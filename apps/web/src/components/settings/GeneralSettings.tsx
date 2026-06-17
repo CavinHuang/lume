@@ -1,5 +1,5 @@
 import * as React from 'react'
-import { useAtom } from 'jotai'
+import { useAtom, useSetAtom } from 'jotai'
 import {
   ChevronDown,
   FileCog,
@@ -22,12 +22,11 @@ import type {
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom } from '@/atoms'
 import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
 import { getGeneralSettings, getProxySettings, saveProxySettings, updateGeneralSettings } from '@/lib/desktop-api'
 import { setThemeMode } from '@/lib/theme-mode'
 import { cn } from '@/lib/utils'
-import { ClearCacheDialog } from './ClearCacheDialog'
 import {
   GENERAL_SETTINGS_DEFAULTS,
   PROXY_MODE_OPTIONS,
@@ -56,7 +55,7 @@ export function GeneralSettings() {
   const [proxyDraft, setProxyDraft] = React.useState<AgentProxySettings>(DEFAULT_PROXY_SETTINGS)
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
-  const [clearCacheOpen, setClearCacheOpen] = React.useState(false)
+  const setSettingsTab = useSetAtom(settingsInitialTabAtom)
 
   const currentWorkspace = React.useMemo(
     () => workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null,
@@ -162,8 +161,7 @@ export function GeneralSettings() {
   }
 
   return (
-    <>
-      <div className="space-y-3">
+    <div className="space-y-3">
         <SettingsCard title="工作区">
           <SettingsRow label="默认工作区" desc="新会话默认使用的本地工作区">
             <SelectShell className="w-[180px]">
@@ -320,16 +318,12 @@ export function GeneralSettings() {
             <QuickAction icon={FileCog} label="打开配置文件" onClick={() => void openLumeConfigSourceFile()} />
             <QuickAction
               icon={Trash2}
-              label="清理缓存"
-              tone="danger"
-              onClick={() => setClearCacheOpen(true)}
+              label="数据管理"
+              onClick={() => setSettingsTab('data')}
             />
           </div>
         </SettingsCard>
-      </div>
-
-      <ClearCacheDialog open={clearCacheOpen} onOpenChange={setClearCacheOpen} />
-    </>
+    </div>
   )
 }
 
@@ -416,12 +410,10 @@ function ProxyInput({
 function QuickAction({
   icon: Icon,
   label,
-  tone = 'default',
   onClick,
 }: {
   icon: LucideIcon
   label: string
-  tone?: 'default' | 'danger'
   onClick?: () => void
 }) {
   return (
@@ -429,10 +421,7 @@ function QuickAction({
       type="button"
       variant="outline"
       onClick={onClick}
-      className={cn(
-        'h-10 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]',
-        tone === 'danger' && 'border-[#ff9fa8] text-[#ff4d57] hover:bg-[#fff5f6] hover:text-[#ff4d57]'
-      )}
+      className="h-10 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
     >
       <Icon size={15} />
       {label}

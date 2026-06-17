@@ -7,10 +7,6 @@ import type {
 } from '@lume/shared'
 import { GENERAL_SETTINGS_DEFAULTS as SHARED_GENERAL_SETTINGS_DEFAULTS } from '@lume/shared'
 
-export type CacheCleanupKey = 'frontendTemp' | 'previewRender' | 'logs'
-
-export type CacheCleanupSelection = Record<CacheCleanupKey, boolean>
-
 export interface ThemeModeOption {
   value: ThemeMode
   label: string
@@ -19,12 +15,6 @@ export interface ThemeModeOption {
 
 export interface ProxyModeOption {
   value: AgentProxyMode
-  label: string
-  desc: string
-}
-
-export interface CacheCleanupOption {
-  key: CacheCleanupKey
   label: string
   desc: string
 }
@@ -67,24 +57,6 @@ export const PROXY_MODE_OPTIONS: ProxyModeOption[] = [
   },
 ]
 
-export const CACHE_CLEANUP_OPTIONS: CacheCleanupOption[] = [
-  {
-    key: 'frontendTemp',
-    label: '前端临时缓存',
-    desc: '移除本地界面临时文件与派生缓存',
-  },
-  {
-    key: 'previewRender',
-    label: '预览/渲染缓存',
-    desc: '清理预览图、渲染结果等可重建内容',
-  },
-  {
-    key: 'logs',
-    label: '日志缓存',
-    desc: '删除本地日志缓存文件，不影响配置和会话数据',
-  },
-]
-
 export function mergeGeneralSettings(
   current: GeneralSettings | null | undefined,
   updates: UpdateGeneralSettingsInput
@@ -93,6 +65,7 @@ export function mergeGeneralSettings(
 
   return {
     themeMode: updates.themeMode ?? base.themeMode,
+    agentMessageDisplayMode: updates.agentMessageDisplayMode ?? base.agentMessageDisplayMode,
     windowBehavior: {
       minimizeToTray: updates.windowBehavior?.minimizeToTray ?? base.windowBehavior.minimizeToTray,
       closeToTray: updates.windowBehavior?.closeToTray ?? base.windowBehavior.closeToTray,
@@ -107,18 +80,6 @@ export function mergeGeneralSettings(
           : base.updateSettings.lastUpdateCheckAt,
     },
   }
-}
-
-export function createDefaultCacheCleanupSelection(): CacheCleanupSelection {
-  return {
-    frontendTemp: true,
-    previewRender: true,
-    logs: true,
-  }
-}
-
-export function hasSelectedCacheCleanup(selection: CacheCleanupSelection): boolean {
-  return Object.values(selection).some(Boolean)
 }
 
 export function normalizeProxyDraft(settings: AgentProxySettings): AgentProxySettings {

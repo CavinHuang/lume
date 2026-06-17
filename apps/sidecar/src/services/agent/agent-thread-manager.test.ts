@@ -15,7 +15,12 @@ import {
   moveAgentThreadToWorkspace,
   truncateAgentMessagesFrom,
   updateAgentThreadMeta,
-  toggleAgentThreadPin
+  toggleAgentThreadPin,
+  trashAgentThread,
+  archiveAgentThread,
+  emptyTrash,
+  listAgentThreads,
+  listTrashedThreads
 } from "./agent-thread-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentThreadArtifactsPath, getAgentThreadFilesPath, getAgentThreadPlansPath, getAgentThreadRootPath, getAgentWorkspacePath } from "../infra/config-paths";
@@ -416,5 +421,40 @@ describe("agent-thread-manager advanced ops", () => {
 
     expect(forkedSdkMessages.length).toBeGreaterThan(0);
     expect(forkedSdkMessages.some((message) => message.type === "assistant")).toBeTrue();
+  });
+
+  test("emptyTrash 应永久删除全部已 trash 线程，并保留 active/archived 线程", () => {
+    const activeThread = createAgentThread("活跃线程");
+    const archivedThread = createAgentThread("归档线程");
+    const trashed1 = createAgentThread("回收站线程1");
+    const trashed2 = createAgentThread("回收站线程2");
+
+    archiveAgentThread(archivedThread.id);
+    trashAgentThread(trashed1.id);
+    trashAgentThread(trashed2.id);
+
+    expect(listTrashedThreads()).toHaveLength(2);
+
+    const cleanedCount = emptyTrash();
+
+    expect(cleanedCount).toBe(2);
+    expect(listTrashedThreads()).toHaveLength(0);
+
+    // 已 trash 线程应从索引中彻底移除
+    expect(getAgentThreadMeta(trashed1.id)).toBeUndefined();
+    expect(getAgentThreadMeta(trashed2.id)).toBeUndefined();
+
+    // active / archived 线程应存活且状态不变
+    expect(getAgentThreadMeta(activeThread.id)?.status).not.toBe("trashed");
+    expect(getAgentThreadMeta(archivedThread.id)?.status).toBe("archived");
+    expect(listAgentThreads().map((t) => t.id)).toContain(activeThread.id);
+  });
+
+  test("emptyTrash 在回收站为空时应返回 0", () => {
+    const active = createAgentThread("仅活跃");
+
+    expect(listTrashedThreads()).toHaveLength(0);
+    expect(emptyTrash()).toBe(0);
+    expect(getAgentThreadMeta(active.id)).toBeDefined();
   });
 });

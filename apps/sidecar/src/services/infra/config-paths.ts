@@ -309,3 +309,21 @@ export function getRoutineSchedulePath(date: string): string {
 export function getRoutineRunsPath(): string {
   return join(getRoutineDir(), "runs.jsonl");
 }
+
+export function getPluginsCacheDir(): string {
+  return ensureDir(join(getConfigDir(), "plugins", "cache"), "插件缓存目录");
+}
+
+export function getPluginsDataDir(): string {
+  return ensureDir(join(getConfigDir(), "plugins", "data"), "插件数据目录");
+}
+
+/** 全局向量索引目录（~/.lume/memory/index） */
+export function getGlobalVectorIndexDir(): string {
+  return ensureDir(join(getStructuredMemoryDir(), "index"), "全局向量索引目录");
+}
+
+/** 工作区向量索引目录（agent-workspaces/<slug>/memory/index） */
+export function getWorkspaceVectorIndexDir(workspaceSlug: string): string {
+  return ensureDir(join(getWorkspaceMemoryDir(workspaceSlug), "index"), "工作区向量索引目录");
+}

@@ -1,12 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { Check, ChevronDown, ChevronRight, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, Wrench, X } from 'lucide-react'
+import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
-import { useSetAtom } from 'jotai'
-import { activeTabIdAtom, agentThreadsAtom, tabsAtom } from '@/atoms'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { activeTabIdAtom, agentThreadsAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
+import { groupAssistantBlocksForMinimal } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
@@ -97,6 +98,7 @@ export function RuntimeEventContentBlock({
 
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
   const contentBlocks = message.blocks.filter((block) => block.type !== 'task_progress')
+  const useMinimalMode = useAtomValue(generalSettingsAtom).agentMessageDisplayMode === 'minimal'
   const activeStreamingTextBlockId = streaming === true && message.status === 'streaming'
     ? findActiveStreamingTextBlockId(message.blocks)
     : null
@@ -120,22 +122,32 @@ export function RuntimeEventContentBlock({
         <Sparkles size={21} strokeWidth={1.8} fill="#675cff" fillOpacity={0.08} />
       </div>
       <div className="min-w-0 flex-1 space-y-4 pt-2">
-        {contentBlocks
-          .filter(block => block.type !== 'memory_context_used')
-          .map((block, index) => (
-            <RuntimeEventAssistantBlockItem
-              key={block.id}
-              block={block}
-              threadId={threadId}
-              onOpenThreadFile={onOpenThreadFile}
-              onUserResizeStart={onUserResizeStart}
-              isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
-              isActiveThinking={block.type === 'thinking'
-                && streaming === true
-                && message.status === 'streaming'
-                && index === contentBlocks.length - 1}
-            />
-          ))}
+        {useMinimalMode ? (
+          <MinimalAssistantContent
+            blocks={contentBlocks.filter((b) => b.type !== 'memory_context_used')}
+            threadId={threadId}
+            isStreamingMessage={streaming === true && message.status === 'streaming'}
+            onOpenThreadFile={onOpenThreadFile}
+            onUserResizeStart={onUserResizeStart}
+          />
+        ) : (
+          contentBlocks
+            .filter((block) => block.type !== 'memory_context_used')
+            .map((block, index) => (
+              <RuntimeEventAssistantBlockItem
+                key={block.id}
+                block={block}
+                threadId={threadId}
+                onOpenThreadFile={onOpenThreadFile}
+                onUserResizeStart={onUserResizeStart}
+                isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
+                isActiveThinking={block.type === 'thinking'
+                  && streaming === true
+                  && message.status === 'streaming'
+                  && index === contentBlocks.length - 1}
+              />
+            ))
+        )}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
         )}
@@ -538,6 +550,332 @@ function RuntimeEventAssistantBlockItem({
       threadId={threadId}
       onUserResizeStart={onUserResizeStart}
     />
+  )
+}
+
+function MinimalProcessGroup({
+  blocks,
+  threadId,
+  isStreamingMessage,
+  onUserResizeStart,
+}: {
+  blocks: RuntimeAssistantBlock[]
+  threadId: string
+  isStreamingMessage: boolean
+  onUserResizeStart?: () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+
+  const toolCalls = blocks
+    .filter((b): b is Extract<RuntimeAssistantBlock, { type: 'tool_call' }> => b.type === 'tool_call')
+    .map((b) => b.toolCall)
+  const subagentCount = toolCalls.filter((tc) => tc.toolName === 'Agent').length
+  const nonAgentCount = toolCalls.length - subagentCount
+  const failedCount = toolCalls.filter((tc) => tc.status === 'failed').length
+  const completedCount = toolCalls.filter((tc) => tc.status === 'completed').length
+  // 仅展示第一个运行中的工具：agent 绝大多数情况顺序执行工具；并发多工具时其余的进度不单独展示。
+  const runningTool = toolCalls.find((tc) => tc.status === 'running')
+  const hasRunning = isStreamingMessage && Boolean(runningTool)
+
+  useEffect(() => {
+    if (!hasRunning) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [hasRunning])
+
+  const nonAgentDurationMs = toolCalls
+    .filter((tc) => tc.toolName !== 'Agent')
+    .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
+  const subagentDurationMs = toolCalls
+    .filter((tc) => tc.toolName === 'Agent')
+    .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
+  const runningElapsedMs = hasRunning && runningTool?.startedAt
+    ? Math.max(0, now - Date.parse(runningTool.startedAt))
+    : 0
+  const runningOnSubagent = hasRunning && runningTool?.toolName === 'Agent'
+  const toolDurationMs = nonAgentDurationMs + (runningOnSubagent ? 0 : runningElapsedMs)
+  const subagentTotalMs = subagentDurationMs + (runningOnSubagent ? runningElapsedMs : 0)
+  const thinkingCount = blocks.filter((b) => b.type === 'thinking').length
+
+  const fmtDuration = (ms: number) => (
+    ms <= 0
+      ? ''
+      : ms / 1000 < 60
+        ? `${(ms / 1000).toFixed(hasRunning ? 0 : 1)}s`
+        : formatDurationLabel(ms)
+  )
+
+  // 折叠行摘要：图标 + 文本单元，用 · 分隔（不再使用 emoji）
+  const summaryUnits: ReactNode[] = []
+  if (hasRunning && runningTool) {
+    // 运行中：当前动作 + 已完成步数 + 总已用时
+    summaryUnits.push(
+      <span key="run" className="inline-flex items-center gap-1">
+        <span className="size-1.5 animate-pulse rounded-full bg-blue-500" />
+        正在执行 {runningTool.toolName}
+      </span>,
+    )
+    summaryUnits.push(
+      <span key="done">
+        已完成 {completedCount} 步{failedCount > 0 ? ` · ${failedCount} 失败` : ''}
+      </span>,
+    )
+    const elapsed = fmtDuration(runningElapsedMs + nonAgentDurationMs + subagentDurationMs)
+    if (elapsed) {
+      summaryUnits.push(
+        <span key="dur" className="inline-flex items-center gap-1 tabular-nums">
+          <Clock size={12} />
+          {elapsed}
+        </span>,
+      )
+    }
+  } else {
+    // 完成态：按分类（思考次数 / 工具调用数+时长 / 子代理数+时长 / 失败），按需省略
+    if (thinkingCount > 0) {
+      summaryUnits.push(
+        <span key="think" className="inline-flex items-center gap-1">
+          <Brain size={12} />
+          思考 {thinkingCount} 次
+        </span>,
+      )
+    }
+    if (nonAgentCount > 0) {
+      const d = fmtDuration(toolDurationMs)
+      summaryUnits.push(
+        <span key="ops" className="inline-flex items-center gap-1 tabular-nums">
+          <Wrench size={12} />
+          {nonAgentCount} 个工具调用{d ? ` ${d}` : ''}
+        </span>,
+      )
+    }
+    if (subagentCount > 0) {
+      const d = fmtDuration(subagentTotalMs)
+      summaryUnits.push(
+        <span key="sub" className="inline-flex items-center gap-1 tabular-nums">
+          <Bot size={12} />
+          {subagentCount} 子代理{d ? ` ${d}` : ''}
+        </span>,
+      )
+    }
+    if (failedCount > 0) {
+      summaryUnits.push(
+        <span key="fail" className="inline-flex items-center gap-1 text-destructive/70">
+          <TriangleAlert size={12} />
+          {failedCount} 失败
+        </span>,
+      )
+    }
+  }
+
+  const summaryNodes: ReactNode[] = []
+  summaryUnits.forEach((unit, index) => {
+    if (index > 0) {
+      summaryNodes.push(<span key={`sep-${index}`} className="text-foreground/25">·</span>)
+    }
+    summaryNodes.push(unit)
+  })
+
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+        className="flex items-center gap-1.5 text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
+      >
+        {summaryNodes}
+        <ChevronRight size={12} className={cn('shrink-0 transition-transform', expanded && 'rotate-90')} />
+      </button>
+      {expanded && (
+        <div className="mt-1.5 space-y-0.5 pl-1">
+          {blocks.map((block) => {
+            if (block.type === 'thinking') {
+              return <MinimalThinkingRow key={block.id} text={block.text} />
+            }
+            if (block.type === 'tool_call') {
+              if (block.toolCall.toolName === 'Agent') {
+                return (
+                  <MinimalSubagentRow
+                    key={block.id}
+                    toolCall={block.toolCall}
+                    threadId={threadId}
+                    onUserResizeStart={onUserResizeStart}
+                  />
+                )
+              }
+              return <MinimalToolCallRow key={block.id} toolCall={block.toolCall} />
+            }
+            return null
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MinimalToolCallRow({ toolCall }: { toolCall: RuntimeToolCallView }) {
+  const [open, setOpen] = useState(false)
+  const input = asRecord(toolCall.input)
+  const isRunning = toolCall.status === 'running'
+  const resultOpen = !isRunning && open
+  const shouldRenderResult = useDeferredUnmount(resultOpen)
+
+  let resultData: unknown = toolCall.output
+  if (typeof toolCall.output === 'string') {
+    try {
+      resultData = JSON.parse(toolCall.output)
+    } catch {
+      resultData = toolCall.output
+    }
+  }
+
+  const Icon = toolCall.toolName === 'Bash' ? Terminal : Wrench
+
+  return (
+    <div>
+      <button
+        type="button"
+        disabled={isRunning}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60 disabled:hover:text-foreground/40"
+      >
+        <Icon size={12} className="shrink-0" />
+        <span className="shrink-0 font-mono font-medium">{toolCall.toolName}</span>
+        <span className="min-w-0 flex-1 truncate">{summarizeInput(input)}</span>
+        {toolCall.status === 'failed' && <TriangleAlert size={11} className="shrink-0 text-destructive/70" />}
+        {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
+          <span className="shrink-0 tabular-nums">{formatDurationLabel(toolCall.durationMs)}</span>
+        )}
+        {isRunning ? (
+          <Loader2 size={11} className="shrink-0 animate-spin" />
+        ) : (
+          <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+        )}
+      </button>
+      {shouldRenderResult && (
+        <AnimatedCollapsiblePanel open={resultOpen}>
+          <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
+            <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
+          </div>
+        </AnimatedCollapsiblePanel>
+      )}
+    </div>
+  )
+}
+
+function MinimalThinkingRow({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
+      >
+        <Brain size={12} className="shrink-0" />
+        <span className="flex-1">思考过程</span>
+        <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+      </button>
+      <AnimatedCollapsiblePanel open={open}>
+        <p className="mb-1 mt-1 whitespace-pre-wrap rounded-md bg-foreground/[0.03] p-2 text-[11.5px] leading-relaxed text-foreground/50">
+          {text}
+        </p>
+      </AnimatedCollapsiblePanel>
+    </div>
+  )
+}
+
+function MinimalSubagentRow({
+  toolCall,
+  threadId,
+  onUserResizeStart,
+}: {
+  toolCall: RuntimeToolCallView
+  threadId: string
+  onUserResizeStart?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const input = asRecord(toolCall.input)
+  const label = asString(input.description ?? input.prompt) ?? '子代理'
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
+      >
+        <Bot size={12} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
+          <span className="shrink-0 tabular-nums">{formatDurationLabel(toolCall.durationMs)}</span>
+        )}
+        <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
+      </button>
+      <AnimatedCollapsiblePanel open={open}>
+        <div className="mb-1 mt-1">
+          <SubagentInlinePanel
+            threadId={threadId}
+            toolUseId={toolCall.id}
+            runId={toolCall.subagentRunId}
+            status={toolCall.subagentStatus}
+            description={asString(input.description ?? input.prompt)}
+            agentType={asString(input.subagent_type)}
+            prompt={asString(input.prompt)}
+            onUserResizeStart={onUserResizeStart}
+          />
+        </div>
+      </AnimatedCollapsiblePanel>
+    </div>
+  )
+}
+
+function MinimalAssistantContent({
+  blocks,
+  threadId,
+  isStreamingMessage,
+  onOpenThreadFile,
+  onUserResizeStart,
+}: {
+  blocks: RuntimeAssistantBlock[]
+  threadId: string
+  isStreamingMessage: boolean
+  onOpenThreadFile?: (path: string) => void
+  onUserResizeStart?: () => void
+}) {
+  const segments = useMemo(() => groupAssistantBlocksForMinimal(blocks), [blocks])
+
+  return (
+    <>
+      {segments.map((segment) => {
+        if (segment.kind === 'inline') {
+          const block = segment.block
+          if (block.type === 'text') {
+            return (
+              <SmoothText
+                key={block.id}
+                text={block.text}
+                isStreaming={isStreamingMessage}
+                onOpenThreadFile={onOpenThreadFile}
+              />
+            )
+          }
+          if (block.type === 'plan_preview') {
+            return <PlanPreviewCard key={block.id} preview={block.preview} onOpenThreadFile={onOpenThreadFile} />
+          }
+          return null
+        }
+        return (
+          <MinimalProcessGroup
+            key={`process:${segment.blocks[0]?.id ?? 'empty'}`}
+            blocks={segment.blocks}
+            threadId={threadId}
+            isStreamingMessage={isStreamingMessage}
+            onUserResizeStart={onUserResizeStart}
+          />
+        )
+      })}
+    </>
   )
 }
 
@@ -1128,6 +1466,11 @@ function RuntimeEventToolCallBlock({
         )}>
           {isRunning ? '执行中' : toolCall.status === 'failed' ? '失败' : '已完成'}
         </span>
+        {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
+          <span className="tabular-nums text-[11px] font-medium text-[#9aa0a6]">
+            {formatDurationLabel(toolCall.durationMs)}
+          </span>
+        )}
         <span className="min-w-0 flex-1 truncate text-[#68718a]">{summarizeInput(input)}</span>
         {isRunning && <Loader2 size={13} className="shrink-0 animate-spin text-[#7567ff]" />}
         {!isRunning && (
@@ -1622,6 +1965,17 @@ function CopyMessageButton({
       {displayLabel && <span>{displayLabel}</span>}
     </button>
   )
+}
+
+function formatDurationLabel(ms: number): string {
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(1)}s`
+  const totalSec = Math.floor(s)
+  const mm = Math.floor(totalSec / 60)
+  const ss = totalSec % 60
+  if (s < 3600) return `${mm}:${String(ss).padStart(2, '0')}`
+  const hh = Math.floor(mm / 60)
+  return `${hh}:${String(mm % 60).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
 }
 
 function summarizeInput(input: unknown): string {

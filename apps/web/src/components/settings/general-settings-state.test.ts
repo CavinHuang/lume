@@ -1,11 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  CACHE_CLEANUP_OPTIONS,
   GENERAL_SETTINGS_DEFAULTS,
   PROXY_MODE_OPTIONS,
   THEME_MODE_OPTIONS,
-  createDefaultCacheCleanupSelection,
-  hasSelectedCacheCleanup,
   normalizeProxyDraft,
   mergeGeneralSettings,
 } from './general-settings-state'
@@ -27,22 +24,10 @@ describe('general settings state', () => {
     ])
   })
 
-  test('cache cleanup defaults all three safe caches to selected', () => {
-    expect(CACHE_CLEANUP_OPTIONS.map((option) => option.key)).toEqual([
-      'frontendTemp',
-      'previewRender',
-      'logs',
-    ])
-    expect(createDefaultCacheCleanupSelection()).toEqual({
-      frontendTemp: true,
-      previewRender: true,
-      logs: true,
-    })
-  })
-
   test('general settings defaults stay app-wide and conservative', () => {
     expect(GENERAL_SETTINGS_DEFAULTS).toEqual({
       themeMode: 'system',
+      agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false,
@@ -63,6 +48,7 @@ describe('general settings state', () => {
       },
     })).toEqual({
       themeMode: 'system',
+      agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: true,
@@ -118,14 +104,6 @@ describe('general settings state', () => {
       installOnlyWhenIdle: true,
       lastUpdateCheckAt: '2026-05-05T03:30:00.000Z',
     })
-  })
-
-  test('hasSelectedCacheCleanup returns false when every safe cache option is deselected', () => {
-    expect(hasSelectedCacheCleanup({
-      frontendTemp: false,
-      previewRender: false,
-      logs: false,
-    })).toBe(false)
   })
 
   test('normalizeProxyDraft disables proxy when mode is off and trims custom values', () => {

@@ -8,15 +8,19 @@ describe('SettingsView metadata', () => {
       'appearance',
       'models',
       'agents',
+      'skills',
       'workspaces',
       'memory',
+      'reading',
       'permissions',
       'shortcuts',
       'integrations',
       'im-integrations',
       'web-search',
       'updates',
+      'data',
       'logs',
+      'archive',
     ])
     expect(SETTINGS_PAGE_TITLES.memory).toBe('记忆')
     expect(SETTINGS_PAGE_SUBTITLES.memory).toContain('工作区与全局记忆')
@@ -26,6 +30,7 @@ describe('SettingsView metadata', () => {
     expect(SETTINGS_PAGE_TITLES['im-integrations']).toBe('IM 集成')
     expect(SETTINGS_PAGE_TITLES['web-search']).toBe('网络搜索')
     expect(SETTINGS_PAGE_TITLES.updates).toBe('版本与更新')
+    expect(SETTINGS_PAGE_TITLES.data).toBe('数据管理')
     expect(SETTINGS_PAGE_TITLES.logs).toBe('应用日志')
     expect(SETTINGS_PAGE_SUBTITLES.logs).toContain('运行日志')
   })

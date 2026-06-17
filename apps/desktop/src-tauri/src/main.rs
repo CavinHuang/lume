@@ -600,6 +600,43 @@ fn desktop_list_log_files() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+fn data_get_storage_stats(categories: Vec<DataCategoryInput>) -> Result<serde_json::Value, String> {
+    let root = ll::config::resolve_config_dir();
+    let mut outs = Vec::<DataCategoryOutput>::new();
+    let mut total: u64 = 0;
+    for cat in &categories {
+        let bytes = compute_category_bytes(&root, cat);
+        total += bytes;
+        outs.push(DataCategoryOutput { key: cat.key.clone(), bytes });
+    }
+    Ok(serde_json::json!({
+        "total": total,
+        "configDir": root.to_string_lossy(),
+        "categories": outs
+    }))
+}
+
+#[tauri::command]
+fn data_export_zip(input: ExportZipInput) -> Result<serde_json::Value, String> {
+    let root = ll::config::resolve_config_dir();
+    let dest = Path::new(&input.dest_path);
+    let (bytes, file_count) = write_data_zip(&root, dest, !input.include_credentials)?;
+    info!(
+        "[desktop] data_export_zip -> {} ({} files, {} bytes, credentials_stripped={})",
+        dest.display(),
+        file_count,
+        bytes,
+        !input.include_credentials
+    );
+    Ok(serde_json::json!({
+        "path": dest.to_string_lossy(),
+        "bytes": bytes,
+        "fileCount": file_count,
+        "credentialsStripped": !input.include_credentials
+    }))
+}
+
+#[tauri::command]
 fn desktop_read_log_file(
     file_name: String,
     levels: Option<Vec<String>>,
@@ -1512,6 +1549,7 @@ mod tests {
         parse_window_behavior_from_settings_str, resolve_runtime_window_action,
         resolve_settings_path, WindowAction, WindowBehavior, WindowBehaviorEvent,
     };
+    use std::path::PathBuf;
     use std::process::Command;
 
     #[test]
@@ -1539,10 +1577,11 @@ mod tests {
 
     #[test]
     fn sidecar_logging_env_overrides() {
+        let mut command = Command::new("lume-sidecar");
         apply_sidecar_logging_env(&mut command);
         let envs = command
             .get_envs()
-            .map(|(key, value)| {
+            .map(|(key, value): (&std::ffi::OsStr, Option<&std::ffi::OsStr>)| {
                 (
                     key.to_string_lossy().to_string(),
                     value.map(|item| item.to_string_lossy().to_string()),
@@ -1666,6 +1705,9 @@ mod tests {
 }
 
 fn main() {
+    // 最早期：按 launcher.json 注入 LUME_CONFIG_DIR（必须在 ll::init 写日志之前）
+    apply_launcher_config_env();
+
     // 初始化统一日志系统
     ll::init(ll::LumeLoggerConfig {
         level: ll::LumeLogLevel::Debug,
@@ -1749,7 +1791,11 @@ fn main() {
             write_binary_file,
             open_in_system,
             reveal_path_in_system,
-            copy_file
+            copy_file,
+            data_get_storage_stats,
+            data_export_zip,
+            data_migrate_to_dir,
+            data_apply_migration
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -1821,4 +1867,600 @@ fn main() {
                 _ => {}
             }
         });
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DataCategoryInput {
+    key: String,
+    scan_paths: Vec<String>,
+    skip_subdirs: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct DataCategoryOutput {
+    key: String,
+    bytes: u64,
+}
+
+/// 把含 `*` 的相对路径展开为具体路径（只支持单段 `*`，用于 agent-workspaces/*）。
+fn expand_scan_path(root: &Path, rel: &str) -> Vec<PathBuf> {
+    let parts: Vec<&str> = rel.split('/').collect();
+    let star_idx = parts.iter().position(|p| *p == "*");
+    match star_idx {
+        None => vec![root.join(rel)],
+        Some(idx) => {
+            let parent = root.join(parts[..idx].join("/"));
+            let suffix: PathBuf = parts[idx + 1..].iter().collect();
+            let Ok(entries) = std::fs::read_dir(&parent) else {
+                return vec![];
+            };
+            entries
+                .filter_map(Result::ok)
+                .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+                .map(|e| {
+                    let mut p = e.path();
+                    if !suffix.as_os_str().is_empty() {
+                        p.push(&suffix);
+                    }
+                    p
+                })
+                .collect()
+        }
+    }
+}
+
+/// 对单类别求体积：扫描 scan_paths，跳过 skip_subdirs（含 `*`）。
+fn compute_category_bytes(root: &Path, input: &DataCategoryInput) -> u64 {
+    let mut skip_prefixes: Vec<PathBuf> = Vec::new();
+    for s in &input.skip_subdirs {
+        for p in expand_scan_path(root, s) {
+            skip_prefixes.push(p);
+        }
+    }
+
+    let mut total: u64 = 0;
+    for rel in &input.scan_paths {
+        for target in expand_scan_path(root, rel) {
+            for entry in walkdir::WalkDir::new(&target).into_iter().filter_map(Result::ok) {
+                let path = entry.path();
+                if skip_prefixes.iter().any(|sp| path.starts_with(sp)) {
+                    continue;
+                }
+                if entry.file_type().is_file() {
+                    if let Ok(meta) = entry.metadata() {
+                        total += meta.len();
+                    }
+                }
+            }
+        }
+    }
+    total
+}
+
+#[cfg(test)]
+mod data_stats_tests {
+    use super::*;
+    use std::fs::{create_dir_all, write};
+
+    fn make_tree(root: &Path) {
+        create_dir_all(root.join("memory/index")).unwrap();
+        create_dir_all(root.join("memory/entries")).unwrap();
+        create_dir_all(root.join("logs")).unwrap();
+        write(root.join("memory/index/vec.json"), "xxxxx").unwrap(); // 5
+        write(root.join("memory/entries/e.md"), "yyy").unwrap(); // 3
+        write(root.join("logs/l.ndjson"), "zz").unwrap(); // 2
+    }
+
+    #[test]
+    fn core_excludes_index() {
+        let tmp = std::env::temp_dir().join("lume-stats-test-core");
+        let _ = std::fs::remove_dir_all(&tmp);
+        make_tree(&tmp);
+
+        let core = DataCategoryInput {
+            key: "core".into(),
+            scan_paths: vec!["memory".into()],
+            skip_subdirs: vec!["memory/index".into()],
+        };
+        // memory = entries(3) + index(5)；skip index 后应只剩 3
+        assert_eq!(compute_category_bytes(&tmp, &core), 3);
+    }
+
+    #[test]
+    fn derived_counts_index() {
+        let tmp = std::env::temp_dir().join("lume-stats-test-derived");
+        let _ = std::fs::remove_dir_all(&tmp);
+        make_tree(&tmp);
+
+        let derived = DataCategoryInput {
+            key: "derived".into(),
+            scan_paths: vec!["memory/index".into(), "logs".into()],
+            skip_subdirs: vec![],
+        };
+        // index(5) + logs(2) = 7
+        assert_eq!(compute_category_bytes(&tmp, &derived), 7);
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportZipInput {
+    dest_path: String,
+    include_credentials: bool,
+}
+
+/// 对 JSON 字节做脱敏；非 JSON 原样返回。失败时返回原文（不阻断导出）。
+fn redact_json_bytes(bytes: &[u8]) -> Vec<u8> {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return bytes.to_vec();
+    };
+    let patterns = ll::redact::default_patterns();
+    ll::redact::redact_value(&mut value, &patterns);
+    serde_json::to_vec_pretty(&value).unwrap_or_else(|_| bytes.to_vec())
+}
+
+/// 把 src 目录打成 zip 写入 dest。对所有 .json 做脱敏（当 strip=true）。
+/// 返回 (字节数, 文件数)。
+fn write_data_zip(src: &Path, dest: &Path, strip_credentials: bool) -> Result<(u64, u64), String> {
+    let file = std::fs::File::create(dest).map_err(|e| format!("创建导出文件失败: {e}"))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts = zip::write::SimpleFileOptions::default();
+
+    let mut count: u64 = 0;
+    for entry in walkdir::WalkDir::new(src).into_iter().filter_map(Result::ok) {
+        let path = entry.path();
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let rel = path.strip_prefix(src).map_err(|e| e.to_string())?;
+        let raw = std::fs::read(path).map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+        let data = if strip_credentials && rel.extension().and_then(|e| e.to_str()) == Some("json") {
+            redact_json_bytes(&raw)
+        } else {
+            raw
+        };
+        zip.start_file(rel.to_string_lossy(), opts)
+            .map_err(|e| format!("写入 zip 条目失败: {e}"))?;
+        zip.write_all(&data).map_err(|e| format!("写入 zip 内容失败: {e}"))?;
+        count += 1;
+    }
+    zip.finish().map_err(|e| format!("完成 zip 失败: {e}"))?;
+    let bytes = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    Ok((bytes, count))
+}
+
+#[cfg(test)]
+mod export_zip_tests {
+    use super::*;
+    use std::fs::{create_dir_all, write};
+    use std::io::Read;
+
+    #[test]
+    fn redacts_json_credentials() {
+        let raw = br#"{"apiKey":"sk-secret","name":"ok"}"#;
+        let out = redact_json_bytes(raw);
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("[REDACTED]"));
+        assert!(!s.contains("sk-secret"));
+        assert!(s.contains("ok"));
+    }
+
+    #[test]
+    fn zip_strips_credentials_when_requested() {
+        let src = std::env::temp_dir().join("lume-export-src");
+        let dest = std::env::temp_dir().join("lume-export-dest.zip");
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_file(&dest);
+        create_dir_all(&src).unwrap();
+        write(src.join("settings.json"), br#"{"apiKey":"sk-leak"}"#).unwrap();
+
+        let (bytes, count) = write_data_zip(&src, &dest, true).unwrap();
+        assert!(bytes > 0);
+        assert_eq!(count, 1);
+
+        // 解 zip 校验内容脱敏
+        let f = std::fs::File::open(&dest).unwrap();
+        let mut archive = zip::ZipArchive::new(f).unwrap();
+        let mut s = String::new();
+        archive.by_index(0).unwrap().read_to_string(&mut s).unwrap();
+        assert!(s.contains("[REDACTED]"));
+        assert!(!s.contains("sk-leak"));
+    }
+}
+
+const LUME_APP_IDENTIFIER: &str = "com.lume.desktop";
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LauncherConfig {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    config_dir: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pending_delete_old: Option<PathBuf>,
+}
+
+/// launcher.json 的 OS 标准路径（<config_dir>/<identifier>/launcher.json）。
+fn resolve_launcher_path() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join(LUME_APP_IDENTIFIER).join("launcher.json"))
+}
+
+fn read_launcher_config_from(path: &Path) -> Option<LauncherConfig> {
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<LauncherConfig>(&text).ok()
+}
+
+fn write_launcher_config_at(path: &Path, cfg: &LauncherConfig) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建 launcher 目录失败: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| format!("序列化 launcher.json 失败: {e}"))?;
+    std::fs::write(path, json).map_err(|e| format!("写 launcher.json 失败: {e}"))
+}
+
+/// 计算生效的 config 目录，优先级：外部 env > launcher.json > 默认。
+/// `launcher_path: None` 表示不读 launcher.json（测试用）。
+fn effective_config_dir_with(launcher_path: Option<&Path>) -> PathBuf {
+    if let Ok(v) = std::env::var("LUME_CONFIG_DIR") {
+        let t = v.trim();
+        if !t.is_empty() {
+            let p = PathBuf::from(t);
+            return if p.is_absolute() {
+                p
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(p)
+            };
+        }
+    }
+    if let Some(path) = launcher_path {
+        if let Some(cfg) = read_launcher_config_from(path) {
+            if let Some(cd) = cfg.config_dir {
+                return cd;
+            }
+        }
+    }
+    ll::config::resolve_config_dir()
+}
+
+/// main() 最早期调用：按优先级把 config 目录写入 LUME_CONFIG_DIR（若外部未设），
+/// 并清理 launcher.json 中的 pendingDeleteOld（删除旧目录）。
+fn apply_launcher_config_env() {
+    // 外部 env 已设 → 不覆盖（保留 dev/CLI 覆盖语义）
+    if let Ok(v) = std::env::var("LUME_CONFIG_DIR") {
+        if !v.trim().is_empty() {
+            return;
+        }
+    }
+    let Some(path) = resolve_launcher_path() else { return };
+    let Some(cfg) = read_launcher_config_from(&path) else { return };
+
+    if let Some(cd) = cfg.config_dir.clone() {
+        let _ = std::env::set_var("LUME_CONFIG_DIR", &cd);
+    }
+
+    // 清理 pendingDeleteOld：仅当存在且不等于生效目录时删除旧目录，然后清除该字段
+    if cfg.pending_delete_old.is_some() {
+        let effective = effective_config_dir_with(Some(path.as_path()));
+        if let Some(old) = cfg.pending_delete_old.as_ref() {
+            if old != &effective && old.exists() {
+                let _ = std::fs::remove_dir_all(old);
+            }
+        }
+        let cleared = LauncherConfig {
+            config_dir: cfg.config_dir.clone(),
+            pending_delete_old: None,
+        };
+        let _ = write_launcher_config_at(&path, &cleared);
+    }
+}
+
+#[cfg(test)]
+mod migration_launcher_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Mutex;
+
+    // LUME_CONFIG_DIR 是进程级全局 env，多个测试并发读写会互相污染。
+    // 用一把模块级 Mutex 把触碰 env 的测试串行化（不影响其它并行测试）。
+    static ENV_GUARD: Mutex<()> = Mutex::new(());
+    // 每次写临时 launcher.json 用独立目录，避免并发测试复用同一路径互相覆盖。
+    static UNIQUE: AtomicU64 = AtomicU64::new(0);
+
+    fn write_tmp_launcher(cfg: &LauncherConfig) -> PathBuf {
+        let n = UNIQUE.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("lume-launcher-test-{}-{}", std::process::id(), n));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("launcher.json");
+        write_launcher_config_at(&path, cfg).unwrap();
+        path
+    }
+
+    #[test]
+    fn env_takes_precedence_over_launcher() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        let path = write_tmp_launcher(&LauncherConfig {
+            config_dir: Some(PathBuf::from("/from/launcher")),
+            pending_delete_old: None,
+        });
+        std::env::set_var("LUME_CONFIG_DIR", "/from/env");
+        assert_eq!(effective_config_dir_with(Some(&path)), PathBuf::from("/from/env"));
+        std::env::remove_var("LUME_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn env_relative_resolved_against_cwd() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        std::env::set_var("LUME_CONFIG_DIR", "relative-lume-dir");
+        let dir = effective_config_dir_with(None);
+        // 相对路径应被解析为 <cwd>/relative-lume-dir，而非裸 "relative-lume-dir"
+        assert!(dir.is_absolute(), "relative LUME_CONFIG_DIR should resolve to absolute");
+        assert_eq!(dir.file_name().unwrap(), "relative-lume-dir");
+        std::env::remove_var("LUME_CONFIG_DIR");
+    }
+
+    #[test]
+    fn launcher_used_when_env_absent() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        std::env::remove_var("LUME_CONFIG_DIR");
+        let path = write_tmp_launcher(&LauncherConfig {
+            config_dir: Some(PathBuf::from("/from/launcher")),
+            pending_delete_old: None,
+        });
+        assert_eq!(effective_config_dir_with(Some(&path)), PathBuf::from("/from/launcher"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn default_when_no_env_no_launcher() {
+        let _guard = ENV_GUARD.lock().unwrap();
+        std::env::remove_var("LUME_CONFIG_DIR");
+        let dir = effective_config_dir_with(None);
+        assert!(dir.ends_with(".lume"));
+    }
+
+    #[test]
+    fn roundtrip_launcher_config() {
+        let path = write_tmp_launcher(&LauncherConfig {
+            config_dir: Some(PathBuf::from("/new/lume")),
+            pending_delete_old: Some(PathBuf::from("/old/lume")),
+        });
+        let read = read_launcher_config_from(&path).unwrap();
+        assert_eq!(read.config_dir.as_deref(), Some(std::path::Path::new("/new/lume")));
+        assert_eq!(read.pending_delete_old.as_deref(), Some(std::path::Path::new("/old/lume")));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+}
+
+/// 校验迁移目标：绝对路径、不与 src 重叠、不存在或为空。
+fn validate_migration_target(src: &Path, dest: &Path) -> Result<(), String> {
+    if !dest.is_absolute() {
+        return Err("目标必须是绝对路径".into());
+    }
+    if dest == src {
+        return Err("目标不能与当前数据目录相同".into());
+    }
+    if dest.starts_with(src) {
+        return Err("目标不能在当前数据目录内".into());
+    }
+    if src.starts_with(dest) {
+        return Err("目标不能包含当前数据目录".into());
+    }
+    if dest.exists() {
+        if !dest.is_dir() {
+            return Err("目标已存在且不是目录".into());
+        }
+        let not_empty = std::fs::read_dir(dest)
+            .map(|mut it| it.next().is_some())
+            .unwrap_or(false);
+        if not_empty {
+            return Err("目标目录必须为空".into());
+        }
+    }
+    Ok(())
+}
+
+/// 递归统计目录的文件数与总字节数（不含目录本身与符号链接）。
+fn dir_stats(path: &Path) -> (u64, u64) {
+    let mut files: u64 = 0;
+    let mut bytes: u64 = 0;
+    for entry in walkdir::WalkDir::new(path).into_iter().filter_map(Result::ok) {
+        if entry.file_type().is_file() {
+            files += 1;
+            bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        }
+    }
+    (files, bytes)
+}
+
+/// 递归复制 src 到 dest，逐文件通过 app.emit 报进度。返回（文件数, 字节数）。
+/// 递归复制 src 到 dest，逐文件通过 progress 回调报进度。返回（文件数, 字节数）。
+fn copy_dir_recursive_inner(
+    src: &Path,
+    dest: &Path,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<(u64, u64), String> {
+    let entries: Vec<walkdir::DirEntry> = walkdir::WalkDir::new(src)
+        .into_iter()
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("遍历源目录失败: {e}"))?;
+    let total = entries.iter().filter(|e| e.file_type().is_file()).count() as u64;
+    let mut done: u64 = 0;
+    let mut bytes: u64 = 0;
+    for entry in &entries {
+        let path = entry.path();
+        let rel = path.strip_prefix(src).map_err(|e| e.to_string())?;
+        let target = dest.join(rel);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)
+                .map_err(|e| format!("创建目录 {} 失败: {e}", target.display()))?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(path, &target)
+                .map_err(|e| format!("复制 {} 失败: {e}", path.display()))?;
+            bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            done += 1;
+            progress(done, total);
+        }
+        // 符号链接 / 特殊文件：walkdir 默认不跟随，is_dir/is_file 均为 false，故跳过。
+    }
+    Ok((done, bytes))
+}
+
+/// 迁移用包装：通过 app.emit 报进度。
+fn copy_dir_recursive(src: &Path, dest: &Path, app: &tauri::AppHandle) -> Result<(u64, u64), String> {
+    copy_dir_recursive_inner(src, dest, |done, total| {
+        let _ = app.emit("data:migrate-progress", serde_json::json!({ "done": done, "total": total }));
+    })
+}
+
+#[tauri::command]
+fn data_migrate_to_dir(
+    dest: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SidecarProcess>,
+) -> Result<serde_json::Value, String> {
+    let src = ll::config::resolve_config_dir();
+    let dest_path = PathBuf::from(&dest);
+
+    // 1. 校验目标（在 kill sidecar 之前）
+    validate_migration_target(&src, &dest_path)?;
+
+    // 2. kill sidecar（关闭 SQLite 等打开句柄）
+    let kill_ok = match state.child.lock() {
+        Ok(mut slot) => {
+            if let Some(mut child) = slot.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            true
+        }
+        Err(_) => {
+            warn!("[desktop] data_migrate_to_dir: sidecar 锁中毒，跳过 kill");
+            false
+        }
+    };
+    let _ = kill_ok;
+
+    // 3. 复制 + 进度（失败时清理 dest 半成品，保持「dest 不留痕」契约）
+    let src_stats = dir_stats(&src);
+    let (copied_files, copied_bytes) = match copy_dir_recursive(&src, &dest_path, &app) {
+        Ok(stats) => stats,
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dest_path);
+            return Err(e);
+        }
+    };
+
+    // 4. 校验：dest 统计须与 src 一致
+    let dest_stats = dir_stats(&dest_path);
+    if dest_stats != src_stats {
+        // 校验失败 → 清理 dest 半成品
+        let _ = std::fs::remove_dir_all(&dest_path);
+        return Err(format!(
+            "校验失败：源 {} 文件/{} 字节 vs 目标 {} 文件/{} 字节",
+            src_stats.0, src_stats.1, dest_stats.0, dest_stats.1
+        ));
+    }
+
+    Ok(serde_json::json!({
+        "destPath": dest,
+        "fileCount": copied_files,
+        "bytesCopied": copied_bytes,
+        "verified": true
+    }))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApplyMigrationInput {
+    dest_path: String,
+    delete_old: bool,
+}
+
+#[tauri::command]
+fn data_apply_migration(input: ApplyMigrationInput) -> Result<serde_json::Value, String> {
+    let old = ll::config::resolve_config_dir();
+    let new = PathBuf::from(&input.dest_path);
+    let cfg = LauncherConfig {
+        config_dir: Some(new),
+        pending_delete_old: if input.delete_old { Some(old) } else { None },
+    };
+    let path = resolve_launcher_path()
+        .ok_or_else(|| "无法解析 launcher.json 路径".to_string())?;
+    write_launcher_config_at(&path, &cfg)?;
+    info!("[desktop] data_apply_migration: launcher.json 已写，等待前端 relaunch");
+    Ok(serde_json::json!({ "ok": true }))
+}
+
+#[cfg(test)]
+mod migration_copy_tests {
+    use super::*;
+    use std::fs::{create_dir_all, write};
+
+    fn make_src(root: &Path) {
+        create_dir_all(root.join("a/b")).unwrap();
+        write(root.join("a/b/x.txt"), "hello").unwrap(); // 5
+        write(root.join("a/y.json"), "{}").unwrap(); // 2
+        create_dir_all(root.join("empty")).unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_overlap_and_nonempty() {
+        let src = Path::new("/tmp/lume/src");
+        assert!(validate_migration_target(src, Path::new("rel")).is_err()); // 相对
+        assert!(validate_migration_target(src, src).is_err()); // 相同
+        assert!(validate_migration_target(src, Path::new("/tmp/lume/src/sub")).is_err()); // dest 在 src 内
+        assert!(validate_migration_target(src, Path::new("/tmp/lume")).is_err()); // src 在 dest 内
+    }
+
+    #[test]
+    fn validate_accepts_empty_or_missing() {
+        let src = Path::new("/tmp/lume/src");
+        assert!(validate_migration_target(src, Path::new("/tmp/lume/dest-missing")).is_ok()); // 不存在
+        let empty = std::env::temp_dir().join("lume-empty-target");
+        let _ = std::fs::remove_dir_all(&empty);
+        create_dir_all(&empty).unwrap();
+        assert!(validate_migration_target(src, &empty).is_ok()); // 空目录
+        write(empty.join("z"), "x").unwrap();
+        assert!(validate_migration_target(src, &empty).is_err()); // 非空
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn dir_stats_counts_files_and_bytes() {
+        let src = std::env::temp_dir().join("lume-stats-src");
+        let _ = std::fs::remove_dir_all(&src);
+        make_src(&src);
+        let (files, bytes) = dir_stats(&src);
+        assert_eq!(files, 2);
+        assert_eq!(bytes, 7);
+        let _ = std::fs::remove_dir_all(&src);
+    }
+
+    #[test]
+    fn copy_dir_roundtrips_contents_and_counts() {
+        let src = std::env::temp_dir().join("lume-copy-src");
+        let dest = std::env::temp_dir().join("lume-copy-dest");
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dest);
+        make_src(&src);
+
+        let (files, bytes) = copy_dir_recursive_inner(&src, &dest, |_, _| ()).unwrap();
+        assert_eq!(files, 2);
+        assert_eq!(bytes, 7);
+
+        // 逐文件内容一致
+        assert_eq!(std::fs::read_to_string(dest.join("a/b/x.txt")).unwrap(), "hello");
+        assert_eq!(std::fs::read_to_string(dest.join("a/y.json")).unwrap(), "{}");
+        // dest 统计应与复制返回值一致
+        assert_eq!(dir_stats(&dest), (2, 7));
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&dest);
+    }
 }

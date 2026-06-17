@@ -161,6 +161,7 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
         toolName: event.toolName,
         input: event.inputPreview ?? {},
         status: 'running',
+        startedAt: event.createdAt,
       }
       currentAssistant.toolCalls.set(event.toolCallId, toolCall)
       currentAssistant.toolBlockIds.set(event.toolCallId, currentAssistant.blocks.length)
@@ -180,6 +181,8 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
         id: event.toolCallId,
         toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
         input: existing?.input ?? {},
+        startedAt: existing?.startedAt ?? event.createdAt,
+        durationMs: computeDurationMs(existing?.startedAt, event.createdAt),
         status: isError ? 'failed' : 'completed',
         output: isError ? event.error.message : event.resultPreview,
         isError,
@@ -200,6 +203,8 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
         id: event.toolCallId,
         toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
         input: existing?.input ?? {},
+        startedAt: existing?.startedAt ?? event.createdAt,
+        durationMs: computeDurationMs(existing?.startedAt, event.createdAt),
         status: 'failed',
         output: event.message,
         isError: true,
@@ -242,6 +247,14 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
 
 function isToolPermissionTimeoutMessage(message: string): boolean {
   return message.includes('工具权限确认超时')
+}
+
+function computeDurationMs(startedAt: string | undefined, endedAt: string): number | undefined {
+  if (!startedAt) return undefined
+  const start = Date.parse(startedAt)
+  const end = Date.parse(endedAt)
+  if (Number.isNaN(start) || Number.isNaN(end)) return undefined
+  return Math.max(0, end - start)
 }
 
 function applyAssistantImDelivery(

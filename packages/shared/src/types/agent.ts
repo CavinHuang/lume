@@ -1237,6 +1237,8 @@ export const AGENT_IPC_CHANNELS = {
   LIST_TRASHED_THREADS: 'agent:list-trashed-threads',
   /** 清理过期回收站条目 */
   CLEANUP_EXPIRED_TRASH: 'agent:cleanup-expired-trash',
+  /** 清空回收站（永久删除全部已 trash 线程） */
+  EMPTY_TRASH: 'agent:empty-trash',
   /** 从指定消息开始截断线程（包含该消息） */
   TRUNCATE_THREAD_MESSAGES_FROM: 'agent:truncate-thread-messages-from',
   // 工作区管理

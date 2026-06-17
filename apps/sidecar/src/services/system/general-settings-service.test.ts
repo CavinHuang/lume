@@ -5,6 +5,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,6 +43,7 @@ describe("general-settings-service", () => {
   test("缺少 settings.json 时返回默认常规设置", () => {
     expect(getPersistedGeneralSettings()).toEqual({
       themeMode: "system",
+      agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false
@@ -67,6 +70,7 @@ describe("general-settings-service", () => {
 
     expect(first).toEqual({
       themeMode: "dark",
+      agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false
@@ -87,6 +91,7 @@ describe("general-settings-service", () => {
 
     expect(second).toEqual({
       themeMode: "dark",
+      agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: true
@@ -118,6 +123,7 @@ describe("general-settings-service", () => {
     expect(raw.proxy?.enabled).toBeTrue();
     expect(raw.generalSettings).toEqual({
       themeMode: "dark",
+      agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: true
@@ -179,6 +185,7 @@ describe("general-settings-service", () => {
 
     expect(getPersistedGeneralSettings()).toEqual({
       themeMode: "system",
+      agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false
@@ -257,6 +264,93 @@ describe("general-settings-service", () => {
       cleared: [],
       skipped: ["logs"]
     });
+  });
+
+  test("vectorIndex 清理全局 memory/index", () => {
+    mkdirSync(join(tempConfigDir, "memory", "index"), { recursive: true });
+    const indexFile = join(tempConfigDir, "memory", "index", "vector-index.json");
+    writeFileSync(indexFile, "{}", "utf-8");
+
+    const result = clearGeneralSettingsCaches({ vectorIndex: true });
+
+    expect(result.cleared).toContain("vectorIndex");
+    expect(existsSync(indexFile)).toBeFalse();
+  });
+
+  test("pluginsCache 清理 plugins/cache 与 plugins/data", () => {
+    const cacheFile = writeConfigFile(["plugins", "cache", "p.json"], "{}");
+    const dataFile = writeConfigFile(["plugins", "data", "p.json"], "{}");
+
+    const result = clearGeneralSettingsCaches({ pluginsCache: true });
+
+    expect(result.cleared).toContain("pluginsCache");
+    expect(existsSync(cacheFile)).toBeFalse();
+    expect(existsSync(dataFile)).toBeFalse();
+  });
+
+  test("vectorIndex 清理每个工作区的 memory/index 且保留非索引文件", async () => {
+    const { clearGeneralSettingsCaches } = await import("./general-settings-service");
+    const root = process.env.LUME_CONFIG_DIR!;
+    mkdirSync(join(root, "agent-workspaces", "ws-a", "memory", "index"), { recursive: true });
+    writeFileSync(join(root, "agent-workspaces", "ws-a", "memory", "index", "vec.json"), "{}");
+    mkdirSync(join(root, "agent-workspaces", "ws-a", "memory", "entries"), { recursive: true });
+    writeFileSync(join(root, "agent-workspaces", "ws-a", "memory", "MEMORY.md"), "keep");
+    mkdirSync(join(root, "agent-workspaces", "ws-b", "memory", "index"), { recursive: true });
+    writeFileSync(join(root, "agent-workspaces", "ws-b", "memory", "index", "vec.json"), "{}");
+
+    const result = clearGeneralSettingsCaches({ vectorIndex: true });
+
+    expect(result.cleared).toContain("vectorIndex");
+    expect(() => statSync(join(root, "agent-workspaces", "ws-a", "memory", "index", "vec.json"))).toThrow();
+    expect(() => statSync(join(root, "agent-workspaces", "ws-b", "memory", "index", "vec.json"))).toThrow();
+    // 非索引文件必须保留
+    expect(statSync(join(root, "agent-workspaces", "ws-a", "memory", "MEMORY.md")).size).toBeGreaterThan(0);
+  });
+
+  test("vectorIndex 拒绝清理符号链接逃逸到 ~/.lume 外的目标", async () => {
+    const { clearGeneralSettingsCaches } = await import("./general-settings-service");
+    const root = process.env.LUME_CONFIG_DIR!;
+    // 在 ~/.lume 外造一个受害者目录，含 memory/index
+    const victim = mkdtempSync(join(tmpdir(), "lume-victim-"));
+    mkdirSync(join(victim, "memory", "index"), { recursive: true });
+    writeFileSync(join(victim, "memory", "index", "secret.json"), "leak");
+    // 在 agent-workspaces 下放一个符号链接指向受害者
+    mkdirSync(join(root, "agent-workspaces"), { recursive: true });
+    symlinkSync(victim, join(root, "agent-workspaces", "escape"));
+
+    // 不应抛出；受害者文件必须存活
+    const result = clearGeneralSettingsCaches({ vectorIndex: true });
+    expect(statSync(join(victim, "memory", "index", "secret.json")).size).toBeGreaterThan(0);
+    rmSync(victim, { recursive: true, force: true });
+  });
+
+  test("未选中的键不清理", () => {
+    const logsFile = writeConfigFile(["logs", "lume.ndjson"], "{}\n");
+
+    const result = clearGeneralSettingsCaches({});
+
+    expect(result.cleared).toEqual([]);
+    expect(existsSync(logsFile)).toBeTrue();
+  });
+
+  test("agentMessageDisplayMode 缺失时回退 minimal，显式值被保留并持久化", () => {
+    const settingsPath = getSettingsPath();
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ generalSettings: { themeMode: "dark" } }, null, 2),
+      "utf-8",
+    );
+
+    const loaded = getPersistedGeneralSettings();
+    expect(loaded.agentMessageDisplayMode).toBe("minimal");
+
+    const updated = updatePersistedGeneralSettings({ agentMessageDisplayMode: "verbose" });
+    expect(updated.agentMessageDisplayMode).toBe("verbose");
+
+    const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
+      generalSettings?: { agentMessageDisplayMode?: string };
+    };
+    expect(raw.generalSettings?.agentMessageDisplayMode).toBe("verbose");
   });
 
   function writeConfigFile(pathSegments: string[], content: string): string {

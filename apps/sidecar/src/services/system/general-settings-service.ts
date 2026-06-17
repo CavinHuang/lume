@@ -2,18 +2,26 @@ import {
   existsSync,
   lstatSync,
   readdirSync,
+  realpathSync,
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import {
   GENERAL_SETTINGS_DEFAULTS,
+  type AgentMessageDisplayMode,
   type GeneralSettings,
   type PersistedUiState,
   type ThemeMode,
   type UpdateGeneralSettingsInput
 } from "@lume/shared";
-import { getConfigDir } from "../infra/config-paths";
+import {
+  getConfigDir,
+  getPluginsCacheDir,
+  getPluginsDataDir,
+  getGlobalVectorIndexDir,
+  getAgentWorkspacesDir
+} from "../infra/config-paths";
 import {
   PersistedSettingsReadError,
   readPersistedSettings,
@@ -26,10 +34,12 @@ interface SidecarSettings extends SidecarSettingsStore {
   generalSettings?: GeneralSettings;
 }
 
-type SidecarCacheCleanupKey = "logs";
+type SidecarCacheCleanupKey = "logs" | "vectorIndex" | "pluginsCache";
 
 export interface SidecarClearCacheInput {
   logs?: boolean;
+  vectorIndex?: boolean;
+  pluginsCache?: boolean;
 }
 
 export interface SidecarClearCacheResult {
@@ -37,10 +47,14 @@ export interface SidecarClearCacheResult {
   skipped: SidecarCacheCleanupKey[];
 }
 
-const CACHE_KEYS: SidecarCacheCleanupKey[] = ["logs"];
+const CACHE_KEYS: SidecarCacheCleanupKey[] = ["logs", "vectorIndex", "pluginsCache"];
 
 function isThemeMode(value: unknown): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
+}
+
+function isAgentMessageDisplayMode(value: unknown): value is AgentMessageDisplayMode {
+  return value === "minimal" || value === "verbose";
 }
 
 function sanitizeGeneralSettings(input: unknown): GeneralSettings {
@@ -64,6 +78,9 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
 
   return {
     themeMode: isThemeMode(value.themeMode) ? value.themeMode : GENERAL_SETTINGS_DEFAULTS.themeMode,
+    agentMessageDisplayMode: isAgentMessageDisplayMode(value.agentMessageDisplayMode)
+      ? value.agentMessageDisplayMode
+      : GENERAL_SETTINGS_DEFAULTS.agentMessageDisplayMode,
     windowBehavior: {
       minimizeToTray:
         typeof windowBehavior?.minimizeToTray === "boolean"
@@ -95,6 +112,15 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
   };
 }
 
+/** Resolve a path following symlinks; fall back to lexical resolve if the path doesn't exist. */
+function safeRealpath(targetPath: string): string {
+  try {
+    return realpathSync(targetPath);
+  } catch {
+    return resolve(targetPath);
+  }
+}
+
 function resolveCacheTargetPaths(key: SidecarCacheCleanupKey): string[] {
   const configDir = getConfigDir();
   switch (key) {
@@ -103,6 +129,20 @@ function resolveCacheTargetPaths(key: SidecarCacheCleanupKey): string[] {
         join(configDir, "logs"),
         join(tmpdir(), "lume-logs")
       ]));
+    case "vectorIndex": {
+      const paths = [getGlobalVectorIndexDir()];
+      try {
+        const workspacesDir = getAgentWorkspacesDir();
+        for (const slug of readdirSync(workspacesDir)) {
+          paths.push(join(workspacesDir, slug, "memory", "index"));
+        }
+      } catch {
+        // 工作区目录不存在时忽略
+      }
+      return paths;
+    }
+    case "pluginsCache":
+      return [getPluginsCacheDir(), getPluginsDataDir()];
   }
 }
 
@@ -111,9 +151,13 @@ function assertSafeCacheTarget(targetPath: string): void {
   const allowedRoots = [
     join(configDir, "cache"),
     join(configDir, "logs"),
+    join(configDir, "memory", "index"),
+    join(configDir, "plugins", "cache"),
+    join(configDir, "plugins", "data"),
+    join(configDir, "agent-workspaces"),
     join(tmpdir(), "lume-logs")
-  ].map((value) => resolve(value));
-  const resolvedTarget = resolve(targetPath);
+  ].map((value) => safeRealpath(value));
+  const resolvedTarget = safeRealpath(targetPath);
   const isAllowed = allowedRoots.some((root) =>
     resolvedTarget === root || resolvedTarget.startsWith(`${root}${sep}`)
   );
@@ -127,7 +171,11 @@ function clearDirectoryContents(targetPath: string): boolean {
     return false;
   }
 
-  assertSafeCacheTarget(targetPath);
+  try {
+    assertSafeCacheTarget(targetPath);
+  } catch {
+    return false;
+  }
 
   const stat = lstatSync(targetPath);
   if (!stat.isDirectory()) {
@@ -163,6 +211,7 @@ export function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput
   const current = sanitizeGeneralSettings(settings.generalSettings);
   const next: GeneralSettings = {
     themeMode: input.themeMode ?? current.themeMode,
+    agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
     windowBehavior: {
       minimizeToTray: input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray,
       closeToTray: input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray

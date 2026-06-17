@@ -29,6 +29,7 @@ import {
   listArchivedThreads,
   listTrashedThreads,
   cleanupExpiredTrash,
+  emptyTrash,
 } from "../services/agent/agent-thread-manager";
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
@@ -682,6 +683,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.LIST_TRASHED_THREADS]: async () => listTrashedThreads(),
     [AGENT_IPC_CHANNELS.CLEANUP_EXPIRED_TRASH]: async () => {
       const count = cleanupExpiredTrash();
+      return { cleanedCount: count };
+    },
+    [AGENT_IPC_CHANNELS.EMPTY_TRASH]: async () => {
+      const count = emptyTrash();
+      log.info("[Agent 线程] 清空回收站", { count });
       return { cleanedCount: count };
     },
     [AGENT_IPC_CHANNELS.GET_RUNTIME_STATUS]: async (params) => {

@@ -1,5 +1,7 @@
 export type ThemeMode = "system" | "light" | "dark"
 
+export type AgentMessageDisplayMode = "minimal" | "verbose"
+
 export interface GeneralSettingsWindowBehavior {
   minimizeToTray: boolean
   closeToTray: boolean
@@ -16,12 +18,14 @@ export interface GeneralSettings {
   themeMode: ThemeMode
   windowBehavior: GeneralSettingsWindowBehavior
   updateSettings: GeneralSettingsUpdateSettings
+  agentMessageDisplayMode: AgentMessageDisplayMode
 }
 
 export interface UpdateGeneralSettingsInput {
   themeMode?: ThemeMode
   windowBehavior?: Partial<GeneralSettingsWindowBehavior>
   updateSettings?: Partial<GeneralSettingsUpdateSettings>
+  agentMessageDisplayMode?: AgentMessageDisplayMode
 }
 
 export type LogViewerLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
@@ -89,7 +93,8 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
     notifyAfterDownload: true,
     installOnlyWhenIdle: true,
     lastUpdateCheckAt: null
-  }
+  },
+  agentMessageDisplayMode: "minimal"
 }
 
 export const GENERAL_SETTINGS_IPC_CHANNELS = {

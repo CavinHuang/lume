@@ -601,6 +601,21 @@ export function cleanupExpiredTrash(): number {
   return toDelete.length;
 }
 
+/** 清空回收站：永久删除所有 status === "trashed" 的线程（不限时间），返回清理数量 */
+export function emptyTrash(): number {
+  const index = readIndex();
+  const toDelete = index.threads.filter((t) => t.status === "trashed");
+
+  for (const thread of toDelete) {
+    deleteAgentThread(thread.id);
+  }
+
+  if (toDelete.length > 0) {
+    console.log(`[Agent 线程] 已清空回收站 ${toDelete.length} 个条目`);
+  }
+  return toDelete.length;
+}
+
 export function truncateAgentMessagesFrom(threadId: string, messageId: string): AgentMessage[] {
   const messages = getAgentThreadMessages(threadId);
   const targetIndex = messages.findIndex((msg) => msg.id === messageId);

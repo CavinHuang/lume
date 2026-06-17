@@ -27,6 +27,8 @@ export interface ClearCacheInput {
   frontendTemp?: boolean
   previewRender?: boolean
   logs?: boolean
+  vectorIndex?: boolean
+  pluginsCache?: boolean
 }
 
 export type ClearCacheKey = keyof ClearCacheInput
@@ -115,7 +117,7 @@ export const clearCache = async (input: ClearCacheInput): Promise<ClearCacheResu
   const browserResult = await clearBrowserCaches(input)
   const sidecarResult = await sidecarCall<ClearCacheResult>(
     GENERAL_SETTINGS_IPC_CHANNELS.CLEAR_CACHE,
-    { logs: input.logs }
+    { logs: input.logs, vectorIndex: input.vectorIndex, pluginsCache: input.pluginsCache }
   )
 
   return {
