@@ -107,4 +107,43 @@ describe("agent handlers GET_PLUGIN_AUDIT_LOG", () => {
     expect(result.events).toHaveLength(1);
     expect(result.events[0]?.id).toBe("2");
   });
+
+  test("filters by workspaceSlug within the same pluginId", async () => {
+    isolateConfigDir();
+    const path = getPluginAuditPath();
+    await appendPluginAuditEntry(path, {
+      id: "a1",
+      pluginId: "acme",
+      workspaceSlug: "ws-a",
+      type: "sensitive_approval",
+      createdAt: "t1",
+      summary: "ok",
+    });
+    await appendPluginAuditEntry(path, {
+      id: "a2",
+      pluginId: "acme",
+      workspaceSlug: "ws-b",
+      type: "sensitive_denial",
+      createdAt: "t2",
+      summary: "no",
+    });
+    await appendPluginAuditEntry(path, {
+      id: "a3",
+      pluginId: "acme",
+      workspaceSlug: "ws-a",
+      type: "capability_blocked",
+      createdAt: "t3",
+      summary: "blocked",
+    });
+
+    const handlers = buildHandlers();
+    const result = (await handlers[AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG]!({
+      pluginId: "acme",
+      workspaceSlug: "ws-a",
+    })) as GetPluginAuditLogResult;
+
+    expect(result.events).toHaveLength(2);
+    expect(result.events.map((e) => e.id)).toEqual(["a1", "a3"]);
+    expect(result.events.every((e) => e.workspaceSlug === "ws-a")).toBe(true);
+  });
 });

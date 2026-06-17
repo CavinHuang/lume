@@ -1144,3 +1144,9 @@ export const readLogFileInputSchema = z.object({
 export const lumeConfigEffectiveInputSchema = z.object({
   workspaceSlug: optionalIdSchema
 });
+
+export const getPluginAuditLogInputSchema = z.object({
+  pluginId: idSchema,
+  workspaceSlug: idSchema.optional(),
+  limit: z.number().int().positive().optional()
+});

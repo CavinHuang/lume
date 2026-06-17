@@ -173,6 +173,7 @@ import {
   agentUpdateThreadModelSelectionInputSchema,
   applySkillImprovementInputSchema,
   executeTaskContractInputSchema,
+  getPluginAuditLogInputSchema,
   attachWorkspaceResourceToThreadInputSchema,
   attachedPathInputSchema,
   copyFolderToThreadInputSchema,
@@ -998,17 +999,21 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return result;
     },
     [AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG]: async (params) => {
-      const obj = asObject(params);
-      const pluginId = asString(obj.pluginId);
-      if (!pluginId) {
-        throw new Error(`${AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG} 参数非法: pluginId - 必填`);
-      }
-      const rawLimit = typeof obj.limit === "number" ? obj.limit : undefined;
+      const input = validateInput(
+        getPluginAuditLogInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_PLUGIN_AUDIT_LOG
+      );
       const events = await readPluginAuditEntries(getPluginAuditPath(), {
-        pluginId,
-        ...(rawLimit && rawLimit > 0 ? { limit: rawLimit } : {}),
+        pluginId: input.pluginId,
+        ...(input.workspaceSlug ? { workspaceSlug: input.workspaceSlug } : {}),
+        ...(input.limit ? { limit: input.limit } : {}),
       });
-      log.info("GET_PLUGIN_AUDIT_LOG request", { pluginId, count: events.length });
+      log.info("GET_PLUGIN_AUDIT_LOG request", {
+        pluginId: input.pluginId,
+        workspaceSlug: input.workspaceSlug,
+        count: events.length,
+      });
       return { events };
     },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {

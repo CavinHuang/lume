@@ -43,12 +43,14 @@ export async function appendPluginAuditEntry(
 /**
  * Read plugin audit events from a jsonl store. Best-effort: a missing file
  * returns `[]`; malformed lines are skipped (not fatal). When `pluginId` is
- * given only matching events are returned; when `limit` is given the result is
- * tailed to the most recent N (jsonl is chronological append-order).
+ * given only matching events are returned; when `workspaceSlug` is given events
+ * are further filtered to that workspace (same pluginId across workspaces must
+ * not bleed together); when `limit` is given the result is tailed to the most
+ * recent N (jsonl is chronological append-order).
  */
 export async function readPluginAuditEntries(
   path: string,
-  input: { pluginId?: string; limit?: number },
+  input: { pluginId?: string; workspaceSlug?: string; limit?: number },
 ): Promise<PluginAuditEvent[]> {
   let raw: string;
   try {
@@ -65,6 +67,7 @@ export async function readPluginAuditEntries(
     try {
       const parsed = JSON.parse(trimmed) as PluginAuditEvent;
       if (input.pluginId && parsed.pluginId !== input.pluginId) continue;
+      if (input.workspaceSlug && parsed.workspaceSlug !== input.workspaceSlug) continue;
       events.push(parsed);
     } catch {
       // malformed line — skip
