@@ -321,7 +321,22 @@ export function createCanUseToolHandler(
             }
             emit.onToolPermissionRequest(permissionRequest);
           },
-          { onTimeout: () => { pluginTimedOut = true; } },
+          {
+            onTimeout: (permissionRequest) => {
+              pluginTimedOut = true;
+              emit.onRuntimeEvent?.({
+                id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:tool.permission_timeout`,
+                type: "tool.permission_timeout",
+                threadId: approvalThreadId,
+                runId: requestRunId ?? permissionRequest.runId ?? params.runtime.sessionId,
+                createdAt: new Date().toISOString(),
+                toolCallId: permissionRequest.toolUseId,
+                requestId: permissionRequest.requestId,
+                toolName,
+                message: `插件权限确认超时: ${toolName}`,
+              });
+            },
+          },
         );
         if (pluginDecision === "allow_always") {
           // Persist workspace-scoped approval so the next attempt's checkSensitiveCapability returns allow.
