@@ -59,3 +59,26 @@ describe('boot React CSS (lume-boot-screen.css)', () => {
     expect(css).toContain('.lume-boot-root.is-fading')
   })
 })
+
+describe('boot component (LumeBootScreen.tsx)', () => {
+  const component = readWebFile('src', 'components', 'boot', 'LumeBootScreen.tsx')
+
+  test('is driven by ready and removes the static layer on mount', () => {
+    expect(component).toContain('ready')
+    expect(component).toContain("getElementById('boot-root')")
+    expect(component).toContain('.remove()')
+  })
+
+  test('renders the four scene layers and consumes boot-phase copy', () => {
+    expect(component).toContain('lume-boot-scene-organize')
+    expect(component).toContain('lume-boot-scene-memory')
+    expect(component).toContain('lume-boot-scene-ready')
+    expect(component).toContain('PHASE_COPY')
+    expect(component).toContain('data-phase')
+  })
+
+  test('exports a barrel', () => {
+    const barrel = readWebFile('src', 'components', 'boot', 'index.ts')
+    expect(barrel).toContain('LumeBootScreen')
+  })
+})
