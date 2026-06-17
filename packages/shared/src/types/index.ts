@@ -22,3 +22,4 @@ export * from "./lume-config";
 export * from "./system-config";
 export * from "./routine";
 export * from "./info-extract";
+export * from "./plugin-audit";
