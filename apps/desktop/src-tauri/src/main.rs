@@ -379,12 +379,27 @@ fn ensure_sidecar_running(
     Ok(())
 }
 
+/// 等待 sidecar 真正就绪后再返回。
+///
+/// `healthcheck` 代表「后端可用」，而不仅仅是 Tauri 进程存活：它向 sidecar 发起一次
+/// `healthcheck` JSON-RPC 并等待响应。sidecar 仅在自身 boot 完成（apps/sidecar/src/index.ts
+/// 中注册 readline 之后）才开始分发请求，请求在此之前缓存在 stdin 管道里，因此这次调用会
+/// 阻塞到 sidecar 真正能响应为止。这样启动页 / 主界面会等到后端就绪再进入，避免「启动动画
+/// 结束 → 后端尚未就绪 → 空白」的间隙。等待上限沿用 sidecar 单次响应超时
+/// `SIDECAR_RESPONSE_TIMEOUT_SECS`；超时则返回错误，由前端展示错误页。
 #[tauri::command]
-fn healthcheck() -> serde_json::Value {
-    serde_json::json!({
-        "ok": true,
-        "source": "desktop"
-    })
+async fn healthcheck(
+    state: tauri::State<'_, SidecarProcess>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    match sidecar_call_internal(&state, "healthcheck", serde_json::Value::Null, &app).await {
+        Ok(_) => Ok(serde_json::json!({
+            "ok": true,
+            "source": "desktop",
+            "sidecar": "ready"
+        })),
+        Err(error) => Err(format!("sidecar not ready: {error}")),
+    }
 }
 
 #[tauri::command]

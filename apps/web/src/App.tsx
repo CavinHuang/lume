@@ -18,7 +18,9 @@ function AppInner() {
   return <AppShell />
 }
 
-const HEALTHCHECK_TIMEOUT_MS = 10_000
+// 安全网：兜底上限。Rust 的 `healthcheck` 命令会在 sidecar 就绪或其自身响应超时
+// (SIDECAR_RESPONSE_TIMEOUT_SECS) 时先行返回；这里留出余量，确保由 Rust 给出结论。
+const HEALTHCHECK_TIMEOUT_MS = 50_000
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -45,7 +47,7 @@ export function App() {
         const isTimeout = err instanceof Error && err.message === 'timeout'
         setError(
           isTimeout
-            ? '后端启动超时（10s），请检查 sidecar 是否正常运行。'
+            ? '后端启动超时，请检查 sidecar 是否正常运行。'
             : '无法连接到后端，请检查环境配置后重启应用。'
         )
       })
