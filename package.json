@@ -11,7 +11,7 @@
     "dev": "concurrently -k -n web,desktop -c cyan,green \"bun run --filter @lume/web dev\" \"bun run --filter @lume/desktop dev\"",
     "build": "bun run --filter @lume/shared build && bun run --filter @lume/ui build && bun run --filter @lume/sidecar build && bun run --filter @lume/cli build && bun run --filter @lume/web build && bun run --filter @lume/desktop build",
     "build:desktop": "bun run --filter @lume/shared build && bun run --filter @lume/ui build && bun run --filter @lume/sidecar build && bun run --filter @lume/web build && bun run --filter @lume/desktop build",
-    "package:desktop": "bun run build:desktop",
+    "package:desktop": "bun run --filter @lume/shared build && bun run --filter @lume/ui build && bun run --filter @lume/sidecar build && bun run --filter @lume/web build && bun run --filter @lume/desktop package",
     "release:desktop": "bun run package:desktop",
     "typecheck": "bun run --filter @lume/shared typecheck && bun run --filter @lume/ui typecheck && bun run --filter @lume/sidecar typecheck && bun run --filter @lume/cli typecheck && bun run --filter @lume/web typecheck",
     "test:web": "bun run --filter @lume/web test",

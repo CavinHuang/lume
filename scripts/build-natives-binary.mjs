@@ -1,5 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { copyFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
@@ -41,18 +41,13 @@ const manifestPath = resolve(NATIVES_DIR, "..", "..", "crates", "lume-natives", 
 const searchDir = resolve(NATIVES_DIR, "..", "..", "crates", "lume-natives", "target", target.cargoTarget, "release");
 
 console.error(`[natives-binary] cargo build --target ${target.cargoTarget} ...`);
-// Run cargo build + locate + copy in one shell so cp sees cargo's output files
-const shellCmd = [
-  `cargo build --release --manifest-path "${manifestPath}" --target ${target.cargoTarget}`,
-  `&& DYLIB=$(find "${searchDir}" -name 'liblume_natives*.dylib' -o -name 'lume_natives*.so' -o -name 'lume_natives*.dll' | head -1)`,
-  `&& test -f "$DYLIB"`,
-  `&& cp "$DYLIB" "${outfile}"`,
-  `&& echo "COPIED_OK"`,
-].join(" ");
-
-const result = spawnSync(process.platform === "win32" ? "cmd.exe" : "sh", [
-  process.platform === "win32" ? "/c" : "-c",
-  shellCmd,
+const result = spawnSync("cargo", [
+  "build",
+  "--release",
+  "--manifest-path",
+  manifestPath,
+  "--target",
+  target.cargoTarget,
 ], { cwd: REPO_ROOT, stdio: "inherit" });
 
 if (result.status !== 0) {
@@ -60,4 +55,35 @@ if (result.status !== 0) {
   process.exit(1);
 }
 
+const nativeLibrary = findNativeLibrary(searchDir);
+if (!nativeLibrary) {
+  console.error(`[natives-binary] failed to find built library in ${searchDir}`);
+  process.exit(1);
+}
+
+copyFileSync(nativeLibrary, outfile);
+console.error("COPIED_OK");
 console.error(`[natives-binary] wrote ${outfile}`);
+
+function findNativeLibrary(dir) {
+  for (const entry of readdirSync(dir)) {
+    const fullPath = join(dir, entry);
+    const stats = statSync(fullPath);
+    if (stats.isDirectory()) {
+      const nested = findNativeLibrary(fullPath);
+      if (nested) return nested;
+      continue;
+    }
+    if (
+      stats.isFile() &&
+      (
+        /^liblume_natives.*\.dylib$/.test(entry) ||
+        /^lume_natives.*\.so$/.test(entry) ||
+        /^lume_natives.*\.dll$/.test(entry)
+      )
+    ) {
+      return fullPath;
+    }
+  }
+  return null;
+}

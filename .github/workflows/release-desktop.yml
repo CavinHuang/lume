@@ -62,15 +62,19 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build shared packages
-        env:
-          TAURI_TARGET_TRIPLE: ${{ matrix.platform.rustTarget }}
         run: |
           bun run --filter @lume/shared build
           bun run --filter @lume/ui build
           bun run --filter @lume/sidecar build
-          bun run --filter @lume/sidecar build:binary
-          bun run --filter @lume/sidecar build:resources
           bun run --filter @lume/web build
+
+      - name: Prepare desktop bundle resources
+        env:
+          TAURI_TARGET_TRIPLE: ${{ matrix.platform.rustTarget }}
+        run: |
+          bun scripts/build-natives-binary.mjs
+          bun scripts/build-sidecar-binary.mjs
+          bun scripts/build-default-skills-archive.mjs
 
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@v0
@@ -79,6 +83,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           LUME_UPDATER_PUBLIC_KEY: ${{ vars.LUME_UPDATER_PUBLIC_KEY }}
+          TAURI_TARGET_TRIPLE: ${{ matrix.platform.rustTarget }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
@@ -86,5 +91,5 @@ jobs:
           releaseBody: "Desktop release for ${{ github.ref_name }}."
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.platform.args }}
+          args: ${{ matrix.platform.args }} --config src-tauri/tauri.release.conf.json
           updaterJsonPreferNsis: true
