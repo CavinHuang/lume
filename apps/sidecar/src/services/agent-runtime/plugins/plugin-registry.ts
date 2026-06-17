@@ -9,6 +9,7 @@ import {
 } from "@lume/agent-sdk";
 import type { FilePluginStateStore, PluginStateFile } from "./plugin-state-store.js";
 import { PluginPermissionRuntime } from "./permission-runtime.js";
+import { appendPluginAuditEntry } from "./plugin-audit-store.js";
 
 export interface PluginRegistryConfig {
   installedRoot: string;
@@ -276,6 +277,17 @@ async function attachPermissionState(
         message: `Plugin ${plugin.pluginId} is ${result.state} (${result.reason}); capabilities will not load until reviewed.`,
         path: plugin.root,
       });
+      // Phase 4B: needs_review audit hook. Emits per occurrence (no dedup in Plan A;
+      // createdAt distinguishes; per-session volume is bounded). Fire-and-forget.
+      if (result.state === "needs-review") {
+        void appendPluginAuditEntry(undefined, {
+          pluginId: plugin.pluginId,
+          ...(plugin.version ? { version: plugin.version } : {}),
+          type: "needs_review",
+          summary: `Plugin ${plugin.pluginId} needs review (permissions hash mismatch)`,
+          metadata: { reason: result.reason },
+        });
+      }
     }
   }
 }
