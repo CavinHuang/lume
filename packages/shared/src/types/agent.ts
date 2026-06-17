@@ -734,6 +734,15 @@ export interface AgentToolPermissionRequest {
   automationJobId?: string
   /** 自动化触发来源（仅 automation_approval 使用）。 */
   automationTrigger?: string
+  /** Plugin sensitive-capability context (Phase 4A interactive approval). Undefined = built-in tool approval. */
+  pluginSensitive?: AgentPluginSensitiveRequest
+}
+
+/** Plugin sensitive-capability dimension on a tool permission request (Phase 4A). */
+export interface AgentPluginSensitiveRequest {
+  pluginId: string
+  /** The SensitiveCapabilityKey being confirmed, e.g. commandTool:${name} / mcpServer:${id}. */
+  capabilityKey: string
 }
 
 export interface AgentToolPermissionResponseInput {
