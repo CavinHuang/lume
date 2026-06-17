@@ -1,4 +1,5 @@
 import { AppShell } from '@/components/app-shell/AppShell'
+import { LumeBootScreen } from '@/components/boot'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
 import { useReadingListeners } from '@/hooks/useReadingListeners'
 import { useSkillListeners } from '@/hooks/useSkillListeners'
@@ -26,8 +27,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ])
 }
 
+const BOOT_LOGO_URL = new URL('./assets/imgs/logo.png', import.meta.url).href
+
 export function App() {
   const [ready, setReady] = useState(false)
+  const [bootDone, setBootDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -62,7 +66,15 @@ export function App() {
     )
   }
 
-  if (!ready) return null
+  if (!ready || !bootDone) {
+    return (
+      <LumeBootScreen
+        logoSrc={BOOT_LOGO_URL}
+        ready={ready}
+        onExited={() => setBootDone(true)}
+      />
+    )
+  }
 
   return (
     <Provider>

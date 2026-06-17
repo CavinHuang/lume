@@ -82,3 +82,22 @@ describe('boot component (LumeBootScreen.tsx)', () => {
     expect(barrel).toContain('LumeBootScreen')
   })
 })
+
+describe('boot integration (App.tsx)', () => {
+  const app = readWebFile('src', 'App.tsx')
+
+  test('renders LumeBootScreen until boot is done', () => {
+    expect(app).toContain('LumeBootScreen')
+    expect(app).toContain('bootDone')
+    expect(app).toContain('onExited')
+  })
+
+  test('keeps the healthcheck error branch', () => {
+    expect(app).toContain('setError')
+    expect(app).toContain('text-destructive')
+  })
+
+  test('uses the app logo as boot logo source', () => {
+    expect(app).toContain('assets/imgs/logo.png')
+  })
+})
