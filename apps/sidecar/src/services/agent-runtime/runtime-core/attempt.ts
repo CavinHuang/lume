@@ -45,6 +45,7 @@ import {
 import type { LumeWorkflowHookRuntimeLike } from "../../workflow-hooks/hook-runtime";
 import { runGuidanceStore, type ConsumedRunGuidance } from "../guidance/run-guidance-store";
 import { createPluginPermissionInterceptor } from "../plugins/permission-interceptor.js";
+import { appendPluginAuditEntry } from "../plugins/plugin-audit-store.js";
 import {
   type InterceptorInput,
   type InterceptorResult,
@@ -285,6 +286,16 @@ export function createCanUseToolHandler(
           rawInput: input,
           reasonCode: "permission_review_required",
         });
+        // Phase 4B: capability_blocked audit hook. The block branch's gateResult carries
+        // no pluginId (only ask does, per sensitive-gate.ts); source it from the descriptor.
+        const blockPluginId = (descriptor.definition as { runtimeMetadata?: { pluginId?: string } }).runtimeMetadata?.pluginId ?? toolName;
+        void appendPluginAuditEntry(undefined, {
+          pluginId: blockPluginId,
+          type: "capability_blocked",
+          summary: `Plugin tool ${toolName} blocked (prior deny)`,
+          ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
+          metadata: { toolName, reason: gateResult.reason },
+        });
         log.debug("[Agent 工具] 完成", {
           toolName,
           threadId: params.runtime.sessionId.slice(0, 8),
@@ -360,6 +371,14 @@ export function createCanUseToolHandler(
               error: error instanceof Error ? error.message : String(error),
             });
           }
+          // Phase 4B: sensitive_approval audit hook (workspace-scoped allow_always).
+          void appendPluginAuditEntry(undefined, {
+            pluginId: gateResult.pluginId,
+            type: "sensitive_approval",
+            summary: `Plugin ${gateResult.pluginId} sensitive capability approved (always, workspace)`,
+            ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
+            metadata: { capabilityKey: gateResult.capabilityKey, toolName, scope: "workspace" },
+          });
           log.debug("[Agent 工具] 完成", {
             toolName,
             threadId: params.runtime.sessionId.slice(0, 8),
@@ -386,6 +405,16 @@ export function createCanUseToolHandler(
           toolName,
           rawInput: input,
           reasonCode: pluginTimedOut ? "approval_timeout" : "user_denied",
+        });
+        // Phase 4B: sensitive_denial audit hook (user denied or approval timed out).
+        void appendPluginAuditEntry(undefined, {
+          pluginId: gateResult.pluginId,
+          type: "sensitive_denial",
+          summary: pluginTimedOut
+            ? `Plugin ${gateResult.pluginId} sensitive approval timed out`
+            : `Plugin ${gateResult.pluginId} sensitive capability denied`,
+          ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
+          metadata: { capabilityKey: gateResult.capabilityKey, toolName, reason: pluginTimedOut ? "timeout" : "user_denied" },
         });
         log.debug("[Agent 工具] 完成", {
           toolName,
