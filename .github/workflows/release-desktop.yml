@@ -10,43 +10,22 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build ${{ matrix.platform.name }}
-    runs-on: ${{ matrix.platform.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: macOS
-            os: macos-latest
-            rustTarget: aarch64-apple-darwin
-            args: --target aarch64-apple-darwin
-          - name: macOS Intel
-            os: macos-latest
-            rustTarget: x86_64-apple-darwin
-            args: --target x86_64-apple-darwin
-          - name: Windows
-            os: windows-latest
-            rustTarget: x86_64-pc-windows-msvc
-            args: ""
-
+  release-macos:
+    name: Build macOS ARM
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.13
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform.rustTarget }}
-
+          targets: aarch64-apple-darwin
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
       - name: Build shared packages
         run: |
           bun run --filter @lume/shared build
@@ -54,15 +33,13 @@ jobs:
           bun run --filter @lume/sidecar build
           bun run --filter @lume/cli build
           bun run --filter @lume/web build
-
       - name: Prepare desktop bundle resources
         env:
-          TAURI_TARGET_TRIPLE: ${{ matrix.platform.rustTarget }}
+          TAURI_TARGET_TRIPLE: aarch64-apple-darwin
         run: |
           bun scripts/build-natives-binary.mjs
           bun scripts/build-sidecar-binary.mjs
           bun scripts/build-default-skills-archive.mjs
-
       - name: Read release notes
         id: release_notes
         shell: bash
@@ -74,7 +51,6 @@ jobs:
           else
             echo "body=No release notes found for ${{ github.ref_name }}." >> "$GITHUB_OUTPUT"
           fi
-
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@v0
         env:
@@ -82,7 +58,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           LUME_UPDATER_PUBLIC_KEY: ${{ vars.LUME_UPDATER_PUBLIC_KEY }}
-          TAURI_TARGET_TRIPLE: ${{ matrix.platform.rustTarget }}
+          TAURI_TARGET_TRIPLE: aarch64-apple-darwin
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
@@ -90,5 +66,136 @@ jobs:
           releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.platform.args }} --config src-tauri/tauri.release.conf.json
+          args: --target aarch64-apple-darwin --config src-tauri/tauri.release.conf.json
           updaterJsonPreferNsis: true
+
+  release-macos-intel:
+    name: Build macOS Intel
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build shared packages
+        run: |
+          bun run --filter @lume/shared build
+          bun run --filter @lume/ui build
+          bun run --filter @lume/sidecar build
+          bun run --filter @lume/cli build
+          bun run --filter @lume/web build
+      - name: Prepare desktop bundle resources
+        env:
+          TAURI_TARGET_TRIPLE: x86_64-apple-darwin
+        run: |
+          bun scripts/build-natives-binary.mjs
+          bun scripts/build-sidecar-binary.mjs
+          bun scripts/build-default-skills-archive.mjs
+      - name: Read release notes
+        id: release_notes
+        shell: bash
+        run: |
+          if [ -f "docs/release/${{ github.ref_name }}.md" ]; then
+            echo "body<<EOF" >> "$GITHUB_OUTPUT"
+            cat "docs/release/${{ github.ref_name }}.md" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "body=No release notes found for ${{ github.ref_name }}." >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          LUME_UPDATER_PUBLIC_KEY: ${{ vars.LUME_UPDATER_PUBLIC_KEY }}
+          TAURI_TARGET_TRIPLE: x86_64-apple-darwin
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "Lume ${{ github.ref_name }}"
+          releaseBody: ${{ steps.release_notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+          args: --target x86_64-apple-darwin --config src-tauri/tauri.release.conf.json
+          updaterJsonPreferNsis: true
+
+  release-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Build shared packages
+        run: |
+          bun run --filter @lume/shared build
+          bun run --filter @lume/ui build
+          bun run --filter @lume/sidecar build
+          bun run --filter @lume/cli build
+          bun run --filter @lume/web build
+      - name: Prepare desktop bundle resources
+        env:
+          TAURI_TARGET_TRIPLE: x86_64-pc-windows-msvc
+        run: |
+          bun scripts/build-natives-binary.mjs
+          bun scripts/build-sidecar-binary.mjs
+          bun scripts/build-default-skills-archive.mjs
+      - name: Read release notes
+        id: release_notes
+        shell: bash
+        run: |
+          if [ -f "docs/release/${{ github.ref_name }}.md" ]; then
+            echo "body<<EOF" >> "$GITHUB_OUTPUT"
+            cat "docs/release/${{ github.ref_name }}.md" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "body=No release notes found for ${{ github.ref_name }}." >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build and upload Tauri bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          LUME_UPDATER_PUBLIC_KEY: ${{ vars.LUME_UPDATER_PUBLIC_KEY }}
+          TAURI_TARGET_TRIPLE: x86_64-pc-windows-msvc
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: "Lume ${{ github.ref_name }}"
+          releaseBody: ${{ steps.release_notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+          args: --config src-tauri/tauri.release.conf.json
+          updaterJsonPreferNsis: true
+
+  publish-release:
+    name: Publish Release
+    needs: [release-macos, release-macos-intel, release-windows]
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          echo "Publishing release for tag ${{ github.ref_name }}"
+          gh release edit "${{ github.ref_name }}" --draft=false
