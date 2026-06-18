@@ -1,7 +1,8 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { deflateSync } from "node:zlib";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SIDECAR_ENTRY = resolve(REPO_ROOT, "apps", "sidecar", "src", "index.ts");
@@ -54,6 +55,7 @@ const args = [
   SIDECAR_ENTRY,
   "--bundle",
   "--target=bun",
+  "--format=js",
   "--external",
   "css-tree",
   `--outfile=${OUTFILE}`,
@@ -67,6 +69,11 @@ const result = spawnSync("bun", args, {
 
 if (result.status !== 0) {
   process.exit(result.status ?? 1);
+}
+
+if (!existsSync(OUTFILE)) {
+  console.error(`[sidecar-binary] ERROR: expected output not created at ${OUTFILE}`);
+  process.exit(1);
 }
 
 // Package sidecar node_modules (dereferencing symlinks) so the bundled app has
@@ -106,9 +113,15 @@ if (existsSync(NODE_MODULES_ZIP)) {
 }
 const zipResult = createZip(tmpDir, NODE_MODULES_ZIP);
 if (zipResult.status !== 0) {
-  console.error(`[sidecar-binary] zip failed (status=${zipResult.status})`);
+  console.error(`[sidecar-binary] zip failed, trying Node.js fallback`);
+  const fb = createZipNode(tmpDir, NODE_MODULES_ZIP);
+  if (fb.status !== 0) process.exit(1);
+}
+if (!existsSync(NODE_MODULES_ZIP)) {
+  console.error(`[sidecar-binary] ERROR: zip not created at ${NODE_MODULES_ZIP}`);
   process.exit(1);
 }
+console.error(`[sidecar-binary] zip created (${statSync(NODE_MODULES_ZIP).size} bytes)`);
 // Clean up temp dir
 rmSync(tmpDir, { recursive: true, force: true });
 
@@ -138,17 +151,88 @@ function copyDirReal(src, dst) {
 
 function createZip(sourceDir, zipPath) {
   if (process.platform === "win32") {
-    return spawnSync("powershell.exe", [
+    const r = spawnSync("powershell.exe", [
       "-NoProfile",
       "-Command",
       "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory($args[0], $args[1])",
-      sourceDir,
-      zipPath,
-    ], { stdio: "inherit" });
+      sourceDir, zipPath,
+    ], { stdio: "pipe" });
+    if (r.status === 0) return r;
+    return createZipNode(sourceDir, zipPath);
   }
-
-  return spawnSync("zip", ["-r", "-q", zipPath, "."], {
-    cwd: sourceDir,
-    stdio: "inherit",
-  });
+  return spawnSync("zip", ["-r", "-q", zipPath, "."], { cwd: sourceDir, stdio: "inherit" });
 }
+
+function createZipNode(sourceDir, zipPath) {
+  try {
+    const entries = collectEntries(sourceDir);
+    const parts = [];
+    const cdParts = [];
+    let offset = 0;
+    for (const e of entries) {
+      const data = readFileSync(e.full);
+      const compressed = deflateSync(data);
+      const local = buildLocalHeader(e.rel, compressed.length, e.size);
+      parts.push(local, compressed);
+      cdParts.push(buildCentralHeader(e.rel, compressed.length, e.size, offset));
+      offset += local.length + compressed.length;
+    }
+    const cd = Buffer.concat(cdParts);
+    const eocd = buildEOCD(entries.length, cd.length, offset);
+    writeFileSync(zipPath, Buffer.concat([...parts, cd, eocd]));
+    return { status: 0 };
+  } catch (err) {
+    console.error(`[sidecar-binary] Node.js zip failed: ${err.message}`);
+    return { status: 1 };
+  }
+}
+
+function collectEntries(dir) {
+  const out = [];
+  for (const name of readdirSync(dir)) {
+    const full = resolve(dir, name);
+    if (statSync(full).isDirectory()) out.push(...collectEntries(full));
+    else out.push({ full, rel: full.slice(full.indexOf(dir) + dir.length + 1), size: statSync(full).size });
+  }
+  return out;
+}
+
+function buildLocalHeader(name, compSize, uncompSize) {
+  const nb = Buffer.from(name, "utf-8");
+  const h = Buffer.alloc(30 + nb.length);
+  let p = 0;
+  writeU32(h, p, 0x04034b50); p += 4;
+  writeU16(h, p, 20); p += 2; writeU16(h, p, 0); p += 2; writeU16(h, p, 8); p += 2;
+  writeU16(h, p, 0); p += 2; writeU32(h, p, 0); p += 4;
+  writeU32(h, p, compSize); p += 4; writeU32(h, p, uncompSize); p += 4;
+  writeU16(h, p, nb.length); p += 2; writeU16(h, p, 0); p += 2;
+  nb.copy(h, p);
+  return h;
+}
+
+function buildCentralHeader(name, compSize, uncompSize, offset) {
+  const nb = Buffer.from(name, "utf-8");
+  const h = Buffer.alloc(46 + nb.length);
+  let p = 0;
+  writeU32(h, p, 0x02014b50); p += 4; writeU16(h, p, 20); p += 2;
+  writeU16(h, p, 20); p += 2; writeU16(h, p, 0); p += 2; writeU16(h, p, 8); p += 2;
+  writeU16(h, p, 0); p += 4; writeU32(h, p, 0); p += 4;
+  writeU32(h, p, compSize); p += 4; writeU32(h, p, uncompSize); p += 4;
+  writeU16(h, p, nb.length); p += 2; writeU16(h, p, 0); p += 2;
+  writeU16(h, p, 0); p += 2; writeU16(h, p, 0); p += 2;
+  writeU16(h, p, 0); p += 2; writeU32(h, p, 0); p += 4; writeU32(h, p, offset); p += 4;
+  nb.copy(h, p);
+  return h;
+}
+
+function buildEOCD(count, cdSize, cdOffset) {
+  const b = Buffer.alloc(22);
+  let p = 0;
+  writeU32(b, p, 0x06054b50); p += 4; writeU16(b, p, 0); p += 2;
+  writeU16(b, p, 0); p += 2; writeU16(b, p, count); p += 2;
+  writeU16(b, p, count); p += 2; writeU32(b, p, cdSize); p += 4;
+  writeU32(b, p, cdOffset); p += 4; writeU16(b, p, 0);
+  return b;
+}
+function writeU32(b, p, v) { b.writeUInt32LE(v, p); }
+function writeU16(b, p, v) { b.writeUInt16LE(v, p); }
