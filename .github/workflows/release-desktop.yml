@@ -66,6 +66,7 @@ jobs:
           bun run --filter @lume/shared build
           bun run --filter @lume/ui build
           bun run --filter @lume/sidecar build
+          bun run --filter @lume/cli build
           bun run --filter @lume/web build
 
       - name: Prepare desktop bundle resources
