@@ -1,0 +1,306 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import YAML from "yaml";
+import { FilePluginStateStore } from "../agent-runtime/plugins/plugin-state-store";
+import { PluginRegistry } from "../agent-runtime/plugins/plugin-registry";
+import { getLumeConfigYamlPath } from "../infra/config-paths";
+import { getEffectivePluginRuntimeConfig } from "../system/lume-config-service";
+import {
+  PluginMarketError,
+  PluginMarketService
+} from "./plugin-market-service";
+
+async function writeJson(path: string, value: unknown) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(value, null, 2), "utf-8");
+}
+
+function makeService(root: string, fetchImpl?: typeof fetch) {
+  return new PluginMarketService({
+    installedRoot: join(root, "installed"),
+    legacyGlobalRoot: join(root, "legacy"),
+    statePath: join(root, "plugins-state.json"),
+    fetchImpl
+  });
+}
+
+describe("PluginMarketService", () => {
+  let prevHome: string | undefined;
+  let prevConfigDir: string | undefined;
+  let root = "";
+
+  beforeEach(() => {
+    prevHome = process.env.HOME;
+    prevConfigDir = process.env.LUME_CONFIG_DIR;
+    root = mkdtempSync(join(tmpdir(), "lume-plugin-market-"));
+    process.env.HOME = root;
+    process.env.LUME_CONFIG_DIR = join(root, "config");
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+    else process.env.LUME_CONFIG_DIR = prevConfigDir;
+    if (root) rmSync(root, { recursive: true, force: true });
+  });
+
+  test("inspects a local plugin and summarizes permissions", async () => {
+    const pluginRoot = join(root, "source", "local-plugin");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "local-plugin",
+      version: "1.0.0",
+      skills: ["./skills"],
+      commandTools: [{ name: "hello", command: "echo", args: ["hello"] }],
+      permissions: {
+        filesystem: { read: ["./**"], write: ["./data/**"] },
+        network: { outbound: ["api.example.com"] },
+        shell: { allow: true },
+        hooks: { events: ["BeforeToolUse"] }
+      }
+    });
+
+    const inspected = await makeService(root).inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "local", path: pluginRoot }
+    });
+
+    expect(inspected.kind).toBe("plugin");
+    expect(inspected.normalized.pluginId).toBe("local-plugin");
+    expect(inspected.permissionsHash).toHaveLength(64);
+    expect(inspected.permissionSummary.riskLabels).toContain("shell");
+    expect(inspected.permissionSummary.riskLabels).toContain("network");
+    expect(inspected.permissionSummary.hookEvents).toEqual(["BeforeToolUse"]);
+  });
+
+  test("requires accepted permissions hash before installing plugin", async () => {
+    const pluginRoot = join(root, "source", "needs-review");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "needs-review",
+      version: "1.0.0"
+    });
+
+    await expect(
+      makeService(root).installMarketItem({
+        workspaceSlug: "default",
+        kind: "plugin",
+        source: { type: "local", path: pluginRoot }
+      })
+    ).rejects.toMatchObject({ code: "permission_review_required" });
+  });
+
+  test("installs a reviewed local plugin and registry can load it", async () => {
+    const pluginRoot = join(root, "source", "reviewed");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "reviewed",
+      version: "1.0.0"
+    });
+    const service = makeService(root);
+    const inspected = await service.inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "local", path: pluginRoot }
+    });
+
+    await service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      source: { type: "local", path: pluginRoot },
+      acceptedPermissionsHash: inspected.permissionsHash,
+      enableScope: "workspace"
+    });
+
+    const state = await new FilePluginStateStore(join(root, "plugins-state.json")).read();
+    expect(state.plugins.reviewed?.activeVersion).toBe("1.0.0");
+    expect(state.plugins.reviewed?.versions["1.0.0"]?.permissionsHash).toBe(inspected.permissionsHash);
+    expect(getEffectivePluginRuntimeConfig("default").enabled).toEqual(["reviewed"]);
+
+    const registry = new PluginRegistry({
+      installedRoot: join(root, "installed"),
+      legacyGlobalRoot: join(root, "legacy"),
+      stateStore: new FilePluginStateStore(join(root, "plugins-state.json"))
+    });
+    const listed = await registry.list({ enabled: ["reviewed"], disabled: [], directories: [] });
+    expect(listed.plugins.map((plugin) => plugin.pluginId)).toEqual(["reviewed"]);
+  });
+
+  test("blocks uninstall of enabled plugin unless forced", async () => {
+    const pluginRoot = join(root, "source", "enabled-plugin");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "enabled-plugin",
+      version: "1.0.0"
+    });
+    const service = makeService(root);
+    const inspected = await service.inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "local", path: pluginRoot }
+    });
+    await service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      source: { type: "local", path: pluginRoot },
+      acceptedPermissionsHash: inspected.permissionsHash,
+      enableScope: "global"
+    });
+
+    await expect(service.uninstallPlugin({ pluginId: "enabled-plugin" }))
+      .rejects.toMatchObject({ code: "uninstall_blocked" });
+
+    const result = await service.uninstallPlugin({ pluginId: "enabled-plugin", force: true });
+    expect(result.removedVersions).toEqual(["1.0.0"]);
+    expect(getEffectivePluginRuntimeConfig("default").enabled).toEqual([]);
+    expect(existsSync(join(root, "installed", "enabled-plugin", "1.0.0"))).toBeFalse();
+  });
+
+  test("reads marketplace indexes and reinspects resolved sources", async () => {
+    const pluginRoot = join(root, "source", "indexed");
+    const indexPath = join(root, "market.json");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "indexed",
+      version: "1.0.0"
+    });
+    await writeJson(indexPath, {
+      items: [
+        {
+          kind: "plugin",
+          id: "indexed",
+          name: "Indexed",
+          source: { type: "local", path: pluginRoot }
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [{ id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+
+    const catalog = await makeService(root).getMarketCatalog({ workspaceSlug: "default" });
+    expect(catalog.plugins.map((plugin) => plugin.pluginId)).toContain("indexed");
+
+    const inspected = await makeService(root).inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "market-item", sourceId: "local-market", itemId: "indexed" }
+    });
+    expect(inspected.kind).toBe("plugin");
+    expect(inspected.normalized.pluginId).toBe("indexed");
+  });
+
+  test("installs marketplace plugin items by item id after permission review", async () => {
+    const pluginRoot = join(root, "source", "indexed-install");
+    const indexPath = join(root, "market.json");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "indexed-install",
+      version: "1.0.0",
+      permissions: {
+        filesystem: { write: ["./data/**"] }
+      }
+    });
+    await writeJson(indexPath, {
+      items: [
+        {
+          kind: "plugin",
+          id: "indexed-install",
+          name: "Indexed Install",
+          source: { type: "local", path: pluginRoot }
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [{ id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+
+    const service = makeService(root);
+    const detail = await service.getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:indexed-install"
+    });
+    const hash = detail.inspect?.kind === "plugin" ? detail.inspect.permissionsHash : "";
+
+    await service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:indexed-install",
+      acceptedPermissionsHash: hash,
+      enableScope: "workspace"
+    });
+
+    const state = await new FilePluginStateStore(join(root, "plugins-state.json")).read();
+    expect(state.plugins["indexed-install"]?.activeVersion).toBe("1.0.0");
+    expect(getEffectivePluginRuntimeConfig("default").enabled).toEqual(["indexed-install"]);
+  });
+
+  test("github inspect uses mocked GitHub tree and raw files", async () => {
+    const fetchImpl = (async (url: string) => {
+      if (url.includes("/git/trees/main")) {
+        return Response.json({
+          tree: [
+            { path: "lume-plugin.json", type: "blob" },
+            { path: "skills/demo/SKILL.md", type: "blob" }
+          ]
+        });
+      }
+      if (url.includes("raw.githubusercontent.com")) {
+        return new Response(JSON.stringify({
+          schema: "lume-plugin/v1",
+          name: "github-plugin",
+          version: "1.0.0",
+          skills: ["./skills"]
+        }), { status: 200 });
+      }
+      return Response.json({ default_branch: "main" });
+    }) as unknown as typeof fetch;
+
+    const inspected = await makeService(root, fetchImpl).inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "github", owner: "acme", repo: "plugin", ref: "main", url: "https://github.com/acme/plugin" }
+    });
+
+    expect(inspected.kind).toBe("plugin");
+    expect(inspected.normalized.pluginId).toBe("github-plugin");
+  });
+
+  test("github install reports tarball download failures", async () => {
+    const fetchImpl = (async (url: string) => {
+      if (url.includes("/git/trees/main")) {
+        return Response.json({ tree: [{ path: "lume-plugin.json", type: "blob" }] });
+      }
+      if (url.includes("raw.githubusercontent.com")) {
+        return new Response(JSON.stringify({
+          schema: "lume-plugin/v1",
+          name: "github-plugin",
+          version: "1.0.0"
+        }), { status: 200 });
+      }
+      if (url.includes("/tarball/")) {
+        return new Response("nope", { status: 500 });
+      }
+      return Response.json({ default_branch: "main" });
+    }) as unknown as typeof fetch;
+    const service = makeService(root, fetchImpl);
+    const inspected = await service.inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "github", owner: "acme", repo: "plugin", ref: "main", url: "https://github.com/acme/plugin" }
+    });
+
+    await expect(service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      source: { type: "github", owner: "acme", repo: "plugin", ref: "main", url: "https://github.com/acme/plugin" },
+      acceptedPermissionsHash: inspected.permissionsHash
+    })).rejects.toMatchObject({ code: "install_failed" });
+  });
+});

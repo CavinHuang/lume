@@ -15,9 +15,12 @@ import {
   MoreVertical,
   PenTool,
   Plus,
+  Power,
+  Puzzle,
   RefreshCw,
   Search,
   ShieldCheck,
+  Trash2,
   Sparkles,
   X,
   type LucideIcon,
@@ -26,31 +29,47 @@ import { agentWorkspacesAtom, currentThreadIdAtom, currentWorkspaceIdAtom } from
 import {
   deleteWorkspaceSkill,
   getAgentThreadPath,
-  getGitHubSkillReview,
+  getEffectiveLumeConfig,
+  getMarketCatalog,
+  getMarketDetail,
   getSkillMarketDetail,
-  getSkillMarketCatalog,
-  importLocalSkillDirectoryToWorkspace,
+  installMarketItem,
   installSkillMarketItemToWorkspace,
-  installGitHubSkillToWorkspace,
+  setPluginEnablement,
+  uninstallPlugin,
+  updatePluginsConfig,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
-import type { SkillCatalogItem, SkillFileTreeNode, SkillMarketDetailResult, SkillSourceType } from '@lume/shared'
+import type {
+  GetMarketDetailResult,
+  LumeConfigPluginMarketSourceRef,
+  PluginMarketItem,
+  SkillCatalogItem,
+  SkillFileTreeNode,
+  SkillMarketDetailResult,
+} from '@lume/shared'
 import { SkillSettingsView, type SkillSettingsViewHandle } from './SkillSettingsView'
 import { SkillAddSourceDialog } from './SkillAddSourceDialog'
 import {
-  buildSkillActionLabel,
   buildSkillInstallRequest,
   isInstallableSkillMarketItem,
   resolveSkillSettingsCwd,
   type SkillMarketSection,
 } from './skill-market-state'
+import {
+  buildMarketCards,
+  buildMarketSummary,
+  filterMarketCards,
+  MARKET_CATEGORY_OPTIONS,
+  MARKET_SOURCE_OPTIONS,
+  PLUGIN_SOURCE_LABELS,
+  SKILL_SOURCE_LABELS,
+  type MarketCardView,
+} from './plugin-market-ui-state'
 
 type SkillVisualTone = 'violet' | 'mint' | 'figma' | 'green' | 'blue' | 'orange'
 
-interface SkillMarketCard {
-  item: SkillCatalogItem
-  category: string
-  actionLabel: string
+interface MarketDisplayCard extends MarketCardView {
   icon: LucideIcon
   tone: SkillVisualTone
 }
@@ -64,21 +83,13 @@ interface SkillSourceView {
   tone: SkillVisualTone
 }
 
-const SKILL_VISUALS: Record<string, Pick<SkillMarketCard, 'category' | 'actionLabel' | 'icon' | 'tone'>> = {
+const SKILL_VISUALS: Record<string, Pick<MarketDisplayCard, 'category' | 'actionLabel' | 'icon' | 'tone'>> = {
   'prd-generator': { category: '内置', actionLabel: '启用', icon: FileText, tone: 'violet' },
   'code-review': { category: '内置', actionLabel: '启用', icon: Code2, tone: 'mint' },
   'figma-spec': { category: '本地发现', actionLabel: '安装', icon: PenTool, tone: 'figma' },
   'sql-query': { category: '本地发现', actionLabel: '安装', icon: Database, tone: 'violet' },
   'release-notes': { category: '外部市场源', actionLabel: '添加', icon: Megaphone, tone: 'green' },
   'knowledge-qa': { category: '外部市场源', actionLabel: '添加', icon: MessageCircle, tone: 'blue' },
-}
-
-const SOURCE_LABELS: Record<SkillSourceType, string> = {
-  'built-in': '内置',
-  local: '本地发现',
-  github: '外部市场源',
-  'subscribed-market': '外部市场源',
-  plugin: '插件',
 }
 
 export function SkillsMarketView() {
@@ -90,25 +101,31 @@ export function SkillsMarketView() {
   const setCurrentWorkspaceId = useSetAtom(currentWorkspaceIdAtom)
   const [activeSection, setActiveSection] = useState<SkillMarketSection>('market')
   const [settingsCwd, setSettingsCwd] = useState<string | null>(null)
-  const [items, setItems] = useState<SkillCatalogItem[]>([])
+  const [skills, setSkills] = useState<SkillCatalogItem[]>([])
+  const [plugins, setPlugins] = useState<PluginMarketItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('全部分类')
   const [source, setSource] = useState('全部来源')
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
-  const [busySkillSlug, setBusySkillSlug] = useState<string | null>(null)
+  const [busyItemId, setBusyItemId] = useState<string | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [skillDetail, setSkillDetail] = useState<SkillMarketDetailResult | null>(null)
+  const [pluginDetailOpen, setPluginDetailOpen] = useState(false)
+  const [pluginDetailLoading, setPluginDetailLoading] = useState(false)
+  const [pluginDetailError, setPluginDetailError] = useState<string | null>(null)
+  const [pluginDetail, setPluginDetail] = useState<GetMarketDetailResult | null>(null)
   const [addSourceDialogOpen, setAddSourceDialogOpen] = useState(false)
   const skillSettingsViewRef = useRef<SkillSettingsViewHandle>(null)
 
   const loadCatalog = useCallback(async () => {
     if (!workspaceSlug) {
-      setItems([])
+      setSkills([])
+      setPlugins([])
       setLoading(false)
       return
     }
@@ -116,12 +133,14 @@ export function SkillsMarketView() {
     setLoading(true)
     setError(null)
     try {
-      const result = await getSkillMarketCatalog(workspaceSlug)
-      setItems(result.items)
+      const result = await getMarketCatalog({ workspaceSlug })
+      setSkills(result.skills)
+      setPlugins(result.plugins)
       setLastSyncedAt(Date.now())
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
-      setItems([])
+      setSkills([])
+      setPlugins([])
     } finally {
       setLoading(false)
     }
@@ -159,27 +178,15 @@ export function SkillsMarketView() {
   }, [activeSection, currentThreadId, workspaceSlug])
 
   const cards = useMemo(() => {
-    const queryText = query.trim().toLowerCase()
-
-    return items
-      .map(toSkillMarketCard)
-      .filter((card) => {
-        const matchesQuery =
-          !queryText ||
-          card.item.name.toLowerCase().includes(queryText) ||
-          card.item.description?.toLowerCase().includes(queryText) === true
-        const matchesCategory = category === '全部分类' || card.category === category
-        const sourceLabel = SOURCE_LABELS[card.item.sourceType]
-        const matchesSource = source === '全部来源' || sourceLabel === source
-        return matchesQuery && matchesCategory && matchesSource
-      })
-  }, [category, items, query, source])
-
-  const sourceViews = useMemo(() => buildSkillSourceViews(items), [items])
+    const marketCards = buildMarketCards({ plugins, skills }).map(toMarketDisplayCard)
+    return filterMarketCards(marketCards, { query, category, source })
+  }, [category, plugins, query, skills, source])
+  const summary = useMemo(() => buildMarketSummary({ plugins, skills }), [plugins, skills])
+  const sourceViews = useMemo(() => buildMarketSourceViews(skills, plugins), [plugins, skills])
 
   const handleSkillAction = async (item: SkillCatalogItem) => {
     if (!workspaceSlug) return
-    setBusySkillSlug(item.slug)
+    setBusyItemId(`skill:${item.id}`)
     setError(null)
     try {
       if (item.installState === 'installed') {
@@ -195,7 +202,76 @@ export function SkillsMarketView() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setBusySkillSlug(null)
+      setBusyItemId(null)
+    }
+  }
+
+  const handlePluginAction = async (item: PluginMarketItem) => {
+    if (!workspaceSlug) return
+    if (item.installState !== 'installed') {
+      await handleOpenPluginDetail(item)
+      return
+    }
+
+    setBusyItemId(`plugin:${item.id}`)
+    setError(null)
+    try {
+      const enabled = item.enableState !== 'global-enabled' && item.enableState !== 'workspace-enabled'
+      await setPluginEnablement({
+        workspaceSlug,
+        pluginId: item.pluginId,
+        scope: 'workspace',
+        enabled,
+      })
+      await loadCatalog()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyItemId(null)
+    }
+  }
+
+  const handleInstallPluginFromDetail = async () => {
+    if (!workspaceSlug || !pluginDetail?.inspect || pluginDetail.inspect.kind !== 'plugin') return
+    const marketItem = pluginDetail.item.kind === 'plugin' ? pluginDetail.item.plugin : null
+    if (!marketItem) return
+
+    setBusyItemId(`plugin:${marketItem.id}`)
+    setPluginDetailError(null)
+    setError(null)
+    try {
+      await installMarketItem({
+        workspaceSlug,
+        kind: 'plugin',
+        itemId: marketItem.id,
+        acceptedPermissionsHash: pluginDetail.inspect.permissionsHash,
+        enableScope: 'workspace',
+        overwrite: marketItem.installState === 'update-available',
+      })
+      setPluginDetailOpen(false)
+      await loadCatalog()
+    } catch (err) {
+      setPluginDetailError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyItemId(null)
+    }
+  }
+
+  const handleUninstallPluginFromDetail = async () => {
+    const marketItem = pluginDetail?.item.kind === 'plugin' ? pluginDetail.item.plugin : null
+    if (!marketItem) return
+
+    setBusyItemId(`plugin:${marketItem.id}`)
+    setPluginDetailError(null)
+    setError(null)
+    try {
+      await uninstallPlugin({ pluginId: marketItem.pluginId, version: marketItem.version, force: true })
+      setPluginDetailOpen(false)
+      await loadCatalog()
+    } catch (err) {
+      setPluginDetailError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyItemId(null)
     }
   }
 
@@ -215,6 +291,23 @@ export function SkillsMarketView() {
     }
   }
 
+  const handleOpenPluginDetail = async (item: PluginMarketItem) => {
+    if (!workspaceSlug) return
+    setPluginDetailOpen(true)
+    setPluginDetailLoading(true)
+    setPluginDetailError(null)
+    setPluginDetail(null)
+    setError(null)
+    try {
+      setPluginDetail(await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: item.id }))
+    } catch (err) {
+      setPluginDetailError(err instanceof Error ? err.message : String(err))
+      setPluginDetail({ item: { kind: 'plugin', plugin: item }, diagnostics: item.diagnostics ?? [] })
+    } finally {
+      setPluginDetailLoading(false)
+    }
+  }
+
   const handleAddSource = async (draft: {
     connectionMode: 'local' | 'remote'
     type: 'official' | 'team' | 'local'
@@ -226,22 +319,16 @@ export function SkillsMarketView() {
       throw new Error('请先选择工作区')
     }
 
-    if (draft.connectionMode === 'local') {
-      await importLocalSkillDirectoryToWorkspace({
-        workspaceSlug,
-        localPath: draft.localPath,
-        overwrite: false,
-      })
-      await loadCatalog()
-      return
-    }
+    const config = await getEffectiveLumeConfig()
+    const sourceRef = buildMarketSourceRef(draft)
+    const marketSources = [
+      ...(config.plugins?.marketSources ?? []).filter((source) => source.id !== sourceRef.id),
+      sourceRef,
+    ]
 
-    const review = await getGitHubSkillReview({ url: draft.url })
-    await installGitHubSkillToWorkspace({
-      url: review.url,
-      workspaceSlug,
-      reviewToken: review.reviewToken,
-      overwrite: false,
+    await updatePluginsConfig({
+      ...(config.plugins ?? {}),
+      marketSources,
     })
     await loadCatalog()
   }
@@ -250,13 +337,13 @@ export function SkillsMarketView() {
     <div className="min-h-0 flex-1 overflow-hidden bg-white px-7 pb-8 pt-8 text-[#121832]">
       <div className="mx-auto flex h-full max-w-[1230px] flex-col">
         <header className="mb-6">
-          <h1 className="text-[25px] font-semibold leading-tight text-[#121832]">技能</h1>
+          <h1 className="text-[25px] font-semibold leading-tight text-[#121832]">插件市场</h1>
           <p className="mt-2 text-[14px] leading-6 text-[#60698d]">
-            市场用于发现和安装技能，设置用于管理工作区内的自有技能。
+            市场用于发现、审核和安装插件与技能，设置用于管理工作区内的自有技能。
           </p>
           <div className="mt-5 inline-flex rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
             {([
-              { id: 'market', label: '技能市场' },
+              { id: 'market', label: '插件市场' },
               { id: 'settings', label: '技能设置' },
             ] as const).map((section) => (
               <button
@@ -291,18 +378,24 @@ export function SkillsMarketView() {
               {loading ? (
                 <div className="mt-6 flex h-[180px] items-center justify-center gap-2 rounded-[8px] border border-[#e4e7f1] text-[13px] text-[#626b8f]">
                   <Loader2 size={16} className="animate-spin" />
-                  正在同步技能...
+                  正在同步市场...
                 </div>
               ) : error ? (
                 <div className="mt-6 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
                   {error}
                 </div>
               ) : (
-                <SkillCardGrid
+                <MarketCardGrid
                   cards={cards}
-                  busySkillSlug={busySkillSlug}
-                  onSkillAction={(item) => void handleSkillAction(item)}
-                  onOpenDetail={(item) => void handleOpenSkillDetail(item)}
+                  busyItemId={busyItemId}
+                  onAction={(card) => {
+                    if (card.kind === 'skill') void handleSkillAction(card.item as SkillCatalogItem)
+                    else void handlePluginAction(card.item as PluginMarketItem)
+                  }}
+                  onOpenDetail={(card) => {
+                    if (card.kind === 'skill') void handleOpenSkillDetail(card.item as SkillCatalogItem)
+                    else void handleOpenPluginDetail(card.item as PluginMarketItem)
+                  }}
                 />
               )}
             </main>
@@ -310,8 +403,7 @@ export function SkillsMarketView() {
             <SkillSourcePanel
               loading={loading}
               sources={sourceViews}
-              totalSkills={items.length}
-              installedCount={items.filter((item) => item.installState === 'installed').length}
+              summary={summary}
               lastSyncedAt={lastSyncedAt}
               onAddSource={() => setSourceDialogOpen(true)}
               onSync={() => void loadCatalog()}
@@ -365,6 +457,16 @@ export function SkillsMarketView() {
         detail={skillDetail}
         onOpenChange={setDetailOpen}
       />
+      <PluginDetailDialog
+        open={pluginDetailOpen}
+        loading={pluginDetailLoading}
+        error={pluginDetailError}
+        detail={pluginDetail}
+        busy={busyItemId !== null}
+        onInstall={() => void handleInstallPluginFromDetail()}
+        onUninstall={() => void handleUninstallPluginFromDetail()}
+        onOpenChange={setPluginDetailOpen}
+      />
     </div>
   )
 }
@@ -392,12 +494,12 @@ function SkillFilterBar({
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="搜索技能"
+            placeholder="搜索插件或技能"
             className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-[#1d2440] outline-none placeholder:text-[#6c7699]"
           />
         </label>
-        <MarketSelect value={category} options={['全部分类', '内置', '本地发现', '外部市场源']} onChange={onCategoryChange} />
-        <MarketSelect value={source} options={['全部来源', '内置', '本地发现', '外部市场源']} onChange={onSourceChange} />
+        <MarketSelect value={category} options={[...MARKET_CATEGORY_OPTIONS]} onChange={onCategoryChange} />
+        <MarketSelect value={source} options={[...MARKET_SOURCE_OPTIONS]} onChange={onSourceChange} />
       </div>
     </section>
   )
@@ -430,51 +532,53 @@ function MarketSelect({
   )
 }
 
-function SkillCardGrid({
+function MarketCardGrid({
   cards,
-  busySkillSlug,
-  onSkillAction,
+  busyItemId,
+  onAction,
   onOpenDetail,
 }: {
-  cards: SkillMarketCard[]
-  busySkillSlug: string | null
-  onSkillAction: (item: SkillCatalogItem) => void
-  onOpenDetail: (item: SkillCatalogItem) => void
+  cards: MarketDisplayCard[]
+  busyItemId: string | null
+  onAction: (card: MarketDisplayCard) => void
+  onOpenDetail: (card: MarketDisplayCard) => void
 }) {
   return (
     <section className="mt-6 grid min-h-0 content-start grid-cols-3 gap-5 overflow-y-auto pr-2 pb-2">
       {cards.map((card) => (
-        <SkillCard
-          key={card.item.id}
+        <MarketCard
+          key={`${card.kind}:${card.id}`}
           card={card}
-          busy={busySkillSlug === card.item.slug}
-          onAction={() => onSkillAction(card.item)}
-          onOpenDetail={() => onOpenDetail(card.item)}
+          busy={busyItemId === `${card.kind}:${card.id}`}
+          onAction={() => onAction(card)}
+          onOpenDetail={() => onOpenDetail(card)}
         />
       ))}
       {cards.length === 0 && (
         <div className="col-span-3 rounded-[8px] border border-dashed border-[#d8ddec] p-10 text-center text-[13px] text-[#687196]">
-          当前工作区还没有可展示的 Agent 技能。可添加本地目录或远程 GitHub 技能源进行同步。
+          当前工作区还没有可展示的插件或 Agent 技能。可添加本地或远程 JSON 市场索引进行同步。
         </div>
       )}
     </section>
   )
 }
 
-function SkillCard({
+function MarketCard({
   card,
   busy,
   onAction,
   onOpenDetail,
 }: {
-  card: SkillMarketCard
+  card: MarketDisplayCard
   busy: boolean
   onAction: () => void
   onOpenDetail: () => void
 }) {
   const Icon = card.icon
-  const installed = card.item.installState === 'installed'
-  const actionable = installed || isInstallableSkillMarketItem(card.item)
+  const installed = card.installState === 'installed'
+  const skillActionable = card.kind === 'skill' && (installed || isInstallableSkillMarketItem(card.item as SkillCatalogItem))
+  const pluginActionable = card.kind === 'plugin'
+  const actionable = skillActionable || pluginActionable
 
   return (
     <article
@@ -493,10 +597,10 @@ function SkillCard({
         <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-[8px]', iconToneClass(card.tone))}>
           <Icon size={21} strokeWidth={2.2} />
         </div>
-        <h2 className="min-w-0 flex-1 truncate text-[16px] font-semibold leading-6 text-[#121832]" title={card.item.name}>
-          {card.item.name}
+        <h2 className="min-w-0 flex-1 truncate text-[16px] font-semibold leading-6 text-[#121832]" title={card.name}>
+          {card.name}
         </h2>
-        {installed && (
+        {card.enabled && (
           <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#35c977] text-white">
             <Check size={16} strokeWidth={2.5} />
           </span>
@@ -504,7 +608,7 @@ function SkillCard({
       </div>
       <div className="mt-4 min-w-0 flex-1 overflow-hidden">
         <p className="line-clamp-4 break-all text-[13px] leading-[20px] text-[#687196]">
-          {card.item.description ?? '暂无描述。'}
+          {card.description ?? '暂无描述。'}
         </p>
       </div>
       <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-3 pt-3">
@@ -530,16 +634,14 @@ function SkillCard({
 function SkillSourcePanel({
   loading,
   sources,
-  totalSkills,
-  installedCount,
+  summary,
   lastSyncedAt,
   onAddSource,
   onSync,
 }: {
   loading: boolean
   sources: SkillSourceView[]
-  totalSkills: number
-  installedCount: number
+  summary: ReturnType<typeof buildMarketSummary>
   lastSyncedAt: number | null
   onAddSource: () => void
   onSync: () => void
@@ -547,7 +649,7 @@ function SkillSourcePanel({
   return (
     <aside className="h-fit rounded-[8px] border border-[#e4e7f1] bg-white p-5 shadow-[0_18px_40px_-36px_rgba(43,52,103,0.52)]">
       <h2 className="text-[17px] font-semibold text-[#121832]">市场源</h2>
-      <p className="mt-3 text-[13px] leading-6 text-[#60698d]">管理技能来源，并同步获取最新技能。</p>
+      <p className="mt-3 text-[13px] leading-6 text-[#60698d]">管理插件与技能来源，并同步获取最新市场内容。</p>
 
       <div className="mt-5 space-y-4">
         {sources.map((source) => (
@@ -571,7 +673,7 @@ function SkillSourcePanel({
         className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-[#635bff] text-[14px] font-semibold text-white shadow-[0_16px_30px_-22px_rgba(99,91,255,0.82)] transition-colors hover:bg-[#564dff] disabled:cursor-wait disabled:opacity-70"
       >
         <RefreshCw size={18} className={cn(loading && 'animate-spin')} />
-        同步技能
+        同步市场
       </button>
 
       <div className="my-6 h-px bg-[#edf0f6]" />
@@ -582,7 +684,7 @@ function SkillSourcePanel({
           <span className="text-[13px]">上次同步：{formatSyncTime(lastSyncedAt)}</span>
         </div>
         <div className="mt-3 pl-8 text-[13px] text-[#687196]">
-          已发现 {totalSkills} 个技能，当前工作区已安装 {installedCount} 个
+          已发现 {summary.totalPlugins} 个插件、{summary.totalSkills} 个技能；当前工作区已启用 {summary.enabledPlugins} 个插件，已安装 {summary.installedSkills} 个技能
         </div>
       </div>
     </aside>
@@ -632,9 +734,9 @@ function AddSkillSourceDialog({
       <section className="w-full max-w-[560px] rounded-[8px] border border-[#e4e7f1] bg-white shadow-[0_28px_80px_-42px_rgba(18,24,50,0.62)]">
         <header className="flex items-start justify-between border-b border-[#edf0f6] px-6 py-5">
           <div>
-            <h2 className="text-[19px] font-semibold leading-7 text-[#121832]">添加新的技能来源</h2>
+            <h2 className="text-[19px] font-semibold leading-7 text-[#121832]">添加新的市场来源</h2>
             <p className="mt-1 text-[13px] leading-5 text-[#687196]">
-              接入官方、团队或本地镜像源，添加后可立即同步技能目录。
+              接入官方、团队或本地 JSON index，添加后可立即同步插件目录。
             </p>
           </div>
           <button
@@ -652,8 +754,8 @@ function AddSkillSourceDialog({
             <legend className="mb-3 text-[13px] font-semibold text-[#121832]">接入方式</legend>
             <div className="grid grid-cols-2 gap-3">
               {([
-                { id: 'remote', label: '远程地址', desc: 'GitHub、HTTPS 或私有仓库地址' },
-                { id: 'local', label: '本地目录', desc: '从本机目录或镜像文件夹同步' },
+                { id: 'remote', label: '远程地址', desc: 'HTTPS JSON 市场索引' },
+                { id: 'local', label: '本地文件', desc: '本机 JSON 市场索引' },
               ] as const).map((option) => (
                 <button
                   key={option.id}
@@ -680,7 +782,7 @@ function AddSkillSourceDialog({
             <legend className="mb-3 text-[13px] font-semibold text-[#121832]">来源类型</legend>
             <div className="grid grid-cols-3 gap-3">
               {(connectionMode === 'local'
-                ? [{ id: 'local', label: '本地镜像', desc: '本机目录' }]
+                ? [{ id: 'local', label: '本地索引', desc: 'JSON 文件' }]
                 : [
                 { id: 'official', label: '官方源', desc: '受信任市场' },
                 { id: 'team', label: '团队源', desc: '组织共享' },
@@ -708,14 +810,14 @@ function AddSkillSourceDialog({
             <SkillSourceField
               label="源名称"
               value={name}
-              placeholder="例如：设计团队技能源"
+              placeholder="例如：设计团队插件源"
               onChange={setName}
             />
             {connectionMode === 'remote' && (
               <SkillSourceField
                 label="源地址"
                 value={url}
-                placeholder="https://github.com/org/skills"
+                placeholder="https://example.com/lume-market.json"
                 onChange={setUrl}
               />
             )}
@@ -723,9 +825,9 @@ function AddSkillSourceDialog({
 
           {connectionMode === 'local' && (
             <SkillSourceField
-              label="本地路径"
+              label="索引路径"
               value={localPath}
-              placeholder="/Users/me/.lume/skill-market"
+              placeholder="/Users/me/.lume/market.json"
               onChange={setLocalPath}
             />
           )}
@@ -742,7 +844,7 @@ function AddSkillSourceDialog({
               信任与同步
             </div>
             <p className="mt-2 text-[12px] leading-5 text-[#687196]">
-              新市场源默认启用手动审核。同步后，外部技能会标记为“外部市场源”，安装前需要确认来源与内容。
+              新市场源默认启用手动审核。同步后，插件会标记为“外部市场源”，安装前必须确认权限摘要。
             </p>
           </div>
         </div>
@@ -883,8 +985,8 @@ function SkillDetailDialog({
             <div className="space-y-5">
               <section className="rounded-[8px] border border-[#e4e7f1] bg-[#fbfcff] p-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(SOURCE_LABELS[detail.item.sourceType]))}>
-                    {SOURCE_LABELS[detail.item.sourceType]}
+                  <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(SKILL_SOURCE_LABELS[detail.item.sourceType]))}>
+                    {SKILL_SOURCE_LABELS[detail.item.sourceType]}
                   </span>
                   <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
                     {formatInstallState(detail.item.installState)}
@@ -922,6 +1024,183 @@ function SkillDetailDialog({
           )}
         </div>
       </section>
+    </div>
+  )
+}
+
+function PluginDetailDialog({
+  open,
+  loading,
+  error,
+  detail,
+  busy,
+  onInstall,
+  onUninstall,
+  onOpenChange,
+}: {
+  open: boolean
+  loading: boolean
+  error: string | null
+  detail: GetMarketDetailResult | null
+  busy: boolean
+  onInstall: () => void
+  onUninstall: () => void
+  onOpenChange: (open: boolean) => void
+}) {
+  const item = detail?.item.kind === 'plugin' ? detail.item.plugin : null
+  const inspected = detail?.inspect?.kind === 'plugin' ? detail.inspect : null
+  const permissionRows = item ? buildPermissionRows(item) : []
+  const canInstall = Boolean(item && inspected && item.installState !== 'installed')
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#111735]/32 p-4 backdrop-blur-[2px]">
+      <section className="grid max-h-[88vh] w-full max-w-[820px] grid-rows-[auto_minmax(0,1fr)_auto] rounded-[8px] border border-[#e4e7f1] bg-white shadow-[0_28px_80px_-42px_rgba(18,24,50,0.62)]">
+        <header className="flex items-start justify-between border-b border-[#edf0f6] px-6 py-5">
+          <div className="min-w-0">
+            <h2 className="truncate text-[19px] font-semibold leading-7 text-[#121832]">
+              {item?.displayName ?? item?.name ?? '插件详情'}
+            </h2>
+            <p className="mt-1 text-[13px] leading-5 text-[#687196]">
+              安装前检查插件能力、权限摘要与来源状态。
+            </p>
+          </div>
+          <button
+            type="button"
+            title="关闭"
+            onClick={() => onOpenChange(false)}
+            className="flex size-8 items-center justify-center rounded-[6px] text-[#687196] hover:bg-[#f4f6fb] hover:text-[#121832]"
+          >
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="min-h-0 overflow-y-auto px-6 py-5">
+          {loading ? (
+            <div className="flex h-[220px] items-center justify-center gap-2 text-[13px] text-[#687196]">
+              <Loader2 size={16} className="animate-spin" />
+              正在检查插件...
+            </div>
+          ) : error && !item ? (
+            <div className="rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-5 text-[13px] leading-6 text-[#ba3636]">
+              {error}
+            </div>
+          ) : item ? (
+            <div className="space-y-5">
+              {error && (
+                <div className="rounded-[8px] border border-[#ffe5b8] bg-[#fffaf0] p-4 text-[13px] leading-6 text-[#9a6418]">
+                  {error}
+                </div>
+              )}
+
+              <section className="rounded-[8px] border border-[#e4e7f1] bg-[#fbfcff] p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass('插件'))}>插件</span>
+                  <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(PLUGIN_SOURCE_LABELS[item.sourceType]))}>
+                    {PLUGIN_SOURCE_LABELS[item.sourceType]}
+                  </span>
+                  <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
+                    {formatInstallState(item.installState)}
+                  </span>
+                  <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
+                    {formatPluginEnableState(item.enableState)}
+                  </span>
+                  <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">v{item.version}</span>
+                </div>
+                <p className="mt-3 text-[13px] leading-6 text-[#60698d]">
+                  {item.description ?? '暂无描述。'}
+                </p>
+              </section>
+
+              <section className="grid gap-3 md:grid-cols-4">
+                <PluginMetric label="技能" value={item.capabilities.skillCount} />
+                <PluginMetric label="命令工具" value={item.capabilities.commandToolNames.length} />
+                <PluginMetric label="MCP 服务" value={item.capabilities.mcpServerNames.length} />
+                <PluginMetric label="Hook 事件" value={item.capabilities.hookEvents.length} />
+              </section>
+
+              <section className="rounded-[8px] border border-[#e4e7f1] bg-white p-4">
+                <div className="flex items-center gap-2 text-[14px] font-semibold text-[#121832]">
+                  <ShieldCheck size={18} className="text-[#20c579]" />
+                  权限审核
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {item.permissions.riskLabels.length > 0 ? item.permissions.riskLabels.map((risk) => (
+                    <span key={risk} className="rounded-[5px] bg-[#fff4e5] px-2 py-1 text-[12px] font-semibold text-[#a45f00]">
+                      {formatRiskLabel(risk)}
+                    </span>
+                  )) : (
+                    <span className="rounded-[5px] bg-[#eaf8f0] px-2 py-1 text-[12px] font-semibold text-[#168653]">低风险</span>
+                  )}
+                </div>
+                <div className="mt-4 space-y-3">
+                  {permissionRows.map((row) => (
+                    <div key={row.label} className="grid gap-2 rounded-[8px] bg-[#fbfcff] px-3 py-2 text-[12px] leading-5 md:grid-cols-[120px_minmax(0,1fr)]">
+                      <span className="font-semibold text-[#121832]">{row.label}</span>
+                      <span className="break-all text-[#687196]">{row.value}</span>
+                    </div>
+                  ))}
+                </div>
+                {inspected && (
+                  <div className="mt-4 rounded-[8px] border border-[#edf0f6] bg-[#fbfcff] px-3 py-2 text-[12px] leading-5 text-[#687196]">
+                    权限 hash：<span className="font-mono">{inspected.permissionsHash}</span>
+                  </div>
+                )}
+              </section>
+
+              {item.diagnostics && item.diagnostics.length > 0 && (
+                <section className="rounded-[8px] border border-[#ffe5b8] bg-[#fffaf0] p-4">
+                  <div className="text-[13px] font-semibold text-[#9a6418]">诊断信息</div>
+                  <ul className="mt-2 space-y-1 text-[12px] leading-5 text-[#9a6418]">
+                    {item.diagnostics.map((diagnostic, index) => (
+                      <li key={`${diagnostic.code}-${index}`}>{diagnostic.message}</li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-[8px] border border-dashed border-[#d8ddec] p-8 text-center text-[13px] text-[#687196]">
+              暂无插件详情。
+            </div>
+          )}
+        </div>
+
+        <footer className="flex items-center justify-end gap-3 border-t border-[#edf0f6] px-6 py-4">
+          {item?.installState === 'installed' && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onUninstall}
+              className="flex h-9 items-center gap-2 rounded-[6px] border border-[#ffd2d2] px-4 text-[13px] font-semibold text-[#ba3636] hover:bg-[#fff8f8] disabled:cursor-wait disabled:opacity-60"
+            >
+              <Trash2 size={16} />
+              卸载
+            </button>
+          )}
+          {item?.installState !== 'installed' && (
+            <button
+              type="button"
+              disabled={!canInstall || busy}
+              onClick={onInstall}
+              className="flex h-9 items-center gap-2 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff] disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />}
+              {item?.installState === 'update-available' ? '确认权限并更新' : '确认权限并安装'}
+            </button>
+          )}
+        </footer>
+      </section>
+    </div>
+  )
+}
+
+function PluginMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-[8px] border border-[#e4e7f1] bg-white p-3">
+      <div className="text-[12px] font-semibold text-[#687196]">{label}</div>
+      <div className="mt-1 text-[20px] font-semibold leading-7 text-[#121832]">{value}</div>
     </div>
   )
 }
@@ -1086,12 +1365,21 @@ function formatFileSize(length: number): string {
   return `${(length / 1024).toFixed(1)} KB`
 }
 
-function buildSkillSourceViews(items: SkillCatalogItem[]): SkillSourceView[] {
-  const builtInCount = items.filter((item) => item.sourceType === 'built-in').length
-  const localCount = items.filter((item) => item.sourceType === 'local').length
-  const githubCount = items.filter((item) => item.sourceType === 'github').length
+function buildMarketSourceViews(skills: SkillCatalogItem[], plugins: PluginMarketItem[]): SkillSourceView[] {
+  const pluginCount = plugins.length
+  const builtInCount = skills.filter((item) => item.sourceType === 'built-in').length
+  const localCount = skills.filter((item) => item.sourceType === 'local').length
+  const githubCount = skills.filter((item) => item.sourceType === 'github' || item.sourceType === 'subscribed-market').length
 
   return [
+    {
+      id: 'plugins',
+      name: '插件来源',
+      detail: `已发现 ${pluginCount} 个插件`,
+      enabled: pluginCount > 0,
+      icon: Puzzle,
+      tone: 'mint',
+    },
     {
       id: 'built-in',
       name: '内置技能',
@@ -1119,7 +1407,44 @@ function buildSkillSourceViews(items: SkillCatalogItem[]): SkillSourceView[] {
   ]
 }
 
-function formatInstallState(state: SkillCatalogItem['installState']): string {
+function buildMarketSourceRef(draft: {
+  connectionMode: 'local' | 'remote'
+  type: 'official' | 'team' | 'local'
+  name: string
+  url: string
+  localPath: string
+}): LumeConfigPluginMarketSourceRef {
+  const location = draft.connectionMode === 'local' ? draft.localPath.trim() : draft.url.trim()
+  const name = draft.name.trim() || inferMarketSourceName(location)
+  const base = `${draft.connectionMode}-${name}-${location}`
+  const id = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || `market-${Date.now()}`
+
+  if (draft.connectionMode === 'local') {
+    return {
+      id,
+      name,
+      kind: 'local-index',
+      enabled: true,
+      path: location,
+    }
+  }
+
+  return {
+    id,
+    name,
+    kind: 'remote-index',
+    enabled: true,
+    url: location,
+  }
+}
+
+function inferMarketSourceName(location: string): string {
+  const trimmed = location.replace(/\/$/, '')
+  const lastSegment = trimmed.split('/').filter(Boolean).pop()
+  return lastSegment || '自定义市场源'
+}
+
+function formatInstallState(state: SkillCatalogItem['installState'] | PluginMarketItem['installState']): string {
   switch (state) {
     case 'installed':
       return '已安装'
@@ -1128,6 +1453,55 @@ function formatInstallState(state: SkillCatalogItem['installState']): string {
     case 'not-installed':
       return '未安装'
   }
+}
+
+function formatPluginEnableState(state: PluginMarketItem['enableState']): string {
+  switch (state) {
+    case 'global-enabled':
+      return '全局启用'
+    case 'workspace-enabled':
+      return '工作区启用'
+    case 'disabled':
+      return '已禁用'
+    case 'needs-review':
+      return '需要审核'
+    case 'not-installed':
+      return '未安装'
+  }
+}
+
+function formatRiskLabel(risk: PluginMarketItem['permissions']['riskLabels'][number]): string {
+  switch (risk) {
+    case 'shell':
+      return 'Shell'
+    case 'network':
+      return '网络'
+    case 'write':
+      return '写文件'
+    case 'mcp':
+      return '注册 MCP'
+    case 'high-risk-tool':
+      return '高风险工具'
+  }
+}
+
+function buildPermissionRows(item: PluginMarketItem): Array<{ label: string; value: string }> {
+  const permissions = item.permissions
+  return [
+    { label: '读取文件', value: formatPermissionList(permissions.filesystemRead) },
+    { label: '写入文件', value: formatPermissionList(permissions.filesystemWrite) },
+    { label: '网络访问', value: formatPermissionList(permissions.networkOutbound) },
+    { label: '工具允许', value: formatPermissionList(permissions.toolAllow) },
+    { label: '工具询问', value: formatPermissionList(permissions.toolAsk) },
+    { label: '工具拒绝', value: formatPermissionList(permissions.toolDeny) },
+    { label: 'Hook 事件', value: formatPermissionList(permissions.hookEvents) },
+    { label: 'Shell', value: permissions.shellAllow ? '允许' : '未声明' },
+    { label: 'MCP 注册', value: permissions.mcpRegister ? '允许' : '未声明' },
+  ]
+}
+
+function formatPermissionList(values: string[]): string {
+  return values.length > 0 ? values.join(', ') : '未声明'
 }
 
 function formatSyncTime(timestamp: number | null): string {
@@ -1139,20 +1513,28 @@ function formatSyncTime(timestamp: number | null): string {
   return `${Math.floor(elapsedMinutes / 60)} 小时前`
 }
 
-function toSkillMarketCard(item: SkillCatalogItem): SkillMarketCard {
-  const visual = SKILL_VISUALS[item.slug] ?? inferSkillVisual(item)
+function toMarketDisplayCard(card: MarketCardView): MarketDisplayCard {
+  if (card.kind === 'plugin') {
+    return {
+      ...card,
+      icon: Puzzle,
+      tone: inferPluginTone(card.item as PluginMarketItem),
+    }
+  }
+  const skill = card.item as SkillCatalogItem
+  const visual = SKILL_VISUALS[skill.slug] ?? inferSkillVisual(skill)
   return {
-    item,
+    ...card,
     ...visual,
-    category: SOURCE_LABELS[item.sourceType],
-    actionLabel: buildSkillActionLabel(item),
+    category: card.category,
+    actionLabel: card.actionLabel,
   }
 }
 
-function inferSkillVisual(item: SkillCatalogItem): Pick<SkillMarketCard, 'category' | 'actionLabel' | 'icon' | 'tone'> {
+function inferSkillVisual(item: SkillCatalogItem): Pick<MarketDisplayCard, 'category' | 'actionLabel' | 'icon' | 'tone'> {
   const name = `${item.name} ${item.slug}`.toLowerCase()
-  const category = SOURCE_LABELS[item.sourceType]
-  const actionLabel = buildSkillActionLabel(item)
+  const category = SKILL_SOURCE_LABELS[item.sourceType]
+  const actionLabel = ''
 
   if (name.includes('sql') || name.includes('database')) {
     return { category, actionLabel, icon: Database, tone: 'violet' }
@@ -1167,6 +1549,13 @@ function inferSkillVisual(item: SkillCatalogItem): Pick<SkillMarketCard, 'catego
     return { category, actionLabel, icon: MessageCircle, tone: 'blue' }
   }
   return { category, actionLabel, icon: Sparkles, tone: 'violet' }
+}
+
+function inferPluginTone(item: PluginMarketItem): SkillVisualTone {
+  if (item.permissions.riskLabels.includes('shell') || item.permissions.riskLabels.includes('high-risk-tool')) return 'orange'
+  if (item.permissions.riskLabels.includes('network')) return 'blue'
+  if (item.permissions.riskLabels.includes('write')) return 'green'
+  return 'mint'
 }
 
 function iconToneClass(tone: SkillVisualTone): string {
@@ -1188,6 +1577,8 @@ function iconToneClass(tone: SkillVisualTone): string {
 
 function badgeToneClass(category: string): string {
   switch (category) {
+    case '插件':
+      return 'bg-[#eaf8f0] text-[#168653]'
     case '内置':
       return 'bg-[#f0edff] text-[#635bff]'
     case '本地发现':

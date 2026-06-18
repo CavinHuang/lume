@@ -22,9 +22,29 @@ export interface LumeConfigSkillsSection {
   disabled?: string[]
 }
 
-export interface LumeConfigPluginsSection {
+export interface LumeConfigPluginEnablement {
   enabled?: string[]
+  disabled?: string[]
+}
+
+export interface LumeConfigPluginMarketSourceRef {
+  id: string
+  name: string
+  kind: "local-index" | "remote-index"
+  enabled: boolean
+  url?: string
+  path?: string
+}
+
+export interface LumeConfigPluginsSection {
+  /** @deprecated normalized into global.enabled */
+  enabled?: string[]
+  /** @deprecated normalized into global.disabled */
+  disabled?: string[]
+  global?: LumeConfigPluginEnablement
+  workspaces?: Record<string, LumeConfigPluginEnablement>
   directories?: string[]
+  marketSources?: LumeConfigPluginMarketSourceRef[]
 }
 
 export interface LumeConfigModelsSection {

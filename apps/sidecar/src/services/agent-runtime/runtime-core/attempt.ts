@@ -27,7 +27,7 @@ import { ToolExecutionGateway } from "../tools/tool-execution-gateway";
 import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
 import { prepareRuntimeCoreAttempt, type PreparedRuntimeCoreAttempt } from "./prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
-import { getEffectiveLumeConfig } from "../../system/lume-config-service";
+import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../../system/lume-config-service";
 import { recordPermissionDenial } from "../permissions/permission-denials";
 import {
   resolveConfiguredPermissionRules,
@@ -804,9 +804,10 @@ export async function runRuntimeCoreAttempt(
   }));
 
   const pluginManager = new SidecarPluginManager();
+  const pluginRuntimeConfig = getEffectivePluginRuntimeConfig(prepared.workspaceSlug);
   const pluginInterceptorContexts = await pluginManager.buildInterceptorContexts({
-    enabled: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.enabled ?? [],
-    directories: getEffectiveLumeConfig(prepared.workspaceSlug).plugins?.directories ?? [],
+    enabled: pluginRuntimeConfig.enabled,
+    directories: pluginRuntimeConfig.directories,
   });
 
   // Phase 3c: sensitive-capability gate runtime. Stateless (state lives in the

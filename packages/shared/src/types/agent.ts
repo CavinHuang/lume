@@ -1361,6 +1361,22 @@ export const AGENT_IPC_CHANNELS = {
   RELOAD_PLUGINS: 'agent:reload-plugins',
   /** 查询插件审计日志（Phase 4B） */
   GET_PLUGIN_AUDIT_LOG: 'agent:get-plugin-audit-log',
+  /** 获取统一插件/技能市场目录 */
+  GET_MARKET_CATALOG: 'agent:get-market-catalog',
+  /** 获取统一市场详情 */
+  GET_MARKET_DETAIL: 'agent:get-market-detail',
+  /** 检查本地/GitHub/市场条目来源 */
+  INSPECT_MARKET_SOURCE: 'agent:inspect-market-source',
+  /** 安装市场条目 */
+  INSTALL_MARKET_ITEM: 'agent:install-market-item',
+  /** 更新插件 */
+  UPDATE_PLUGIN: 'agent:update-plugin',
+  /** 卸载插件 */
+  UNINSTALL_PLUGIN: 'agent:uninstall-plugin',
+  /** 设置插件启用范围 */
+  SET_PLUGIN_ENABLEMENT: 'agent:set-plugin-enablement',
+  /** 设置插件 active version */
+  SET_PLUGIN_ACTIVE_VERSION: 'agent:set-plugin-active-version',
   /** 工作区 Skill 有可确认的改进建议 */
   SKILL_IMPROVEMENT_SUGGESTED: 'agent:skill-improvement-suggested',
   /** 获取 GitHub 技能安装前审查摘要 */

@@ -3,6 +3,7 @@ import type {
   LumeConfigPermissionApprovalRoutes,
   LumeConfigPermissionMode,
   LumeConfigPermissionsSection,
+  LumeConfigPluginsSection,
   LumeConfigSkillsSection,
   LumeConfigThinkingLevel,
   LumeConfigSubagentModelStrategy,
@@ -90,6 +91,15 @@ export const updateSkillsConfig = (value: LumeConfigSkillsSection, workspaceSlug
     path: 'skills',
     value,
     summary: 'update workspace skills settings',
+  })
+
+export const updatePluginsConfig = (value: LumeConfigPluginsSection, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'plugins',
+    value,
+    summary: 'update plugin market settings',
   })
 
 export const updatePermissionApprovals = (value: LumeConfigPermissionApprovalRoutes, workspaceSlug?: string) =>

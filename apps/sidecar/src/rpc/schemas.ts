@@ -1,4 +1,4 @@
-import { normalizeMcpTransport } from "@lume/shared";
+import { normalizeMcpTransport, type InspectMarketSourceRef, type PluginSourceRef } from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "./validation";
 
 const relativeThreadPathSchema = z.string()
@@ -865,6 +865,107 @@ export const installSkillMarketItemInputSchema = z.object({
   skillId: z.string().min(1),
   overwrite: z.boolean().optional()
 });
+
+const pluginSourceRefSchema: z.ZodType<PluginSourceRef> = z.lazy(() =>
+  z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("local"),
+      path: z.string().trim().min(1)
+    }).strict(),
+    z.object({
+      type: z.literal("github"),
+      owner: idSchema,
+      repo: idSchema,
+      ref: z.string().trim().min(1),
+      url: z.string().url(),
+      subdir: z.string().trim().min(1).optional()
+    }).strict(),
+    z.object({
+      type: z.literal("subscribed-market"),
+      sourceId: idSchema,
+      itemId: z.string().trim().min(1),
+      resolved: pluginSourceRefSchema
+    }).strict(),
+    z.object({
+      type: z.literal("legacy"),
+      path: z.string().trim().min(1)
+    }).strict()
+  ])
+);
+
+const inspectMarketSourceRefSchema: z.ZodType<InspectMarketSourceRef> = z.union([
+  pluginSourceRefSchema,
+  z.object({
+    type: z.literal("market-item"),
+    sourceId: idSchema,
+    itemId: z.string().trim().min(1)
+  }).strict()
+]);
+
+export const marketCatalogInputSchema = z.object({
+  workspaceSlug: idSchema,
+  includeBlockedSources: z.boolean().optional()
+}).strict();
+
+export const marketDetailInputSchema = z.object({
+  workspaceSlug: idSchema,
+  kind: z.enum(["plugin", "skill"]),
+  itemId: z.string().trim().min(1)
+}).strict();
+
+export const inspectMarketSourceInputSchema = z.object({
+  workspaceSlug: idSchema,
+  source: inspectMarketSourceRefSchema
+}).strict();
+
+export const installMarketItemInputSchema = z.object({
+  workspaceSlug: idSchema,
+  kind: z.enum(["plugin", "skill"]),
+  itemId: z.string().trim().min(1).optional(),
+  source: inspectMarketSourceRefSchema.optional(),
+  overwrite: z.boolean().optional(),
+  enableScope: z.enum(["none", "workspace", "global"]).optional(),
+  acceptedPermissionsHash: z.string().trim().min(1).optional()
+}).strict();
+
+export const updatePluginInputSchema = z.object({
+  pluginId: idSchema,
+  source: pluginSourceRefSchema.optional(),
+  targetVersion: z.string().trim().min(1).optional(),
+  acceptedPermissionsHash: z.string().trim().min(1).optional(),
+  activate: z.boolean().optional(),
+  force: z.boolean().optional()
+}).strict();
+
+export const uninstallPluginInputSchema = z.object({
+  pluginId: idSchema,
+  version: z.string().trim().min(1).optional(),
+  force: z.boolean().optional()
+}).strict();
+
+export const setPluginEnablementInputSchema = z.object({
+  workspaceSlug: idSchema.optional(),
+  pluginId: idSchema,
+  version: z.string().trim().min(1).optional(),
+  force: z.boolean().optional(),
+  scope: z.enum(["global", "workspace"]),
+  enabled: z.boolean()
+}).strict().superRefine((value, ctx) => {
+  if (value.scope === "workspace" && !value.workspaceSlug) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["workspaceSlug"],
+      message: "workspaceSlug is required for workspace scope"
+    });
+  }
+});
+
+export const setPluginActiveVersionInputSchema = z.object({
+  pluginId: idSchema,
+  version: z.string().trim().min(1),
+  acceptedPermissionsHash: z.string().trim().min(1).optional(),
+  force: z.boolean().optional()
+}).strict();
 
 export const threadPathInputSchema = z.object({
   workspaceSlug: optionalIdSchema,

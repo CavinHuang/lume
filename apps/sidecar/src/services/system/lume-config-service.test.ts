@@ -8,7 +8,7 @@ import {
 } from "@lume/shared";
 import YAML from "yaml";
 import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
-import { getEffectiveLumeConfig, updateLumeConfigSection } from "./lume-config-service";
+import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, updateLumeConfigSection } from "./lume-config-service";
 
 describe("lume-config-service", () => {
   let prevConfigDir: string | undefined;
@@ -43,8 +43,11 @@ describe("lume-config-service", () => {
     const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
     expect(file.version).toBe(1);
     expect(file.skills?.enabled).toEqual([]);
-    expect(file.plugins?.enabled).toEqual([]);
+    expect(file.plugins?.global?.enabled).toEqual([]);
+    expect(file.plugins?.global?.disabled).toEqual([]);
+    expect(file.plugins?.workspaces).toEqual({});
     expect(file.plugins?.directories).toEqual([]);
+    expect(file.plugins?.marketSources).toEqual([]);
     expect(file.permissions?.rules).toEqual([]);
     expect(file.permissions?.classifier?.enabled).toBe(false);
     expect(file.permissions?.privateWriteRoots).toEqual([]);
@@ -288,6 +291,86 @@ describe("lume-config-service", () => {
 
     expect(defaultEffective.models?.agent?.defaultModelRef).toBe("anthropic/claude-sonnet-4");
     expect(anotherEffective.models?.agent?.defaultModelRef).toBe("openai/gpt-5.4");
+  });
+
+  test("应将旧 plugins.enabled/disabled 迁移为 canonical global 配置", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        enabled: ["legacy-a", "legacy-b", "legacy-a"],
+        disabled: ["legacy-c"],
+        directories: ["/plugins", "/plugins"],
+        marketSources: [{ id: "official", name: "Official", kind: "remote-index", url: "https://example.com/index.json", enabled: true }]
+      }
+    }), "utf-8");
+
+    const effective = getEffectiveLumeConfig("default");
+    const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
+
+    expect(effective.plugins?.global?.enabled).toEqual(["legacy-a", "legacy-b"]);
+    expect(effective.plugins?.global?.disabled).toEqual(["legacy-c"]);
+    expect(file.plugins?.enabled).toBeUndefined();
+    expect(file.plugins?.disabled).toBeUndefined();
+    expect(file.plugins?.global?.enabled).toEqual(["legacy-a", "legacy-b"]);
+    expect(file.plugins?.global?.disabled).toEqual(["legacy-c"]);
+    expect(file.plugins?.directories).toEqual(["/plugins"]);
+    expect(file.plugins?.marketSources?.[0]?.id).toBe("official");
+  });
+
+  test("应合并 global 与 workspace 插件启用配置", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "plugins",
+      value: {
+        global: {
+          enabled: ["global-a", "shared"],
+          disabled: ["global-off"]
+        },
+        directories: ["/global-plugins"],
+        marketSources: [{ id: "team", name: "Team", kind: "local-index", path: "/market.json", enabled: true }],
+        workspaces: {
+          default: {
+            enabled: ["workspace-a"],
+            disabled: ["shared"]
+          }
+        }
+      }
+    });
+
+    const runtime = getEffectivePluginRuntimeConfig("default");
+
+    expect(runtime.enabled).toEqual(["global-a", "workspace-a"]);
+    expect(runtime.disabled).toEqual(["global-off", "shared"]);
+    expect(runtime.directories).toEqual(["/global-plugins"]);
+    expect(runtime.marketSources.map((source) => source.id)).toEqual(["team"]);
+  });
+
+  test("应迁移旧 workspace overlay 的 plugins.enabled/disabled", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        enabled: ["global-a"],
+        directories: []
+      },
+      workspaces: {
+        default: {
+          plugins: {
+            enabled: ["workspace-a"],
+            disabled: ["global-a"]
+          }
+        }
+      }
+    }), "utf-8");
+
+    const runtime = getEffectivePluginRuntimeConfig("default");
+    const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
+
+    expect(runtime.enabled).toEqual(["workspace-a"]);
+    expect(runtime.disabled).toEqual(["global-a"]);
+    expect(file.workspaces?.default?.plugins?.enabled).toBeUndefined();
+    expect(file.workspaces?.default?.plugins?.disabled).toBeUndefined();
+    expect(file.plugins?.workspaces?.default?.enabled).toEqual(["workspace-a"]);
+    expect(file.plugins?.workspaces?.default?.disabled).toEqual(["global-a"]);
   });
 
   test("默认使用本地 ONNX embedding，但允许 workspace 覆盖", () => {

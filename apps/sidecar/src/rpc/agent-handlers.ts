@@ -127,7 +127,8 @@ import {
 } from "../services/skills/workspace-skill-editor-service";
 import { SidecarPluginManager } from "../services/agent-runtime/plugins/plugin-manager.js";
 import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin-audit-store.js";
-import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
+import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
+import { createDefaultPluginMarketService } from "../services/plugins/plugin-market-service";
 import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/config-paths";
 import { createLogger, getLogsDir } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
@@ -175,6 +176,8 @@ import {
   applySkillImprovementInputSchema,
   executeTaskContractInputSchema,
   getPluginAuditLogInputSchema,
+  inspectMarketSourceInputSchema,
+  installMarketItemInputSchema,
   attachWorkspaceResourceToThreadInputSchema,
   attachedPathInputSchema,
   copyFolderToThreadInputSchema,
@@ -186,6 +189,8 @@ import {
   installSkillMarketItemInputSchema,
   listEditableSkillsInputSchema,
   listDirectoryInputSchema,
+  marketCatalogInputSchema,
+  marketDetailInputSchema,
   moveAttachedFileInputSchema,
   moveFileInputSchema,
   pendingInteractiveInputSchema,
@@ -211,6 +216,8 @@ import {
   skillMarketDetailInputSchema,
   skillImprovementAnalysisInputSchema,
   skillVersionInputSchema,
+  setPluginActiveVersionInputSchema,
+  setPluginEnablementInputSchema,
   threadRunEventsInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
@@ -225,6 +232,8 @@ import {
   workspaceRequiredPathInputSchema,
   workspaceSlugInputSchema,
   workspaceUpdateInputSchema,
+  uninstallPluginInputSchema,
+  updatePluginInputSchema,
   writeBootstrapFileInputSchema
 } from "./schemas";
 import type { NotificationWriter, RpcHandler } from "./types";
@@ -238,7 +247,11 @@ async function buildAgentPluginList(): Promise<{
   diagnostics: AgentPluginDiagnostic[];
 }> {
   const manager = new SidecarPluginManager();
-  const plugins = await manager.resolveEnabled({ enabled: [], directories: [] });
+  const pluginConfig = getEffectivePluginRuntimeConfig();
+  const plugins = await manager.resolveEnabled({
+    enabled: pluginConfig.enabled,
+    directories: pluginConfig.directories,
+  });
   const items: AgentPluginListItem[] = plugins.map((p) => ({
     pluginId: p.name,
     name: p.name,
@@ -1021,6 +1034,70 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         count: events.length,
       });
       return { events };
+    },
+    [AGENT_IPC_CHANNELS.GET_MARKET_CATALOG]: async (params) => {
+      const input = validateInput(
+        marketCatalogInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_MARKET_CATALOG
+      );
+      return createDefaultPluginMarketService().getMarketCatalog(input);
+    },
+    [AGENT_IPC_CHANNELS.GET_MARKET_DETAIL]: async (params) => {
+      const input = validateInput(
+        marketDetailInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_MARKET_DETAIL
+      );
+      return createDefaultPluginMarketService().getMarketDetail(input);
+    },
+    [AGENT_IPC_CHANNELS.INSPECT_MARKET_SOURCE]: async (params) => {
+      const input = validateInput(
+        inspectMarketSourceInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.INSPECT_MARKET_SOURCE
+      );
+      return createDefaultPluginMarketService().inspectMarketSource(input);
+    },
+    [AGENT_IPC_CHANNELS.INSTALL_MARKET_ITEM]: async (params) => {
+      const input = validateInput(
+        installMarketItemInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.INSTALL_MARKET_ITEM
+      );
+      return createDefaultPluginMarketService().installMarketItem(input);
+    },
+    [AGENT_IPC_CHANNELS.UPDATE_PLUGIN]: async (params) => {
+      const input = validateInput(
+        updatePluginInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.UPDATE_PLUGIN
+      );
+      return createDefaultPluginMarketService().updatePlugin(input);
+    },
+    [AGENT_IPC_CHANNELS.UNINSTALL_PLUGIN]: async (params) => {
+      const input = validateInput(
+        uninstallPluginInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.UNINSTALL_PLUGIN
+      );
+      return createDefaultPluginMarketService().uninstallPlugin(input);
+    },
+    [AGENT_IPC_CHANNELS.SET_PLUGIN_ENABLEMENT]: async (params) => {
+      const input = validateInput(
+        setPluginEnablementInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.SET_PLUGIN_ENABLEMENT
+      );
+      return createDefaultPluginMarketService().setPluginEnablement(input);
+    },
+    [AGENT_IPC_CHANNELS.SET_PLUGIN_ACTIVE_VERSION]: async (params) => {
+      const input = validateInput(
+        setPluginActiveVersionInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.SET_PLUGIN_ACTIVE_VERSION
+      );
+      return createDefaultPluginMarketService().setPluginActiveVersion(input);
     },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
       const input = validateInput(

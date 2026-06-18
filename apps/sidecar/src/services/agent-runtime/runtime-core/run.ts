@@ -54,7 +54,7 @@ import { getWorkspaceMcpManager } from "../../mcp/workspace-mcp-manager";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-v2/policy";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
-import { getEffectiveLumeConfig } from "../../system/lume-config-service";
+import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../../system/lume-config-service";
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
@@ -913,13 +913,13 @@ export async function createRuntimeCoreSession(
   // Phase 3b: registry → resolver → bridge. Command tools + skills come from the
   // PluginRuntimeBridge now; the SDK's loadPlugins path is no longer used (no
   // agentOptions.plugins). Plugin hooks are wired below (Phase 3d, buildPluginAgentHooks).
-  const pluginConfig = getEffectiveLumeConfig(input.workspaceSlug).plugins;
+  const pluginConfig = getEffectivePluginRuntimeConfig(input.workspaceSlug);
   const pluginManager = new SidecarPluginManager();
   const registeredPlugins = await pluginManager.listRegistered({
-    enabled: pluginConfig?.enabled ?? [],
+    enabled: pluginConfig.enabled,
     // cwd-local root + configured extras as directories; the global ~/.lume/plugins
     // root is covered by SidecarPluginManager's default pluginRoot.
-    directories: [join(input.cwd, ".lume", "plugins"), ...(pluginConfig?.directories ?? [])],
+    directories: [join(input.cwd, ".lume", "plugins"), ...pluginConfig.directories],
   });
   const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
 

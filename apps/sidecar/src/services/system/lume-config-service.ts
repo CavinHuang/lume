@@ -10,6 +10,8 @@ import {
   type LumeConfigFile,
   type LumeConfigImAccountApprovalPolicy,
   type LumeConfigImApprovalPolicy,
+  type LumeConfigPluginEnablement,
+  type LumeConfigPluginMarketSourceRef,
   type LumeConfigPermissionApprovalRoutes,
   type LumeConfigPermissionRule,
   type LumeConfigSectionSet,
@@ -53,8 +55,13 @@ function createDefaultLumeConfig(): LumeConfigFile {
       disabled: []
     },
     plugins: {
-      enabled: [],
-      directories: []
+      global: {
+        enabled: [],
+        disabled: []
+      },
+      workspaces: {},
+      directories: [],
+      marketSources: []
     },
     permissions: {
       toolPolicy: {
@@ -153,6 +160,77 @@ function normalizePermissionRules(value: unknown): LumeConfigPermissionRule[] {
     });
   }
   return rules;
+}
+
+function normalizePluginEnablement(value: unknown): LumeConfigPluginEnablement {
+  if (!isPlainObject(value)) {
+    return { enabled: [], disabled: [] };
+  }
+  return {
+    enabled: normalizeUniqueStringArray(value.enabled),
+    disabled: normalizeUniqueStringArray(value.disabled)
+  };
+}
+
+function normalizePluginMarketSources(value: unknown): LumeConfigPluginMarketSourceRef[] {
+  if (!Array.isArray(value)) return [];
+  const sources: LumeConfigPluginMarketSourceRef[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!isPlainObject(item)) continue;
+    const id = normalizeOptionalString(item.id);
+    const name = normalizeOptionalString(item.name);
+    const kind = item.kind === "local-index" || item.kind === "remote-index" ? item.kind : undefined;
+    if (!id || !name || !kind || seen.has(id)) continue;
+    const url = normalizeOptionalString(item.url);
+    const path = normalizeOptionalString(item.path);
+    if (kind === "remote-index" && !url) continue;
+    if (kind === "local-index" && !path) continue;
+    sources.push({
+      id,
+      name,
+      kind,
+      enabled: item.enabled !== false,
+      ...(url ? { url } : {}),
+      ...(path ? { path } : {})
+    });
+    seen.add(id);
+  }
+  return sources;
+}
+
+function normalizePluginsSection(value: unknown): NonNullable<LumeConfigSectionSet["plugins"]> {
+  if (!isPlainObject(value)) {
+    return {
+      global: { enabled: [], disabled: [] },
+      workspaces: {},
+      directories: [],
+      marketSources: []
+    };
+  }
+
+  const legacyEnabled = normalizeUniqueStringArray(value.enabled);
+  const legacyDisabled = normalizeUniqueStringArray(value.disabled);
+  const explicitGlobal = normalizePluginEnablement(value.global);
+  const global = {
+    enabled: explicitGlobal.enabled?.length ? explicitGlobal.enabled : legacyEnabled,
+    disabled: explicitGlobal.disabled?.length ? explicitGlobal.disabled : legacyDisabled
+  };
+  const workspaces: Record<string, LumeConfigPluginEnablement> = {};
+  if (isPlainObject(value.workspaces)) {
+    for (const [slug, enablement] of Object.entries(value.workspaces)) {
+      const normalizedSlug = slug.trim();
+      if (!normalizedSlug) continue;
+      workspaces[normalizedSlug] = normalizePluginEnablement(enablement);
+    }
+  }
+
+  return {
+    global,
+    workspaces,
+    directories: normalizeUniqueStringArray(value.directories),
+    marketSources: normalizePluginMarketSources(value.marketSources)
+  };
 }
 
 function normalizeSubagentApprovalPolicy(value: unknown): LumeConfigSubagentApprovalPolicy {
@@ -440,10 +518,7 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   }
 
   if (isPlainObject(value.plugins)) {
-    next.plugins = {
-      enabled: normalizeUniqueStringArray(value.plugins.enabled),
-      directories: normalizeUniqueStringArray(value.plugins.directories)
-    };
+    next.plugins = normalizePluginsSection(value.plugins);
   }
 
   if (isPlainObject(value.permissions)) {
@@ -489,14 +564,37 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
 
   const base = normalizeSectionSet(input);
   const workspaces: Record<string, LumeConfigSectionSet> = {};
+  const migratedPluginWorkspaces: Record<string, LumeConfigPluginEnablement> = {};
   if (isPlainObject(input.workspaces)) {
     for (const [slug, sectionSet] of Object.entries(input.workspaces)) {
       if (!slug.trim()) {
         continue;
       }
-      workspaces[slug] = normalizeSectionSet(sectionSet);
+      const normalizedWorkspace = normalizeSectionSet(sectionSet);
+      if (isPlainObject(sectionSet) && isPlainObject(sectionSet.plugins)) {
+        const legacyWorkspacePlugins = sectionSet.plugins;
+        if (Array.isArray(legacyWorkspacePlugins.enabled) || Array.isArray(legacyWorkspacePlugins.disabled)) {
+          migratedPluginWorkspaces[slug] = normalizePluginEnablement(legacyWorkspacePlugins);
+          delete normalizedWorkspace.plugins;
+        }
+      }
+      workspaces[slug] = normalizedWorkspace;
     }
   }
+  const plugins = {
+    ...(fallback.plugins ?? {}),
+    ...(base.plugins ?? {}),
+    global: {
+      ...(fallback.plugins?.global ?? {}),
+      ...(base.plugins?.global ?? {})
+    },
+    workspaces: {
+      ...(base.plugins?.workspaces ?? {}),
+      ...migratedPluginWorkspaces
+    },
+    directories: base.plugins?.directories ?? fallback.plugins?.directories ?? [],
+    marketSources: base.plugins?.marketSources ?? fallback.plugins?.marketSources ?? []
+  };
 
   return {
     version: CONFIG_VERSION,
@@ -526,6 +624,7 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
     mcp: { ...fallback.mcp, ...base.mcp },
     memory: { ...fallback.memory, ...base.memory },
     skills: { ...fallback.skills, ...base.skills },
+    plugins,
     permissions: {
       ...fallback.permissions,
       ...base.permissions,
@@ -591,7 +690,9 @@ function readOrCreateLumeConfig(): LumeConfigFile {
 
   try {
     const parsed = YAML.parse(readConfigFileContent(path)) as unknown;
-    return normalizeLumeConfigFile(parsed);
+    const normalized = normalizeLumeConfigFile(parsed);
+    writeYamlAtomic(path, YAML.stringify(normalized));
+    return normalized;
   } catch (error) {
     console.warn("[Lume Config] 解析 lume.yaml 失败，回退默认配置:", error);
     return createDefaultLumeConfig();
@@ -702,6 +803,17 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
       ...(file.skills ?? {}),
       ...(overlay?.skills ?? {})
     },
+    plugins: {
+      ...(file.plugins ?? {}),
+      global: {
+        ...(file.plugins?.global ?? {})
+      },
+      workspaces: {
+        ...(file.plugins?.workspaces ?? {})
+      },
+      directories: file.plugins?.directories ?? [],
+      marketSources: file.plugins?.marketSources ?? []
+    },
     permissions: {
       ...(file.permissions ?? {}),
       toolPolicy: {
@@ -740,6 +852,32 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
   };
   syncWebSearchEnvVars(effective.webSearch ?? {});
   return effective;
+}
+
+export interface EffectivePluginRuntimeConfig {
+  enabled: string[];
+  disabled: string[];
+  directories: string[];
+  marketSources: LumeConfigPluginMarketSourceRef[];
+}
+
+function mergeUnique(left?: string[], right?: string[]): string[] {
+  return normalizeUniqueStringArray([...(left ?? []), ...(right ?? [])]);
+}
+
+export function getEffectivePluginRuntimeConfig(workspaceSlug?: string): EffectivePluginRuntimeConfig {
+  const config = getEffectiveLumeConfig(workspaceSlug);
+  const global = config.plugins?.global ?? {};
+  const workspace = workspaceSlug ? config.plugins?.workspaces?.[workspaceSlug] : undefined;
+  const disabled = mergeUnique(global.disabled, workspace?.disabled);
+  const disabledSet = new Set(disabled);
+  const enabled = mergeUnique(global.enabled, workspace?.enabled).filter((pluginId) => !disabledSet.has(pluginId));
+  return {
+    enabled,
+    disabled,
+    directories: normalizeUniqueStringArray(config.plugins?.directories),
+    marketSources: (config.plugins?.marketSources ?? []).filter((source) => source.enabled !== false)
+  };
 }
 
 export function updateLumeConfigSection(input: UpdateLumeConfigSectionInput): LumeEffectiveConfig {
