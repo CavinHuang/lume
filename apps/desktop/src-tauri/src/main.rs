@@ -152,6 +152,21 @@ fn current_settings_path() -> PathBuf {
     resolve_settings_path(None, dirs::home_dir().as_deref())
 }
 
+/// Strip Windows extended-length path prefix (\\?\) so that Node.js realpathSync
+/// can handle the path. Without this, Node.js strips the prefix internally and
+/// may end up calling lstat on a bare drive letter like "D:", causing EISDIR.
+#[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+fn normalize_windows_path(path: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(stripped);
+        }
+    }
+    path.to_path_buf()
+}
+
 fn parse_window_behavior_from_settings_str(raw: &str) -> WindowBehavior {
     serde_json::from_str::<PersistedSettingsFile>(raw)
         .map(|settings| settings.general_settings.window_behavior)
@@ -1488,11 +1503,15 @@ fn spawn_bundled_sidecar_js(app: &tauri::AppHandle) -> Option<Child> {
     let node_modules_dir = extract_sidecar_node_modules(app);
 
     // Use the resource dir as cwd — it always exists in the bundled app.
-    let cwd = if let Ok(resource_dir) = app.path().resource_dir() {
+    // On Windows, Tauri may return extended-length paths (\\?\) which Node.js
+    // realpathSync cannot handle (it strips the prefix, leaving bare "D:").
+    // Strip the prefix to produce a normal Windows path.
+    let raw_cwd = if let Ok(resource_dir) = app.path().resource_dir() {
         resource_dir
     } else {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar")
     };
+    let cwd = normalize_windows_path(&raw_cwd);
 
     // Always launch the bridge via `node` so the .mjs file doesn't need +x permission
     // in the bundled app (Tauri resources don't preserve execute bits).
