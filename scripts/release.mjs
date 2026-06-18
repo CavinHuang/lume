@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,15 +54,18 @@ function parseCommits(log) {
 }
 
 function bumpVersion(version, type) {
-  const [major, minor, patch] = version.split(".").map(Number);
+  const parts = version.split(".").map(p => parseInt(p, 10));
+  if (parts.length !== 3 || parts.some(isNaN)) {
+    throw new Error(`Invalid version format: ${version}. Expected x.y.z`);
+  }
+  const [major, minor, patch] = parts;
   if (type === "major") return `${major + 1}.0.0`;
   if (type === "minor") return `${major}.${minor + 1}.0`;
   return `${major}.${minor}.${patch + 1}`;
 }
 
 async function updateJsonFile(path, newVersion) {
-  const fs = await import("node:fs");
-  const content = fs.readFileSync(path, "utf-8");
+  const content = readFileSync(path, "utf-8");
   const updated = content.replace(
     /"version":\s*"[^"]+"/,
     `"version": "${newVersion}"`
@@ -69,7 +73,7 @@ async function updateJsonFile(path, newVersion) {
   if (updated === content) {
     throw new Error(`Version not found in ${path}`);
   }
-  fs.writeFileSync(path, updated);
+  writeFileSync(path, updated);
   console.log(`  ✓ ${path} → ${newVersion}`);
 }
 
