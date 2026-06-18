@@ -55,7 +55,6 @@ const args = [
   SIDECAR_ENTRY,
   "--bundle",
   "--target=bun",
-  "--format=js",
   "--external",
   "css-tree",
   `--outfile=${OUTFILE}`,
