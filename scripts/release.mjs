@@ -206,14 +206,14 @@ async function main() {
   console.log("\n📄 Generating release notes...");
   const notesPath = generateReleaseNotes(targetTag, grouped);
 
-  const notesContent = run("git", ["show", `HEAD:${notesPath}`]);
+  const notesContent = readFileSync(notesPath, "utf-8");
   console.log("\n--- Release Notes Preview ---");
   console.log(notesContent);
   console.log("--- End ---\n");
 
   const confirm = await new Promise(resolve => {
     const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-    rl2.question("Accept release notes? [Y/n/edit] ", answer => {
+    rl2.question("Accept release notes? [Y/n] ", answer => {
       rl2.close();
       resolve(answer.toLowerCase());
     });
@@ -225,9 +225,9 @@ async function main() {
 
   // 7. Bump versions in 3 files
   console.log("\n🔧 Bumping versions...");
-  updateJsonFile(resolve(REPO_ROOT, "package.json"), newVersion);
-  updateJsonFile(resolve(REPO_ROOT, "apps", "desktop", "package.json"), newVersion);
-  updateJsonFile(resolve(REPO_ROOT, "apps", "desktop", "src-tauri", "tauri.conf.json"), newVersion);
+  await updateJsonFile(resolve(REPO_ROOT, "package.json"), newVersion);
+  await updateJsonFile(resolve(REPO_ROOT, "apps", "desktop", "package.json"), newVersion);
+  await updateJsonFile(resolve(REPO_ROOT, "apps", "desktop", "src-tauri", "tauri.conf.json"), newVersion);
 
   // 8. Commit
   console.log("\n📦 Committing...");
