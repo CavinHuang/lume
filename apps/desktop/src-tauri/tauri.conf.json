@@ -52,7 +52,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "__LUME_UPDATER_PUBLIC_KEY__",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkxQUVGMTg3M0NCMTREQwpSV1RjRk10ekdPOGFDZDNYMFl2dEU1UVV3VkRmZkJlM05UTFBwZzhoc3lscCs5OGFmQXJnc1FjZgo=",
       "endpoints": [
         "https://github.com/CavinHuang/lume/releases/latest/download/latest.json"
       ],
