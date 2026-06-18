@@ -20,6 +20,7 @@ export interface MarketFilterInput {
   query: string
   category: string
   source: string
+  kind?: MarketCardKind
 }
 
 export interface MarketCatalogInput {
@@ -90,9 +91,10 @@ export function filterMarketCards<T extends MarketCardView>(cards: T[], input: M
       !queryText ||
       card.name.toLowerCase().includes(queryText) ||
       card.description?.toLowerCase().includes(queryText) === true
+    const matchesKind = !input.kind || card.kind === input.kind
     const matchesCategory = input.category === '全部分类' || card.category === input.category
     const matchesSource = input.source === '全部来源' || card.sourceLabel === input.source || card.category === input.source
-    return matchesQuery && matchesCategory && matchesSource
+    return matchesKind && matchesQuery && matchesCategory && matchesSource
   })
 }
 

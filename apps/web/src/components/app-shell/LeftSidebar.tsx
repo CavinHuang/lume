@@ -135,7 +135,7 @@ export function LeftSidebar() {
     setActiveTabId(skillsId)
 
     if (!tabs.find((tab) => tab.id === skillsId)) {
-      setTabs((previous) => [...previous, { id: skillsId, type: 'skills', title: '技能' }])
+      setTabs((previous) => [...previous, { id: skillsId, type: 'skills', title: '技能 / 插件' }])
     }
   }
 

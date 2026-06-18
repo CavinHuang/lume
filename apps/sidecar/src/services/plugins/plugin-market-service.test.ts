@@ -194,6 +194,97 @@ describe("PluginMarketService", () => {
     expect(inspected.normalized.pluginId).toBe("indexed");
   });
 
+  test("reads .lume-plugin marketplace manifests with plugin and skill entries", async () => {
+    const marketRoot = join(root, "marketplace");
+    await writeJson(join(marketRoot, ".lume-plugin", "plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "superpowers",
+      version: "6.0.2"
+    });
+    await mkdir(join(marketRoot, "skills", "debugging"), { recursive: true });
+    await writeFile(join(marketRoot, "skills", "debugging", "SKILL.md"), "---\nname: Debugging\nversion: 1.0.0\n---\n\nDebug carefully.", "utf-8");
+    await writeJson(join(marketRoot, ".lume-plugin", "marketplace.json"), {
+      name: "superpowers-dev",
+      description: "Development marketplace",
+      owner: { name: "Jesse Vincent", email: "jesse@fsck.com" },
+      plugins: [
+        {
+          name: "superpowers",
+          description: "Core skills library",
+          version: "6.0.2",
+          source: "./"
+        }
+      ],
+      skills: [
+        {
+          name: "Debugging",
+          description: "Debugging workflow",
+          version: "1.0.0",
+          source: "./skills/debugging"
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [{ id: "superpowers", name: "Superpowers", kind: "local-index", path: marketRoot, enabled: true }]
+      }
+    }), "utf-8");
+
+    const catalog = await makeService(root).getMarketCatalog({ workspaceSlug: "default" });
+
+    expect(catalog.plugins.map((plugin) => plugin.pluginId)).toContain("superpowers");
+    expect(catalog.skills.find((skill) => skill.id === "superpowers:debugging")).toMatchObject({
+      slug: "debugging",
+      name: "Debugging",
+      sourceType: "subscribed-market",
+      sourceId: "superpowers:debugging"
+    });
+  });
+
+  test("installs marketplace skill entries by item id", async () => {
+    const marketRoot = join(root, "marketplace");
+    await mkdir(join(marketRoot, "skills", "debugging"), { recursive: true });
+    await writeFile(join(marketRoot, "skills", "debugging", "SKILL.md"), "---\nname: Debugging\n---\n\nDebug carefully.", "utf-8");
+    await writeJson(join(marketRoot, ".lume-plugin", "marketplace.json"), {
+      name: "superpowers-dev",
+      skills: [{ name: "Debugging", source: "./skills/debugging" }]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [{ id: "superpowers", name: "Superpowers", kind: "local-index", path: marketRoot, enabled: true }]
+      }
+    }), "utf-8");
+
+    const result = await makeService(root).installMarketItem({
+      workspaceSlug: "default",
+      kind: "skill",
+      itemId: "superpowers:debugging"
+    });
+
+    expect(result).toMatchObject({ kind: "skill", id: "superpowers:debugging", installed: true });
+    expect(readFileSync(join(process.env.LUME_CONFIG_DIR ?? "", "agent-workspaces", "default", "skills", "debugging", "SKILL.md"), "utf-8"))
+      .toContain("Debug carefully");
+  });
+
+  test("inspects local plugins with .lume-plugin/plugin.json manifests", async () => {
+    const pluginRoot = join(root, "source", "lume-dir-plugin");
+    await writeJson(join(pluginRoot, ".lume-plugin", "plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "lume-dir-plugin",
+      version: "1.0.0"
+    });
+
+    const inspected = await makeService(root).inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "local", path: pluginRoot }
+    });
+
+    expect(inspected.normalized.pluginId).toBe("lume-dir-plugin");
+    expect(inspected.normalized.manifestFormat).toBe("lume");
+  });
+
   test("installs marketplace plugin items by item id after permission review", async () => {
     const pluginRoot = join(root, "source", "indexed-install");
     const indexPath = join(root, "market.json");
@@ -271,6 +362,30 @@ describe("PluginMarketService", () => {
 
     expect(inspected.kind).toBe("plugin");
     expect(inspected.normalized.pluginId).toBe("github-plugin");
+  });
+
+  test("github inspect supports .codex-plugin plugin manifests", async () => {
+    const fetchImpl = (async (url: string) => {
+      if (url.includes("/git/trees/main")) {
+        return Response.json({ tree: [{ path: ".codex-plugin/plugin.json", type: "blob" }] });
+      }
+      if (url.includes("raw.githubusercontent.com")) {
+        return new Response(JSON.stringify({
+          name: "codex-github-plugin",
+          version: "1.0.0",
+          interface: { displayName: "Codex GitHub Plugin" }
+        }), { status: 200 });
+      }
+      return Response.json({ default_branch: "main" });
+    }) as unknown as typeof fetch;
+
+    const inspected = await makeService(root, fetchImpl).inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "github", owner: "acme", repo: "plugin", ref: "main", url: "https://github.com/acme/plugin" }
+    });
+
+    expect(inspected.normalized.pluginId).toBe("codex-github-plugin");
+    expect(inspected.normalized.manifestFormat).toBe("codex");
   });
 
   test("github install reports tarball download failures", async () => {

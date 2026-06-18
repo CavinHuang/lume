@@ -137,7 +137,8 @@ function scanVersionedPluginDirectory(pluginRoot: string, diagnostics: PluginDia
 }
 
 function hasPluginManifest(pluginRoot: string): boolean {
-  return existsSync(join(pluginRoot, "lume-plugin.json")) ||
+  return existsSync(join(pluginRoot, ".lume-plugin", "plugin.json")) ||
+    existsSync(join(pluginRoot, "lume-plugin.json")) ||
     existsSync(join(pluginRoot, ".codex-plugin", "plugin.json")) ||
     existsSync(join(pluginRoot, "plugin.json"));
 }
@@ -151,7 +152,7 @@ function readPlugin(pluginRoot: string, diagnostics: PluginDiagnostic[]): Normal
   try {
     const plugin = normalizePluginManifests({
       pluginRoot,
-      lumeManifest: readJsonIfExists(join(pluginRoot, "lume-plugin.json")),
+      lumeManifest: readJsonIfExists(join(pluginRoot, ".lume-plugin", "plugin.json")) ?? readJsonIfExists(join(pluginRoot, "lume-plugin.json")),
       codexManifest: readJsonIfExists(join(pluginRoot, ".codex-plugin", "plugin.json")),
       legacyManifest: readJsonIfExists(join(pluginRoot, "plugin.json")),
     });

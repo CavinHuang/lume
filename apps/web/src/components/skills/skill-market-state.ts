@@ -1,13 +1,5 @@
 import type { InstallSkillMarketItemToWorkspaceInput, SkillCatalogItem } from '@lume/shared'
 
-export type SkillMarketSection = 'market' | 'settings'
-
-export interface ResolveSkillSettingsCwdInput {
-  activeSection: SkillMarketSection
-  currentThreadId: string | null
-  getThreadPath: (threadId: string) => Promise<string | null | undefined>
-}
-
 export function buildSkillActionLabel(item: SkillCatalogItem): string {
   if (item.installState === 'installed') return '移除'
   if (item.installState === 'update-available') return '更新'
@@ -35,12 +27,4 @@ export function isInstallableSkillMarketItem(item: SkillCatalogItem): boolean {
       item.sourceId?.startsWith('local:skill:') === true
     )
   )
-}
-
-export async function resolveSkillSettingsCwd(input: ResolveSkillSettingsCwdInput): Promise<string | null> {
-  if (input.activeSection !== 'settings' || !input.currentThreadId) return null
-
-  const threadPath = await input.getThreadPath(input.currentThreadId)
-  const cwd = threadPath?.trim()
-  return cwd ? cwd : null
 }

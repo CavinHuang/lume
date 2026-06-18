@@ -17,4 +17,25 @@ describe('skill market boundary', () => {
     expect(content).not.toContain('SkillVersionPanel')
     expect(content).not.toContain('版本历史')
   })
+
+  test('market view does not mount the skill settings surface', () => {
+    const content = source('apps/web/src/components/skills/SkillsMarketView.tsx')
+
+    expect(content).not.toContain('SkillSettingsView')
+    expect(content).not.toContain('SkillAddSourceDialog')
+    expect(content).not.toContain('技能设置')
+  })
+
+  test('market source dialog documents marketplace root and direct installs', () => {
+    const content = source('apps/web/src/components/skills/SkillsMarketView.tsx')
+
+    expect(content).toContain('单独安装插件')
+    expect(content).toContain('单独安装技能')
+    expect(content).toContain('.lume-plugin/marketplace.json')
+    expect(content).toContain('plugins[]')
+    expect(content).toContain('skills[]')
+    expect(content).toContain('.lume-plugin/plugin.json')
+    expect(content).toContain('.codex-plugin/plugin.json')
+    expect(content).toContain('SKILL.md')
+  })
 })

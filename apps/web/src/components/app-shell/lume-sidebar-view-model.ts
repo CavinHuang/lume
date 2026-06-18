@@ -102,7 +102,7 @@ export function buildLumeSidebarViewModel({
     { id: 'new-chat', label: '新建聊天', icon: 'square-pen', kind: 'button', shortcut: 'Ctrl N' },
     { id: 'search', label: '搜索', icon: 'search', kind: 'search', shortcut: 'Ctrl K' },
     { id: 'lume', label: 'Lume', icon: 'bot', kind: 'button', active: activeTabId === '__lume__' },
-    { id: 'skills', label: '技能', icon: 'box', kind: 'button', active: activeTabId === '__skills__' },
+    { id: 'skills', label: '技能 / 插件', icon: 'box', kind: 'button', active: activeTabId === '__skills__' },
     {
       id: 'automations',
       label: '自动化',

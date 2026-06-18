@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { SkillCatalogItem } from '@lume/shared'
-import { buildSkillActionLabel, buildSkillInstallRequest, resolveSkillSettingsCwd } from './skill-market-state'
+import { buildSkillActionLabel, buildSkillInstallRequest } from './skill-market-state'
 
 function marketItem(input: Partial<SkillCatalogItem> & Pick<SkillCatalogItem, 'installState'>): SkillCatalogItem {
   return {
@@ -31,27 +31,5 @@ describe('skill-market-state', () => {
       skillId: 'built-in:alpha',
       overwrite: true,
     })
-  })
-
-  test('resolves the settings cwd from the current thread path', async () => {
-    const cwd = await resolveSkillSettingsCwd({
-      activeSection: 'settings',
-      currentThreadId: 'thread-1',
-      getThreadPath: async (threadId) => `  /tmp/${threadId}  `,
-    })
-
-    expect(cwd).toBe('/tmp/thread-1')
-  })
-
-  test('does not resolve a cwd outside skill settings or without a current thread', async () => {
-    const calls: string[] = []
-    const getThreadPath = async (threadId: string) => {
-      calls.push(threadId)
-      return '/tmp/thread-1'
-    }
-
-    await expect(resolveSkillSettingsCwd({ activeSection: 'market', currentThreadId: 'thread-1', getThreadPath })).resolves.toBeNull()
-    await expect(resolveSkillSettingsCwd({ activeSection: 'settings', currentThreadId: null, getThreadPath })).resolves.toBeNull()
-    expect(calls).toEqual([])
   })
 })

@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   computePermissionsHash,
@@ -21,6 +21,7 @@ import type {
   InspectPluginResult,
   InstallMarketItemInput,
   InstallMarketItemResult,
+  MarketplaceManifest,
   PluginCapabilitySummary,
   PluginEnableState,
   PluginMarketItem,
@@ -28,12 +29,15 @@ import type {
   PluginSourceRef,
   SetPluginEnablementInput,
   SetPluginEnablementResult,
+  SkillCatalogItem,
+  SkillMarketSourceRef,
   UninstallPluginInput,
   UninstallPluginResult,
   UpdatePluginInput,
   UpdatePluginResult,
 } from "@lume/shared";
-import { getSkillMarketCatalog, getSkillMarketDetail, installSkillMarketItemToWorkspace } from "../skills/skills-market-service";
+import { getGitHubSkillReview, installGitHubSkillToWorkspace } from "../skills/github-skill-install-service";
+import { getSkillMarketCatalog, getSkillMarketDetail, importLocalSkillDirectoryToWorkspace, installSkillMarketItemToWorkspace } from "../skills/skills-market-service";
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, updateLumeConfigSection } from "../system/lume-config-service";
 import { FilePluginStateStore, type PluginInstallRecord } from "../agent-runtime/plugins/plugin-state-store";
 import { PluginRegistry } from "../agent-runtime/plugins/plugin-registry";
@@ -81,13 +85,41 @@ interface MarketIndexPluginEntry {
   kind: "plugin";
   id: string;
   name?: string;
+  description?: string;
+  version?: string;
   source: PluginSourceRef;
 }
+
+interface MarketIndexSkillEntry {
+  kind: "skill";
+  id: string;
+  name: string;
+  description?: string;
+  version?: string;
+  source: SkillMarketSourceRef;
+}
+
+type MarketIndexEntry = MarketIndexPluginEntry | MarketIndexSkillEntry;
 
 interface GitHubTreeEntry {
   path: string;
   type: string;
 }
+
+interface GitHubRepoRoot {
+  owner: string;
+  repo: string;
+  ref: string;
+  rootPath: string;
+  url: string;
+}
+
+interface GitHubManifestMatch {
+  path: string;
+  format: "lume" | "codex" | "legacy";
+}
+
+const MARKETPLACE_MANIFEST_PATH = ".lume-plugin/marketplace.json";
 
 type SidecarInspectPluginResult = Omit<InspectPluginResult, "normalized"> & {
   normalized: NormalizedPlugin;
@@ -102,6 +134,7 @@ export class PluginMarketService {
 
   async getMarketCatalog(input: GetMarketCatalogInput): Promise<GetMarketCatalogResult> {
     const skills = getSkillMarketCatalog(input).items;
+    const skillsById = new Map<string, SkillCatalogItem>(skills.map((skill) => [skill.id, skill]));
     const diagnostics: AgentPluginDiagnostic[] = [];
     const byId = new Map<string, PluginMarketItem>();
 
@@ -125,6 +158,11 @@ export class PluginMarketService {
       try {
         const entries = await this.readMarketIndex(source.id);
         for (const entry of entries) {
+          if (entry.kind === "skill") {
+            const skill = this.toMarketSkillItem(source.id, entry, input.workspaceSlug, skills);
+            skillsById.set(skill.id, skill);
+            continue;
+          }
           try {
             const inspected = await this.inspectPluginSource(input.workspaceSlug, entry.source);
             const item = this.toMarketItem(inspected.normalized, input.workspaceSlug, entry.source.type, inspected.installState);
@@ -149,7 +187,7 @@ export class PluginMarketService {
 
     return {
       plugins: [...byId.values()].sort((left, right) => left.name.localeCompare(right.name)),
-      skills,
+      skills: [...skillsById.values()].sort((left, right) => left.name.localeCompare(right.name, "zh-CN")),
       diagnostics,
     };
   }
@@ -161,6 +199,16 @@ export class PluginMarketService {
 
   async getMarketDetail(input: GetMarketDetailInput): Promise<GetMarketDetailResult> {
     if (input.kind === "skill") {
+      const marketSkill = await this.resolveMarketSkill(input.itemId).catch(() => null);
+      if (marketSkill) {
+        const catalog = getSkillMarketCatalog({ workspaceSlug: input.workspaceSlug, includeBlockedSources: true }).items;
+        const item = this.toMarketSkillItem(marketSkill.sourceId, marketSkill.entry, input.workspaceSlug, catalog);
+        return {
+          item: { kind: "skill", skill: item },
+          inspect: { kind: "skill", item },
+          diagnostics: [],
+        };
+      }
       const detail = getSkillMarketDetail({ workspaceSlug: input.workspaceSlug, skillSlug: input.itemId });
       return {
         item: { kind: "skill", skill: detail.item },
@@ -180,9 +228,21 @@ export class PluginMarketService {
 
   async installMarketItem(input: InstallMarketItemInput): Promise<InstallMarketItemResult> {
     if (input.kind === "skill") {
-      if (!input.itemId) {
-        throw new PluginMarketError("source_not_found", "skill install requires itemId");
+      const source = input.source
+        ? await this.resolveSkillSource(input.source)
+        : input.itemId
+          ? await this.resolveSkillSource(parseMarketItemId(input.itemId)).catch(() => null)
+          : null;
+
+      if (source) {
+        const result = await this.installSkillSource(input.workspaceSlug, source, input.overwrite);
+        return { kind: "skill", id: input.itemId ?? source.type, installed: result.imported };
       }
+
+      if (!input.itemId) {
+        throw new PluginMarketError("source_not_found", "skill install requires itemId or source");
+      }
+
       const result = installSkillMarketItemToWorkspace({
         workspaceSlug: input.workspaceSlug,
         skillId: input.itemId,
@@ -383,7 +443,7 @@ export class PluginMarketService {
     try {
       return normalizePluginManifests({
         pluginRoot: root,
-        lumeManifest: readJsonIfExists(join(root, "lume-plugin.json")),
+        lumeManifest: readJsonIfExists(join(root, ".lume-plugin", "plugin.json")) ?? readJsonIfExists(join(root, "lume-plugin.json")),
         codexManifest: readJsonIfExists(join(root, ".codex-plugin", "plugin.json")),
         legacyManifest: readJsonIfExists(join(root, "plugin.json")),
       });
@@ -394,12 +454,14 @@ export class PluginMarketService {
 
   private async inspectGitHubPlugin(source: Extract<PluginSourceRef, { type: "github" }>): Promise<NormalizedPlugin> {
     const tree = await this.fetchGitHubTree(source);
-    const manifestPath = resolveGitHubManifestPath(tree, source.subdir);
-    const raw = await this.fetchText(rawGitHubUrl(source, manifestPath));
+    const manifest = resolveGitHubManifestPath(tree, source.subdir);
+    const raw = await this.fetchText(rawGitHubUrl(source, manifest.path));
     try {
       return normalizePluginManifests({
         pluginRoot: `github:${source.owner}/${source.repo}/${source.ref}${source.subdir ? `/${source.subdir}` : ""}`,
-        lumeManifest: JSON.parse(raw) as Record<string, unknown>,
+        lumeManifest: manifest.format === "lume" ? JSON.parse(raw) as Record<string, unknown> : undefined,
+        codexManifest: manifest.format === "codex" ? JSON.parse(raw) as Record<string, unknown> : undefined,
+        legacyManifest: manifest.format === "legacy" ? JSON.parse(raw) as Record<string, unknown> : undefined,
       });
     } catch (error) {
       throw new PluginMarketError("invalid_manifest", error instanceof Error ? error.message : String(error));
@@ -428,30 +490,164 @@ export class PluginMarketService {
 
   private async resolveInspectSource(source: InspectMarketSourceRef): Promise<PluginSourceRef> {
     if (source.type === "subscribed-market") return source.resolved;
-    if (source.type !== "market-item") return source;
+    if (isPluginSourceRef(source)) return source;
+    if (source.type !== "market-item") {
+      throw new PluginMarketError("source_not_found", "该来源是 Skill，不是插件");
+    }
     const entries = await this.readMarketIndex(source.sourceId);
-    const item = entries.find((entry) => entry.id === source.itemId);
+    const item = entries.find((entry): entry is MarketIndexPluginEntry => entry.kind === "plugin" && entry.id === source.itemId);
     if (!item) {
       throw new PluginMarketError("source_not_found", "未找到市场条目");
     }
     return item.source;
   }
 
-  private async readMarketIndex(sourceId: string): Promise<MarketIndexPluginEntry[]> {
+  private async resolveSkillSource(source: InspectMarketSourceRef): Promise<SkillMarketSourceRef> {
+    if (isSkillMarketSourceRef(source)) return source;
+    if (source.type !== "market-item") {
+      throw new PluginMarketError("source_not_found", "该来源不是 Skill");
+    }
+    const entries = await this.readMarketIndex(source.sourceId);
+    const item = entries.find((entry): entry is MarketIndexSkillEntry => entry.kind === "skill" && entry.id === source.itemId);
+    if (!item) {
+      throw new PluginMarketError("source_not_found", "未找到 Skill 市场条目");
+    }
+    return item.source;
+  }
+
+  private async resolveMarketSkill(itemId: string): Promise<{ sourceId: string; entry: MarketIndexSkillEntry }> {
+    const parsed = parseMarketItemId(itemId);
+    if (parsed.type !== "market-item") {
+      throw new PluginMarketError("source_not_found", "无效市场条目");
+    }
+    const entries = await this.readMarketIndex(parsed.sourceId);
+    const entry = entries.find((candidate): candidate is MarketIndexSkillEntry => candidate.kind === "skill" && candidate.id === parsed.itemId);
+    if (!entry) {
+      throw new PluginMarketError("source_not_found", "未找到 Skill 市场条目");
+    }
+    return { sourceId: parsed.sourceId, entry };
+  }
+
+  private async readMarketIndex(sourceId: string): Promise<MarketIndexEntry[]> {
     const source = getEffectivePluginRuntimeConfig().marketSources.find((item) => item.id === sourceId);
     if (!source) {
       throw new PluginMarketError("source_not_found", "未找到市场源");
     }
-    const raw = source.kind === "local-index"
-      ? readFileSync(source.path ?? "", "utf-8")
-      : await this.fetchText(source.url ?? "");
-    const parsed = JSON.parse(raw) as { items?: Array<Record<string, unknown>> };
-    return (parsed.items ?? []).flatMap((item) => {
-      if (item.kind !== "plugin" || typeof item.id !== "string" || !isPluginSourceRef(item.source)) {
-        return [];
-      }
-      return [{ kind: "plugin" as const, id: item.id, name: typeof item.name === "string" ? item.name : undefined, source: item.source }];
+    if (source.kind === "local-index") {
+      return this.readLocalMarketIndex(source.path ?? "");
+    }
+    return this.readRemoteMarketIndex(source.url ?? "");
+  }
+
+  private readLocalMarketIndex(sourcePath: string): MarketIndexEntry[] {
+    if (!sourcePath) {
+      throw new PluginMarketError("source_not_found", "市场源路径为空");
+    }
+    const resolvedPath = resolve(sourcePath);
+    const manifestPath = existsSync(resolvedPath) && statSync(resolvedPath).isDirectory()
+      ? join(resolvedPath, MARKETPLACE_MANIFEST_PATH)
+      : resolvedPath;
+    const parsed = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
+    if (Array.isArray(parsed.items)) {
+      return readLegacyIndexEntries(parsed.items);
+    }
+    const root = dirname(dirname(manifestPath));
+    return this.readMarketplaceManifest(parsed as unknown as MarketplaceManifest, {
+      pluginSource: (entrySource) => ({ type: "local", path: resolve(root, assertRelativeMarketplaceSource(entrySource)) }),
+      skillSource: (entrySource) => ({ type: "skill-local", path: resolve(root, assertRelativeMarketplaceSource(entrySource)) }),
     });
+  }
+
+  private async readRemoteMarketIndex(sourceUrl: string): Promise<MarketIndexEntry[]> {
+    if (!sourceUrl) {
+      throw new PluginMarketError("source_not_found", "市场源 URL 为空");
+    }
+    if (/\.json(?:$|[?#])/i.test(sourceUrl)) {
+      const parsed = JSON.parse(await this.fetchText(sourceUrl)) as Record<string, unknown>;
+      if (Array.isArray(parsed.items)) {
+        return readLegacyIndexEntries(parsed.items);
+      }
+    }
+
+    const root = await this.resolveGitHubRoot(sourceUrl);
+    const raw = await this.fetchText(rawGitHubUrl({
+      type: "github",
+      owner: root.owner,
+      repo: root.repo,
+      ref: root.ref,
+      url: root.url,
+      subdir: root.rootPath,
+    }, joinPosix(root.rootPath, MARKETPLACE_MANIFEST_PATH)));
+    const parsed = JSON.parse(raw) as MarketplaceManifest;
+    return this.readMarketplaceManifest(parsed, {
+      pluginSource: (entrySource) => ({
+        type: "github",
+        owner: root.owner,
+        repo: root.repo,
+        ref: root.ref,
+        url: root.url,
+        subdir: joinPosix(root.rootPath, assertRelativeMarketplaceSource(entrySource)),
+      }),
+      skillSource: (entrySource) => ({
+        type: "skill-github",
+        url: githubTreeUrl(root, assertRelativeMarketplaceSource(entrySource)),
+      }),
+    });
+  }
+
+  private readMarketplaceManifest(
+    manifest: MarketplaceManifest,
+    resolveSource: {
+      pluginSource: (entrySource: string) => PluginSourceRef;
+      skillSource: (entrySource: string) => SkillMarketSourceRef;
+    },
+  ): MarketIndexEntry[] {
+    const plugins = Array.isArray(manifest.plugins) ? manifest.plugins : [];
+    const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
+    if (plugins.length === 0 && skills.length === 0) {
+      throw new PluginMarketError("invalid_manifest", "marketplace.json 必须包含 plugins[] 或 skills[]");
+    }
+
+    return [
+      ...plugins.flatMap((entry) => {
+        if (!isMarketplaceEntry(entry)) return [];
+        const id = marketplaceEntryId(entry);
+        return [{
+          kind: "plugin" as const,
+          id,
+          name: entry.name,
+          description: entry.description,
+          version: entry.version,
+          source: resolveSource.pluginSource(entry.source),
+        }];
+      }),
+      ...skills.flatMap((entry) => {
+        if (!isMarketplaceEntry(entry)) return [];
+        const id = marketplaceEntryId(entry);
+        return [{
+          kind: "skill" as const,
+          id,
+          name: entry.name,
+          description: entry.description,
+          version: entry.version,
+          source: resolveSource.skillSource(entry.source),
+        }];
+      }),
+    ];
+  }
+
+  private async resolveGitHubRoot(url: string): Promise<GitHubRepoRoot> {
+    const parsed = parseGitHubRootUrl(url);
+    if (parsed.ref) return parsed;
+
+    const response = await this.fetchImpl(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" },
+    });
+    if (!response.ok) {
+      throw new PluginMarketError("network_failed", `读取 GitHub 仓库信息失败: ${response.status}`);
+    }
+    const payload = await response.json() as { default_branch?: string };
+    return { ...parsed, ref: payload.default_branch ?? "main" };
   }
 
   private async stageInstall(source: PluginSourceRef, plugin: NormalizedPlugin): Promise<string> {
@@ -546,6 +742,29 @@ export class PluginMarketService {
     return "global-enabled";
   }
 
+  private async installSkillSource(
+    workspaceSlug: string,
+    source: SkillMarketSourceRef,
+    overwrite?: boolean,
+  ): Promise<{ imported: boolean }> {
+    if (source.type === "skill-local") {
+      return importLocalSkillDirectoryToWorkspace({
+        workspaceSlug,
+        localPath: source.path,
+        overwrite,
+      });
+    }
+
+    const review = await getGitHubSkillReview({ url: source.url }, { fetchImpl: this.fetchImpl });
+    const result = await installGitHubSkillToWorkspace({
+      workspaceSlug,
+      url: review.url,
+      reviewToken: review.reviewToken,
+      overwrite,
+    }, { fetchImpl: this.fetchImpl });
+    return { imported: result.imported };
+  }
+
   private findEnabledScopes(pluginId: string): Array<{ scope: "global" | "workspace"; workspaceSlug?: string }> {
     const config = getEffectiveLumeConfig();
     const result: Array<{ scope: "global" | "workspace"; workspaceSlug?: string }> = [];
@@ -580,6 +799,26 @@ export class PluginMarketService {
       capabilities: summarizeCapabilities(plugin),
       permissions: summarizePermissions(plugin.permissions),
       diagnostics: plugin.diagnostics as AgentPluginDiagnostic[],
+    };
+  }
+
+  private toMarketSkillItem(
+    sourceId: string,
+    entry: MarketIndexSkillEntry,
+    workspaceSlug: string,
+    existingSkills: SkillCatalogItem[],
+  ): SkillCatalogItem {
+    const installed = existingSkills.find((skill) => skill.slug === entry.id && skill.installState === "installed");
+    return {
+      id: `${sourceId}:${entry.id}`,
+      sourceId: `${sourceId}:${entry.id}`,
+      slug: entry.id,
+      name: entry.name,
+      description: entry.description,
+      version: entry.version,
+      sourceType: "subscribed-market",
+      trustLevel: entry.source.type === "skill-local" ? "trusted" : "review-required",
+      installState: installed ? "installed" : "not-installed",
     };
   }
 
@@ -642,13 +881,100 @@ function summarizePermissions(permissions: PluginPermissions): PluginPermissionS
   };
 }
 
-function resolveGitHubManifestPath(tree: GitHubTreeEntry[], subdir?: string): string {
-  const prefix = subdir ? `${subdir.replace(/\/$/, "")}/` : "";
-  const path = `${prefix}lume-plugin.json`;
-  if (!tree.some((entry) => entry.type === "blob" && entry.path === path)) {
-    throw new PluginMarketError("invalid_manifest", "GitHub 仓库中没有检测到 lume-plugin.json");
+function readLegacyIndexEntries(items: Array<Record<string, unknown>>): MarketIndexEntry[] {
+  return items.flatMap((item) => {
+    if (item.kind !== "plugin" || typeof item.id !== "string" || !isPluginSourceRef(item.source)) {
+      return [];
+    }
+    return [{
+      kind: "plugin" as const,
+      id: item.id,
+      name: typeof item.name === "string" ? item.name : undefined,
+      source: item.source,
+    }];
+  });
+}
+
+function isMarketplaceEntry(value: unknown): value is { name: string; description?: string; version?: string; source: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entry = value as Record<string, unknown>;
+  return typeof entry.name === "string" && entry.name.trim().length > 0
+    && typeof entry.source === "string" && entry.source.trim().length > 0;
+}
+
+function marketplaceEntryId(entry: { name: string; source: string }): string {
+  return slugifyMarketplaceId(entry.name) || slugifyMarketplaceId(basename(entry.source)) || "item";
+}
+
+function slugifyMarketplaceId(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function assertRelativeMarketplaceSource(source: string): string {
+  const trimmed = source.trim();
+  if (!trimmed || trimmed.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(trimmed) || /^[a-z]+:\/\//i.test(trimmed)) {
+    throw new PluginMarketError("invalid_manifest", "marketplace source 必须是相对目录路径");
   }
-  return path;
+  return trimmed;
+}
+
+function joinPosix(...segments: Array<string | undefined>): string {
+  const filtered = segments
+    .filter((segment): segment is string => !!segment && segment !== ".")
+    .map((segment) => segment.replace(/^\/+|\/+$/g, ""));
+  return posix.normalize(filtered.join("/") || "").replace(/^\.$/, "");
+}
+
+function parseGitHubRootUrl(input: string): GitHubRepoRoot {
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    throw new PluginMarketError("source_not_found", "GitHub URL 非法");
+  }
+  if (url.protocol !== "https:" || url.hostname !== "github.com") {
+    throw new PluginMarketError("source_not_found", "远程市场源仅支持 github.com");
+  }
+  const segments = url.pathname.replace(/^\/|\/$/g, "").split("/").filter(Boolean);
+  const owner = segments[0] ?? "";
+  const repo = (segments[1] ?? "").replace(/\.git$/i, "");
+  if (!owner || !repo) {
+    throw new PluginMarketError("source_not_found", "GitHub URL 缺少 owner/repo");
+  }
+  if (segments[2] === "tree") {
+    const ref = segments[3];
+    if (!ref) {
+      throw new PluginMarketError("source_not_found", "GitHub tree URL 缺少 ref");
+    }
+    return {
+      owner,
+      repo,
+      ref,
+      rootPath: segments.slice(4).join("/"),
+      url: input,
+    };
+  }
+  return { owner, repo, ref: "", rootPath: "", url: input };
+}
+
+function githubTreeUrl(root: GitHubRepoRoot, source: string): string {
+  const subdir = joinPosix(root.rootPath, source);
+  return `https://github.com/${root.owner}/${root.repo}/tree/${root.ref}${subdir ? `/${subdir}` : ""}`;
+}
+
+function resolveGitHubManifestPath(tree: GitHubTreeEntry[], subdir?: string): GitHubManifestMatch {
+  const prefix = subdir ? `${subdir.replace(/\/$/, "")}/` : "";
+  const candidates: GitHubManifestMatch[] = [
+    { path: `${prefix}.lume-plugin/plugin.json`, format: "lume" },
+    { path: `${prefix}lume-plugin.json`, format: "lume" },
+    { path: `${prefix}.codex-plugin/plugin.json`, format: "codex" },
+    { path: `${prefix}plugin.json`, format: "legacy" },
+  ];
+  const match = candidates.find((candidate) => tree.some((entry) => entry.type === "blob" && entry.path === candidate.path));
+  if (!match) {
+    throw new PluginMarketError("invalid_manifest", "GitHub 仓库中没有检测到 .lume-plugin/plugin.json 或 .codex-plugin/plugin.json");
+  }
+  return match;
 }
 
 function rawGitHubUrl(source: Extract<PluginSourceRef, { type: "github" }>, path: string): string {
@@ -665,6 +991,14 @@ function isPluginSourceRef(value: unknown): value is PluginSourceRef {
   if (source.type === "subscribed-market") {
     return typeof source.sourceId === "string" && typeof source.itemId === "string" && isPluginSourceRef(source.resolved);
   }
+  return false;
+}
+
+function isSkillMarketSourceRef(value: unknown): value is SkillMarketSourceRef {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  if (source.type === "skill-local") return typeof source.path === "string";
+  if (source.type === "skill-github") return typeof source.url === "string";
   return false;
 }
 

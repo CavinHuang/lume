@@ -8,6 +8,10 @@ export type PluginSourceRef =
   | { type: "subscribed-market"; sourceId: string; itemId: string; resolved: PluginSourceRef }
   | { type: "legacy"; path: string }
 
+export type SkillMarketSourceRef =
+  | { type: "skill-local"; path: string }
+  | { type: "skill-github"; url: string }
+
 export interface PluginMarketSourceRef {
   id: string
   name: string
@@ -15,6 +19,35 @@ export interface PluginMarketSourceRef {
   enabled: boolean
   url?: string
   path?: string
+}
+
+export interface MarketplaceOwner {
+  name: string
+  email?: string
+}
+
+export interface MarketplacePluginEntry {
+  name: string
+  description?: string
+  version?: string
+  source: string
+  author?: MarketplaceOwner
+}
+
+export interface MarketplaceSkillEntry {
+  name: string
+  description?: string
+  version?: string
+  source: string
+  author?: MarketplaceOwner
+}
+
+export interface MarketplaceManifest {
+  name: string
+  description?: string
+  owner?: MarketplaceOwner
+  plugins?: MarketplacePluginEntry[]
+  skills?: MarketplaceSkillEntry[]
 }
 
 export type MarketInstallState = "not-installed" | "installed" | "update-available"
@@ -78,7 +111,7 @@ export interface GetMarketDetailInput {
   itemId: string
 }
 
-export type InspectMarketSourceRef = PluginSourceRef | { type: "market-item"; sourceId: string; itemId: string }
+export type InspectMarketSourceRef = PluginSourceRef | SkillMarketSourceRef | { type: "market-item"; sourceId: string; itemId: string }
 
 export interface InspectMarketSourceInput {
   workspaceSlug: string

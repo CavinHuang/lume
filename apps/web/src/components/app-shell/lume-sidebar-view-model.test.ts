@@ -41,10 +41,11 @@ describe('buildLumeSidebarViewModel', () => {
     expect(model.topActions.map((action) => action.id)).toEqual([
       'new-chat',
       'search',
-      'reading',
+      'lume',
       'skills',
       'automations',
     ])
+    expect(model.topActions.find((action) => action.id === 'skills')?.label).toBe('技能 / 插件')
   })
 
   test('marks automation navigation active and enabled when the automation tab is open', () => {
@@ -89,9 +90,8 @@ describe('buildLumeSidebarViewModel', () => {
     })
 
     const currentWorkspace = model.workspaces[0]
-    const syntheticRow = currentWorkspace.rows.find((row) => row.type === 'synthetic-thread')
 
-    expect(syntheticRow).toEqual({
+    expect(currentWorkspace.syntheticRow).toEqual({
       type: 'synthetic-thread',
       id: '__welcome__',
       workspaceId: 'workspace-1',
@@ -113,14 +113,14 @@ describe('buildLumeSidebarViewModel', () => {
       expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
     })
 
-    expect(model.workspaces[0].rows[0]).toEqual({
+    expect(model.workspaces[0].syntheticRow).toEqual({
       type: 'synthetic-thread',
       id: '__welcome__',
       workspaceId: 'workspace-1',
       label: '新对话',
       active: true,
     })
-    expect(model.workspaces[1].rows[0]).toEqual({
+    expect(model.workspaces[1].syntheticRow).toEqual({
       type: 'synthetic-thread',
       id: '__welcome__',
       workspaceId: 'workspace-2',
@@ -156,75 +156,13 @@ describe('buildLumeSidebarViewModel', () => {
     })
 
     const automationWorkspace = model.workspaces.find((workspace) => workspace.id === 'workspace-2')
-    const groups = automationWorkspace?.rows.filter((row) => row.type === 'thread-group') ?? []
-
-    expect(groups).toHaveLength(1)
-    expect(groups[0]).toMatchObject({
-      type: 'thread-group',
-      label: '昨天',
-    })
-    expect(groups[0].items).toHaveLength(1)
-    expect(groups[0].items[0]).toMatchObject({
+    expect(automationWorkspace?.threads).toHaveLength(1)
+    expect(automationWorkspace?.threads[0]).toMatchObject({
       id: 'thread-yesterday',
       title: '昨天的线程',
       active: true,
       isStreaming: true,
     })
-  })
-
-  test('groups IM-origin threads by provider before regular date groups', () => {
-    const startOfToday = new Date().setHours(0, 0, 0, 0)
-    const model = buildLumeSidebarViewModel({
-      workspaces: [createWorkspace()],
-      threads: [
-        createThread({
-          id: 'weixin-thread',
-          title: '微信: Alice',
-          updatedAt: startOfToday + 120_000,
-          source: {
-            type: 'im',
-            provider: 'weixin',
-            accountId: 'account-1',
-            accountLabel: '工作微信',
-            peerKind: 'dm',
-            peerId: 'user-1',
-            peerName: 'Alice',
-          },
-        }),
-        createThread({
-          id: 'feishu-thread',
-          title: '飞书: 项目群',
-          updatedAt: startOfToday + 60_000,
-          source: {
-            type: 'im',
-            provider: 'feishu',
-            accountId: 'app-1',
-            accountLabel: '飞书应用',
-            peerKind: 'group',
-            peerId: 'chat-1',
-            peerName: '项目群',
-          },
-        }),
-        createThread({
-          id: 'regular-thread',
-          title: '普通会话',
-          updatedAt: startOfToday + 30_000,
-        }),
-      ],
-      currentWorkspaceId: 'workspace-1',
-      activeTabId: null,
-      streamingStates: {},
-      expandedWorkspaceIds: ['workspace-1'],
-    })
-
-    const groups = model.workspaces[0].rows.filter((row) => row.type === 'thread-group')
-
-    expect(groups.map((group) => group.label)).toEqual(['微信', '飞书', '今天'])
-    expect(groups.map((group) => group.items.map((item) => item.id))).toEqual([
-      ['weixin-thread'],
-      ['feishu-thread'],
-      ['regular-thread'],
-    ])
   })
 
   test('keeps labels in collapsed item data for tooltips and icon-only navigation', () => {
@@ -334,22 +272,15 @@ describe('buildLumeSidebarViewModel', () => {
       count: 1,
       isCurrent: false,
     })
-    expect(firstUnassigned?.rows).toEqual(secondUnassigned?.rows)
-    expect(firstUnassigned?.rows).toEqual([
+    expect(firstUnassigned?.threads).toEqual(secondUnassigned?.threads)
+    expect(firstUnassigned?.threads).toEqual([
       {
-        type: 'thread-group',
-        id: '__unassigned__:今天',
-        label: '今天',
-        items: [
-          {
-            id: 'legacy-thread',
-            title: 'Legacy thread',
-            active: false,
-            pinned: false,
-            isStreaming: false,
-            updatedAt: threads[0].updatedAt,
-          },
-        ],
+        id: 'legacy-thread',
+        title: 'Legacy thread',
+        active: false,
+        pinned: false,
+        isStreaming: false,
+        updatedAt: threads[0].updatedAt,
       },
     ])
     expect(currentFirstWorkspace.collapsedItems).toEqual(

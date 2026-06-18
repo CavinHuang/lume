@@ -45,6 +45,11 @@ const getEffectiveLumeConfigMock = mock(async () => ({
   },
 }))
 
+const getSkillMarketCatalogMock = mock(async () => ({
+  items: [],
+  diagnostics: [],
+}))
+
 const listSkillVersionsMock = mock(async () => [
   { path: '/tmp/versions/SKILL_20260605_010203_abcd.md', filename: 'SKILL_20260605_010203_abcd.md', timestamp: '20260605 010203' },
 ])
@@ -62,6 +67,7 @@ const analyzeSkillImprovementMock = mock(async () => ({
   analyzeSkillImprovement: analyzeSkillImprovementMock,
   deleteWorkspaceSkill: mock(async () => ({ ok: true })),
   getEditableSkill: getEditableSkillMock,
+  getSkillMarketCatalog: getSkillMarketCatalogMock,
   getMcpConfig: mock(async () => ({ servers: {} })),
   getMcpStatus: mock(async () => ({ servers: {} })),
   listSkillVersions: listSkillVersionsMock,
@@ -81,6 +87,8 @@ mock.module('@/lib/desktop-api', () => ({
   deleteWorkspaceSkill: (...args: unknown[]) => getDesktopApiMocks().deleteWorkspaceSkill?.(...args),
   getEditableSkill: (...args: Parameters<typeof getEditableSkillMock>) =>
     getDesktopApiMocks().getEditableSkill?.(...args),
+  getSkillMarketCatalog: (...args: Parameters<typeof getSkillMarketCatalogMock>) =>
+    getDesktopApiMocks().getSkillMarketCatalog?.(...args),
   getMcpConfig: (...args: unknown[]) => getDesktopApiMocks().getMcpConfig?.(...args),
   getMcpStatus: (...args: unknown[]) => getDesktopApiMocks().getMcpStatus?.(...args),
   listSkillVersions: (...args: Parameters<typeof listSkillVersionsMock>) =>
@@ -99,6 +107,11 @@ mock.module('@/lib/desktop-api/lume-config', () => ({
     version: 1 as const,
     sourcePath: '/tmp/lume.yaml',
     permissions,
+  })),
+  updateSkillsConfig: mock(async (skills: unknown) => ({
+    version: 1 as const,
+    sourcePath: '/tmp/lume.yaml',
+    skills,
   })),
 }))
 

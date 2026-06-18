@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAtomValue } from 'jotai'
 import {
   Check,
   ChevronDown,
@@ -9,6 +9,7 @@ import {
   FileText,
   FolderSync,
   Globe2,
+  Info,
   Loader2,
   Megaphone,
   MessageCircle,
@@ -25,16 +26,20 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { agentWorkspacesAtom, currentThreadIdAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   deleteWorkspaceSkill,
-  getAgentThreadPath,
   getEffectiveLumeConfig,
   getMarketCatalog,
   getMarketDetail,
   getSkillMarketDetail,
+  getGitHubSkillReview,
+  importLocalSkillDirectoryToWorkspace,
+  inspectMarketSource,
   installMarketItem,
+  installGitHubSkillToWorkspace,
   installSkillMarketItemToWorkspace,
+  openFolderDialog,
   setPluginEnablement,
   uninstallPlugin,
   updatePluginsConfig,
@@ -44,17 +49,14 @@ import type {
   GetMarketDetailResult,
   LumeConfigPluginMarketSourceRef,
   PluginMarketItem,
+  PluginSourceRef,
   SkillCatalogItem,
   SkillFileTreeNode,
   SkillMarketDetailResult,
 } from '@lume/shared'
-import { SkillSettingsView, type SkillSettingsViewHandle } from './SkillSettingsView'
-import { SkillAddSourceDialog } from './SkillAddSourceDialog'
 import {
   buildSkillInstallRequest,
   isInstallableSkillMarketItem,
-  resolveSkillSettingsCwd,
-  type SkillMarketSection,
 } from './skill-market-state'
 import {
   buildMarketCards,
@@ -64,6 +66,7 @@ import {
   MARKET_SOURCE_OPTIONS,
   PLUGIN_SOURCE_LABELS,
   SKILL_SOURCE_LABELS,
+  type MarketCardKind,
   type MarketCardView,
 } from './plugin-market-ui-state'
 
@@ -95,12 +98,9 @@ const SKILL_VISUALS: Record<string, Pick<MarketDisplayCard, 'category' | 'action
 export function SkillsMarketView() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
-  const currentThreadId = useAtomValue(currentThreadIdAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSlug = workspace?.slug ?? null
-  const setCurrentWorkspaceId = useSetAtom(currentWorkspaceIdAtom)
-  const [activeSection, setActiveSection] = useState<SkillMarketSection>('market')
-  const [settingsCwd, setSettingsCwd] = useState<string | null>(null)
+  const [activeKind, setActiveKind] = useState<MarketCardKind>('plugin')
   const [skills, setSkills] = useState<SkillCatalogItem[]>([])
   const [plugins, setPlugins] = useState<PluginMarketItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -119,8 +119,6 @@ export function SkillsMarketView() {
   const [pluginDetailLoading, setPluginDetailLoading] = useState(false)
   const [pluginDetailError, setPluginDetailError] = useState<string | null>(null)
   const [pluginDetail, setPluginDetail] = useState<GetMarketDetailResult | null>(null)
-  const [addSourceDialogOpen, setAddSourceDialogOpen] = useState(false)
-  const skillSettingsViewRef = useRef<SkillSettingsViewHandle>(null)
 
   const loadCatalog = useCallback(async () => {
     if (!workspaceSlug) {
@@ -150,37 +148,10 @@ export function SkillsMarketView() {
     void loadCatalog()
   }, [loadCatalog])
 
-  useEffect(() => {
-    let cancelled = false
-    setSettingsCwd(null)
-
-    if (activeSection !== 'settings' || !currentThreadId) {
-      return () => {
-        cancelled = true
-      }
-    }
-
-    void resolveSkillSettingsCwd({
-      activeSection,
-      currentThreadId,
-      getThreadPath: (threadId) => getAgentThreadPath(threadId, workspaceSlug ?? undefined),
-    })
-      .then((cwd) => {
-        if (!cancelled) setSettingsCwd(cwd)
-      })
-      .catch(() => {
-        if (!cancelled) setSettingsCwd(null)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [activeSection, currentThreadId, workspaceSlug])
-
   const cards = useMemo(() => {
     const marketCards = buildMarketCards({ plugins, skills }).map(toMarketDisplayCard)
-    return filterMarketCards(marketCards, { query, category, source })
-  }, [category, plugins, query, skills, source])
+    return filterMarketCards(marketCards, { query, category, source, kind: activeKind })
+  }, [activeKind, category, plugins, query, skills, source])
   const summary = useMemo(() => buildMarketSummary({ plugins, skills }), [plugins, skills])
   const sourceViews = useMemo(() => buildMarketSourceViews(skills, plugins), [plugins, skills])
 
@@ -339,20 +310,20 @@ export function SkillsMarketView() {
         <header className="mb-6">
           <h1 className="text-[25px] font-semibold leading-tight text-[#121832]">插件市场</h1>
           <p className="mt-2 text-[14px] leading-6 text-[#60698d]">
-            市场用于发现、审核和安装插件与技能，设置用于管理工作区内的自有技能。
+            市场用于发现、审核和安装插件与技能，可在插件和技能视图之间快速切换。
           </p>
           <div className="mt-5 inline-flex rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
             {([
-              { id: 'market', label: '插件市场' },
-              { id: 'settings', label: '技能设置' },
+              { id: 'plugin', label: `插件 ${summary.totalPlugins}` },
+              { id: 'skill', label: `技能 ${summary.totalSkills}` },
             ] as const).map((section) => (
               <button
                 key={section.id}
                 type="button"
-                onClick={() => setActiveSection(section.id)}
+                onClick={() => setActiveKind(section.id)}
                 className={cn(
                   'h-9 rounded-[6px] px-4 text-[13px] font-semibold transition-colors',
-                  activeSection === section.id
+                  activeKind === section.id
                     ? 'bg-white text-[#121832] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]'
                     : 'text-[#687196] hover:text-[#121832]',
                 )}
@@ -363,92 +334,60 @@ export function SkillsMarketView() {
           </div>
         </header>
 
-        {activeSection === 'market' ? (
-          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_338px] gap-5">
-            <main className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
-              <SkillFilterBar
-                query={query}
-                category={category}
-                source={source}
-                onQueryChange={setQuery}
-                onCategoryChange={setCategory}
-                onSourceChange={setSource}
-              />
-
-              {loading ? (
-                <div className="mt-6 flex h-[180px] items-center justify-center gap-2 rounded-[8px] border border-[#e4e7f1] text-[13px] text-[#626b8f]">
-                  <Loader2 size={16} className="animate-spin" />
-                  正在同步市场...
-                </div>
-              ) : error ? (
-                <div className="mt-6 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
-                  {error}
-                </div>
-              ) : (
-                <MarketCardGrid
-                  cards={cards}
-                  busyItemId={busyItemId}
-                  onAction={(card) => {
-                    if (card.kind === 'skill') void handleSkillAction(card.item as SkillCatalogItem)
-                    else void handlePluginAction(card.item as PluginMarketItem)
-                  }}
-                  onOpenDetail={(card) => {
-                    if (card.kind === 'skill') void handleOpenSkillDetail(card.item as SkillCatalogItem)
-                    else void handleOpenPluginDetail(card.item as PluginMarketItem)
-                  }}
-                />
-              )}
-            </main>
-
-            <SkillSourcePanel
-              loading={loading}
-              sources={sourceViews}
-              summary={summary}
-              lastSyncedAt={lastSyncedAt}
-              onAddSource={() => setSourceDialogOpen(true)}
-              onSync={() => void loadCatalog()}
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_338px] gap-5">
+          <main className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
+            <SkillFilterBar
+              query={query}
+              category={category}
+              source={source}
+              onQueryChange={setQuery}
+              onCategoryChange={setCategory}
+              onSourceChange={setSource}
             />
-          </div>
-        ) : (
-          <SkillSettingsView
-            ref={skillSettingsViewRef}
-            workspaceSlug={workspaceSlug}
-            cwd={settingsCwd}
-            onOpenMarket={() => setActiveSection('market')}
-            onCreateNew={() => {
-              setAddSourceDialogOpen(false)
-              setActiveSection('settings')
-            }}
-            availableWorkspaces={workspaces}
-            onWorkspaceChange={(slug) => {
-              const target = workspaces.find((w) => w.slug === slug)
-              if (target) setCurrentWorkspaceId(target.id)
-            }}
+
+            {loading ? (
+              <div className="mt-6 flex h-[180px] items-center justify-center gap-2 rounded-[8px] border border-[#e4e7f1] text-[13px] text-[#626b8f]">
+                <Loader2 size={16} className="animate-spin" />
+                正在同步市场...
+              </div>
+            ) : error ? (
+              <div className="mt-6 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
+                {error}
+              </div>
+            ) : (
+              <MarketCardGrid
+                cards={cards}
+                activeKind={activeKind}
+                busyItemId={busyItemId}
+                onAction={(card) => {
+                  if (card.kind === 'skill') void handleSkillAction(card.item as SkillCatalogItem)
+                  else void handlePluginAction(card.item as PluginMarketItem)
+                }}
+                onOpenDetail={(card) => {
+                  if (card.kind === 'skill') void handleOpenSkillDetail(card.item as SkillCatalogItem)
+                  else void handleOpenPluginDetail(card.item as PluginMarketItem)
+                }}
+              />
+            )}
+          </main>
+
+          <SkillSourcePanel
+            loading={loading}
+            sources={sourceViews}
+            summary={summary}
+            lastSyncedAt={lastSyncedAt}
+            onAddSource={() => setSourceDialogOpen(true)}
+            onSync={() => void loadCatalog()}
           />
-        )}
+        </div>
       </div>
 
       <AddSkillSourceDialog
         open={sourceDialogOpen}
+        workspaceSlug={workspaceSlug}
         onOpenChange={setSourceDialogOpen}
         onSubmit={handleAddSource}
-      />
-      <SkillAddSourceDialog
-        open={addSourceDialogOpen}
-        onOpenChange={setAddSourceDialogOpen}
-        workspaceSlug={workspaceSlug}
-        onCreateNew={() => {
-          setAddSourceDialogOpen(false)
-          setActiveSection('settings')
-          // 等 SkillSettingsView 挂载后再调用 createNewSkill
-          setTimeout(() => {
-            skillSettingsViewRef.current?.createNewSkill('workspace')
-          }, 50)
-        }}
-        onOpenMarket={() => {
-          setAddSourceDialogOpen(false)
-          setActiveSection('market')
-        }}
+        onCatalogChanged={() => void loadCatalog()}
       />
       <SkillDetailDialog
         open={detailOpen}
@@ -534,11 +473,13 @@ function MarketSelect({
 
 function MarketCardGrid({
   cards,
+  activeKind,
   busyItemId,
   onAction,
   onOpenDetail,
 }: {
   cards: MarketDisplayCard[]
+  activeKind: MarketCardKind
   busyItemId: string | null
   onAction: (card: MarketDisplayCard) => void
   onOpenDetail: (card: MarketDisplayCard) => void
@@ -556,7 +497,9 @@ function MarketCardGrid({
       ))}
       {cards.length === 0 && (
         <div className="col-span-3 rounded-[8px] border border-dashed border-[#d8ddec] p-10 text-center text-[13px] text-[#687196]">
-          当前工作区还没有可展示的插件或 Agent 技能。可添加本地或远程 JSON 市场索引进行同步。
+          {activeKind === 'plugin'
+            ? '当前工作区还没有可展示的插件。可添加本地或 GitHub marketplace root 进行同步。'
+            : '当前工作区还没有可展示的 Agent 技能。可添加市场源或同步已有来源。'}
         </div>
       )}
     </section>
@@ -693,10 +636,13 @@ function SkillSourcePanel({
 
 function AddSkillSourceDialog({
   open,
+  workspaceSlug,
   onOpenChange,
   onSubmit,
+  onCatalogChanged,
 }: {
   open: boolean
+  workspaceSlug: string | null
   onOpenChange: (open: boolean) => void
   onSubmit: (draft: {
     connectionMode: 'local' | 'remote'
@@ -705,17 +651,43 @@ function AddSkillSourceDialog({
     url: string
     localPath: string
   }) => Promise<void>
+  onCatalogChanged: () => void
 }) {
+  const [panel, setPanel] = useState<'source' | 'plugin' | 'skill' | 'format'>('source')
   const [connectionMode, setConnectionMode] = useState<'local' | 'remote'>('remote')
   const [type, setType] = useState<'official' | 'team' | 'local'>('official')
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [localPath, setLocalPath] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [pluginMode, setPluginMode] = useState<'local' | 'remote'>('local')
+  const [pluginLocalPath, setPluginLocalPath] = useState('')
+  const [pluginUrl, setPluginUrl] = useState('')
+  const [pluginReview, setPluginReview] = useState<{
+    source: PluginSourceRef
+    name: string
+    version: string
+    permissionsHash: string
+    risks: string[]
+  } | null>(null)
+  const [skillMode, setSkillMode] = useState<'local' | 'remote'>('local')
+  const [skillLocalPath, setSkillLocalPath] = useState('')
+  const [skillUrl, setSkillUrl] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const handleSubmit = async () => {
-    setBusy(true)
+  const chooseLocalPath = async (target: 'source' | 'plugin' | 'skill') => {
+    const selected = await openFolderDialog()
+    if (!selected.path) return
+    if (target === 'source') setLocalPath(selected.path)
+    if (target === 'plugin') {
+      setPluginLocalPath(selected.path)
+      setPluginReview(null)
+    }
+    if (target === 'skill') setSkillLocalPath(selected.path)
+  }
+
+  const handleSubmitSource = async () => {
+    setBusy('source')
     setError(null)
     try {
       await onSubmit({ connectionMode, type, name, url, localPath })
@@ -723,7 +695,78 @@ function AddSkillSourceDialog({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setBusy(false)
+      setBusy(null)
+    }
+  }
+
+  const handleInspectPlugin = async () => {
+    if (!workspaceSlug) {
+      setError('请先选择工作区')
+      return
+    }
+    setBusy('plugin-review')
+    setError(null)
+    try {
+      const sourceRef = buildDirectPluginSource(pluginMode, pluginLocalPath, pluginUrl)
+      const inspected = await inspectMarketSource({ workspaceSlug, source: sourceRef })
+      if (inspected.kind !== 'plugin') throw new Error('没有检测到有效插件')
+      setPluginReview({
+        source: sourceRef,
+        name: inspected.normalized.displayName ?? inspected.normalized.name,
+        version: inspected.normalized.version,
+        permissionsHash: inspected.permissionsHash,
+        risks: inspected.permissionSummary.riskLabels.map(formatRiskLabel),
+      })
+    } catch (err) {
+      setPluginReview(null)
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleInstallReviewedPlugin = async () => {
+    if (!workspaceSlug || !pluginReview) return
+    setBusy('plugin-install')
+    setError(null)
+    try {
+      await installMarketItem({
+        workspaceSlug,
+        kind: 'plugin',
+        source: pluginReview.source,
+        acceptedPermissionsHash: pluginReview.permissionsHash,
+        enableScope: 'workspace',
+        overwrite: true,
+      })
+      onCatalogChanged()
+      onOpenChange(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleInstallSkill = async () => {
+    if (!workspaceSlug) {
+      setError('请先选择工作区')
+      return
+    }
+    setBusy('skill-install')
+    setError(null)
+    try {
+      if (skillMode === 'local') {
+        await importLocalSkillDirectoryToWorkspace({ workspaceSlug, localPath: skillLocalPath.trim(), overwrite: true })
+      } else {
+        const review = await getGitHubSkillReview({ url: skillUrl.trim() })
+        await installGitHubSkillToWorkspace({ workspaceSlug, url: review.url, reviewToken: review.reviewToken, overwrite: true })
+      }
+      onCatalogChanged()
+      onOpenChange(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
     }
   }
 
@@ -731,12 +774,12 @@ function AddSkillSourceDialog({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#111735]/32 p-6 backdrop-blur-[2px]">
-      <section className="w-full max-w-[560px] rounded-[8px] border border-[#e4e7f1] bg-white shadow-[0_28px_80px_-42px_rgba(18,24,50,0.62)]">
+      <section className="grid max-h-[88vh] w-full max-w-[720px] grid-rows-[auto_minmax(0,1fr)_auto] rounded-[8px] border border-[#e4e7f1] bg-white shadow-[0_28px_80px_-42px_rgba(18,24,50,0.62)]">
         <header className="flex items-start justify-between border-b border-[#edf0f6] px-6 py-5">
           <div>
-            <h2 className="text-[19px] font-semibold leading-7 text-[#121832]">添加新的市场来源</h2>
+            <h2 className="text-[19px] font-semibold leading-7 text-[#121832]">添加技能 / 插件</h2>
             <p className="mt-1 text-[13px] leading-5 text-[#687196]">
-              接入官方、团队或本地 JSON index，添加后可立即同步插件目录。
+              添加 marketplace root，或单独安装插件目录、技能目录、GitHub 地址。
             </p>
           </div>
           <button
@@ -749,122 +792,149 @@ function AddSkillSourceDialog({
           </button>
         </header>
 
-        <div className="space-y-5 px-6 py-5">
-          <fieldset>
-            <legend className="mb-3 text-[13px] font-semibold text-[#121832]">接入方式</legend>
-            <div className="grid grid-cols-2 gap-3">
-              {([
-                { id: 'remote', label: '远程地址', desc: 'HTTPS JSON 市场索引' },
-                { id: 'local', label: '本地文件', desc: '本机 JSON 市场索引' },
-              ] as const).map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => {
-                    setConnectionMode(option.id)
-                    setType(option.id === 'local' ? 'local' : 'official')
-                  }}
-                  className={cn(
-                    'rounded-[8px] border p-3 text-left transition-colors',
-                    connectionMode === option.id
-                      ? 'border-[#635bff] bg-[#f4f2ff] text-[#121832]'
-                      : 'border-[#e4e7f1] bg-white text-[#60698d] hover:bg-[#f8f9fc]',
-                  )}
-                >
-                  <div className="text-[13px] font-semibold">{option.label}</div>
-                  <div className="mt-1 text-[12px] leading-4 text-[#687196]">{option.desc}</div>
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend className="mb-3 text-[13px] font-semibold text-[#121832]">来源类型</legend>
-            <div className="grid grid-cols-3 gap-3">
-              {(connectionMode === 'local'
-                ? [{ id: 'local', label: '本地索引', desc: 'JSON 文件' }]
-                : [
-                { id: 'official', label: '官方源', desc: '受信任市场' },
-                { id: 'team', label: '团队源', desc: '组织共享' },
-                ]
-              ).map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setType(option.id as 'official' | 'team' | 'local')}
-                  className={cn(
-                    'rounded-[8px] border p-3 text-left transition-colors',
-                    type === option.id
-                      ? 'border-[#635bff] bg-[#f4f2ff] text-[#121832]'
-                      : 'border-[#e4e7f1] bg-white text-[#60698d] hover:bg-[#f8f9fc]',
-                  )}
-                >
-                  <div className="text-[13px] font-semibold">{option.label}</div>
-                  <div className="mt-1 text-[12px] text-[#687196]">{option.desc}</div>
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <div className="grid grid-cols-2 gap-4">
-            <SkillSourceField
-              label="源名称"
-              value={name}
-              placeholder="例如：设计团队插件源"
-              onChange={setName}
-            />
-            {connectionMode === 'remote' && (
-              <SkillSourceField
-                label="源地址"
-                value={url}
-                placeholder="https://example.com/lume-market.json"
-                onChange={setUrl}
-              />
-            )}
+        <div className="min-h-0 overflow-y-auto px-6 py-5">
+          <div className="mb-5 grid grid-cols-4 gap-2 rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
+            {([
+              { id: 'source', label: '市场源' },
+              { id: 'plugin', label: '单独安装插件' },
+              { id: 'skill', label: '单独安装技能' },
+              { id: 'format', label: '格式说明' },
+            ] as const).map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => {
+                  setPanel(option.id)
+                  setError(null)
+                }}
+                className={cn(
+                  'h-9 rounded-[6px] px-3 text-[12px] font-semibold transition-colors',
+                  panel === option.id ? 'bg-white text-[#121832] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]' : 'text-[#687196] hover:text-[#121832]',
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
 
-          {connectionMode === 'local' && (
-            <SkillSourceField
-              label="索引路径"
-              value={localPath}
-              placeholder="/Users/me/.lume/market.json"
-              onChange={setLocalPath}
-            />
+          {panel === 'source' && (
+            <div className="space-y-5">
+              <SourceModeSwitch value={connectionMode} onChange={(value) => {
+                setConnectionMode(value)
+                setType(value === 'local' ? 'local' : 'official')
+              }} localLabel="本地 marketplace root" remoteLabel="GitHub marketplace root" />
+              <div className="grid grid-cols-2 gap-4">
+                <SkillSourceField label="源名称" value={name} placeholder="例如：superpowers-dev" onChange={setName} />
+                {connectionMode === 'remote' && (
+                  <SkillSourceField label="GitHub root 地址" value={url} placeholder="https://github.com/org/repo/tree/main/path" onChange={setUrl} />
+                )}
+              </div>
+              {connectionMode === 'local' && (
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+                  <SkillSourceField label="marketplace root" value={localPath} placeholder="/Users/me/marketplace-root" onChange={setLocalPath} />
+                  <ChooseFolderButton onClick={() => void chooseLocalPath('source')} />
+                </div>
+              )}
+              <FormatHint compact />
+            </div>
           )}
+
+          {panel === 'plugin' && (
+            <div className="space-y-5">
+              <SourceModeSwitch value={pluginMode} onChange={(value) => {
+                setPluginMode(value)
+                setPluginReview(null)
+              }} localLabel="插件目录" remoteLabel="GitHub 插件" />
+              {pluginMode === 'local' ? (
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+                  <SkillSourceField label="插件目录" value={pluginLocalPath} placeholder="/Users/me/plugin-root" onChange={(value) => {
+                    setPluginLocalPath(value)
+                    setPluginReview(null)
+                  }} />
+                  <ChooseFolderButton onClick={() => void chooseLocalPath('plugin')} />
+                </div>
+              ) : (
+                <SkillSourceField label="GitHub 插件地址" value={pluginUrl} placeholder="https://github.com/org/repo/tree/main/plugin" onChange={(value) => {
+                  setPluginUrl(value)
+                  setPluginReview(null)
+                }} />
+              )}
+              <button
+                type="button"
+                disabled={busy !== null || (pluginMode === 'local' ? !pluginLocalPath.trim() : !pluginUrl.trim())}
+                onClick={() => void handleInspectPlugin()}
+                className="flex h-10 items-center gap-2 rounded-[6px] border border-[#bdb6ff] px-4 text-[13px] font-semibold text-[#635bff] hover:bg-[#f5f3ff] disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                {busy === 'plugin-review' ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                检查权限
+              </button>
+              {pluginReview && (
+                <div className="rounded-[8px] border border-[#e4e7f1] bg-[#fbfcff] p-4">
+                  <div className="text-[13px] font-semibold text-[#121832]">{pluginReview.name} v{pluginReview.version}</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {pluginReview.risks.length > 0 ? pluginReview.risks.map((risk) => (
+                      <span key={risk} className="rounded-[5px] bg-[#fff4e5] px-2 py-1 text-[12px] font-semibold text-[#a45f00]">{risk}</span>
+                    )) : (
+                      <span className="rounded-[5px] bg-[#eaf8f0] px-2 py-1 text-[12px] font-semibold text-[#168653]">低风险</span>
+                    )}
+                  </div>
+                  <div className="mt-3 break-all font-mono text-[12px] leading-5 text-[#687196]">{pluginReview.permissionsHash}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {panel === 'skill' && (
+            <div className="space-y-5">
+              <SourceModeSwitch value={skillMode} onChange={setSkillMode} localLabel="技能目录" remoteLabel="GitHub 技能" />
+              {skillMode === 'local' ? (
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+                  <SkillSourceField label="技能目录" value={skillLocalPath} placeholder="/Users/me/skills/debugging 或 /Users/me/skills" onChange={setSkillLocalPath} />
+                  <ChooseFolderButton onClick={() => void chooseLocalPath('skill')} />
+                </div>
+              ) : (
+                <SkillSourceField label="GitHub 技能地址" value={skillUrl} placeholder="https://github.com/org/repo/tree/main/skills/debugging" onChange={setSkillUrl} />
+              )}
+              <div className="rounded-[8px] border border-[#e1e9ff] bg-[#f7f9ff] p-4 text-[12px] leading-5 text-[#687196]">
+                本地可以选择一个包含 SKILL.md 的技能目录，也可以选择包含多个技能子目录的父目录。远程地址会先走 GitHub skill review，再安装到当前工作区。
+              </div>
+            </div>
+          )}
+
+          {panel === 'format' && <MarketplaceFormatGuide />}
 
           {error && (
-            <div className="rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-3 text-[12px] leading-5 text-[#ba3636]">
-              {error}
-            </div>
+            <div className="mt-5 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-3 text-[12px] leading-5 text-[#ba3636]">{error}</div>
           )}
-
-          <div className="rounded-[8px] border border-[#e1e9ff] bg-[#f7f9ff] p-4">
-            <div className="flex items-center gap-2 text-[13px] font-semibold text-[#121832]">
-              <ShieldCheck size={18} className="text-[#20c579]" />
-              信任与同步
-            </div>
-            <p className="mt-2 text-[12px] leading-5 text-[#687196]">
-              新市场源默认启用手动审核。同步后，插件会标记为“外部市场源”，安装前必须确认权限摘要。
-            </p>
-          </div>
         </div>
 
-        <footer className="flex items-center justify-end gap-3 border-t border-[#edf0f6] px-6 py-4">
+        <footer className="flex items-center justify-between gap-3 border-t border-[#edf0f6] px-6 py-4">
           <button
             type="button"
-            onClick={() => onOpenChange(false)}
-            className="h-9 rounded-[6px] border border-[#dfe3ee] px-4 text-[13px] font-semibold text-[#60698d] hover:bg-[#f8f9fc]"
+            onClick={() => setPanel('format')}
+            className="flex h-9 items-center gap-2 rounded-[6px] px-3 text-[13px] font-semibold text-[#60698d] hover:bg-[#f8f9fc]"
           >
-            取消
+            <Info size={16} />
+            支持格式
           </button>
-          <button
-            type="button"
-            disabled={busy || (connectionMode === 'remote' ? !url.trim() : !localPath.trim())}
-            onClick={() => void handleSubmit()}
-            className="h-9 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff]"
-          >
-            {busy ? '同步中...' : '添加并同步'}
-          </button>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => onOpenChange(false)} className="h-9 rounded-[6px] border border-[#dfe3ee] px-4 text-[13px] font-semibold text-[#60698d] hover:bg-[#f8f9fc]">取消</button>
+            {panel === 'source' && (
+              <button type="button" disabled={busy !== null || (connectionMode === 'remote' ? !url.trim() : !localPath.trim())} onClick={() => void handleSubmitSource()} className="h-9 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff] disabled:cursor-not-allowed disabled:opacity-55">
+                {busy === 'source' ? '同步中...' : '添加并同步'}
+              </button>
+            )}
+            {panel === 'plugin' && (
+              <button type="button" disabled={busy !== null || !pluginReview} onClick={() => void handleInstallReviewedPlugin()} className="h-9 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff] disabled:cursor-not-allowed disabled:opacity-55">
+                {busy === 'plugin-install' ? '安装中...' : '确认安装插件'}
+              </button>
+            )}
+            {panel === 'skill' && (
+              <button type="button" disabled={busy !== null || (skillMode === 'local' ? !skillLocalPath.trim() : !skillUrl.trim())} onClick={() => void handleInstallSkill()} className="h-9 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff] disabled:cursor-not-allowed disabled:opacity-55">
+                {busy === 'skill-install' ? '安装中...' : '审查并安装技能'}
+              </button>
+            )}
+          </div>
         </footer>
       </section>
     </div>
@@ -892,6 +962,89 @@ function SkillSourceField({
         className="mt-2 h-10 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-3 text-[13px] text-[#121832] outline-none placeholder:text-[#9aa2bd] focus:border-[#bdb6ff]"
       />
     </label>
+  )
+}
+
+function ChooseFolderButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="h-10 rounded-[6px] border border-[#dfe3ee] px-4 text-[13px] font-semibold text-[#46527a] hover:bg-[#f8f9fc]"
+    >
+      选择目录
+    </button>
+  )
+}
+
+function SourceModeSwitch({
+  value,
+  onChange,
+  localLabel,
+  remoteLabel,
+}: {
+  value: 'local' | 'remote'
+  onChange: (value: 'local' | 'remote') => void
+  localLabel: string
+  remoteLabel: string
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {([
+        { id: 'local', label: localLabel },
+        { id: 'remote', label: remoteLabel },
+      ] as const).map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          onClick={() => onChange(option.id)}
+          className={cn(
+            'rounded-[8px] border p-3 text-left text-[13px] font-semibold transition-colors',
+            value === option.id
+              ? 'border-[#635bff] bg-[#f4f2ff] text-[#121832]'
+              : 'border-[#e4e7f1] bg-white text-[#60698d] hover:bg-[#f8f9fc]',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function FormatHint({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="rounded-[8px] border border-[#e1e9ff] bg-[#f7f9ff] p-4 text-[12px] leading-5 text-[#687196]">
+      市场源必须是 marketplace root，根目录下存在 <span className="font-mono text-[#46527a]">.lume-plugin/marketplace.json</span>
+      {compact ? '。' : '，其中 plugins[] 和 skills[] 的 source 都是相对 root 的目录路径。'}
+    </div>
+  )
+}
+
+function MarketplaceFormatGuide() {
+  return (
+    <div className="space-y-4 text-[13px] leading-6 text-[#60698d]">
+      <FormatHint />
+      <div className="rounded-[8px] border border-[#e4e7f1] bg-white p-4">
+        <div className="font-semibold text-[#121832]">marketplace.json</div>
+        <pre className="mt-3 overflow-auto rounded-[8px] bg-[#fbfcff] p-3 font-mono text-[12px] leading-5 text-[#26304f]">
+{`{
+  "name": "superpowers-dev",
+  "description": "Development marketplace",
+  "plugins": [
+    { "name": "superpowers", "version": "6.0.2", "source": "./" }
+  ],
+  "skills": [
+    { "name": "debugging", "version": "1.0.0", "source": "./skills/debugging" }
+  ]
+}`}
+        </pre>
+      </div>
+      <div className="rounded-[8px] border border-[#e4e7f1] bg-white p-4">
+        插件目录需要包含 <span className="font-mono">.lume-plugin/plugin.json</span> 或 <span className="font-mono">.codex-plugin/plugin.json</span>。
+        技能目录需要包含 <span className="font-mono">SKILL.md</span>。<span className="font-mono">plugins[]</span> 和 <span className="font-mono">skills[]</span> 至少有一个非空数组。
+      </div>
+    </div>
   )
 }
 
@@ -1436,6 +1589,47 @@ function buildMarketSourceRef(draft: {
     enabled: true,
     url: location,
   }
+}
+
+function buildDirectPluginSource(mode: 'local' | 'remote', localPath: string, url: string): PluginSourceRef {
+  if (mode === 'local') {
+    const path = localPath.trim()
+    if (!path) throw new Error('请选择插件目录')
+    return { type: 'local', path }
+  }
+
+  const parsed = parseGitHubPluginUrl(url.trim())
+  return {
+    type: 'github',
+    owner: parsed.owner,
+    repo: parsed.repo,
+    ref: parsed.ref,
+    url: parsed.url,
+    ...(parsed.subdir ? { subdir: parsed.subdir } : {}),
+  }
+}
+
+function parseGitHubPluginUrl(input: string): { owner: string; repo: string; ref: string; subdir?: string; url: string } {
+  if (!input) throw new Error('请输入 GitHub 插件地址')
+  let url: URL
+  try {
+    url = new URL(input)
+  } catch {
+    throw new Error('GitHub URL 非法')
+  }
+  if (url.protocol !== 'https:' || url.hostname !== 'github.com') {
+    throw new Error('仅支持 github.com 地址')
+  }
+  const segments = url.pathname.replace(/^\/|\/$/g, '').split('/').filter(Boolean)
+  const owner = segments[0] ?? ''
+  const repo = (segments[1] ?? '').replace(/\.git$/i, '')
+  if (!owner || !repo) throw new Error('GitHub URL 缺少 owner/repo')
+  if (segments[2] === 'tree') {
+    const ref = segments[3] ?? ''
+    if (!ref) throw new Error('GitHub tree URL 缺少 ref')
+    return { owner, repo, ref, subdir: segments.slice(4).join('/') || undefined, url: input }
+  }
+  return { owner, repo, ref: 'main', url: input }
 }
 
 function inferMarketSourceName(location: string): string {

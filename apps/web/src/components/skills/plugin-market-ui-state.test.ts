@@ -82,6 +82,18 @@ describe('plugin-market-ui-state', () => {
       .toEqual(['Database Plugin'])
   })
 
+  test('filters mixed market cards by selected kind', () => {
+    const cards = buildMarketCards({
+      plugins: [plugin({ name: 'Database Plugin' })],
+      skills: [skill({ name: 'Release Notes' })],
+    })
+
+    expect(filterMarketCards(cards, { query: '', category: '全部分类', source: '全部来源', kind: 'plugin' }).map((card) => card.name))
+      .toEqual(['Database Plugin'])
+    expect(filterMarketCards(cards, { query: '', category: '全部分类', source: '全部来源', kind: 'skill' }).map((card) => card.name))
+      .toEqual(['Release Notes'])
+  })
+
   test('labels plugin actions from install and enable state', () => {
     expect(buildPluginActionLabel(plugin({ installState: 'not-installed', enableState: 'not-installed' }))).toBe('安装')
     expect(buildPluginActionLabel(plugin({ installState: 'update-available', enableState: 'disabled' }))).toBe('更新')

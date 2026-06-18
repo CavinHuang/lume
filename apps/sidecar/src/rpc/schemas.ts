@@ -1,4 +1,4 @@
-import { normalizeMcpTransport, type InspectMarketSourceRef, type PluginSourceRef } from "@lume/shared";
+import { normalizeMcpTransport, type InspectMarketSourceRef, type PluginSourceRef, type SkillMarketSourceRef } from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "./validation";
 
 const relativeThreadPathSchema = z.string()
@@ -893,8 +893,20 @@ const pluginSourceRefSchema: z.ZodType<PluginSourceRef> = z.lazy(() =>
   ])
 );
 
+const skillMarketSourceRefSchema: z.ZodType<SkillMarketSourceRef> = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("skill-local"),
+    path: z.string().trim().min(1)
+  }).strict(),
+  z.object({
+    type: z.literal("skill-github"),
+    url: z.string().url()
+  }).strict()
+]);
+
 const inspectMarketSourceRefSchema: z.ZodType<InspectMarketSourceRef> = z.union([
   pluginSourceRefSchema,
+  skillMarketSourceRefSchema,
   z.object({
     type: z.literal("market-item"),
     sourceId: idSchema,
