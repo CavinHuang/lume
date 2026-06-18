@@ -137,3 +137,126 @@ function generateReleaseNotes(tag, groupedCommits) {
 }
 
 export { generateReleaseNotes };
+
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.length === 0 || args.includes("--help") || args.includes("-h")) {
+    console.log("Usage: bun scripts/release.mjs <version> [--patch|--minor|--major]");
+    console.log("  version: target version tag, e.g. v0.1.1");
+    console.log("  --patch/--minor/--major: auto-bump type (default: patch)");
+    process.exit(0);
+  }
+
+  const targetTag = args.find(a => a.startsWith("v"));
+  if (!targetTag) {
+    console.error("Error: version tag required (e.g. v0.1.1)");
+    process.exit(1);
+  }
+  const bumpType = args.includes("--major") ? "major"
+    : args.includes("--minor") ? "minor"
+    : "patch";
+
+  // 1. Check clean working tree
+  console.log("\n📋 Checking working tree...");
+  const status = run("git", ["status", "--porcelain"]);
+  if (status) {
+    console.error("Error: working tree is not clean:\n" + status);
+    process.exit(1);
+  }
+  console.log("  ✓ Clean");
+
+  // 2. Get last tag
+  console.log("\n🏷️  Finding last tag...");
+  const lastTag = getLastTag();
+  console.log(`  Last tag: ${lastTag || "(none)"}`);
+
+  // 3. Extract commits
+  console.log(`\n📝 Commits since ${lastTag || "beginning"}:`);
+  const rawLog = getCommitsSince(lastTag);
+  if (!rawLog) {
+    console.error("Error: no commits found");
+    process.exit(1);
+  }
+  console.log(rawLog);
+
+  const grouped = parseCommits(rawLog);
+  const totalCommits = Object.values(grouped).reduce((sum, arr) => sum + arr.length, 0);
+  console.log(`\n  Total: ${totalCommits} commit(s)`);
+
+  // 4. Confirm continue
+  console.log(`\n🔖 Target version: ${targetTag} (${bumpType} bump)`);
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise(resolve =>
+    rl.question("Continue? [Y/n] ", resolve)
+  );
+  rl.close();
+  if (answer.toLowerCase() === "n") {
+    console.log("Aborted.");
+    process.exit(0);
+  }
+
+  // 5. Determine new version
+  const rootPkg = JSON.parse(run("git", ["show", "HEAD:package.json"]));
+  const currentVersion = rootPkg.version;
+  const newVersion = bumpVersion(currentVersion, bumpType);
+  console.log(`\n🔢 Version: ${currentVersion} → ${newVersion}`);
+
+  // 6. Generate and show release notes
+  console.log("\n📄 Generating release notes...");
+  const notesPath = generateReleaseNotes(targetTag, grouped);
+
+  const notesContent = run("git", ["show", `HEAD:${notesPath}`]);
+  console.log("\n--- Release Notes Preview ---");
+  console.log(notesContent);
+  console.log("--- End ---\n");
+
+  const confirm = await new Promise(resolve => {
+    const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl2.question("Accept release notes? [Y/n/edit] ", answer => {
+      rl2.close();
+      resolve(answer.toLowerCase());
+    });
+  });
+  if (confirm === "n") {
+    console.log("Aborted.");
+    process.exit(0);
+  }
+
+  // 7. Bump versions in 3 files
+  console.log("\n🔧 Bumping versions...");
+  updateJsonFile(resolve(REPO_ROOT, "package.json"), newVersion);
+  updateJsonFile(resolve(REPO_ROOT, "apps", "desktop", "package.json"), newVersion);
+  updateJsonFile(resolve(REPO_ROOT, "apps", "desktop", "src-tauri", "tauri.conf.json"), newVersion);
+
+  // 8. Commit
+  console.log("\n📦 Committing...");
+  run("git", ["add",
+    "package.json",
+    "apps/desktop/package.json",
+    "apps/desktop/src-tauri/tauri.conf.json",
+    notesPath,
+  ]);
+  run("git", ["commit", "-m", `chore: release ${targetTag}`]);
+  console.log("  ✓ Committed");
+
+  // 9. Push
+  console.log("\n🚀 Pushing...");
+  run("git", ["push"]);
+  console.log("  ✓ Pushed");
+
+  // 10. Tag
+  console.log("\n🏷️  Tagging...");
+  run("git", ["tag", targetTag]);
+  run("git", ["push", "origin", targetTag]);
+  console.log(`  ✓ Tag ${targetTag} pushed`);
+
+  console.log(`\n✅ Release ${targetTag} complete!`);
+  console.log(`   CI will build and create a draft release.`);
+  console.log(`   Release notes: ${notesPath}`);
+}
+
+main().catch(err => {
+  console.error(`\n❌ ${err.message}`);
+  process.exit(1);
+});
