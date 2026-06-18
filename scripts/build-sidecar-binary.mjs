@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -83,21 +83,26 @@ const tmpDir = resolve(REPO_ROOT, "apps", "desktop", "src-tauri", "binaries", "_
 rmSync(tmpDir, { recursive: true, force: true });
 mkdirSync(tmpDir, { recursive: true });
 
+console.error(`[sidecar-binary] workspace nm: ${existsSync(WORKSPACE_NM) ? "found" : "NOT FOUND"} at ${WORKSPACE_NM}`);
+console.error(`[sidecar-binary] sidecar nm: ${existsSync(NODE_MODULES_SRC) ? "found" : "NOT FOUND"} at ${NODE_MODULES_SRC}`);
+
 let stagedCount = 0;
 for (const pkg of packagesToCopy) {
-  // Try workspace root first (Bun installs there), then sidecar's own node_modules
   const src = resolve(WORKSPACE_NM, pkg);
   const fallback = resolve(NODE_MODULES_SRC, pkg);
-  const pkgSrc = existsSync(src) ? src : existsSync(fallback) ? fallback : null;
+  const wsExists = existsSync(src);
+  const fbExists = existsSync(fallback);
+  const pkgSrc = wsExists ? src : fbExists ? fallback : null;
   if (!pkgSrc) {
-    console.error(`[sidecar-binary] WARNING: ${pkg} not found, skipping`);
+    console.error(`[sidecar-binary] WARNING: ${pkg} not found (workspace:${wsExists}, sidecar:${fbExists})`);
     continue;
   }
+  const srcLabel = wsExists ? "workspace" : "sidecar";
   const dst = resolve(tmpDir, pkg);
   mkdirSync(dst, { recursive: true });
   copyDirReal(pkgSrc, dst);
   stagedCount += 1;
-  console.error(`[sidecar-binary] staged ${pkgSrc} -> _nm-tmp/${pkg}`);
+  console.error(`[sidecar-binary] staged ${pkg} from ${srcLabel}: ${pkgSrc}`);
 }
 
 if (stagedCount === 0) {
@@ -139,11 +144,13 @@ function copyDirReal(src, dst) {
   for (const entry of readdirSync(src)) {
     const s = resolve(src, entry);
     const d = resolve(dst, entry);
-    const st = statSync(s);
+    // realpathSync dereferences symlinks and junctions on all platforms
+    const realSrc = realpathSync(s);
+    const st = statSync(realSrc);
     if (st.isDirectory()) {
-      copyDirReal(s, d);
+      copyDirReal(realSrc, d);
     } else {
-      copyFileSync(s, d);
+      copyFileSync(realSrc, d);
     }
   }
 }
