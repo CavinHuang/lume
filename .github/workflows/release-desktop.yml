@@ -79,13 +79,14 @@ jobs:
 
       - name: Read release notes
         id: release_notes
+        shell: bash
         run: |
           if [ -f "docs/release/${{ github.ref_name }}.md" ]; then
-            echo "body<<EOF" >> $GITHUB_OUTPUT
-            cat docs/release/${{ github.ref_name }}.md >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            echo "body<<EOF" >> "$GITHUB_OUTPUT"
+            cat "docs/release/${{ github.ref_name }}.md" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
           else
-            echo "body=No release notes found for ${{ github.ref_name }}." >> $GITHUB_OUTPUT
+            echo "body=No release notes found for ${{ github.ref_name }}." >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and upload Tauri bundles
