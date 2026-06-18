@@ -16,7 +16,6 @@ if (!bunBin || !cwd || !entry) {
 }
 
 const child = spawn(bunBin, [entry], {
-  cwd,
   env: process.env,
   stdio: ["pipe", "pipe", "pipe"]
 });

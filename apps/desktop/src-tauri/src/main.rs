@@ -1510,6 +1510,7 @@ fn spawn_bundled_sidecar_js(app: &tauri::AppHandle) -> Option<Child> {
     let mut process = Command::new(&node_bin);
     process
         .args(&bridge_args)
+        .current_dir(&cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
