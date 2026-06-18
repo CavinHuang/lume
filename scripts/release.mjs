@@ -59,7 +59,7 @@ function bumpVersion(version, type) {
   return `${major}.${minor}.${patch + 1}`;
 }
 
-function updateJsonFile(path, newVersion) {
+async function updateJsonFile(path, newVersion) {
   const fs = await import("node:fs");
   const content = fs.readFileSync(path, "utf-8");
   const updated = content.replace(
