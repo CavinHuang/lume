@@ -30,6 +30,7 @@
     "@types/node": "^25.9.2",
     "asar": "^3.2.0",
     "concurrently": "^9.2.1",
+    "fflate": "^0.8.3",
     "typescript": "^5.9.3"
   }
 }
