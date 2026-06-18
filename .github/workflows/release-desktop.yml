@@ -77,6 +77,17 @@ jobs:
           bun scripts/build-sidecar-binary.mjs
           bun scripts/build-default-skills-archive.mjs
 
+      - name: Read release notes
+        id: release_notes
+        run: |
+          if [ -f "docs/release/${{ github.ref_name }}.md" ]; then
+            echo "body<<EOF" >> $GITHUB_OUTPUT
+            cat docs/release/${{ github.ref_name }}.md >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "body=No release notes found for ${{ github.ref_name }}." >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and upload Tauri bundles
         uses: tauri-apps/tauri-action@v0
         env:
@@ -89,7 +100,7 @@ jobs:
           projectPath: apps/desktop
           tagName: ${{ github.ref_name }}
           releaseName: "Lume ${{ github.ref_name }}"
-          releaseBody: "Desktop release for ${{ github.ref_name }}."
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.platform.args }} --config src-tauri/tauri.release.conf.json
