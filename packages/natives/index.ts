@@ -89,6 +89,21 @@ export interface NativeGlobResult {
   total_matches: number;
 }
 
+export interface NativeListWorkspaceOptions {
+  path: string;
+  max_depth: number;
+  hidden?: boolean;
+  gitignore?: boolean;
+  collect_agents_md?: boolean;
+  timeout_ms?: number;
+}
+
+export interface NativeListWorkspaceResult {
+  entries: NativeGlobMatch[];
+  agents_md_files: string[];
+  truncated: boolean;
+}
+
 // ── Native loader ──────────────────────────────────────
 
 type NativeModule = {
@@ -115,6 +130,7 @@ type NativeModule = {
     multiline?: boolean,
   ): boolean;
   glob(options: NativeGlobOptions): Promise<NativeGlobResult>;
+  listWorkspace(options: NativeListWorkspaceOptions): Promise<NativeListWorkspaceResult>;
   fuzzyFind(options: {
     query: string;
     path: string;
@@ -282,6 +298,24 @@ export async function nativeGlob(
 
   try {
     return await native.glob(options);
+  } catch {
+    return null;
+  }
+}
+
+// ── Workspace Scan ───────────────────────────────────
+
+/**
+ * Native bounded workspace tree scan. Returns null if native unavailable.
+ */
+export async function nativeListWorkspace(
+  options: NativeListWorkspaceOptions,
+): Promise<NativeListWorkspaceResult | null> {
+  const native = loadNative();
+  if (!native) return null;
+
+  try {
+    return await native.listWorkspace(options);
   } catch {
     return null;
   }

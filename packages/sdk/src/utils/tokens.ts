@@ -5,6 +5,8 @@
  * API-based exact counting when available.
  */
 
+import { countStringTokens } from '@lume/natives'
+
 /**
  * Rough token estimation.
  *
@@ -14,6 +16,12 @@
  */
 export function estimateTokens(text: string): number {
   if (!text) return 0
+  try {
+    const nativeCount = countStringTokens(text)
+    if (nativeCount > 0) return nativeCount
+  } catch {
+    // Fall back to the cheap local estimate when native loading/counting fails.
+  }
   let asciiChars = 0
   let fullTokenChars = 0
 

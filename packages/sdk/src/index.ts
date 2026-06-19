@@ -51,6 +51,7 @@ export type { McpSdkServerConfig } from './sdk-mcp-server.js'
 // --------------------------------------------------------------------------
 
 export { QueryEngine } from './engine.js'
+export { resolveShellInvocation } from './utils/shell-invocation.js'
 
 // --------------------------------------------------------------------------
 // LLM Providers (Anthropic + OpenAI)
@@ -92,8 +93,10 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  FindFilesTool,
   GlobTool,
   GrepTool,
+  ListWorkspaceTreeTool,
   NotebookEditTool,
 
   // Web

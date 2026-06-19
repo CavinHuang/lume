@@ -2,7 +2,6 @@
  * GlobTool - File pattern matching
  */
 
-import { spawn } from 'child_process'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
 import { isNativeAvailable, nativeGlob } from '@lume/natives'
@@ -87,30 +86,12 @@ export const GlobTool = defineTool({
         }
       }
     } catch {
-      // Fall through to bash-based approach
+      // Fall through to an explicit unavailable result.
     }
 
-    // Fallback: use bash find/glob
-    return new Promise<string>((resolvePromise) => {
-      const cmd = `shopt -s globstar nullglob 2>/dev/null; cd ${JSON.stringify(searchDir)} && ls -1d ${pattern} 2>/dev/null | head -500`
-      const proc = spawn('bash', ['-c', cmd], {
-        cwd: searchDir,
-        timeout: 30000,
-      })
-
-      const chunks: Buffer[] = []
-      proc.stdout?.on('data', (d: Buffer) => chunks.push(d))
-      proc.on('close', () => {
-        const result = Buffer.concat(chunks).toString('utf-8').trim()
-        resolvePromise(JSON.stringify({
-          pattern,
-          path: searchDir,
-          matches: result ? result.split(/\r?\n/).filter(Boolean) : [],
-        }, null, 2))
-      })
-      proc.on('error', () => {
-        resolvePromise(`Error searching for files with pattern "${pattern}"`)
-      })
-    })
+    return {
+      data: 'Glob is unavailable: native glob failed and Node fs.promises.glob is not available',
+      is_error: true,
+    }
   },
 })

@@ -16,3 +16,4 @@ pub mod grep;
 pub mod glob;
 pub mod fd;
 pub mod ast;
+pub mod workspace;

@@ -1,4 +1,5 @@
 import type { AgentMessageAttachmentInput, AgentSendInput } from "@lume/shared";
+import { estimateTokens } from "@lume/agent-sdk";
 import {
   buildDynamicContext,
   buildSystemPromptAppend
@@ -229,8 +230,4 @@ function resolvePromptMemorySessionType(input: {
   if (input.threadType) return input.threadType;
   if (input.chatType === "group" || input.chatType === "channel") return input.chatType;
   return "main";
-}
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }

@@ -24,6 +24,7 @@
  */
 
 import { spawn } from 'child_process'
+import { resolveShellInvocation } from './utils/shell-invocation.js'
 import type {
   SDKHookProgressMessage,
   SDKHookResponseMessage,
@@ -316,7 +317,8 @@ async function executeShellHook(
   exitCode?: number
 }> {
   return new Promise((resolve) => {
-    const proc = spawn('bash', ['-c', command], {
+    const shell = resolveShellInvocation(command)
+    const proc = spawn(shell.command, shell.args, {
       timeout,
       env: {
         ...process.env,

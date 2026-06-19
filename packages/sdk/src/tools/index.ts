@@ -13,9 +13,11 @@ import { BashTool } from './bash.js'
 import { FileReadTool } from './read.js'
 import { FileWriteTool } from './write.js'
 import { FileEditTool } from './edit.js'
+import { FindFilesTool } from './find-files.js'
 import { GlobTool } from './glob.js'
 import { GrepTool } from './grep.js'
 import { NotebookEditTool } from './notebook-edit.js'
+import { ListWorkspaceTreeTool } from './workspace-tree.js'
 
 // Web
 import { WebFetchTool } from './web-fetch.js'
@@ -83,8 +85,10 @@ const ALL_TOOLS: ToolDefinition[] = [
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  FindFilesTool,
   GlobTool,
   GrepTool,
+  ListWorkspaceTreeTool,
   NotebookEditTool,
 
   // Web
@@ -215,8 +219,10 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  FindFilesTool,
   GlobTool,
   GrepTool,
+  ListWorkspaceTreeTool,
   NotebookEditTool,
   WebFetchTool,
   WebSearchTool,

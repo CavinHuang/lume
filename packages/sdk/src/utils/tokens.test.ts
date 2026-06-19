@@ -1,7 +1,26 @@
-import { describe, expect, test } from "bun:test"
-import { estimateMessagesTokens, estimateTokens } from "./tokens.js"
+import { beforeEach, describe, expect, mock, test } from "bun:test"
+
+let nativeTokenCount = 0
+const countStringTokensMock = mock((_text: string, _model?: string) => nativeTokenCount)
+
+mock.module("@lume/natives", () => ({
+  countStringTokens: countStringTokensMock,
+}))
+
+const { estimateMessagesTokens, estimateTokens } = await import("./tokens.js")
 
 describe("token estimation", () => {
+  beforeEach(() => {
+    nativeTokenCount = 0
+    countStringTokensMock.mockClear()
+  })
+
+  test("uses native token counting when available", () => {
+    nativeTokenCount = 17
+
+    expect(estimateTokens("hello world")).toBe(17)
+  })
+
   test("counts CJK characters as full tokens instead of ASCII quarters", () => {
     expect(estimateTokens("你好世界")).toBe(4)
   })

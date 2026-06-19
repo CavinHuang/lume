@@ -6,6 +6,7 @@ import type {
   HookOutput,
   SensitiveCapabilityKey,
 } from "@lume/agent-sdk";
+import { resolveShellInvocation } from "@lume/agent-sdk";
 import type { PluginPermissionRuntime } from "./permission-runtime.js";
 
 /** A capability's resolved hooks paired with its source pluginId. */
@@ -35,7 +36,8 @@ export type ShellHookSpawner = (
  */
 export const defaultShellHookSpawner: ShellHookSpawner = (command, input, timeout, signal) => {
   return new Promise((resolve) => {
-    const proc = spawn("bash", ["-c", command], {
+    const shell = resolveShellInvocation(command);
+    const proc = spawn(shell.command, shell.args, {
       timeout,
       env: {
         ...process.env,

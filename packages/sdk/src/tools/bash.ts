@@ -8,6 +8,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { defineTool } from './types.js'
+import { resolveShellInvocation } from '../utils/shell-invocation.js'
 
 export const BashTool = defineTool({
   name: 'Bash',
@@ -65,7 +66,8 @@ export const BashTool = defineTool({
         session_id: context.sessionId || '',
       })
 
-      const proc = spawn('bash', ['-c', command], {
+      const shell = resolveShellInvocation(command)
+      const proc = spawn(shell.command, shell.args, {
         cwd: context.cwd,
         env: { ...process.env },
         timeout: timeoutMs,
@@ -166,7 +168,8 @@ export const BashTool = defineTool({
       const chunks: Buffer[] = []
       const errChunks: Buffer[] = []
 
-      const proc = spawn('bash', ['-c', command], {
+      const shell = resolveShellInvocation(command)
+      const proc = spawn(shell.command, shell.args, {
         cwd: context.cwd,
         env: { ...process.env },
         timeout: timeoutMs,
