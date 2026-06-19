@@ -11,6 +11,9 @@ const TARGETS = {
 };
 const REQUIRED_RESOURCES = ["resources/default-skills.tar", "binaries/lume-natives.node"];
 const FORBIDDEN_RESOURCE_MARKERS = ["lume-sidecar.js", "sidecar-node-bridge", "node-modules"];
+const APP_ICON = resolve(TAURI_DIR, "icons", "icon.png");
+
+verifyPngIs8BitRgba(APP_ICON);
 
 const target = process.env.TAURI_TARGET_TRIPLE;
 const binaryName = TARGETS[target];
@@ -41,6 +44,19 @@ for (const resource of resources) {
 }
 
 console.error(`[verify-package-inputs] ok for ${target}`);
+
+function verifyPngIs8BitRgba(file) {
+  const bytes = readFileSync(file);
+  const pngSignature = "89504e470d0a1a0a";
+  if (bytes.subarray(0, 8).toString("hex") !== pngSignature) {
+    fail(`app icon must be a PNG: ${file}`);
+  }
+  const bitDepth = bytes[24];
+  const colorType = bytes[25];
+  if (bitDepth !== 8 || colorType !== 6) {
+    fail(`app icon must be 8-bit RGBA PNG for Tauri tray icon, got bitDepth=${bitDepth} colorType=${colorType}`);
+  }
+}
 
 function fail(message) {
   console.error(`[verify-package-inputs] ${message}`);
