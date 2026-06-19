@@ -7,8 +7,8 @@
 import { ExternalLink } from 'lucide-react'
 import { openExternal } from '@/lib/desktop-api'
 import { Separator } from '@/components/ui/separator'
+import { APP_VERSION } from '@/lib/app-version'
 
-const APP_VERSION = '0.1.0'
 const GITHUB_URL = 'https://github.com/anthropics/lume'
 
 export function AboutSettings() {

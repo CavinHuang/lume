@@ -223,17 +223,25 @@ async function main() {
     process.exit(0);
   }
 
-  // 7. Bump versions in 3 files
+  // 7. Bump versions in release-owned package metadata
   console.log("\n🔧 Bumping versions...");
   await updateJsonFile(resolve(REPO_ROOT, "package.json"), newVersion);
   await updateJsonFile(resolve(REPO_ROOT, "apps", "desktop", "package.json"), newVersion);
+  await updateJsonFile(resolve(REPO_ROOT, "apps", "web", "package.json"), newVersion);
   await updateJsonFile(resolve(REPO_ROOT, "apps", "desktop", "src-tauri", "tauri.conf.json"), newVersion);
+  await updateFile(
+    resolve(REPO_ROOT, "apps", "desktop", "src-tauri", "Cargo.toml"),
+    /version = "[^"]+"/,
+    `version = "${newVersion}"`
+  );
 
   // 8. Commit
   console.log("\n📦 Committing...");
   run("git", ["add",
     "package.json",
     "apps/desktop/package.json",
+    "apps/web/package.json",
+    "apps/desktop/src-tauri/Cargo.toml",
     "apps/desktop/src-tauri/tauri.conf.json",
     notesPath,
   ]);

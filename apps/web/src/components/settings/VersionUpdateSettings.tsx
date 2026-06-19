@@ -33,8 +33,8 @@ import {
   type VersionUpdateSnapshot,
   type VersionUpdateStatus,
 } from './version-update-state'
+import { APP_VERSION } from '@/lib/app-version'
 
-const CURRENT_APP_VERSION = '0.1.0'
 const logoUrl = new URL('../../assets/imgs/logo.png', import.meta.url).href
 
 interface DownloadProgress {
@@ -58,7 +58,7 @@ export function VersionUpdateSettings() {
   const autoCheckStartedRef = React.useRef(false)
 
   const snapshot: VersionUpdateSnapshot = {
-    currentVersion: CURRENT_APP_VERSION,
+    currentVersion: APP_VERSION,
     latestVersion,
     status,
     downloaded,
@@ -127,7 +127,7 @@ export function VersionUpdateSettings() {
     }
 
     setStatus(
-      normalizeReleaseVersion(remoteVersion) === normalizeReleaseVersion(CURRENT_APP_VERSION)
+      normalizeReleaseVersion(remoteVersion) === normalizeReleaseVersion(APP_VERSION)
         ? 'current'
         : 'available'
     )
@@ -225,7 +225,7 @@ export function VersionUpdateSettings() {
   return (
     <div className="space-y-4 pb-6">
       <div className="grid grid-cols-4 gap-3">
-        <MetricCard icon={Box} label="当前版本" value={CURRENT_APP_VERSION} tint="brand" />
+        <MetricCard icon={Box} label="当前版本" value={APP_VERSION} tint="brand" />
         <MetricCard icon={CloudDownload} label="最新版本" value={latestVersion ?? '-'} tint="blue" />
         <MetricCard icon={UploadCloud} label="更新状态" value={getStatusLabel(status, updateAvailable)} tint={updateAvailable ? 'green' : 'brand'} />
         <MetricCard icon={Clock3} label="上次检查" value={lastCheckText} tint="violet" />
@@ -244,7 +244,7 @@ export function VersionUpdateSettings() {
             <p className="mt-1 text-[13px] text-[var(--text-2)]">本地优先的 AI Agent 应用</p>
           </div>
           <div className="w-[300px] space-y-2 border-l border-[var(--border)] pl-8 text-[13px]">
-            <InfoLine label="当前版本" value={CURRENT_APP_VERSION} />
+            <InfoLine label="当前版本" value={APP_VERSION} />
             <InfoLine label="更新通道" value="Stable" />
             <InfoLine label="安装方式" value="桌面应用" />
           </div>
