@@ -1,6 +1,6 @@
 [package]
 name = "lume"
-version = "0.0.3"
+version = "0.0.4"
 description = "Lume desktop shell"
 authors = ["Lume Team"]
 edition = "2021"
