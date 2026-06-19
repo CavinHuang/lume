@@ -28,13 +28,12 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "externalBin": [],
+    "externalBin": [
+      "binaries/lume-sidecar"
+    ],
     "resources": [
       "resources/default-skills.tar",
-      "binaries/lume-natives.node",
-      "binaries/lume-sidecar.js",
-      "binaries/sidecar-node-modules.zip",
-      "binaries/sidecar-node-bridge.mjs"
+      "binaries/lume-natives.node"
     ],
     "targets": "all",
     "category": "DeveloperTool",
