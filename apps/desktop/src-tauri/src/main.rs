@@ -307,6 +307,13 @@ fn build_tray_icon(app: &tauri::AppHandle) -> tauri::Result<tauri::tray::TrayIco
 }
 
 fn spawn_sidecar_with_strategy(app: &tauri::AppHandle) -> Option<Child> {
+    if !should_allow_env_sidecar() {
+        if has_env_sidecar_cmd() && !LOGGED_ENV_CMD_IGNORED.swap(true, Ordering::Relaxed) {
+            warn!("[desktop] LUME_SIDECAR_CMD detected but ignored in release builds");
+        }
+        return spawn_sidecar_default(app);
+    }
+
     let prefer_env = env_flag_enabled("LUME_SIDECAR_PREFER_ENV");
     if prefer_env {
         return spawn_sidecar_from_env().or_else(|| spawn_sidecar_default(app));
@@ -319,6 +326,10 @@ fn spawn_sidecar_with_strategy(app: &tauri::AppHandle) -> Option<Child> {
     }
 
     spawn_sidecar_default(app).or_else(|| spawn_sidecar_from_env())
+}
+
+fn should_allow_env_sidecar() -> bool {
+    cfg!(debug_assertions)
 }
 
 fn is_broken_pipe_error_message(message: &str) -> bool {
@@ -1374,183 +1385,85 @@ fn resolve_default_skills_archive(app: &tauri::AppHandle) -> Option<String> {
     None
 }
 
-// ── JS-bundle sidecar (release) ──────────────────────────
-// The sidecar is bundled as JS (not a compiled binary) so that require() calls
-// for data files (e.g. css-tree's data/patch.json) resolve from the real filesystem
-// via the node-bridge → system `bun` runner.
+// ── Bundled standalone sidecar (release) ──────────────────────────
 
-fn bundled_sidecar_js_relative_path() -> &'static str {
-    "lume-sidecar.js"
+fn bundled_sidecar_binary_base_name() -> &'static str {
+    "lume-sidecar"
 }
 
-fn resolve_bundled_sidecar_js_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let rel = bundled_sidecar_js_relative_path();
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let p = resource_dir.join("binaries").join(rel);
-        if p.exists() {
-            return Some(p);
+fn bundled_sidecar_runtime_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "lume-sidecar.exe"
+    } else {
+        bundled_sidecar_binary_base_name()
+    }
+}
+
+fn current_target_sidecar_binary_name() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "lume-sidecar-aarch64-apple-darwin"
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "lume-sidecar-x86_64-apple-darwin"
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "lume-sidecar-x86_64-pc-windows-msvc.exe"
+    } else {
+        "unsupported"
+    }
+}
+
+fn resolve_bundled_sidecar_binary_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let runtime_name = bundled_sidecar_runtime_name();
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(executable_dir) = current_exe.parent() {
+            let p = normalize_windows_path(&executable_dir.join(runtime_name));
+            info!("[desktop] checking sidecar at exe dir: {}", p.display());
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
+
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        for p in [
+            resource_dir.join("binaries").join(runtime_name),
+            resource_dir.join(runtime_name),
+            resource_dir.join(current_target_sidecar_binary_name()),
+        ] {
+            let p = normalize_windows_path(&p);
+            info!("[desktop] checking sidecar resource fallback: {}", p.display());
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+
     None
 }
 
-fn resolve_bridge_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    // In the bundled app the bridge is shipped as a resource in binaries/.
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let p = resource_dir.join("binaries").join("sidecar-node-bridge.mjs");
-        if p.exists() {
-            return Some(p);
-        }
-    }
-    // Dev fallback: bridge lives next to the desktop source tree.
-    let dev_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/sidecar-node-bridge.mjs");
-    if dev_path.exists() {
-        return Some(dev_path);
-    }
-    None
-}
+fn spawn_bundled_sidecar_binary(app: &tauri::AppHandle) -> Option<Child> {
+    let binary_path = resolve_bundled_sidecar_binary_path(app)?;
+    let cwd = binary_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
 
-/// Extract bundled `sidecar-node-modules.zip` to the app data directory.
-/// Returns the extraction root so callers can point `NODE_PATH` at it.
-/// Skips re-extraction if the directory already exists with expected content.
-fn extract_sidecar_node_modules(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let zip_path = if let Ok(resource_dir) = app.path().resource_dir() {
-        resource_dir.join("binaries").join("sidecar-node-modules.zip")
-    } else {
-        return None;
-    };
-
-    if !zip_path.exists() {
-        warn!("[desktop] sidecar-node-modules.zip not found at {}", zip_path.display());
-        return None;
-    }
-
-    let extract_dir = if let Ok(data_dir) = app.path().app_data_dir() {
-        data_dir.join("sidecar-node-modules")
-    } else {
-        return None;
-    };
-
-    if extract_dir.join("css-tree").exists() {
-        return Some(extract_dir);
-    }
-
-    let file = match std::fs::File::open(&zip_path) {
-        Ok(f) => f,
-        Err(e) => {
-            error!("[desktop] failed to open node_modules zip: {e}");
-            return None;
-        }
-    };
-
-    let mut archive = match zip::ZipArchive::new(file) {
-        Ok(a) => a,
-        Err(e) => {
-            error!("[desktop] failed to read zip archive: {e}");
-            return None;
-        }
-    };
-
-    if let Err(e) = std::fs::create_dir_all(&extract_dir) {
-        error!("[desktop] failed to create extract dir: {e}");
-        return None;
-    }
-
-    let len = archive.len();
-    for i in 0..len {
-        let mut entry = match archive.by_index(i) {
-            Ok(e) => e,
-            Err(e) => {
-                warn!("[desktop] bad zip entry {i}: {e}");
-                continue;
-            }
-        };
-        let out_path = extract_dir.join(entry.name());
-        if entry.is_dir() {
-            let _ = std::fs::create_dir_all(&out_path);
-        } else {
-            if let Some(parent) = out_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let mut out = match std::fs::File::create(&out_path) {
-                Ok(f) => f,
-                Err(e) => {
-                    warn!("[desktop] failed to create {}: {e}", out_path.display());
-                    continue;
-                }
-            };
-            if let Err(e) = std::io::copy(&mut entry, &mut out) {
-                warn!("[desktop] failed to extract {}: {e}", out_path.display());
-            }
-        }
-    }
-
-    info!(
-        "[desktop] extracted sidecar node_modules -> {}",
-        extract_dir.display()
-    );
-    Some(extract_dir)
-}
-
-fn spawn_bundled_sidecar_js(app: &tauri::AppHandle) -> Option<Child> {
-    let bundle_path = resolve_bundled_sidecar_js_path(app)?;
-    let bridge_path = resolve_bridge_path(app)?;
-    let bun_bin = resolve_bun_binary();
-
-    // Extract bundled node_modules and expose via NODE_PATH so that
-    // data-file requires (e.g. css-tree's data/patch.json) resolve correctly.
-    let node_modules_dir = extract_sidecar_node_modules(app);
-
-    // Use the resource dir as cwd — it always exists in the bundled app.
-    // On Windows, Tauri may return extended-length paths (\\?\) which Node.js
-    // realpathSync cannot handle (it strips the prefix, leaving bare "D:").
-    // Strip the prefix to produce a normal Windows path.
-    let raw_cwd = if let Ok(resource_dir) = app.path().resource_dir() {
-        resource_dir
-    } else {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar")
-    };
-    let cwd = normalize_windows_path(&raw_cwd);
-
-    // Always launch the bridge via `node` so the .mjs file doesn't need +x permission
-    // in the bundled app (Tauri resources don't preserve execute bits).
-    let node_bin = resolve_node_binary();
-    let bridge_args = vec![
-        bridge_path.to_string_lossy().to_string(),
-        "--bun".to_string(),
-        bun_bin.clone(),
-        "--cwd".to_string(),
-        cwd.to_string_lossy().to_string(),
-        "--entry".to_string(),
-        bundle_path.to_string_lossy().to_string(),
-    ];
-
-    let mut process = Command::new(&node_bin);
+    let mut process = Command::new(&binary_path);
     process
-        .args(&bridge_args)
         .current_dir(&cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     apply_sidecar_logging_env(&mut process);
     apply_natives_path_env(&mut process, app);
-
-    if let Some(ref dir) = node_modules_dir {
-        process.env("NODE_PATH", dir.to_string_lossy().to_string());
-    }
-
     let (skills_archive, skills_dir) =
         apply_default_skills_env(&mut process, app, &PathBuf::from(""));
 
     match process.spawn() {
         Ok(child) => {
             info!(
-                "[desktop] sidecar process booted from JS bundle: {} (node={}, bridge={}, bun={}, cwd={}, default-skills-archive={}, default-skills-dir={})",
-                bundle_path.display(),
-                node_bin,
-                bridge_path.display(),
-                bun_bin,
+                "[desktop] sidecar process booted from bundled binary: {} (cwd={}, default-skills-archive={}, default-skills-dir={})",
+                binary_path.display(),
                 cwd.display(),
                 skills_archive.as_deref().unwrap_or("not-found"),
                 skills_dir.as_deref().unwrap_or("not-found")
@@ -1559,9 +1472,8 @@ fn spawn_bundled_sidecar_js(app: &tauri::AppHandle) -> Option<Child> {
         }
         Err(error) => {
             error!(
-                "[desktop] failed to spawn JS bundle sidecar: {error} (bridge={}, bundle={})",
-                bridge_path.display(),
-                bundle_path.display()
+                "[desktop] failed to spawn bundled sidecar binary: {error} (binary={})",
+                binary_path.display()
             );
             None
         }
@@ -1648,13 +1560,7 @@ fn resolve_default_skills_dir(app: &tauri::AppHandle, sidecar_dir: &PathBuf) -> 
 
 fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
     if !cfg!(debug_assertions) {
-        // Release: try the JS bundle first (launched via node-bridge → system bun).
-        // This uses the real filesystem for require() resolution (css-tree data/patch.json etc.)
-        // unlike a compiled binary whose virtual fs can't resolve data-file requires.
-        if let Some(child) = spawn_bundled_sidecar_js(app) {
-            return Some(child);
-        }
-        warn!("[desktop] bundled JS sidecar not found, falling back to development sidecar path");
+        return spawn_bundled_sidecar_binary(app);
     }
 
     let sidecar_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar");
@@ -1753,9 +1659,11 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
 mod tests {
     use super::{
         apply_sidecar_logging_env, build_mac_sidecar_bridge_args,
+        bundled_sidecar_binary_base_name, current_target_sidecar_binary_name,
         next_window_action,
         parse_window_behavior_from_settings_str, resolve_runtime_window_action,
-        resolve_settings_path, WindowAction, WindowBehavior, WindowBehaviorEvent,
+        resolve_settings_path, should_allow_env_sidecar, WindowAction, WindowBehavior,
+        WindowBehaviorEvent,
     };
     use std::path::PathBuf;
     use std::process::Command;
@@ -1799,6 +1707,31 @@ mod tests {
 
         assert_eq!(envs.get("LUME_LOG_FILE"), None);
         assert_eq!(envs.get("LUME_LOG_CONSOLE"), Some(&Some("true".to_string())));
+    }
+
+    #[test]
+    fn bundled_sidecar_binary_base_name_matches_tauri_external_bin() {
+        assert_eq!(bundled_sidecar_binary_base_name(), "lume-sidecar");
+    }
+
+    #[test]
+    fn current_target_sidecar_name_matches_platform() {
+        let expected = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            "lume-sidecar-aarch64-apple-darwin"
+        } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+            "lume-sidecar-x86_64-apple-darwin"
+        } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+            "lume-sidecar-x86_64-pc-windows-msvc.exe"
+        } else {
+            "unsupported"
+        };
+
+        assert_eq!(current_target_sidecar_binary_name(), expected);
+    }
+
+    #[test]
+    fn env_sidecar_is_debug_only() {
+        assert_eq!(should_allow_env_sidecar(), cfg!(debug_assertions));
     }
 
     #[test]
