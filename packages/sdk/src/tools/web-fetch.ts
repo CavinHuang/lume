@@ -5,7 +5,6 @@
 import { defineTool } from "./types.js";
 import { ensureNetworkAllowed } from "../utils/pathing.js";
 import { sdkFetch } from "./web-request.js";
-import { extractArticleMarkdown } from "./html-to-markdown.js";
 
 const MAX_FETCH_CHARS = 100000;
 
@@ -66,7 +65,7 @@ export const WebFetchTool = defineTool({
           return { data: text };
         }
 
-        const article = extractArticleMarkdown(text, url);
+        const article = await extractReadableArticleMarkdown(text, url);
         if (article) {
           if (format === "text") {
             return { data: `# ${article.title}\n\n${article.content.replace(/[#*_`>\[\]()!-]/g, "")}` };
@@ -90,3 +89,16 @@ export const WebFetchTool = defineTool({
     }
   },
 });
+
+async function extractReadableArticleMarkdown(
+  html: string,
+  url: string
+): Promise<{ title: string; content: string } | null> {
+  try {
+    const modulePath = "./html-to-" + "markdown.js";
+    const { extractArticleMarkdown } = await import(modulePath);
+    return extractArticleMarkdown(html, url);
+  } catch {
+    return null;
+  }
+}
