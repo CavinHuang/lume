@@ -48,10 +48,10 @@ jobs:
           release_id="$(gh release view "${GITHUB_REF_NAME}" --json databaseId --jq '.databaseId')"
           echo "release_id=${release_id}" >> "$GITHUB_OUTPUT"
 
-  build-macos-arm:
-    name: Build macOS ARM
+  build-js-assets:
+    name: Build JS assets
     needs: prepare-release
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,10 +59,14 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.13
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
         with:
-          targets: aarch64-apple-darwin
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.13-
+            ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Build shared packages
@@ -72,6 +76,55 @@ jobs:
           bun run --filter @lume/sidecar build
           bun run --filter @lume/cli build
           bun run --filter @lume/web build
+      - name: Upload JS assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-assets
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            apps/web/dist
+            apps/sidecar/dist
+            packages/shared/dist
+            packages/cli/dist
+
+  build-macos-arm:
+    name: Build macOS ARM
+    needs: [prepare-release, build-js-assets]
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.13-
+            ${{ runner.os }}-bun-
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64-apple-darwin
+          workspaces: |
+            apps/desktop/src-tauri -> target
+            crates/lume-natives -> target
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Download JS assets
+        uses: actions/download-artifact@v4
+        with:
+          name: js-assets
+          path: .
       - name: Prepare desktop bundle resources
         env:
           TAURI_TARGET_TRIPLE: aarch64-apple-darwin
@@ -110,7 +163,7 @@ jobs:
 
   build-macos-intel:
     name: Build macOS Intel
-    needs: prepare-release
+    needs: [prepare-release, build-js-assets]
     runs-on: macos-15-intel
     steps:
       - name: Checkout
@@ -119,19 +172,32 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.13
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.13-
+            ${{ runner.os }}-bun-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-apple-darwin
+          workspaces: |
+            apps/desktop/src-tauri -> target
+            crates/lume-natives -> target
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Build shared packages
-        run: |
-          bun run --filter @lume/shared build
-          bun run --filter @lume/ui build
-          bun run --filter @lume/sidecar build
-          bun run --filter @lume/cli build
-          bun run --filter @lume/web build
+      - name: Download JS assets
+        uses: actions/download-artifact@v4
+        with:
+          name: js-assets
+          path: .
       - name: Prepare desktop bundle resources
         env:
           TAURI_TARGET_TRIPLE: x86_64-apple-darwin
@@ -170,7 +236,7 @@ jobs:
 
   build-windows:
     name: Build Windows
-    needs: prepare-release
+    needs: [prepare-release, build-js-assets]
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -179,19 +245,32 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.13
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.13-
+            ${{ runner.os }}-bun-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-msvc
+          workspaces: |
+            apps/desktop/src-tauri -> target
+            crates/lume-natives -> target
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Build shared packages
-        run: |
-          bun run --filter @lume/shared build
-          bun run --filter @lume/ui build
-          bun run --filter @lume/sidecar build
-          bun run --filter @lume/cli build
-          bun run --filter @lume/web build
+      - name: Download JS assets
+        uses: actions/download-artifact@v4
+        with:
+          name: js-assets
+          path: .
       - name: Prepare desktop bundle resources
         env:
           TAURI_TARGET_TRIPLE: x86_64-pc-windows-msvc
