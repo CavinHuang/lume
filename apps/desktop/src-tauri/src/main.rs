@@ -1280,13 +1280,7 @@ fn spawn_sidecar_from_env() -> Option<Child> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     apply_sidecar_logging_env(&mut process);
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        process.creation_flags(CREATE_NO_WINDOW);
-    }
+    apply_sidecar_hidden_window(&mut process);
 
     match process.spawn() {
         Ok(child) => {
@@ -1455,6 +1449,7 @@ fn spawn_bundled_sidecar_binary(app: &tauri::AppHandle) -> Option<Child> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     apply_sidecar_logging_env(&mut process);
+    apply_sidecar_hidden_window(&mut process);
     apply_natives_path_env(&mut process, app);
     let (skills_archive, skills_dir) =
         apply_default_skills_env(&mut process, app, &PathBuf::from(""));
@@ -1506,6 +1501,37 @@ fn apply_sidecar_logging_env(process: &mut Command) {
     // native logger now writes directly to shared log files;
     // keep stderr enabled as fallback for native init failures
     process.env("LUME_LOG_CONSOLE", "true");
+}
+
+fn sidecar_hidden_window_creation_flags() -> Option<u32> {
+    #[cfg(target_os = "windows")]
+    {
+        Some(0x08000000)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+fn apply_sidecar_hidden_window(process: &mut Command) {
+    let flags = sidecar_hidden_window_creation_flags();
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+
+        if let Some(flags) = flags {
+            process.creation_flags(flags);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = flags;
+        let _ = process;
+    }
 }
 
 fn apply_natives_path_env(process: &mut Command, app: &tauri::AppHandle) {
@@ -1597,6 +1623,7 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             apply_sidecar_logging_env(&mut process);
+            apply_sidecar_hidden_window(&mut process);
             let (skills_archive, default_skills_dir) =
                 apply_default_skills_env(&mut process, app, &sidecar_dir);
 
@@ -1633,6 +1660,7 @@ fn spawn_sidecar_default(app: &tauri::AppHandle) -> Option<Child> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     apply_sidecar_logging_env(&mut process);
+    apply_sidecar_hidden_window(&mut process);
     let (skills_archive, default_skills_dir) =
         apply_default_skills_env(&mut process, app, &sidecar_dir);
 
@@ -1660,7 +1688,7 @@ mod tests {
     use super::{
         apply_sidecar_logging_env, build_mac_sidecar_bridge_args,
         bundled_sidecar_binary_base_name, current_target_sidecar_binary_name,
-        next_window_action,
+        next_window_action, sidecar_hidden_window_creation_flags,
         parse_window_behavior_from_settings_str, resolve_runtime_window_action,
         resolve_settings_path, should_allow_env_sidecar, WindowAction, WindowBehavior,
         WindowBehaviorEvent,
@@ -1707,6 +1735,17 @@ mod tests {
 
         assert_eq!(envs.get("LUME_LOG_FILE"), None);
         assert_eq!(envs.get("LUME_LOG_CONSOLE"), Some(&Some("true".to_string())));
+    }
+
+    #[test]
+    fn sidecar_hidden_window_flags_are_windows_only() {
+        let expected = if cfg!(target_os = "windows") {
+            Some(0x08000000)
+        } else {
+            None
+        };
+
+        assert_eq!(sidecar_hidden_window_creation_flags(), expected);
     }
 
     #[test]

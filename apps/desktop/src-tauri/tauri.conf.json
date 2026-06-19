@@ -44,6 +44,7 @@
     },
     "windows": {
       "nsis": {
+        "installerIcon": "icons/icon.ico",
         "installMode": "perMachine",
         "displayLanguageSelector": false
       }
