@@ -299,6 +299,7 @@ function appendContextCompactionNotice(
     if (activeNotice) {
       activeNotice.status = 'completed'
       activeNotice.text = formatContextCompactionNoticeText(event)
+      if (event.summary) activeNotice.summary = event.summary
       return
     }
   }
@@ -313,6 +314,7 @@ function appendContextCompactionNotice(
     variant: 'context_compaction',
     status: event.type === 'context.compaction.completed' ? 'completed' : 'active',
     text: formatContextCompactionNoticeText(event),
+    ...(event.type === 'context.compaction.completed' && event.summary ? { summary: event.summary } : {}),
     createdAt: event.createdAt,
   })
 }

@@ -82,6 +82,7 @@ export interface RuntimeSystemMessageView {
   variant: 'context_compaction'
   status: 'active' | 'completed'
   text: string
+  summary?: string
   createdAt: string
 }
 

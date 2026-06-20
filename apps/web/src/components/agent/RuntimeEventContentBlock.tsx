@@ -233,16 +233,34 @@ function ContextCompactionDivider({
   className?: string
 }) {
   const active = message.status === 'active'
+  const [expanded, setExpanded] = useState(false)
+  const hasSummary = message.status === 'completed' && Boolean(message.summary)
   return (
-    <div className={cn('flex w-full items-center gap-4 px-6 py-1 text-[15px] font-semibold leading-6 text-[#7d8494]', className)}>
-      <span className="h-px min-w-8 flex-1 bg-[#dde1e8]" />
-      <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
-        {active
-          ? <Loader2 size={17} className="animate-spin text-[#8b91a0]" strokeWidth={2} />
-          : <History size={17} className="text-[#7d8494]" strokeWidth={2} />}
-        {message.text}
-      </span>
-      <span className="h-px min-w-8 flex-1 bg-[#dde1e8]" />
+    <div className={cn('flex w-full flex-col gap-1', className)}>
+      <div className="flex w-full items-center gap-4 px-6 py-1 text-[15px] font-semibold leading-6 text-[#7d8494]">
+        <span className="h-px min-w-8 flex-1 bg-[#dde1e8]" />
+        <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
+          {active
+            ? <Loader2 size={17} className="animate-spin text-[#8b91a0]" strokeWidth={2} />
+            : <History size={17} className="text-[#7d8494]" strokeWidth={2} />}
+          {message.text}
+          {hasSummary && (
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              className="ml-1 text-[12px] font-medium text-[#8b91a0] underline-offset-2 hover:underline"
+            >
+              {expanded ? '收起总结' : '查看总结'}
+            </button>
+          )}
+        </span>
+        <span className="h-px min-w-8 flex-1 bg-[#dde1e8]" />
+      </div>
+      {hasSummary && expanded && (
+        <div className="mx-auto max-h-60 w-full max-w-3xl overflow-y-auto whitespace-pre-wrap rounded-lg bg-[#f5f6f8] px-4 py-3 text-[13px] font-normal leading-6 text-[#3f4452]">
+          {message.summary}
+        </div>
+      )}
     </div>
   )
 }
