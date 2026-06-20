@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { AgentMessage } from "@lume/shared";
 import {
   appendAgentTranscriptMessage,
   appendAgentThreadSDKMessages,
+  clearAgentThreadMessages,
   createAgentThread,
   deleteAgentThread,
   forkAgentThread,
@@ -456,5 +458,50 @@ describe("agent-thread-manager advanced ops", () => {
     expect(listTrashedThreads()).toHaveLength(0);
     expect(emptyTrash()).toBe(0);
     expect(getAgentThreadMeta(active.id)).toBeDefined();
+  });
+});
+
+describe("clearAgentThreadMessages", () => {
+  let tempConfigDir = "";
+  const oldConfigDir = process.env.LUME_CONFIG_DIR;
+
+  beforeEach(() => {
+    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-clear-thread-"));
+    process.env.LUME_CONFIG_DIR = tempConfigDir;
+  });
+
+  afterEach(() => {
+    if (oldConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = oldConfigDir;
+    }
+    rmSync(tempConfigDir, { recursive: true, force: true });
+  });
+
+  const buildMessage = (role: "user" | "assistant", content: string): AgentMessage =>
+    ({ id: `${role}-${content}`, role, content, createdAt: Date.now() }) as AgentMessage;
+
+  it("清空全部消息且保留 thread 本身", () => {
+    const thread = createAgentThread("测试会话");
+    appendAgentTranscriptMessage(thread.id, buildMessage("user", "你好"));
+    appendAgentTranscriptMessage(thread.id, buildMessage("assistant", "你好，有什么可以帮你"));
+    expect(getAgentThreadMessages(thread.id).length).toBe(2);
+
+    const result = clearAgentThreadMessages(thread.id);
+
+    expect(result.ok).toBe(true);
+    expect(result.cleared).toBe(2);
+    expect(getAgentThreadMessages(thread.id).length).toBe(0);
+    expect(getAgentThreadMeta(thread.id)).toBeDefined();
+  });
+
+  it("空 thread 清空幂等无害", () => {
+    const thread = createAgentThread("空会话");
+    const result = clearAgentThreadMessages(thread.id);
+    expect(result.ok).toBe(true);
+    expect(result.cleared).toBe(0);
+    expect(getAgentThreadMessages(thread.id).length).toBe(0);
+    expect(getAgentThreadMeta(thread.id)).toBeDefined();
   });
 });

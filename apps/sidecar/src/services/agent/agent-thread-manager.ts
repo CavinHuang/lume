@@ -628,6 +628,22 @@ export function truncateAgentMessagesFrom(threadId: string, messageId: string): 
   return kept;
 }
 
+/**
+ * 清空指定线程的全部消息与运行记录，保留线程本身（meta 留存），可在同一会话窗口继续对话。
+ * 若线程正在运行，先停止，避免 runtime 继续向已清空的线程写入。
+ * stopAgent 对非运行中的线程为幂等 no-op（与 STOP_THREAD handler 行为一致）。
+ * stopAgent 定义在 agent-service.ts（反向依赖本模块），用动态 import 避免静态循环依赖。
+ */
+export function clearAgentThreadMessages(threadId: string): { ok: true; cleared: number } {
+  void import("./agent-service")
+    .then((mod) => mod.stopAgent(threadId))
+    .catch(() => undefined);
+  const messages = getAgentThreadMessages(threadId);
+  replaceAgentThreadTranscript(threadId, []);
+  console.log(`[Agent 线程] 已清空 ${threadId.slice(0, 8)} 的 ${messages.length} 条消息`);
+  return { ok: true, cleared: messages.length };
+}
+
 export const truncateAgentThreadMessagesFrom = truncateAgentMessagesFrom;
 
 /**
