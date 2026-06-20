@@ -526,6 +526,20 @@ const lumeConfigSubagentStrategySchema = z.object({
   defaultModelRef: nonEmptyTrimmedStringSchema.optional()
 }).strict();
 
+const lumeConfigRoutineStrategySchema = z.object({
+  defaultModelRef: nonEmptyTrimmedStringSchema.optional()
+}).strict();
+
+const lumeConfigSimpleModelStrategySchema = z.object({
+  defaultModelRef: nonEmptyTrimmedStringSchema.optional()
+}).strict();
+
+const lumeConfigImageGenerationStrategySchema = z.object({
+  priorityModelRefs: z.array(nonEmptyTrimmedStringSchema).optional()
+}).strict();
+
+const lumeConfigContextWindowsSchema = z.record(nonEmptyTrimmedStringSchema, z.number().int().positive());
+
 const lumeConfigPermissionRuleSchema = z.object({
   id: z.string().optional(),
   tool: nonEmptyTrimmedStringSchema,
@@ -614,6 +628,29 @@ export const lumeConfigUpdateInputSchema = z.union([
     value: lumeConfigSubagentStrategySchema
   }),
   lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.routine"),
+    value: lumeConfigRoutineStrategySchema
+  }),
+  ...[
+    "models.background",
+    "models.contextCompression",
+    "models.title",
+    "models.welcomeSuggestions",
+    "models.permissionClassifier",
+    "models.memoryJudgement"
+  ].map((path) => lumeConfigUpdateBaseSchema.extend({
+    path: z.literal(path),
+    value: lumeConfigSimpleModelStrategySchema
+  })),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.imageGeneration"),
+    value: lumeConfigImageGenerationStrategySchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.contextWindows"),
+    value: lumeConfigContextWindowsSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.agent.defaultChannelId"),
     value: nonEmptyTrimmedStringSchema
   }),
@@ -630,8 +667,16 @@ export const lumeConfigUpdateInputSchema = z.union([
     value: nonEmptyTrimmedStringSchema
   }),
   lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.routine.defaultModelRef"),
+    value: nonEmptyTrimmedStringSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.embedding.defaultModelRef"),
     value: nonEmptyTrimmedStringSchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("memory.extraction.modelRef"),
+    value: z.string().nullable()
   }),
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("agent.thinkingLevel"),
@@ -1167,7 +1212,8 @@ const automationScheduleSchema = z.object({
   timezone: z.string().optional()
 });
 
-const automationSystemActionSchema = z.enum(["memory_distill_workspace"]);
+const automationJobSourceSchema = z.enum(["manual", "system"]);
+const automationSystemActionSchema = z.enum(["routine", "memory_distill_workspace"]);
 const automationTriggerModeSchema = z.enum(["manual", "schedule", "webhook", "chat"]);
 
 export const automationCreateInputSchema = z.object({
@@ -1177,6 +1223,7 @@ export const automationCreateInputSchema = z.object({
   threadId: z.string().optional(),
   schedule: automationScheduleSchema,
   triggerModes: z.array(automationTriggerModeSchema).optional(),
+  source: automationJobSourceSchema.optional(),
   description: z.string().optional(),
   defaultModel: z.string().optional(),
   toolResourceIds: z.array(z.string()).optional(),
@@ -1192,6 +1239,7 @@ export const automationUpdateInputSchema = z.object({
   threadId: z.string().optional(),
   schedule: automationScheduleSchema.optional(),
   triggerModes: z.array(automationTriggerModeSchema).optional(),
+  source: automationJobSourceSchema.optional(),
   description: z.string().optional(),
   defaultModel: z.string().optional(),
   toolResourceIds: z.array(z.string()).optional(),

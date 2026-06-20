@@ -12,6 +12,18 @@ export interface LumeConfigSubagentModelStrategy {
   defaultModelRef?: string
 }
 
+export interface LumeConfigRoutineModelStrategy {
+  defaultModelRef?: string
+}
+
+export interface LumeConfigSimpleModelStrategy {
+  defaultModelRef?: string
+}
+
+export interface LumeConfigImageGenerationStrategy {
+  priorityModelRefs?: string[]
+}
+
 export interface LumeConfigAgentSection {
   permissionMode?: LumeConfigPermissionMode
   thinkingLevel?: LumeConfigThinkingLevel
@@ -53,6 +65,15 @@ export interface LumeConfigModelsSection {
   }
   agent?: LumeConfigAgentDefaultStrategy
   subagent?: LumeConfigSubagentModelStrategy
+  routine?: LumeConfigRoutineModelStrategy
+  background?: LumeConfigSimpleModelStrategy
+  contextCompression?: LumeConfigSimpleModelStrategy
+  title?: LumeConfigSimpleModelStrategy
+  welcomeSuggestions?: LumeConfigSimpleModelStrategy
+  permissionClassifier?: LumeConfigSimpleModelStrategy
+  memoryJudgement?: LumeConfigSimpleModelStrategy
+  imageGeneration?: LumeConfigImageGenerationStrategy
+  contextWindows?: Record<string, number>
   embedding?: {
     defaultModelRef?: string
   }

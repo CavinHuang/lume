@@ -129,6 +129,31 @@ function normalizeFallbackModelRefs(
   return normalizeUniqueStringArray(value).filter((item) => item !== blocked);
 }
 
+function normalizeModelStrategy(value: unknown): { defaultModelRef?: string } {
+  if (!isPlainObject(value)) return {};
+  const defaultModelRef = normalizeOptionalString(value.defaultModelRef);
+  return defaultModelRef ? { defaultModelRef } : {};
+}
+
+function normalizeImageGenerationStrategy(value: unknown): { priorityModelRefs?: string[] } {
+  if (!isPlainObject(value)) return {};
+  const priorityModelRefs = normalizeUniqueStringArray(value.priorityModelRefs);
+  return {
+    ...(priorityModelRefs.length > 0 ? { priorityModelRefs } : {})
+  };
+}
+
+function normalizeContextWindows(value: unknown): Record<string, number> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const next: Record<string, number> = {};
+  for (const [modelRef, tokens] of Object.entries(value)) {
+    const key = normalizeOptionalString(modelRef);
+    if (!key || typeof tokens !== "number" || !Number.isInteger(tokens) || tokens <= 0) continue;
+    next[key] = tokens;
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -445,10 +470,12 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
     const chat = isPlainObject(value.models.chat) ? value.models.chat : {};
     const agent = isPlainObject(value.models.agent) ? value.models.agent : {};
     const subagent = isPlainObject(value.models.subagent) ? value.models.subagent : {};
+    const routine = isPlainObject(value.models.routine) ? value.models.routine : {};
     const embedding = isPlainObject(value.models.embedding) ? value.models.embedding : {};
     const agentDefaultChannelId = normalizeOptionalString(agent.defaultChannelId);
     const agentDefaultModelRef = normalizeOptionalString(agent.defaultModelRef);
     const subagentDefaultModelRef = normalizeOptionalString(subagent.defaultModelRef);
+    const routineDefaultModelRef = normalizeOptionalString(routine.defaultModelRef);
     next.models = {
       chat: {
         ...(typeof chat.defaultModelRef === "string"
@@ -471,6 +498,21 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
           ? { defaultModelRef: subagentDefaultModelRef }
           : {})
       },
+      routine: {
+        ...(routineDefaultModelRef
+          ? { defaultModelRef: routineDefaultModelRef }
+          : {})
+      },
+      background: normalizeModelStrategy(value.models.background),
+      contextCompression: normalizeModelStrategy(value.models.contextCompression),
+      title: normalizeModelStrategy(value.models.title),
+      welcomeSuggestions: normalizeModelStrategy(value.models.welcomeSuggestions),
+      permissionClassifier: normalizeModelStrategy(value.models.permissionClassifier),
+      memoryJudgement: normalizeModelStrategy(value.models.memoryJudgement),
+      imageGeneration: normalizeImageGenerationStrategy(value.models.imageGeneration),
+      ...(normalizeContextWindows(value.models.contextWindows)
+        ? { contextWindows: normalizeContextWindows(value.models.contextWindows) }
+        : {}),
       embedding: {
         ...(typeof embedding.defaultModelRef === "string"
           ? { defaultModelRef: embedding.defaultModelRef }
@@ -613,6 +655,42 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
       subagent: {
         ...(fallback.models?.subagent ?? {}),
         ...(base.models?.subagent ?? {})
+      },
+      routine: {
+        ...(fallback.models?.routine ?? {}),
+        ...(base.models?.routine ?? {})
+      },
+      background: {
+        ...(fallback.models?.background ?? {}),
+        ...(base.models?.background ?? {})
+      },
+      contextCompression: {
+        ...(fallback.models?.contextCompression ?? {}),
+        ...(base.models?.contextCompression ?? {})
+      },
+      title: {
+        ...(fallback.models?.title ?? {}),
+        ...(base.models?.title ?? {})
+      },
+      welcomeSuggestions: {
+        ...(fallback.models?.welcomeSuggestions ?? {}),
+        ...(base.models?.welcomeSuggestions ?? {})
+      },
+      permissionClassifier: {
+        ...(fallback.models?.permissionClassifier ?? {}),
+        ...(base.models?.permissionClassifier ?? {})
+      },
+      memoryJudgement: {
+        ...(fallback.models?.memoryJudgement ?? {}),
+        ...(base.models?.memoryJudgement ?? {})
+      },
+      imageGeneration: {
+        ...(fallback.models?.imageGeneration ?? {}),
+        ...(base.models?.imageGeneration ?? {})
+      },
+      contextWindows: {
+        ...(fallback.models?.contextWindows ?? {}),
+        ...(base.models?.contextWindows ?? {})
       },
       embedding: {
         ...(fallback.models?.embedding ?? {}),
@@ -777,6 +855,42 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
       subagent: {
         ...(file.models?.subagent ?? {}),
         ...(overlay?.models?.subagent ?? {})
+      },
+      routine: {
+        ...(file.models?.routine ?? {}),
+        ...(overlay?.models?.routine ?? {})
+      },
+      background: {
+        ...(file.models?.background ?? {}),
+        ...(overlay?.models?.background ?? {})
+      },
+      contextCompression: {
+        ...(file.models?.contextCompression ?? {}),
+        ...(overlay?.models?.contextCompression ?? {})
+      },
+      title: {
+        ...(file.models?.title ?? {}),
+        ...(overlay?.models?.title ?? {})
+      },
+      welcomeSuggestions: {
+        ...(file.models?.welcomeSuggestions ?? {}),
+        ...(overlay?.models?.welcomeSuggestions ?? {})
+      },
+      permissionClassifier: {
+        ...(file.models?.permissionClassifier ?? {}),
+        ...(overlay?.models?.permissionClassifier ?? {})
+      },
+      memoryJudgement: {
+        ...(file.models?.memoryJudgement ?? {}),
+        ...(overlay?.models?.memoryJudgement ?? {})
+      },
+      imageGeneration: {
+        ...(file.models?.imageGeneration ?? {}),
+        ...(overlay?.models?.imageGeneration ?? {})
+      },
+      contextWindows: {
+        ...(file.models?.contextWindows ?? {}),
+        ...(overlay?.models?.contextWindows ?? {})
       },
       embedding: {
         ...(file.models?.embedding ?? {}),

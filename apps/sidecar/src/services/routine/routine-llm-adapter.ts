@@ -20,7 +20,7 @@ export async function generateRoutinePlanWithLlm(
   date: string
 ): Promise<LlmRoutinePlan | undefined> {
   const config = getEffectiveLumeConfig()
-  const modelRef = config.models?.chat?.defaultModelRef || config.models?.agent?.defaultModelRef
+  const modelRef = config.models?.routine?.defaultModelRef || config.models?.agent?.defaultModelRef || config.models?.chat?.defaultModelRef
   if (!modelRef) return undefined
 
   const binding = resolveChannelModelBinding(modelRef, "chat")

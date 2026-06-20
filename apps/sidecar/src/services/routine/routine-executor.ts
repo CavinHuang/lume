@@ -27,7 +27,7 @@ export async function scheduleRoutineEntries(routine: DailyRoutine): Promise<Dai
     if (executor) {
       try {
         const jobInput = executor.buildJobInput(entry, routine.context)
-        const job = createAutomationJob(jobInput)
+        const job = createAutomationJob({ ...jobInput, source: "system", systemAction: "routine" })
         entry.automationJobId = job.id
         scheduled++
       } catch (error) {
@@ -46,6 +46,8 @@ export async function scheduleRoutineEntries(routine: DailyRoutine): Promise<Dai
           prompt: entry.customPrompt,
           schedule: { type: "once", runAt: entry.scheduledAt },
           enabled: true,
+          source: "system",
+          systemAction: "routine",
         })
         entry.automationJobId = job.id
         scheduled++
@@ -86,7 +88,7 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
   const executor = getActivityExecutor(entry.activity)
   if (executor) {
     const jobInput = executor.buildJobInput({ ...entry, scheduledAt: Date.now() }, routine.context)
-    const job = createAutomationJob(jobInput)
+    const job = createAutomationJob({ ...jobInput, source: "system", systemAction: "routine" })
     entry.automationJobId = job.id
   } else if (entry.customPrompt) {
     // Custom activity: use customPrompt
@@ -95,6 +97,8 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
       prompt: entry.customPrompt,
       schedule: { type: "once", runAt: Date.now() },
       enabled: true,
+      source: "system",
+      systemAction: "routine",
     })
     entry.automationJobId = job.id
   } else {

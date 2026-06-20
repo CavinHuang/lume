@@ -4,6 +4,8 @@ import type {
   LumeConfigPermissionMode,
   LumeConfigPermissionsSection,
   LumeConfigPluginsSection,
+  LumeConfigSimpleModelStrategy,
+  LumeConfigRoutineModelStrategy,
   LumeConfigSkillsSection,
   LumeConfigThinkingLevel,
   LumeConfigSubagentModelStrategy,
@@ -39,6 +41,60 @@ export const updateSubagentModelStrategy = (value: LumeConfigSubagentModelStrate
     summary: 'update subagent default model strategy',
   })
 
+export const updateRoutineModelStrategy = (value: LumeConfigRoutineModelStrategy, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'models.routine',
+    value,
+    summary: 'update routine scheduling model strategy',
+  })
+
+export type LumeModelPurpose =
+  | 'background'
+  | 'contextCompression'
+  | 'title'
+  | 'welcomeSuggestions'
+  | 'permissionClassifier'
+  | 'memoryJudgement'
+
+export const updateModelPurposeStrategy = (
+  purpose: LumeModelPurpose,
+  value: LumeConfigSimpleModelStrategy,
+  workspaceSlug?: string
+) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: `models.${purpose}`,
+    value,
+    summary: `update ${purpose} model strategy`,
+  })
+
+export const updateImageGenerationModelStrategy = (
+  value: { priorityModelRefs?: string[] },
+  workspaceSlug?: string
+) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'models.imageGeneration',
+    value,
+    summary: 'update image generation model strategy',
+  })
+
+export const updateModelContextWindows = (
+  value: Record<string, number>,
+  workspaceSlug?: string
+) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'models.contextWindows',
+    value,
+    summary: 'update model context windows',
+  })
+
 export const updateEmbeddingModelRef = (modelRef: string, workspaceSlug?: string) =>
   sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
     source: 'user',
@@ -53,7 +109,7 @@ export const updateMemoryExtractionModelRef = (modelRef: string | undefined, wor
     source: 'user',
     ...(workspaceSlug ? { workspaceSlug } : {}),
     path: 'memory.extraction.modelRef',
-    value: modelRef,
+    value: modelRef ?? null,
     summary: modelRef ? 'update memory extraction model' : 'clear memory extraction model',
   })
 

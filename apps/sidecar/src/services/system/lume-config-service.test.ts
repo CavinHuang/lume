@@ -409,6 +409,54 @@ describe("lume-config-service", () => {
     expect(anotherEffective.models?.subagent?.defaultModelRef).toBe("openai/gpt-5.4-mini");
   });
 
+  test("应支持日程调度模型配置并允许 workspace 覆盖", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "models.routine.defaultModelRef",
+      value: "openai/routine-global"
+    });
+
+    updateLumeConfigSection({
+      source: "agent",
+      workspaceSlug: "default",
+      path: "models.routine.defaultModelRef",
+      value: "anthropic/routine-workspace"
+    });
+
+    const defaultEffective = getEffectiveLumeConfig("default");
+    const anotherEffective = getEffectiveLumeConfig("another");
+
+    expect(defaultEffective.models?.routine?.defaultModelRef).toBe("anthropic/routine-workspace");
+    expect(anotherEffective.models?.routine?.defaultModelRef).toBe("openai/routine-global");
+  });
+
+  test("应支持后台模型、图像模型和上下文长度配置", () => {
+    updateLumeConfigSection({
+      source: "agent",
+      path: "models.title",
+      value: { defaultModelRef: "openai/title-model" }
+    });
+    updateLumeConfigSection({
+      source: "agent",
+      path: "models.imageGeneration",
+      value: {
+        priorityModelRefs: ["doubao/seedream", "openai/gpt-image"]
+      }
+    });
+    updateLumeConfigSection({
+      source: "agent",
+      path: "models.contextWindows",
+      value: {
+        "openai/title-model": 128000
+      }
+    });
+
+    const effective = getEffectiveLumeConfig();
+    expect(effective.models?.title?.defaultModelRef).toBe("openai/title-model");
+    expect(effective.models?.imageGeneration?.priorityModelRefs).toEqual(["doubao/seedream", "openai/gpt-image"]);
+    expect(effective.models?.contextWindows?.["openai/title-model"]).toBe(128000);
+  });
+
   test("写入配置后应追加审计日志", () => {
     updateLumeConfigSection({
       source: "agent",
