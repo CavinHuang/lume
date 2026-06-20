@@ -482,13 +482,13 @@ describe("clearAgentThreadMessages", () => {
   const buildMessage = (role: "user" | "assistant", content: string): AgentMessage =>
     ({ id: `${role}-${content}`, role, content, createdAt: Date.now() }) as AgentMessage;
 
-  it("清空全部消息且保留 thread 本身", () => {
+  it("清空全部消息且保留 thread 本身", async () => {
     const thread = createAgentThread("测试会话");
     appendAgentTranscriptMessage(thread.id, buildMessage("user", "你好"));
     appendAgentTranscriptMessage(thread.id, buildMessage("assistant", "你好，有什么可以帮你"));
     expect(getAgentThreadMessages(thread.id).length).toBe(2);
 
-    const result = clearAgentThreadMessages(thread.id);
+    const result = await clearAgentThreadMessages(thread.id);
 
     expect(result.ok).toBe(true);
     expect(result.cleared).toBe(2);
@@ -496,9 +496,9 @@ describe("clearAgentThreadMessages", () => {
     expect(getAgentThreadMeta(thread.id)).toBeDefined();
   });
 
-  it("空 thread 清空幂等无害", () => {
+  it("空 thread 清空幂等无害", async () => {
     const thread = createAgentThread("空会话");
-    const result = clearAgentThreadMessages(thread.id);
+    const result = await clearAgentThreadMessages(thread.id);
     expect(result.ok).toBe(true);
     expect(result.cleared).toBe(0);
     expect(getAgentThreadMessages(thread.id).length).toBe(0);
