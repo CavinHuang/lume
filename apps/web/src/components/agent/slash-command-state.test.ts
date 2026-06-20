@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildSlashSuggestionItems, normalizeSlashSuggestionItems } from './slash-command-state'
+import { buildSlashSuggestionItems, getCommonSlashSuggestionItems, normalizeSlashSuggestionItems } from './slash-command-state'
 
 describe('buildSlashSuggestionItems', () => {
   test('returns common slash commands ahead of workspace skills', () => {
@@ -43,5 +43,21 @@ describe('buildSlashSuggestionItems', () => {
       section: 'skill',
       subtitle: '工作区技能',
     }))
+  })
+})
+
+describe('executeOnSelect 标记', () => {
+  test('/clear 与 /reload-plugins 标记为选中即执行', () => {
+    const items = getCommonSlashSuggestionItems()
+    const clear = items.find((i) => i.id === 'clear')
+    const reload = items.find((i) => i.id === 'reload-plugins')
+    expect(clear?.executeOnSelect).toBe(true)
+    expect(reload?.executeOnSelect).toBe(true)
+  })
+
+  test('其它命令不带 executeOnSelect', () => {
+    const items = getCommonSlashSuggestionItems()
+    const compact = items.find((i) => i.id === 'compact')
+    expect(compact?.executeOnSelect).toBeFalsy()
   })
 })

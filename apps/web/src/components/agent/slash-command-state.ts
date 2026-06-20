@@ -11,9 +11,11 @@ export interface MentionItem {
   subtitle?: string
   section?: MentionSection
   meta?: string
+  /** 选中即执行：不插入编辑器文本，直接触发 onCommandExecute(id) */
+  executeOnSelect?: boolean
 }
 
-type CommonSlashCommand = Pick<MentionItem, 'id' | 'label' | 'type' | 'title' | 'subtitle' | 'section'> & {
+type CommonSlashCommand = Pick<MentionItem, 'id' | 'label' | 'type' | 'title' | 'subtitle' | 'section' | 'executeOnSelect'> & {
   keywords: string[]
 }
 
@@ -30,6 +32,7 @@ const COMMON_SLASH_COMMANDS: CommonSlashCommand[] = [
     subtitle: '清空当前对话上下文',
     section: 'capability',
     keywords: ['clear', 'context', 'history', '清空', '上下文'],
+    executeOnSelect: true,
   },
   {
     id: 'compact',
@@ -57,6 +60,7 @@ const COMMON_SLASH_COMMANDS: CommonSlashCommand[] = [
     subtitle: '重新加载插件与扩展能力',
     section: 'capability',
     keywords: ['reload', 'plugins', 'extensions', '重载', '插件'],
+    executeOnSelect: true,
   },
 ]
 
