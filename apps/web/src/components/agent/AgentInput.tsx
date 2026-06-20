@@ -510,6 +510,24 @@ export function AgentInput({
       })()
       return
     }
+    if (id === 'compact') {
+      editor.commands.clearContent()
+      setEditorText('')
+      void (async () => {
+        try {
+          await agentSend({
+            threadId,
+            userMessage: '/compact',
+            ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
+          })
+          // 不 toast 成功：压缩进度由 compaction system 消息在对话中反馈
+        } catch (error) {
+          console.error('[AgentInput] 压缩对话失败:', error)
+          toast.error('压缩失败')
+        }
+      })()
+      return
+    }
   }, [editor, threadId, threads, doClear])
 
   slashCommandExecuteRef.current = handleSlashCommandExecute
@@ -519,8 +537,8 @@ export function AgentInput({
     const rawText = applyAgentRoleMentions(editor.getText()).trim()
     if (!rawText && pendingAttachments.length === 0) return
 
-    // 兜底：手打 /clear 或 /reload-plugins 文本回车，走与「选中」相同的流程
-    if (rawText === '/reload-plugins' || rawText === '/clear') {
+    // 兜底：手打 /clear /compact /reload-plugins 文本回车，走与「选中」相同的流程
+    if (rawText === '/reload-plugins' || rawText === '/clear' || rawText === '/compact') {
       handleSlashCommandExecute(rawText.replace(/^\//, ''))
       return
     }
