@@ -47,17 +47,19 @@ describe('buildSlashSuggestionItems', () => {
 })
 
 describe('executeOnSelect 标记', () => {
-  test('/clear 与 /reload-plugins 标记为选中即执行', () => {
+  test('/clear /compact /reload-plugins 标记为选中即执行', () => {
     const items = getCommonSlashSuggestionItems()
     const clear = items.find((i) => i.id === 'clear')
+    const compact = items.find((i) => i.id === 'compact')
     const reload = items.find((i) => i.id === 'reload-plugins')
     expect(clear?.executeOnSelect).toBe(true)
+    expect(compact?.executeOnSelect).toBe(true)
     expect(reload?.executeOnSelect).toBe(true)
   })
 
   test('其它命令不带 executeOnSelect', () => {
     const items = getCommonSlashSuggestionItems()
-    const compact = items.find((i) => i.id === 'compact')
-    expect(compact?.executeOnSelect).toBeFalsy()
+    const mcp = items.find((i) => i.id === 'mcp')
+    expect(mcp?.executeOnSelect).toBeFalsy()
   })
 })

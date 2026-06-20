@@ -42,6 +42,7 @@ const COMMON_SLASH_COMMANDS: CommonSlashCommand[] = [
     subtitle: '压缩当前对话历史，减少上下文占用',
     section: 'capability',
     keywords: ['compact', 'compress', 'history', '压缩', '历史'],
+    executeOnSelect: true,
   },
 {
     id: 'mcp',
