@@ -61,6 +61,7 @@ import {
 } from './agent-message-queue-state'
 import { type MentionItem } from './slash-command-state'
 import { createSuggestionRenderer } from './editor-mention-suggestions'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { buildContextWindowProgress } from './runtime-state-projections'
 import { ContextWindowIndicator } from './ContextWindowIndicator'
 import { getThreadSelectionSummary } from '@/components/model-selection/model-selection-state'
@@ -219,6 +220,14 @@ export function AgentInput({
   const [channelsLoaded, setChannelsLoaded] = useState(false)
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean
+    title: string
+    description: string
+    confirmLabel: string
+    destructive: boolean
+    onConfirm: () => void
+  }>({ open: false, title: '', description: '', confirmLabel: '确认', destructive: false, onConfirm: () => {} })
   const [localSending, setLocalSending] = useState(false)
   const [historyMessages, setHistoryMessages] = useState<AgentMessage[]>([])
   const mentionSuggestionOpenRef = useRef(false)
@@ -361,6 +370,11 @@ export function AgentInput({
     mentionSuggestionOpenRef.current = open
   }, [])
 
+  const slashCommandExecuteRef = useRef<(id: string) => void>(() => {})
+  const handleSlashCommandExecuteStable = useCallback((id: string) => {
+    slashCommandExecuteRef.current(id)
+  }, [])
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ undoRedo: false, bold: false, italic: false, strike: false }),
@@ -375,7 +389,7 @@ export function AgentInput({
         HTMLAttributes: {
           class: 'mention bg-orange-500/10 text-orange-600 dark:text-orange-400 px-0.5 rounded font-medium text-[13px]',
         },
-        suggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen),
+        suggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable),
       }),
       Mention.extend({ name: 'skillMention' }).configure({
         HTMLAttributes: {
@@ -444,25 +458,70 @@ export function AgentInput({
     setEditorText(nextText)
   }, [editor])
 
+  const doClear = useCallback(async () => {
+    try {
+      await sidecarCall(AGENT_IPC_CHANNELS.CLEAR_THREAD, { threadId })
+      setRuntimeEvents((prev) => {
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
+      setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+      setMessageQueues((prev) => {
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
+      toast.success('已清空对话')
+    } catch (error) {
+      console.error('[AgentInput] 清空对话失败:', error)
+      toast.error('清空失败')
+    }
+  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues])
+
+  const handleSlashCommandExecute = useCallback((id: string) => {
+    if (!editor) return
+    if (id === 'clear') {
+      editor.commands.clearContent()
+      setEditorText('')
+      const title = threads.find((t) => t.id === threadId)?.title ?? '当前会话'
+      setConfirmState({
+        open: true,
+        title: '清空当前对话',
+        description: `将删除当前会话「${title}」的所有消息，此操作不可撤销。`,
+        confirmLabel: '清空',
+        destructive: true,
+        onConfirm: () => { void doClear() },
+      })
+      return
+    }
+    if (id === 'reload-plugins') {
+      editor.commands.clearContent()
+      setEditorText('')
+      void (async () => {
+        try {
+          const result = await sidecarCall(AGENT_IPC_CHANNELS.RELOAD_PLUGINS, {})
+          setInstalledPlugins(normalizeListPluginsResult(result))
+          toast.success('插件已重新加载')
+        } catch (error) {
+          console.error('[AgentInput] 重载插件失败:', error)
+          toast.error('重载插件失败')
+        }
+      })()
+      return
+    }
+  }, [editor, threadId, threads, doClear])
+
+  slashCommandExecuteRef.current = handleSlashCommandExecute
+
   const handleSend = useCallback(async () => {
     if (!editor || localSending) return
     const rawText = applyAgentRoleMentions(editor.getText()).trim()
     if (!rawText && pendingAttachments.length === 0) return
 
-    // 3d-reload: intercept the /reload-plugins slash command. Re-scan plugins on the
-    // sidecar, refresh the local list, and consume the command (do NOT send to the agent).
-    // The next agent attempt picks up the fresh disk state automatically.
-    if (rawText === '/reload-plugins') {
-      editor.commands.clearContent()
-      setEditorText('')
-      try {
-        const result = await sidecarCall(AGENT_IPC_CHANNELS.RELOAD_PLUGINS, {})
-        setInstalledPlugins(normalizeListPluginsResult(result))
-        toast.success('插件已重新加载')
-      } catch (error) {
-        console.error('[AgentInput] 重载插件失败:', error)
-        toast.error('重载插件失败')
-      }
+    // 兜底：手打 /clear 或 /reload-plugins 文本回车，走与「选中」相同的流程
+    if (rawText === '/reload-plugins' || rawText === '/clear') {
+      handleSlashCommandExecute(rawText.replace(/^\//, ''))
       return
     }
 
@@ -543,6 +602,7 @@ export function AgentInput({
     }
   }, [
     editor,
+    handleSlashCommandExecute,
     localSending,
     onClearPendingAttachments,
     pendingAttachments,
@@ -832,6 +892,15 @@ export function AgentInput({
           />
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmState.open}
+        onOpenChange={(open) => setConfirmState((prev) => ({ ...prev, open }))}
+        title={confirmState.title}
+        description={confirmState.description}
+        confirmLabel={confirmState.confirmLabel}
+        destructive={confirmState.destructive}
+        onConfirm={confirmState.onConfirm}
+      />
     </div>
   )
 }
