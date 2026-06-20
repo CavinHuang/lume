@@ -12,6 +12,7 @@ import { listAutomationJobs, recordAutomationJobRun, updateAutomationJob } from 
 import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
 import { getEffectiveSystemConfig } from "../system/system-config-service";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { matchCronExpression } from "./automation-schedule";
 
 type JobDisposer = () => void;
@@ -53,8 +54,30 @@ function clearSchedules(): void {
   lastCronMinuteKeyByJob.clear();
 }
 
-function pickExecutionChannel(): { channelId: string; modelId: string; modelRef: string } {
-  const modelRef = getEffectiveSystemConfig().models?.agent?.defaultModelRef;
+/**
+ * 判定自动化任务使用哪类模型配置：
+ * - routine：日程任务（systemAction='routine'）
+ * - automation：用户手动或让 agent 创建的定时任务（source !== 'system'）
+ * - agent：其他系统任务（如记忆蒸馏），用默认对话模型
+ */
+export function resolveAutomationModelKind(job: { systemAction?: string; source?: string }): "routine" | "automation" | "agent" {
+  if (job.systemAction === "routine") return "routine";
+  if (job.source !== "system") return "automation";
+  return "agent";
+}
+
+function pickExecutionChannel(job: AutomationJob): { channelId: string; modelId: string; modelRef: string } {
+  const kind = resolveAutomationModelKind(job);
+  let modelRef: string | undefined;
+  if (kind === "agent") {
+    modelRef = getEffectiveSystemConfig().models?.agent?.defaultModelRef;
+  } else {
+    const config = getEffectiveLumeConfig();
+    const specific = kind === "routine"
+      ? config.models?.routine?.defaultModelRef
+      : config.models?.automation?.defaultModelRef;
+    modelRef = specific || config.models?.agent?.defaultModelRef;
+  }
   const binding = resolveChannelModelBinding(modelRef ?? "", "chat");
   if (!binding || !modelRef) {
     throw new Error("未找到可用的 Agent 默认模型，请先在通用设置中配置");
@@ -89,7 +112,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
   let runMessage = "任务执行完成";
 
   try {
-    const { channelId, modelId, modelRef } = pickExecutionChannel();
+    const { channelId, modelId, modelRef } = pickExecutionChannel(job);
     const boundThreadId = job.threadId?.trim();
     if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
       threadId = boundThreadId;

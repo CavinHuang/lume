@@ -1,4 +1,4 @@
-import type { DailyRoutine } from "@lume/shared"
+import type { DailyRoutine, RoutineEntryStatus, RoutineResult } from "@lume/shared"
 import { createAutomationJob } from "../automation/automation-manager"
 import { listAutomationJobs } from "../automation/automation-manager"
 import { startAutomationRunner, refreshAutomationRunnerJobs } from "../automation/automation-runner-service"
@@ -113,6 +113,33 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
   return routine
 }
 
+/**
+ * 根据自动化 job 与最近一次 run 判定 routine 条目的完成状态。
+ * job 未跑完（仍 enabled 或无 lastRunAt）返回 null（不更新）；
+ * run 失败 → failed；否则 → completed（summary 优先用 LLM 回复，回退 run 消息）。
+ */
+export function resolveRoutineEntryCompletion(input: {
+  job: { enabled: boolean; lastRunAt?: number }
+  latestRun?: { status?: string; message?: string; threadId?: string }
+  llmReply?: string
+}): { status: RoutineEntryStatus; result?: RoutineResult } | null {
+  const { job, latestRun, llmReply } = input
+  if (job.enabled || !job.lastRunAt) {
+    return null
+  }
+  if (latestRun?.status === "failed") {
+    return {
+      status: "failed",
+      result: { summary: latestRun.message ?? "任务执行失败" },
+    }
+  }
+  const summary = llmReply ?? latestRun?.message
+  return {
+    status: "completed",
+    ...(summary ? { result: { summary } } : {}),
+  }
+}
+
 export function syncRoutineStatus(): void {
   const date = today()
   const routine = readRoutine(date)
@@ -158,22 +185,27 @@ export function syncRoutineStatus(): void {
     }
 
     if (!job.enabled && job.lastRunAt) {
-      entry.status = "completed"
-      // Get the LLM's reply from the agent thread, fall back to run log message
       const runs = listAutomationRunsForJob(entry.automationJobId, 1)
       const latestRun = runs[0]
-      if (latestRun) {
-        const llmReply = latestRun.threadId
-          ? getLatestAssistantResponse(latestRun.threadId)
-          : undefined
-        entry.result = { summary: llmReply ?? latestRun.message }
+      const llmReply = latestRun?.threadId
+        ? getLatestAssistantResponse(latestRun.threadId)
+        : undefined
+      const completion = resolveRoutineEntryCompletion({ job, latestRun, llmReply })
+      if (!completion) continue
+      entry.status = completion.status
+      if (completion.result) {
+        entry.result = completion.result
       }
       changed++
-      log.info("条目执行完成", { date, entryId: entry.id, activity: entry.activity, runStatus: latestRun?.status })
+      if (completion.status === "failed") {
+        log.warn("条目执行失败", { date, entryId: entry.id, activity: entry.activity, runStatus: latestRun?.status })
+      } else {
+        log.info("条目执行完成", { date, entryId: entry.id, activity: entry.activity, runStatus: latestRun?.status })
+      }
       appendRoutineRun({
         entryId: entry.id,
         activity: entry.activity,
-        status: "completed",
+        status: completion.status,
         completedAt: Date.now(),
       })
     }

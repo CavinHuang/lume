@@ -3,7 +3,23 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createAutomationJob } from "./automation-manager";
-import { listAutomationRuns, runAutomationJobNow, stopAutomationRunner } from "./automation-runner-service";
+import { listAutomationRuns, resolveAutomationModelKind, runAutomationJobNow, stopAutomationRunner } from "./automation-runner-service";
+
+describe("resolveAutomationModelKind", () => {
+  it("routine 系统动作 → routine 模型", () => {
+    expect(resolveAutomationModelKind({ systemAction: "routine", source: "system" })).toBe("routine");
+  });
+
+  it("用户手动或让 agent 创建的定时任务 → automation 模型", () => {
+    expect(resolveAutomationModelKind({ source: "manual" })).toBe("automation");
+    // 无 source/systemAction 也视为用户任务
+    expect(resolveAutomationModelKind({})).toBe("automation");
+  });
+
+  it("其他系统任务（如记忆蒸馏）→ agent 默认模型", () => {
+    expect(resolveAutomationModelKind({ systemAction: "memory_distill_workspace", source: "system" })).toBe("agent");
+  });
+});
 
 describe("automation-runner-service", () => {
   let tempConfigDir = "";
