@@ -2,6 +2,7 @@ import { AGENT_IPC_CHANNELS, type BootstrapFileType } from "@lume/shared";
 import type {
   AgentPendingInteractiveState,
   AgentGenerateTitleInput,
+  AgentWelcomeSuggestionInput,
   AgentListSubagentRunsInput,
   AgentPluginDiagnostic,
   AgentPluginListItem,
@@ -39,6 +40,7 @@ import {
   appendAgentMessage,
   sendAgentMessage,
   generateAgentTitle,
+  generateWelcomeSuggestions,
   listAgentMessageQueue,
   promoteQueuedAgentMessageToGuidance,
   removeQueuedAgentMessage,
@@ -1406,6 +1408,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         validateInput(saveFilesToWorkspaceInputSchema, params, AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE_ROOT)
       ),
     [AGENT_IPC_CHANNELS.GENERATE_TITLE]: async (params) => generateAgentTitle(params as AgentGenerateTitleInput),
+    [AGENT_IPC_CHANNELS.GENERATE_WELCOME_SUGGESTIONS]: async (params) =>
+      generateWelcomeSuggestions(params as AgentWelcomeSuggestionInput),
     [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.STOP_THREAD);
       stopAgent(input.threadId);

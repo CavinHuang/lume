@@ -222,9 +222,27 @@ export interface AgentGenerateTitleInput {
   /** 规范化模型引用（provider/model），优先于 channelId/modelId */
   modelRef?: string
   /** 渠道 ID（用于获取 API Key） */
-  channelId: string
+  channelId?: string
   /** 模型 ID */
-  modelId: string
+  modelId?: string
+}
+
+// ===== 欢迎页建议 =====
+
+export interface AgentWelcomeSuggestionInput {
+  workspaceSlug?: string
+  workspaceName?: string
+}
+
+export interface AgentWelcomeSuggestion {
+  id: string
+  title: string
+  prompt: string
+}
+
+export interface AgentWelcomeSuggestionsResult {
+  suggestions: AgentWelcomeSuggestion[]
+  source: 'model' | 'fallback'
 }
 
 // ===== Skill 元数据 =====
@@ -1292,6 +1310,8 @@ export const AGENT_IPC_CHANNELS = {
   // 标题生成
   /** 生成 Agent 线程标题 */
   GENERATE_TITLE: 'agent:generate-title',
+  /** 生成欢迎页建议 */
+  GENERATE_WELCOME_SUGGESTIONS: 'agent:generate-welcome-suggestions',
 
   // 消息发送
   /** 发送线程消息（触发 Agent 流式响应） */

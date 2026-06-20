@@ -1,9 +1,20 @@
 import { describe, expect, test } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ContextWindowIndicator } from './ContextWindowIndicator'
+import { ContextWindowIndicator, shouldCloseContextWindowIndicatorForTarget } from './ContextWindowIndicator'
 import type { ContextWindowProgress } from './runtime-state-projections'
 
 describe('ContextWindowIndicator contract', () => {
+  test('keeps the context panel open for inside pointer targets only', () => {
+    const panel = {
+      contains(target: unknown) {
+        return target === 'inside-target'
+      },
+    } as Pick<Node, 'contains'>
+
+    expect(shouldCloseContextWindowIndicatorForTarget(panel, 'inside-target' as unknown as Node)).toBe(false)
+    expect(shouldCloseContextWindowIndicatorForTarget(panel, 'outside-target' as unknown as Node)).toBe(true)
+  })
+
   test('shows Alice-style thresholds and Lume budget sections when expanded', () => {
     const progress: ContextWindowProgress = {
       usedTokens: 420,

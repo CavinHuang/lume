@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { ContextWindowProgress } from './runtime-state-projections'
 
@@ -19,9 +19,22 @@ const usageRecordGridClassName = 'grid grid-cols-[1fr_44px_44px_40px_44px_52px] 
 
 export function ContextWindowIndicator({ progress, defaultOpen = false }: ContextWindowIndicatorProps) {
   const [open, setOpen] = useState(defaultOpen)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!shouldCloseContextWindowIndicatorForTarget(panelRef.current, event.target as Node)) return
+      setOpen(false)
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    return () => window.removeEventListener('pointerdown', handlePointerDown)
+  }, [open])
 
   return (
-    <div className="relative">
+    <div ref={panelRef} className="relative">
       <button
         type="button"
         aria-expanded={open}
@@ -187,6 +200,10 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
       )}
     </div>
   )
+}
+
+export function shouldCloseContextWindowIndicatorForTarget(container: Pick<Node, 'contains'> | null, target: Node | null): boolean {
+  return Boolean(container && target && !container.contains(target))
 }
 
 function CompactionStatusBlock({

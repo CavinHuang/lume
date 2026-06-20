@@ -52,6 +52,25 @@ describe("createAutoTitleJob", () => {
     expect(updatedTitles).toEqual(["实现 Service Runtime"]);
   });
 
+  test("配置标题生成器时优先使用生成标题", async () => {
+    const { createAgentThread, getAgentThreadMeta } = await import("../../agent/agent-thread-manager");
+    const { createAutoTitleJob } = await import("./auto-title-job");
+    const thread = createAgentThread("新 Agent 线程", "channel-test");
+    const job = createAutoTitleJob({
+      threadId: thread.id,
+      fallbackUserMessage: "实现 Service Runtime",
+      generateTitle: async () => "后台模型设置",
+    });
+
+    if (!job) {
+      throw new Error("auto title job was not created");
+    }
+
+    await job.run();
+
+    expect(getAgentThreadMeta(thread.id)?.title).toBe("后台模型设置");
+  });
+
   test("非默认标题不应生成 job", async () => {
     const { createAgentThread } = await import("../../agent/agent-thread-manager");
     const { createAutoTitleJob } = await import("./auto-title-job");

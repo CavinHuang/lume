@@ -323,7 +323,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         onScroll={handleScroll}
         onWheel={handleWheelNavigation}
         onTouchMove={handleTouchNavigation}
-        className="h-full w-full overflow-y-auto"
+        className="agent-message-scrollbar h-full w-full overflow-y-auto"
       >
         <div
           ref={contentRef}

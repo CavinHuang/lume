@@ -1,5 +1,5 @@
 
-import type { SDKMessage } from "@lume/agent-sdk";
+import { createProvider, type ApiType, type SDKMessage } from "@lume/agent-sdk";
 import type {
   AgentMessageQueueOperationResult,
   AgentMessageQueueSnapshot,
@@ -16,6 +16,9 @@ import type {
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput,
   AgentGenerateTitleInput,
+  AgentWelcomeSuggestion,
+  AgentWelcomeSuggestionInput,
+  AgentWelcomeSuggestionsResult,
   LumeRuntimeEvent
 } from "@lume/shared";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
@@ -76,6 +79,29 @@ type AgentStreamEmitter = {
 };
 
 const DEFAULT_MODEL_ID = "claude-sonnet-4-5-20250929";
+
+const DEFAULT_WELCOME_SUGGESTIONS: AgentWelcomeSuggestion[] = [
+  {
+    id: "fallback-plan-day",
+    title: "规划今天的工作",
+    prompt: "帮我梳理今天最重要的 3 件事，并给出可执行的时间安排。"
+  },
+  {
+    id: "fallback-summarize-project",
+    title: "总结这个项目",
+    prompt: "阅读当前工作区，帮我总结项目结构、关键模块和下一步建议。"
+  },
+  {
+    id: "fallback-debug-path",
+    title: "排查一个问题",
+    prompt: "我遇到一个问题，请先帮我设计最小复现和排查路径。"
+  },
+  {
+    id: "fallback-memory-review",
+    title: "整理近期记忆",
+    prompt: "根据最近对话和项目上下文，帮我提炼需要长期保留的偏好和决策。"
+  }
+];
 
 const log = createLogger("agent-service");
 const ROUTING_HEURISTIC_TOOLS = [
@@ -855,9 +881,18 @@ export async function sendAgentMessage(
     });
   }
   if (runtimeResult.status === "completed" && shouldTryAutoTitle) {
+    const titleModelRef = effectiveLumeConfig.models?.title?.defaultModelRef;
     const job = createAutoTitleJob({
       threadId,
       fallbackUserMessage: userMessage,
+      ...(titleModelRef
+        ? {
+          generateTitle: (sourceText) => generateAgentTitle({
+            sourceText,
+            modelRef: titleModelRef
+          })
+        }
+        : {}),
       onTitleUpdated: (title) => {
         emit.onTitleUpdated(title);
       }
@@ -973,6 +1008,55 @@ export function stopAllAgents(): void {
     .catch(() => undefined);
 }
 
+export async function generateWelcomeSuggestions(
+  input: AgentWelcomeSuggestionInput = {}
+): Promise<AgentWelcomeSuggestionsResult> {
+  const fallback = (): AgentWelcomeSuggestionsResult => ({
+    suggestions: DEFAULT_WELCOME_SUGGESTIONS,
+    source: "fallback"
+  });
+  const config = getEffectiveLumeConfig(input.workspaceSlug);
+  const modelRef = config.models?.welcomeSuggestions?.defaultModelRef || config.models?.background?.defaultModelRef;
+  if (!modelRef) return fallback();
+
+  const binding = resolveChannelModelBinding(modelRef, "chat");
+  if (!binding) return fallback();
+
+  try {
+    const provider = createProvider(resolveAgentServiceApiType(binding.channel.provider), {
+      apiKey: decryptApiKey(binding.channel.id),
+      baseURL: binding.channel.baseUrl,
+    });
+    const response = await provider.createMessage({
+      model: binding.modelId,
+      maxTokens: 900,
+      system: WELCOME_SUGGESTIONS_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: JSON.stringify({
+            workspaceName: input.workspaceName ?? "",
+            examples: DEFAULT_WELCOME_SUGGESTIONS
+          })
+        }
+      ],
+    });
+    const text = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => (block as { type: "text"; text: string }).text)
+      .join("")
+      .trim();
+    const suggestions = parseWelcomeSuggestions(text);
+    return suggestions.length > 0 ? { suggestions, source: "model" } : fallback();
+  } catch (error) {
+    log.warn("欢迎页建议生成失败，已回退默认建议", {
+      modelRef,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return fallback();
+  }
+}
+
 export async function generateAgentTitle(input: AgentGenerateTitleInput): Promise<string | null> {
   const sourceText = (input.sourceText ?? input.userMessage ?? "").trim();
   if (!sourceText) {
@@ -999,10 +1083,12 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
   }
 
   try {
+    const modelId = boundModel?.modelId ?? input.modelId;
+    if (!modelId) return null;
     const modelSelection = resolveChannelModelSelection({
       channelProvider: channel.provider,
       baseUrl: channel.baseUrl,
-      modelId: boundModel?.modelId ?? input.modelId,
+      modelId,
       openaiApiMode: channel.openaiApiMode,
       channelProviderId: channel.providerId,
     });
@@ -1030,3 +1116,50 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
     return null;
   }
 }
+
+function parseWelcomeSuggestions(text: string): AgentWelcomeSuggestion[] {
+  const cleaned = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  try {
+    const parsed = JSON.parse(cleaned) as unknown;
+    const items = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === "object" && Array.isArray((parsed as { suggestions?: unknown }).suggestions)
+        ? (parsed as { suggestions: unknown[] }).suggestions
+        : [];
+    return items
+      .map((item, index) => {
+        if (!item || typeof item !== "object") return null;
+        const title = typeof (item as { title?: unknown }).title === "string"
+          ? (item as { title: string }).title.trim()
+          : "";
+        const prompt = typeof (item as { prompt?: unknown }).prompt === "string"
+          ? (item as { prompt: string }).prompt.trim()
+          : "";
+        if (!title || !prompt) return null;
+        return { id: `model-${index}`, title: title.slice(0, 20), prompt };
+      })
+      .filter((item): item is AgentWelcomeSuggestion => Boolean(item))
+      .slice(0, 4);
+  } catch {
+    return [];
+  }
+}
+
+function resolveAgentServiceApiType(provider: string): ApiType {
+  const normalized = provider.trim().toLowerCase();
+  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
+  if (normalized === "deepseek") return "deepseek-chat-completions";
+  return "openai-completions";
+}
+
+const WELCOME_SUGGESTIONS_SYSTEM_PROMPT = `你是 Lume 欢迎页的任务建议生成器。
+根据当前工作区名称，生成 4 个用户一眼能理解、适合直接开始对话的建议。
+要求：
+- title 使用 4-8 个中文字符，像按钮文案
+- prompt 是完整中文指令，点击后会填入输入框
+- 不要解释，不要 markdown
+- 只返回 JSON：
+{"suggestions":[{"title":"规划今天","prompt":"..."}]}`;

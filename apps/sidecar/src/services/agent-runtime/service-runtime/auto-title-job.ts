@@ -17,6 +17,7 @@ const log = createLogger("auto-title-job");
 export function createAutoTitleJob(input: {
   threadId: string;
   fallbackUserMessage: string;
+  generateTitle?: (sourceText: string) => Promise<string | null>;
   onTitleUpdated?: (title: string) => void;
 }): ServiceRuntimeJob | null {
   const meta = getAgentThreadMeta(input.threadId);
@@ -38,18 +39,22 @@ export function createAutoTitleJob(input: {
     run: async () => {
       const threadMessages = getAgentThreadMessages(input.threadId);
       const sourceText = resolveAgentTitleSourceText(threadMessages, input.fallbackUserMessage);
+      const generatedTitle = input.generateTitle
+        ? sanitizeGeneratedTitle(await input.generateTitle(sourceText) ?? "")
+        : "";
       const fallbackTitle = sanitizeGeneratedTitle(deriveFallbackAgentTitleFromSourceText(sourceText) ?? "");
-      if (!fallbackTitle) {
+      const title = generatedTitle || fallbackTitle;
+      if (!title) {
         log.debug("自动标题跳过：未能生成可用标题", { threadId: input.threadId });
         return;
       }
-      updateAgentThreadMeta(input.threadId, { title: fallbackTitle });
+      updateAgentThreadMeta(input.threadId, { title });
       log.info("自动标题更新成功（临时）", {
         threadId: input.threadId,
-        title: fallbackTitle,
-        source: "fallback"
+        title,
+        source: generatedTitle ? "llm" : "fallback"
       });
-      input.onTitleUpdated?.(fallbackTitle);
+      input.onTitleUpdated?.(title);
     }
   };
 }
