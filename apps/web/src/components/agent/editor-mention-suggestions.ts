@@ -98,6 +98,7 @@ export function createSuggestionRenderer(
   char: string,
   getWorkspaceSlug: () => string | null,
   setSuggestionOpen: (open: boolean) => void,
+  onCommandExecute?: (id: string) => void,
 ) {
   return {
     char,
@@ -115,7 +116,7 @@ export function createSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: char as '@' | '/' | '#' | '$', getWorkspaceSlug },
+            props: { ...props, trigger: char as '@' | '/' | '#' | '$', getWorkspaceSlug, onCommandExecute },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
