@@ -10,6 +10,8 @@ interface MentionListProps {
   command: (item: { id: string; label: string }) => void
   trigger?: '@' | '/' | '#' | '$'
   getWorkspaceSlug?: () => string | null
+  /** 选中即执行命令（executeOnSelect）时触发，替代插入 mention 文本 */
+  onCommandExecute?: (id: string) => void
 }
 
 export interface MentionListRef {
@@ -17,7 +19,7 @@ export interface MentionListRef {
 }
 
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
-  function MentionList({ items, command, trigger = '/', getWorkspaceSlug }, ref) {
+  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute }, ref) {
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [panelMode, setPanelMode] = useState<'commands' | 'mcp-status'>('commands')
     const [mcpRows, setMcpRows] = useState<McpServerRow[]>([])
@@ -54,8 +56,12 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         fetchMcpData()
         return
       }
+      if (item.executeOnSelect && onCommandExecute) {
+        onCommandExecute(item.id)
+        return
+      }
       command({ id: item.id, label: item.label })
-    }, [displayItems, command, fetchMcpData])
+    }, [displayItems, command, fetchMcpData, onCommandExecute])
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
