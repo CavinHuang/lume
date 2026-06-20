@@ -108,3 +108,36 @@ export function applyReadingModelSelectChange(
   }
   return { ...draft, textModelMode: 'explicit', textModelRef: selectedValue }
 }
+
+export type ReadingModelField = 'text' | 'image' | keyof ReadingAdvancedModelSettings
+
+/**
+ * 构造单字段模型变更的增量 patch（updateReadingSettings 是 patch 语义，无需回填非模型字段）。
+ * text/image 清除用 null；advanced 阶段清除用空字符串 "" ——
+ * undefined 会被 JSON 序列化丢弃，sidecar 收不到字段就清不掉。
+ */
+export function buildReadingModelPatch(
+  field: ReadingModelField,
+  modelRef: string,
+): ReadingUpdateSettingsInput {
+  if (field === 'text') {
+    const trimmed = modelRef.trim()
+    return trimmed
+      ? { textModelMode: 'explicit', textModelRef: trimmed }
+      : { textModelMode: 'inherit', textModelRef: null }
+  }
+  if (field === 'image') {
+    return { imageModelRef: modelRef.trim() || null }
+  }
+  return { advanced: buildAdvancedStagePatch(field, modelRef) }
+}
+
+function buildAdvancedStagePatch(
+  field: keyof ReadingAdvancedModelSettings,
+  modelRef: string,
+): Partial<ReadingAdvancedModelSettings> {
+  const trimmed = modelRef.trim()
+  const patch: Partial<ReadingAdvancedModelSettings> = {}
+  ;(patch as Record<string, unknown>)[field] = trimmed || ''
+  return patch
+}

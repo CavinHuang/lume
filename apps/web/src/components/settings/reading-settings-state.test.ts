@@ -4,6 +4,7 @@ import {
   READING_ADVANCED_STAGE_OPTIONS,
   applyReadingModelSelectChange,
   buildReadingChatModelOptions,
+  buildReadingModelPatch,
   buildReadingSettingsSavePayload,
   getReadingSettingsDraft,
   resolveReadingModelSelectValue,
@@ -120,6 +121,31 @@ describe('reading settings state', () => {
     const explicit = applyReadingModelSelectChange(draft, 'zai/glm-5.1')
     expect(explicit.textModelMode).toBe('explicit')
     expect(explicit.textModelRef).toBe('zai/glm-5.1')
+  })
+
+  test('builds incremental reading model patch without touching non-model fields', () => {
+    // text: explicit + trimmed
+    expect(buildReadingModelPatch('text', ' zai/glm-5.1 ')).toEqual({
+      textModelMode: 'explicit',
+      textModelRef: 'zai/glm-5.1',
+    })
+    // text: empty -> inherit + null (clear)
+    expect(buildReadingModelPatch('text', '   ')).toEqual({
+      textModelMode: 'inherit',
+      textModelRef: null,
+    })
+    // image: trimmed, or null when empty
+    expect(buildReadingModelPatch('image', ' openai/gpt-image ')).toEqual({
+      imageModelRef: 'openai/gpt-image',
+    })
+    expect(buildReadingModelPatch('image', '')).toEqual({ imageModelRef: null })
+    // advanced stage: trimmed; empty uses "" so sidecar can clear it
+    expect(buildReadingModelPatch('deepModelRef', ' deepseek/r1 ')).toEqual({
+      advanced: { deepModelRef: 'deepseek/r1' },
+    })
+    expect(buildReadingModelPatch('companionModelRef', '  ')).toEqual({
+      advanced: { companionModelRef: '' },
+    })
   })
 })
 

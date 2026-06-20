@@ -50,6 +50,15 @@ export const updateRoutineModelStrategy = (value: LumeConfigRoutineModelStrategy
     summary: 'update routine scheduling model strategy',
   })
 
+export const updateAutomationModelStrategy = (value: LumeConfigSimpleModelStrategy, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'models.automation',
+    value,
+    summary: 'update automation job model strategy',
+  })
+
 export type LumeModelPurpose =
   | 'background'
   | 'contextCompression'

@@ -66,6 +66,7 @@ export interface LumeConfigModelsSection {
   agent?: LumeConfigAgentDefaultStrategy
   subagent?: LumeConfigSubagentModelStrategy
   routine?: LumeConfigRoutineModelStrategy
+  automation?: LumeConfigSimpleModelStrategy
   background?: LumeConfigSimpleModelStrategy
   contextCompression?: LumeConfigSimpleModelStrategy
   title?: LumeConfigSimpleModelStrategy

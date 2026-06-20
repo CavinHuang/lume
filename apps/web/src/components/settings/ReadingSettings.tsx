@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BookOpen, Check, LogIn, MessageSquare, RefreshCw, Save, TestTube2 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { Channel } from '@lume/shared'
 import type { ReadingSettingsDraft } from './reading-settings-state'
 import {
-  READING_ADVANCED_STAGE_OPTIONS,
   READING_CADENCE_OPTIONS,
-  applyReadingModelSelectChange,
-  buildReadingChatModelOptions,
   buildReadingSettingsSavePayload,
   getReadingSettingsDraft,
-  resolveReadingModelSelectValue,
 } from './reading-settings-state'
 import {
   connectReadingWeread,
@@ -20,7 +15,6 @@ import {
   testWereadKey,
   updateReadingSettings,
 } from '@/lib/desktop-api/reading'
-import { listChannels } from '@/lib/desktop-api/channel'
 
 type WereadTestStatus = 'idle' | 'testing' | 'ok' | 'fail'
 
@@ -40,23 +34,19 @@ const WEREAD_FEATURES = [
 
 export function ReadingSettings() {
   const [draft, setDraft] = useState<ReadingSettingsDraft | null>(null)
-  const [channels, setChannels] = useState<Channel[]>([])
   const [connected, setConnected] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [savedApiKey, setSavedApiKey] = useState('')
-  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [keyFlowBusy, setKeyFlowBusy] = useState(false)
   const [testStatus, setTestStatus] = useState<WereadTestStatus>('idle')
   const [connectionDetail, setConnectionDetail] = useState<WereadConnectionDetail | null>(null)
 
   const load = useCallback(async () => {
-    const [snapshot, keyResult, channelList] = await Promise.all([
+    const [snapshot, keyResult] = await Promise.all([
       getReadingSnapshot(),
       getWereadApiKey().catch(() => ({ apiKey: null })),
-      listChannels().catch(() => []),
     ])
     setDraft(getReadingSettingsDraft(snapshot.settings))
-    setChannels(channelList)
     setConnected(snapshot.wereadConnection.connected)
     setApiKey(keyResult.apiKey ?? '')
     setSavedApiKey(keyResult.apiKey ?? '')
@@ -288,61 +278,6 @@ export function ReadingSettings() {
           />
           安静运行
         </label>
-      </section>
-
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
-        <h3 className="text-[15px] font-semibold text-[var(--text-1)]">模型</h3>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <label className="text-[13px] text-[var(--text-2)]">
-            <span className="mb-2 block">文本模型</span>
-            <select
-              value={resolveReadingModelSelectValue(draft)}
-              onChange={(event) => setDraft((current) => current ? applyReadingModelSelectChange(current, event.target.value) : current)}
-              className="h-9 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 outline-none"
-            >
-              {buildReadingChatModelOptions(channels).map((option) => (
-                <option key={option.modelRef || '__inherit__'} value={option.modelRef}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-[13px] text-[var(--text-2)]">
-            <span className="mb-2 block">图像模型</span>
-            <input
-              value={draft.imageModelRef}
-              onChange={(event) => setDraft((current) => current ? { ...current, imageModelRef: event.target.value } : current)}
-              placeholder="provider/image-model"
-              className="h-9 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 outline-none"
-            />
-          </label>
-        </div>
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen((value) => !value)}
-          className="mt-4 text-[13px] font-medium text-[var(--brand)]"
-        >
-          高级阶段模型
-        </button>
-        {advancedOpen && (
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {READING_ADVANCED_STAGE_OPTIONS.map((item) => (
-              <label key={item.id} className="text-[13px] text-[var(--text-2)]">
-                <span className="mb-2 block">{item.label}</span>
-                <input
-                  value={draft.advanced[item.id] ?? ''}
-                  onChange={(event) => setDraft((current) => current ? {
-                    ...current,
-                    advanced: {
-                      ...current.advanced,
-                      [item.id]: event.target.value,
-                    },
-                  } : current)}
-                  placeholder="继承文本模型"
-                  className="h-9 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 outline-none"
-                />
-              </label>
-            ))}
-          </div>
-        )}
       </section>
 
       <div className="flex justify-end">

@@ -23,6 +23,8 @@ import type {
   MemoryRuntimeConfig,
   ProviderType,
   ProviderGroup,
+  ReadingAdvancedModelSettings,
+  ReadingSettings,
 } from '@lume/shared'
 import {
   findModelMeta,
@@ -39,6 +41,7 @@ import {
   getEffectiveLumeConfig,
   updateAgentModelStrategy,
   updateAgentThinkingLevel,
+  updateAutomationModelStrategy,
   updateEmbeddingModelRef,
   updateImageGenerationModelStrategy,
   updateMemoryExtractionModelRef,
@@ -49,10 +52,12 @@ import {
   type LumeModelPurpose,
 } from '@/lib/desktop-api/lume-config'
 import { getMemoryRuntimeConfig, updateMemoryRuntimeConfig } from '@/lib/desktop-api/memory'
+import { getReadingSnapshot, updateReadingSettings } from '@/lib/desktop-api/reading'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { ChannelForm } from './ChannelForm'
 import { buildEmbeddingModelOptions, buildRerankModelOptions } from './memory-settings-state'
+import { buildReadingModelPatch, READING_ADVANCED_STAGE_OPTIONS, type ReadingModelField } from './reading-settings-state'
 import {
   buildModelOptions,
   getEnabledChannels,
@@ -68,6 +73,7 @@ export function AgentSettings() {
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [config, setConfig] = React.useState<LumeEffectiveConfig | null>(null)
   const [memoryRuntimeConfig, setMemoryRuntimeConfig] = React.useState<MemoryRuntimeConfig | null>(null)
+  const [readingSettings, setReadingSettings] = React.useState<ReadingSettings | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [savingModel, setSavingModel] = React.useState(false)
   const [savingAction, setSavingAction] = React.useState<string | null>(null)
@@ -84,14 +90,16 @@ export function AgentSettings() {
   const [savingProvider, setSavingProvider] = React.useState(false)
 
   const reload = React.useCallback(async () => {
-    const [nextChannels, nextConfig, nextMemoryRuntimeConfig] = await Promise.all([
+    const [nextChannels, nextConfig, nextMemoryRuntimeConfig, nextReadingSnapshot] = await Promise.all([
       listChannels(),
       getEffectiveLumeConfig(),
       getMemoryRuntimeConfig(),
+      getReadingSnapshot(),
     ])
     setChannels(nextChannels)
     setConfig(nextConfig)
     setMemoryRuntimeConfig(nextMemoryRuntimeConfig)
+    setReadingSettings(nextReadingSnapshot.settings)
     const nextThinkingLevel = nextConfig.agent?.thinkingLevel ?? 'medium'
     setThinkingLevel(nextThinkingLevel)
   }, [])
@@ -129,13 +137,7 @@ export function AgentSettings() {
     }),
     [allModelOptions, currentStrategy, enabledChannels]
   )
-  const selectedProviderId = activeDefault.channel?.id ?? enabledChannels[0]?.id ?? ''
-  const selectedProviderModels = React.useMemo(
-    () => buildModelOptions(enabledChannels, selectedProviderId),
-    [enabledChannels, selectedProviderId]
-  )
-  const selectedProviderValue = selectedProviderId
-  const selectedModelValue = activeDefault.option?.modelRef ?? selectedProviderModels[0]?.modelRef ?? ''
+  const selectedModelValue = activeDefault.option?.modelRef ?? ''
   const providerRows = React.useMemo(() => buildModelProviderRows(channels), [channels])
   const connectedProviderCount = providerRows.filter((row) => row.channel?.enabled).length
   const availableModelCount = allModelOptions.length
@@ -249,13 +251,6 @@ export function AgentSettings() {
     }
   }
 
-  const handleProviderChange = (channelId: string) => {
-    const firstModel = buildModelOptions(enabledChannels, channelId)[0]
-    if (firstModel) {
-      void persistDefaultModel(firstModel.modelRef)
-    }
-  }
-
   const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
     setThinkingLevel(value)
     updateAgentThinkingLevel(value).catch((error) => {
@@ -272,6 +267,9 @@ export function AgentSettings() {
         setConfig(nextConfig)
       } else if (action === 'routine') {
         const nextConfig = await updateRoutineModelStrategy(modelRef ? { defaultModelRef: modelRef } : {})
+        setConfig(nextConfig)
+      } else if (action === 'automation') {
+        const nextConfig = await updateAutomationModelStrategy(modelRef ? { defaultModelRef: modelRef } : {})
         setConfig(nextConfig)
       } else if (action === 'memory-extraction') {
         const nextConfig = await updateMemoryExtractionModelRef(modelRef.trim() || undefined)
@@ -310,6 +308,20 @@ export function AgentSettings() {
     } catch (error) {
       console.error('[AgentSettings] save image generation models FAILED:', error)
       toast.error('保存图像生成模型失败')
+    } finally {
+      setSavingAction(null)
+    }
+  }
+
+  const persistReadingModel = async (field: ReadingModelField, modelRef: string) => {
+    setSavingAction(`reading-${field}`)
+    try {
+      const updated = await updateReadingSettings(buildReadingModelPatch(field, modelRef))
+      setReadingSettings(updated)
+      toast.success('读书模型已更新')
+    } catch (error) {
+      console.error('[AgentSettings] save reading model FAILED:', error)
+      toast.error('保存读书模型失败')
     } finally {
       setSavingAction(null)
     }
@@ -458,48 +470,6 @@ export function AgentSettings() {
             defaultProviderLabel={defaultProviderLabel}
           />
 
-          <SettingsCard title="默认模型配置">
-            <div className="grid grid-cols-[minmax(0,330px)_minmax(0,1fr)] items-center gap-x-14 gap-y-3">
-              <div className="grid grid-cols-[104px_168px] items-center gap-x-8 gap-y-3">
-                <FieldLabel>默认供应商</FieldLabel>
-                <SelectShell>
-                  <select
-                    value={selectedProviderValue}
-                    onChange={(event) => handleProviderChange(event.target.value)}
-                    className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[var(--text-1)] outline-none"
-                  >
-                    {enabledChannels.length === 0 ? (
-                      <option value="">未配置</option>
-                    ) : enabledChannels.map((channel) => (
-                      <option key={channel.id} value={channel.id}>{channel.name}</option>
-                    ))}
-                  </select>
-                </SelectShell>
-
-                <FieldLabel>默认模型</FieldLabel>
-                <SelectShell>
-                  <select
-                    value={selectedModelValue}
-                    onChange={(event) => void persistDefaultModel(event.target.value)}
-                    disabled={savingModel || selectedProviderModels.length === 0}
-                    className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[var(--text-1)] outline-none disabled:opacity-60"
-                  >
-                    {selectedProviderModels.length === 0 ? (
-                      <option value="">未设置</option>
-                    ) : selectedProviderModels.map((option) => (
-                      <option key={option.modelRef} value={option.modelRef}>{option.label}</option>
-                    ))}
-                  </select>
-                </SelectShell>
-              </div>
-
-              <div className="grid grid-cols-[86px_minmax(0,260px)] items-start justify-end gap-x-4 gap-y-3">
-                <FieldLabel className="justify-end">推理强度</FieldLabel>
-                <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} inline />
-              </div>
-            </div>
-          </SettingsCard>
-
           <SettingsCard
             title="供应商配置"
             description="供应商名称、Base URL、API Key 和模型列表会通过本地 channel 配置落盘。开启供应商后即可编辑并保存配置。"
@@ -551,6 +521,7 @@ export function AgentSettings() {
           memoryJudgementModelValue={config?.models?.memoryJudgement?.defaultModelRef ?? ''}
           subagentModelValue={config?.models?.subagent?.defaultModelRef ?? ''}
           routineModelValue={config?.models?.routine?.defaultModelRef ?? ''}
+          automationModelValue={config?.models?.automation?.defaultModelRef ?? ''}
           extractionModelValue={getMemoryExtractionModelRef(config)}
           embeddingModelValue={config?.models?.embedding?.defaultModelRef ?? ''}
           rerankModelValue={memoryRuntimeConfig?.retrieval.rerankModelRef ?? ''}
@@ -560,6 +531,10 @@ export function AgentSettings() {
           contextWindowInput={contextWindowInput}
           savingAction={savingAction}
           savingModel={savingModel}
+          thinkingLevel={thinkingLevel}
+          onThinkingLevelChange={handleThinkingLevelChange}
+          readingSettings={readingSettings}
+          onReadingModelChange={(field, modelRef) => void persistReadingModel(field, modelRef)}
           onContextModelRefChange={setContextModelRef}
           onContextWindowInputChange={setContextWindowInput}
           onDefaultModelChange={(modelRef) => void persistDefaultModel(modelRef)}
@@ -636,6 +611,7 @@ function ModelActionSettings({
   memoryJudgementModelValue,
   subagentModelValue,
   routineModelValue,
+  automationModelValue,
   extractionModelValue,
   embeddingModelValue,
   rerankModelValue,
@@ -645,6 +621,10 @@ function ModelActionSettings({
   contextWindowInput,
   savingAction,
   savingModel,
+  thinkingLevel,
+  onThinkingLevelChange,
+  readingSettings,
+  onReadingModelChange,
   onContextModelRefChange,
   onContextWindowInputChange,
   onDefaultModelChange,
@@ -666,6 +646,7 @@ function ModelActionSettings({
   memoryJudgementModelValue: string
   subagentModelValue: string
   routineModelValue: string
+  automationModelValue: string
   extractionModelValue: string
   embeddingModelValue: string
   rerankModelValue: string
@@ -675,6 +656,10 @@ function ModelActionSettings({
   contextWindowInput: string
   savingAction: string | null
   savingModel: boolean
+  thinkingLevel: LumeConfigThinkingLevel
+  onThinkingLevelChange: (value: LumeConfigThinkingLevel) => void
+  readingSettings: ReadingSettings | null
+  onReadingModelChange: (field: ReadingModelField, modelRef: string) => void
   onContextModelRefChange: (value: string) => void
   onContextWindowInputChange: (value: string) => void
   onDefaultModelChange: (modelRef: string) => void
@@ -692,6 +677,13 @@ function ModelActionSettings({
         title="主力模型"
         description="核心对话、复杂推理和日程规划使用的模型。"
       >
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] py-3">
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold leading-5 text-[var(--text-1)]">推理强度</div>
+            <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">影响回复前的思考深度</div>
+          </div>
+          <ThinkingLevelPicker value={thinkingLevel} onChange={onThinkingLevelChange} inline />
+        </div>
         <ActionModelRow
           title="默认对话模型"
           description="主对话、新建话题时使用的模型"
@@ -717,6 +709,15 @@ function ModelActionSettings({
           inheritLabel={inheritDefault}
           disabled={savingAction === 'routine'}
           onChange={(value) => onActionModelChange('routine', value)}
+        />
+        <ActionModelRow
+          title="自动化任务"
+          description="自动化页面创建的定时任务使用"
+          value={automationModelValue}
+          options={chatOptions}
+          inheritLabel={inheritDefault}
+          disabled={savingAction === 'automation'}
+          onChange={(value) => onActionModelChange('automation', value)}
         />
       </SettingsCard>
 
@@ -817,6 +818,14 @@ function ModelActionSettings({
           onChange={(value) => onActionModelChange('embedding', value)}
         />
       </SettingsCard>
+
+      <ReadingModelSettings
+        chatOptions={chatOptions}
+        imageOptions={imageOptions}
+        readingSettings={readingSettings}
+        savingAction={savingAction}
+        onReadingModelChange={onReadingModelChange}
+      />
 
       <ImageGenerationSettings
         options={imageOptions}
@@ -1093,6 +1102,67 @@ function ContextWindowSettings({
   )
 }
 
+const READING_STAGE_DESCRIPTIONS: Record<keyof ReadingAdvancedModelSettings, string> = {
+  selectionModelRef: '从书架挑选下一本要读的书',
+  seedModelRef: '生成札记的种子草稿',
+  deepModelRef: '产出深度读书笔记',
+  companionModelRef: '陪读聊天与答疑',
+}
+
+function ReadingModelSettings({
+  chatOptions,
+  imageOptions,
+  readingSettings,
+  savingAction,
+  onReadingModelChange,
+}: {
+  chatOptions: ActionModelOption[]
+  imageOptions: ActionModelOption[]
+  readingSettings: ReadingSettings | null
+  savingAction: string | null
+  onReadingModelChange: (field: ReadingModelField, modelRef: string) => void
+}) {
+  if (!readingSettings) return null
+  const textValue = readingSettings.textModelMode === 'inherit' ? '' : (readingSettings.textModelRef ?? '')
+  return (
+    <SettingsCard
+      title="读书模型"
+      description="阅读流程各阶段使用的模型，留空表示继承上一级。"
+    >
+      <ActionModelRow
+        title="文本模型"
+        description="选书、札记、深度笔记等通用文本任务"
+        value={textValue}
+        options={chatOptions}
+        inheritLabel="继承默认对话模型"
+        disabled={savingAction === 'reading-text'}
+        onChange={(ref) => onReadingModelChange('text', ref)}
+      />
+      <ActionModelRow
+        title="图像模型"
+        description="读书卡片封面与配图生成"
+        value={readingSettings.imageModelRef ?? ''}
+        options={imageOptions}
+        inheritLabel="未指定（不生成图像）"
+        disabled={savingAction === 'reading-image'}
+        onChange={(ref) => onReadingModelChange('image', ref)}
+      />
+      {READING_ADVANCED_STAGE_OPTIONS.map((stage) => (
+        <ActionModelRow
+          key={stage.id}
+          title={stage.label}
+          description={READING_STAGE_DESCRIPTIONS[stage.id]}
+          value={readingSettings.advanced[stage.id] ?? ''}
+          options={chatOptions}
+          inheritLabel="继承文本模型"
+          disabled={savingAction === `reading-${stage.id}`}
+          onChange={(ref) => onReadingModelChange(stage.id, ref)}
+        />
+      ))}
+    </SettingsCard>
+  )
+}
+
 function ProviderConfigurationWorkbench({
   activeProvider,
   activeProviderRow,
@@ -1312,12 +1382,6 @@ function SettingsCard({
       )}
       {children}
     </section>
-  )
-}
-
-function FieldLabel({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={cn('flex h-9 items-center text-[13px] font-medium text-[var(--text-2)]', className)}>{children}</div>
   )
 }
 

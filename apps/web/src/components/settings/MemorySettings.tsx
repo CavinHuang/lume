@@ -18,7 +18,6 @@ import {
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import type {
-  Channel,
   MemoryCitationsMode,
   MemoryIngestSourceInput,
   MemoryIngestSourcesJob,
@@ -44,7 +43,6 @@ import {
   getMemoryOrganizeJob,
   getMemorySettingsSnapshot,
   ingestMemorySources,
-  listChannels,
   openFileDialog,
   openFolderDialog,
   openMemorySource,
@@ -55,10 +53,8 @@ import {
   deleteMemoryEntry,
   resolveMemoryPending,
   updateMemoryEntry,
-  updateEmbeddingModelRef,
   updateMemoryRuntimeConfig,
 } from '@/lib/desktop-api'
-import { updateMemoryExtractionModelRef } from '@/lib/desktop-api/lume-config'
 import { cn } from '@/lib/utils'
 import {
   MEMORY_CITATION_MODE_LABELS,
@@ -71,12 +67,10 @@ import {
   MEMORY_TOOL_POLICY_GROUPS,
   MEMORY_USER_CATEGORY_META,
   applyMemoryIngestTargetScope,
-  buildEmbeddingModelOptions,
   buildMemoryIngestItemRows,
   buildMemoryLayerMetrics,
   buildMemoryDetailRows,
   buildMemoryOverviewMetrics,
-  buildRerankModelOptions,
   filterMemoryEntriesByUserCategory,
   isMemoryToolGroupEnabled,
   localOnnxStatusLabel,
@@ -168,7 +162,6 @@ export function MemorySettings() {
   const [view, setView] = React.useState<MemorySettingsView>('profile')
   const [runtimeConfig, setRuntimeConfig] = React.useState<MemoryRuntimeConfig | null>(null)
   const [snapshot, setSnapshot] = React.useState<MemorySettingsSnapshot | null>(null)
-  const [channels, setChannels] = React.useState<Channel[]>([])
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
   const [entryOrganizeJob, setEntryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
   const [historyOrganizeJob, setHistoryOrganizeJob] = React.useState<MemoryOrganizeJob | null>(null)
@@ -189,10 +182,8 @@ export function MemorySettings() {
     try {
       const nextConfig = await getMemoryRuntimeConfig()
       const nextSnapshot = await getMemorySettingsSnapshot(workspaceSlug)
-      const nextChannels = await listChannels()
       setRuntimeConfig(nextConfig)
       setSnapshot(nextSnapshot)
-      setChannels(nextChannels)
     } catch (error) {
       console.error('[MemorySettings] refresh FAILED:', error)
       toast.error(memorySettingsErrorMessage(error))
@@ -438,30 +429,6 @@ export function MemorySettings() {
     await refresh()
   })
 
-  const handleEmbeddingModel = (modelRef: string) => runAction('embedding-model', async () => {
-    if (!workspaceSlug || !modelRef) return
-    await updateEmbeddingModelRef(modelRef, workspaceSlug)
-    await refresh()
-  })
-
-  const handleExtractionModel = (modelRef: string) => runAction('extraction-model', async () => {
-    if (!workspaceSlug) return
-    await updateMemoryExtractionModelRef(modelRef.trim() || undefined, workspaceSlug)
-    await refresh()
-  })
-
-  const handleRerankModel = (modelRef: string) => runAction('rerank-model', async () => {
-    if (!runtimeConfig) return
-    const nextConfig = await updateMemoryRuntimeConfig({
-      retrieval: {
-        ...runtimeConfig.retrieval,
-        rerankModelRef: modelRef.trim() || undefined,
-      },
-    })
-    setRuntimeConfig(nextConfig)
-    await refresh()
-  })
-
   const handleOrganizeHistory = () => runAction('organize-history', async () => {
     if (!workspaceSlug) return
     setOrganizeResult(null)
@@ -635,12 +602,9 @@ export function MemorySettings() {
 
       <OverviewPanel
         busyAction={busyAction}
-        channels={channels}
         runtimeConfig={runtimeConfig}
         snapshot={snapshot}
         onCitationsMode={(mode) => void handleCitationsMode(mode)}
-        onEmbeddingModel={(modelRef) => void handleEmbeddingModel(modelRef)}
-        onExtractionModel={(modelRef) => void handleExtractionModel(modelRef)}
         onOrganizeEntries={() => void handleOrganizeEntries()}
         onOrganizeHistory={() => void handleOrganizeHistory()}
         onIngestPastedText={() => void handleIngestPastedText()}
@@ -648,7 +612,6 @@ export function MemorySettings() {
         onIngestLocalFolder={() => void handleIngestLocalFolder()}
         onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
         onOpenFile={(path) => void handleOpenMemoryFile(path)}
-        onRerankModel={(modelRef) => void handleRerankModel(modelRef)}
         onSemanticMode={(mode) => void handleSemanticMode(mode)}
         onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
         externalText={externalText}
@@ -670,7 +633,6 @@ export function MemorySettings() {
 
 function OverviewPanel({
   busyAction,
-  channels,
   runtimeConfig,
   snapshot,
   externalText,
@@ -681,8 +643,6 @@ function OverviewPanel({
   entryOrganizeResult,
   historyOrganizeJob,
   onCitationsMode,
-  onEmbeddingModel,
-  onExtractionModel,
   onExternalTextChange,
   onIngestTargetScope,
   onIngestPastedText,
@@ -692,7 +652,6 @@ function OverviewPanel({
   onOpenFile,
   onOrganizeEntries,
   onOrganizeHistory,
-  onRerankModel,
   onSemanticMode,
   onToggle,
   organizeResult,
@@ -700,7 +659,6 @@ function OverviewPanel({
   onWorkspaceFilePathChange,
 }: {
   busyAction: string | null
-  channels: Channel[]
   runtimeConfig: MemoryRuntimeConfig | null
   snapshot: MemorySettingsSnapshot | null
   externalText: string
@@ -711,8 +669,6 @@ function OverviewPanel({
   entryOrganizeResult: MemoryOrganizeEntriesResult | null
   historyOrganizeJob: MemoryOrganizeJob | null
   onCitationsMode: (mode: MemoryCitationsMode) => void
-  onEmbeddingModel: (modelRef: string) => void
-  onExtractionModel: (modelRef: string) => void
   onExternalTextChange: (value: string) => void
   onIngestTargetScope: (scope: MemoryIngestTargetScopeMode) => void
   onIngestPastedText: () => void
@@ -722,7 +678,6 @@ function OverviewPanel({
   onOpenFile: (path: string) => void
   onOrganizeEntries: () => void
   onOrganizeHistory: () => void
-  onRerankModel: (modelRef: string) => void
   onSemanticMode: (mode: MemoryRuntimeConfig['retrieval']['semantic']) => void
   onToggle: (groupId: MemoryToolPolicyGroupId, enabled: boolean) => void
   organizeResult: MemoryOrganizeHistoryResult | null
@@ -731,9 +686,6 @@ function OverviewPanel({
 }) {
   const metrics = buildMemoryOverviewMetrics(snapshot)
   const layerMetrics = buildMemoryLayerMetrics(snapshot)
-  const embeddingOptions = React.useMemo(() => buildEmbeddingModelOptions(channels), [channels])
-  const rerankOptions = React.useMemo(() => buildRerankModelOptions(channels), [channels])
-  const extractionOptions = rerankOptions
   const ingestItemRows = React.useMemo(() => buildMemoryIngestItemRows(ingestResult), [ingestResult])
   const ingestRunning = ingestJob?.status === 'running'
   const entryOrganizeRunning = entryOrganizeJob?.status === 'running'
@@ -862,40 +814,6 @@ function OverviewPanel({
             ))}
           </div>
         </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <label className="block">
-            <span className="text-[12px] font-medium text-[var(--text-3)]">Embedding 模型</span>
-            <select
-              className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
-              disabled={embeddingOptions.length === 0 || busyAction !== null}
-              value={snapshot?.retrieval.semantic.embeddingModelRef ?? ''}
-              onChange={(event) => onEmbeddingModel(event.target.value)}
-            >
-              <option value="">{embeddingOptions.length === 0 ? '未检测到 Embedding 模型' : '未配置'}</option>
-              {embeddingOptions.map((option) => (
-                <option key={option.modelRef} value={option.modelRef}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-[12px] font-medium text-[var(--text-3)]">Rerank 模型</span>
-            <select
-              className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
-              disabled={rerankOptions.length === 0 || busyAction !== null}
-              value={runtimeConfig?.retrieval.rerankModelRef ?? ''}
-              onChange={(event) => onRerankModel(event.target.value)}
-            >
-              <option value="">
-                {snapshot?.retrieval.rerank.source === 'extraction' && snapshot.retrieval.rerank.modelRef
-                  ? `复用提取模型：${snapshot.retrieval.rerank.modelRef}`
-                  : '未启用'}
-              </option>
-              {rerankOptions.map((option) => (
-                <option key={option.modelRef} value={option.modelRef}>{option.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
         {snapshot?.retrieval.semantic.localOnnx ? (
           <div className="mt-3 border-t border-border pt-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -995,20 +913,6 @@ function OverviewPanel({
             <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
               {summarizeMemoryExtractionStatus(snapshot?.extraction)}
             </p>
-            <label className="mt-2 block max-w-[360px]">
-              <span className="text-[12px] font-medium text-[var(--text-3)]">提取模型</span>
-              <select
-                className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
-                disabled={extractionOptions.length === 0 || busyAction !== null || ingestRunning}
-                value={snapshot?.extraction.modelRef ?? ''}
-                onChange={(event) => onExtractionModel(event.target.value)}
-              >
-                <option value="">{extractionOptions.length === 0 ? '未检测到可用聊天模型' : '未启用'}</option>
-                {extractionOptions.map((option) => (
-                  <option key={option.modelRef} value={option.modelRef}>{option.label}</option>
-                ))}
-              </select>
-            </label>
           </div>
           <div className="flex rounded-[8px] border border-border bg-[var(--surface-1)] p-0.5">
             {([
