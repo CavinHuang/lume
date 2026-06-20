@@ -1328,6 +1328,8 @@ export const AGENT_IPC_CHANNELS = {
   PROMOTE_QUEUED_MESSAGE_TO_GUIDANCE: 'agent:promote-queued-message-to-guidance',
   /** 中止 Agent 线程执行 */
   STOP_THREAD: 'agent:stop-thread',
+  /** 清空 Agent 线程会话 */
+  CLEAR_THREAD: 'agent:clear-thread',
   // 工作区能力（MCP + Skill）
   /** 获取工作区能力摘要 */
   GET_CAPABILITIES: 'agent:get-capabilities',
