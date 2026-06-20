@@ -22,6 +22,17 @@ export interface VersionUpdateActionState {
   busyLabel: string | null
 }
 
+export interface ReleaseDownloadAsset {
+  name: string
+  browser_download_url: string
+}
+
+export interface ReleaseDownloadSource {
+  assets?: ReleaseDownloadAsset[]
+}
+
+export type ReleaseDownloadPlatform = 'windows' | 'macos' | 'unknown'
+
 export function normalizeReleaseVersion(version: string): string {
   return version.trim().replace(/^v/i, '')
 }
@@ -60,6 +71,51 @@ export function getUpdateActionState(snapshot: VersionUpdateSnapshot): VersionUp
     canInstall: snapshot.status === 'downloaded' && snapshot.downloaded,
     busyLabel: null,
   }
+}
+
+export function pickReleaseText(
+  desktopBody: string | undefined,
+  githubBody: string | undefined,
+  fallbackBody: string
+): string {
+  return desktopBody?.trim() || githubBody?.trim() || fallbackBody
+}
+
+export function shouldShowReleasePageAction(
+  snapshot: VersionUpdateSnapshot,
+  desktopUpdateAvailable: boolean,
+  releaseUrl: string | null
+): boolean {
+  return getUpdateActionState(snapshot).canDownload && !desktopUpdateAvailable && Boolean(releaseUrl)
+}
+
+export function pickReleaseDownloadAsset(
+  release: ReleaseDownloadSource | null | undefined,
+  platform: ReleaseDownloadPlatform
+): ReleaseDownloadAsset | null {
+  const assets = release?.assets ?? []
+  const downloadable = assets.filter((asset) => {
+    const name = asset.name.toLowerCase()
+    return asset.browser_download_url && !name.endsWith('.sig') && name !== 'latest.json'
+  })
+
+  if (platform === 'windows') {
+    return (
+      downloadable.find((asset) => {
+        const name = asset.name.toLowerCase()
+        return name.endsWith('.exe') && name.includes('setup')
+      }) ??
+      downloadable.find((asset) => asset.name.toLowerCase().endsWith('.exe')) ??
+      downloadable.find((asset) => asset.name.toLowerCase().endsWith('.msi')) ??
+      null
+    )
+  }
+
+  if (platform === 'macos') {
+    return downloadable.find((asset) => asset.name.toLowerCase().endsWith('.dmg')) ?? null
+  }
+
+  return null
 }
 
 export function shouldAutoCheckUpdates(

@@ -21,6 +21,7 @@ import {
   getGeneralSettings,
   getLatestGitHubRelease,
   installDesktopUpdateAndRelaunch,
+  openExternal,
   updateGeneralSettings,
   type DesktopUpdateDownloadEvent,
   type DesktopUpdateInfo,
@@ -29,7 +30,10 @@ import { cn } from '@/lib/utils'
 import {
   getUpdateActionState,
   normalizeReleaseVersion,
+  pickReleaseDownloadAsset,
+  pickReleaseText,
   shouldAutoCheckUpdates,
+  shouldShowReleasePageAction,
   type VersionUpdateSnapshot,
   type VersionUpdateStatus,
 } from './version-update-state'
@@ -47,6 +51,8 @@ export function VersionUpdateSettings() {
   const [latestVersion, setLatestVersion] = React.useState<string | null>(null)
   const [releaseBody, setReleaseBody] = React.useState('')
   const [releaseDate, setReleaseDate] = React.useState<string | null>(null)
+  const [releaseUrl, setReleaseUrl] = React.useState<string | null>(null)
+  const [releaseDownloadUrl, setReleaseDownloadUrl] = React.useState<string | null>(null)
   const [status, setStatus] = React.useState<VersionUpdateStatus>('idle')
   const [downloaded, setDownloaded] = React.useState(false)
   const [desktopUpdateAvailable, setDesktopUpdateAvailable] = React.useState(false)
@@ -65,6 +71,8 @@ export function VersionUpdateSettings() {
   }
   const actionState = getUpdateActionState(snapshot)
   const canDownload = actionState.canDownload && desktopUpdateAvailable
+  const canOpenReleaseDownload = shouldShowReleasePageAction(snapshot, desktopUpdateAvailable, releaseDownloadUrl)
+  const canOpenReleasePage = shouldShowReleasePageAction(snapshot, desktopUpdateAvailable, releaseUrl)
   const updateAvailable = status === 'available' || status === 'downloaded' || status === 'downloading'
   const lastCheckText = settings?.updateSettings.lastUpdateCheckAt
     ? formatDateTime(settings.updateSettings.lastUpdateCheckAt)
@@ -117,8 +125,6 @@ export function VersionUpdateSettings() {
     const remoteVersion = info?.version ?? fallbackLatest
     setDesktopUpdateAvailable(Boolean(info))
     setLatestVersion(remoteVersion ? normalizeReleaseVersion(remoteVersion) : null)
-    setReleaseBody(info?.body ?? releaseBody)
-    setReleaseDate(info?.date ?? releaseDate)
     setDownloaded(false)
 
     if (!remoteVersion) {
@@ -147,8 +153,12 @@ export function VersionUpdateSettings() {
           return null
         }),
       ])
-      setReleaseBody(desktopUpdate?.body ?? latestRelease?.body ?? '')
+      setReleaseBody(pickReleaseText(desktopUpdate?.body, latestRelease?.body, releaseBody))
       setReleaseDate(desktopUpdate?.date ?? latestRelease?.published_at ?? null)
+      setReleaseUrl(latestRelease?.html_url ?? null)
+      setReleaseDownloadUrl(
+        pickReleaseDownloadAsset(latestRelease, detectReleaseDownloadPlatform())?.browser_download_url ?? null
+      )
       applyUpdateInfo(desktopUpdate, latestRelease?.tag_name ?? null)
       await rememberCheckTime()
       toast.success(desktopUpdate || latestRelease ? '更新检查完成' : '当前已是最新版本')
@@ -272,6 +282,18 @@ export function VersionUpdateSettings() {
               <Button className="h-9 px-4" onClick={handleDownloadUpdate}>
                 <Download size={15} />
                 下载更新
+              </Button>
+            )}
+            {canOpenReleaseDownload && releaseDownloadUrl && (
+              <Button className="h-9 px-4" onClick={() => void openExternal(releaseDownloadUrl)}>
+                <Download size={15} />
+                下载安装包
+              </Button>
+            )}
+            {!canOpenReleaseDownload && canOpenReleasePage && releaseUrl && (
+              <Button className="h-9 px-4" onClick={() => void openExternal(releaseUrl)}>
+                <Download size={15} />
+                打开下载页
               </Button>
             )}
             {actionState.canInstall && (
@@ -468,6 +490,13 @@ function getStatusLabel(status: VersionUpdateStatus, updateAvailable: boolean): 
   if (updateAvailable) return '可更新'
   if (status === 'current') return '已是最新'
   return '未检查'
+}
+
+function detectReleaseDownloadPlatform() {
+  const value = `${navigator.platform} ${navigator.userAgent}`.toLowerCase()
+  if (value.includes('win')) return 'windows'
+  if (value.includes('mac')) return 'macos'
+  return 'unknown'
 }
 
 function formatDateTime(value: string): string {

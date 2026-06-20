@@ -19,6 +19,20 @@ export interface GitHubRelease {
   published_at: string;
   /** Release HTML URL */
   html_url: string;
+  /** Release 资源 */
+  assets?: GitHubReleaseAsset[];
+}
+
+/** GitHub Release 资源 */
+export interface GitHubReleaseAsset {
+  /** 资源名称 */
+  name: string;
+  /** 浏览器下载 URL */
+  browser_download_url: string;
+  /** 资源类型 */
+  content_type?: string;
+  /** 资源大小 */
+  size?: number;
 }
 
 /** GitHub Release 列表查询选项 */

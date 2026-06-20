@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test'
 import {
   getUpdateActionState,
   normalizeReleaseVersion,
+  pickReleaseDownloadAsset,
+  pickReleaseText,
   shouldAutoCheckUpdates,
+  shouldShowReleasePageAction,
   type VersionUpdateSnapshot,
 } from './version-update-state'
 
@@ -77,5 +80,37 @@ describe('version update state', () => {
     expect(shouldAutoCheckUpdates(false, null, now)).toBe(false)
     expect(shouldAutoCheckUpdates(true, '2026-05-05T01:00:00.000Z', now)).toBe(false)
     expect(shouldAutoCheckUpdates(true, '2026-05-03T01:00:00.000Z', now)).toBe(true)
+  })
+
+  test('keeps GitHub release notes when desktop updater metadata has none', () => {
+    expect(pickReleaseText(undefined, 'release notes', '')).toBe('release notes')
+  })
+
+  test('shows release page action when updater download is unavailable', () => {
+    expect(shouldShowReleasePageAction({
+      currentVersion: '0.0.2',
+      latestVersion: '0.0.4',
+      status: 'available',
+      downloaded: false,
+    }, false, 'https://github.com/CavinHuang/lume/releases/tag/v0.0.4')).toBe(true)
+  })
+
+  test('picks Windows setup asset from GitHub release assets', () => {
+    expect(pickReleaseDownloadAsset({
+      assets: [
+        { name: 'latest.json', browser_download_url: 'https://example.com/latest.json' },
+        { name: 'Lume_0.0.4_x64-setup.exe.sig', browser_download_url: 'https://example.com/setup.exe.sig' },
+        { name: 'Lume_0.0.4_x64-setup.exe', browser_download_url: 'https://example.com/setup.exe' },
+      ],
+    }, 'windows')?.browser_download_url).toBe('https://example.com/setup.exe')
+  })
+
+  test('does not pick non-installable release assets', () => {
+    expect(pickReleaseDownloadAsset({
+      assets: [
+        { name: 'latest.json', browser_download_url: 'https://example.com/latest.json' },
+        { name: 'Lume_0.0.4_x64-setup.exe.sig', browser_download_url: 'https://example.com/setup.exe.sig' },
+      ],
+    }, 'windows')).toBeNull()
   })
 })
