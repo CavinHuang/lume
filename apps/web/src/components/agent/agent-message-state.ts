@@ -18,8 +18,6 @@ export function isNearScrollBottom(
 }
 
 export function shouldAutoScrollAfterUserScroll({
-  currentScrollTop,
-  previousScrollTop,
   nearBottom,
   programmatic = false,
 }: {
@@ -28,8 +26,10 @@ export function shouldAutoScrollAfterUserScroll({
   nearBottom: boolean
   programmatic?: boolean
 }): boolean {
+  // 只要仍在底部阈值内就保持自动触底：scrollTop 的瞬时减小（上方内容折叠导致
+  // 浏览器 clamp、底部亚像素抖动）不应被误判为“用户向上滚”而关闭粘底。
+  // 仅当用户向上滚并离开底部区域（nearBottom=false）时才停止跟随。
   if (programmatic) return true
-  if (currentScrollTop < previousScrollTop) return false
   return nearBottom
 }
 
@@ -320,4 +320,59 @@ function projectVisibleAssistantBlocks(message: AgentMessage): Extract<RuntimeMe
     })
   }
   return blocks
+}
+
+/**
+ * 流式时 projection 每 token 重建所有 message（及 block）对象引用，导致 memo 默认浅
+ * 比较失效、整列表 + 流式消息内部未变 block 都每 token re-render。stabilize 在消费层
+ * （AgentMessages）做引用稳定化：
+ *
+ * - message 级：内容签名（JSON.stringify）相同 → 复用旧 message 引用（含旧 blocks）。
+ * - block 级（仅 assistant）：签名变化时，按 block.id 匹配上一帧 block，内容相同则复用
+ *   旧 block 引用。即使 id 偶尔失配（如 assistant.final 重排），stringify 内容比较兜底，
+ *   最坏只是「不复用」，不会「错误复用」。
+ *
+ * cache 跨 token 保持（useRef），消息移除时自动清理对应条目。
+ */
+export type RuntimeMessageStabilizeCache = Map<string, { signature: string; message: RuntimeMessageView }>
+
+export function stabilizeRuntimeMessages(
+  messages: RuntimeMessageView[],
+  cache: RuntimeMessageStabilizeCache,
+): RuntimeMessageView[] {
+  const liveIds = new Set(messages.map((message) => message.id))
+  for (const id of cache.keys()) {
+    if (!liveIds.has(id)) cache.delete(id)
+  }
+  return messages.map((message) => {
+    const signature = JSON.stringify(message)
+    const cached = cache.get(message.id)
+    if (cached && cached.signature === signature) {
+      return cached.message
+    }
+    const stabilized = stabilizeRuntimeMessageBlocks(message, cached?.message)
+    cache.set(message.id, { signature, message: stabilized })
+    return stabilized
+  })
+}
+
+function stabilizeRuntimeMessageBlocks(
+  message: RuntimeMessageView,
+  prevMessage: RuntimeMessageView | undefined,
+): RuntimeMessageView {
+  if (message.type !== 'assistant' || prevMessage?.type !== 'assistant') {
+    return message
+  }
+  const prevById = new Map(prevMessage.blocks.map((block) => [block.id, block]))
+  let reusedAny = false
+  const nextBlocks = message.blocks.map((block) => {
+    const prev = prevById.get(block.id)
+    if (prev && JSON.stringify(prev) === JSON.stringify(block)) {
+      reusedAny = true
+      return prev
+    }
+    return block
+  })
+  if (!reusedAny) return { ...message }
+  return { ...message, blocks: nextBlocks }
 }

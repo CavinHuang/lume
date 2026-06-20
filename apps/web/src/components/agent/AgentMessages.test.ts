@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import type { RuntimeMessageView } from './runtime-message-view'
+import type { RuntimeMessageView, RuntimeAssistantMessageView, RuntimeAssistantBlock } from './runtime-message-view'
 import type { AgentMessage } from '@lume/shared'
+import { areRuntimeEventContentBlockPropsEqual } from './RuntimeEventContentBlock'
 import {
   collectNewRuntimeMessageIds,
   getProgrammaticScrollHoldUntil,
@@ -10,6 +11,7 @@ import {
   reconcileUserMessageVersions,
   shouldApplyThreadMessagesResult,
   shouldAutoScrollAfterUserScroll,
+  stabilizeRuntimeMessages,
 } from './agent-message-state'
 
 describe('collectNewRuntimeMessageIds', () => {
@@ -56,12 +58,31 @@ describe('agent message scroll helpers', () => {
     expect(isNearScrollBottom({ scrollHeight: 1000, scrollTop: 560, clientHeight: 320 })).toBe(false)
   })
 
-  test('disables auto scroll when the user scrolls upward', () => {
+  test('disables auto scroll when the user scrolls upward away from the bottom', () => {
     expect(shouldAutoScrollAfterUserScroll({
       currentScrollTop: 400,
       previousScrollTop: 460,
-      nearBottom: true,
+      nearBottom: false,
     })).toBe(false)
+  })
+
+  test('keeps auto scroll when scrollTop shrinks due to content collapse while at the bottom', () => {
+    // 上方内容（思考过程/工具结果）折叠 → scrollHeight 减小 → 浏览器把 scrollTop
+    // clamp 到新的 max。此刻 distToBottom=0、仍在最底部，不应被误判为“用户向上滚”
+    // 而关闭粘底（数值取自真实复现日志）。
+    expect(shouldAutoScrollAfterUserScroll({
+      currentScrollTop: 5312,
+      previousScrollTop: 5753,
+      nearBottom: true,
+    })).toBe(true)
+  })
+
+  test('keeps auto scroll during sub-pixel jitter at the bottom', () => {
+    expect(shouldAutoScrollAfterUserScroll({
+      currentScrollTop: 6653,
+      previousScrollTop: 6654,
+      nearBottom: true,
+    })).toBe(true)
   })
 
   test('keeps auto scroll only while scrolling downward near the bottom', () => {
@@ -483,5 +504,120 @@ describe('projectVisibleThreadMessages', () => {
         toolCalls: [],
       },
     ])
+  })
+})
+
+describe('areRuntimeEventContentBlockPropsEqual', () => {
+  const baseAssistantMessage: RuntimeAssistantMessageView = {
+    id: 'assistant:run-1',
+    type: 'assistant',
+    text: '你好',
+    thinking: '',
+    toolCalls: [],
+    blocks: [{ type: 'text', id: 'text:0', text: '你好' }],
+    status: 'completed',
+  }
+
+  test('treats equal content with a different object identity as equal', () => {
+    const prev = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: false }
+    const next = {
+      message: { ...baseAssistantMessage, blocks: [{ ...baseAssistantMessage.blocks[0] }] },
+      threadId: 't1',
+      streaming: false,
+      animate: false,
+    }
+    expect(next.message).not.toBe(prev.message)
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(true)
+  })
+
+  test('detects assistant text change', () => {
+    const prev = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: false }
+    const next = {
+      message: { ...baseAssistantMessage, text: '变了', blocks: [{ type: 'text', id: 'text:0', text: '变了' }] },
+      threadId: 't1',
+      streaming: false,
+      animate: false,
+    }
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
+  })
+
+  test('detects streaming prop change', () => {
+    const prev = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: false }
+    const next = { message: baseAssistantMessage, threadId: 't1', streaming: true, animate: false }
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
+  })
+
+  test('detects animate prop change', () => {
+    const prev = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: false }
+    const next = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: true }
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
+  })
+})
+
+describe('stabilizeRuntimeMessages', () => {
+  test('reuses the previous message reference when content is unchanged', () => {
+    const cache = new Map()
+    const msg: RuntimeAssistantMessageView = {
+      id: 'a1',
+      type: 'assistant',
+      text: 'hi',
+      thinking: '',
+      toolCalls: [],
+      blocks: [{ type: 'text', id: 't0', text: 'hi' }],
+      status: 'streaming',
+      tokenCount: 2,
+    }
+    const first = stabilizeRuntimeMessages([msg], cache)
+    const rebuilt: RuntimeAssistantMessageView = { ...msg, blocks: [{ type: 'text', id: 't0', text: 'hi' }] }
+    const second = stabilizeRuntimeMessages([rebuilt], cache)
+    expect(second[0]).toBe(first[0])
+  })
+
+  test('stabilizes unchanged blocks within a changed message', () => {
+    const cache = new Map()
+    const toolBlock: RuntimeAssistantBlock = {
+      type: 'tool_call',
+      id: 'tool:tc1',
+      toolCall: { id: 'tc1', toolName: 'Bash', input: {}, status: 'completed' },
+    }
+    const msg: RuntimeAssistantMessageView = {
+      id: 'a1',
+      type: 'assistant',
+      text: 'a',
+      thinking: '',
+      toolCalls: [],
+      blocks: [toolBlock, { type: 'text', id: 't0', text: 'a' }],
+      status: 'streaming',
+      tokenCount: 1,
+    }
+    const first = stabilizeRuntimeMessages([msg], cache)
+    const firstToolBlock = (first[0] as RuntimeAssistantMessageView).blocks[0]
+    const changed: RuntimeAssistantMessageView = {
+      ...msg,
+      text: 'ab',
+      tokenCount: 2,
+      blocks: [{ ...toolBlock }, { type: 'text', id: 't0', text: 'ab' }],
+    }
+    const second = stabilizeRuntimeMessages([changed], cache)
+    expect(second[0]).not.toBe(first[0])
+    expect((second[0] as RuntimeAssistantMessageView).blocks[0]).toBe(firstToolBlock)
+  })
+
+  test('drops cache entries for removed messages', () => {
+    const cache = new Map()
+    const msg: RuntimeAssistantMessageView = {
+      id: 'a1',
+      type: 'assistant',
+      text: 'x',
+      thinking: '',
+      toolCalls: [],
+      blocks: [],
+      status: 'completed',
+      tokenCount: 1,
+    }
+    stabilizeRuntimeMessages([msg], cache)
+    expect(cache.has('a1')).toBe(true)
+    stabilizeRuntimeMessages([], cache)
+    expect(cache.has('a1')).toBe(false)
   })
 })

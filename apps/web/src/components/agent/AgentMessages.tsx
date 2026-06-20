@@ -24,6 +24,8 @@ import {
   reconcileUserMessageVersions,
   shouldApplyThreadMessagesResult,
   shouldAutoScrollAfterUserScroll,
+  stabilizeRuntimeMessages,
+  type RuntimeMessageStabilizeCache,
 } from './agent-message-state'
 
 interface AgentMessagesProps {
@@ -50,6 +52,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const scheduledBottomScrollFrameRef = useRef(0)
   const latestUserMessageKeyRef = useRef<string | null>(null)
   const shouldAutoScrollRef = useRef(true)
+  const stabilizeCacheRef = useRef<RuntimeMessageStabilizeCache>(new Map())
   const showScrollButtonRef = useRef(false)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
@@ -62,7 +65,10 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
       : projectVisibleThreadMessages(visibleThreadMessages)
   ), [runtimeEvents, visibleThreadMessages])
   const liveMessages = useMemo(
-    () => reconcileUserMessageVersions(projectedMessages, visibleThreadMessages),
+    () => stabilizeRuntimeMessages(
+      reconcileUserMessageVersions(projectedMessages, visibleThreadMessages),
+      stabilizeCacheRef.current,
+    ),
     [projectedMessages, visibleThreadMessages],
   )
   const newMessageIds = useMemo(() => {
@@ -280,6 +286,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   useLayoutEffect(() => {
     if (prevThreadIdRef.current !== threadId) {
       prevThreadIdRef.current = threadId
+      stabilizeCacheRef.current.clear()
       shouldAutoScrollRef.current = true
       latestUserMessageKeyRef.current = latestUserMessageKey
       return scrollMessagesToBottom('instant')

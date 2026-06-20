@@ -33,6 +33,27 @@ interface RuntimeEventContentBlockProps {
   onUserResizeStart?: () => void
 }
 
+/**
+ * memo 比较函数：流式时 projection 每 token 重建所有 message 对象引用，
+ * 默认浅比较会失效、导致整条消息列表每 token 都 re-render。这里按「内容」
+ * 比较 message，让内容未变的历史消息跳过 re-render。
+ *
+ * - 标量 props（streaming/animate/threadId）直接比较；
+ * - onOpen* / onUserResizeStart 回调由父级 useCallback 保证引用稳定，不参与比较；
+ * - message 用 JSON.stringify 比较，自动覆盖全部渲染字段，避免漏字段导致该刷新不刷新。
+ */
+export function areRuntimeEventContentBlockPropsEqual(
+  prev: RuntimeEventContentBlockProps,
+  next: RuntimeEventContentBlockProps,
+): boolean {
+  if (prev.streaming !== next.streaming) return false
+  if (prev.animate !== next.animate) return false
+  if (prev.threadId !== next.threadId) return false
+  if (prev.message === next.message) return true
+  if (prev.message.type !== next.message.type) return false
+  return JSON.stringify(prev.message) === JSON.stringify(next.message)
+}
+
 export interface CopyFeedbackState {
   resetTimeoutId: ReturnType<typeof setTimeout> | null
 }
@@ -68,7 +89,7 @@ export function getAssistantCopyText(text: string): string {
   return stripAfterglowLines(text)
 }
 
-export function RuntimeEventContentBlock({
+export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   message,
   animate,
   streaming,
@@ -175,7 +196,7 @@ export function RuntimeEventContentBlock({
       </div>
     </div>
   )
-}
+}, areRuntimeEventContentBlockPropsEqual)
 
 function findActiveStreamingTextBlockId(blocks: RuntimeAssistantBlock[]): string | null {
   const lastBlock = blocks.at(-1)
@@ -527,7 +548,7 @@ export function formatMessageAttachmentSize(size: number): string {
   return `${Math.round(kb / 1024)} MB`
 }
 
-function RuntimeEventAssistantBlockItem({
+const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockItem({
   block,
   threadId,
   onOpenThreadFile,
@@ -569,7 +590,7 @@ function RuntimeEventAssistantBlockItem({
       onUserResizeStart={onUserResizeStart}
     />
   )
-}
+})
 
 function MinimalProcessGroup({
   blocks,
@@ -1009,7 +1030,7 @@ function useDelayedAssistantIdleStatus(active: boolean, activitySignature: strin
   return visible
 }
 
-function RuntimeEventThinkingBlock({ text, active }: { text: string; active: boolean }) {
+const RuntimeEventThinkingBlock = memo(function RuntimeEventThinkingBlock({ text, active }: { text: string; active: boolean }) {
   const [collapsed, setCollapsed] = useState(!active)
 
   useEffect(() => {
@@ -1046,7 +1067,7 @@ function RuntimeEventThinkingBlock({ text, active }: { text: string; active: boo
       </div>
     </div>
   )
-}
+})
 
 function useIsDark(): boolean {
   return useSyncExternalStore(
@@ -1413,7 +1434,7 @@ function IncompleteTable() {
   )
 }
 
-function RuntimeEventToolCallBlock({
+const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   toolCall,
   threadId,
   onUserResizeStart,
@@ -1507,7 +1528,7 @@ function RuntimeEventToolCallBlock({
       )}
     </div>
   )
-}
+})
 
 export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): string | null {
   if (toolCall.permissionState === 'timeout') return '权限超时'
