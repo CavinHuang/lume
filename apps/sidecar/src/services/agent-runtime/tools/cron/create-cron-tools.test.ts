@@ -57,7 +57,9 @@ describe("create-cron-tools", () => {
     const createdJob = (createResult as { job?: { id?: string } }).job;
     expect(Boolean(createdJob?.id)).toBeTrue();
     const createdThreadId = (createResult as { job?: { threadId?: string } }).job?.threadId;
+    const createdSource = (createResult as { job?: { source?: string } }).job?.source;
     expect(createdThreadId).toBe("session-main-1");
+    expect(createdSource).toBe("manual");
 
     const readResult = await callTool(readTool, {});
     const jobs = (readResult as { jobs?: Array<{ id: string; name: string }> }).jobs ?? [];

@@ -309,6 +309,7 @@ export function createAutomationTemplateTools(_input: { workspaceId?: string }):
           prompt,
           schedule,
           enabled: asBoolean(input.enabled) ?? true,
+          source: "manual",
         };
 
         const created = createAutomationJob(jobInput);

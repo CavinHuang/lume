@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   AutomationCreateJobInput,
   AutomationDeleteJobInput,
+  DailyRoutine,
   AutomationJob,
   AutomationJobsIndex,
   AutomationUpdateJobInput
 } from "@lume/shared";
-import { getAutomationJobsPath } from "../infra/config-paths";
+import { getAutomationJobsPath, getConfigDir } from "../infra/config-paths";
 import { getNextAutomationRunAt, validateAutomationSchedule } from "./automation-schedule";
 
 const INDEX_VERSION = 1;
@@ -52,6 +54,24 @@ function writeIndex(index: AutomationJobsIndex): void {
   writeJsonAtomic(indexPath, JSON.stringify(index, null, 2));
 }
 
+function listRoutineAutomationJobIds(): Set<string> {
+  const ids = new Set<string>();
+  const dir = join(getConfigDir(), "routine", "schedules");
+  if (!existsSync(dir)) return ids;
+  for (const filename of readdirSync(dir)) {
+    if (!filename.endsWith(".json")) continue;
+    try {
+      const routine = JSON.parse(readFileSync(join(dir, filename), "utf-8")) as DailyRoutine;
+      for (const entry of routine.entries ?? []) {
+        if (entry.automationJobId) ids.add(entry.automationJobId);
+      }
+    } catch {
+      // ignore broken routine schedules here; routine-store owns detailed recovery
+    }
+  }
+  return ids;
+}
+
 function normalizeName(name: string): string {
   const trimmed = String(name ?? "").trim();
   if (!trimmed) {
@@ -69,7 +89,14 @@ function normalizePrompt(prompt: string): string {
 }
 
 export function listAutomationJobs(): AutomationJob[] {
-  return readIndex().jobs.sort((a, b) => b.updatedAt - a.updatedAt);
+  const routineJobIds = listRoutineAutomationJobIds();
+  return readIndex().jobs
+    .map((job) => (
+      routineJobIds.has(job.id) && !job.systemAction
+        ? { ...job, source: "system" as const, systemAction: "routine" as const }
+        : job
+    ))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function createAutomationJob(input: AutomationCreateJobInput): AutomationJob {
@@ -85,6 +112,8 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
     threadId: input.threadId?.trim() || undefined,
     schedule: input.schedule,
     ...(input.triggerModes ? { triggerModes: input.triggerModes } : {}),
+    ...(input.source ? { source: input.source } : {}),
+    ...(input.systemAction ? { systemAction: input.systemAction } : {}),
     ...(input.description ? { description: input.description.trim() } : {}),
     ...(input.defaultModel ? { defaultModel: input.defaultModel.trim() } : {}),
     ...(input.toolResourceIds ? { toolResourceIds: input.toolResourceIds } : {}),
@@ -122,6 +151,8 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
     ...(input.threadId !== undefined ? { threadId: input.threadId.trim() || undefined } : {}),
     schedule,
     ...(input.triggerModes !== undefined ? { triggerModes: input.triggerModes } : {}),
+    ...(input.source !== undefined ? { source: input.source } : {}),
+    ...(input.systemAction !== undefined ? { systemAction: input.systemAction } : {}),
     ...(input.description !== undefined ? { description: input.description.trim() || undefined } : {}),
     ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel.trim() || undefined } : {}),
     ...(input.toolResourceIds !== undefined ? { toolResourceIds: input.toolResourceIds } : {}),

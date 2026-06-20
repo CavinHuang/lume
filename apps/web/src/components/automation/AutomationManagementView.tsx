@@ -44,6 +44,7 @@ import { upsertWelcomeTab } from '@/components/app-shell/LeftSidebar'
 import {
   createAutomationJob,
   deleteAutomationJob,
+  listAutomationRuns,
   runAutomationJobNow,
   toggleAutomationJob,
   updateAutomationJob,
@@ -76,6 +77,8 @@ interface CreateDraft {
   defaultModel: string
   thinkingLevel: string
 }
+
+type AutomationListTab = 'manual' | 'system'
 
 const FREQUENCY_OPTIONS: Array<{ id: string; label: string }> = [
   { id: 'hourly', label: '每小时' },
@@ -217,14 +220,37 @@ export function AutomationManagementView() {
   const [templateDraft, setTemplateDraft] = useState<CreateDraft | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
+  const [selectedRuns, setSelectedRuns] = useState<AutomationRun[] | null>(null)
+  const [listTab, setListTab] = useState<AutomationListTab>('manual')
 
   const selectedJob = useMemo(() => jobs.find((j) => j.id === selectedJobId) ?? null, [jobs, selectedJobId])
+  const selectedJobRuns = selectedRuns ?? (selectedJobId ? runs.filter((r) => r.jobId === selectedJobId) : [])
+  const manualJobs = useMemo(() => jobs.filter((job) => !isSystemAutomationJob(job)), [jobs])
+  const systemJobs = useMemo(() => jobs.filter(isSystemAutomationJob), [jobs])
+  const visibleJobs = listTab === 'manual' ? manualJobs : systemJobs
 
   const workspaceOptions = useMemo<WorkspaceOption[]>(() => (
     workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name }))
   ), [workspaces])
 
   const defaultWorkspaceId = workspaceOptions[0]?.id ?? ''
+
+  useEffect(() => {
+    if (!selectedJobId) {
+      setSelectedRuns(null)
+      return
+    }
+    let cancelled = false
+    setSelectedRuns(null)
+    listAutomationRuns({ jobId: selectedJobId, limit: 50 })
+      .then((items) => {
+        if (!cancelled) setSelectedRuns(items)
+      })
+      .catch((error) => console.error('[AutomationManagementView] 加载运行历史失败:', error))
+    return () => {
+      cancelled = true
+    }
+  }, [selectedJobId, runs])
 
   const createFromTemplate = useCallback((template: AutomationTemplate) => {
     const { frequency, minuteOfDay, dayOfWeek } = frequencyForSchedule(template.schedule)
@@ -284,6 +310,7 @@ export function AutomationManagementView() {
           triggerModes: ['schedule'],
           defaultModel: draft.defaultModel || undefined,
           thinkingLevel: draft.thinkingLevel === 'off' ? undefined : draft.thinkingLevel,
+          source: 'manual',
         })
         setJobs((previous) => upsertAutomationJob(previous, created))
       }
@@ -304,7 +331,7 @@ export function AutomationManagementView() {
           {selectedJob ? (
             <AutomationJobDetail
               job={selectedJob}
-              runs={runs.filter((r) => r.jobId === selectedJob.id)}
+              runs={selectedJobRuns}
               onBack={() => setSelectedJobId(null)}
               onToggle={async () => {
                 const updated = await toggleAutomationJob(selectedJob.id)
@@ -383,7 +410,15 @@ export function AutomationManagementView() {
                   onCreateTemplate={createFromTemplate}
                 />
               ) : (
-                <AutomationList jobs={jobs} runs={runs} onEdit={openEditDialog} onSelect={(id) => setSelectedJobId(id)} />
+                <>
+                  <AutomationSourceTabs
+                    value={listTab}
+                    manualCount={manualJobs.length}
+                    systemCount={systemJobs.length}
+                    onChange={setListTab}
+                  />
+                  <AutomationList jobs={visibleJobs} runs={runs} onEdit={openEditDialog} onSelect={(id) => setSelectedJobId(id)} />
+                </>
               )}
             </>
           )}
@@ -445,35 +480,151 @@ function EmptyAutomationState({
   )
 }
 
+function AutomationSourceTabs({
+  value,
+  manualCount,
+  systemCount,
+  onChange,
+}: {
+  value: AutomationListTab
+  manualCount: number
+  systemCount: number
+  onChange: (value: AutomationListTab) => void
+}) {
+  return (
+    <div className="mt-8 inline-flex w-fit rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
+      <AutomationSourceTabButton active={value === 'manual'} label="用户创建" count={manualCount} onClick={() => onChange('manual')} />
+      <AutomationSourceTabButton active={value === 'system'} label="系统日程" count={systemCount} onClick={() => onChange('system')} />
+    </div>
+  )
+}
+
+function AutomationSourceTabButton({
+  active,
+  label,
+  count,
+  onClick,
+}: {
+  active: boolean
+  label: string
+  count: number
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-7 rounded-[6px] px-3 text-[12px] font-medium transition-colors ${
+        active
+          ? 'bg-[var(--text-1)] text-white'
+          : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
+      }`}
+    >
+      {label} {count}
+    </button>
+  )
+}
+
 function AutomationList({ jobs, runs, onEdit, onSelect }: { jobs: AutomationJob[]; runs: AutomationRun[]; onEdit: (job: AutomationJob) => void; onSelect: (id: string) => void }) {
   const setJobs = useSetAtom(automationJobsAtom)
+  const [completedOpen, setCompletedOpen] = useState(false)
+  const activeJobs = jobs.filter((job) => !isCompletedAutomationJob(job))
+  const completedJobs = jobs.filter(isCompletedAutomationJob)
 
   return (
-    <section className="mt-10 grid max-w-[760px] gap-2.5">
-      {jobs.map((job) => {
-        const run = runs.find((item) => item.jobId === job.id)
-        return (
-          <AutomationJobRow
-            key={job.id}
-            job={job}
-            run={run}
-            onEdit={() => onEdit(job)}
-            onSelect={() => onSelect(job.id)}
-            onToggle={async () => {
-              const updated = await toggleAutomationJob(job.id)
-              setJobs((prev) => upsertAutomationJob(prev, updated))
-            }}
-            onDelete={async () => {
-              await deleteAutomationJob(job.id)
-              setJobs((prev) => prev.filter((j) => j.id !== job.id))
-            }}
-            onRun={async () => {
-              await runAutomationJobNow(job.id)
-            }}
+    <section className="mt-5 grid max-w-[760px] gap-5">
+      {jobs.length === 0 ? (
+        <p className="py-10 text-center text-[13px] text-[var(--text-3)]">暂无任务</p>
+      ) : (
+        <>
+          <AutomationJobGroup
+            jobs={activeJobs}
+            runs={runs}
+            title="进行中"
+            emptyLabel="暂无进行中的任务"
+            onEdit={onEdit}
+            onSelect={onSelect}
+            setJobs={setJobs}
           />
-        )
-      })}
+          {completedJobs.length > 0 && (
+            <div>
+              <button
+                type="button"
+                onClick={() => setCompletedOpen((value) => !value)}
+                className="mb-2 flex h-7 items-center gap-1.5 text-[12px] font-medium text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
+              >
+                {completedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                已完成 {completedJobs.length}
+              </button>
+              {completedOpen && (
+                <AutomationJobGroup
+                  jobs={completedJobs}
+                  runs={runs}
+                  title=""
+                  emptyLabel=""
+                  onEdit={onEdit}
+                  onSelect={onSelect}
+                  setJobs={setJobs}
+                />
+              )}
+            </div>
+          )}
+        </>
+      )}
     </section>
+  )
+}
+
+function AutomationJobGroup({
+  jobs,
+  runs,
+  title,
+  emptyLabel,
+  onEdit,
+  onSelect,
+  setJobs,
+}: {
+  jobs: AutomationJob[]
+  runs: AutomationRun[]
+  title: string
+  emptyLabel: string
+  onEdit: (job: AutomationJob) => void
+  onSelect: (id: string) => void
+  setJobs: (update: (jobs: AutomationJob[]) => AutomationJob[]) => void
+}) {
+  return (
+    <div>
+      {title && <h2 className="mb-2 text-[12px] font-medium text-[var(--text-3)]">{title} {jobs.length}</h2>}
+      {jobs.length === 0 ? (
+        emptyLabel ? <p className="py-4 text-[13px] text-[var(--text-3)]">{emptyLabel}</p> : null
+      ) : (
+        <div className="grid gap-2.5">
+          {jobs.map((job) => {
+            const run = runs.find((item) => item.jobId === job.id)
+            return (
+              <AutomationJobRow
+                key={job.id}
+                job={job}
+                run={run}
+                onEdit={() => onEdit(job)}
+                onSelect={() => onSelect(job.id)}
+                onToggle={async () => {
+                  const updated = await toggleAutomationJob(job.id)
+                  setJobs((prev) => upsertAutomationJob(prev, updated))
+                }}
+                onDelete={async () => {
+                  await deleteAutomationJob(job.id)
+                  setJobs((prev) => prev.filter((j) => j.id !== job.id))
+                }}
+                onRun={async () => {
+                  await runAutomationJobNow(job.id)
+                }}
+              />
+            )
+          })}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -495,6 +646,8 @@ function AutomationJobRow({
   onSelect: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const statusLabel = automationJobStatusLabel(job)
+  const moduleLabel = automationModuleLabel(job)
 
   return (
     <article
@@ -504,9 +657,9 @@ function AutomationJobRow({
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <h2 className="truncate text-[13px] font-semibold text-[var(--text-1)]">{job.name}</h2>
-          {!job.enabled && (
-            <span className="rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-3)]">已停用</span>
-          )}
+          <AutomationBadge label={automationSourceLabel(job)} />
+          {moduleLabel && <AutomationBadge label={`模块：${moduleLabel}`} />}
+          {statusLabel && <AutomationBadge label={statusLabel} />}
         </div>
         <p className="mt-1 truncate text-[13px] text-[var(--text-2)]">{job.description ?? summarizePrompt(job.prompt)}</p>
       </div>
@@ -570,6 +723,14 @@ function AutomationJobRow({
   )
 }
 
+function AutomationBadge({ label }: { label: string }) {
+  return (
+    <span className="shrink-0 rounded-full bg-[var(--surface-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-3)]">
+      {label}
+    </span>
+  )
+}
+
 function AutomationJobDetail({
   job,
   runs,
@@ -591,6 +752,8 @@ function AutomationJobDetail({
   const [saving, setSaving] = useState(false)
   const [channels, setChannels] = useState<Channel[]>([])
   const [scheduleOpen, setScheduleOpen] = useState(false)
+  const statusLabel = automationJobStatusLabel(job) ?? (job.enabled ? '活跃' : '已停用')
+  const moduleLabel = automationModuleLabel(job)
 
   const { frequency, minuteOfDay, dayOfWeek, customCron } = useMemo(() => frequencyForSchedule(job.schedule), [job.schedule])
   const thinkingLabel = THINKING_LEVEL_OPTIONS.find((t) => t.value === (job.thinkingLevel ?? 'off'))?.label ?? '关闭'
@@ -761,8 +924,10 @@ function AutomationJobDetail({
             <h3 className="mb-3 text-[14px] font-semibold text-[var(--text-3)]">状态</h3>
             <div className="flex items-center gap-2">
               <span className={`size-2 rounded-full ${job.enabled ? 'bg-emerald-500' : 'bg-[var(--text-3)]'}`} />
-              <span className={`text-[14px] ${job.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-[var(--text-1)]'}`}>{job.enabled ? '活跃' : '已停用'}</span>
+              <span className={`text-[14px] ${job.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-[var(--text-1)]'}`}>{statusLabel}</span>
             </div>
+            <DetailRow label="来源" value={automationSourceLabel(job)} />
+            {moduleLabel && <DetailRow label="模块" value={moduleLabel} />}
             {job.nextRunAt ? (
               <DetailRow label="下次运行" value={formatShortTime(job.nextRunAt)} />
             ) : null}
@@ -849,9 +1014,9 @@ function AutomationJobDetail({
           </div>
 
           {/* 运行历史 */}
-          {runs.length > 0 && (
-            <div>
-              <h3 className="mb-3 text-[14px] font-semibold text-[var(--text-3)]">运行历史记录</h3>
+          <div>
+            <h3 className="mb-3 text-[14px] font-semibold text-[var(--text-3)]">运行历史记录</h3>
+            {runs.length > 0 ? (
               <div className="flex flex-col gap-3">
                 {runs.slice(0, 10).map((run) => (
                   <div key={run.id} className="flex items-center gap-2.5">
@@ -865,8 +1030,10 @@ function AutomationJobDetail({
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-[14px] text-[var(--text-3)]">暂无运行记录</p>
+            )}
+          </div>
         </div>
       </div>
     </>
@@ -1372,6 +1539,30 @@ function scheduleLabel(schedule: AutomationSchedule): string {
 
   const freqLabel = FREQUENCY_OPTIONS.find((f) => f.id === frequency)?.label ?? ''
   return `${freqLabel} ${formatMinuteOfDay(minuteOfDay)}`
+}
+
+function automationSourceLabel(job: AutomationJob): string {
+  return isSystemAutomationJob(job) ? '系统日程' : '用户创建'
+}
+
+function isSystemAutomationJob(job: AutomationJob): boolean {
+  return job.source === 'system' || job.systemAction === 'routine'
+}
+
+function automationModuleLabel(job: AutomationJob): string | null {
+  return isSystemAutomationJob(job) ? '日程' : null
+}
+
+function isCompletedAutomationJob(job: AutomationJob): boolean {
+  return job.schedule.type === 'once' && Boolean(job.lastRunAt)
+}
+
+function automationJobStatusLabel(job: AutomationJob): string | null {
+  if (job.schedule.type === 'once') {
+    if (job.lastRunAt) return '已完成'
+    if ((job.schedule.runAt ?? 0) < Date.now()) return '已过期'
+  }
+  return job.enabled ? null : '已停用'
 }
 
 function summarizePrompt(prompt: string): string {

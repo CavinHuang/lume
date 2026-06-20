@@ -183,7 +183,8 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
             schedule,
             workspaceId,
             threadId,
-            enabled: asBoolean(args.enabled)
+            enabled: asBoolean(args.enabled),
+            source: "manual"
           });
           await syncAutomationRunnerJobs();
           return { ok: true, action, job: created };

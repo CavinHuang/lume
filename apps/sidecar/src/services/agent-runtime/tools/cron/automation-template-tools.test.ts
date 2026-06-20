@@ -65,16 +65,18 @@ describe("automation-template-tools", () => {
       action: "create",
       templateId: "daily-bug-scan",
       name: "我的自定义扫描任务",
-    }) as { ok: boolean; action: string; job: { id?: string; name: string; prompt: string } };
+    }) as { ok: boolean; action: string; job: { id?: string; name: string; prompt: string; source?: string } };
 
     expect(result.ok).toBeTrue();
     expect(result.action).toBe("create");
     expect(result.job.name).toBe("我的自定义扫描任务");
     expect(result.job.prompt).toContain("扫描");
+    expect(result.job.source).toBe("manual");
 
     const allJobs = listAutomationJobs();
     const created = allJobs.find((j) => j.id === result.job.id);
     expect(created).toBeDefined();
+    expect(created?.source).toBe("manual");
     expect(created?.schedule.type).toBe("cron");
     expect(created?.schedule.cronExpr).toBe("0 9 * * *");
   });

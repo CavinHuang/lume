@@ -10,6 +10,12 @@ export type AutomationScheduleType = 'cron' | 'once' | 'interval' | 'manual'
 /** 自动化任务触发入口 */
 export type AutomationTriggerMode = 'manual' | 'schedule' | 'webhook' | 'chat'
 
+/** 自动化任务来源 */
+export type AutomationJobSource = 'manual' | 'system'
+
+/** 系统自动化动作标识 */
+export type AutomationSystemAction = 'routine' | 'memory_distill_workspace'
+
 /** 任务调度配置 */
 export interface AutomationSchedule {
   /** 调度类型 */
@@ -38,6 +44,10 @@ export interface AutomationJob {
   schedule: AutomationSchedule
   /** 可触发任务的入口，用于管理页展示和未来能力扩展 */
   triggerModes?: AutomationTriggerMode[]
+  /** 创建来源：用户手动创建或系统自动创建 */
+  source?: AutomationJobSource
+  /** 系统自动创建任务的动作标识 */
+  systemAction?: AutomationSystemAction
   /** 简短说明 */
   description?: string
   /** 默认模型展示值 */
@@ -74,6 +84,8 @@ export interface AutomationCreateJobInput {
   threadId?: string
   schedule: AutomationSchedule
   triggerModes?: AutomationTriggerMode[]
+  source?: AutomationJobSource
+  systemAction?: AutomationSystemAction
   description?: string
   defaultModel?: string
   thinkingLevel?: string
@@ -90,6 +102,8 @@ export interface AutomationUpdateJobInput {
   threadId?: string
   schedule?: AutomationSchedule
   triggerModes?: AutomationTriggerMode[]
+  source?: AutomationJobSource
+  systemAction?: AutomationSystemAction
   description?: string
   defaultModel?: string
   thinkingLevel?: string

@@ -17,6 +17,8 @@ describe("automation rpc schemas", () => {
       workspaceId: "workspace-1",
       schedule: { type: "manual" },
       triggerModes: ["manual", "chat"],
+      source: "system",
+      systemAction: "routine",
       toolResourceIds: ["file", "knowledge", "prd"],
       defaultModel: "GPT-5.4"
     };
@@ -32,6 +34,7 @@ describe("automation rpc schemas", () => {
       prompt: "生成发布说明",
       schedule: { type: "manual" },
       triggerModes: ["manual", "schedule", "chat"],
+      source: "manual",
       toolResourceIds: ["file", "code"],
       defaultModel: "继承当前模型"
     };

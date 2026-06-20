@@ -8,7 +8,7 @@ import {
   listAutomationJobs,
   updateAutomationJob
 } from "./automation-manager";
-import { getAutomationJobsPath } from "../infra/config-paths";
+import { getAutomationJobsPath, getRoutineSchedulePath } from "../infra/config-paths";
 
 describe("automation-manager", () => {
   let prevConfigDir: string | undefined;
@@ -65,12 +65,14 @@ describe("automation-manager", () => {
       schedule: { type: "manual" },
       prompt: "阅读并理解需求文档，输出结构清晰的 PRD 初稿",
       triggerModes: ["manual", "chat"],
+      source: "manual",
       toolResourceIds: ["file", "prd", "design"],
       defaultModel: "GPT-5.1"
     });
 
     expect(created.schedule).toEqual({ type: "manual" });
     expect(created.triggerModes).toEqual(["manual", "chat"]);
+    expect(created.source).toBe("manual");
     expect(created.toolResourceIds).toEqual(["file", "prd", "design"]);
     expect(created.description).toBe("根据需求文档，生成产品需求文档初稿");
     expect(created.defaultModel).toBe("GPT-5.1");
@@ -83,6 +85,7 @@ describe("automation-manager", () => {
     });
 
     expect(updated.schedule).toEqual({ type: "cron", cronExpr: "0 9 * * *" });
+    expect(updated.source).toBe("manual");
     expect(updated.triggerModes).toEqual(["manual", "schedule", "chat"]);
     expect(updated.toolResourceIds).toEqual(["file", "web", "prd"]);
     expect(listAutomationJobs()[0]?.triggerModes).toEqual(["manual", "schedule", "chat"]);
@@ -117,6 +120,38 @@ describe("automation-manager", () => {
       schedule: { type: "manual" }
     });
     expect(manual.nextRunAt).toBeNull();
+  });
+
+  test("应将日程引用的旧自动化任务标记为系统任务", () => {
+    const created = createAutomationJob({
+      name: "旧日程任务",
+      schedule: { type: "once", runAt: Date.now() + 60_000 },
+      prompt: "执行日程条目"
+    });
+    writeFileSync(getRoutineSchedulePath("2026-06-19"), JSON.stringify({
+      id: "routine-1",
+      date: "2026-06-19",
+      generatedAt: Date.now(),
+      status: "planned",
+      context: {
+        activeBooks: 0,
+        unfinishedTodos: 0,
+        dayOfWeek: 5,
+        recentNotes: 0,
+        pendingMemories: 0
+      },
+      entries: [{
+        id: "entry-1",
+        activity: "daily_summary",
+        scheduledAt: Date.now(),
+        status: "pending",
+        automationJobId: created.id
+      }]
+    }), "utf-8");
+
+    const listed = listAutomationJobs();
+    expect(listed[0]?.source).toBe("system");
+    expect(listed[0]?.systemAction).toBe("routine");
   });
 
   test("索引损坏时应自动备份并回退空列表", () => {
