@@ -1895,13 +1895,16 @@ fn main() {
         ..ll::LumeLoggerConfig::default()
     }).expect("failed to initialize lume-logger");
 
-    let updater_pubkey = option_env!("LUME_UPDATER_PUBLIC_KEY")
-        .unwrap_or("__LUME_UPDATER_PUBLIC_KEY__")
-        .to_string();
+    let mut updater_builder = tauri_plugin_updater::Builder::new();
+    if let Some(updater_pubkey) = option_env!("LUME_UPDATER_PUBLIC_KEY")
+        .filter(|value| !value.trim().is_empty())
+    {
+        updater_builder = updater_builder.pubkey(updater_pubkey.to_string());
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().pubkey(updater_pubkey).build())
+        .plugin(updater_builder.build())
         .manage(SidecarProcess::new())
         .manage(DesktopShellState::new())
         .setup(|app| {
