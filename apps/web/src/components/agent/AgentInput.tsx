@@ -31,6 +31,7 @@ import {
   type LumeConfigAgentDefaultStrategy,
   type LumeEffectiveConfig,
   type LumeConfigThinkingLevel,
+  type LumeRuntimeEvent,
 } from '@lume/shared'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { MentionList } from './MentionList'
@@ -513,17 +514,39 @@ export function AgentInput({
     if (id === 'compact') {
       editor.commands.clearContent()
       setEditorText('')
+      setLocalSending(true)
+      const createdAt = new Date().toISOString()
+      const optimisticId = `optimistic:compact:${threadId}:${createdAt}`
+      // optimistic：立即显示「正在压缩」，不等后端 compaction.started 事件到达。
+      // 后端真实 compaction 事件到达后由 appendContextCompactionNotice 的 existing 分支合并到本条，不重复。
+      setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
+        id: optimisticId,
+        type: 'context.compaction.started',
+        threadId,
+        runId: optimisticId,
+        createdAt,
+        trigger: 'manual',
+        preTokens: 0,
+        policy: 'manual',
+        source: 'manual',
+      } as LumeRuntimeEvent))
       void (async () => {
         try {
-          await agentSend({
+          const result = await agentSend({
             threadId,
             userMessage: '/compact',
             ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
           })
-          // 不 toast 成功：压缩进度由 compaction system 消息在对话中反馈
+          if (shouldReleaseAgentInputLocalSendingAfterDispatch(result.mode)) {
+            setLocalSending(false)
+          }
+          if (result.mode !== 'sent') {
+            toast.success('已加入队列')
+          }
         } catch (error) {
           console.error('[AgentInput] 压缩对话失败:', error)
           toast.error('压缩失败')
+          setLocalSending(false)
         }
       })()
       return
