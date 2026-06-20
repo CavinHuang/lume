@@ -23,6 +23,7 @@ import {
   toggleAgentThreadPin,
   forkAgentThread,
   truncateAgentMessagesFrom,
+  clearAgentThreadMessages,
   updateAgentThreadMeta,
   archiveAgentThread,
   restoreAgentThread,
@@ -848,6 +849,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM]: async (params) => {
       const input = validateInput(agentTruncateThreadInputSchema, params, AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM);
       return truncateAgentMessagesFrom(input.threadId, input.messageId);
+    },
+    [AGENT_IPC_CHANNELS.CLEAR_THREAD]: async (params) => {
+      const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.CLEAR_THREAD);
+      return clearAgentThreadMessages(input.threadId);
     },
     [AGENT_IPC_CHANNELS.FORK_THREAD]: async (params) => {
       const input = params as { threadId: string; upToMessageId: string };
