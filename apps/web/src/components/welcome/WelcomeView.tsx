@@ -29,12 +29,14 @@ import {
   type AgentMessageAttachmentInput,
   type AgentSavedFile,
   type AgentThreadMeta,
+  type AgentWelcomeSuggestion,
+  type AgentWelcomeSuggestionsResult,
   type LumeConfigThinkingLevel,
 } from '@lume/shared'
 import { LUME_CONFIG_IPC_CHANNELS } from '@lume/shared'
 import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { LumeWelcomeSurface } from './LumeWelcomeSurface'
-import { buildWelcomeSurfaceViewModel } from './welcome-surface-view-model'
+import { buildWelcomeSurfaceViewModel, DEFAULT_WELCOME_SUGGESTIONS } from './welcome-surface-view-model'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { createSuggestionRenderer } from '@/components/agent/editor-mention-suggestions'
 import { attachmentDataUrl, isImageAttachment } from '@/components/agent/AgentAttachmentGrid'
@@ -78,6 +80,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [editorText, setEditorText] = useState('')
   const [pendingFiles, setPendingFiles] = useState<WelcomePendingFile[]>([])
   const [pendingFolders, setPendingFolders] = useState<{ id: string; path: string; name: string }[]>([])
+  const [welcomeSuggestions, setWelcomeSuggestions] = useState<AgentWelcomeSuggestion[]>(DEFAULT_WELCOME_SUGGESTIONS)
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
 
   useEffect(() => {
@@ -126,6 +129,24 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     setChannelId(undefined)
     setModelId(undefined)
   }, [workspaceSlug])
+
+  useEffect(() => {
+    let cancelled = false
+    setWelcomeSuggestions(DEFAULT_WELCOME_SUGGESTIONS)
+    sidecarCall<AgentWelcomeSuggestionsResult>(AGENT_IPC_CHANNELS.GENERATE_WELCOME_SUGGESTIONS, {
+      workspaceSlug: configWorkspaceSlug,
+      workspaceName: selectedWorkspace?.name ?? undefined,
+    })
+      .then((result) => {
+        if (!cancelled && result.suggestions.length > 0) {
+          setWelcomeSuggestions(result.suggestions)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setWelcomeSuggestions(DEFAULT_WELCOME_SUGGESTIONS)
+      })
+    return () => { cancelled = true }
+  }, [configWorkspaceSlug, selectedWorkspace?.name])
 
   const welcomeSurfaceModel = useMemo(
     () =>
@@ -190,6 +211,16 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     editor.commands.focus('end')
     setWelcomePromptSeed(null)
   }, [editor, setWelcomePromptSeed, welcomePromptSeed])
+
+  const handleWelcomeSuggestionSelect = useCallback((prompt: string) => {
+    if (!editor) {
+      setWelcomePromptSeed(prompt)
+      return
+    }
+    editor.commands.clearContent()
+    editor.commands.insertContent(prompt)
+    editor.commands.focus('end')
+  }, [editor, setWelcomePromptSeed])
 
   const handleSend = async () => {
     if (!editor || sending) return
@@ -431,6 +462,8 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         onSend={handleSend}
         onAttach={handleAttach}
         onPluginSelect={handlePluginSelect}
+        suggestions={welcomeSuggestions}
+        onSuggestionSelect={handleWelcomeSuggestionSelect}
         onRemovePendingFile={(index) =>
           setPendingFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
         }

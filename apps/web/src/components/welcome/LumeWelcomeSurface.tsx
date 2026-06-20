@@ -8,7 +8,7 @@ import { LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import { AgentAttachmentGrid } from '@/components/agent/AgentAttachmentGrid'
 import { sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, type AgentListPluginsResult, type AgentPluginListItem } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentListPluginsResult, type AgentPluginListItem, type AgentWelcomeSuggestion } from '@lume/shared'
 import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
 
 type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
@@ -43,6 +43,8 @@ interface LumeWelcomeSurfaceProps {
   onRemovePendingFile: (index: number) => void
   onPluginSelect?: (pluginName: string) => void
   folderBar?: ReactNode
+  suggestions?: AgentWelcomeSuggestion[]
+  onSuggestionSelect?: (prompt: string) => void
 }
 
 export function LumeWelcomeSurface({
@@ -61,6 +63,8 @@ export function LumeWelcomeSurface({
   onRemovePendingFile,
   onPluginSelect,
   folderBar,
+  suggestions,
+  onSuggestionSelect,
 }: LumeWelcomeSurfaceProps) {
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const [pluginsPopoverOpen, setPluginsPopoverOpen] = useState(false)
@@ -288,6 +292,22 @@ export function LumeWelcomeSurface({
               className="mt-[-12px] w-full max-w-[840px] rounded-b-[1rem] border border-t-0 border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] px-3 pt-6 pb-2"
             >
               {folderBar}
+            </div>
+          )}
+          {suggestions && suggestions.length > 0 && (
+            <div className="mt-4 flex w-full max-w-[840px] flex-wrap justify-center gap-2">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.id}
+                  type="button"
+                  title={suggestion.prompt}
+                  onClick={() => onSuggestionSelect?.(suggestion.prompt)}
+                  disabled={sending}
+                  className="inline-flex max-w-full items-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_46%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_82%,transparent)] px-3 py-1.5 text-[13px] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_20%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="truncate">{suggestion.title}</span>
+                </button>
+              ))}
             </div>
           )}
           <p className="mt-3 text-center text-[12px] text-[var(--text-3)]">

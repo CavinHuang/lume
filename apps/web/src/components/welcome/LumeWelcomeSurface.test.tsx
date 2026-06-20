@@ -60,4 +60,32 @@ describe('LumeWelcomeSurface', () => {
     expect(html).toMatch(/<button type="button" aria-label="添加" title="添加" disabled=""/)
     expect(html).toMatch(/<button type="button" disabled=""[^>]*title="移除附件"/)
   })
+
+  test('renders welcome suggestions', () => {
+    const model = buildWelcomeSurfaceViewModel({
+      workspaceName: 'Lume 主路径',
+    })
+
+    const html = renderToStaticMarkup(
+      <LumeWelcomeSurface
+        model={model}
+        workspaceSelector={<span>workspace-pill</span>}
+        modelPicker={<span>model-pill</span>}
+        composerModelPicker={<span>composer-model-pill</span>}
+        permissionModePicker={<span>permission-pill</span>}
+        thinkingLevelPicker={<span>thinking-pill</span>}
+        editor={null}
+        pendingFiles={[]}
+        sending={false}
+        hasText={false}
+        suggestions={[{ id: 's1', title: '规划今天', prompt: '帮我规划今天。' }]}
+        onSend={() => {}}
+        onAttach={() => {}}
+        onRemovePendingFile={() => {}}
+      />,
+    )
+
+    expect(html).toContain('规划今天')
+    expect(html).toContain('帮我规划今天。')
+  })
 })
