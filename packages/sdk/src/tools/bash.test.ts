@@ -9,6 +9,17 @@ describe("BashTool shell invocation", () => {
     });
   });
 
+  test("adds NoProfile for explicit Windows PowerShell commands", () => {
+    expect(resolveShellInvocation("powershell -Command \"Remove-Item 'C:\\tmp\\a.exe' -Force\"", "win32", {
+      ComSpec: "C:\\Windows\\System32\\cmd.exe",
+    }).args).toEqual([
+      "/d",
+      "/s",
+      "/c",
+      "powershell -NoProfile -Command \"Remove-Item 'C:\\tmp\\a.exe' -Force\"",
+    ]);
+  });
+
   test("keeps bash on non-Windows platforms", () => {
     expect(resolveShellInvocation("echo hi", "darwin", {})).toEqual({
       command: "bash",
