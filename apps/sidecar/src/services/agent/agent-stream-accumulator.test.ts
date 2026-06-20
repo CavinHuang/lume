@@ -57,4 +57,14 @@ describe("agent-stream-accumulator", () => {
     } as unknown as SDKMessage);
     expect(hasRenderableAssistantOutput(state)).toBeTrue();
   });
+
+  test("压缩 system 事件（started/progress/boundary）应被视为可渲染输出", () => {
+    // manual /compact 的 run 只产出压缩 system 事件、无 assistant 消息，
+    // 这些事件应被认可为有意义的可渲染输出，避免误报「未检测到可渲染输出」。
+    for (const subtype of ["context_compaction_started", "context_compaction_progress", "compact_boundary"]) {
+      const state = createAgentStreamAccumulatorState();
+      appendSdkMessage(state, { type: "system", subtype } as unknown as SDKMessage);
+      expect(hasRenderableAssistantOutput(state)).toBeTrue();
+    }
+  });
 });
