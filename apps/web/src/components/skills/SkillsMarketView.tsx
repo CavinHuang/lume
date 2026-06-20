@@ -307,12 +307,14 @@ export function SkillsMarketView() {
   return (
     <div className="min-h-0 flex-1 overflow-hidden bg-white px-7 pb-8 pt-8 text-[#121832]">
       <div className="mx-auto flex h-full max-w-[1230px] flex-col">
-        <header className="mb-6">
-          <h1 className="text-[25px] font-semibold leading-tight text-[#121832]">插件市场</h1>
-          <p className="mt-2 text-[14px] leading-6 text-[#60698d]">
-            市场用于发现、审核和安装插件与技能，可在插件和技能视图之间快速切换。
-          </p>
-          <div className="mt-5 inline-flex rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
+        <header className="mb-6 flex items-start justify-between gap-5">
+          <div className="min-w-0">
+            <h1 className="text-[25px] font-semibold leading-tight text-[#121832]">插件市场</h1>
+            <p className="mt-2 text-[14px] leading-6 text-[#60698d]">
+              市场用于发现、审核和安装插件与技能，可在插件和技能视图之间快速切换。
+            </p>
+          </div>
+          <div className="inline-flex shrink-0 rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
             {([
               { id: 'plugin', label: `插件 ${summary.totalPlugins}` },
               { id: 'skill', label: `技能 ${summary.totalSkills}` },
