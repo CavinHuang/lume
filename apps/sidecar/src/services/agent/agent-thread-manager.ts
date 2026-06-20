@@ -631,7 +631,9 @@ export function truncateAgentMessagesFrom(threadId: string, messageId: string): 
 /**
  * 清空指定线程的全部消息与运行记录，保留线程本身（meta 留存），可在同一会话窗口继续对话。
  * 先停止运行中的线程再清空，避免 runtime 在清空后继续写入。
- * stopAgent 对非运行中的线程为幂等 no-op（与 STOP_THREAD handler 行为一致）。
+ * 注意 stopAgent 内部 stopAgentRuntime 为 fire-and-forget（与 STOP_THREAD handler 行为一致）：
+ * 同步部分（删 session state、标记 idle）立即生效，但不保证 runtime 异步循环在清空前完全终止（极小竞态窗口）。
+ * stopAgent 对非运行中的线程为幂等 no-op。
  * 动态 import agent-service 以规避与 agent-service 的静态循环依赖（agent-service 已反向 import 本模块）。
  */
 export async function clearAgentThreadMessages(threadId: string): Promise<{ ok: true; cleared: number }> {
