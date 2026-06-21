@@ -73,6 +73,13 @@ describe('runtime-event-state', () => {
     expect(withSubagentDelta['thread-1']?.events[0]?.parentToolUseId).toBeUndefined()
   })
 
+  test('连续同 owner 的 assistant.delta 合并为一条（正向）', () => {
+    const first = appendRuntimeEvent({}, deltaEvent('d1', 1, 'hello', '2026-06-21T00:00:00.001Z'))
+    const merged = appendRuntimeEvent(first, deltaEvent('d2', 2, ' world', '2026-06-21T00:00:00.002Z'))
+    expect(merged.t1.events).toHaveLength(1)
+    expect((merged.t1.events[0] as any).delta).toBe('hello world')
+  })
+
   test('keeps live RuntimeEvents in semantic order when final assistant content arrives after tool start', () => {
     const timestamp = '2026-05-11T00:00:00.000Z'
     const withTool = appendRuntimeEvent({}, runtimeEvent({
