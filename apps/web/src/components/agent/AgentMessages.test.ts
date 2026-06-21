@@ -581,7 +581,13 @@ describe('areRuntimeEventContentBlockPropsEqual', () => {
     status: 'completed',
   }
 
-  test('treats equal content with a different object identity as equal', () => {
+  test('treats the same message reference as equal', () => {
+    const prev = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: false }
+    const next = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: false }
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(true)
+  })
+
+  test('treats a different message reference as not equal even when content matches', () => {
     const prev = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: false }
     const next = {
       message: { ...baseAssistantMessage, blocks: [{ ...baseAssistantMessage.blocks[0] }] },
@@ -590,7 +596,7 @@ describe('areRuntimeEventContentBlockPropsEqual', () => {
       animate: false,
     }
     expect(next.message).not.toBe(prev.message)
-    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(true)
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
   })
 
   test('detects assistant text change', () => {

@@ -34,13 +34,13 @@ interface RuntimeEventContentBlockProps {
 }
 
 /**
- * memo 比较函数：流式时 projection 每 token 重建所有 message 对象引用，
- * 默认浅比较会失效、导致整条消息列表每 token 都 re-render。这里按「内容」
- * 比较 message，让内容未变的历史消息跳过 re-render。
+ * memo 比较函数：靠 message 引用稳定（2b 增量投影 + 2c reconcile/stabilize 引用稳定化）
+ * 让未变历史消息跳过 re-render。引用不同即视为变化（re-render）——不再用 JSON.stringify
+ * 兜底内容比较（2c 移除）。
  *
  * - 标量 props（streaming/animate/threadId）直接比较；
  * - onOpen* / onUserResizeStart 回调由父级 useCallback 保证引用稳定，不参与比较；
- * - message 用 JSON.stringify 比较，自动覆盖全部渲染字段，避免漏字段导致该刷新不刷新。
+ * - message 用引用比较（===）。
  */
 export function areRuntimeEventContentBlockPropsEqual(
   prev: RuntimeEventContentBlockProps,
@@ -49,9 +49,7 @@ export function areRuntimeEventContentBlockPropsEqual(
   if (prev.streaming !== next.streaming) return false
   if (prev.animate !== next.animate) return false
   if (prev.threadId !== next.threadId) return false
-  if (prev.message === next.message) return true
-  if (prev.message.type !== next.message.type) return false
-  return JSON.stringify(prev.message) === JSON.stringify(next.message)
+  return prev.message === next.message
 }
 
 export interface CopyFeedbackState {
