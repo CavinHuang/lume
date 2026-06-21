@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState, type TouchEventHandler, type WheelEventHandler } from 'react'
 import { ArrowDown } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentRuntimeEventsAtom, agentSubagentRunsAtom } from '@/atoms'
+import { agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentSubagentRunsAtom } from '@/atoms'
 import { getThreadMessages, getThreadRuntimeEvents, sidecarCall } from '@/lib/desktop-api'
 import {
   AGENT_IPC_CHANNELS,
@@ -42,7 +42,7 @@ interface AgentMessagesProps {
 
 export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThreadImage, onOpenMemorySource }: AgentMessagesProps) {
   useBootstrapGeneralSettings()
-  const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
+  const runtimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId))?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)

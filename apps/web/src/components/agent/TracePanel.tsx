@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import { Activity, CircleAlert, Clock3, ShieldCheck } from 'lucide-react'
-import { agentRuntimeEventsAtom } from '@/atoms'
+import { agentRuntimeEventsFamily } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { getAgentRunTrace, listAgentRunStates } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
@@ -28,7 +28,7 @@ const statusStyle: Record<string, string> = {
 }
 
 export function TracePanel({ threadId }: TracePanelProps) {
-  const liveRuntimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
+  const liveRuntimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId))?.events ?? []
   const [runRows, setRunRows] = useState<RunRow[]>([])
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [rows, setRows] = useState<TraceRow[]>([])

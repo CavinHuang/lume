@@ -18,7 +18,7 @@ import {
   sidecarCall,
 } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { agentMessageQueueAtom, agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentMessageQueueAtom, agentPlanModePhaseAtom, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   AGENT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
@@ -205,7 +205,7 @@ export function AgentInput({
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const thread = threads.find((item) => item.id === threadId)
   const planModePhase = useAtomValue(agentPlanModePhaseAtom)[threadId]
-  const runtimeEvents = useAtomValue(agentRuntimeEventsAtom)[threadId]?.events ?? []
+  const runtimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId))?.events ?? []
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const [messageQueues, setMessageQueues] = useAtom(agentMessageQueueAtom)

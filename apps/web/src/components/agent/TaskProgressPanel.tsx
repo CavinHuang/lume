@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAtomValue } from 'jotai'
-import { agentRuntimeEventsAtom } from '@/atoms'
+import { agentRuntimeEventsFamily } from '@/atoms'
 import { cn } from '@/lib/utils'
 import { executeTaskContract } from '@/lib/desktop-api'
 import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, RotateCcw, SkipForward, XCircle } from 'lucide-react'
@@ -55,7 +55,7 @@ export function getTaskProgressItems(
 }
 
 export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
-  const runtimeEventState = useAtomValue(agentRuntimeEventsAtom)[threadId]
+  const runtimeEventState = useAtomValue(agentRuntimeEventsFamily(threadId))
   const activeItemRef = useRef<HTMLDivElement>(null)
   const [continueBusy, setContinueBusy] = useState(false)
 
