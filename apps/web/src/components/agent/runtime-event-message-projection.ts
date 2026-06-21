@@ -9,240 +9,252 @@ import type {
 
 const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。'
 
+interface ProjectionState {
+  messages: RuntimeMessageView[]
+  currentAssistant: MutableAssistantMessage | null
+  terminalClosed: boolean
+}
+
 export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): RuntimeMessageView[] {
-  events = keepLatestVersionTurns(events)
-  const messages: RuntimeMessageView[] = []
-  let currentAssistant: MutableAssistantMessage | null = null
-  let terminalClosed = false
+  const kept = keepLatestVersionTurns(events)
+  const state: ProjectionState = {
+    messages: [],
+    currentAssistant: null,
+    terminalClosed: false,
+  }
+  for (const event of kept) {
+    applyRuntimeEvent(state, event)
+  }
+  flushAssistant(state.messages, state.currentAssistant)
+  return state.messages
+}
 
-  events.forEach((event) => {
-    if (event.type === 'run.started') {
-      terminalClosed = false
-      return
+function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEvent): void {
+  const { messages } = state
+
+  if (event.type === 'run.started') {
+    state.terminalClosed = false
+    return
+  }
+
+  if (event.type === 'message.user.submitted') {
+    flushAssistant(state.messages, state.currentAssistant)
+    messages.push({
+      id: event.messageId ?? `user:${event.createdAt}`,
+      type: 'user',
+      text: event.text,
+      createdAt: event.createdAt,
+      ...(event.attachments && event.attachments.length > 0 ? { attachments: event.attachments } : {}),
+      ...(event.messageId ? { messageId: event.messageId } : {}),
+      ...(event.versionGroupId ? { versionGroupId: event.versionGroupId } : {}),
+      ...(typeof event.versionIndex === 'number' ? { versionIndex: event.versionIndex } : {}),
+      ...(typeof event.versionCount === 'number' ? { versionCount: event.versionCount } : {}),
+    })
+    state.currentAssistant = createAssistantMessage(`assistant:${event.runId}`)
+    state.terminalClosed = false
+    return
+  }
+
+  if (event.type === 'task.progress') {
+    if (state.terminalClosed || !state.currentAssistant) {
+      state.currentAssistant = createAssistantMessage(`assistant:task:${event.taskRunId}`)
     }
+    state.terminalClosed = false
+    state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'task_progress')
+    state.currentAssistant.blocks.push({
+      type: 'task_progress',
+      id: `task:${event.taskRunId}:${event.createdAt}`,
+      event,
+    })
+    recomputeAssistantContent(state.currentAssistant)
+    return
+  }
 
-    if (event.type === 'message.user.submitted') {
-      flushAssistant(messages, currentAssistant)
-      messages.push({
-        id: event.messageId ?? `user:${event.createdAt}`,
-        type: 'user',
-        text: event.text,
-        createdAt: event.createdAt,
-        ...(event.attachments && event.attachments.length > 0 ? { attachments: event.attachments } : {}),
-        ...(event.messageId ? { messageId: event.messageId } : {}),
-        ...(event.versionGroupId ? { versionGroupId: event.versionGroupId } : {}),
-        ...(typeof event.versionIndex === 'number' ? { versionIndex: event.versionIndex } : {}),
-        ...(typeof event.versionCount === 'number' ? { versionCount: event.versionCount } : {}),
-      })
-      currentAssistant = createAssistantMessage(`assistant:${event.runId}`)
-      terminalClosed = false
-      return
+  if (event.type === 'memory.context.used') {
+    if (event.items.length === 0) return
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'memory_context_used')
+    state.currentAssistant.blocks.push({
+      type: 'memory_context_used',
+      id: `memory:${event.runId}:${event.createdAt}`,
+      event,
+    })
+    return
+  }
+
+  if (
+    event.type === 'context.compaction.started'
+    || event.type === 'context.compaction.progress'
+    || event.type === 'context.compaction.completed'
+  ) {
+    if (state.currentAssistant && assistantHasContent(state.currentAssistant)) {
+      flushAssistant(state.messages, state.currentAssistant)
     }
+    state.currentAssistant = null
+    appendContextCompactionNotice(messages, event)
+    state.terminalClosed = false
+    return
+  }
 
-    if (event.type === 'task.progress') {
-      if (terminalClosed || !currentAssistant) {
-        currentAssistant = createAssistantMessage(`assistant:task:${event.taskRunId}`)
-      }
-      terminalClosed = false
-      currentAssistant.blocks = currentAssistant.blocks.filter((block) => block.type !== 'task_progress')
-      currentAssistant.blocks.push({
-        type: 'task_progress',
-        id: `task:${event.taskRunId}:${event.createdAt}`,
-        event,
-      })
-      recomputeAssistantContent(currentAssistant)
-      return
-    }
+  if (event.type === 'usage.updated') {
+    if (event.scope !== 'main') return
+    applyAssistantProviderTokenUsage(state.messages, state.currentAssistant, {
+      inputTokens: firstFiniteNumber(event.billing.latestRecord?.inputTokens, event.billing.cumulative.inputTokens),
+      outputTokens: firstFiniteNumber(event.billing.latestRecord?.outputTokens, event.billing.cumulative.outputTokens),
+      cacheReadInputTokens: firstFiniteNumber(event.billing.latestRecord?.cacheReadInputTokens, event.billing.cumulative.cacheReadInputTokens),
+      cacheCreationInputTokens: firstFiniteNumber(event.billing.latestRecord?.cacheCreationInputTokens, event.billing.cumulative.cacheCreationInputTokens),
+      cachedTokens: firstFiniteNumber(event.billing.latestRecord?.cachedTokens, event.billing.cumulative.cachedTokens),
+      contextTokens: event.context.totalTokens,
+      contextWindow: event.context.contextWindow,
+      contextPercent: calculateContextPercent(event.context.totalTokens, event.context.contextWindow),
+    })
+    return
+  }
 
-    if (event.type === 'memory.context.used') {
-      if (event.items.length === 0) return
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      currentAssistant.blocks = currentAssistant.blocks.filter((block) => block.type !== 'memory_context_used')
-      currentAssistant.blocks.push({
-        type: 'memory_context_used',
-        id: `memory:${event.runId}:${event.createdAt}`,
-        event,
-      })
-      return
-    }
+  if (event.type === 'im.delivery') {
+    applyAssistantImDelivery(state.messages, state.currentAssistant, event)
+    return
+  }
 
-    if (
-      event.type === 'context.compaction.started'
-      || event.type === 'context.compaction.progress'
-      || event.type === 'context.compaction.completed'
-    ) {
-      if (currentAssistant && assistantHasContent(currentAssistant)) {
-        flushAssistant(messages, currentAssistant)
-      }
-      currentAssistant = null
-      appendContextCompactionNotice(messages, event)
-      terminalClosed = false
-      return
-    }
+  if (state.terminalClosed) {
+    return
+  }
 
-    if (event.type === 'usage.updated') {
-      if (event.scope !== 'main') return
-      applyAssistantProviderTokenUsage(messages, currentAssistant, {
-        inputTokens: firstFiniteNumber(event.billing.latestRecord?.inputTokens, event.billing.cumulative.inputTokens),
-        outputTokens: firstFiniteNumber(event.billing.latestRecord?.outputTokens, event.billing.cumulative.outputTokens),
-        cacheReadInputTokens: firstFiniteNumber(event.billing.latestRecord?.cacheReadInputTokens, event.billing.cumulative.cacheReadInputTokens),
-        cacheCreationInputTokens: firstFiniteNumber(event.billing.latestRecord?.cacheCreationInputTokens, event.billing.cumulative.cacheCreationInputTokens),
-        cachedTokens: firstFiniteNumber(event.billing.latestRecord?.cachedTokens, event.billing.cumulative.cachedTokens),
-        contextTokens: event.context.totalTokens,
-        contextWindow: event.context.contextWindow,
-        contextPercent: calculateContextPercent(event.context.totalTokens, event.context.contextWindow),
-      })
-      return
-    }
-
-    if (event.type === 'im.delivery') {
-      applyAssistantImDelivery(messages, currentAssistant, event)
-      return
-    }
-
-    if (terminalClosed) {
-      return
-    }
-
-    const subagentOwner = getSubagentOwner(event)
-    if (subagentOwner) {
-      if (currentAssistant) {
-        markSubagentToolCall(currentAssistant, subagentOwner.parentToolUseId, {
-          subagentRunId: subagentOwner.subagentRunId,
-          status: 'running',
-        })
-      }
-      return
-    }
-
-    if (event.type === 'assistant.delta') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      currentAssistant.text += event.delta
-      appendAssistantTextBlock(currentAssistant, event.delta)
-      return
-    }
-
-    if (event.type === 'assistant.thinking_delta') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      currentAssistant.thinking += event.delta
-      appendAssistantThinkingBlock(currentAssistant, event.delta)
-      return
-    }
-
-    if (event.type === 'assistant.final') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      replaceAssistantContentBlocks(currentAssistant, event.blocks)
-      return
-    }
-
-    if (event.type === 'plan.preview') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      currentAssistant.blocks.push({
-        type: 'plan_preview',
-        id: `plan:${event.contractId}`,
-        preview: {
-          contractId: event.contractId,
-          title: event.title,
-          summary: event.summary,
-          markdown: event.markdown,
-          ...(event.planFilePath ? { planFilePath: event.planFilePath } : {}),
-          ...(event.planVerified !== undefined ? { planVerified: event.planVerified } : {}),
-          stepCount: event.stepCount,
-        },
-      })
-      currentAssistant.text += event.markdown
-      return
-    }
-
-    if (event.type === 'tool.started') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      const toolCall: RuntimeToolCallView = {
-        id: event.toolCallId,
-        toolName: event.toolName,
-        input: event.inputPreview ?? {},
+  const subagentOwner = getSubagentOwner(event)
+  if (subagentOwner) {
+    if (state.currentAssistant) {
+      markSubagentToolCall(state.currentAssistant, subagentOwner.parentToolUseId, {
+        subagentRunId: subagentOwner.subagentRunId,
         status: 'running',
-        startedAt: event.createdAt,
-      }
-      currentAssistant.toolCalls.set(event.toolCallId, toolCall)
-      currentAssistant.toolBlockIds.set(event.toolCallId, currentAssistant.blocks.length)
-      currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall })
-      currentAssistant.currentContentSegmentStart = currentAssistant.blocks.length
-      return
+      })
     }
+    return
+  }
 
-    if (event.type === 'tool.completed' || event.type === 'tool.failed') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      const existing = currentAssistant.toolCalls.get(event.toolCallId)
-      const isError = event.type === 'tool.failed'
-      const permissionState = isError && isToolPermissionTimeoutMessage(event.error.message)
-        ? 'timeout'
-        : existing?.permissionState
-      const toolCall: RuntimeToolCallView = {
-        id: event.toolCallId,
-        toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
-        input: existing?.input ?? {},
-        startedAt: existing?.startedAt ?? event.createdAt,
-        durationMs: computeDurationMs(existing?.startedAt, event.createdAt),
-        status: isError ? 'failed' : 'completed',
-        output: isError ? event.error.message : event.resultPreview,
-        isError,
-        ...(permissionState ? { permissionState } : {}),
-        ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
-        ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
-          ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }
-          : existing?.subagentStatus ? { subagentStatus: existing.subagentStatus } : {}),
-      }
-      upsertToolCallBlock(currentAssistant, event.toolCallId, toolCall)
-      return
+  if (event.type === 'assistant.delta') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant.text += event.delta
+    appendAssistantTextBlock(state.currentAssistant, event.delta)
+    return
+  }
+
+  if (event.type === 'assistant.thinking_delta') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant.thinking += event.delta
+    appendAssistantThinkingBlock(state.currentAssistant, event.delta)
+    return
+  }
+
+  if (event.type === 'assistant.final') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    replaceAssistantContentBlocks(state.currentAssistant, event.blocks)
+    return
+  }
+
+  if (event.type === 'plan.preview') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant.blocks.push({
+      type: 'plan_preview',
+      id: `plan:${event.contractId}`,
+      preview: {
+        contractId: event.contractId,
+        title: event.title,
+        summary: event.summary,
+        markdown: event.markdown,
+        ...(event.planFilePath ? { planFilePath: event.planFilePath } : {}),
+        ...(event.planVerified !== undefined ? { planVerified: event.planVerified } : {}),
+        stepCount: event.stepCount,
+      },
+    })
+    state.currentAssistant.text += event.markdown
+    return
+  }
+
+  if (event.type === 'tool.started') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    const toolCall: RuntimeToolCallView = {
+      id: event.toolCallId,
+      toolName: event.toolName,
+      input: event.inputPreview ?? {},
+      status: 'running',
+      startedAt: event.createdAt,
     }
+    state.currentAssistant.toolCalls.set(event.toolCallId, toolCall)
+    state.currentAssistant.toolBlockIds.set(event.toolCallId, state.currentAssistant.blocks.length)
+    state.currentAssistant.blocks.push({ type: 'tool_call', id: `tool:${event.toolCallId}`, toolCall })
+    state.currentAssistant.currentContentSegmentStart = state.currentAssistant.blocks.length
+    return
+  }
 
-    if (event.type === 'tool.permission_timeout') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      const existing = currentAssistant.toolCalls.get(event.toolCallId)
-      const toolCall: RuntimeToolCallView = {
-        id: event.toolCallId,
-        toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
-        input: existing?.input ?? {},
-        startedAt: existing?.startedAt ?? event.createdAt,
-        durationMs: computeDurationMs(existing?.startedAt, event.createdAt),
-        status: 'failed',
-        output: event.message,
-        isError: true,
-        permissionState: 'timeout',
-      }
-      upsertToolCallBlock(currentAssistant, event.toolCallId, toolCall)
-      return
+  if (event.type === 'tool.completed' || event.type === 'tool.failed') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    const existing = state.currentAssistant.toolCalls.get(event.toolCallId)
+    const isError = event.type === 'tool.failed'
+    const permissionState = isError && isToolPermissionTimeoutMessage(event.error.message)
+      ? 'timeout'
+      : existing?.permissionState
+    const toolCall: RuntimeToolCallView = {
+      id: event.toolCallId,
+      toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
+      input: existing?.input ?? {},
+      startedAt: existing?.startedAt ?? event.createdAt,
+      durationMs: computeDurationMs(existing?.startedAt, event.createdAt),
+      status: isError ? 'failed' : 'completed',
+      output: isError ? event.error.message : event.resultPreview,
+      isError,
+      ...(permissionState ? { permissionState } : {}),
+      ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
+      ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
+        ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }
+        : existing?.subagentStatus ? { subagentStatus: existing.subagentStatus } : {}),
     }
+    upsertToolCallBlock(state.currentAssistant, event.toolCallId, toolCall)
+    return
+  }
 
-    if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      if (event.type === 'run.turn_limited') {
-        appendAssistantTextBlock(currentAssistant, TURN_LIMIT_NOTICE)
-        recomputeAssistantContent(currentAssistant)
-      }
-      if (event.type === 'run.completed') {
-        currentAssistant.messageId = event.finalMessageId
-        currentAssistant.completedAt = event.createdAt
-      }
-      currentAssistant.status = 'completed'
-      flushAssistant(messages, currentAssistant)
-      currentAssistant = null
-      terminalClosed = true
-      return
+  if (event.type === 'tool.permission_timeout') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    const existing = state.currentAssistant.toolCalls.get(event.toolCallId)
+    const toolCall: RuntimeToolCallView = {
+      id: event.toolCallId,
+      toolName: event.toolName ?? existing?.toolName ?? event.toolCallId,
+      input: existing?.input ?? {},
+      startedAt: existing?.startedAt ?? event.createdAt,
+      durationMs: computeDurationMs(existing?.startedAt, event.createdAt),
+      status: 'failed',
+      output: event.message,
+      isError: true,
+      permissionState: 'timeout',
     }
+    upsertToolCallBlock(state.currentAssistant, event.toolCallId, toolCall)
+    return
+  }
 
-    if (event.type === 'run.failed' || event.type === 'run.cancelled') {
-      currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
-      currentAssistant.status = 'failed'
-      currentAssistant.error = event.type === 'run.failed' ? event.error.message : (event.reason ?? 'Run cancelled')
-      flushAssistant(messages, currentAssistant)
-      currentAssistant = null
-      terminalClosed = true
+  if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    if (event.type === 'run.turn_limited') {
+      appendAssistantTextBlock(state.currentAssistant, TURN_LIMIT_NOTICE)
+      recomputeAssistantContent(state.currentAssistant)
     }
-  })
+    if (event.type === 'run.completed') {
+      state.currentAssistant.messageId = event.finalMessageId
+      state.currentAssistant.completedAt = event.createdAt
+    }
+    state.currentAssistant.status = 'completed'
+    flushAssistant(state.messages, state.currentAssistant)
+    state.currentAssistant = null
+    state.terminalClosed = true
+    return
+  }
 
-  flushAssistant(messages, currentAssistant)
-  return messages
+  if (event.type === 'run.failed' || event.type === 'run.cancelled') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant.status = 'failed'
+    state.currentAssistant.error = event.type === 'run.failed' ? event.error.message : (event.reason ?? 'Run cancelled')
+    flushAssistant(state.messages, state.currentAssistant)
+    state.currentAssistant = null
+    state.terminalClosed = true
+  }
 }
 
 function isToolPermissionTimeoutMessage(message: string): boolean {
