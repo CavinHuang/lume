@@ -238,6 +238,72 @@ describe("memory-v2 markdown store", () => {
     expect(accepted?.frontmatter.confidence).toBe("high");
     expect(accepted?.frontmatter.tags).toEqual(["profile", "demo"]);
   });
+
+  test("findEntryById 命中存在的 entry（updateEntryStatus 成功更新）", () => {
+    const store = createMemoryV2Store();
+    const entry = store.writeEntry({
+      kind: "decision",
+      targetScope: "global",
+      statement: "Memory V2 stores one claim per entry file.",
+      confidence: "high"
+    });
+
+    const updated = store.updateEntryStatus({
+      scope: entry.frontmatter.scope,
+      workspaceSlug: undefined,
+      id: entry.frontmatter.id,
+      status: "archived"
+    });
+
+    expect(updated.frontmatter.status).toBe("archived");
+    expect(updated.frontmatter.id).toBe(entry.frontmatter.id);
+    expect(readEntryFile(entry.path).frontmatter.status).toBe("archived");
+  });
+
+  test("findEntryById 未命中时抛错（不存在 id）", () => {
+    const store = createMemoryV2Store();
+
+    expect(() => store.updateEntryStatus({
+      scope: "global",
+      workspaceSlug: undefined,
+      id: "nonexistent-id-xxx",
+      status: "archived"
+    })).toThrow(/not found/);
+  });
+
+  test("多个 entry 下 findEntryById 精确定位（无文件名后缀误匹配）", () => {
+    const store = createMemoryV2Store();
+    const a = store.writeEntry({
+      kind: "fact",
+      targetScope: "global",
+      statement: "第一条记忆",
+      confidence: "high"
+    });
+    const b = store.writeEntry({
+      kind: "fact",
+      targetScope: "global",
+      statement: "第二条记忆",
+      confidence: "high"
+    });
+
+    const found = store.updateEntryStatus({
+      scope: b.frontmatter.scope,
+      workspaceSlug: undefined,
+      id: b.frontmatter.id,
+      status: "archived"
+    });
+    expect(found.frontmatter.id).toBe(b.frontmatter.id);
+    expect(found.frontmatter.id).not.toBe(a.frontmatter.id);
+
+    const aState = store.updateEntryStatus({
+      scope: a.frontmatter.scope,
+      workspaceSlug: undefined,
+      id: a.frontmatter.id,
+      status: "active"
+    });
+    expect(aState.frontmatter.id).toBe(a.frontmatter.id);
+    expect(aState.frontmatter.status).toBe("active");
+  });
 });
 
 function updateEntryStatusForTest(id: string, supersededBy: string): void {
