@@ -560,18 +560,30 @@ function findEntryById(input: {
   workspaceSlug?: string;
   id: string;
 }): MemoryV2Entry | undefined {
-  return listEntries({
-    workspaceSlug: input.workspaceSlug,
-    scopes: [input.scope]
-  }).find((entry) => entry.frontmatter.id === input.id);
+  const paths = getMemoryV2ScopePaths({ scope: input.scope, workspaceSlug: input.workspaceSlug });
+  const file = listMarkdownFiles(paths.entriesDir).find((path) => entryFileId(path) === input.id);
+  if (!file) return undefined;
+  try {
+    return readEntryFile(file);
+  } catch {
+    return undefined;
+  }
 }
 
 function findEntryByIdAcrossScopes(id: string, workspaceSlug?: string): MemoryV2Entry | undefined {
-  return listEntries({
-    workspaceSlug,
-    scopes: ["global", "workspace"],
-    includeStatuses: ALL_ENTRY_STATUSES
-  }).find((entry) => entry.frontmatter.id === id);
+  for (const scope of ["global", "workspace"] as const) {
+    if (scope === "workspace" && !workspaceSlug) continue;
+    const paths = getMemoryV2ScopePaths({ scope, workspaceSlug });
+    const file = listMarkdownFiles(paths.entriesDir).find((path) => entryFileId(path) === id);
+    if (file) {
+      try {
+        return readEntryFile(file);
+      } catch {
+        continue;
+      }
+    }
+  }
+  return undefined;
 }
 
 function removeEntryReferences(id: string, workspaceSlug?: string): void {
@@ -712,6 +724,11 @@ function listMarkdownFiles(dir: string): string[] {
         return false;
       }
     });
+}
+
+/** entry 文件名格式 {YYYY-MM-DD}-{id}.md；去掉 .md 后缀与 10 字符 date 前缀（+"-"）得 id。 */
+function entryFileId(path: string): string {
+  return basename(path, ".md").slice(11);
 }
 
 function pendingTypeDir(paths: MemoryV2ScopePaths, type: MemoryV2PendingType): string {
