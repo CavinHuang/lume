@@ -11,7 +11,10 @@ import {
 } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { hydrateRuntimeEvents } from '@/hooks/runtime-event-state'
-import { projectRuntimeEventMessages } from './runtime-event-message-projection'
+import {
+  applyRuntimeEventsIncremental,
+  type ProjectionRef,
+} from './runtime-event-message-projection'
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
 import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
 import {
@@ -59,11 +62,17 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const loadedRuntimeEventThreadsRef = useRef<Set<string>>(new Set())
   const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
   const [showScrollButton, setShowScrollButton] = useState(false)
-  const projectedMessages = useMemo(() => (
-    runtimeEvents.length > 0
-      ? projectRuntimeEventMessages(runtimeEvents)
-      : projectVisibleThreadMessages(visibleThreadMessages)
-  ), [runtimeEvents, visibleThreadMessages])
+  const projectionRef = useRef<ProjectionRef | null>(null)
+  const projectedMessages = useMemo(() => {
+    if (runtimeEvents.length > 0) {
+      const result = applyRuntimeEventsIncremental(runtimeEvents, projectionRef.current)
+      projectionRef.current = result.ref
+      return result.messages
+    }
+    // runtimeEvents 为空（如纯历史会话，无 runtime events）：走 visibleThreadMessages 投影
+    projectionRef.current = null
+    return projectVisibleThreadMessages(visibleThreadMessages)
+  }, [runtimeEvents, visibleThreadMessages])
   const liveMessages = useMemo(
     () => stabilizeRuntimeMessages(
       reconcileUserMessageVersions(projectedMessages, visibleThreadMessages),
