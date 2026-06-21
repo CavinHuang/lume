@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
-import { projectRuntimeEventMessages } from './runtime-event-message-projection'
+import { projectRuntimeEventMessages, applyRuntimeEventsIncremental, type ProjectionRef } from './runtime-event-message-projection'
 import type { LumeRuntimeEvent } from '@lume/shared'
+import type { RuntimeMessageView } from './runtime-message-view'
 
 function event(input: Partial<LumeRuntimeEvent> & Pick<LumeRuntimeEvent, 'type'>): LumeRuntimeEvent {
   return {
@@ -702,5 +703,155 @@ describe('runtime-event-message-projection', () => {
         },
       ],
     })
+  })
+})
+
+/** 模拟「事件逐个追加」的增量调用，返回最终 messages（用于与全量对比）。 */
+function incrementalProject(events: LumeRuntimeEvent[]): RuntimeMessageView[] {
+  let ref: ProjectionRef | null = null
+  let messages: RuntimeMessageView[] = []
+  for (let i = 1; i <= events.length; i++) {
+    const result = applyRuntimeEventsIncremental(events.slice(0, i), ref)
+    ref = result.ref
+    messages = result.messages
+  }
+  return messages
+}
+
+describe('applyRuntimeEventsIncremental 与全量投影等价', () => {
+  test('纯 assistant.delta 追加：增量结果 == 全量', () => {
+    const events = [
+      event({ type: 'message.user.submitted', text: 'hi', messageId: 'u1' }),
+      event({ type: 'run.started', runId: 'r1' }),
+      event({ type: 'assistant.delta', runId: 'r1', delta: 'Hello' }),
+      event({ type: 'assistant.delta', runId: 'r1', delta: ' world' }),
+      event({ type: 'run.completed', runId: 'r1', finalMessageId: 'a1' }),
+    ]
+    expect(incrementalProject(events)).toEqual(projectRuntimeEventMessages(events))
+  })
+
+  test('tool 调用序列：增量结果 == 全量', () => {
+    const events = [
+      event({ type: 'message.user.submitted', text: 'run tool', messageId: 'u2' }),
+      event({ type: 'run.started', runId: 'r2' }),
+      event({ type: 'tool.started', runId: 'r2', toolCallId: 't1', toolName: 'Read', createdAt: '2026-05-11T00:00:01.000Z' }),
+      event({ type: 'assistant.delta', runId: 'r2', delta: 'reading' }),
+      event({ type: 'tool.completed', runId: 'r2', toolCallId: 't1', toolName: 'Read', createdAt: '2026-05-11T00:00:02.000Z', resultPreview: 'ok' }),
+      event({ type: 'run.completed', runId: 'r2', finalMessageId: 'a2' }),
+    ]
+    expect(incrementalProject(events)).toEqual(projectRuntimeEventMessages(events))
+  })
+
+  test('多轮对话（多 user/assistant turn）：增量结果 == 全量', () => {
+    const events = [
+      event({ type: 'message.user.submitted', text: 'q1', messageId: 'u3' }),
+      event({ type: 'run.started', runId: 'r3' }),
+      event({ type: 'assistant.delta', runId: 'r3', delta: 'a1' }),
+      event({ type: 'run.completed', runId: 'r3', finalMessageId: 'a3' }),
+      event({ type: 'message.user.submitted', text: 'q2', messageId: 'u4' }),
+      event({ type: 'run.started', runId: 'r4' }),
+      event({ type: 'assistant.delta', runId: 'r4', delta: 'a2' }),
+      event({ type: 'run.completed', runId: 'r4', finalMessageId: 'a4' }),
+    ]
+    expect(incrementalProject(events)).toEqual(projectRuntimeEventMessages(events))
+  })
+
+  test('usage.updated / im.delivery 等辅助事件：增量结果 == 全量', () => {
+    const events = [
+      event({ type: 'message.user.submitted', text: 'hi', messageId: 'u5' }),
+      event({ type: 'run.started', runId: 'r5' }),
+      event({ type: 'assistant.delta', runId: 'r5', delta: 'x' }),
+      usageEvent(5),
+      event({ type: 'run.completed', runId: 'r5', finalMessageId: 'a5' }),
+    ]
+    expect(incrementalProject(events)).toEqual(projectRuntimeEventMessages(events))
+  })
+
+  test('version turn 切换（触发 fallback）：增量结果 == 全量', () => {
+    // 两组同 versionGroupId 的 user.submitted，versionIndex 递增 → keepLatestVersionTurns 只保留高 version
+    const events = [
+      event({ type: 'message.user.submitted', text: 'v1', messageId: 'u-v1', versionGroupId: 'vg1', versionIndex: 0, versionCount: 2 } as any),
+      event({ type: 'run.started', runId: 'r-v1' }),
+      event({ type: 'assistant.delta', runId: 'r-v1', delta: 'old' }),
+      event({ type: 'run.completed', runId: 'r-v1', finalMessageId: 'a-v1' }),
+      event({ type: 'message.user.submitted', text: 'v2', messageId: 'u-v2', versionGroupId: 'vg1', versionIndex: 1, versionCount: 2 } as any),
+      event({ type: 'run.started', runId: 'r-v2' }),
+      event({ type: 'assistant.delta', runId: 'r-v2', delta: 'new' }),
+      event({ type: 'run.completed', runId: 'r-v2', finalMessageId: 'a-v2' }),
+    ]
+    expect(incrementalProject(events)).toEqual(projectRuntimeEventMessages(events))
+  })
+
+  test('compact 截断（事件回退）：增量结果 == 全量', () => {
+    // 先增量投 5 事件，再用前 2 事件重投（模拟 compact 后 events 缩短）→ fallback
+    const full = [
+      event({ type: 'message.user.submitted', text: 'q', messageId: 'u6' }),
+      event({ type: 'run.started', runId: 'r6' }),
+      event({ type: 'assistant.delta', runId: 'r6', delta: 'a' }),
+      event({ type: 'assistant.delta', runId: 'r6', delta: 'b' }),
+      event({ type: 'run.completed', runId: 'r6', finalMessageId: 'a6' }),
+    ]
+    let ref: ProjectionRef | null = null
+    let messages: RuntimeMessageView[] = []
+    for (let i = 1; i <= full.length; i++) {
+      const result = applyRuntimeEventsIncremental(full.slice(0, i), ref)
+      ref = result.ref
+      messages = result.messages
+    }
+    // compact：events 缩短为前 2 个
+    const afterCompact = applyRuntimeEventsIncremental(full.slice(0, 2), ref)
+    expect(afterCompact.messages).toEqual(projectRuntimeEventMessages(full.slice(0, 2)))
+  })
+})
+
+describe('applyRuntimeEventsIncremental 引用稳定', () => {
+  test('纯追加：未变历史消息引用跨帧不变', () => {
+    const base = [
+      event({ type: 'message.user.submitted', text: 'q', messageId: 'u7' }),
+      event({ type: 'run.started', runId: 'r7' }),
+      event({ type: 'assistant.delta', runId: 'r7', delta: 'first' }),
+      event({ type: 'run.completed', runId: 'r7', finalMessageId: 'a7' }),
+    ]
+    const r1 = applyRuntimeEventsIncremental(base, null)
+    // 第一帧：user 消息（index 0）引用
+    const userMsgRef = r1.messages[0]
+
+    // 追加新 turn
+    const extended = [
+      ...base,
+      event({ type: 'message.user.submitted', text: 'q2', messageId: 'u8' }),
+      event({ type: 'run.started', runId: 'r8' }),
+      event({ type: 'assistant.delta', runId: 'r8', delta: 'second' }),
+    ]
+    const r2 = applyRuntimeEventsIncremental(extended, r1.ref)
+    // 历史首条 user 消息引用不变（增量未 touch）
+    expect(r2.messages[0]).toBe(userMsgRef)
+    // 且内容仍正确
+    expect(r2.messages[0]).toMatchObject({ id: 'u7', type: 'user' })
+  })
+
+  test('同一流式 assistant 的 text block 引用稳定（增量 mutate 不重建历史 block）', () => {
+    const events = [
+      event({ type: 'message.user.submitted', text: 'q', messageId: 'u9' }),
+      event({ type: 'run.started', runId: 'r9' }),
+      event({ type: 'assistant.delta', runId: 'r9', delta: 'Hello' }),
+    ]
+    const r1 = applyRuntimeEventsIncremental(events, null)
+    const r2 = applyRuntimeEventsIncremental(
+      [...events, event({ type: 'assistant.delta', runId: 'r9', delta: ' world' })],
+      r1.ref,
+    )
+    // 流式 assistant 消息每帧是新快照（currentAssistant 快照），但其内 text block 引用应稳定
+    const assistant1 = r1.messages.at(-1)!
+    const assistant2 = r2.messages.at(-1)!
+    expect(assistant1.type).toBe('assistant')
+    expect(assistant2.type).toBe('assistant')
+    // 第一个 text block 引用稳定（appendAssistantTextBlock mutate 同一 block）
+    if (assistant1.type === 'assistant' && assistant2.type === 'assistant') {
+      const textBlock1 = assistant1.blocks.find((b) => b.type === 'text')!
+      const textBlock2 = assistant2.blocks.find((b) => b.type === 'text')!
+      expect(textBlock2).toBe(textBlock1)
+      expect((textBlock2 as any).text).toBe('Hello world')
+    }
   })
 })
