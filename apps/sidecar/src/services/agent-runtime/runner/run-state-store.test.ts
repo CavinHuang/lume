@@ -82,4 +82,44 @@ describe("run-state-store", () => {
     expect(byThread.map((state) => state.runId)).toEqual(["run-1", "run-2"]);
     expect((await store.findActiveByThread("thread-1"))?.runId).toBe("run-1");
   });
+
+  test("多次 appendItem 累积后 get 返回全部 items（append-only 正确性）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-"));
+    const store = createFileBackedLumeRunStateStore(dir);
+    await store.create(makeState("run-acc", "running"));
+    for (let i = 1; i <= 5; i++) {
+      await store.appendItem("run-acc", {
+        type: "system_event", id: `item-${i}`, name: "n", createdAt: `2026-04-29T00:00:0${i}.000Z`
+      });
+    }
+    const stored = await store.get("run-acc");
+    expect(stored?.generatedItems.map((i) => i.id)).toEqual(["item-1", "item-2", "item-3", "item-4", "item-5"]);
+  });
+
+  test("update 不含 generatedItems 时不改动 items.jsonl", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-"));
+    const store = createFileBackedLumeRunStateStore(dir);
+    await store.create(makeState("run-u1", "running"));
+    await store.appendItem("run-u1", { type: "system_event", id: "keep-1", name: "n", createdAt: "2026-04-29T00:00:01.000Z" });
+    await store.update("run-u1", { status: "waiting_for_approval" });
+    const stored = await store.get("run-u1");
+    expect(stored?.status).toBe("waiting_for_approval");
+    expect(stored?.generatedItems.map((i) => i.id)).toEqual(["keep-1"]);
+  });
+
+  test("update 含 generatedItems 时重写 items（handoff 兼容）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-run-state-store-"));
+    const store = createFileBackedLumeRunStateStore(dir);
+    await store.create(makeState("run-u2", "running"));
+    await store.appendItem("run-u2", { type: "system_event", id: "orig-1", name: "n", createdAt: "2026-04-29T00:00:01.000Z" });
+    await store.update("run-u2", {
+      generatedItems: [
+        { type: "system_event", id: "orig-1", name: "n", createdAt: "2026-04-29T00:00:01.000Z", handoff: true } as any,
+        { type: "system_event", id: "new-2", name: "n", createdAt: "2026-04-29T00:00:02.000Z" }
+      ]
+    });
+    const stored = await store.get("run-u2");
+    expect(stored?.generatedItems.map((i) => i.id)).toEqual(["orig-1", "new-2"]);
+    expect((stored?.generatedItems[0] as any).handoff).toBe(true);
+  });
 });
