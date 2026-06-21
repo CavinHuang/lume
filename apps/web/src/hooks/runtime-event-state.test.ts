@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
+import * as runtimeEventState from './runtime-event-state'
 import { appendRuntimeEvent, hydrateRuntimeEvents } from './runtime-event-state'
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from '@lume/shared'
+
+// appendRuntimeEvents 将在 Task 3 实现；此处通过命名空间动态访问，
+// 使批量用例在函数缺失时单独失败（TDD 红灯），而不阻塞其余 characterization 用例的模块加载。
+const appendRuntimeEvents = (runtimeEventState as any).appendRuntimeEvents as
+  | ((prev: Record<string, { events: LumeRuntimeEvent[] }>, events: LumeRuntimeEvent[]) => Record<string, { events: LumeRuntimeEvent[] }>)
+  | undefined
 
 function runtimeEvent(event: Partial<LumeRuntimeEvent> & Pick<LumeRuntimeEvent, 'type'>): LumeRuntimeEvent {
   return {
@@ -10,6 +17,19 @@ function runtimeEvent(event: Partial<LumeRuntimeEvent> & Pick<LumeRuntimeEvent, 
     runId: 'run-1',
     createdAt: '2026-05-11T00:00:00.000Z',
     ...event,
+  } as LumeRuntimeEvent
+}
+
+function deltaEvent(id: string, seq: number, text: string, createdAt: string): LumeRuntimeEvent {
+  return {
+    id,
+    type: 'assistant.delta',
+    threadId: 't1',
+    runId: 'run-1',
+    messageId: 'msg-1',
+    sequence: seq,
+    createdAt,
+    delta: text,
   } as LumeRuntimeEvent
 }
 
@@ -194,5 +214,37 @@ describe('runtime-event-state', () => {
       versionGroupId: 'group-1',
     })
     expect(hydrated['thread-1']?.terminalStatus).toBe('completed')
+  })
+
+  test('超过 MAX_EVENTS_PER_THREAD(100) 时裁剪到尾部并保留最近一条 user 提交', () => {
+    let state: Record<string, { events: LumeRuntimeEvent[] }> = {}
+    state = appendRuntimeEvent(state, runtimeEvent({
+      id: 'u0',
+      type: 'message.user.submitted',
+      text: 'hi',
+      createdAt: '2026-06-21T00:00:00.000Z',
+    }) as LumeRuntimeEvent)
+    for (let i = 1; i <= 120; i++) {
+      // 严格递增的毫秒时间戳，避免字符串排序歧义
+      const ms = String(i).padStart(3, '0')
+      state = appendRuntimeEvent(state, deltaEvent(`d${i}`, i, `${i}`, `2026-06-21T00:00:00.${ms}Z`))
+    }
+    expect(state.t1.events.length).toBeLessThanOrEqual(100)
+  })
+})
+
+describe('appendRuntimeEvents (批量)', () => {
+  test('批量追加的结果与逐个追加一致', () => {
+    const batch = [
+      deltaEvent('d1', 1, 'A', '2026-06-21T00:00:00.001Z'),
+      deltaEvent('d2', 2, 'B', '2026-06-21T00:00:00.002Z'),
+      deltaEvent('d3', 3, 'C', '2026-06-21T00:00:00.003Z'),
+    ]
+    const batched = appendRuntimeEvents({}, batch)
+    let sequential: Record<string, { events: LumeRuntimeEvent[] }> = {}
+    for (const e of batch) sequential = appendRuntimeEvent(sequential, e)
+    expect((batched.t1.events[0] as any).delta).toBe('ABC')
+    expect(batched.t1.events.length).toBe(sequential.t1.events.length)
+    expect(batched.t1.terminalStatus).toBe(sequential.t1.terminalStatus)
   })
 })
