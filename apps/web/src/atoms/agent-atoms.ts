@@ -1,5 +1,5 @@
 import { atom } from 'jotai'
-import { atomWithStorage } from 'jotai/utils'
+import { atomFamily, atomWithStorage, selectAtom } from 'jotai/utils'
 import type { AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, PlanModePhaseChangedEvent, AgentSendInput, AgentMessageQueueSnapshot } from '@lume/shared'
 import type { RuntimeEventState } from '@/hooks/runtime-event-state'
 
@@ -10,6 +10,14 @@ export type StreamingState = 'idle' | 'streaming' | 'errored'
 export const agentStreamingStatesAtom = atom<Record<string, StreamingState>>({})
 export const agentRuntimeStatusAtom = atom<Record<string, AgentRuntimeStatus>>({})
 export const agentRuntimeEventsAtom = atom<RuntimeEventState>({})
+
+/**
+ * 按 threadId 切片订阅 runtime events。selectAtom + Object.is 比较：
+ * appendRuntimeEvent 对未变 threadId 保留 value 引用 → 未变线程的组件不 re-render。
+ */
+export const agentRuntimeEventsFamily = atomFamily((threadId: string) =>
+  selectAtom(agentRuntimeEventsAtom, (state) => state[threadId]),
+)
 export const agentPendingInteractiveAtom = atom<Record<string, AgentPendingInteractiveState>>({})
 export const agentMessageQueueAtom = atom<Record<string, AgentMessageQueueSnapshot>>({})
 export const agentSubagentRunsAtom = atom<Record<string, SubagentRunRecord[]>>({})
