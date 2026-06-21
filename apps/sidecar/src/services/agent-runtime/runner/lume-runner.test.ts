@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/shared";
@@ -110,12 +110,30 @@ function readTrace(agentDir: string): {
   }>;
 } {
   const sessionDir = getRuntimeCoreSessionDir("thread-1", agentDir);
-  const traceFile = readdirSync(join(sessionDir, "traces"))
+  const tracesDir = join(sessionDir, "traces");
+  const traceFile = readdirSync(tracesDir)
     .find((file) => file.endsWith(".json"));
   if (!traceFile) {
     throw new Error("trace not found");
   }
-  return JSON.parse(readFileSync(join(sessionDir, "traces", traceFile), "utf8"));
+  const trace = JSON.parse(readFileSync(join(tracesDir, traceFile), "utf8"));
+  const traceId = traceFile.slice(0, -".json".length);
+  const spansPath = join(tracesDir, `${traceId}.spans.jsonl`);
+  if (existsSync(spansPath)) {
+    const records = readFileSync(spansPath, "utf8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    const byId = new Map<string, { id: string }>();
+    for (const span of records) {
+      byId.set(span.id, span);
+    }
+    trace.spans = [...byId.values()];
+  } else {
+    trace.spans = [];
+  }
+  return trace;
 }
 
 describe("LumeRunner", () => {
