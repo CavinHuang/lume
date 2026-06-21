@@ -18,7 +18,7 @@ export function appendRuntimeEvent(
   if (isDuplicateUserSubmit(current?.events.at(-1), event)) {
     return prev
   }
-  const events = trimRuntimeEvents(sortRuntimeEvents(appendOrMergeRuntimeEvent(current?.events ?? [], event)))
+  const events = trimRuntimeEvents(orderedAppend(current?.events ?? [], event))
   return {
     ...prev,
     [event.threadId]: {
@@ -69,17 +69,31 @@ function mergeHydratedRuntimeEvents(
   return sortRuntimeEvents(merged)
 }
 
+function compareRuntimeEvents(a: LumeRuntimeEvent, b: LumeRuntimeEvent): number {
+  const timeOrder = a.createdAt.localeCompare(b.createdAt)
+  if (timeOrder !== 0) return timeOrder
+  const semanticOrder = runtimeEventOrder(a) - runtimeEventOrder(b)
+  if (semanticOrder !== 0) return semanticOrder
+  if (typeof a.sequence === 'number' && typeof b.sequence === 'number') {
+    return a.sequence - b.sequence
+  }
+  return 0
+}
+
 function sortRuntimeEvents(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
-  return [...events].sort((a, b) => {
-    const timeOrder = a.createdAt.localeCompare(b.createdAt)
-    if (timeOrder !== 0) return timeOrder
-    const semanticOrder = runtimeEventOrder(a) - runtimeEventOrder(b)
-    if (semanticOrder !== 0) return semanticOrder
-    if (typeof a.sequence === 'number' && typeof b.sequence === 'number') {
-      return a.sequence - b.sequence
-    }
-    return 0
-  })
+  return [...events].sort(compareRuntimeEvents)
+}
+
+/** 追加/合并后，若尾部仍保持全局有序则无需全量排序（流式 delta 几乎总是命中）。 */
+function isTailOrdered(events: LumeRuntimeEvent[]): boolean {
+  if (events.length < 2) return true
+  const n = events.length
+  return compareRuntimeEvents(events[n - 2], events[n - 1]) <= 0
+}
+
+function orderedAppend(events: LumeRuntimeEvent[], event: LumeRuntimeEvent): LumeRuntimeEvent[] {
+  const merged = appendOrMergeRuntimeEvent(events, event)
+  return isTailOrdered(merged) ? merged : sortRuntimeEvents(merged)
 }
 
 function sameRuntimeEvents(a: LumeRuntimeEvent[], b: LumeRuntimeEvent[]): boolean {
