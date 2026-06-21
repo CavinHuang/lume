@@ -9,7 +9,7 @@ import type {
 
 const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。'
 
-interface ProjectionState {
+export interface ProjectionState {
   messages: RuntimeMessageView[]
   currentAssistant: MutableAssistantMessage | null
   terminalClosed: boolean
@@ -29,7 +29,7 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
   return state.messages
 }
 
-function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEvent): void {
+export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEvent): void {
   const { messages } = state
 
   if (event.type === 'run.started') {
@@ -531,15 +531,13 @@ function assistantHasContent(assistant: MutableAssistantMessage): boolean {
   )
 }
 
-function flushAssistant(
-  messages: RuntimeMessageView[],
-  assistant: MutableAssistantMessage | null,
-): void {
-  if (!assistant) return
+/** 构建当前 assistant 的视图消息（不 mutate state.messages）。无内容且非 streaming 占位时返回 null。 */
+function snapshotAssistant(assistant: MutableAssistantMessage | null): RuntimeMessageView | null {
+  if (!assistant) return null
   const hasContent = assistantHasContent(assistant)
   const shouldRenderPlaceholder = assistant.status === 'streaming'
-  if (!hasContent && !shouldRenderPlaceholder) return
-  messages.push({
+  if (!hasContent && !shouldRenderPlaceholder) return null
+  return {
     id: assistant.id,
     type: 'assistant',
     text: assistant.text,
@@ -554,7 +552,26 @@ function flushAssistant(
     ...(assistant.providerTokenCount !== undefined ? { tokenCountSource: 'provider' as const } : {}),
     ...(assistant.providerTokenUsage ? { tokenUsage: assistant.providerTokenUsage } : {}),
     toolCalls: [...assistant.toolCalls.values()],
-  })
+  }
+}
+
+function flushAssistant(
+  messages: RuntimeMessageView[],
+  assistant: MutableAssistantMessage | null,
+): void {
+  const snapshot = snapshotAssistant(assistant)
+  if (snapshot) messages.push(snapshot)
+}
+
+/**
+ * 构建投影的最终消息视图：历史已 flush 消息 + 当前 currentAssistant 快照。
+ * 关键：不 mutate state.messages——增量场景 state 跨帧保持，每帧只在「视图」末尾附上
+ * currentAssistant 快照，不能 push（否则跨帧累积重复 assistant）。
+ * 全量 projectRuntimeEventMessages 末尾的 flushAssistant 等价于此处的快照追加。
+ */
+function buildMessagesView(state: ProjectionState): RuntimeMessageView[] {
+  const snapshot = snapshotAssistant(state.currentAssistant)
+  return snapshot ? [...state.messages, snapshot] : [...state.messages]
 }
 
 function applyAssistantProviderTokenUsage(
@@ -647,4 +664,58 @@ function estimateValueTokens(value: unknown): number {
 function estimateTextTokens(value: string): number {
   const trimmed = value.trim()
   return trimmed.length > 0 ? Math.ceil(trimmed.length / 4) : 0
+}
+
+export interface ProjectionRef {
+  state: ProjectionState
+  events: LumeRuntimeEvent[]
+}
+
+export interface IncrementalProjectionResult {
+  messages: RuntimeMessageView[]
+  ref: ProjectionRef
+}
+
+/**
+ * 判断能否对 events 做增量 apply（相对 prev）。
+ * 增量条件（全部满足）：
+ * 1. 有 prev（非首次）——由调用方 `prev && canApplyIncrementally` 保证；
+ * 2. events.length >= prev.events.length（未截断——compact/回退则 fallback）；
+ * 3. events 的「最后一条旧事件」引用 === prev 的对应引用（追加语义：旧事件元素引用被复用。换线程/version 重写会改变引用 → fallback）；
+ * 4. 新追加的事件中不含带 versionGroupId 的 message.user.submitted（version turn 重组需 keepLatestVersionTurns 全局重算 → 保守 fallback）。
+ */
+function canApplyIncrementally(events: LumeRuntimeEvent[], prev: ProjectionRef): boolean {
+  if (events.length < prev.events.length) return false
+  if (events.length === 0) return true
+  const lastOldIndex = prev.events.length - 1
+  if (lastOldIndex >= 0 && events[lastOldIndex] !== prev.events[lastOldIndex]) return false
+  for (let i = prev.events.length; i < events.length; i++) {
+    const event = events[i]
+    if (event?.type === 'message.user.submitted' && (event as any).versionGroupId) return false
+  }
+  return true
+}
+
+/**
+ * 增量投影：能增量则只 apply 新事件到 prev.state；否则 fallback 全量重投影。
+ * 返回最终消息视图 + 供下一帧增量判断的 ref（ref.events 始终是原始 events，便于下次引用比较）。
+ */
+export function applyRuntimeEventsIncremental(
+  events: LumeRuntimeEvent[],
+  prev: ProjectionRef | null,
+): IncrementalProjectionResult {
+  if (prev && canApplyIncrementally(events, prev)) {
+    const state = prev.state
+    for (let i = prev.events.length; i < events.length; i++) {
+      applyRuntimeEvent(state, events[i]!)
+    }
+    return { messages: buildMessagesView(state), ref: { state, events } }
+  }
+  // fallback：全量重投影
+  const state: ProjectionState = { messages: [], currentAssistant: null, terminalClosed: false }
+  const kept = keepLatestVersionTurns(events)
+  for (const event of kept) {
+    applyRuntimeEvent(state, event)
+  }
+  return { messages: buildMessagesView(state), ref: { state, events } }
 }
