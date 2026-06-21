@@ -155,6 +155,8 @@ git add apps/web/src/hooks/runtime-event-state.test.ts apps/web/src/hooks/runtim
 git commit -m "test(web): 为 runtime-event-state 增加 characterization test 与基准"
 ```
 
+> **实现备注（执行时修正）：** 实际执行时发现 `runtime-event-state.test.ts` 已存在（9 个用例），故采用追加而非新建；并发现 trim 测试原始 setup 有缺陷——delta helper 固定 `messageId` 导致 120 条合并为 1，length 从不超 100、trim 未真正运行。已重写为 120 条不可合并事件（各自不同 `messageId`）+ 验证 `latestUserBeforeTail` rescue 分支的断言，并把 bench 升级为 N=10000 取 3 轮最小值。最终：11 pass / 1 fail（批量用例为 Task 3 的 TDD 红灯），B0 ≈ 2.4ms。见 commits `b06f7022` / `8e58d9c0` / `22118d5e`。
+
 ---
 
 ## Task 2：appendRuntimeEvent 增量 sort 优化（去无条件全量排序）
