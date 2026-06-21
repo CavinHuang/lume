@@ -83,20 +83,24 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
   }
 
   async update(runId: string, patch: Partial<LumeRunState>): Promise<void> {
-    const state = await this.get(runId);
+    const state = readJsonFile<LumeRunState>(this.statePath(runId));
     if (!state) return;
-    const generatedItems = patch.generatedItems ?? state.generatedItems;
     const next: LumeRunState = {
       ...state,
       ...patch,
-      generatedItems,
       updatedAt: patch.updatedAt ?? new Date().toISOString()
     };
     writeTextAtomic(this.statePath(runId), JSON.stringify({
       ...next,
       generatedItems: []
     }, null, 2));
-    writeTextAtomic(this.itemsPath(runId), generatedItems.map((item) => JSON.stringify(item)).join("\n"));
+    if (patch.generatedItems !== undefined) {
+      const items = patch.generatedItems;
+      writeTextAtomic(
+        this.itemsPath(runId),
+        items.length > 0 ? items.map((item) => JSON.stringify(item)).join("\n") + "\n" : ""
+      );
+    }
   }
 
   async appendItem(runId: string, item: LumeRunItem): Promise<void> {
