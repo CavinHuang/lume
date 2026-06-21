@@ -124,6 +124,7 @@ function isTailOrdered(events: LumeRuntimeEvent[]): boolean {
   return compareRuntimeEvents(events[n - 2], events[n - 1]) <= 0
 }
 
+/** 合并新事件后，尾部有序则短路返回，否则回退全量 sort；行为等价于 sortRuntimeEvents(appendOrMergeRuntimeEvent(...))。 */
 function orderedAppend(events: LumeRuntimeEvent[], event: LumeRuntimeEvent): LumeRuntimeEvent[] {
   const merged = appendOrMergeRuntimeEvent(events, event)
   return isTailOrdered(merged) ? merged : sortRuntimeEvents(merged)

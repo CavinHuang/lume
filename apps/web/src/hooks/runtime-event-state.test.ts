@@ -289,4 +289,31 @@ describe('appendRuntimeEvents (批量)', () => {
     ])
     expect(batched['thread-1']?.events.length).toBe(sequential['thread-1']?.events.length)
   })
+
+  test('batch 内 user submit 被 delta 打断时与逐个追加一致（不误去重）', () => {
+    const userA = runtimeEvent({
+      id: 'u1',
+      threadId: 't1',
+      type: 'message.user.submitted',
+      text: 'hello',
+      createdAt: '2026-06-21T00:00:00.001Z',
+    })
+    const delta1 = deltaEvent('d1', 1, 'x', '2026-06-21T00:00:00.002Z')
+    const userApersisted = runtimeEvent({
+      id: 'u2',
+      threadId: 't1',
+      type: 'message.user.submitted',
+      text: 'hello',
+      createdAt: '2026-06-21T00:00:00.003Z',
+    })
+
+    const batched = appendRuntimeEvents({}, [userA, delta1, userApersisted])
+
+    let sequential: ReturnType<typeof appendRuntimeEvent> = {}
+    sequential = appendRuntimeEvent(sequential, userA)
+    sequential = appendRuntimeEvent(sequential, delta1)
+    sequential = appendRuntimeEvent(sequential, userApersisted)
+
+    expect(batched.t1.events.length).toBe(sequential.t1.events.length)
+  })
 })

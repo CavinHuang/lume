@@ -273,6 +273,12 @@ export function useGlobalAgentListeners() {
         cancelAnimationFrame(runtimeEventsRafRef.current)
         runtimeEventsRafRef.current = null
       }
+      // flush 残留事件，避免卸载丢失最后一帧
+      const batch = pendingRuntimeEventsRef.current
+      if (batch.length > 0) {
+        pendingRuntimeEventsRef.current = []
+        setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
+      }
     }
   }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs, enqueueRuntimeEvent])
 }

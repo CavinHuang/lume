@@ -1,3 +1,7 @@
+/**
+ * 手动基准脚本（非自动测试）：通过 `bun apps/web/src/hooks/runtime-event-state.bench.ts` 运行，
+ * 不会被 `bun test` 自动收集，修改 `appendRuntimeEvent` 后请手动复测以免该脚本静默腐化。
+ */
 import { appendRuntimeEvent, type RuntimeEventState } from './runtime-event-state'
 import type { LumeRuntimeEvent } from '@lume/shared'
 

@@ -133,6 +133,8 @@ export function useSmoothStream({
       // 内容重置（用户重新发送等场景）
       chunkQueueRef.current = []
       displayedRef.current = newContent
+      // 重置 flush 计时，避免新流第一帧因旧时间戳命中限流条件而立即 flush
+      lastFlushTimeRef.current = 0
       setDisplayedContent(newContent)
     }
 
