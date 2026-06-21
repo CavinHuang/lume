@@ -55,61 +55,96 @@ export function shouldApplyThreadMessagesResult({
   return !cancelled && requestedThreadId === currentThreadId
 }
 
+export type ReconcileCache = Map<string, {
+  projectedRef: RuntimeMessageView
+  visibleRef: AgentMessage | undefined
+  result: RuntimeMessageView
+}>
+
 export function reconcileUserMessageVersions(
   messages: RuntimeMessageView[],
   visibleThreadMessages: AgentMessage[],
+  cache?: ReconcileCache,
 ): RuntimeMessageView[] {
   const visibleUsers = visibleThreadMessages.filter((message) => message.role === 'user')
   const visibleAssistants = visibleThreadMessages.filter((message) => message.role === 'assistant')
   if (visibleUsers.length === 0 && visibleAssistants.length === 0) return messages
+
+  const effectiveCache = cache ?? new Map()
+  const liveIds = new Set(messages.map((message) => message.id))
+  for (const id of effectiveCache.keys()) {
+    if (!liveIds.has(id)) effectiveCache.delete(id)
+  }
+
   const usedVisibleIds = new Set<string>()
   const usedVisibleAssistantIds = new Set<string>()
-
   return messages.map((message) => {
-    if (message.type === 'user') {
-      if (message.messageId) {
-        const visible = visibleUsers.find((item) => item.id === message.messageId)
-        return visible ? withPersistedUserMessage(message, visible) : message
-      }
-
-      const visible = visibleUsers.find((item) => (
-        !usedVisibleIds.has(item.id)
-        && item.content === message.text
-        && Math.abs(item.createdAt - Date.parse(message.createdAt)) < 10_000
-      )) ?? visibleUsers.find((item) => !usedVisibleIds.has(item.id) && item.content === message.text)
-
-      if (visible) {
-        usedVisibleIds.add(visible.id)
-        return withPersistedUserMessage(message, visible)
-      }
-      return message
+    const visible = matchVisibleMessage(message, visibleUsers, visibleAssistants, usedVisibleIds, usedVisibleAssistantIds)
+    const cached = effectiveCache.get(message.id)
+    if (cached && cached.projectedRef === message && cached.visibleRef === visible) {
+      return cached.result
     }
-
-    if (message.type === 'assistant') {
-      const visible = visibleAssistants.find((item) => (
-        !usedVisibleAssistantIds.has(item.id)
-        && item.content === message.text
-      ))
-      if (!visible) return message
-      usedVisibleAssistantIds.add(visible.id)
-      const providerTokenUsage = readPersistedAssistantTokenUsage(visible.metadata)
-      const providerOutputTokens = providerTokenUsage?.outputTokens
-      return {
-        ...message,
-        messageId: visible.id,
-        completedAt: new Date(visible.createdAt).toISOString(),
-        ...(message.tokenCountSource === 'provider' || providerOutputTokens === undefined
-          ? {}
-          : {
-              tokenCount: providerOutputTokens,
-              tokenCountSource: 'provider' as const,
-            }),
-        ...(message.tokenUsage || providerTokenUsage === undefined ? {} : { tokenUsage: providerTokenUsage }),
-      }
-    }
-
-    return message
+    const result = applyReconciledMessage(message, visible)
+    effectiveCache.set(message.id, { projectedRef: message, visibleRef: visible, result })
+    return result
   })
+}
+
+function matchVisibleMessage(
+  message: RuntimeMessageView,
+  visibleUsers: AgentMessage[],
+  visibleAssistants: AgentMessage[],
+  usedVisibleIds: Set<string>,
+  usedVisibleAssistantIds: Set<string>,
+): AgentMessage | undefined {
+  if (message.type === 'user') {
+    if (message.messageId) {
+      return visibleUsers.find((item) => item.id === message.messageId)
+    }
+    const visible = visibleUsers.find((item) => (
+      !usedVisibleIds.has(item.id)
+      && item.content === message.text
+      && Math.abs(item.createdAt - Date.parse(message.createdAt)) < 10_000
+    )) ?? visibleUsers.find((item) => !usedVisibleIds.has(item.id) && item.content === message.text)
+    if (visible) usedVisibleIds.add(visible.id)
+    return visible
+  }
+  if (message.type === 'assistant') {
+    const visible = visibleAssistants.find((item) => (
+      !usedVisibleAssistantIds.has(item.id)
+      && item.content === message.text
+    ))
+    if (visible) usedVisibleAssistantIds.add(visible.id)
+    return visible
+  }
+  return undefined
+}
+
+function applyReconciledMessage(
+  message: RuntimeMessageView,
+  visible: AgentMessage | undefined,
+): RuntimeMessageView {
+  if (!visible) return message
+  if (message.type === 'user') {
+    return withPersistedUserMessage(message, visible)
+  }
+  if (message.type === 'assistant') {
+    const providerTokenUsage = readPersistedAssistantTokenUsage(visible.metadata)
+    const providerOutputTokens = providerTokenUsage?.outputTokens
+    return {
+      ...message,
+      messageId: visible.id,
+      completedAt: new Date(visible.createdAt).toISOString(),
+      ...(message.tokenCountSource === 'provider' || providerOutputTokens === undefined
+        ? {}
+        : {
+            tokenCount: providerOutputTokens,
+            tokenCountSource: 'provider' as const,
+          }),
+      ...(message.tokenUsage || providerTokenUsage === undefined ? {} : { tokenUsage: providerTokenUsage }),
+    }
+  }
+  return message
 }
 
 export function projectVisibleThreadMessages(visibleThreadMessages: AgentMessage[]): RuntimeMessageView[] {

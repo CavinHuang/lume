@@ -12,6 +12,7 @@ import {
   shouldApplyThreadMessagesResult,
   shouldAutoScrollAfterUserScroll,
   stabilizeRuntimeMessages,
+  type ReconcileCache,
 } from './agent-message-state'
 
 describe('collectNewRuntimeMessageIds', () => {
@@ -357,6 +358,68 @@ describe('reconcileUserMessageVersions', () => {
       messageId: 'assistant-message-1',
       completedAt: '2026-05-01T07:23:00.000Z',
     })
+  })
+
+  test('reuses the previous result when projected and visible references are unchanged', () => {
+    const messages: RuntimeMessageView[] = [{
+      id: 'user:1',
+      type: 'user',
+      text: 'hello',
+      createdAt: '2026-05-01T00:00:00.000Z',
+    }]
+    const visibleThreadMessages = [{
+      id: 'message-1',
+      role: 'user',
+      content: 'hello',
+      createdAt: Date.parse('2026-05-01T00:00:00.000Z'),
+    }] as AgentMessage[]
+    const cache: ReconcileCache = new Map()
+
+    const first = reconcileUserMessageVersions(messages, visibleThreadMessages, cache)
+    // 第二次：相同的 messages 引用 + 相同 visible 引用 → 复用上次 result（引用稳定）
+    const second = reconcileUserMessageVersions(messages, visibleThreadMessages, cache)
+    expect(second[0]).toBe(first[0])
+  })
+
+  test('re-reconciles when the projected message reference changes', () => {
+    const visibleThreadMessages = [{
+      id: 'message-1',
+      role: 'user',
+      content: 'hello',
+      createdAt: Date.parse('2026-05-01T00:00:00.000Z'),
+    }] as AgentMessage[]
+    const cache: ReconcileCache = new Map()
+
+    const first = reconcileUserMessageVersions(
+      [{ id: 'user:1', type: 'user', text: 'hello', createdAt: '2026-05-01T00:00:00.000Z' }],
+      visibleThreadMessages,
+      cache,
+    )
+    // projected 引用变（新对象，内容相同）→ miss → 重新 spread 新 result
+    const second = reconcileUserMessageVersions(
+      [{ id: 'user:1', type: 'user', text: 'hello', createdAt: '2026-05-01T00:00:00.000Z' }],
+      visibleThreadMessages,
+      cache,
+    )
+    expect(second[0]).not.toBe(first[0])
+  })
+
+  test('drops cache entries for removed messages', () => {
+    const visibleThreadMessages = [{
+      id: 'message-1',
+      role: 'user',
+      content: 'hello',
+      createdAt: Date.parse('2026-05-01T00:00:00.000Z'),
+    }] as AgentMessage[]
+    const cache: ReconcileCache = new Map()
+    reconcileUserMessageVersions(
+      [{ id: 'user:1', type: 'user', text: 'hello', createdAt: '2026-05-01T00:00:00.000Z' }],
+      visibleThreadMessages,
+      cache,
+    )
+    expect(cache.has('user:1')).toBe(true)
+    reconcileUserMessageVersions([], visibleThreadMessages, cache)
+    expect(cache.has('user:1')).toBe(false)
   })
 })
 

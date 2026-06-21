@@ -28,6 +28,7 @@ import {
   shouldApplyThreadMessagesResult,
   shouldAutoScrollAfterUserScroll,
   stabilizeRuntimeMessages,
+  type ReconcileCache,
   type RuntimeMessageStabilizeCache,
 } from './agent-message-state'
 
@@ -56,6 +57,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const latestUserMessageKeyRef = useRef<string | null>(null)
   const shouldAutoScrollRef = useRef(true)
   const stabilizeCacheRef = useRef<RuntimeMessageStabilizeCache>(new Map())
+  const reconcileCacheRef = useRef<ReconcileCache>(new Map())
   const showScrollButtonRef = useRef(false)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
@@ -75,7 +77,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   }, [runtimeEvents, visibleThreadMessages])
   const liveMessages = useMemo(
     () => stabilizeRuntimeMessages(
-      reconcileUserMessageVersions(projectedMessages, visibleThreadMessages),
+      reconcileUserMessageVersions(projectedMessages, visibleThreadMessages, reconcileCacheRef.current),
       stabilizeCacheRef.current,
     ),
     [projectedMessages, visibleThreadMessages],
@@ -296,6 +298,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     if (prevThreadIdRef.current !== threadId) {
       prevThreadIdRef.current = threadId
       stabilizeCacheRef.current.clear()
+      reconcileCacheRef.current.clear()
       shouldAutoScrollRef.current = true
       latestUserMessageKeyRef.current = latestUserMessageKey
       return scrollMessagesToBottom('instant')
