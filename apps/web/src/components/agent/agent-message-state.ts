@@ -66,9 +66,20 @@ export function reconcileUserMessageVersions(
   visibleThreadMessages: AgentMessage[],
   cache?: ReconcileCache,
 ): RuntimeMessageView[] {
-  const visibleUsers = visibleThreadMessages.filter((message) => message.role === 'user')
-  const visibleAssistants = visibleThreadMessages.filter((message) => message.role === 'assistant')
-  if (visibleUsers.length === 0 && visibleAssistants.length === 0) return messages
+  if (visibleThreadMessages.length === 0) return messages
+
+  const visibleUsersById = new Map<string, AgentMessage>()
+  const visibleUsersByContent = new Map<string, AgentMessage[]>()
+  const visibleAssistantsByContent = new Map<string, AgentMessage[]>()
+  for (const visible of visibleThreadMessages) {
+    if (visible.role === 'user') {
+      visibleUsersById.set(visible.id, visible)
+      pushGroup(visibleUsersByContent, visible.content, visible)
+    } else if (visible.role === 'assistant') {
+      pushGroup(visibleAssistantsByContent, visible.content, visible)
+    }
+  }
+  if (visibleUsersById.size === 0 && visibleAssistantsByContent.size === 0) return messages
 
   const effectiveCache = cache ?? new Map()
   const liveIds = new Set(messages.map((message) => message.id))
@@ -79,7 +90,14 @@ export function reconcileUserMessageVersions(
   const usedVisibleIds = new Set<string>()
   const usedVisibleAssistantIds = new Set<string>()
   return messages.map((message) => {
-    const visible = matchVisibleMessage(message, visibleUsers, visibleAssistants, usedVisibleIds, usedVisibleAssistantIds)
+    const visible = matchVisibleMessage(
+      message,
+      visibleUsersById,
+      visibleUsersByContent,
+      visibleAssistantsByContent,
+      usedVisibleIds,
+      usedVisibleAssistantIds,
+    )
     const cached = effectiveCache.get(message.id)
     if (cached && cached.projectedRef === message && cached.visibleRef === visible) {
       return cached.result
@@ -90,32 +108,48 @@ export function reconcileUserMessageVersions(
   })
 }
 
+function pushGroup(map: Map<string, AgentMessage[]>, key: string, message: AgentMessage): void {
+  const list = map.get(key)
+  if (list) list.push(message)
+  else map.set(key, [message])
+}
+
 function matchVisibleMessage(
   message: RuntimeMessageView,
-  visibleUsers: AgentMessage[],
-  visibleAssistants: AgentMessage[],
+  visibleUsersById: Map<string, AgentMessage>,
+  visibleUsersByContent: Map<string, AgentMessage[]>,
+  visibleAssistantsByContent: Map<string, AgentMessage[]>,
   usedVisibleIds: Set<string>,
   usedVisibleAssistantIds: Set<string>,
 ): AgentMessage | undefined {
   if (message.type === 'user') {
     if (message.messageId) {
-      return visibleUsers.find((item) => item.id === message.messageId)
+      return visibleUsersById.get(message.messageId)
     }
-    const visible = visibleUsers.find((item) => (
+    const group = visibleUsersByContent.get(message.text) ?? []
+    const withinWindow = group.find((item) => (
       !usedVisibleIds.has(item.id)
-      && item.content === message.text
       && Math.abs(item.createdAt - Date.parse(message.createdAt)) < 10_000
-    )) ?? visibleUsers.find((item) => !usedVisibleIds.has(item.id) && item.content === message.text)
-    if (visible) usedVisibleIds.add(visible.id)
-    return visible
+    ))
+    if (withinWindow) {
+      usedVisibleIds.add(withinWindow.id)
+      return withinWindow
+    }
+    const byContent = group.find((item) => !usedVisibleIds.has(item.id))
+    if (byContent) {
+      usedVisibleIds.add(byContent.id)
+      return byContent
+    }
+    return undefined
   }
   if (message.type === 'assistant') {
-    const visible = visibleAssistants.find((item) => (
-      !usedVisibleAssistantIds.has(item.id)
-      && item.content === message.text
-    ))
-    if (visible) usedVisibleAssistantIds.add(visible.id)
-    return visible
+    const group = visibleAssistantsByContent.get(message.text) ?? []
+    const visible = group.find((item) => !usedVisibleAssistantIds.has(item.id))
+    if (visible) {
+      usedVisibleAssistantIds.add(visible.id)
+      return visible
+    }
+    return undefined
   }
   return undefined
 }
