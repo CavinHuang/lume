@@ -82,6 +82,6 @@ describe("trace-store", () => {
     const stored = await store.get("t-meta");
     expect(stored?.status).toBe("completed");
     expect(stored?.spans).toHaveLength(1);
-    expect(stored?.spans[0].id).toBe("s1");
+    expect(stored?.spans[0]?.id).toBe("s1");
   });
 });
