@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useSetAtom } from 'jotai'
 import { onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import {
@@ -27,6 +27,7 @@ import {
   type AgentSubagentCompletionEvent,
   type AgentMessageQueueSnapshot,
   type PlanModePhaseChangedEvent,
+  type LumeRuntimeEvent,
 } from '@lume/shared'
 import {
   planPreviewToPendingTaskApproval,
@@ -36,7 +37,7 @@ import {
   upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from './pending-interactive-state'
-import { appendRuntimeEvent, hydrateRuntimeEvents } from './runtime-event-state'
+import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
 
 export function useGlobalAgentListeners() {
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
@@ -50,6 +51,22 @@ export function useGlobalAgentListeners() {
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const setTabs = useSetAtom(tabsAtom)
+
+  const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
+  const runtimeEventsRafRef = useRef<number | null>(null)
+  const flushRuntimeEvents = useCallback(() => {
+    runtimeEventsRafRef.current = null
+    const batch = pendingRuntimeEventsRef.current
+    if (batch.length === 0) return
+    pendingRuntimeEventsRef.current = []
+    setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
+  }, [setRuntimeEvents])
+  const enqueueRuntimeEvent = useCallback((event: LumeRuntimeEvent) => {
+    pendingRuntimeEventsRef.current.push(event)
+    if (runtimeEventsRafRef.current === null) {
+      runtimeEventsRafRef.current = requestAnimationFrame(flushRuntimeEvents)
+    }
+  }, [flushRuntimeEvents])
 
   useEffect(() => {
     sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE)
@@ -79,7 +96,7 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.RUNTIME_EVENT: {
           const notification = params as AgentRuntimeEventNotification
           const { threadId, event } = notification
-          setRuntimeEvents((prev) => appendRuntimeEvent(prev, event))
+          enqueueRuntimeEvent(event)
           if (event.type === 'plan.preview') {
             setPendingInteractive((prev) => upsertPendingTaskApproval(prev, planPreviewToPendingTaskApproval(event)))
           }
@@ -250,6 +267,12 @@ export function useGlobalAgentListeners() {
         }
       }
     })
-    return () => { unlisten.then((fn) => fn()) }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs])
+    return () => {
+      unlisten.then((fn) => fn())
+      if (runtimeEventsRafRef.current !== null) {
+        cancelAnimationFrame(runtimeEventsRafRef.current)
+        runtimeEventsRafRef.current = null
+      }
+    }
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs, enqueueRuntimeEvent])
 }

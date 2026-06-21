@@ -1,13 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import * as runtimeEventState from './runtime-event-state'
-import { appendRuntimeEvent, hydrateRuntimeEvents } from './runtime-event-state'
+import { appendRuntimeEvent, appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from '@lume/shared'
-
-// appendRuntimeEvents 将在 Task 3 实现；此处通过命名空间动态访问，
-// 使批量用例在函数缺失时单独失败（TDD 红灯），而不阻塞其余 characterization 用例的模块加载。
-const appendRuntimeEvents = (runtimeEventState as any).appendRuntimeEvents as
-  | ((prev: Record<string, { events: LumeRuntimeEvent[] }>, events: LumeRuntimeEvent[]) => Record<string, { events: LumeRuntimeEvent[] }>)
-  | undefined
 
 function runtimeEvent(event: Partial<LumeRuntimeEvent> & Pick<LumeRuntimeEvent, 'type'>): LumeRuntimeEvent {
   return {

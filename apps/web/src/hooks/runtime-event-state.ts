@@ -29,6 +29,38 @@ export function appendRuntimeEvent(
   }
 }
 
+export function appendRuntimeEvents(
+  prev: RuntimeEventState,
+  events: LumeRuntimeEvent[],
+): RuntimeEventState {
+  if (events.length === 0) return prev
+  let next = prev
+  // 按线程分组，每组复用 orderedAppend（尾部短路），最后仅对该组做一次 trim
+  const byThread = new Map<string, LumeRuntimeEvent[]>()
+  for (const event of events) {
+    const list = byThread.get(event.threadId) ?? []
+    list.push(event)
+    byThread.set(event.threadId, list)
+  }
+  for (const [threadId, list] of byThread) {
+    const current = next[threadId]
+    let acc = current?.events ?? []
+    for (const event of list) {
+      acc = orderedAppend(acc, event)
+    }
+    const trimmed = trimRuntimeEvents(acc)
+    const terminal = list.reduce<ThreadRuntimeEventState['terminalStatus'] | undefined>(
+      (status, event) => getTerminalStatus(event) ?? status,
+      current?.terminalStatus,
+    )
+    next = {
+      ...next,
+      [threadId]: { events: trimmed, terminalStatus: terminal, updatedAt: Date.now() },
+    }
+  }
+  return next
+}
+
 export function hydrateRuntimeEvents(
   prev: RuntimeEventState,
   result: AgentThreadRuntimeEventsResult,
