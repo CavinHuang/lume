@@ -1,4 +1,4 @@
-import { appendRuntimeEvent } from './runtime-event-state'
+import { appendRuntimeEvent, type RuntimeEventState } from './runtime-event-state'
 import type { LumeRuntimeEvent } from '@lume/shared'
 
 function delta(seq: number, text: string): LumeRuntimeEvent {
@@ -9,9 +9,16 @@ function delta(seq: number, text: string): LumeRuntimeEvent {
   } as LumeRuntimeEvent
 }
 
-const N = 1000
-let state: any = {}
-const start = performance.now()
-for (let i = 1; i <= N; i++) state = appendRuntimeEvent(state, delta(i, `t${i}`))
-const elapsed = performance.now() - start
-console.log(`appendRuntimeEvent x${N}: ${elapsed.toFixed(1)}ms, final events=${state.t1.events.length}`)
+const N = 10000
+const TRIALS = 3
+let best = Infinity
+for (let t = 1; t <= TRIALS; t++) {
+  let state: RuntimeEventState = {}
+  const start = performance.now()
+  for (let i = 1; i <= N; i++) state = appendRuntimeEvent(state, delta(i, `t${i}`))
+  const elapsed = performance.now() - start
+  if (elapsed < best) best = elapsed
+  if (t === TRIALS) {
+    console.log(`appendRuntimeEvent x${N} (min of ${TRIALS}): ${best.toFixed(1)}ms, final events=${state.t1.events.length}`)
+  }
+}

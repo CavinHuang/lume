@@ -20,13 +20,19 @@ function runtimeEvent(event: Partial<LumeRuntimeEvent> & Pick<LumeRuntimeEvent, 
   } as LumeRuntimeEvent
 }
 
-function deltaEvent(id: string, seq: number, text: string, createdAt: string): LumeRuntimeEvent {
+function deltaEvent(
+  id: string,
+  seq: number,
+  text: string,
+  createdAt: string,
+  messageId = 'msg-1',
+): LumeRuntimeEvent {
   return {
     id,
     type: 'assistant.delta',
     threadId: 't1',
     runId: 'run-1',
-    messageId: 'msg-1',
+    messageId,
     sequence: seq,
     createdAt,
     delta: text,
@@ -223,20 +229,30 @@ describe('runtime-event-state', () => {
     expect(hydrated['thread-1']?.terminalStatus).toBe('completed')
   })
 
-  test('超过 MAX_EVENTS_PER_THREAD(100) 时裁剪到尾部并保留最近一条 user 提交', () => {
+  test('超过 MAX_EVENTS_PER_THREAD(100) 时裁剪到尾部并 rescue 最近一条 user 提交', () => {
     let state: Record<string, { events: LumeRuntimeEvent[] }> = {}
-    state = appendRuntimeEvent(state, runtimeEvent({
+    // u0 必须与后续 deltas 同线程（t1），否则 rescue 分支无法被触发
+    const u0 = {
       id: 'u0',
       type: 'message.user.submitted',
-      text: 'hi',
+      threadId: 't1',
+      runId: 'run-1',
       createdAt: '2026-06-21T00:00:00.000Z',
-    }) as LumeRuntimeEvent)
+      text: 'hi',
+    } as LumeRuntimeEvent
+    state = appendRuntimeEvent(state, u0)
+    // 120 条 distinct owner 的 assistant.delta（不同 messageId → 不合并 → 120 条独立事件）
     for (let i = 1; i <= 120; i++) {
-      // 严格递增的毫秒时间戳，避免字符串排序歧义
-      const ms = String(i).padStart(3, '0')
-      state = appendRuntimeEvent(state, deltaEvent(`d${i}`, i, `${i}`, `2026-06-21T00:00:00.${ms}Z`))
+      state = appendRuntimeEvent(
+        state,
+        deltaEvent(`d${i}`, i, `chunk${i}`, `2026-06-21T00:00:${String(i).padStart(2, '0')}.${String(i).padStart(3, '0')}Z`, `msg-${i}`),
+      )
     }
+    // 121 事件 > 100 → trimRuntimeEvents 取 tail=slice(-100)（全部是 delta），
+    // tail 内无 user submit → latestUserBeforeTail rescue 分支把 u0 提到头部 → [u0, ...99 deltas]
     expect(state.t1.events.length).toBeLessThanOrEqual(100)
+    expect(state.t1.events[0].type).toBe('message.user.submitted')
+    expect((state.t1.events[0] as any).text).toBe('hi')
   })
 })
 
