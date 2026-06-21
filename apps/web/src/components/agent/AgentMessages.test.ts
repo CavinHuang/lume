@@ -618,7 +618,7 @@ describe('areRuntimeEventContentBlockPropsEqual', () => {
 })
 
 describe('stabilizeRuntimeMessages', () => {
-  test('reuses the previous message reference when content is unchanged', () => {
+  test('reuses the previous message reference when message identity is unchanged', () => {
     const cache = new Map()
     const msg: RuntimeAssistantMessageView = {
       id: 'a1',
@@ -631,8 +631,8 @@ describe('stabilizeRuntimeMessages', () => {
       tokenCount: 2,
     }
     const first = stabilizeRuntimeMessages([msg], cache)
-    const rebuilt: RuntimeAssistantMessageView = { ...msg, blocks: [{ type: 'text', id: 't0', text: 'hi' }] }
-    const second = stabilizeRuntimeMessages([rebuilt], cache)
+    // 第二帧传同引用 msg（引用未变）→ stabilize 复用
+    const second = stabilizeRuntimeMessages([msg], cache)
     expect(second[0]).toBe(first[0])
   })
 
@@ -659,7 +659,7 @@ describe('stabilizeRuntimeMessages', () => {
       ...msg,
       text: 'ab',
       tokenCount: 2,
-      blocks: [{ ...toolBlock }, { type: 'text', id: 't0', text: 'ab' }],
+      blocks: [toolBlock, { type: 'text', id: 't0', text: 'ab' }],
     }
     const second = stabilizeRuntimeMessages([changed], cache)
     expect(second[0]).not.toBe(first[0])
@@ -682,5 +682,24 @@ describe('stabilizeRuntimeMessages', () => {
     expect(cache.has('a1')).toBe(true)
     stabilizeRuntimeMessages([], cache)
     expect(cache.has('a1')).toBe(false)
+  })
+
+  test('does not reuse a message when content matches but identity differs', () => {
+    const cache = new Map()
+    const msg: RuntimeAssistantMessageView = {
+      id: 'a1',
+      type: 'assistant',
+      text: 'hi',
+      thinking: '',
+      toolCalls: [],
+      blocks: [{ type: 'text', id: 't0', text: 'hi' }],
+      status: 'streaming',
+      tokenCount: 2,
+    }
+    const first = stabilizeRuntimeMessages([msg], cache)
+    // 内容相同但引用不同（新对象 + 新 block）→ 退化引用比较后不复用
+    const rebuilt: RuntimeAssistantMessageView = { ...msg, blocks: [{ type: 'text', id: 't0', text: 'hi' }] }
+    const second = stabilizeRuntimeMessages([rebuilt], cache)
+    expect(second[0]).not.toBe(first[0])
   })
 })

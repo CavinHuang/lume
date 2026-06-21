@@ -358,18 +358,16 @@ function projectVisibleAssistantBlocks(message: AgentMessage): Extract<RuntimeMe
 }
 
 /**
- * 流式时 projection 每 token 重建所有 message（及 block）对象引用，导致 memo 默认浅
- * 比较失效、整列表 + 流式消息内部未变 block 都每 token re-render。stabilize 在消费层
- * （AgentMessages）做引用稳定化：
+ * 流式时 projection 重建 message（及 block）对象引用，stabilize 在消费层（AgentMessages）
+ * 做引用稳定化。2b 增量投影 + 2c reconcile memoize 已让未变消息引用稳定，stabilize 退化
+ * 为纯引用比较（不再用 JSON.stringify）：
  *
- * - message 级：内容签名（JSON.stringify）相同 → 复用旧 message 引用（含旧 blocks）。
- * - block 级（仅 assistant）：签名变化时，按 block.id 匹配上一帧 block，内容相同则复用
- *   旧 block 引用。即使 id 偶尔失配（如 assistant.final 重排），stringify 内容比较兜底，
- *   最坏只是「不复用」，不会「错误复用」。
+ * - message 级：引用相同（cached.message === message）→ 复用旧 message 引用（含旧 blocks）。
+ * - block 级（仅 assistant）：按 block.id 匹配上一帧 block，引用相同（prev === block）则复用。
  *
  * cache 跨 token 保持（useRef），消息移除时自动清理对应条目。
  */
-export type RuntimeMessageStabilizeCache = Map<string, { signature: string; message: RuntimeMessageView }>
+export type RuntimeMessageStabilizeCache = Map<string, { message: RuntimeMessageView }>
 
 export function stabilizeRuntimeMessages(
   messages: RuntimeMessageView[],
@@ -380,13 +378,10 @@ export function stabilizeRuntimeMessages(
     if (!liveIds.has(id)) cache.delete(id)
   }
   return messages.map((message) => {
-    const signature = JSON.stringify(message)
     const cached = cache.get(message.id)
-    if (cached && cached.signature === signature) {
-      return cached.message
-    }
+    if (cached?.message === message) return cached.message
     const stabilized = stabilizeRuntimeMessageBlocks(message, cached?.message)
-    cache.set(message.id, { signature, message: stabilized })
+    cache.set(message.id, { message: stabilized })
     return stabilized
   })
 }
@@ -402,7 +397,7 @@ function stabilizeRuntimeMessageBlocks(
   let reusedAny = false
   const nextBlocks = message.blocks.map((block) => {
     const prev = prevById.get(block.id)
-    if (prev && JSON.stringify(prev) === JSON.stringify(block)) {
+    if (prev && prev === block) {
       reusedAny = true
       return prev
     }
