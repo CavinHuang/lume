@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -33,6 +34,35 @@ function readTrace(path: string): LumeTrace | null {
   }
 }
 
+function readJsonlFile<T>(path: string): T[] {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as T;
+      } catch {
+        return null;
+      }
+    })
+    .filter((item): item is T => item !== null);
+}
+
+/**
+ * 读取 spans.jsonl 并按 spanId 去重，取每个 span 的最后版本（event-sourcing）。
+ * Map 保持首次插入顺序 = appendSpan(startSpan) 顺序，updateSpan 追加的新版本只更新值不改顺序。
+ */
+function readSpans(path: string): LumeTraceSpan[] {
+  const records = readJsonlFile<LumeTraceSpan>(path);
+  const byId = new Map<string, LumeTraceSpan>();
+  for (const span of records) {
+    byId.set(span.id, span);
+  }
+  return [...byId.values()];
+}
+
 class FileBackedLumeTraceStore implements LumeTraceStore {
   private readonly tracesDir: string;
 
@@ -42,31 +72,38 @@ class FileBackedLumeTraceStore implements LumeTraceStore {
   }
 
   async create(trace: LumeTrace): Promise<void> {
-    writeTextAtomic(this.tracePath(trace.id), JSON.stringify(trace, null, 2));
+    writeTextAtomic(this.tracePath(trace.id), JSON.stringify({ ...trace, spans: [] }, null, 2));
+    if (trace.spans.length > 0) {
+      writeTextAtomic(
+        this.spansPath(trace.id),
+        trace.spans.map((span) => JSON.stringify(span)).join("\n") + "\n"
+      );
+    }
   }
 
   async get(traceId: string): Promise<LumeTrace | null> {
-    return readTrace(this.tracePath(traceId));
+    const trace = readTrace(this.tracePath(traceId));
+    if (!trace) return null;
+    return { ...trace, spans: readSpans(this.spansPath(traceId)) };
   }
 
   async update(traceId: string, patch: Partial<LumeTrace>): Promise<void> {
-    const trace = await this.get(traceId);
+    const trace = readTrace(this.tracePath(traceId));
     if (!trace) return;
     writeTextAtomic(this.tracePath(traceId), JSON.stringify({ ...trace, ...patch }, null, 2));
   }
 
   async appendSpan(traceId: string, span: LumeTraceSpan): Promise<void> {
-    const trace = await this.get(traceId);
-    if (!trace) return;
-    await this.update(traceId, { spans: [...trace.spans, span] });
+    if (!existsSync(this.tracePath(traceId))) return;
+    appendFileSync(this.spansPath(traceId), JSON.stringify(span) + "\n", "utf-8");
   }
 
   async updateSpan(traceId: string, spanId: string, patch: Partial<LumeTraceSpan>): Promise<void> {
-    const trace = await this.get(traceId);
-    if (!trace) return;
-    await this.update(traceId, {
-      spans: trace.spans.map((span) => span.id === spanId ? { ...span, ...patch } : span)
-    });
+    const spans = readSpans(this.spansPath(traceId));
+    const current = spans.find((span) => span.id === spanId);
+    if (!current) return;
+    const next: LumeTraceSpan = { ...current, ...patch };
+    appendFileSync(this.spansPath(traceId), JSON.stringify(next) + "\n", "utf-8");
   }
 
   async listByThread(threadId: string): Promise<LumeTrace[]> {
@@ -74,7 +111,8 @@ class FileBackedLumeTraceStore implements LumeTraceStore {
     const traces: LumeTrace[] = [];
     for (const file of readdirSync(this.tracesDir)) {
       if (!file.endsWith(".json")) continue;
-      const trace = readTrace(join(this.tracesDir, file));
+      const traceId = file.slice(0, -".json".length);
+      const trace = await this.get(traceId);
       if (trace?.threadId === threadId) {
         traces.push(trace);
       }
@@ -84,6 +122,10 @@ class FileBackedLumeTraceStore implements LumeTraceStore {
 
   private tracePath(traceId: string): string {
     return join(this.tracesDir, `${traceId}.json`);
+  }
+
+  private spansPath(traceId: string): string {
+    return join(this.tracesDir, `${traceId}.spans.jsonl`);
   }
 }
 
