@@ -14,5 +14,6 @@
     "src/hooks/**/*",
     "src/mermaid-block/**/*",
     "src/highlight/**/*"
-  ]
+  ],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

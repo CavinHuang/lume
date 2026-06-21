@@ -22,6 +22,8 @@ interface UseSmoothStreamOptions {
   isStreaming: boolean
   /** 每帧最小间隔（ms），默认 10 */
   minDelay?: number
+  /** 驱动 React setState（进而触发 Markdown 重解析）的最小间隔（ms），默认 50 */
+  flushInterval?: number
 }
 
 interface UseSmoothStreamReturn {
@@ -54,6 +56,20 @@ function segmentText(text: string): string[] {
   return Array.from(segmenter.segment(text)).map((part) => part.segment)
 }
 
+/** 决定本帧是否触发 React setState（驱动 Markdown 重解析）。rAF 每帧累积字符到 ref，仅在达到间隔或流结束时才 setState。 */
+export function shouldFlush(input: {
+  currentTime: number
+  lastFlushTime: number
+  flushInterval: number
+  queueLength: number
+  streamDone: boolean
+}): boolean {
+  return (
+    input.currentTime - input.lastFlushTime >= input.flushInterval ||
+    (input.queueLength === 0 && input.streamDone)
+  )
+}
+
 /**
  * 流式文本平滑渲染 Hook
  *
@@ -74,6 +90,7 @@ export function useSmoothStream({
   content,
   isStreaming,
   minDelay = 10,
+  flushInterval = 50,
 }: UseSmoothStreamOptions): UseSmoothStreamReturn {
   const [displayedContent, setDisplayedContent] = useState(content)
 
@@ -87,6 +104,8 @@ export function useSmoothStream({
   const prevContentRef = useRef(content)
   // 上次渲染时间
   const lastRenderTimeRef = useRef(0)
+  // 上次触发 setState（flush）的时间
+  const lastFlushTimeRef = useRef(0)
   // 流是否结束
   const streamDoneRef = useRef(!isStreaming)
 
@@ -160,7 +179,20 @@ export function useSmoothStream({
     // 取出字符并更新
     const chars = queue.splice(0, count)
     displayedRef.current += chars.join('')
-    setDisplayedContent(displayedRef.current)
+
+    // setState 限流：仅在达到 flush 间隔或流结束时触发，减少 XMarkdown 重解析
+    if (
+      shouldFlush({
+        currentTime,
+        lastFlushTime: lastFlushTimeRef.current,
+        flushInterval,
+        queueLength: queue.length,
+        streamDone: streamDoneRef.current,
+      })
+    ) {
+      lastFlushTimeRef.current = currentTime
+      setDisplayedContent(displayedRef.current)
+    }
 
     // 还有内容 → 继续下一帧
     if (queue.length > 0 || !streamDoneRef.current) {
@@ -168,7 +200,7 @@ export function useSmoothStream({
     } else {
       rafRef.current = null
     }
-  }, [minDelay])
+  }, [minDelay, flushInterval])
 
   // 启动/重启渲染循环。流结束后如果队列还有内容，也继续平滑追赶，
   // 避免完成瞬间把剩余内容一次性刷到 UI 导致消息列表抖动。
