@@ -46,4 +46,42 @@ describe("trace-store", () => {
     });
     expect(stored?.spans[0]?.durationMs).toBeGreaterThanOrEqual(1000);
   });
+
+  test("多次 updateSpan 后 get 返回该 span 的最后版本（dedup）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-trace-store-"));
+    const store = createFileBackedLumeTraceStore(dir);
+    await store.create({ id: "t-dedup", threadId: "th", runId: "r", name: "n", status: "running", startedAt: "2026-04-29T00:00:00.000Z", spans: [] });
+    await store.appendSpan("t-dedup", { id: "s1", traceId: "t-dedup", type: "tool_call", name: "x", status: "running", startedAt: "2026-04-29T00:00:00.000Z" });
+    await store.updateSpan("t-dedup", "s1", { status: "completed", endedAt: "2026-04-29T00:00:01.000Z", durationMs: 1000 });
+    await store.updateSpan("t-dedup", "s1", { status: "failed", error: { message: "boom" } });
+    const stored = await store.get("t-dedup");
+    expect(stored?.spans).toHaveLength(1);
+    expect(stored?.spans[0]).toMatchObject({ id: "s1", status: "failed", durationMs: 1000 });
+    expect((stored?.spans[0] as any).error?.message).toBe("boom");
+  });
+
+  test("多个 span 保持 startSpan 顺序，updateSpan 不改变顺序", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-trace-store-"));
+    const store = createFileBackedLumeTraceStore(dir);
+    await store.create({ id: "t-order", threadId: "th", runId: "r", name: "n", status: "running", startedAt: "2026-04-29T00:00:00.000Z", spans: [] });
+    await store.appendSpan("t-order", { id: "s1", traceId: "t-order", type: "model_call", name: "a", status: "running", startedAt: "2026-04-29T00:00:00.000Z" });
+    await store.appendSpan("t-order", { id: "s2", traceId: "t-order", type: "tool_call", name: "b", status: "running", startedAt: "2026-04-29T00:00:01.000Z" });
+    await store.updateSpan("t-order", "s2", { status: "completed", endedAt: "2026-04-29T00:00:02.000Z" });
+    await store.updateSpan("t-order", "s1", { status: "completed", endedAt: "2026-04-29T00:00:03.000Z" });
+    const stored = await store.get("t-order");
+    expect(stored?.spans.map((s) => s.id)).toEqual(["s1", "s2"]);
+    expect(stored?.spans.every((s) => s.status === "completed")).toBe(true);
+  });
+
+  test("update 元数据不改动 spans", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-trace-store-"));
+    const store = createFileBackedLumeTraceStore(dir);
+    await store.create({ id: "t-meta", threadId: "th", runId: "r", name: "n", status: "running", startedAt: "2026-04-29T00:00:00.000Z", spans: [] });
+    await store.appendSpan("t-meta", { id: "s1", traceId: "t-meta", type: "model_call", name: "a", status: "running", startedAt: "2026-04-29T00:00:00.000Z" });
+    await store.update("t-meta", { status: "completed", endedAt: "2026-04-29T00:00:05.000Z" });
+    const stored = await store.get("t-meta");
+    expect(stored?.status).toBe("completed");
+    expect(stored?.spans).toHaveLength(1);
+    expect(stored?.spans[0].id).toBe("s1");
+  });
 });
