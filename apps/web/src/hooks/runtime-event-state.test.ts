@@ -263,4 +263,30 @@ describe('appendRuntimeEvents (批量)', () => {
     expect(batched.t1.events.length).toBe(sequential.t1.events.length)
     expect(batched.t1.terminalStatus).toBe(sequential.t1.terminalStatus)
   })
+
+  test('批量也去重 optimistic 与 sidecar 的重复 user submit', () => {
+    const optimistic = runtimeEvent({
+      id: 'optimistic',
+      type: 'message.user.submitted',
+      text: 'hello',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    })
+    const persisted = runtimeEvent({
+      id: 'persisted',
+      type: 'message.user.submitted',
+      text: 'hello',
+      createdAt: '2026-05-11T00:00:01.000Z',
+    })
+
+    const batched = appendRuntimeEvents({}, [optimistic, persisted])
+
+    let sequential: ReturnType<typeof appendRuntimeEvent> = {}
+    sequential = appendRuntimeEvent(sequential, optimistic)
+    sequential = appendRuntimeEvent(sequential, persisted)
+
+    expect(batched['thread-1']?.events).toEqual([
+      expect.objectContaining({ id: 'optimistic', type: 'message.user.submitted', text: 'hello' }),
+    ])
+    expect(batched['thread-1']?.events.length).toBe(sequential['thread-1']?.events.length)
+  })
 })

@@ -46,6 +46,7 @@ export function appendRuntimeEvents(
     const current = next[threadId]
     let acc = current?.events ?? []
     for (const event of list) {
+      if (isDuplicateUserSubmit(acc.at(-1), event)) continue
       acc = orderedAppend(acc, event)
     }
     const trimmed = trimRuntimeEvents(acc)
