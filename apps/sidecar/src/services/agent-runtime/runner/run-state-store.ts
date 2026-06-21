@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -67,7 +68,7 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
     if (state.generatedItems.length > 0) {
       writeTextAtomic(
         this.itemsPath(state.runId),
-        state.generatedItems.map((item) => JSON.stringify(item)).join("\n")
+        state.generatedItems.map((item) => JSON.stringify(item)).join("\n") + "\n"
       );
     }
   }
@@ -99,10 +100,8 @@ class FileBackedLumeRunStateStore implements LumeRunStateStore {
   }
 
   async appendItem(runId: string, item: LumeRunItem): Promise<void> {
-    const state = await this.get(runId);
-    if (!state) return;
-    const generatedItems = [...state.generatedItems, item];
-    await this.update(runId, { generatedItems });
+    if (!existsSync(this.statePath(runId))) return;
+    appendFileSync(this.itemsPath(runId), JSON.stringify(item) + "\n", "utf-8");
   }
 
   async listByThread(threadId: string): Promise<LumeRunState[]> {
