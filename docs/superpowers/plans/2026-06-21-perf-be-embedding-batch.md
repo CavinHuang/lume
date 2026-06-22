@@ -112,13 +112,11 @@ test("dotProduct 对归一化向量 ≡ 旧 cosineSimilarity（等长，容差 1
   }
 });
 
-test("dotProduct 不等长输入与旧 cosineSimilarity 等价（取 min length）", () => {
-  const an = l2normalize([1, 2, 3, 4]);
-  const bn = l2normalize([5, 6]); // 不等长
-  expect(dotProduct(toFloat32Array(an), toFloat32Array(bn))).toBeCloseTo(
-    cosineSimilarity(an, bn),
-    6
-  );
+test("dotProduct 不等长输入取 min length（前 min 维点积，不重新归一化）", () => {
+  // 注：不等长时 dotProduct 与旧 cosineSimilarity 不等价——后者用前 min 维的局部范数
+  // 重新归一化。生产中所有 embedding 等长（embedDim 固定），不等长仅作防御性 quirk。
+  // 验证 dotProduct 自身行为：取前 2 维点积 1*5 + 2*6 = 17，忽略 a 的后 2 维。
+  expect(dotProduct(toFloat32Array([1, 2, 3, 4]), toFloat32Array([5, 6]))).toBeCloseTo(17, 6);
 });
 
 test("dotProduct 正交向量 = 0", () => {
