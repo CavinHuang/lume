@@ -6,7 +6,7 @@
 
 ## 一句话状态
 
-性能优化路线图的 **Phase 1 / 2(全部子阶段) / 3a / 3b / 3d / 4 已完成**，**3c 已跳过**（核查为非生产热路径），**全局 Record atom 按 threadId 切片订阅已完成（5 个 atom，helper + 形状 A/B）**。**剩余 Phase 0 / 5 / 6 / 7 / 8 / 9 / 10**（storage atom + Tier-3 atom 按需）。全部工作在 `feat/new-ui` 分支（长期开发分支，**勿合并 main**——还有 Phase 5-10）。
+性能优化路线图的 **Phase 1 / 2(全部子阶段) / 3a / 3b / 3d / 4 / Phase 5 核心子集（token 增量记账）已完成**，**3c 已跳过**（核查为非生产热路径），**全局 Record atom 按 threadId 切片订阅已完成（5 个 atom，helper + 形状 A/B）**。Phase 5 的 context/normalize 缓存（Option B）+ tool-schema 缓存按需（YAGNI，低优先）。**剩余 Phase 0 / 5(余项) / 6 / 7 / 8 / 9 / 10**（storage atom + Tier-3 atom 按需）。全部工作在 `feat/new-ui` 分支（长期开发分支，**勿合并 main**——还有 Phase 5-10）。
 
 ## 分支与同步（换机器第一步）
 
@@ -29,6 +29,7 @@
 | 3d | — | markdown-store `findEntryById` 文件名定位（-78%~93%） | — |
 | **4** | — | **本地 ONNX embedding 批量化（embed_batch 一次 forward + transfer list，N 次 IPC→1 次）+ Float32Array/dotProduct + cosine util 抽取** | **100 条 embedding <1s；memory-v2 147 pass** |
 | 全局 atom 切片 | — | 全局 Record atom 按 threadId 切片订阅：`createThreadSliceFamily` helper + 5 family（streamingStates/pendingInteractive/planModePhase/subagentRuns/runtimeStatus）；形状 A（6 处单线程下标读取换 family）+ 形状 B（LeftSidebar 去整对象读，ThreadItem 行级订阅）；顺手修 `LumeSidebar.test.tsx` 失效 import。 | helper 契约测试（Object.is 引用稳定性）+ ThreadItem TDD 测试；memory-v2 147/0、AgentMessages 30/0、agent 117/23/18、app-shell 21/1/0、projection 26/1、typecheck 0。 |
+| **5（核心子集）** | — | **`estimateMessagesTokens` 按消息对象 `WeakMap` 缓存 token 计数（每消息一次 run 内最多 native tokenize 一次）；sidecar context budget 去 `.map` 直读 `sessionMessages` 命中缓存；`estimateMessagesTokens` 入参 `content` 改可选以匹配 `KernelMessage`。** | 缓存命中跳过 native 等价性测试（tokens.test +3）+ compaction 语义测试；sdk 226/0、tokens 6/0、sidecar context 13/0、memory-v2 147/0、双 typecheck 0。 |
 
 **跳过 Phase 3c**：agent-thread-manager transcript append-only——源码核查发现 `appendAgentTranscriptMessage` 仅在 `.test.ts` 调用，非生产热路径，审查报告误判。
 
@@ -60,6 +61,9 @@
 
 | 测试范围 | 基线 | 命令 |
 |----------|------|------|
+| sdk tokens（Phase 5 域） | **6 pass / 0 fail**（3 基线 + 3 缓存等价/命中/compaction） | `bun test packages/sdk/src/utils/tokens.test.ts` |
+| sdk 全量 | **226 pass / 0 fail** | `bun test packages/sdk/` |
+| sidecar context（Phase 5 域） | **13 pass / 0 fail** | `bun test apps/sidecar/src/services/agent-runtime/context/` |
 | memory-v2（Phase 4 域） | **147 pass / 0 fail**（129 基线 + vector-math 7 + local-embedding 6 + semantic-index 5） | `bun test apps/sidecar/src/services/memory-v2/` |
 | projection | 26 pass / 1 fail（pre-existing：compaction notice test 过时） | `bun test apps/web/src/components/agent/runtime-event-message-projection.test.ts` |
 | AgentMessages | 30 pass / 0 fail（单独跑） | `bun test apps/web/src/components/agent/AgentMessages.test.ts` |
@@ -82,7 +86,9 @@
 
 ### Phase 5：SDK token 增量记账 + context 缓存（P1，无依赖）
 
-消除"每轮 LLM 调用前同步 native tokenize 全量历史"+"每轮全量 normalize/工具 schema 重建"。
+**核心子集（token 增量记账）已完成**：每消息 `WeakMap` 缓存 token 计数（`estimateMessagesTokens`）+ sidecar budget 去 `.map` 命中缓存。
+
+**剩余（按需，YAGNI，低优先）**：normalize/context 缓存（Option B）+ tool-schema 缓存。消除"每轮全量 normalize/工具 schema 重建"。
 
 - Files：`packages/sdk/src/utils/tokens.ts:17-94`、`engine.ts:469,496,550,710,729,1619,903-909`、`apps/sidecar/src/providers/sse-reader.ts:133,173`、`apps/sidecar/src/services/agent-runtime/runtime-core/run.ts:877-881,916-1024`。
 - 验收：80-turn 会话每轮 token 计算耗时不再随历史线性增长。
