@@ -6,7 +6,7 @@
 
 ## 一句话状态
 
-性能优化路线图的 **Phase 1 / 2(全部子阶段) / 3a / 3b / 3d / 4 已完成**，**3c 已跳过**（核查为非生产热路径）。**Phase 0 / 5 / 6 / 7 / 8 / 9 / 10 + 8 个全局 atom 待做**。全部工作在 `feat/new-ui` 分支（长期开发分支，**勿合并 main**——还有 Phase 5-10）。
+性能优化路线图的 **Phase 1 / 2(全部子阶段) / 3a / 3b / 3d / 4 已完成**，**3c 已跳过**（核查为非生产热路径），**全局 Record atom 按 threadId 切片订阅已完成（5 个 atom，helper + 形状 A/B）**。**剩余 Phase 0 / 5 / 6 / 7 / 8 / 9 / 10**（storage atom + Tier-3 atom 按需）。全部工作在 `feat/new-ui` 分支（长期开发分支，**勿合并 main**——还有 Phase 5-10）。
 
 ## 分支与同步（换机器第一步）
 
@@ -28,6 +28,7 @@
 | 3b | — | trace-store spans event-sourcing（-94%） | — |
 | 3d | — | markdown-store `findEntryById` 文件名定位（-78%~93%） | — |
 | **4** | — | **本地 ONNX embedding 批量化（embed_batch 一次 forward + transfer list，N 次 IPC→1 次）+ Float32Array/dotProduct + cosine util 抽取** | **100 条 embedding <1s；memory-v2 147 pass** |
+| 全局 atom 切片 | — | 全局 Record atom 按 threadId 切片订阅：`createThreadSliceFamily` helper + 5 family（streamingStates/pendingInteractive/planModePhase/subagentRuns/runtimeStatus）；形状 A（6 处单线程下标读取换 family）+ 形状 B（LeftSidebar 去整对象读，ThreadItem 行级订阅）；顺手修 `LumeSidebar.test.tsx` 失效 import。 | helper 契约测试（Object.is 引用稳定性）+ ThreadItem TDD 测试；memory-v2 147/0、AgentMessages 30/0、agent 117/23/18、app-shell 21/1/0、projection 26/1、typecheck 0。 |
 
 **跳过 Phase 3c**：agent-thread-manager transcript append-only——源码核查发现 `appendAgentTranscriptMessage` 仅在 `.test.ts` 调用，非生产热路径，审查报告误判。
 
@@ -63,18 +64,21 @@
 | projection | 26 pass / 1 fail（pre-existing：compaction notice test 过时） | `bun test apps/web/src/components/agent/runtime-event-message-projection.test.ts` |
 | AgentMessages | 30 pass / 0 fail（单独跑） | `bun test apps/web/src/components/agent/AgentMessages.test.ts` |
 | agent 目录 | 117 pass / 23 fail / 18 errors（pre-existing：desktop-api 导出缺失） | `bun test apps/web/src/components/agent/` |
+| app-shell | 21 pass / 1 fail / 0 error（pre-existing：LumeSidebar recycle-bin disabled 断言失效） | `bun test apps/web/src/components/app-shell/` |
+| agent-atoms | 2 pass / 0 fail（helper 契约测试） | `bun test apps/web/src/atoms/agent-atoms.test.ts` |
 | typecheck | exit 0 | `bun run --filter @lume/sidecar typecheck` |
 
 > **零回归判定**：改动后重跑对应范围，pass/fail 数与基线一致（pre-existing fail 不算回归）。隔离对比标准手法：`git checkout HEAD~N -- <files>` 跑旧实现对比。
 
 ## 剩余工作（按优先级 + 依赖）
 
-### 🥇 优先：其他全局 Record atom（复用 Phase 2d 模式，低风险高复用）
+### 全局 Record atom：5 已完成，余按需（复用 Phase 2d 模式）
 
-8 个全局 `Record` atom 仍是"线程 A 输出 → 线程 B 组件 re-render"的反模式。复用 Phase 2d 的 `atomFamily(selectAtom)` 按 threadId 切片模式，可抽 `createThreadSliceFamily` helper 统一。
+5 个高频全局 `Record` atom 已按 threadId 切片订阅（helper + family 见上表"全局 atom 切片"行）：`agentStreamingStatesAtom` / `agentPendingInteractiveAtom` / `agentPlanModePhaseAtom` / `agentSubagentRunsAtom` / `agentRuntimeStatusAtom`。消除"线程 A 输出 → 线程 B 侧栏/输入栏 re-render"主热路径。模式参考：`apps/web/src/atoms/agent-atoms.ts` 的 `createThreadSliceFamily` helper（`jotai/utils` 的 atomFamily(selectAtom)）。
 
-- `agentStreamingStatesAtom`（7 文件用）、`agentPendingInteractiveAtom`（7 文件用）等低频更新 atom。
-- 模式参考：`apps/web/src/atoms/agent-atoms.ts` 的 `agentRuntimeEventsFamily`（Phase 2d）。atomFamily 在 `jotai/utils` 非 `jotai`。
+**剩余可选 follow-up（按需，低频/低价值，YAGNI）**：
+- Storage atom：`agentSidePanelViewAtom` / `agentFileTreeOpenAtom`（视图态，单线程本地 UI，跨线程 re-render 影响小）。
+- Tier-3 atom：`agentMessageQueueAtom` / `agentErrorMessagesAtom` / `agentThreadPermissionModesAtom`（低频更新，队列/错误/权限）。
 
 ### Phase 5：SDK token 增量记账 + context 缓存（P1，无依赖）
 
@@ -159,10 +163,11 @@ bun run --filter @lume/web typecheck
 - **projection 1 fail**：`keeps context compaction start and completion visible as a status timeline`——production 有意合并 start/progress/completed 为单条 notice，test 过时。护栏：保持 26/1。
 - **agent 目录 23 fail / 18 errors**：全为 desktop-api 导出缺失（`saveFilePathDialog`/`submitTaskApproval`/`executeTaskContract` not found in desktop-api/index.ts）+ overlay frame language。护栏：117/23/18。
 - **AgentMessages 计数差异**：单独跑 30/0，但在 agent 目录跑因 RuntimeEventContentBlock 间接依赖 desktop-api 计数不同——验证 AgentMessages 用单独跑。
+- **app-shell 1 fail**：`LumeSidebar.test.tsx` 的 `disables recycle bin` 用例断言 `recycleBinButton.props.disabled === true`，但组件/视图模型从未实现 recycle-bin 禁用逻辑（Task 5 修好该文件 import 后此断言才暴露）。护栏：保持 21/1/0。修复需产品决策（回收站是否应在某状态下禁用）。
 - **transformers.js batch 风险**：Phase 4 依赖 `@xenova/transformers@^2.17.2` pipeline 接受 `string[]`（由 `mean_pooling` 类型注释 `[batchSize, embedDim]` 支撑）。纯逻辑由 `sliceFlatVectors` 单测守护；真实 batch 行为由 `embedding-batch-equiv.test.ts`（需模型）兜底，尚未真实验证。
 
 ## 接续提示词（换机器后粘贴到新会话）
 
 ```
-继续 Lume 性能优化。先读 docs/superpowers/plans/2026-06-22-perf-progress-handoff.md 恢复进展上下文（Phase 1/2/3(a,b,d)/4 已完成，3c 跳过；Phase 5-10 + 8 个全局 atom 待做，全在 feat/new-ui 分支）。下一步从「其他全局 atom（复用 Phase 2d atomFamily(selectAtom) 模式）」或 Phase 5 开始——按 superpowers brainstorming → spec → plan → executing-plans 流程推进，范围决策倾向核心子集（YAGNI）。开始前先跑 memory-v2 基线确认 147 pass。
+继续 Lume 性能优化。先读 docs/superpowers/plans/2026-06-22-perf-progress-handoff.md 恢复进展上下文（Phase 1/2/3(a,b,d)/4 已完成，3c 跳过；全局 atom 按 threadId 切片订阅已完成 5 atom；剩余 Phase 5-10，全在 feat/new-ui 分支）。下一步从 Phase 5（SDK token 增量记账 + context 缓存）开始——按 superpowers brainstorming → spec → plan → executing-plans 流程推进，范围决策倾向核心子集（YAGNI）。开始前先跑 memory-v2 基线确认 147 pass。
 ```
