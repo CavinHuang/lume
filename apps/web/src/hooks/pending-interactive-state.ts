@@ -126,7 +126,9 @@ export function removePendingToolPermissionEverywhere(
     const currentPermissions = state.toolPermissions ?? []
     const toolPermissions = currentPermissions.filter((item) => item.requestId !== requestId)
     changed ||= toolPermissions.length !== currentPermissions.length
-    next[threadId] = { ...state, toolPermissions }
+    next[threadId] = toolPermissions.length === currentPermissions.length
+      ? state
+      : { ...state, toolPermissions }
   }
   return changed ? next : prev
 }

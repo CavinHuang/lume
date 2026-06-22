@@ -134,6 +134,45 @@ describe("pending interactive state helpers", () => {
     expect(next["child-thread"]?.toolPermissions).toEqual([])
   })
 
+  test("跨线程删除时应保留未包含目标 requestId 线程的引用（守护 Object.is 不变量）", () => {
+    const stateA: AgentPendingInteractiveState = {
+      threadId: "thread-a",
+      toolPermissions: [{
+        threadId: "thread-a",
+        requestId: "perm-other",
+        toolUseId: "tool-a",
+        toolName: "Write",
+        risk: "medium",
+        reason: "need permission",
+        input: {}
+      }]
+    }
+    const stateB: AgentPendingInteractiveState = {
+      threadId: "thread-b",
+      toolPermissions: [{
+        threadId: "thread-b",
+        requestId: "perm-target",
+        toolUseId: "tool-b",
+        toolName: "Write",
+        risk: "medium",
+        reason: "need permission",
+        input: {}
+      }]
+    }
+    const base: Record<string, AgentPendingInteractiveState> = {
+      "thread-a": stateA,
+      "thread-b": stateB
+    }
+
+    const next = removePendingToolPermissionEverywhere(base, "perm-target")
+
+    // 线程 A 未包含目标 requestId：引用必须保持不变（守护 agentPendingInteractiveFamily 的 Object.is 不变量）
+    expect(next["thread-a"]).toBe(stateA)
+    // 线程 B 包含目标 requestId：引用应改变，且不再包含被删除的 requestId
+    expect(next["thread-b"]).not.toBe(stateB)
+    expect(next["thread-b"]?.toolPermissions?.map((item) => item.requestId)).toEqual([])
+  })
+
   test("同一线程应能累计多个任务审批请求，并可按 contractId 删除", () => {
     const first: AgentTaskApprovalRequest = {
       threadId: "parent-thread",
