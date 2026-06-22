@@ -1,5 +1,6 @@
 import { createMemoryV2Store, type MemoryV2Store } from "./markdown-store";
 import { createMemoryV2EmbeddingProvider, type MemoryV2EmbedTexts } from "./embedding";
+import { dotProduct, toFloat32Array } from "./vector-math";
 import type {
   MemoryV2Candidate,
   MemoryV2Entry,
@@ -224,11 +225,12 @@ async function findSemanticDuplicate(input: {
     ]);
     const candidateVector = vectors[0];
     if (!candidateVector || candidateVector.length === 0) return undefined;
+    const candidateVec = toFloat32Array(candidateVector);
     let best: { entry: MemoryV2Entry; score: number } | undefined;
     for (let index = 0; index < comparable.length; index += 1) {
       const entryVector = vectors[index + 1];
       if (!entryVector || entryVector.length === 0) continue;
-      const score = cosineSimilarity(candidateVector, entryVector);
+      const score = dotProduct(candidateVec, toFloat32Array(entryVector));
       if (!best || score > best.score) best = { entry: comparable[index]!, score };
     }
     return best && best.score >= 0.92 ? best.entry : undefined;
@@ -304,21 +306,4 @@ function normalizeStatement(value: string): string {
 
 function normalizeToken(value: string): string {
   return value.trim().toLowerCase();
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  const length = Math.min(a.length, b.length);
-  if (length === 0) return 0;
-  let dot = 0;
-  let aNorm = 0;
-  let bNorm = 0;
-  for (let index = 0; index < length; index += 1) {
-    const av = a[index] ?? 0;
-    const bv = b[index] ?? 0;
-    dot += av * bv;
-    aNorm += av * av;
-    bNorm += bv * bv;
-  }
-  if (aNorm === 0 || bNorm === 0) return 0;
-  return dot / (Math.sqrt(aNorm) * Math.sqrt(bNorm));
 }
