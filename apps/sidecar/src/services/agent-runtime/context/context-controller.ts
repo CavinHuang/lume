@@ -61,10 +61,7 @@ export function createContextBudgetSnapshot(input: ContextBudgetSnapshotInput): 
     system: estimateTokens(input.systemPrompt ?? ""),
     memory: estimateTokens(input.memoryContext ?? ""),
     session: sessionMessages.length > 0
-      ? estimateMessagesTokens(sessionMessages.map((message) => ({
-          role: message.role,
-          content: message.content ?? ""
-        })))
+      ? estimateMessagesTokens(sessionMessages)
       : 0,
     toolSchemas: input.toolSchemaTokens ?? 0,
     reservedOutput: input.reservedOutputTokens ?? Math.floor(input.total * 0.05)

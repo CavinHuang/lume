@@ -48,7 +48,7 @@ export function estimateTokens(text: string): number {
  * Estimate tokens for a message array.
  */
 export function estimateMessagesTokens(
-  messages: Array<{ role: string; content: any }>,
+  messages: Array<{ role: string; content?: any }>,
 ): number {
   let total = 0
   for (const msg of messages) {
