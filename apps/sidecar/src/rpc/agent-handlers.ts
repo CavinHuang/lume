@@ -241,6 +241,7 @@ import {
 } from "./schemas";
 import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, asString, validateInput } from "./validation";
+import { trimSdkMessagesForTransport } from "./message-payload-trim";
 
 const log = createLogger("agent-handlers");
 
@@ -584,7 +585,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES);
-      return getAgentThreadMessages(input.threadId);
+      return getAgentThreadMessages(input.threadId).map(trimSdkMessagesForTransport);
     },
     [AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS]: async (params) => {
       const input = validateInput(threadRunEventsInputSchema, params, AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS);
