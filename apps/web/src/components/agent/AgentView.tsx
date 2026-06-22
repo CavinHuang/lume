@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
-  agentStreamingStatesAtom,
-  agentPendingInteractiveAtom,
+  agentStreamingStatesFamily,
+  agentPendingInteractiveFamily,
   agentThreadsAtom,
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
@@ -38,8 +38,8 @@ interface AgentViewProps {
 }
 
 export function AgentView({ threadId }: AgentViewProps) {
-  const streamingState = useAtomValue(agentStreamingStatesAtom)[threadId] ?? 'idle'
-  const pendingInteractive = useAtomValue(agentPendingInteractiveAtom)[threadId]
+  const streamingState = useAtomValue(agentStreamingStatesFamily(threadId)) ?? 'idle'
+  const pendingInteractive = useAtomValue(agentPendingInteractiveFamily(threadId))
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
   const pendingTaskApprovals = pendingInteractive?.taskApprovals ?? []
