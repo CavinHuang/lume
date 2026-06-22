@@ -3,7 +3,7 @@ import { useAtomValue } from 'jotai'
 import { Loader2, ChevronDown, Bot, Copy, Check, AlertTriangle } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { cn } from '@/lib/utils'
-import { agentSubagentRunsAtom } from '@/atoms'
+import { agentSubagentRunsFamily } from '@/atoms'
 import { useElapsedTime, formatElapsed } from '@/hooks/useElapsedTime'
 import { getAgentRole, type SubagentRunStatus } from '@lume/shared'
 import { resolveSubagentRoleDisplay } from './subagent-role-display'
@@ -28,7 +28,6 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
   const [expanded, setExpanded] = useState(false)
   const expandedContentMounted = useDeferredUnmount(expanded)
   const expandedContentRef = useRef<HTMLDivElement>(null)
-  const subagentRunsMap = useAtomValue(agentSubagentRunsAtom)
 
   useLayoutEffect(() => {
     if (!expanded || !expandedContentMounted) return
@@ -38,7 +37,7 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
   }, [expanded, expandedContentMounted])
 
   // 优先用 runId 查找，其次用 toolUseId 查找
-  const runs = subagentRunsMap[threadId] ?? []
+  const runs = useAtomValue(agentSubagentRunsFamily(threadId)) ?? []
   const runRecord = runId
     ? runs.find(r => r.runId === runId)
     : toolUseId

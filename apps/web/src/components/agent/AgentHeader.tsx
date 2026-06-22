@@ -1,6 +1,6 @@
 import { useAtomValue } from 'jotai'
 import { cn } from '@/lib/utils'
-import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusAtom } from '@/atoms'
+import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily } from '@/atoms'
 import { WorkspacePicker } from './WorkspacePicker'
 import type { AgentRuntimePhase } from '@lume/shared'
 
@@ -21,7 +21,7 @@ const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text:
 export function AgentHeader({ threadId }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const thread = threads.find((t) => t.id === threadId)
-  const runtimeStatus = useAtomValue(agentRuntimeStatusAtom)[threadId]
+  const runtimeStatus = useAtomValue(agentRuntimeStatusFamily(threadId))
   const runtimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId))?.events ?? []
 
   const phase = runtimeStatus?.phase
