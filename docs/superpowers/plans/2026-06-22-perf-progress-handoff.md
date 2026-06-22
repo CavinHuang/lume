@@ -6,7 +6,7 @@
 
 ## 一句话状态
 
-性能优化路线图的 **Phase 1 / 2(全部子阶段) / 3a / 3b / 3d / 4 / Phase 5 核心子集（token 增量记账）已完成**，**3c 已跳过**（核查为非生产热路径），**全局 Record atom 按 threadId 切片订阅已完成（5 个 atom，helper + 形状 A/B）**。Phase 5 的 context/normalize 缓存（Option B）+ tool-schema 缓存按需（YAGNI，低优先）。**剩余 Phase 0 / 5(余项) / 6 / 7 / 8 / 9 / 10**（storage atom + Tier-3 atom 按需）。全部工作在 `feat/new-ui` 分支（长期开发分支，**勿合并 main**——还有 Phase 5-10）。
+性能优化路线图的 **Phase 1 / 2(全部子阶段) / 3a / 3b / 3d / 4 / Phase 5 核心子集（token 增量记账）/ Phase 6 子项 A（打开会话 payload 裁剪）已完成**，**3c 已跳过**（核查为非生产热路径），**全局 Record atom 按 threadId 切片订阅已完成（5 个 atom，helper + 形状 A/B）**。Phase 5 的 context/normalize 缓存（Option B）+ tool-schema 缓存按需（YAGNI，低优先）。**剩余 Phase 0 / 5(余项) / 6(B+C 独立周期) / 7 / 8 / 9 / 10**（storage atom + Tier-3 atom 按需）。全部工作在 `feat/new-ui` 分支（长期开发分支，**勿合并 main**——还有 Phase 5-10）。
 
 ## 分支与同步（换机器第一步）
 
@@ -30,6 +30,7 @@
 | **4** | — | **本地 ONNX embedding 批量化（embed_batch 一次 forward + transfer list，N 次 IPC→1 次）+ Float32Array/dotProduct + cosine util 抽取** | **100 条 embedding <1s；memory-v2 147 pass** |
 | 全局 atom 切片 | — | 全局 Record atom 按 threadId 切片订阅：`createThreadSliceFamily` helper + 5 family（streamingStates/pendingInteractive/planModePhase/subagentRuns/runtimeStatus）；形状 A（6 处单线程下标读取换 family）+ 形状 B（LeftSidebar 去整对象读，ThreadItem 行级订阅）；顺手修 `LumeSidebar.test.tsx` 失效 import。 | helper 契约测试（Object.is 引用稳定性）+ ThreadItem TDD 测试；memory-v2 147/0、AgentMessages 30/0、agent 117/23/18、app-shell 21/1/0、projection 26/1、typecheck 0。 |
 | **5（核心子集）** | — | **`estimateMessagesTokens` 按消息对象 `WeakMap` 缓存 token 计数（每消息一次 run 内最多 native tokenize 一次）；sidecar context budget 去 `.map` 直读 `sessionMessages` 命中缓存；`estimateMessagesTokens` 入参 `content` 改可选以匹配 `KernelMessage`。** | 缓存命中跳过 native 等价性测试（tokens.test +3）+ compaction 语义测试；sdk 226/0、tokens 6/0、sidecar context 13/0、memory-v2 147/0、双 typecheck 0。 |
+| **6A** | — | **`GET_THREAD_MESSAGES` 响应边界裁剪 `sdkMessages` 仅留 compaction system 消息（`isCompactionSdkMessage` 谓词 [@lume/shared] + `trimSdkMessagesForTransport` [sidecar rpc]）；前端零改动（compaction 投影等价）；内部 `getVisibleAgentMessages` 不变。** | 裁剪等价性 + payload 缩减测试（agent-compaction 2、message-payload-trim 4）；shared 46/0、memory-v2 147/0、双 typecheck 0。 |
 
 **跳过 Phase 3c**：agent-thread-manager transcript append-only——源码核查发现 `appendAgentTranscriptMessage` 仅在 `.test.ts` 调用，非生产热路径，审查报告误判。
 
@@ -65,6 +66,9 @@
 | sdk 全量 | **226 pass / 0 fail** | `bun test packages/sdk/` |
 | sidecar context（Phase 5 域） | **13 pass / 0 fail** | `bun test apps/sidecar/src/services/agent-runtime/context/` |
 | memory-v2（Phase 4 域） | **147 pass / 0 fail**（129 基线 + vector-math 7 + local-embedding 6 + semantic-index 5） | `bun test apps/sidecar/src/services/memory-v2/` |
+| shared 全量（Phase 6A 域） | **46 pass / 0 fail**（含 `agent-compaction` 2：`isCompactionSdkMessage` 谓词单测） | `bun test packages/shared/` |
+| sidecar message-payload-trim（Phase 6A 域） | **4 pass / 0 fail**（裁剪等价 + payload 缩减） | `bun test apps/sidecar/src/rpc/message-payload-trim.test.ts` |
+| sidecar agent + rpc | 288 pass / 14 fail（pre-existing：agent-service engine sendAgentMessage/queue/subagent + agent-handlers.skill-evolution） | `bun test apps/sidecar/src/services/agent/ apps/sidecar/src/rpc/` |
 | projection | 26 pass / 1 fail（pre-existing：compaction notice test 过时） | `bun test apps/web/src/components/agent/runtime-event-message-projection.test.ts` |
 | AgentMessages | 30 pass / 0 fail（单独跑） | `bun test apps/web/src/components/agent/AgentMessages.test.ts` |
 | agent 目录 | 117 pass / 23 fail / 18 errors（pre-existing：desktop-api 导出缺失） | `bun test apps/web/src/components/agent/` |
@@ -97,6 +101,8 @@
 ### Phase 6：RPC payload 裁剪 + 缓存层（P1，无依赖）
 
 打开长会话不传输整段 `sdkMessages`；读配置不反触发写盘；skills/notes/threads 不每次全量读盘。
+
+**子项 A（打开会话 payload 裁剪）已完成**：`GET_THREAD_MESSAGES` 边界裁剪 `sdkMessages`，仅留 compaction system 消息（`isCompactionSdkMessage` 谓词 [@lume/shared] + `trimSdkMessagesForTransport` [sidecar rpc]）。前端零改动（compaction 投影等价）；内部 `getVisibleAgentMessages` 不变。**余 B（config read→write）+ C（skills/notes/threads 缓存）为独立周期**，分别按 brainstorming → spec → plan → executing-plans 流程推进。
 
 - Files：`apps/sidecar/src/rpc/agent-handlers.ts:585-588`、`agent-message-versioning-service.ts:297`、`lume-config-service.ts:761-778`、`agent-workspace-manager.ts:492-522`、`reading-store.ts:780`、`general-settings-service.ts:192`、`apps/desktop/src-tauri/src/main.rs:1187-1195,1101-1105`。
 - 验收：打开 80-turn 会话 <200ms；进设置页无磁盘写。
@@ -171,6 +177,7 @@ bun run --filter @lume/web typecheck
 - **AgentMessages 计数差异**：单独跑 30/0，但在 agent 目录跑因 RuntimeEventContentBlock 间接依赖 desktop-api 计数不同——验证 AgentMessages 用单独跑。
 - **app-shell 1 fail**：`LumeSidebar.test.tsx` 的 `disables recycle bin` 用例断言 `recycleBinButton.props.disabled === true`，但组件/视图模型从未实现 recycle-bin 禁用逻辑（Task 5 修好该文件 import 后此断言才暴露）。护栏：保持 21/1/0。修复需产品决策（回收站是否应在某状态下禁用）。
 - **transformers.js batch 风险**：Phase 4 依赖 `@xenova/transformers@^2.17.2` pipeline 接受 `string[]`（由 `mean_pooling` 类型注释 `[batchSize, embedDim]` 支撑）。纯逻辑由 `sliceFlatVectors` 单测守护；真实 batch 行为由 `embedding-batch-equiv.test.ts`（需模型）兜底，尚未真实验证。
+- **sidecar agent/rpc 14 fail**：`agent-service` engine 测试（sendAgentMessage / queue / subagent）+ `agent-handlers.skill-evolution`，pre-existing，与 Phase 6A 无关（stash 核实）。护栏：288/14。
 
 ## 已知技术债（未来迁移）
 
