@@ -363,7 +363,9 @@ parentPort?.on("message", async (message: WorkerRequest) => {
     }
     parentPort?.postMessage(
       { type: "result_batch", id: message.id, data, dims },
-      [data.buffer]
+      // data.buffer 实为 ArrayBuffer（Float32Array，transformers.js 不用 SharedArrayBuffer），
+      // TS 的 ArrayBufferLike 类型过宽，断言收窄为 Transferable。
+      [data.buffer as ArrayBuffer]
     );
   } catch (error) {
     parentPort?.postMessage({

@@ -5,7 +5,10 @@ type TransformersModule = {
     task: "feature-extraction",
     model: string,
     options: { quantized: boolean; revision: string }
-  ) => Promise<(text: string, options: { pooling: "mean"; normalize: boolean }) => Promise<{ data: ArrayLike<number> }>>;
+  ) => Promise<(
+    texts: string | string[],
+    options: { pooling: "mean"; normalize: boolean }
+  ) => Promise<{ data: ArrayLike<number>; dims: number[] }>>;
   env: {
     cacheDir?: string;
     allowLocalModels?: boolean;
@@ -14,9 +17,9 @@ type TransformersModule = {
 };
 
 type WorkerRequest = {
-  type: "embed";
+  type: "embed_batch";
   id: number;
-  text: string;
+  texts: string[];
 };
 
 const DEFAULT_MAX_INPUT_LENGTH = 512;
@@ -36,24 +39,32 @@ async function initialize(): Promise<void> {
 }
 
 parentPort?.on("message", async (message: WorkerRequest) => {
-  if (message.type !== "embed") return;
+  if (message.type !== "embed_batch") return;
   if (!embedder) {
-    parentPort?.postMessage({ type: "error", id: message.id, error: "local embedding model is not ready" });
+    parentPort?.postMessage({ type: "error_batch", id: message.id, error: "local embedding model is not ready" });
     return;
   }
   try {
-    const result = await embedder(message.text.slice(0, DEFAULT_MAX_INPUT_LENGTH), {
-      pooling: "mean",
-      normalize: true
-    });
-    parentPort?.postMessage({
-      type: "result",
-      id: message.id,
-      embedding: Array.from(result.data)
-    });
+    const truncated = message.texts.map((text) => text.slice(0, DEFAULT_MAX_INPUT_LENGTH));
+    const result = await embedder(truncated, { pooling: "mean", normalize: true });
+    const data = result.data instanceof Float32Array
+      ? result.data
+      : Float32Array.from(result.data);
+    // result.dims = [batchSize, embedDim]，取最后一维作为向量维度。
+    const dims = result.dims[result.dims.length - 1] ?? 0;
+    if (dims <= 0 || data.length === 0) {
+      parentPort?.postMessage({ type: "error_batch", id: message.id, error: "empty embedding result" });
+      return;
+    }
+    parentPort?.postMessage(
+      { type: "result_batch", id: message.id, data, dims },
+      // data 为 Float32Array.from / 原生 Float32Array，其 buffer 为 ArrayBuffer（transformers.js
+      // 不使用 SharedArrayBuffer），可零拷贝 transfer。TS 的 ArrayBufferLike 类型过宽，断言收窄。
+      [data.buffer as ArrayBuffer]
+    );
   } catch (error) {
     parentPort?.postMessage({
-      type: "error",
+      type: "error_batch",
       id: message.id,
       error: error instanceof Error ? error.message : String(error)
     });

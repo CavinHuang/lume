@@ -6,6 +6,7 @@ import type { MemoryV2EmbedTexts } from "./embedding";
 export const LOCAL_ONNX_MODEL_ID = "Xenova/bge-small-zh-v1.5";
 const INIT_TIMEOUT_MS = 15_000;
 const EMBED_TIMEOUT_MS = 8_000;
+const EMBED_BATCH_SIZE = 32;
 
 export type LocalOnnxMemoryEmbeddingStatus = {
   status: "not_cached" | "cached" | "downloading" | "initializing" | "ready" | "failed";
@@ -17,13 +18,36 @@ export type LocalOnnxMemoryEmbeddingStatus = {
 type WorkerMessage =
   | { type: "ready" }
   | { type: "init_error"; error?: string }
-  | { type: "result"; id: number; embedding?: number[] }
-  | { type: "error"; id: number; error?: string };
+  | { type: "result_batch"; id: number; data: Float32Array; dims: number }
+  | { type: "error_batch"; id: number; error?: string };
 
 interface PendingRequest {
-  resolve: (embedding: number[]) => void;
+  resolve: (vectors: number[][]) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+/** 将数组按固定大小切分为多批（最后一批可能不足 size）。size<=0 退化为 1。 */
+export function chunkTexts<T>(items: readonly T[], size: number): T[][] {
+  const safeSize = Math.max(1, Math.floor(size));
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += safeSize) {
+    chunks.push(items.slice(index, index + safeSize));
+  }
+  return chunks;
+}
+
+/** 将扁平的 batch×embedDim Float32Array 切回 number[][]（每条一个向量）。
+ *  embedDim 非整除时丢弃尾部不足一个完整向量的部分。 */
+export function sliceFlatVectors(flat: Float32Array, embedDim: number): number[][] {
+  if (embedDim <= 0) return [];
+  const count = Math.floor(flat.length / embedDim);
+  const vectors: number[][] = [];
+  for (let index = 0; index < count; index += 1) {
+    const start = index * embedDim;
+    vectors.push(Array.from(flat.subarray(start, start + embedDim)));
+  }
+  return vectors;
 }
 
 let runtimeStatus: LocalOnnxMemoryEmbeddingStatus | undefined;
@@ -37,12 +61,11 @@ class LocalOnnxEmbeddingWorker {
   private readonly pending = new Map<number, PendingRequest>();
 
   async embedTexts(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) return [];
     await this.ensureReady();
-    const vectors: number[][] = [];
-    for (const text of texts) {
-      vectors.push(await this.embedOne(text));
-    }
-    return vectors;
+    const batches = chunkTexts(texts, EMBED_BATCH_SIZE);
+    const results = await Promise.all(batches.map((batch) => this.embedBatch(batch)));
+    return results.flat();
   }
 
   private ensureReady(): Promise<void> {
@@ -97,7 +120,7 @@ class LocalOnnxEmbeddingWorker {
     return this.ready;
   }
 
-  private embedOne(text: string): Promise<number[]> {
+  private embedBatch(texts: string[]): Promise<number[][]> {
     const worker = this.worker;
     if (!worker) {
       return Promise.reject(new Error("Local ONNX embedding worker is unavailable."));
@@ -110,25 +133,30 @@ class LocalOnnxEmbeddingWorker {
         reject(new Error("Local ONNX embedding request timed out."));
       }, EMBED_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, timer });
-      worker.postMessage({ type: "embed", id, text });
+      worker.postMessage({ type: "embed_batch", id, texts });
     });
   }
 
   private resolvePending(message: WorkerMessage): void {
-    if (message.type !== "result" && message.type !== "error") return;
+    if (message.type !== "result_batch" && message.type !== "error_batch") return;
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
     clearTimeout(pending.timer);
-    if (message.type === "error") {
+    if (message.type === "error_batch") {
       pending.reject(new Error(message.error ?? "Local ONNX embedding request failed."));
       return;
     }
-    if (!Array.isArray(message.embedding) || message.embedding.length === 0) {
+    if (!(message.data instanceof Float32Array) || message.data.length === 0 || message.dims <= 0) {
       pending.reject(new Error("Local ONNX embedding response shape is invalid."));
       return;
     }
-    pending.resolve(message.embedding.filter((value) => Number.isFinite(value)));
+    const vectors = sliceFlatVectors(message.data, message.dims);
+    if (vectors.length === 0 || vectors.some((vector) => vector.length === 0)) {
+      pending.reject(new Error("Local ONNX embedding response shape is invalid."));
+      return;
+    }
+    pending.resolve(vectors);
   }
 
   private rejectAll(error: Error): void {
