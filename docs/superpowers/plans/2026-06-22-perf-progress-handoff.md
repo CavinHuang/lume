@@ -166,6 +166,10 @@ bun run --filter @lume/web typecheck
 - **app-shell 1 fail**：`LumeSidebar.test.tsx` 的 `disables recycle bin` 用例断言 `recycleBinButton.props.disabled === true`，但组件/视图模型从未实现 recycle-bin 禁用逻辑（Task 5 修好该文件 import 后此断言才暴露）。护栏：保持 21/1/0。修复需产品决策（回收站是否应在某状态下禁用）。
 - **transformers.js batch 风险**：Phase 4 依赖 `@xenova/transformers@^2.17.2` pipeline 接受 `string[]`（由 `mean_pooling` 类型注释 `[batchSize, embedDim]` 支撑）。纯逻辑由 `sliceFlatVectors` 单测守护；真实 batch 行为由 `embedding-batch-equiv.test.ts`（需模型）兜底，尚未真实验证。
 
+## 已知技术债（未来迁移）
+
+- **jotai `atomFamily` 弃用**：`jotai/utils` 的 `atomFamily` 标记 deprecated，jotai v3 将移除。本轮 `createThreadSliceFamily` helper + Phase 2d 的 `agentRuntimeEventsFamily` 共 **2 处** source 调用点（5 个新 family 都经 helper，迁移面很小）。**但官方迁移目标 `jotai-family` 尚未正式发布可用版本**——npm 上 `jotai-family@0.0.0` 是 51 B 占位包（无 README、0 下载、0 依赖），真实代码仅在 [github.com/jotaijs/jotai-family](https://github.com/jotaijs/jotai-family)（API 与 `atomFamily(initializeAtom, areEqual)` 完全一致，MIT，4 个 git tag 但 npm publish 为 0）。结论：**暂不迁移**——git URL 依赖不可固定、供应链风险。等官方发布真实 npm 版本或 jotai v3 落地再迁（届时 helper 单点改 import + Phase 2d 一行）。弃用 warning 为 cosmetic，不影响功能；test 输出会刷屏，勿误判为新问题。
+
 ## 接续提示词（换机器后粘贴到新会话）
 
 ```
