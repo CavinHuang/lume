@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentThreadMeta, AgentWorkspace, AgentRuntimePhase } from '@lume/shared'
+import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 import { buildLumeSidebarViewModel } from './lume-sidebar-view-model'
 
 function createWorkspace(overrides: Partial<AgentWorkspace> = {}): AgentWorkspace {
@@ -34,7 +34,6 @@ describe('buildLumeSidebarViewModel', () => {
       threads: [],
       currentWorkspaceId: 'workspace-1',
       activeTabId: null,
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1'],
     })
 
@@ -54,7 +53,6 @@ describe('buildLumeSidebarViewModel', () => {
       threads: [],
       currentWorkspaceId: 'workspace-1',
       activeTabId: '__automation__',
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1'],
     })
 
@@ -85,7 +83,6 @@ describe('buildLumeSidebarViewModel', () => {
       threads: [createThread()],
       currentWorkspaceId: 'workspace-1',
       activeTabId: '__welcome__',
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1'],
     })
 
@@ -109,7 +106,6 @@ describe('buildLumeSidebarViewModel', () => {
       threads: [],
       currentWorkspaceId: 'workspace-1',
       activeTabId: '__welcome__',
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
     })
 
@@ -149,9 +145,6 @@ describe('buildLumeSidebarViewModel', () => {
       ],
       currentWorkspaceId: 'workspace-1',
       activeTabId: 'thread-yesterday',
-      streamingStates: {
-        'thread-yesterday': 'streaming' satisfies AgentRuntimePhase,
-      },
       expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
     })
 
@@ -161,7 +154,6 @@ describe('buildLumeSidebarViewModel', () => {
       id: 'thread-yesterday',
       title: '昨天的线程',
       active: true,
-      isStreaming: true,
     })
   })
 
@@ -171,7 +163,6 @@ describe('buildLumeSidebarViewModel', () => {
       threads: [createThread()],
       currentWorkspaceId: 'workspace-1',
       activeTabId: 'thread-1',
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1'],
     })
 
@@ -202,7 +193,6 @@ describe('buildLumeSidebarViewModel', () => {
       threads: [],
       currentWorkspaceId: 'workspace-1',
       activeTabId: null,
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1'],
     })
 
@@ -243,7 +233,6 @@ describe('buildLumeSidebarViewModel', () => {
       threads,
       currentWorkspaceId: 'workspace-1',
       activeTabId: null,
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
     })
     const currentSecondWorkspace = buildLumeSidebarViewModel({
@@ -251,7 +240,6 @@ describe('buildLumeSidebarViewModel', () => {
       threads,
       currentWorkspaceId: 'workspace-2',
       activeTabId: null,
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
     })
 
@@ -279,7 +267,6 @@ describe('buildLumeSidebarViewModel', () => {
         title: 'Legacy thread',
         active: false,
         pinned: false,
-        isStreaming: false,
         updatedAt: threads[0].updatedAt,
       },
     ])

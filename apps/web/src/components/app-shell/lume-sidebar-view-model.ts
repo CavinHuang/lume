@@ -1,4 +1,4 @@
-import type { AgentRuntimePhase, AgentThreadMeta, AgentWorkspace } from '@lume/shared'
+import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 
 export type LumeSidebarTopActionId = 'new-chat' | 'search' | 'lume' | 'skills' | 'automations'
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
@@ -10,7 +10,6 @@ export interface BuildLumeSidebarViewModelInput {
   threads: AgentThreadMeta[]
   currentWorkspaceId: string | null
   activeTabId: string | null
-  streamingStates: Record<string, AgentRuntimePhase | undefined>
   expandedWorkspaceIds: string[]
   pinnedWorkspaceIds: string[]
 }
@@ -34,7 +33,6 @@ export interface LumeSidebarThreadItem {
   title: string
   active: boolean
   pinned: boolean
-  isStreaming: boolean
   updatedAt: number
 }
 
@@ -90,7 +88,6 @@ export function buildLumeSidebarViewModel({
   threads,
   currentWorkspaceId,
   activeTabId,
-  streamingStates,
   expandedWorkspaceIds,
   pinnedWorkspaceIds,
 }: BuildLumeSidebarViewModelInput): LumeSidebarViewModel {
@@ -124,7 +121,7 @@ export function buildLumeSidebarViewModel({
       threads.filter((thread) => getThreadWorkspaceId(thread) === workspace.id),
     )
     const allThreads = workspaceThreads.map((thread) =>
-      buildThreadItem(thread, activeTabId, streamingStates),
+      buildThreadItem(thread, activeTabId),
     )
 
     return {
@@ -154,7 +151,7 @@ export function buildLumeSidebarViewModel({
       isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
       pinned: false,
       syntheticRow: null,
-      threads: unassignedThreads.map((thread) => buildThreadItem(thread, activeTabId, streamingStates)),
+      threads: unassignedThreads.map((thread) => buildThreadItem(thread, activeTabId)),
     })
   }
 
@@ -207,14 +204,12 @@ function sortThreadsByUpdatedAt(threads: AgentThreadMeta[]): AgentThreadMeta[] {
 function buildThreadItem(
   thread: AgentThreadMeta,
   activeTabId: string | null,
-  streamingStates: Record<string, AgentRuntimePhase | undefined>,
 ): LumeSidebarThreadItem {
   return {
     id: thread.id,
     title: thread.title,
     active: activeTabId === thread.id,
     pinned: !!thread.pinned,
-    isStreaming: streamingStates[thread.id] === 'streaming',
     updatedAt: thread.updatedAt,
   }
 }

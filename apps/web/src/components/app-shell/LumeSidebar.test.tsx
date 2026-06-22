@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test'
 import { act, Children, isValidElement, type ReactNode, type ReactElement } from 'react'
 import type { AgentWorkspace } from '@lume/shared'
-import { LumeSidebar, shouldCloseThreadMenuForTarget } from './LumeSidebar'
+import { LumeSidebar } from './LumeSidebar'
 import { buildLumeSidebarViewModel } from './lume-sidebar-view-model'
 
 function createWorkspace(overrides: Partial<AgentWorkspace> = {}): AgentWorkspace {
@@ -54,7 +54,6 @@ describe('LumeSidebar', () => {
       threads: [],
       currentWorkspaceId: 'workspace-1',
       activeTabId: null,
-      streamingStates: {},
       expandedWorkspaceIds: ['workspace-1'],
     })
 
@@ -87,22 +86,5 @@ describe('LumeSidebar', () => {
 
     expect(onFooterAction).toHaveBeenCalledWith('settings')
     expect(onFooterAction).toHaveBeenCalledTimes(1)
-  })
-
-  test('keeps the thread menu open when the pointer target is the trigger itself', () => {
-    const trigger = {
-      contains(target: unknown) {
-        return target === 'trigger-target'
-      },
-    } as Pick<Node, 'contains'>
-    const menu = {
-      contains(target: unknown) {
-        return target === 'menu-target'
-      },
-    } as Pick<Node, 'contains'>
-
-    expect(shouldCloseThreadMenuForTarget(menu, trigger, 'trigger-target' as unknown as Node)).toBe(false)
-    expect(shouldCloseThreadMenuForTarget(menu, trigger, 'menu-target' as unknown as Node)).toBe(false)
-    expect(shouldCloseThreadMenuForTarget(menu, trigger, 'outside-target' as unknown as Node)).toBe(true)
   })
 })

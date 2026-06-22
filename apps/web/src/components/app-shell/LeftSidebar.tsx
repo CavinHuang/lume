@@ -1,8 +1,7 @@
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  agentStreamingStatesAtom,
   agentThreadsAtom,
   agentWorkspacesAtom,
   activeTabIdAtom,
@@ -36,7 +35,6 @@ import {
 
 export function LeftSidebar() {
   const [threads, setThreads] = useAtom(agentThreadsAtom)
-  const streamingStates = useAtomValue(agentStreamingStatesAtom)
   const [collapsed, setCollapsed] = useAtom(sidebarCollapsedAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
   const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom)
@@ -80,7 +78,6 @@ export function LeftSidebar() {
     threads,
     currentWorkspaceId,
     activeTabId,
-    streamingStates,
     expandedWorkspaceIds,
     pinnedWorkspaceIds: pinnedIds,
   })
