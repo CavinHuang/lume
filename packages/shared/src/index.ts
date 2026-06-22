@@ -4,6 +4,7 @@
 
 export * from "./types";
 export * from "./agent";
+export * from "./agent-compaction";
 export * from "./tool-names";
 export * from "./afterglow";
 export * from "./data/model-meta";
