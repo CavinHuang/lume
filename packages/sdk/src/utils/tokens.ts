@@ -8,6 +8,13 @@
 import { countStringTokens } from '@lume/natives'
 
 /**
+ * 按消息对象引用缓存 token 计数。依赖消息不可变（追加 / 整体替换，非原地改内容）：
+ * 追加的消息计数一次后命中；compaction 替换数组后旧对象不可达，条目随 WeakMap GC；
+ * 编辑/重试产生新对象 → 自动重算。跨 session 安全（不同对象）。
+ */
+let messageTokenCache = new WeakMap<object, number>()
+
+/**
  * Rough token estimation.
  *
  * ASCII-heavy text is roughly 4 chars/token, while CJK and emoji-like
@@ -45,9 +52,21 @@ export function estimateMessagesTokens(
 ): number {
   let total = 0
   for (const msg of messages) {
-    total += estimateContentTokens(msg.content)
+    const cached = messageTokenCache.get(msg)
+    if (cached !== undefined) {
+      total += cached
+      continue
+    }
+    const count = estimateContentTokens(msg.content)
+    messageTokenCache.set(msg, count)
+    total += count
   }
   return total
+}
+
+/** 测试专用：清空消息 token 缓存。生产代码勿调用。 */
+export function __resetMessageTokenCacheForTests(): void {
+  messageTokenCache = new WeakMap()
 }
 
 const IMAGE_OR_DOCUMENT_TOKEN_ESTIMATE = 2_000

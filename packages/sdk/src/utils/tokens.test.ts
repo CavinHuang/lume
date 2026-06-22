@@ -7,12 +7,13 @@ mock.module("@lume/natives", () => ({
   countStringTokens: countStringTokensMock,
 }))
 
-const { estimateMessagesTokens, estimateTokens } = await import("./tokens.js")
+const { estimateMessagesTokens, estimateTokens, __resetMessageTokenCacheForTests } = await import("./tokens.js")
 
 describe("token estimation", () => {
   beforeEach(() => {
     nativeTokenCount = 0
     countStringTokensMock.mockClear()
+    __resetMessageTokenCacheForTests()
   })
 
   test("uses native token counting when available", () => {
@@ -37,5 +38,56 @@ describe("token estimation", () => {
     ])
 
     expect(tokens).toBe(2_002)
+  })
+})
+
+describe("estimateMessagesTokens per-message cache", () => {
+  test("cached recount equals full recount and is stable on append", () => {
+    nativeTokenCount = 5
+    const messages = [
+      { role: "user", content: "hello world" },
+      { role: "assistant", content: [{ type: "text", text: "response one" }] },
+    ]
+    const first = estimateMessagesTokens(messages)
+    const second = estimateMessagesTokens(messages)
+    expect(second).toBe(first)
+
+    const appended = [...messages, { role: "user", content: "second turn" }]
+    const third = estimateMessagesTokens(appended)
+    expect(third).toBe(first + estimateMessagesTokens([appended[2]!]))
+  })
+
+  test("cache hit skips native tokenize on the second pass", () => {
+    nativeTokenCount = 7
+    const messages = [
+      { role: "user", content: "alpha" },
+      { role: "assistant", content: "beta" },
+      { role: "user", content: "gamma" },
+    ]
+
+    estimateMessagesTokens(messages) // 首次：每条消息触发 native
+    countStringTokensMock.mockClear()
+    estimateMessagesTokens(messages) // 再次：应全部命中缓存
+
+    expect(countStringTokensMock).toHaveBeenCalledTimes(0)
+  })
+
+  test("replacing the array (compaction) recounts new objects, no stale hits", () => {
+    nativeTokenCount = 3
+    const before = [
+      { role: "user", content: "old one" },
+      { role: "assistant", content: "old two" },
+    ]
+    estimateMessagesTokens(before) // 缓存 before 的两条
+
+    const after = [
+      { role: "user", content: "compacted summary" },
+      { role: "assistant", content: "resumed" },
+    ]
+    countStringTokensMock.mockClear()
+    estimateMessagesTokens(after) // 新对象 → 重新计数
+
+    expect(countStringTokensMock).toHaveBeenCalled()
+    expect(countStringTokensMock.mock.calls.length).toBeGreaterThan(0)
   })
 })
