@@ -1,6 +1,8 @@
 import { memo, useState, useRef } from 'react'
+import { useAtomValue } from 'jotai'
 import { Pin, PinOff, Pencil, Trash2, Archive } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { agentStreamingStatesFamily } from '@/atoms'
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { ThreadItemActions } from './ThreadItemActions'
@@ -21,6 +23,8 @@ export const ThreadItem = memo(function ThreadItem({
   onArchive,
   onRename,
 }: ThreadItemProps) {
+  const streamingState = useAtomValue(agentStreamingStatesFamily(thread.id))
+  const isStreaming = streamingState === 'streaming'
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -102,11 +106,11 @@ export const ThreadItem = memo(function ThreadItem({
           />
         }
       >
-        {(thread.isStreaming || thread.active) && (
+        {(isStreaming || thread.active) && (
           <span
             className={cn(
               'absolute inset-y-0 left-0 w-[3px] rounded-l-md pointer-events-none',
-              thread.isStreaming ? 'bg-blue-500 animate-pulse' : 'bg-[var(--brand)]',
+              isStreaming ? 'bg-blue-500 animate-pulse' : 'bg-[var(--brand)]',
             )}
             aria-hidden="true"
           />
