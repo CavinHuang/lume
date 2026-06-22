@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { getMemoryV2ScopePaths } from "./paths";
 import type { MemoryV2EmbedTexts } from "./embedding";
 import type { MemoryV2RecallItem } from "./types";
+import { dotProduct, toFloat32Array } from "./vector-math";
 
 const INDEX_VERSION = 1;
 
@@ -42,11 +43,12 @@ export async function searchSemanticRecall(input: {
     embedTexts: input.embedTexts
   });
   const [queryEmbedding] = await input.embedTexts([input.query]);
-  if (!queryEmbedding) return [];
+  if (!queryEmbedding || queryEmbedding.length === 0) return [];
+  const queryVec = toFloat32Array(queryEmbedding);
   return index.docs
     .map((doc) => ({
       item: doc.item,
-      score: cosineSimilarity(queryEmbedding, doc.embedding)
+      score: dotProduct(queryVec, toFloat32Array(doc.embedding))
     }))
     .filter(({ score }) => score > 0.25)
     .sort((a, b) => b.score - a.score)
@@ -151,21 +153,4 @@ function fileMtimeMs(path: string): number {
   } catch {
     return 0;
   }
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  const length = Math.min(a.length, b.length);
-  if (length === 0) return 0;
-  let dot = 0;
-  let aNorm = 0;
-  let bNorm = 0;
-  for (let index = 0; index < length; index += 1) {
-    const av = a[index] ?? 0;
-    const bv = b[index] ?? 0;
-    dot += av * bv;
-    aNorm += av * av;
-    bNorm += bv * bv;
-  }
-  if (aNorm === 0 || bNorm === 0) return 0;
-  return dot / (Math.sqrt(aNorm) * Math.sqrt(bNorm));
 }
