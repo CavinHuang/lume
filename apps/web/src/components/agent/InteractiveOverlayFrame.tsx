@@ -2,6 +2,22 @@ import { CornerDownLeft, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ReactNode } from 'react'
 
+/**
+ * 交互式覆盖层是否应在按下 Enter 时提交。
+ * 焦点位于按钮 / 输入框 / 文本域时返回 false——交由原生激活或输入处理，
+ * 避免与按钮原生 Enter→click 重复触发，也不打断文本域内的换行；
+ * 其余情况（焦点在卡片正文或未聚焦）返回 true，由覆盖层 keydown 监听统一提交。
+ */
+export function shouldSubmitInteractiveOverlayOnEnter(
+  event: { key: string },
+  target: EventTarget | null,
+): boolean {
+  if (event.key !== 'Enter') return false
+  const element = target as { closest?: (selector: string) => Element | null } | null
+  if (element?.closest?.('button, textarea, input')) return false
+  return true
+}
+
 interface InteractiveOverlayFrameProps {
   kind: string
   title: string

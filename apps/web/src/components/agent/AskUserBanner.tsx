@@ -7,7 +7,7 @@ import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest } from '@lume/shared'
 import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
-import { InteractiveOverlayFrame } from './InteractiveOverlayFrame'
+import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
 
 interface AskUserBannerProps {
   threadId: string
@@ -26,15 +26,6 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
     setHidden(false)
     setBusy(false)
   }, [threadId, request.toolUseId])
-
-  useEffect(() => {
-    if (hidden || typeof window === 'undefined') return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setHidden(true)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hidden])
 
   const select = (question: string, label: string) => {
     setAnswers((prev) => ({ ...prev, [question]: label }))
@@ -58,6 +49,22 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   }
 
   const allAnswered = request.questions.every((q) => answers[q.question])
+  const submitDisabled = !allAnswered
+
+  useEffect(() => {
+    if (hidden || typeof window === 'undefined') return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setHidden(true)
+        return
+      }
+      if (shouldSubmitInteractiveOverlayOnEnter(event, event.target) && !busy && !submitDisabled) {
+        void submit()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [hidden, busy, submitDisabled, submit])
 
   if (hidden) return null
 
@@ -66,7 +73,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
       kind="ask-user"
       title="需要你的输入"
       busy={busy}
-      submitDisabled={!allAnswered}
+      submitDisabled={submitDisabled}
       onIgnore={() => setHidden(true)}
       onSubmit={() => void submit()}
     >

@@ -5,7 +5,7 @@ import { agentPendingInteractiveAtom, agentPlanModePhaseAtom } from '@/atoms'
 import { submitTaskApproval } from '@/lib/desktop-api'
 import { removePendingTaskApproval } from '@/hooks/pending-interactive-state'
 import { cn } from '@/lib/utils'
-import { InteractiveOverlayFrame } from './InteractiveOverlayFrame'
+import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
 import type { AgentTaskApprovalRequest, AgentTaskApprovalResponseInput, AgentTaskApprovalResponseResult } from '@lume/shared'
 
 type PlanApprovalChoice = 'approve' | 'revise'
@@ -71,16 +71,6 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
     onVisibilityChange?.(!hidden)
   }, [hidden, onVisibilityChange])
 
-  useEffect(() => {
-    if (hidden || typeof window === 'undefined') return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      setHidden(true)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hidden])
-
   const submit = async () => {
     const payload = buildPlanApprovalSubmission({
       threadId,
@@ -113,6 +103,21 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
       setBusy(false)
     }
   }
+
+  useEffect(() => {
+    if (hidden || typeof window === 'undefined') return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setHidden(true)
+        return
+      }
+      if (shouldSubmitInteractiveOverlayOnEnter(event, event.target) && !busy) {
+        void submit()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [hidden, busy, submit])
 
   if (hidden) return null
 

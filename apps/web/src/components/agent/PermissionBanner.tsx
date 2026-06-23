@@ -7,7 +7,7 @@ import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, type AgentToolPermissionDecision, type AgentToolPermissionRequest, type AgentToolPermissionResponseInput } from '@lume/shared'
 import { removePendingToolPermissionEverywhere } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
-import { InteractiveOverlayFrame } from './InteractiveOverlayFrame'
+import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
 
 interface PermissionBannerProps {
   threadId: string
@@ -48,15 +48,6 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   }, [threadId, request.requestId])
 
   useEffect(() => {
-    if (hidden || typeof window === 'undefined') return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setHidden(true)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [hidden])
-
-  useEffect(() => {
     if (!canAllowAlways && choice === 'allow_always') {
       setChoice('allow_once')
     }
@@ -83,6 +74,21 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
       setBusy(false)
     }
   }
+
+  useEffect(() => {
+    if (hidden || typeof window === 'undefined') return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setHidden(true)
+        return
+      }
+      if (shouldSubmitInteractiveOverlayOnEnter(event, event.target) && !busy) {
+        void respond()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [hidden, busy, respond])
 
   const subagentDisplayLabel = getSubagentDisplayLabel(request)
 
