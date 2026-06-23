@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -53,6 +53,20 @@ describe("lume-config-service", () => {
     expect(file.permissions?.privateWriteRoots).toEqual([]);
     expect(file.models?.embedding?.defaultModelRef).toBe(MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF);
     expect(file.workspaces).toEqual({});
+  });
+
+  test("读取已规范化的 lume.yaml 时不应重写文件（避免触发文件监听回环）", () => {
+    const path = getLumeConfigYamlPath();
+    // 多次读取，确保落盘内容已到达规范化不动点
+    getEffectiveLumeConfig("default");
+    getEffectiveLumeConfig("default");
+    const before = statSync(path).mtimeMs;
+
+    getEffectiveLumeConfig("default");
+
+    // 内容未变的重复读取不应再次写盘，否则会持续触发 workspace-watcher 的
+    // lume-config:changed 事件，造成 get-effective ↔ 文件监听的无限回环
+    expect(statSync(path).mtimeMs).toBe(before);
   });
 
   test("应默认启用内部 workflow hooks", () => {

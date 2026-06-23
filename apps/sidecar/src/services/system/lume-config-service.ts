@@ -767,9 +767,14 @@ function readOrCreateLumeConfig(): LumeConfigFile {
   }
 
   try {
-    const parsed = YAML.parse(readConfigFileContent(path)) as unknown;
-    const normalized = normalizeLumeConfigFile(parsed);
-    writeYamlAtomic(path, YAML.stringify(normalized));
+    const raw = readConfigFileContent(path);
+    const normalized = normalizeLumeConfigFile(YAML.parse(raw) as unknown);
+    const normalizedYaml = YAML.stringify(normalized);
+    // 仅当规范化结果与磁盘内容不一致时才落盘，避免重复读取触发 workspace-watcher
+    // 的 lume-config:changed 事件，进而造成 get-effective ↔ 文件监听的无限回环
+    if (normalizedYaml !== raw) {
+      writeYamlAtomic(path, normalizedYaml);
+    }
     return normalized;
   } catch (error) {
     console.warn("[Lume Config] 解析 lume.yaml 失败，回退默认配置:", error);
