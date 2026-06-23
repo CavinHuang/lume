@@ -10,6 +10,7 @@ export interface Tab {
   type: TabType
   title: string
   threadId?: string
+  readOnly?: boolean
   settingsTab?: SettingsTab
   workspaceId?: string
   filePath?: string
