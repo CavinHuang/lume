@@ -560,3 +560,103 @@ describe('AgentView plan approval tab behavior', () => {
     }
   })
 })
+
+describe('AgentView readOnly replay mode', () => {
+  test('hides the input composer when readOnly', async () => {
+    const { container, cleanup } = installFakeDom()
+    const store = createStore()
+    store.set(tabsAtom, [
+      { id: 'thread-1', type: 'agent', title: 'Replay', threadId: 'thread-1' },
+    ])
+    store.set(activeTabIdAtom, 'thread-1')
+    store.set(agentThreadsAtom, [
+      {
+        id: 'thread-1',
+        title: 'Replay',
+        workspaceId: 'workspace-1',
+        pinned: false,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ])
+    store.set(agentWorkspacesAtom, [
+      { id: 'workspace-1', name: 'Workspace', slug: 'workspace', createdAt: 1, updatedAt: 2 },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
+    store.set(rightPanelWorkspacesAtom, {})
+    store.set(agentPendingInteractiveAtom, {})
+
+    let root: Root | null = createRoot(container as never)
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <AgentView threadId="thread-1" readOnly />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      // AgentInput 被 mock 成 <div>agent-input</div>；只读时不应渲染
+      expect(container.textContent).not.toContain('agent-input')
+      // 消息流仍应渲染
+      expect(container.textContent).toContain('agent-messages')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('renders the input composer by default (regression guard)', async () => {
+    const { container, cleanup } = installFakeDom()
+    const store = createStore()
+    store.set(tabsAtom, [
+      { id: 'thread-1', type: 'agent', title: 'Chat', threadId: 'thread-1' },
+    ])
+    store.set(activeTabIdAtom, 'thread-1')
+    store.set(agentThreadsAtom, [
+      {
+        id: 'thread-1',
+        title: 'Chat',
+        workspaceId: 'workspace-1',
+        pinned: false,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ])
+    store.set(agentWorkspacesAtom, [
+      { id: 'workspace-1', name: 'Workspace', slug: 'workspace', createdAt: 1, updatedAt: 2 },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
+    store.set(rightPanelWorkspacesAtom, {})
+    store.set(agentPendingInteractiveAtom, {})
+
+    let root: Root | null = createRoot(container as never)
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <AgentView threadId="thread-1" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      // 默认（非只读）仍渲染输入框
+      expect(container.textContent).toContain('agent-input')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+})

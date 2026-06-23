@@ -6,6 +6,7 @@ import type { AgentRuntimePhase } from '@lume/shared'
 
 interface AgentHeaderProps {
   threadId: string
+  readOnly?: boolean
 }
 
 const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text: string }> = {
@@ -18,7 +19,7 @@ const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text:
   errored: { label: '出错', dot: 'bg-destructive', text: 'text-destructive' },
 }
 
-export function AgentHeader({ threadId }: AgentHeaderProps) {
+export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const thread = threads.find((t) => t.id === threadId)
   const runtimeStatus = useAtomValue(agentRuntimeStatusFamily(threadId))
@@ -38,7 +39,7 @@ export function AgentHeader({ threadId }: AgentHeaderProps) {
         <span className="text-[14px] font-medium text-foreground truncate">
           {thread?.title ?? '新会话'}
         </span>
-        <WorkspacePicker />
+        {!readOnly && <WorkspacePicker />}
         {phaseStyle && (
           <span
             className={cn(
