@@ -5,6 +5,7 @@ import {
 } from "../../agent/agent-thread-manager";
 import {
   deriveFallbackAgentTitleFromSourceText,
+  resolveAgentTitleConversationText,
   resolveAgentTitleSourceText,
   sanitizeGeneratedTitle,
   shouldAutoGenerateThreadTitle
@@ -40,7 +41,11 @@ export function createAutoTitleJob(input: {
       const threadMessages = getAgentThreadMessages(input.threadId);
       const sourceText = resolveAgentTitleSourceText(threadMessages, input.fallbackUserMessage);
       const generatedTitle = input.generateTitle
-        ? sanitizeGeneratedTitle(await input.generateTitle(sourceText) ?? "")
+        ? sanitizeGeneratedTitle(
+          await input.generateTitle(
+            resolveAgentTitleConversationText(threadMessages, input.fallbackUserMessage)
+          ) ?? ""
+        )
         : "";
       const fallbackTitle = sanitizeGeneratedTitle(deriveFallbackAgentTitleFromSourceText(sourceText) ?? "");
       const title = generatedTitle || fallbackTitle;

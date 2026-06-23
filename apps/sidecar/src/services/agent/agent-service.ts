@@ -885,14 +885,12 @@ export async function sendAgentMessage(
     const job = createAutoTitleJob({
       threadId,
       fallbackUserMessage: userMessage,
-      ...(titleModelRef
-        ? {
-          generateTitle: (sourceText) => generateAgentTitle({
-            sourceText,
-            modelRef: titleModelRef
-          })
-        }
-        : {}),
+      // 未配置专用 title 模型时回退到当前会话的渠道/模型，确保 LLM 标题生成始终可触发
+      generateTitle: (sourceText) => generateAgentTitle(
+        titleModelRef
+          ? { sourceText, modelRef: titleModelRef }
+          : { sourceText, channelId: resolvedChannelId, modelId: boundModel?.modelId ?? resolvedModelId }
+      ),
       onTitleUpdated: (title) => {
         emit.onTitleUpdated(title);
       }

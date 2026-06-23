@@ -244,13 +244,6 @@ async function waitForQueuedRunRelease(userMessage: string): Promise<void> {
   throw new Error(`queued run resolver not found: ${userMessage}`);
 }
 
-mock.module("../../providers", () => ({
-  fetchTitle: async () => null,
-  getAdapter: () => ({
-    buildTitleRequest: () => ({})
-  })
-}));
-
 mock.module("../agent-runtime/runtime-core/attempt", () => ({
   runAgentRuntime: async (
     params: unknown,
@@ -316,6 +309,16 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
   stopAgentRuntime: () => undefined
 }));
 
+// 标题 LLM 调用经由 providers.fetchTitle；用 spy 观测是否被触发
+const fetchTitleSpy = mock(async () => null);
+
+mock.module("../../providers", () => ({
+  fetchTitle: fetchTitleSpy,
+  getAdapter: () => ({
+    buildTitleRequest: () => ({})
+  })
+}));
+
 describe("agent-service", () => {
   let previousConfigDir: string | undefined;
   let tempConfigDir = "";
@@ -337,6 +340,7 @@ describe("agent-service", () => {
     resetServiceRuntimeForTest();
     heldRunResolvers.clear();
     runAgentRuntimeCalls.length = 0;
+    fetchTitleSpy.mockClear();
     if (previousConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -429,6 +433,45 @@ describe("agent-service", () => {
       }
     });
     expect(sdkMessages.map((message) => message.type)).toEqual(["user", "assistant", "result"]);
+  });
+
+  test("未配置 title 模型时首轮完成后也应回退到会话渠道触发 LLM 标题生成", async () => {
+    const { createChannel } = await import("../channel/channel-manager");
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const { drainServiceRuntimeForTest } = await import("../agent-runtime/service-runtime/service-runtime");
+
+    // 真实渠道：让 generateAgentTitle 能解析到渠道并走到 providers.fetchTitle
+    const channel = createChannel({
+      name: "title-test",
+      provider: "openai",
+      baseUrl: "https://example.com/v1",
+      apiKey: "sk-title-test",
+      enabled: true,
+      models: [{ id: "model-test", name: "Model Test", enabled: true, capabilities: { chat: true } }]
+    });
+    fetchTitleSpy.mockClear();
+    // 默认标题，确保走 shouldTryAutoTitle 分支
+    const thread = createAgentThread("新 Agent 线程", channel.id);
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "帮我配置一个新的模型供应商",
+      channelId: channel.id,
+      modelId: "model-test"
+    }, {
+      onRuntimeEvent: () => undefined,
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+    await drainServiceRuntimeForTest();
+
+    // 默认配置未设置 models.title.defaultModelRef，仍应回退到会话渠道调用 LLM（fetchTitle）
+    expect(fetchTitleSpy).toHaveBeenCalled();
   });
 
   test("sendAgentMessage 应把本轮附件引用持久化到用户消息 metadata", async () => {

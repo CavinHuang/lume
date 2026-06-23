@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@lume/shared";
 
 const MAX_TITLE_LENGTH = 20;
+const TITLE_ASSISTANT_PREVIEW_LIMIT = 300;
 
 const DEFAULT_AGENT_TITLE_CANDIDATES = [
   "新 Agent 线程",
@@ -10,7 +11,7 @@ const DEFAULT_AGENT_TITLE_CANDIDATES = [
 ];
 
 export const AGENT_TITLE_PROMPT_FROM_SUMMARY =
-  "根据用户的消息，生成一个简短的对话标题（10字以内）。只输出标题，不要有任何其他内容、标点符号或引号。\n\n用户消息：";
+  "根据以下首轮对话，生成一个简短的对话标题（10字以内）。只输出标题，不要有任何其他内容、标点符号或引号。\n\n对话内容：\n";
 
 function normalizeTitleForCompare(title: string): string {
   return title.trim().toLowerCase();
@@ -80,3 +81,21 @@ export function resolveTitleSourceText(
 
 export const deriveFallbackAgentTitleFromSourceText = deriveFallbackTitleFromSourceText;
 export const resolveAgentTitleSourceText = resolveTitleSourceText;
+
+export function resolveTitleConversationText(
+  messages: AgentMessage[],
+  fallbackUserMessage: string
+): string {
+  const firstUser = messages.find((message) => message?.role === "user" && message.content.trim());
+  const userText = firstUser?.content.trim() || fallbackUserMessage.trim();
+  const firstAssistant = messages.find(
+    (message) => message?.role === "assistant" && message.content.trim()
+  );
+  if (!firstAssistant) {
+    return userText;
+  }
+  const assistantText = firstAssistant.content.trim().slice(0, TITLE_ASSISTANT_PREVIEW_LIMIT);
+  return `用户：${userText}\n助手：${assistantText}`;
+}
+
+export const resolveAgentTitleConversationText = resolveTitleConversationText;
