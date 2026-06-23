@@ -51,6 +51,7 @@ import {
 } from '@/lib/desktop-api/automation'
 import { listChannels } from '@/lib/desktop-api/channel'
 import type { AutomationJob, AutomationRun, AutomationSchedule, Channel } from '@lume/shared'
+import { openAutomationRunReplay } from './automation-run-replay'
 
 interface WorkspaceOption {
   id: string
@@ -770,6 +771,17 @@ function AutomationJobDetail({
     thinkingLevel: job.thinkingLevel ?? 'off',
   }))
 
+  const tabs = useAtomValue(tabsAtom)
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+
+  const handleOpenRunReplay = useCallback((run: AutomationRun) => {
+    const result = openAutomationRunReplay(run, tabs)
+    if (!result) return
+    setTabs(result.tabs)
+    setActiveTabId(result.activeTabId)
+  }, [tabs, setTabs, setActiveTabId])
+
   useEffect(() => {
     if (editing) {
       setDraft({
@@ -1017,18 +1029,28 @@ function AutomationJobDetail({
           <div>
             <h3 className="mb-3 text-[14px] font-semibold text-[var(--text-3)]">运行历史记录</h3>
             {runs.length > 0 ? (
-              <div className="flex flex-col gap-3">
-                {runs.slice(0, 10).map((run) => (
-                  <div key={run.id} className="flex items-center gap-2.5">
-                    <span className={`size-2 shrink-0 rounded-full ${
-                      run.status === 'success' ? 'bg-emerald-500'
-                        : run.status === 'failed' ? 'bg-red-500'
-                          : 'bg-amber-500'
-                    }`} />
-                    <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">{run.jobName}</span>
-                    <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatDuration(run.startedAt, run.finishedAt)}</span>
-                  </div>
-                ))}
+              <div className="flex flex-col gap-1">
+                {runs.slice(0, 10).map((run) => {
+                  const clickable = Boolean(run.threadId)
+                  return (
+                    <div
+                      key={run.id}
+                      onClick={clickable ? () => handleOpenRunReplay(run) : undefined}
+                      title={clickable ? '查看会话回放' : '无可查看的会话'}
+                      className={`flex items-center gap-2.5 rounded-[6px] px-1.5 py-1 ${
+                        clickable ? 'cursor-pointer transition-colors hover:bg-[var(--surface-2)]' : ''
+                      }`}
+                    >
+                      <span className={`size-2 shrink-0 rounded-full ${
+                        run.status === 'success' ? 'bg-emerald-500'
+                          : run.status === 'failed' ? 'bg-red-500'
+                            : 'bg-amber-500'
+                      }`} />
+                      <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">{run.jobName}</span>
+                      <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatDuration(run.startedAt, run.finishedAt)}</span>
+                    </div>
+                  )
+                })}
               </div>
             ) : (
               <p className="text-[14px] text-[var(--text-3)]">暂无运行记录</p>

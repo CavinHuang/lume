@@ -26,7 +26,7 @@ export function TabContent() {
   }
 
   if (activeTab.type === 'agent' && activeTab.threadId) {
-    return <AgentView threadId={activeTab.threadId} />
+    return <AgentView threadId={activeTab.threadId} readOnly={activeTab.readOnly} />
   }
 
   if (activeTab.type === 'settings') {
