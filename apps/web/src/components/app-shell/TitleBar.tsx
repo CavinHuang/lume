@@ -10,6 +10,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useAtomValue } from 'jotai'
 import { activeTabIdAtom, tabsAtom } from '@/atoms'
 import { RightPanelWindowControls } from '@/components/right-panel'
+import { isMacosTauri } from '@/lib/platform'
 
 function startTitleBarDrag(event: MouseEvent<HTMLDivElement>) {
   if (event.buttons !== 1) return
@@ -30,10 +31,12 @@ export function TitleBar() {
     <div
       className="fixed top-0 left-0 right-0 h-[50px] z-[70] pointer-events-none select-none"
     >
-      <div
-        onMouseDown={startTitleBarDrag}
-        className="absolute left-0 right-0 top-0 h-5 pointer-events-auto"
-      />
+      {isMacosTauri && (
+        <div
+          onMouseDown={startTitleBarDrag}
+          className="absolute left-0 right-0 top-0 h-5 pointer-events-auto"
+        />
+      )}
       {activeThreadId && (
         <RightPanelWindowControls
           className="pointer-events-auto absolute right-4 top-4 z-10"

@@ -77,6 +77,8 @@
 .agent-message-markdown {
   color: #303445;
   font-weight: 450;
+  /* anywhere（非 break-word）：同时把 min-content 收敛到 ~0，避免长英文串把气泡 min-width 撑大；继承至 p/li/标题 */
+  overflow-wrap: anywhere;
 }
 
 .agent-message-markdown p {

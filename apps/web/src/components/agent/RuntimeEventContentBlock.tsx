@@ -348,7 +348,7 @@ function UserMessageBlock({
 
   return (
     <div className={cn('group/user-message ml-auto flex w-full max-w-[920px] justify-end gap-2', className)}>
-      <div className="flex max-w-[560px] flex-col items-end gap-1.5">
+      <div className="flex max-w-[560px] min-w-0 flex-col items-end gap-1.5">
         {message.attachments && message.attachments.length > 0 && (
           <AgentAttachmentGrid
             attachments={message.attachments}
@@ -514,7 +514,7 @@ export function UserAgentRoleInvocationContent({ text }: { text: string }) {
   const invocation = parseAgentRoleInstructionMessage(text)
 
   if (!invocation) {
-    return <div className="whitespace-pre-wrap">{text}</div>
+    return <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</div>
   }
 
   return (
@@ -533,7 +533,7 @@ export function UserAgentRoleInvocationContent({ text }: { text: string }) {
         </span>
       </div>
       {invocation.task && (
-        <div className="whitespace-pre-wrap text-[15px] leading-[22px] text-[#34384c]">{invocation.task}</div>
+        <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[15px] leading-[22px] text-[#34384c]">{invocation.task}</div>
       )}
     </div>
   )
