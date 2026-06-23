@@ -27,7 +27,14 @@ const PROVIDER_ALIAS: Record<string, KnownProvider | null> = {
   custom: "openai",
   kimi: "kimi-coding",
   "kimi-code": "kimi-coding",
-  "kimi-coding": "kimi-coding"
+  "kimi-coding": "kimi-coding",
+  siliconflow: "openai",
+  "aliyun-coding-plan": "openai",
+  "volcengine-coding-plan": "openai",
+  "xiaomi-token-plan": "openai",
+  stepfun: "openai",
+  "stepfun-coding-plan": "openai",
+  "minimax-token-plan": "anthropic"
 };
 
 function normalizeProviderToken(raw?: string): string {

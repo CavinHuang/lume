@@ -51,4 +51,37 @@ describe("provider-resolution", () => {
     expect(resolved.modelId).toBe("glm-5");
     expect(resolved.candidates[0]).toBe("zai");
   });
+
+  test("应映射全部 coding-plan/国内供应商到 runtime provider（避免发送完整 ref）", () => {
+    // 这些 provider 已在 coerceKnownProvider/PROVIDER_API_FAMILIES 中登记，
+    // PROVIDER_ALIAS 必须同步覆盖，否则 parseProviderModelRef 无法拆分，
+    // 会把 "provider/model" 整串当作模型名发给上游 → 404 model does not exist
+    expect(mapLumeProviderToRuntimeProvider("stepfun")).toBe("openai");
+    expect(mapLumeProviderToRuntimeProvider("stepfun-coding-plan")).toBe("openai");
+    expect(mapLumeProviderToRuntimeProvider("siliconflow")).toBe("openai");
+    expect(mapLumeProviderToRuntimeProvider("aliyun-coding-plan")).toBe("openai");
+    expect(mapLumeProviderToRuntimeProvider("volcengine-coding-plan")).toBe("openai");
+    expect(mapLumeProviderToRuntimeProvider("xiaomi-token-plan")).toBe("openai");
+    expect(mapLumeProviderToRuntimeProvider("minimax-token-plan")).toBe("anthropic");
+  });
+
+  test("stepfun-coding-plan 渠道应拆分出模型名而非发送完整 ref", () => {
+    const resolved = resolveRuntimeProviderCandidates({
+      channelProvider: "stepfun-coding-plan",
+      modelId: "stepfun-coding-plan/step-3.7-flash",
+      baseUrl: "https://api.stepfun.com/step_plan/v1"
+    });
+    expect(resolved.modelId).toBe("step-3.7-flash");
+    expect(resolved.candidates).toContain("openai");
+  });
+
+  test("minimax-token-plan（anthropic 协议）应拆分并落到 anthropic provider", () => {
+    const resolved = resolveRuntimeProviderCandidates({
+      channelProvider: "minimax-token-plan",
+      modelId: "minimax-token-plan/abab-coding",
+      baseUrl: "https://api.minimaxi.com/anthropic/v1"
+    });
+    expect(resolved.modelId).toBe("abab-coding");
+    expect(resolved.candidates).toContain("anthropic");
+  });
 });
