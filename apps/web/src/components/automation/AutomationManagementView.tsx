@@ -37,7 +37,7 @@ import {
   ShadcnSelectValue,
 } from '@/components/ui/shadcn-select'
 import { agentWorkspacesAtom, tabsAtom, activeTabIdAtom, welcomePromptSeedAtom } from '@/atoms'
-import { automationJobsAtom, automationRunsAtom } from '@/atoms/automation-atoms'
+import { automationJobsAtom, automationRunsAtom, pendingAutomationJobIdAtom } from '@/atoms/automation-atoms'
 import { THINKING_LEVEL_OPTIONS } from '@/components/settings/agent-settings-state'
 import { useAutomationListeners } from '@/hooks/useAutomationListeners'
 import { upsertWelcomeTab } from '@/components/app-shell/LeftSidebar'
@@ -223,6 +223,14 @@ export function AutomationManagementView() {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [selectedRuns, setSelectedRuns] = useState<AutomationRun[] | null>(null)
   const [listTab, setListTab] = useState<AutomationListTab>('manual')
+  const pendingJobId = useAtomValue(pendingAutomationJobIdAtom)
+  const clearPendingJobId = useSetAtom(pendingAutomationJobIdAtom)
+
+  useEffect(() => {
+    if (!pendingJobId) return
+    setSelectedJobId(pendingJobId)
+    clearPendingJobId(null)
+  }, [pendingJobId, clearPendingJobId])
 
   const selectedJob = useMemo(() => jobs.find((j) => j.id === selectedJobId) ?? null, [jobs, selectedJobId])
   const selectedJobRuns = selectedRuns ?? (selectedJobId ? runs.filter((r) => r.jobId === selectedJobId) : [])
