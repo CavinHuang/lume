@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useAtomValue, useSetAtom } from "jotai"
 import type { DailyRoutine, RoutineEntry } from "@lume/shared"
 import {
   CalendarDays,
@@ -7,19 +8,14 @@ import {
   ListTodo,
   Brain,
   Clock,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react"
 import { getRoutineByDate, triggerRoutineEntry, regenerateRoutine } from "../../lib/desktop-api/routine"
+import { tabsAtom, activeTabIdAtom } from "../../atoms"
+import { pendingAutomationJobIdAtom } from "../../atoms/automation-atoms"
+import { openAutomationJobDetail } from "../automation/automation-run-replay"
 import { RoutineEntryItem } from "./RoutineEntryItem"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "../ui/dialog"
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
@@ -35,10 +31,12 @@ export function RoutinePanel() {
   const [currentDate, setCurrentDate] = useState(today())
   const [routine, setRoutine] = useState<DailyRoutine | null>(null)
   const [loading, setLoading] = useState(true)
-  const [resultEntry, setResultEntry] = useState<RoutineEntry | null>(null)
-  const [resultOpen, setResultOpen] = useState(false)
   const [hasPrev, setHasPrev] = useState(false)
   const [hasNext, setHasNext] = useState(false)
+  const tabs = useAtomValue(tabsAtom)
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setPendingJobId = useSetAtom(pendingAutomationJobIdAtom)
 
   const load = useCallback(async (date: string) => {
     setLoading(true)
@@ -107,9 +105,12 @@ export function RoutinePanel() {
   }, [])
 
   const handleViewResult = useCallback((entry: RoutineEntry) => {
-    setResultEntry(entry)
-    setResultOpen(true)
-  }, [])
+    if (!entry.automationJobId) return
+    const result = openAutomationJobDetail(entry.automationJobId, tabs)
+    setTabs(result.tabs)
+    setActiveTabId(result.activeTabId)
+    setPendingJobId(result.selectedJobId)
+  }, [tabs, setTabs, setActiveTabId, setPendingJobId])
 
   const { pending, done, completedCount, totalCount, progressPercent } = useMemo(() => {
     if (!routine) return { pending: [], done: [], completedCount: 0, totalCount: 0, progressPercent: 0 }
@@ -237,24 +238,6 @@ export function RoutinePanel() {
           重新生成
         </button>
       </div>
-      {resultEntry && (
-        <Dialog open={resultOpen} onOpenChange={setResultOpen}>
-          <DialogContent className="sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <CheckCircle2 size={16} className="text-emerald-500" />
-                执行结果
-              </DialogTitle>
-              <DialogDescription>
-                {resultEntry.customName ?? resultEntry.activity}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="max-h-[60vh] overflow-y-auto rounded-xl border bg-[var(--reading-panel)] px-4 py-3 text-[13px] leading-6 text-[var(--text-2)] whitespace-pre-wrap">
-              {resultEntry.result?.summary}
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
     </div>
   )
 }
