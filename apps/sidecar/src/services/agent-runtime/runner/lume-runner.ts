@@ -457,6 +457,13 @@ export class LumeRunner {
 
   async abort(): Promise<AgentRuntimeRunResult> {
     await this.observer.flush();
+    this.emit.onRuntimeEvent?.({
+      id: `${this.observer.getRunId()}:run.cancelled`,
+      type: "run.cancelled",
+      threadId: this.observer.getThreadId(),
+      runId: this.observer.getRunId(),
+      createdAt: new Date().toISOString()
+    });
     this.emit.onComplete();
     return this.finalizeResult({ status: "aborted" });
   }

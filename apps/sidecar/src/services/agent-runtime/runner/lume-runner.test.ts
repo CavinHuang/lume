@@ -462,6 +462,22 @@ describe("LumeRunner", () => {
     expect(state.error?.message).toBe("boom");
   });
 
+  test("abort emits run.cancelled so clients can reset streaming state", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-abort-"));
+    dirs.push(agentDir);
+    const events: string[] = [];
+    const runner = await LumeRunner.create({
+      params: createTestParams("thread-1"),
+      prepared: createPrepared(agentDir),
+      emit: createRuntimeEventEmitter(events)
+    });
+
+    const result = await runner.abort();
+
+    expect(result).toEqual({ status: "aborted" });
+    expect(events).toEqual(["runtime:run.cancelled", "complete"]);
+  });
+
   test("fires failure hook and preserves original failure", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-hooks-fail-"));
     dirs.push(agentDir);
