@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { AutomationRun } from '@lume/shared'
-import { formatRunTime, buildAutomationRunReplayTab, openAutomationRunReplay } from './automation-run-replay'
+import { formatRunTime, buildAutomationRunReplayTab, openAutomationRunReplay, openAutomationJobDetail } from './automation-run-replay'
 
 function makeRun(overrides: Partial<AutomationRun> = {}): AutomationRun {
   return {
@@ -62,5 +62,27 @@ describe('openAutomationRunReplay', () => {
 
   test('returns null (no-op) when the run has no threadId', () => {
     expect(openAutomationRunReplay(makeRun({ threadId: undefined }), [])).toBeNull()
+  })
+})
+
+describe('openAutomationJobDetail', () => {
+  test('upserts the __automation__ tab, activates it, and echoes the jobId to preselect', () => {
+    const existing = [{ id: 'other', type: 'agent' as const, title: '其它', threadId: 'other' }]
+    const result = openAutomationJobDetail('job-42', existing)
+    expect(result.activeTabId).toBe('__automation__')
+    expect(result.selectedJobId).toBe('job-42')
+    expect(result.tabs).toHaveLength(2)
+    expect(result.tabs.find((t) => t.id === '__automation__')).toEqual({
+      id: '__automation__',
+      type: 'automation',
+      title: '自动化',
+    })
+  })
+
+  test('does not duplicate the __automation__ tab if it already exists', () => {
+    const existing = [{ id: '__automation__', type: 'automation' as const, title: '自动化' }]
+    const result = openAutomationJobDetail('job-42', existing)
+    expect(result.tabs).toHaveLength(1)
+    expect(result.tabs[0].id).toBe('__automation__')
   })
 })

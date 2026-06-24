@@ -30,3 +30,16 @@ export function openAutomationRunReplay(
   if (!tab) return null
   return { tabs: upsertTab(tabs, tab), activeTabId: tab.id }
 }
+
+/** 打开自动化管理 tab 并预选某个任务详情：返回应写入的 tabs、激活的 tabId 与要预选的 jobId。 */
+export function openAutomationJobDetail(
+  jobId: string,
+  tabs: Tab[],
+): { tabs: Tab[]; activeTabId: string; selectedJobId: string } {
+  const automationTab: Tab = { id: '__automation__', type: 'automation', title: '自动化' }
+  return {
+    tabs: upsertTab(tabs, automationTab),
+    activeTabId: '__automation__',
+    selectedJobId: jobId,
+  }
+}
