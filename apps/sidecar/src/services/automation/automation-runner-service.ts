@@ -227,8 +227,13 @@ function scheduleJob(job: AutomationJob): void {
     const timer = setTimeout(() => {
       const latest = listAutomationJobs().find((item) => item.id === job.id);
       if (!latest || !latest.enabled) return;
-      void executeJob(latest, "schedule").finally(() => {
-        void refreshAutomationRunnerJobs();
+      // 跳过的触发（任务仍在运行）不得重排调度：过期 once 任务 delay=0，
+      // 若 skip 后 refresh 会重新 setTimeout(0) → 再次 skip → refresh，
+      // 形成以事件循环速率自转的死循环（线上实测 ~360 次/秒、单任务数万条 skip）。
+      void executeJob(latest, "schedule").then((run) => {
+        if (run.status !== "skipped") {
+          void refreshAutomationRunnerJobs();
+        }
       });
     }, delay);
     jobDisposers.set(job.id, () => clearTimeout(timer));

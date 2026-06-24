@@ -1,4 +1,4 @@
-import { getAgentThreadMeta, updateAgentThreadMeta } from "../../agent/agent-thread-manager";
+import { getAgentThreadMeta, tryUpdateAgentThreadMeta, updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import type { AgentRuntimeRunParams } from "../runner/types";
 
 export function resolvePersistedAgentThreadId(
@@ -21,5 +21,5 @@ export function updateRuntimeThreadMetaIfPresent(
   if (!targetThreadId) {
     return;
   }
-  updateAgentThreadMeta(targetThreadId, updates);
+  tryUpdateAgentThreadMeta(targetThreadId, updates);
 }

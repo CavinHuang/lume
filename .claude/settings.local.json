@@ -29,7 +29,9 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(CLAUDE_CODE_TMPDIR=/tmp rtk tsc --noEmit --project apps/sidecar/tsconfig.json)",
       "Bash(rtk find *)",
-      "Bash(rtk read *)"
+      "Bash(rtk read *)",
+      "Bash(lsof *)",
+      "Read(//Users/cavin/.cargo/registry/src/**)"
     ]
   }
 }

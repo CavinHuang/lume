@@ -1,7 +1,7 @@
 import {
   getAgentThreadMessages,
   getAgentThreadMeta,
-  updateAgentThreadMeta
+  tryUpdateAgentThreadMeta
 } from "../../agent/agent-thread-manager";
 import {
   deriveFallbackAgentTitleFromSourceText,
@@ -53,7 +53,7 @@ export function createAutoTitleJob(input: {
         log.debug("自动标题跳过：未能生成可用标题", { threadId: input.threadId });
         return;
       }
-      updateAgentThreadMeta(input.threadId, { title });
+      tryUpdateAgentThreadMeta(input.threadId, { title });
       log.info("自动标题更新成功（临时）", {
         threadId: input.threadId,
         title,

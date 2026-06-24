@@ -369,23 +369,32 @@ export function appendAgentTranscriptMessage(
   }
 }
 
-export function updateAgentThreadMeta(
+type AgentThreadMetaUpdates = Partial<
+  Pick<
+    AgentThreadMeta,
+    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
+  >
+> & {
+  modelRef?: string | null;
+  channelId?: string | null;
+  modelId?: string | null;
+};
+
+/**
+ * 非致命版本：线程索引条目缺失时返回 null，而非抛出。
+ *
+ * 用于标题、模型选择等“非关键元数据”写入——这些不应让整次运行失败。
+ * 条目缺失的根因是跨进程对 agent-sessions.json 的 read-modify-write 丢更新
+ * （多 sidecar 实例短暂重叠），会让自动化任务以 “Agent 线程不存在” 失败。
+ */
+export function tryUpdateAgentThreadMeta(
   id: string,
-  updates: Partial<
-    Pick<
-      AgentThreadMeta,
-      "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
-    >
-  > & {
-    modelRef?: string | null;
-    channelId?: string | null;
-    modelId?: string | null;
-  }
-): AgentThreadMeta {
+  updates: AgentThreadMetaUpdates
+): AgentThreadMeta | null {
   const index = readIndex();
   const idx = index.threads.findIndex((thread) => thread.id === id);
   if (idx === -1) {
-    throw new Error(`Agent 线程不存在: ${id}`);
+    return null;
   }
 
   const existing = index.threads[idx] as AgentThreadMeta;
@@ -417,6 +426,17 @@ export function updateAgentThreadMeta(
   writeIndex(index);
 
   console.log(`[Agent 线程] 已更新线程: ${updated.title} (${updated.id})`);
+  return updated;
+}
+
+export function updateAgentThreadMeta(
+  id: string,
+  updates: AgentThreadMetaUpdates
+): AgentThreadMeta {
+  const updated = tryUpdateAgentThreadMeta(id, updates);
+  if (!updated) {
+    throw new Error(`Agent 线程不存在: ${id}`);
+  }
   return updated;
 }
 

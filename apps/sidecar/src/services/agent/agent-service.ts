@@ -31,7 +31,7 @@ import {
   getAgentThreadMeta,
   readRuntimeCoreTranscriptMessages,
   replaceAgentThreadTranscript,
-  updateAgentThreadMeta
+  tryUpdateAgentThreadMeta
 } from "./agent-thread-manager";
 import {
   createAssistantMessageVersion,
@@ -733,7 +733,7 @@ export async function sendAgentMessage(
   sessionStateManager.getOrCreate(threadId);
 
   if (hasExplicitSendSelection) {
-    updateAgentThreadMeta(threadId, {
+    tryUpdateAgentThreadMeta(threadId, {
       ...(canonicalModelRef !== undefined ? { modelRef: canonicalModelRef } : {}),
       ...(resolvedChannelId !== undefined ? { channelId: resolvedChannelId } : {}),
       ...(resolvedModelId !== undefined ? { modelId: resolvedModelId } : {}),

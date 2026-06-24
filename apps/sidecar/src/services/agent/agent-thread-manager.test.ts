@@ -16,6 +16,7 @@ import {
   getRecentAgentThreadMessages,
   moveAgentThreadToWorkspace,
   truncateAgentMessagesFrom,
+  tryUpdateAgentThreadMeta,
   updateAgentThreadMeta,
   toggleAgentThreadPin,
   trashAgentThread,
@@ -458,6 +459,23 @@ describe("agent-thread-manager advanced ops", () => {
     expect(listTrashedThreads()).toHaveLength(0);
     expect(emptyTrash()).toBe(0);
     expect(getAgentThreadMeta(active.id)).toBeDefined();
+  });
+
+  test("tryUpdateAgentThreadMeta 对不存在的线程返回 null 而非抛出", () => {
+    const created = createAgentThread("在线程");
+    const updated = tryUpdateAgentThreadMeta(created.id, { title: "新标题" });
+    expect(updated).not.toBeNull();
+    expect(updated?.title).toBe("新标题");
+    expect(getAgentThreadMeta(created.id)?.title).toBe("新标题");
+
+    // 索引条目缺失时返回 null，不抛出：标题/模型选择等非关键写入不应让整次运行失败
+    expect(tryUpdateAgentThreadMeta("nonexistent-thread-id", { title: "x" })).toBeNull();
+  });
+
+  test("updateAgentThreadMeta 对不存在的线程仍抛出（契约不变）", () => {
+    expect(() => updateAgentThreadMeta("nonexistent-thread-id", { title: "x" })).toThrow(
+      "Agent 线程不存在"
+    );
   });
 });
 
