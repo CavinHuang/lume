@@ -190,7 +190,7 @@ export class OpenAIProvider implements LLMProvider {
 
     this.prepareChatCompletionBody(body)
 
-    const response = await this.fetchChatCompletion(body)
+    const response = await this.fetchChatCompletion(body, params.abortSignal)
 
     const data = (await response.json()) as OpenAIChatResponse
 
@@ -242,7 +242,7 @@ export class OpenAIProvider implements LLMProvider {
 
     this.prepareChatCompletionBody(body)
 
-    const response = await this.fetchChatCompletion(body)
+    const response = await this.fetchChatCompletion(body, params.abortSignal)
 
     if (!response.body) {
       throw new Error('OpenAI API returned no response body for streaming request')
@@ -416,7 +416,7 @@ export class OpenAIProvider implements LLMProvider {
     }
   }
 
-  private async fetchChatCompletion(body: Record<string, any>): Promise<Response> {
+  private async fetchChatCompletion(body: Record<string, any>, signal?: AbortSignal): Promise<Response> {
     return withRetry(async () => {
       const response = await fetch(`${this.baseURL}/chat/completions`, {
         method: 'POST',
@@ -425,6 +425,7 @@ export class OpenAIProvider implements LLMProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
       })
 
       if (!response.ok) {
@@ -437,7 +438,7 @@ export class OpenAIProvider implements LLMProvider {
       }
 
       return response
-    }, this.retryConfig)
+    }, this.retryConfig, signal)
   }
 
   // --------------------------------------------------------------------------

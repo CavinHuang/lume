@@ -919,6 +919,7 @@ export class QueryEngine {
         jsonSchema: this.config.jsonSchema,
         outputFormat: this.config.outputFormat,
         effort: this.config.effort,
+        abortSignal: this.config.abortSignal,
         thinking:
           this.config.thinking?.type === 'enabled' &&
           this.config.thinking.budgetTokens
@@ -936,6 +937,7 @@ export class QueryEngine {
           const stream = this.provider.createMessageStream(providerRequest)
 
           while (true) {
+            if (this.config.abortSignal?.aborted) throw new Error('aborted')
             const next = await stream.next()
             if (next.done) {
               response = next.value as CreateMessageResponse
@@ -1011,6 +1013,9 @@ export class QueryEngine {
           }
         }
       } catch (err: any) {
+        if (this.config.abortSignal?.aborted) {
+          throw new Error('aborted')
+        }
         const stopFailureHooks = await this.executeHooks('StopFailure', {
           error: err?.message || 'Unknown provider error',
         })

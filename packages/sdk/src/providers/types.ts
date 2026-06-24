@@ -28,6 +28,8 @@ export interface CreateMessageParams {
   jsonSchema?: Record<string, unknown>
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> }
   effort?: 'low' | 'medium' | 'high' | 'max'
+  /** 中止信号：用于在流式响应过程中即时取消底层 fetch。 */
+  abortSignal?: AbortSignal
 }
 
 /**

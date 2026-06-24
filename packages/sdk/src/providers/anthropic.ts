@@ -146,6 +146,7 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     const stream = this.client.messages.stream(requestParams)
+    params.abortSignal?.addEventListener('abort', () => stream.abort(), { once: true })
 
     for await (const event of stream) {
       if (event.type === 'content_block_delta') {

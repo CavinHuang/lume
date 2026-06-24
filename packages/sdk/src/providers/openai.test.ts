@@ -165,6 +165,37 @@ describe("OpenAIProvider", () => {
     })
   })
 
+  test("createMessageStream 将 abortSignal 透传给 fetch，支持中途停止", async () => {
+    let usedSignal: AbortSignal | undefined
+    globalThis.fetch = (async (_input, init) => {
+      usedSignal = init?.signal
+      const stream = [
+        'data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}',
+        "data: [DONE]",
+        "",
+      ].join("\n")
+      return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } })
+    }) as typeof fetch
+
+    const controller = new AbortController()
+    const provider = new OpenAIProvider({ apiKey: "sk-test", retryConfig: fastRetry })
+    const generator = provider.createMessageStream({
+      model: "gpt-test",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+      abortSignal: controller.signal,
+    })
+
+    // 触发 fetch
+    await generator.next()
+
+    // abortSignal 必须透传给底层 fetch，否则点击停止无法中断在飞的流式请求
+    expect(usedSignal).toBe(controller.signal)
+  })
+
   test("retries transient 5xx streaming failures before reading the stream", async () => {
     let calls = 0
     globalThis.fetch = (async () => {
