@@ -16,6 +16,17 @@ use tauri::webview::PageLoadEvent;
 use tauri::Emitter;
 use tauri::Manager;
 
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::CloseHandle;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    SetInformationJobObject,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE};
+
 const SIDECAR_RESPONSE_TIMEOUT_SECS: u64 = 45;
 const MAIN_WINDOW_LABEL: &str = "main";
 const WEREAD_KEY_WINDOW_LABEL: &str = "weread-key";
@@ -34,6 +45,11 @@ type PendingResponseMap = Arc<Mutex<HashMap<u64, PendingSidecarRequest>>>;
 struct SidecarProcess {
     child: Mutex<Option<Child>>,
     pending: PendingResponseMap,
+    /// Windows: 持有 sidecar 所属 Job Object 的句柄。句柄随主进程存活，
+    /// 主进程一旦被杀（NSIS 更新安装、崩溃、强杀），OS 关闭该句柄即触发
+    /// KILL_ON_JOB_CLOSE，连带终止 sidecar，释放被占用的 .exe 文件锁。
+    #[cfg(target_os = "windows")]
+    job: Mutex<Option<SidecarJobHandle>>,
 }
 
 impl SidecarProcess {
@@ -41,6 +57,8 @@ impl SidecarProcess {
         Self {
             child: Mutex::new(None),
             pending: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(target_os = "windows")]
+            job: Mutex::new(None),
         }
     }
 }
@@ -353,6 +371,16 @@ fn spawn_managed_sidecar(
         spawn_sidecar_stderr_reader(stderr);
     } else {
         ll::logger("desktop.sidecar.lifecycle").warn("sidecar stderr unavailable after spawn");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(handle) = assign_kill_on_close_job(&child) {
+            if let Ok(mut job_slot) = state.job.lock() {
+                // 替换旧句柄：drop 会 CloseHandle 旧 Job（旧 sidecar 已退出则为空操作）。
+                *job_slot = Some(handle);
+            }
+        }
     }
 
     let mut slot = state
@@ -1497,6 +1525,76 @@ fn apply_default_skills_env(
     (archive, directory)
 }
 
+/// 持有 Windows Job Object 句柄的新类型。用 `isize` 承载原始句柄以保证 `Send + Sync`
+/// （裸指针不具备该 trait，无法放进 Tauri 的托管状态）。Drop 时关闭句柄。
+#[cfg(target_os = "windows")]
+struct SidecarJobHandle(isize);
+
+#[cfg(target_os = "windows")]
+impl Drop for SidecarJobHandle {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            unsafe { CloseHandle(self.0 as _) };
+        }
+    }
+}
+
+/// 把 sidecar 进程挂到一个带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object 上。
+///
+/// 背景与根因：Windows 上运行中的 `.exe` 会被 OS 独占锁定。更新安装时 Tauri 的 NSIS
+/// 安装器会杀死主进程以替换主程序二进制，但 sidecar 是用 `Command::spawn` 拉起的独立
+/// 子进程，安装器不认识它、不会连带杀死，于是它的 `.exe` 一直被锁住，安装器覆写时报
+/// 「文件占用」。把 sidecar 挂到本 Job Object 后，主进程一旦退出（含被安装器杀死、崩溃、
+/// 强杀），OS 自动关闭 Job 句柄并连带终止 sidecar，文件锁释放，安装即可继续。
+///
+/// 失败时返回 `None` 并告警；这是尽力而为的增强，失败则退化为旧行为（sidecar 不被
+/// 连带杀死，不影响运行，仅影响更新安装）。
+#[cfg(target_os = "windows")]
+fn assign_kill_on_close_job(child: &Child) -> Option<SidecarJobHandle> {
+    // SAFETY: 调用的都是 Win32 句柄/赋值 API；句柄有效性在每步返回值中校验。
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if (job as isize) == 0 {
+            warn!("[desktop] CreateJobObjectW failed, sidecar won't be killed on exit");
+            return None;
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) == 0
+        {
+            warn!("[desktop] SetInformationJobObject failed, sidecar won't be killed on exit");
+            CloseHandle(job);
+            return None;
+        }
+
+        // 需要 PROCESS_SET_QUOTA 才能把进程加入 Job Object；带 PROCESS_TERMINATE 以稳健。
+        let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, child.id());
+        if (process as isize) == 0 {
+            warn!("[desktop] OpenProcess(sidecar) failed, sidecar won't be killed on exit");
+            CloseHandle(job);
+            return None;
+        }
+
+        let assigned = AssignProcessToJobObject(job, process);
+        CloseHandle(process);
+        if assigned == 0 {
+            // 常见于主进程自身已处于不允许嵌套的 Job（Windows 7 及以下）。现代 Windows 支持嵌套 Job。
+            warn!("[desktop] AssignProcessToJobObject failed, sidecar won't be killed on exit");
+            CloseHandle(job);
+            return None;
+        }
+
+        info!("[desktop] sidecar attached to kill-on-close Job Object");
+        Some(SidecarJobHandle(job as isize))
+    }
+}
+
 fn apply_sidecar_logging_env(process: &mut Command) {
     // native logger now writes directly to shared log files;
     // keep stderr enabled as fallback for native init failures
@@ -1735,6 +1833,24 @@ mod tests {
 
         assert_eq!(envs.get("LUME_LOG_FILE"), None);
         assert_eq!(envs.get("LUME_LOG_CONSOLE"), Some(&Some("true".to_string())));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn kill_on_close_job_terminates_child() {
+        // 回归测试：把一个长寿命进程挂到 kill-on-close Job Object 上，再丢弃句柄，
+        // 应当被 OS 连带终止（非正常退出）。对应根因「主进程被杀 → sidecar 连带退出」。
+        let mut child = Command::new("ping")
+            .args(["-n", "60", "127.0.0.1"])
+            .spawn()
+            .expect("spawn ping");
+        let job = super::assign_kill_on_close_job(&child).expect("attach to kill-on-close job");
+        drop(job); // 关闭 Job 句柄 => OS 终止挂在 Job 上的进程
+        let status = child.wait().expect("wait child");
+        assert!(
+            !status.success(),
+            "子进程应被 Job 连带杀死，却以 {status:?} 退出"
+        );
     }
 
     #[test]

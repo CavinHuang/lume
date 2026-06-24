@@ -24,6 +24,16 @@ walkdir = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 lume-logger = { path = "../../../crates/lume-logger" }
 
+# Windows: 把 sidecar 挂到「主进程退出即连带杀死」的 Job Object 上，
+# 这样更新安装时 NSIS 杀掉主进程后 sidecar 也会被自动终止，释放其 .exe 文件锁。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [[bin]]
 name = "Lume"
 path = "src/main.rs"
