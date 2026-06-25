@@ -35,6 +35,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   const [allowAllInThread, setAllowAllInThread] = useState(false)
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const classification = request.classification
   const grantLabel = request.grantSuggestion?.label
   const alwaysAllowLabel = grantLabel ? `始终允许 ${grantLabel}` : '始终允许'
@@ -45,6 +46,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
     setAllowAllInThread(false)
     setHidden(false)
     setBusy(false)
+    setError(null)
   }, [threadId, request.requestId])
 
   useEffect(() => {
@@ -58,6 +60,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
 
   const respond = async () => {
     setBusy(true)
+    setError(null)
     try {
       const payload = buildToolPermissionSubmission({
         threadId,
@@ -70,6 +73,10 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
         setThreadPermissionModes((prev) => ({ ...prev, [threadId]: 'bypassPermissions' }))
       }
       setPending((prev) => removePendingToolPermissionEverywhere(prev, request.requestId))
+    } catch (err) {
+      // Release 构建无 DevTools，把提交失败直接显示在卡片上，便于定位（会话不匹配 / 请求已失效等）。
+      console.error('[PermissionBanner] submit failed', err)
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -177,6 +184,9 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
             {allowAllInThread && <Check size={15} className="text-[#5f9cff]" />}
           </button>
         )}
+        {error && (
+          <p className="px-1 pt-1 text-[12px] leading-5 text-red-600">{error}</p>
+        )}
       </div>
     </InteractiveOverlayFrame>
   )
@@ -198,6 +208,7 @@ function PermissionChoice({
   return (
     <button
       type="button"
+      data-enter-submits
       onClick={onClick}
       className={cn(
         'flex min-h-10 w-full items-center rounded-[12px] px-2.5 text-left text-[14px] transition-colors',
