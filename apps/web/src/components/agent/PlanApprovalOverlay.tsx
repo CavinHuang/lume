@@ -58,12 +58,14 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
   const [feedbackRequired, setFeedbackRequired] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     setChoice('approve')
     setFeedback('')
     setHidden(false)
     setFeedbackRequired(false)
+    setError(null)
     onVisibilityChange?.(true)
   }, [threadId, request.contractId])
 
@@ -85,6 +87,7 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
     }
 
     setBusy(true)
+    setError(null)
     try {
       const result = await submitTaskApproval(payload)
       if (result.ok) {
@@ -99,6 +102,10 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
           }))
         }
       }
+    } catch (err) {
+      // Release 构建无 DevTools，把提交失败直接显示在卡片上，便于定位。
+      console.error('[PlanApprovalOverlay] submit failed', err)
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -132,6 +139,7 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
       <div className="space-y-1">
           <button
             type="button"
+            data-enter-submits
             onClick={() => {
               setChoice('approve')
               setFeedbackRequired(false)
@@ -177,6 +185,9 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
               <p className="mt-1 text-[11px] text-destructive">请先写一点调整意见。</p>
             )}
           </div>
+        {error && (
+          <p className="px-1 pt-1 text-[12px] leading-5 text-destructive">{error}</p>
+        )}
       </div>
     </InteractiveOverlayFrame>
   )
