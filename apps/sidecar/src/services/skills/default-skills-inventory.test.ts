@@ -38,18 +38,18 @@ describe("default skills inventory", () => {
     }
   });
 
-  test("keeps image-gen as a guarded manual-only skill until image tools exist", () => {
+  test("image-gen skill is backed by real image tools", () => {
     const { content, meta } = readDefaultSkill("image-gen");
 
     expect(meta.slug).toBe("image-gen");
     expect(meta.name).toBe("图片生成");
-    expect(meta.description).toContain("生成图片");
+    expect(meta.description).toContain("生成");
     expect(meta.whenToUse).toContain("生成图片");
-    expect(meta.disableModelInvocation).toBe(true);
-    expect(meta.allowedTools ?? []).not.toContain("image_gen");
-    expect(meta.allowedTools ?? []).not.toContain("list_image_models");
-    expect(content).toContain("尚未接入");
-    expect(content).toContain("不要声称已经生成图片");
+    expect(meta.disableModelInvocation).toBeFalsy();
+    expect(meta.allowedTools ?? []).toContain("image_gen");
+    expect(meta.allowedTools ?? []).toContain("list_image_models");
+    expect(content).not.toContain("尚未接入");
+    expect(content).not.toContain("不要声称已经生成图片");
   });
 
   test("bundles an auto-invocable gallery-share skill backed by local Reading share cards", () => {
@@ -162,8 +162,10 @@ const RUNTIME_BACKED_SKILL_TOOLS = new Set([
   "edit_file",
   "glob",
   "grep",
+  "image_gen",
   "list_dir",
   "list_directory",
+  "list_image_models",
   "lume_generate_share_card",
   "lume_reading_snapshot",
   "office_pack",
