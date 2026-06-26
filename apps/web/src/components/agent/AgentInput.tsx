@@ -226,6 +226,9 @@ export function AgentInput({
   const draft = useAtomValue(agentInputDraftFamily(threadId))
   const setDraftState = useSetAtom(agentInputDraftAtom)
   const isNavigatingHistoryRef = useRef(false) // true = 当前编辑器内容由程序填充（恢复/回溯），不应存为草稿
+  const historyIndexRef = useRef(-1) // -1 = 未回溯（显示草稿）；0..n = 回溯到 history[index]
+  const navigateHistoryRef = useRef<(dir: 1 | -1) => void>(() => {})
+  const resetToDraftRef = useRef<() => void>(() => {})
   const draftRef = useRef(draft)
   draftRef.current = draft
   const history = useAtomValue(agentInputHistoryFamily(threadId)) ?? []
@@ -444,6 +447,28 @@ export function AgentInput({
           debouncedSend()
           return true
         }
+        if (!editor) return false
+        const atFirstLine = editor.state.selection.empty && editor.state.selection.$from.pos === 0
+        // ↑：空框或光标在首行时回溯到更旧
+        if (event.key === 'ArrowUp' && (editor.isEmpty || atFirstLine)) {
+          if (historyRef.current.length > 0) {
+            event.preventDefault()
+            navigateHistoryRef.current(1)
+            return true
+          }
+        }
+        // ↓：回溯中则走向更新
+        if (event.key === 'ArrowDown' && historyIndexRef.current >= 0) {
+          event.preventDefault()
+          navigateHistoryRef.current(-1)
+          return true
+        }
+        // Esc：直接回草稿
+        if (event.key === 'Escape' && historyIndexRef.current >= 0) {
+          event.preventDefault()
+          resetToDraftRef.current()
+          return true
+        }
         return false
       },
     },
@@ -452,10 +477,11 @@ export function AgentInput({
     },
     onUpdate({ editor }) {
       setEditorText(editor.getText())
-      // 程序填充（回溯/恢复）用 setContent(..., false)，不会进此回调；
-      // 进此回调即用户真实输入。回溯态退出重置在 Task 5 完成（届时加 historyIndexRef.current = -1）。
+      // 程序填充（回溯/恢复）用 setContent(..., { emitUpdate: false })，不会进此回调；
+      // 进此回调即用户真实输入。
       if (isNavigatingHistoryRef.current) {
         isNavigatingHistoryRef.current = false
+        historyIndexRef.current = -1 // 用户在回溯态手动输入 → 退出回溯
       }
       debouncedSaveDraft(editor.getJSON())
     },
@@ -465,6 +491,7 @@ export function AgentInput({
   useEffect(() => {
     if (!editor) return
     isNavigatingHistoryRef.current = true
+    historyIndexRef.current = -1
     const json = draftRef.current
     try {
       if (json && !isEmptyDraft(json)) {
@@ -723,6 +750,41 @@ export function AgentInput({
     pushHistoryEntry,
   ])
   sendNowRef.current = () => { void handleSend() }
+
+  const applyContent = (json: AgentInputDraftJSON | undefined) => {
+    if (!editor) return
+    isNavigatingHistoryRef.current = true
+    try {
+      if (json && !isEmptyDraft(json)) {
+        editor.commands.setContent(json, { emitUpdate: false })
+      } else {
+        editor.commands.clearContent()
+      }
+    } catch {
+      editor.commands.clearContent()
+    }
+    setEditorText(editor.getText())
+  }
+
+  navigateHistoryRef.current = (dir) => {
+    if (!editor) return
+    const list = historyRef.current
+    const nextIndex = historyIndexRef.current + dir
+    if (nextIndex < 0) {
+      historyIndexRef.current = -1
+      applyContent(draftRef.current)
+      return
+    }
+    if (nextIndex >= list.length) return // 超界不动
+    historyIndexRef.current = nextIndex
+    applyContent(list[nextIndex])
+  }
+
+  resetToDraftRef.current = () => {
+    if (!editor) return
+    historyIndexRef.current = -1
+    applyContent(draftRef.current)
+  }
 
   useEffect(() => () => cancelPendingDebouncedAgentInputSend(debouncedSend), [debouncedSend])
 
