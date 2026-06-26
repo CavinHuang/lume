@@ -2,11 +2,20 @@ import { describe, expect, test } from 'bun:test'
 import { createStore } from 'jotai'
 import type { SubagentRunRecord } from '@lume/shared'
 import {
+  agentInputDraftAtom,
+  agentInputDraftFamily,
+  agentInputHistoryAtom,
+  agentInputHistoryFamily,
   agentStreamingStatesAtom,
   agentStreamingStatesFamily,
   agentSubagentRunsAtom,
   agentSubagentRunsFamily,
 } from './agent-atoms'
+import {
+  prependHistory,
+  upsertDraft,
+  type AgentInputDraftJSON,
+} from '@/lib/agent-input-draft-state'
 
 describe('createThreadSliceFamily (per-threadId slice)', () => {
   test('unchanged threadId keeps its value reference → subscriber not notified', () => {
@@ -37,5 +46,32 @@ describe('createThreadSliceFamily (per-threadId slice)', () => {
 
     expect(store.get(agentStreamingStatesFamily('nope'))).toBeUndefined()
     expect(store.get(agentStreamingStatesFamily('A'))).toBe('streaming')
+  })
+})
+
+const p = (text: string): AgentInputDraftJSON => ({
+  type: 'doc',
+  content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+})
+
+describe('agentInput draft/history families', () => {
+  test('draft family 读切片，未写入时为 undefined', () => {
+    const store = createStore()
+    store.set(agentInputDraftAtom, {})
+    expect(store.get(agentInputDraftFamily('t1'))).toBeUndefined()
+    store.set(agentInputDraftAtom, upsertDraft(store.get(agentInputDraftAtom), 't1', p('a')))
+    expect(store.get(agentInputDraftFamily('t1'))).toEqual(p('a'))
+    expect(store.get(agentInputDraftFamily('t2'))).toBeUndefined()
+  })
+
+  test('history family 读切片，未写入时为 undefined', () => {
+    const store = createStore()
+    store.set(agentInputHistoryAtom, {})
+    expect(store.get(agentInputHistoryFamily('t1'))).toBeUndefined()
+    store.set(
+      agentInputHistoryAtom,
+      prependHistory(store.get(agentInputHistoryAtom), 't1', p('a')),
+    )
+    expect(store.get(agentInputHistoryFamily('t1'))).toHaveLength(1)
   })
 })

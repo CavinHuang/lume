@@ -2,6 +2,7 @@ import { atom, type Atom, type WritableAtom } from 'jotai'
 import { atomFamily, atomWithStorage, selectAtom } from 'jotai/utils'
 import type { AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, PlanModePhaseChangedEvent, AgentSendInput, AgentMessageQueueSnapshot } from '@lume/shared'
 import type { RuntimeEventState } from '@/hooks/runtime-event-state'
+import type { AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 
 /**
  * 按 threadId 切片订阅一个全局 Record atom。
@@ -55,3 +56,24 @@ export const agentSidePanelViewAtom = atomWithStorage<Record<string, SidePanelVi
 export const agentFileTreeOpenAtom = atomWithStorage<Record<string, boolean>>(
   'agent-file-tree-open', {}
 )
+
+/**
+ * 输入草稿 / 历史：按 threadId 分桶，落 localStorage。
+ * - draft：每会话 1 份未发送草稿（富文本 JSON）。
+ * - history：每会话已发送输入列表（最新在前，≤ AGENT_INPUT_HISTORY_LIMIT）。
+ * 只读 family 用 createThreadSliceFamily（selectAtom）；写入走 root atom + lib 纯函数
+ * （见 AgentInput / ArchiveSettings 调用方）。
+ */
+export type { AgentInputDraftJSON }
+
+export const agentInputDraftAtom = atomWithStorage<Record<string, AgentInputDraftJSON>>(
+  'agent-input-draft',
+  {},
+)
+export const agentInputDraftFamily = createThreadSliceFamily(agentInputDraftAtom)
+
+export const agentInputHistoryAtom = atomWithStorage<Record<string, AgentInputDraftJSON[]>>(
+  'agent-input-history',
+  {},
+)
+export const agentInputHistoryFamily = createThreadSliceFamily(agentInputHistoryAtom)
