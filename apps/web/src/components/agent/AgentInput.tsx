@@ -18,8 +18,8 @@ import {
   sidecarCall,
 } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { agentInputDraftAtom, agentInputDraftFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
-import { isEmptyDraft, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
+import { agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
@@ -228,6 +228,10 @@ export function AgentInput({
   const isNavigatingHistoryRef = useRef(false) // true = 当前编辑器内容由程序填充（恢复/回溯），不应存为草稿
   const draftRef = useRef(draft)
   draftRef.current = draft
+  const history = useAtomValue(agentInputHistoryFamily(threadId)) ?? []
+  const setHistoryState = useSetAtom(agentInputHistoryAtom)
+  const historyRef = useRef(history)
+  historyRef.current = history
   const [confirmState, setConfirmState] = useState<{
     open: boolean
     title: string
@@ -259,6 +263,17 @@ export function AgentInput({
       isEmptyDraft(json) ? removeDraft(prev, threadId) : upsertDraft(prev, threadId, json as AgentInputDraftJSON),
     )
   }, [setDraftState, threadId])
+
+  const clearDraftState = useCallback(() => {
+    setDraftState((prev) => removeDraft(prev, threadId))
+  }, [setDraftState, threadId])
+
+  const pushHistoryEntry = useCallback(
+    (json: AgentInputDraftJSON) => {
+      setHistoryState((prev) => prependHistory(prev, threadId, json))
+    },
+    [setHistoryState, threadId],
+  )
 
   // 防抖写草稿，避免每次按键写 localStorage
   const debouncedSaveDraft = useMemo(
@@ -643,8 +658,12 @@ export function AgentInput({
       return
     }
     const createdAt = new Date().toISOString()
+    const sentJson = editor.getJSON()
     editor.commands.clearContent()
     setEditorText('')
+    pushHistoryEntry(sentJson)
+    clearDraftState()
+    ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
     try {
       const result = await agentSend({
         threadId,
@@ -700,6 +719,8 @@ export function AgentInput({
     streaming,
     thinkingLevel,
     threadId,
+    clearDraftState,
+    pushHistoryEntry,
   ])
   sendNowRef.current = () => { void handleSend() }
 
