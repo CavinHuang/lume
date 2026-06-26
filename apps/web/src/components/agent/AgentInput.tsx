@@ -18,7 +18,9 @@ import {
   sidecarCall,
 } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentInputDraftAtom, agentInputDraftFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { isEmptyDraft, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
+import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
@@ -221,6 +223,11 @@ export function AgentInput({
   const [channelsLoaded, setChannelsLoaded] = useState(false)
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
+  const draft = useAtomValue(agentInputDraftFamily(threadId))
+  const setDraftState = useSetAtom(agentInputDraftAtom)
+  const isNavigatingHistoryRef = useRef(false) // true = 当前编辑器内容由程序填充（恢复/回溯），不应存为草稿
+  const draftRef = useRef(draft)
+  draftRef.current = draft
   const [confirmState, setConfirmState] = useState<{
     open: boolean
     title: string
@@ -246,6 +253,18 @@ export function AgentInput({
     workspaces,
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
+
+  const saveDraft = useCallback((json: AgentInputDraftJSON | undefined) => {
+    setDraftState((prev) =>
+      isEmptyDraft(json) ? removeDraft(prev, threadId) : upsertDraft(prev, threadId, json as AgentInputDraftJSON),
+    )
+  }, [setDraftState, threadId])
+
+  // 防抖写草稿，避免每次按键写 localStorage
+  const debouncedSaveDraft = useMemo(
+    () => debounce(400, (json: AgentInputDraftJSON | undefined) => saveDraft(json)),
+    [saveDraft],
+  )
 
   const applyEffectiveConfig = useCallback((config: LumeEffectiveConfig) => {
     const nextDefaultPermissionMode = config.agent?.permissionMode ?? 'default'
@@ -418,8 +437,35 @@ export function AgentInput({
     },
     onUpdate({ editor }) {
       setEditorText(editor.getText())
+      // 程序填充（回溯/恢复）用 setContent(..., false)，不会进此回调；
+      // 进此回调即用户真实输入。回溯态退出重置在 Task 5 完成（届时加 historyIndexRef.current = -1）。
+      if (isNavigatingHistoryRef.current) {
+        isNavigatingHistoryRef.current = false
+      }
+      debouncedSaveDraft(editor.getJSON())
     },
   })
+
+  // 草稿恢复：threadId 变化或 editor 就绪时，把存盘草稿填回编辑器
+  useEffect(() => {
+    if (!editor) return
+    isNavigatingHistoryRef.current = true
+    const json = draftRef.current
+    try {
+      if (json && !isEmptyDraft(json)) {
+        editor.commands.setContent(json, { emitUpdate: false })
+      } else {
+        editor.commands.clearContent()
+      }
+    } catch {
+      editor.commands.clearContent()
+    }
+    setEditorText(editor.getText())
+    // 下一 tick 解除标志，让后续真实输入正常存草稿
+    queueMicrotask(() => {
+      isNavigatingHistoryRef.current = false
+    })
+  }, [threadId, editor])
 
   const hasComposerPayload = editorText.trim().length > 0 || pendingAttachments.length > 0
   const submitState = deriveAgentInputSubmitState({
@@ -658,6 +704,18 @@ export function AgentInput({
   sendNowRef.current = () => { void handleSend() }
 
   useEffect(() => () => cancelPendingDebouncedAgentInputSend(debouncedSend), [debouncedSend])
+
+  // 卸载或 threadId 变化时，把当前编辑器内容同步写入旧 threadId 草稿，避免防抖未触发而丢草稿
+  useEffect(() => {
+    return () => {
+      ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
+      if (editor && !isNavigatingHistoryRef.current) {
+        saveDraft(editor.getJSON())
+      }
+    }
+    // 故意只依赖 threadId：仅在切换会话/卸载时 flush
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId])
 
   const handleStop = async () => {
     try {
