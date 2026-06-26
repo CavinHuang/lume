@@ -1,187 +1,150 @@
 /**
- * TodoWriteTool - Session todo/checklist management
+ * TodoWriteTool — per-session todo/checklist management.
  *
- * Aligns with the Claude-style shape where the model submits the full
- * todo list on each write. Legacy action-based operations are still accepted.
+ * Factory-based: each session builds its own tool instance via
+ * createTodoTool({ threadId }). State lives in a per-instance store,
+ * so sessions/threads/subagents never share todo state.
  */
 
-import type { ToolDefinition, ToolResult } from '../types.js'
+import { defineTool } from './types.js'
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed'
 
 export interface TodoItem {
-  id: string
+  /** Imperative form, e.g. "Run tests" */
   content: string
-  activeForm?: string
+  /** Present-continuous form shown during execution, e.g. "Running tests" */
+  activeForm: string
   status: TodoStatus
-  priority?: 'high' | 'medium' | 'low'
-  text?: string
-  done?: boolean
 }
 
-const todoList: TodoItem[] = []
-let todoCounter = 0
+const PROMPT = `Use this tool to manage a structured task list for the current session. It tracks progress on multi-step work and shows the user what is being done.
 
-function syncCompatFields(todo: TodoItem): TodoItem {
+## When to use
+- Complex tasks with 3+ distinct steps
+- The user provides multiple tasks (numbered or comma-separated)
+- After receiving new instructions — capture them as todos immediately
+- Before starting a task — mark it in_progress
+
+## When NOT to use
+- A single trivial task
+- Purely informational or conversational requests
+- Fewer than 3 trivial steps
+
+## Rules
+- States: pending | in_progress | completed
+- Keep EXACTLY ONE task in_progress at a time
+- Mark a task completed the moment it is done — do not batch
+- Each item needs BOTH forms:
+  - content: imperative ("Run tests")
+  - activeForm: present continuous ("Running tests")
+`
+
+function statusMarker(status: TodoStatus): string {
+  if (status === 'completed') return '[x]'
+  if (status === 'in_progress') return '[~]'
+  return '[ ]'
+}
+
+function renderTodos(todos: TodoItem[]): string {
+  if (todos.length === 0) return 'No active todos.'
+  return todos.map((t) => `${statusMarker(t.status)} ${t.content}`).join('\n')
+}
+
+function coerceStatus(value: unknown): TodoStatus {
+  if (value === 'in_progress') return 'in_progress'
+  if (value === 'completed') return 'completed'
+  return 'pending'
+}
+
+/** Narrow an arbitrary value to a string-keyed record. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+/**
+ * Isolated state container for one session's todos. Each createTodoTool
+ * instance owns its own store, so state never leaks across sessions.
+ */
+export function createTodoStore() {
+  const items: TodoItem[] = []
   return {
-    ...todo,
-    text: todo.content,
-    done: todo.status === 'completed',
+    set(next: TodoItem[]): void {
+      items.length = 0
+      for (const t of next) items.push(t)
+    },
+    getAll(): TodoItem[] {
+      // Per-element copy: callers may mutate the returned objects
+      // without corrupting the store's internal state.
+      return items.map((t) => ({ ...t }))
+    },
   }
 }
 
-function normalizeTodos(inputTodos: any[]): TodoItem[] {
-  return inputTodos.map((todo) => {
-    const status = todo.status || (todo.done ? 'completed' : 'pending')
-    const id = String(todo.id || `todo_${++todoCounter}`)
-    return syncCompatFields({
-      id,
-      content: String(todo.content || todo.text || ''),
-      activeForm:
-        typeof todo.activeForm === 'string' ? todo.activeForm : undefined,
-      status,
-      priority: todo.priority,
-    })
-  })
-}
+/**
+ * Build a per-session TodoWrite tool. State is scoped to this instance
+ * via an internal store; the module no longer holds any global state.
+ */
+export function createTodoTool(opts: { threadId: string }) {
+  if (!opts?.threadId) {
+    throw new Error('createTodoTool requires a threadId')
+  }
+  const store = createTodoStore()
 
-function listTodosText(): string {
-  if (todoList.length === 0) return 'No todos.'
-  return todoList
-    .map((todo) => {
-      const marker =
-        todo.status === 'completed'
-          ? '[x]'
-          : todo.status === 'in_progress'
-            ? '[~]'
-            : '[ ]'
-      return `${marker} ${todo.id} ${todo.content}${todo.priority ? ` (${todo.priority})` : ''}`
-        + (todo.activeForm ? ` <${todo.activeForm}>` : '')
-    })
-    .join('\n')
-}
-
-export function getTodos(): TodoItem[] {
-  return todoList.map((todo) => ({ ...todo }))
-}
-
-export function clearTodos(): void {
-  todoList.length = 0
-  todoCounter = 0
-}
-
-export const TodoWriteTool: ToolDefinition = {
-  name: 'TodoWrite',
-  description:
-    'Replace the session todo list with an updated checklist, or use the legacy action-based API for compatibility.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      todos: {
-        type: 'array',
-        description: 'The full updated todo list.',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            content: { type: 'string' },
-            text: { type: 'string' },
-            activeForm: { type: 'string' },
-            status: {
-              type: 'string',
-              enum: ['pending', 'in_progress', 'completed'],
-            },
-            done: { type: 'boolean' },
-            priority: {
-              type: 'string',
-              enum: ['high', 'medium', 'low'],
+  return defineTool({
+    name: 'TodoWrite',
+    description:
+      'Update the session todo list. Always provide content (imperative) and activeForm (present continuous) for each task, and keep exactly one task in_progress at a time.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['todos'],
+      properties: {
+        todos: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['content', 'activeForm', 'status'],
+            properties: {
+              content: { type: 'string', minLength: 1 },
+              activeForm: { type: 'string', minLength: 1 },
+              status: {
+                type: 'string',
+                enum: ['pending', 'in_progress', 'completed'],
+              },
             },
           },
         },
       },
-
-      // Backward-compatible shape
-      action: {
-        type: 'string',
-        enum: ['add', 'toggle', 'remove', 'list', 'clear'],
-      },
-      text: { type: 'string' },
-      id: { type: 'string' },
-      priority: {
-        type: 'string',
-        enum: ['high', 'medium', 'low'],
-      },
     },
-  },
-  isReadOnly: () => false,
-  isConcurrencySafe: () => true,
-  isEnabled: () => true,
-  async prompt() {
-    return 'Update the session todo checklist by writing the full desired list.'
-  },
-  async call(input: any): Promise<ToolResult> {
-    if (Array.isArray(input?.todos)) {
-      const oldTodos = getTodos()
-      const newTodos = normalizeTodos(input.todos)
-      todoList.length = 0
-      todoList.push(...newTodos)
-      return {
-        type: 'tool_result',
-        tool_use_id: '',
-        content:
-          `Todos updated successfully.\n\nBefore:\n${oldTodos.length ? oldTodos.map((todo) => `${todo.id}: ${todo.content} [${todo.status}]`).join('\n') : '(empty)'}\n\nAfter:\n${listTodosText()}`,
-      }
-    }
+    isConcurrencySafe: false,
+    prompt: PROMPT,
+    async call(input: { todos?: unknown }) {
+      // Array.isArray narrows input.todos to any[]; treat elements as unknown.
+      const incoming = Array.isArray(input?.todos) ? input.todos : []
 
-    switch (input.action) {
-      case 'add': {
-        if (!input.text) {
-          return { type: 'tool_result', tool_use_id: '', content: 'text required', is_error: true }
+      const next: TodoItem[] = []
+      let allDone = incoming.length > 0
+
+      for (const t of incoming) {
+        if (!isRecord(t)) {
+          return { data: 'Error: each todo must be an object', is_error: true }
         }
-        const item = syncCompatFields({
-          id: `todo_${++todoCounter}`,
-          content: input.text,
-          activeForm: input.text,
-          status: 'pending',
-          priority: input.priority,
-        })
-        todoList.push(item)
-        return { type: 'tool_result', tool_use_id: '', content: `Todo added: ${item.id} "${item.content}"` }
-      }
-      case 'toggle': {
-        const item = todoList.find((todo) => todo.id === String(input.id))
-        if (!item) {
-          return { type: 'tool_result', tool_use_id: '', content: `Todo ${input.id} not found`, is_error: true }
+        const { content, activeForm } = t
+        if (typeof content !== 'string' || content.trim() === '') {
+          return { data: 'Error: each todo requires a non-empty content', is_error: true }
         }
-        item.status = item.status === 'completed' ? 'pending' : 'completed'
-        item.done = item.status === 'completed'
-        return { type: 'tool_result', tool_use_id: '', content: `Todo ${item.id} ${item.status}` }
-      }
-      case 'remove': {
-        const idx = todoList.findIndex((todo) => todo.id === String(input.id))
-        if (idx === -1) {
-          return { type: 'tool_result', tool_use_id: '', content: `Todo ${input.id} not found`, is_error: true }
+        if (typeof activeForm !== 'string' || activeForm.trim() === '') {
+          return { data: 'Error: each todo requires a non-empty activeForm', is_error: true }
         }
-        const [removed] = todoList.splice(idx, 1)
-        if (!removed) {
-          return { type: 'tool_result', tool_use_id: '', content: `Todo ${input.id} not found`, is_error: true }
-        }
-        return { type: 'tool_result', tool_use_id: '', content: `Todo removed: ${removed.id}` }
+        const status = coerceStatus(t.status)
+        if (status !== 'completed') allDone = false
+        next.push({ content, activeForm, status })
       }
-      case 'clear': {
-        clearTodos()
-        return { type: 'tool_result', tool_use_id: '', content: 'All todos cleared.' }
-      }
-      case 'list': {
-        return { type: 'tool_result', tool_use_id: '', content: listTodosText() }
-      }
-      default:
-        return {
-          type: 'tool_result',
-          tool_use_id: '',
-          content: 'Error: todos array or valid legacy action is required',
-          is_error: true,
-        }
-    }
-  },
+
+      store.set(allDone ? [] : next)
+      return renderTodos(store.getAll())
+    },
+  })
 }
