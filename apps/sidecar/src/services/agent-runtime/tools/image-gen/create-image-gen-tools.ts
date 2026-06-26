@@ -32,7 +32,7 @@ reference_image and mask_image accept a threadPath (relative to the current thre
         },
         required: ["prompt"],
       },
-      async call(args) {
+      async call(args, ctx) {
         const workspaceSlug = input.workspaceSlug;
         if (!workspaceSlug) {
           throw new Error("image_gen 需要工作区上下文");
@@ -57,6 +57,7 @@ reference_image and mask_image accept a threadPath (relative to the current thre
           referenceImage,
           maskImage,
           model,
+          abortSignal: ctx.abortSignal,
         });
       },
     }),
