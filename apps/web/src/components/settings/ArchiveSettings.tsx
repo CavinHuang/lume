@@ -7,13 +7,14 @@ import {
   Trash,
   Trash2,
 } from 'lucide-react'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import type { AgentThreadMeta } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { cn } from '@/lib/utils'
-import { agentWorkspacesAtom } from '@/atoms'
+import { agentInputDraftAtom, agentInputHistoryAtom, agentWorkspacesAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
+import { removeDraft, removeHistory } from '@/lib/agent-input-draft-state'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 type View = 'archive' | 'trash'
@@ -32,6 +33,15 @@ function formatDate(timestamp: number): string {
 
 export function ArchiveSettings({ initialView }: { initialView?: 'archive' | 'trash' }) {
   const workspaces = useAtomValue(agentWorkspacesAtom)
+  const setDraftState = useSetAtom(agentInputDraftAtom)
+  const setHistoryState = useSetAtom(agentInputHistoryAtom)
+  const removeThreadInputState = React.useCallback(
+    (threadId: string) => {
+      setDraftState((prev) => removeDraft(prev, threadId))
+      setHistoryState((prev) => removeHistory(prev, threadId))
+    },
+    [setDraftState, setHistoryState],
+  )
   const [view, setView] = React.useState<View>(initialView ?? 'archive')
   const [archivedThreads, setArchivedThreads] = React.useState<AgentThreadMeta[]>([])
   const [trashedThreads, setTrashedThreads] = React.useState<AgentThreadMeta[]>([])
@@ -81,6 +91,7 @@ export function ArchiveSettings({ initialView }: { initialView?: 'archive' | 'tr
   const handleTrash = async (threadId: string) => {
     try {
       await sidecarCall(AGENT_IPC_CHANNELS.TRASH_THREAD, { threadId })
+      removeThreadInputState(threadId)
       toast.success('已移入回收站')
       void loadData()
     } catch (error) {
@@ -112,6 +123,7 @@ export function ArchiveSettings({ initialView }: { initialView?: 'archive' | 'tr
       onConfirm: async () => {
         try {
           await sidecarCall(AGENT_IPC_CHANNELS.PERMANENTLY_DELETE_THREAD, { threadId: thread.id })
+          removeThreadInputState(thread.id)
           toast.success('已永久删除')
           void loadData()
         } catch (error) {
@@ -133,7 +145,10 @@ export function ArchiveSettings({ initialView }: { initialView?: 'archive' | 'tr
       onConfirm: async () => {
         try {
           await Promise.all(
-            trashedThreads.map((t) => sidecarCall(AGENT_IPC_CHANNELS.PERMANENTLY_DELETE_THREAD, { threadId: t.id })),
+            trashedThreads.map(async (t) => {
+              await sidecarCall(AGENT_IPC_CHANNELS.PERMANENTLY_DELETE_THREAD, { threadId: t.id })
+              removeThreadInputState(t.id)
+            }),
           )
           toast.success('回收站已清空')
           void loadData()
