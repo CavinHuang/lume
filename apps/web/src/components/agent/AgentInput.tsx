@@ -497,10 +497,10 @@ export function AgentInput({
       if (json && !isEmptyDraft(json)) {
         editor.commands.setContent(json, { emitUpdate: false })
       } else {
-        editor.commands.clearContent()
+        editor.commands.clearContent(false)
       }
     } catch {
-      editor.commands.clearContent()
+      editor.commands.clearContent(false)
     }
     setEditorText(editor.getText())
     // 下一 tick 解除标志，让后续真实输入正常存草稿
@@ -758,10 +758,10 @@ export function AgentInput({
       if (json && !isEmptyDraft(json)) {
         editor.commands.setContent(json, { emitUpdate: false })
       } else {
-        editor.commands.clearContent()
+        editor.commands.clearContent(false)
       }
     } catch {
-      editor.commands.clearContent()
+      editor.commands.clearContent(false)
     }
     setEditorText(editor.getText())
   }
