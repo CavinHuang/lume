@@ -201,6 +201,29 @@ export class LumeRunObserver {
     });
   }
 
+  recordTodoState(
+    state: { todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[]; currentActiveForm: string | null },
+    emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
+  ): void {
+    this.enqueue(async () => {
+      const item: LumeRunItem = {
+        type: "todo_state",
+        id: `todo:${this.state.runId}:${new Date().toISOString()}`,
+        todos: state.todos,
+        currentActiveForm: state.currentActiveForm,
+        createdAt: new Date().toISOString()
+      };
+      await this.stateStore.appendItem(this.state.runId, item);
+      for (const event of projectRunItemToRuntimeEvents(this.state, item, {
+        includeAssistantText: true,
+        includeAssistantThinking: true,
+        includeModelStreamText: true
+      })) {
+        emitRuntimeEvent?.(event);
+      }
+    });
+  }
+
   recordMemoryContextUsed(event: Extract<LumeRuntimeEvent, { type: "memory.context.used" }>): void {
     this.enqueue(async () => {
       const item: LumeRunItem = {
