@@ -4,7 +4,7 @@ import type { TodoBlockData } from './runtime-message-view'
 import { cn } from '@/lib/utils'
 
 export function TodoPanel({ data }: { data: TodoBlockData | null }) {
-  const [expanded, setExpanded] = useState(false)
+  const [hovered, setHovered] = useState(false)
   if (!data || data.todos.length === 0) return null
 
   const completed = data.todos.filter((t) => t.status === 'completed').length
@@ -12,18 +12,14 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
   const active = !!data.currentActiveForm
 
   return (
-    <div
-      className="sticky bottom-3 z-10 flex justify-center"
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
-    >
+    <div className="sticky bottom-3 z-10 flex justify-center">
       <div
-        className={cn(
-          'max-w-[320px] rounded-lg border border-[#e1e4ec] bg-white/95 text-[12px] shadow-[0_4px_16px_rgba(20,24,40,0.08)] backdrop-blur transition-all',
-          expanded ? 'w-[280px] px-3 py-2' : 'px-2.5 py-1.5',
-        )}
+        className="relative"
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
       >
-        <div className="flex items-center gap-2 font-medium text-foreground/70">
+        {/* 固定气泡：位置与尺寸恒定，hover 不变化 */}
+        <div className="flex max-w-[320px] items-center gap-2 rounded-lg border border-[#e1e4ec] bg-white/95 px-2.5 py-1.5 text-[12px] font-medium text-foreground/70 shadow-[0_4px_16px_rgba(20,24,40,0.08)] backdrop-blur">
           <ProgressRing completed={completed} total={total} active={active} />
           <span className="shrink-0 tabular-nums text-foreground/50">
             {completed}/{total}
@@ -35,8 +31,14 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
           )}
         </div>
 
-        {expanded && (
-          <div className="mt-2 space-y-0.5 border-t border-[#edf0f5] pt-2">
+        {/* popup：脱离文档流（absolute），始终在 DOM，opacity 控制可见——hover 不重建列表、不推挤气泡 */}
+        <div
+          className={cn(
+            'pointer-events-none absolute bottom-full left-1/2 mb-2 w-[280px] -translate-x-1/2 rounded-lg border border-[#e1e4ec] bg-white/95 p-3 text-[12px] opacity-0 shadow-[0_4px_16px_rgba(20,24,40,0.12)] backdrop-blur transition-opacity duration-150',
+            hovered && 'pointer-events-auto opacity-100',
+          )}
+        >
+          <div className="space-y-0.5">
             {data.todos.map((t, i) => (
               <div key={i} className="flex items-center gap-2">
                 {t.status === 'completed' ? (
@@ -57,7 +59,7 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
               </div>
             ))}
           </div>
-        )}
+        </div>
       </div>
     </div>
   )
