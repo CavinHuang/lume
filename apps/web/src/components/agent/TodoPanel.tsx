@@ -13,7 +13,7 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
 
   return (
     <div
-      className="sticky bottom-3 z-10 flex justify-end"
+      className="sticky bottom-3 z-10 flex justify-center"
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
     >
