@@ -22,6 +22,11 @@ export type PlanPreviewView = Pick<
   'contractId' | 'title' | 'summary' | 'markdown' | 'planFilePath' | 'planVerified' | 'stepCount'
 >
 
+export interface TodoBlockData {
+  todos: { content: string; activeForm: string; status: 'pending' | 'in_progress' | 'completed' }[]
+  currentActiveForm: string | null
+}
+
 export type RuntimeAssistantBlock =
   | { type: 'text'; id: string; text: string }
   | { type: 'thinking'; id: string; text: string }
@@ -29,6 +34,7 @@ export type RuntimeAssistantBlock =
   | { type: 'task_progress'; id: string; event: TaskProgressViewEvent }
   | { type: 'memory_context_used'; id: string; event: MemoryContextUsedViewEvent }
   | { type: 'plan_preview'; id: string; preview: PlanPreviewView }
+  | { type: 'todo_update'; id: string; data: TodoBlockData }
 
 export interface RuntimeAssistantTokenUsageView {
   inputTokens?: number

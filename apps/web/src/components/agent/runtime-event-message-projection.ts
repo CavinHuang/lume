@@ -170,6 +170,20 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'todo.state_updated') {
+    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'todo_update')
+    state.currentAssistant.blocks.push({
+      type: 'todo_update',
+      id: `todo:${event.runId}:${event.createdAt}`,
+      data: {
+        todos: event.todos,
+        currentActiveForm: event.currentActiveForm,
+      },
+    })
+    return
+  }
+
   if (event.type === 'tool.started') {
     state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
     const toolCall: RuntimeToolCallView = {
@@ -647,6 +661,9 @@ function estimateAssistantBlockTokens(block: RuntimeAssistantBlock): number {
   if (block.type === 'task_progress') return estimateTextTokens(block.event.message ?? '')
   if (block.type === 'tool_call') {
     return estimateValueTokens(block.toolCall.input) + estimateValueTokens(block.toolCall.output)
+  }
+  if (block.type === 'todo_update') {
+    return estimateTextTokens(block.data.currentActiveForm ?? '') + estimateValueTokens(block.data.todos)
   }
   return 0
 }

@@ -581,6 +581,10 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
     return null
   }
 
+  if (block.type === 'todo_update') {
+    return null
+  }
+
   return (
     <RuntimeEventToolCallBlock
       toolCall={block.toolCall}
