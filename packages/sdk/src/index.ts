@@ -147,7 +147,7 @@ export {
   ConfigTool,
 
   // Todo
-  TodoWriteTool,
+  createTodoTool,
 
   // Skill
   SkillTool,
@@ -471,11 +471,7 @@ export {
   clearConfig,
 } from './tools/config-tool.js'
 
-export {
-  getTodos,
-  clearTodos,
-} from './tools/todo-tool.js'
-export type { TodoItem } from './tools/todo-tool.js'
+export type { TodoItem, TodoStatus } from './tools/todo-tool.js'
 
 // --------------------------------------------------------------------------
 // Types
