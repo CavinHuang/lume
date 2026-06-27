@@ -474,7 +474,7 @@ registerToolMetadata({
   category: "control",
   riskLevel: "low",
   description: "管理任务列表",
-  allowedInPlanMode: true
+  allowedInPlanMode: false
 });
 
 // LSP 工具
