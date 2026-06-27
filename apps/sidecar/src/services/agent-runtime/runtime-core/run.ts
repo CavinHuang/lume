@@ -25,7 +25,7 @@ import {
   type ToolContext,
   type ToolResult,
   SkillTool,
-  TodoWriteTool,
+  createTodoTool,
   defineTool,
   finalizeSubagentOutputFromState,
   summarizeSubagentAssistantEvent,
@@ -596,7 +596,6 @@ function createBaseSdkAlignedTools(
     BashTool,
     NotebookEditTool,
     SkillTool,
-    TodoWriteTool,
     LSPTool
   ];
 }
@@ -647,6 +646,7 @@ function buildRuntimeCoreTools(input: {
     sessionDir: getRuntimeCoreSessionDir(input.sessionId),
     threadId: input.sessionId
   });
+  const todoTool = createTodoTool({ threadId: input.sessionId });
   const lumeTools = createLumeRuntimeTools({
     threadId: input.sessionId,
     workspaceId: input.workspaceId,
@@ -797,7 +797,7 @@ function buildRuntimeCoreTools(input: {
     groups: [
       { source: "sdk", tools: baseTools },
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
-      { source: "task", tools: [taskReportTool, sidecarAgentTool] },
+      { source: "task", tools: [taskReportTool, sidecarAgentTool, todoTool] },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
       ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : []),
       ...(input.pluginCommandTools?.length
