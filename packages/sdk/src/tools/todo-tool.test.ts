@@ -63,4 +63,41 @@ describe('createTodoTool', () => {
     })
     expect(res.content).toBe('[~] Run tests\n[ ] Write docs')
   })
+
+  test('batch-completing 3+ tasks triggers verification nudge', async () => {
+    const tool = createTodoTool({ threadId: 't1' })
+    await tool.call({
+      todos: [
+        item('A', 'in_progress', 'Doing A'),
+        item('B', 'pending', 'Doing B'),
+        item('C', 'pending', 'Doing C'),
+      ],
+    })
+    const res = await tool.call({
+      todos: [
+        item('A', 'completed', 'Doing A'),
+        item('B', 'completed', 'Doing B'),
+        item('C', 'completed', 'Doing C'),
+      ],
+    })
+    expect(res.content).toContain('verification')
+  })
+
+  test('completing tasks one-at-a-time does NOT trigger nudge', async () => {
+    const tool = createTodoTool({ threadId: 't1' })
+    await tool.call({ todos: [item('A', 'in_progress', 'Doing A'), item('B', 'pending', 'Doing B')] })
+    const r1 = await tool.call({ todos: [item('A', 'completed', 'Doing A'), item('B', 'in_progress', 'Doing B')] })
+    const r2 = await tool.call({ todos: [item('B', 'completed', 'Doing B')] })
+    expect(r1.content).not.toContain('verification')
+    expect(r2.content).not.toContain('verification')
+  })
+
+  test('batch-completing only 2 tasks does NOT trigger nudge', async () => {
+    const tool = createTodoTool({ threadId: 't1' })
+    await tool.call({ todos: [item('A', 'in_progress', 'Doing A'), item('B', 'pending', 'Doing B')] })
+    const res = await tool.call({
+      todos: [item('A', 'completed', 'Doing A'), item('B', 'completed', 'Doing B')],
+    })
+    expect(res.content).not.toContain('verification')
+  })
 })

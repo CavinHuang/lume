@@ -51,6 +51,14 @@ function renderTodos(todos: TodoItem[]): string {
   return todos.map((t) => `${statusMarker(t.status)} ${t.content}`).join('\n')
 }
 
+const VERIFICATION_NUDGE =
+  '\n\n[verification needed] 多个任务被一次性标记为完成。在结束本轮前，请派 code-reviewer 子代理验证这些任务的实现是否真正达成，避免虚假完成。'
+
+function countNewlyCompleted(prev: TodoItem[], next: TodoItem[]): number {
+  const prevCompleted = new Set(prev.filter((t) => t.status === 'completed').map((t) => t.content))
+  return next.filter((t) => t.status === 'completed' && !prevCompleted.has(t.content)).length
+}
+
 function coerceStatus(value: unknown): TodoStatus {
   if (value === 'in_progress') return 'in_progress'
   if (value === 'completed') return 'completed'
@@ -124,6 +132,7 @@ export function createTodoTool(opts: { threadId: string }) {
       // Array.isArray narrows input.todos to any[]; treat elements as unknown.
       const incoming = Array.isArray(input?.todos) ? input.todos : []
 
+      const oldTodos = store.getAll()
       const next: TodoItem[] = []
       let allDone = incoming.length > 0
 
@@ -144,7 +153,9 @@ export function createTodoTool(opts: { threadId: string }) {
       }
 
       store.set(allDone ? [] : next)
-      return renderTodos(store.getAll())
+      const base = renderTodos(store.getAll())
+      const shouldNudge = countNewlyCompleted(oldTodos, next) >= 3
+      return shouldNudge ? base + VERIFICATION_NUDGE : base
     },
   })
 }
