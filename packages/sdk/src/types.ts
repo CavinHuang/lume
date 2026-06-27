@@ -746,6 +746,7 @@ export interface ToolInputSchema {
   type: 'object'
   properties: Record<string, any>
   required?: string[]
+  additionalProperties?: boolean
 }
 
 export interface ToolContext {
