@@ -471,7 +471,7 @@ export {
   clearConfig,
 } from './tools/config-tool.js'
 
-export type { TodoItem, TodoStatus } from './tools/todo-tool.js'
+export type { TodoItem, TodoStatus, TodoState } from './tools/todo-tool.js'
 
 // --------------------------------------------------------------------------
 // Types
