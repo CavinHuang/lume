@@ -175,7 +175,10 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'todo_update')
     state.currentAssistant.blocks.push({
       type: 'todo_update',
-      id: `todo:${event.runId}:${event.createdAt}`,
+      // id 必须跨 todo 事件稳定：上方 filter 已保证同 run 内 todo_update 单例，
+      // runId 足够唯一。若带 event.createdAt，每次 todo 更新 id 都漂移，会令简洁模式下
+      // MinimalProcessGroup 段 key 漂移（段首为 todo_update 时）→ 整段卸载重建 → 列表抖动 + 跳顶。
+      id: `todo:${event.runId}`,
       data: {
         todos: event.todos,
         currentActiveForm: event.currentActiveForm,

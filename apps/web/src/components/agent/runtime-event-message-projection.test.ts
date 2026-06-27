@@ -855,3 +855,47 @@ describe('applyRuntimeEventsIncremental 引用稳定', () => {
     }
   })
 })
+
+describe('todo_update block 稳定性', () => {
+  test('多次 todo.state_updated 事件：block id 跨事件稳定（不带变化的 createdAt）', () => {
+    // 简洁模式下 MinimalProcessGroup 段 key = `process:${段首block.id}`。
+    // 若 todo_update 为段首且 id 含每次事件都不同的 createdAt，段 key 会漂移 →
+    // React 卸载重建整个 process 段 → 列表抖动 + 滚动跳顶。
+    // 故同 run 内 todo_update block id 必须稳定（filter 已保证单例，runId 足够唯一）。
+    const events = [
+      event({ type: 'message.user.submitted', text: 'do task', messageId: 'u-todo' }),
+      event({ type: 'run.started', runId: 'r-todo' }),
+      event({
+        type: 'todo.state_updated',
+        runId: 'r-todo',
+        createdAt: '2026-05-11T00:00:01.000Z',
+        todos: [
+          { content: 'step1', status: 'in_progress' },
+          { content: 'step2', status: 'pending' },
+        ],
+        currentActiveForm: 'doing step1',
+      }),
+      event({
+        type: 'todo.state_updated',
+        runId: 'r-todo',
+        createdAt: '2026-05-11T00:00:05.000Z',
+        todos: [
+          { content: 'step1', status: 'completed' },
+          { content: 'step2', status: 'in_progress' },
+        ],
+        currentActiveForm: 'doing step2',
+      }),
+    ]
+    const messages = projectRuntimeEventMessages(events)
+    const assistant = messages.find((m) => m.type === 'assistant')!
+    expect(assistant.type).toBe('assistant')
+    if (assistant.type !== 'assistant') return
+    const todoBlocks = assistant.blocks.filter((b) => b.type === 'todo_update')
+    // filter 保证同 run 内只有一个 todo_update block
+    expect(todoBlocks.length).toBe(1)
+    // id 不含变化的 createdAt，跨事件稳定
+    expect(todoBlocks[0]!.id).toBe('todo:r-todo')
+    // 内容仍为最新一次 todo 状态
+    expect((todoBlocks[0] as any).data.currentActiveForm).toBe('doing step2')
+  })
+})
