@@ -206,12 +206,13 @@ export class LumeRunObserver {
     emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
   ): void {
     this.enqueue(async () => {
+      const createdAt = new Date().toISOString();
       const item: LumeRunItem = {
         type: "todo_state",
-        id: `todo:${this.state.runId}:${new Date().toISOString()}`,
+        id: `todo:${this.state.runId}:${createdAt}-${randomUUID().slice(0, 8)}`,
         todos: state.todos,
         currentActiveForm: state.currentActiveForm,
-        createdAt: new Date().toISOString()
+        createdAt
       };
       await this.stateStore.appendItem(this.state.runId, item);
       for (const event of projectRunItemToRuntimeEvents(this.state, item, {
