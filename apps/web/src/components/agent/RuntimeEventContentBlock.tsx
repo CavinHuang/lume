@@ -617,6 +617,8 @@ function MinimalProcessGroup({
   const completedCount = toolCalls.filter((tc) => tc.status === 'completed').length
   // 仅展示第一个运行中的工具：agent 绝大多数情况顺序执行工具；并发多工具时其余的进度不单独展示。
   const runningTool = toolCalls.find((tc) => tc.status === 'running')
+  const todoBlock = blocks.find((b): b is Extract<RuntimeAssistantBlock, { type: 'todo_update' }> => b.type === 'todo_update')
+  const todoActiveForm = todoBlock?.data.currentActiveForm ?? null
   const hasRunning = isStreamingMessage && Boolean(runningTool)
 
   useEffect(() => {
@@ -654,7 +656,7 @@ function MinimalProcessGroup({
     summaryUnits.push(
       <span key="run" className="inline-flex items-center gap-1">
         <span className="size-1.5 animate-pulse rounded-full bg-blue-500" />
-        正在执行 {runningTool.toolName}
+        {todoActiveForm ?? `正在执行 ${runningTool.toolName}`}
       </span>,
     )
     summaryUnits.push(

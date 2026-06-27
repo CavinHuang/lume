@@ -16,6 +16,8 @@ import {
   type ProjectionRef,
 } from './runtime-event-message-projection'
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
+import { TodoPanel } from './TodoPanel'
+import type { TodoBlockData } from './runtime-message-view'
 import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
 import {
   collectNewRuntimeMessageIds,
@@ -315,6 +317,18 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     }
   }, [latestUserMessageKey, liveMessages.length, scrollMessagesToBottom, threadId])
 
+  const latestTodo: TodoBlockData | null = (() => {
+    for (let i = liveMessages.length - 1; i >= 0; i -= 1) {
+      const m = liveMessages[i]!
+      if (m.type !== 'assistant') continue
+      for (let j = m.blocks.length - 1; j >= 0; j -= 1) {
+        const block = m.blocks[j]!
+        if (block.type === 'todo_update') return block.data
+      }
+    }
+    return null
+  })()
+
   const items: React.ReactNode[] = []
   for (let i = 0; i < liveMessages.length; i++) {
     const msg = liveMessages[i]
@@ -359,6 +373,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           ) : (
             <>
               {items}
+              <TodoPanel data={latestTodo} />
               <div ref={bottomRef} className="h-px w-full" aria-hidden />
             </>
           )}
