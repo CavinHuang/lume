@@ -235,6 +235,18 @@ export function projectRunItemToRuntimeEvents(
     }];
   }
 
+  if (item.type === "todo_state") {
+    return [{
+      id: `${run.runId}:${item.id}:todo.state_updated`,
+      type: "todo.state_updated",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      todos: item.todos,
+      currentActiveForm: item.currentActiveForm
+    }];
+  }
+
   if (item.type === "system_event") {
     return projectSystemEventRuntimeEvents(run, item);
   }

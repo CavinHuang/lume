@@ -18,6 +18,7 @@ export type RuntimeEventType =
   | "tool.permission_timeout"
   | "guidance.delivered"
   | "plan.preview"
+  | "todo.state_updated"
   | "task.progress"
   | "im.delivery"
   | "permission.requested"
@@ -159,6 +160,12 @@ export interface PlanPreviewRuntimeEvent extends RuntimeEventBase {
   planFilePath?: string;
   planVerified?: boolean;
   stepCount: number;
+}
+
+export interface TodoStateUpdatedRuntimeEvent extends RuntimeEventBase {
+  type: "todo.state_updated";
+  todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[];
+  currentActiveForm: string | null;
 }
 
 export type TaskProgressRuntimeStatus =
@@ -369,6 +376,7 @@ export type LumeRuntimeEvent =
   | GuidanceDeliveredRuntimeEvent
   | ToolPermissionResolvedRuntimeEvent
   | PlanPreviewRuntimeEvent
+  | TodoStateUpdatedRuntimeEvent
   | TaskProgressRuntimeEvent
   | ImDeliveryRuntimeEvent
   | RunCompletedRuntimeEvent
