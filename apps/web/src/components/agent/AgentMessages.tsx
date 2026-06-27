@@ -374,12 +374,12 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           ) : (
             <>
               {items}
-              <TodoPanel data={latestTodo} />
               <div ref={bottomRef} className="h-px w-full" aria-hidden />
             </>
           )}
         </div>
       </div>
+      <TodoPanel data={latestTodo} />
       {showScrollButton && hasRenderableMessages && (
         <button
           type="button"

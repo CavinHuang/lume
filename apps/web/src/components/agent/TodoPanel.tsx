@@ -12,9 +12,9 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
   const active = !!data.currentActiveForm
 
   return (
-    <div className="sticky bottom-3 z-10 flex justify-center">
+    <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
       <div
-        className="relative"
+        className="pointer-events-auto relative"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
