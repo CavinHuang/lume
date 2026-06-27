@@ -22,6 +22,7 @@ import {
   buildUncertaintySection
 } from "./prompt/sections/interaction-policy-sections";
 import { buildToolingSection } from "./prompt/sections/tooling-section";
+import { buildTodoSection } from "./prompt/sections/todo-section";
 import { buildRuntimeSection as renderRuntimeSection } from "./prompt/sections/runtime-section";
 import { buildWorkspaceContextSection } from "./prompt/sections/workspace-context-section";
 import {
@@ -338,6 +339,8 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 
   sections.push(buildKnowledgeMaintenanceSection());
   sections.push(buildConversationStyleSection());
+
+  sections.push(buildTodoSection());
 
   sections.push(
     ...buildExecutionPolicySections(),
