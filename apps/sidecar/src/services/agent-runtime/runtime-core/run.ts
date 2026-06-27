@@ -132,6 +132,7 @@ export interface CreateRuntimeCoreSessionInput {
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
+  emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
   runId?: string;
   workflowHooks?: LumeWorkflowHookRuntimeLike;
   applyWorkflowHookEffects?: (result: LumeWorkflowHookExecutionResult) => Promise<void> | void;
@@ -616,6 +617,7 @@ function buildRuntimeCoreTools(input: {
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
+  emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
   runId?: string;
   pluginDiagnostics?: ToolRuntimeDiagnostic[];
   mcpTools?: ToolDefinition[];
@@ -646,7 +648,10 @@ function buildRuntimeCoreTools(input: {
     sessionDir: getRuntimeCoreSessionDir(input.sessionId),
     threadId: input.sessionId
   });
-  const todoTool = createTodoTool({ threadId: input.sessionId });
+  const todoTool = createTodoTool({
+    threadId: input.sessionId,
+    onTodoUpdated: input.emitTodoUpdated,
+  });
   const lumeTools = createLumeRuntimeTools({
     threadId: input.sessionId,
     workspaceId: input.workspaceId,
@@ -1006,6 +1011,7 @@ export async function createRuntimeCoreSession(
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
+    emitTodoUpdated: input.emitTodoUpdated,
     runId: input.runId,
     pluginDiagnostics: pluginAssembly.diagnostics.map((d) => ({
       pluginName: d.pluginId,

@@ -311,6 +311,7 @@ export class LumeRunner {
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitToolPermissionRequest: this.emit.onToolPermissionRequest,
       emitTaskContractUpdated: this.emit.onTaskContractUpdated,
+      emitTodoUpdated: this.emit.onTodoUpdated,
       runId: this.observer.getRunId(),
       workflowHooks: this.workflowHooks,
       applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
