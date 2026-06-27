@@ -18,6 +18,13 @@ export interface TodoItem {
   status: TodoStatus
 }
 
+/** Snapshot pushed to the UI via onTodoUpdated. */
+export interface TodoState {
+  todos: TodoItem[]
+  /** activeForm of the single in_progress task, or null if none. */
+  currentActiveForm: string | null
+}
+
 const PROMPT = `Use this tool to manage a structured task list for the current session. It tracks progress on multi-step work and shows the user what is being done.
 
 ## When to use
@@ -93,7 +100,10 @@ export function createTodoStore() {
  * Build a per-session TodoWrite tool. State is scoped to this instance
  * via an internal store; the module no longer holds any global state.
  */
-export function createTodoTool(opts: { threadId: string }) {
+export function createTodoTool(opts: {
+  threadId: string
+  onTodoUpdated?: (state: TodoState) => void | Promise<void>
+}) {
   if (!opts?.threadId) {
     throw new Error('createTodoTool requires a threadId')
   }
@@ -153,7 +163,15 @@ export function createTodoTool(opts: { threadId: string }) {
       }
 
       store.set(allDone ? [] : next)
-      const base = renderTodos(store.getAll())
+      const todos = store.getAll()
+      const inProgress = todos.find((t) => t.status === 'in_progress')
+      const state: TodoState = {
+        todos,
+        currentActiveForm: inProgress ? inProgress.activeForm : null,
+      }
+      await opts.onTodoUpdated?.(state)
+
+      const base = renderTodos(todos)
       const shouldNudge = !allDone && countNewlyCompleted(oldTodos, next) >= 3
       return shouldNudge ? base + VERIFICATION_NUDGE : base
     },

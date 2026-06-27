@@ -108,6 +108,16 @@ describe('createTodoTool', () => {
     })
     expect(res.content).toBe('No active todos.')
     expect(res.content).not.toContain('verification')
+    // 重复全完成提交（oldTodos 已清空，钉死 !allDone 守卫的 I1 路径）
+    const res2 = await tool.call({
+      todos: [
+        item('A', 'completed', 'Doing A'),
+        item('B', 'completed', 'Doing B'),
+        item('C', 'completed', 'Doing C'),
+      ],
+    })
+    expect(res2.content).toBe('No active todos.')
+    expect(res2.content).not.toContain('verification')
   })
 
   test('completing tasks one-at-a-time does NOT trigger nudge', async () => {
@@ -126,5 +136,32 @@ describe('createTodoTool', () => {
       todos: [item('A', 'completed', 'Doing A'), item('B', 'completed', 'Doing B')],
     })
     expect(res.content).not.toContain('verification')
+  })
+
+  test('onTodoUpdated fires with todos + currentActiveForm after call', async () => {
+    let captured: { todos: TodoItem[]; currentActiveForm: string | null } | null = null
+    const tool = createTodoTool({
+      threadId: 't1',
+      onTodoUpdated: (state) => { captured = state },
+    })
+    await tool.call({
+      todos: [
+        item('Run tests', 'in_progress', 'Running tests'),
+        item('Write docs', 'pending', 'Writing docs'),
+      ],
+    })
+    expect(captured).not.toBeNull()
+    expect(captured!.todos).toHaveLength(2)
+    expect(captured!.currentActiveForm).toBe('Running tests')
+  })
+
+  test('onTodoUpdated currentActiveForm is null when nothing in_progress', async () => {
+    let captured: { todos: TodoItem[]; currentActiveForm: string | null } | null = null
+    const tool = createTodoTool({
+      threadId: 't1',
+      onTodoUpdated: (state) => { captured = state },
+    })
+    await tool.call({ todos: [item('A', 'pending', 'Doing A')] })
+    expect(captured!.currentActiveForm).toBeNull()
   })
 })
