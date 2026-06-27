@@ -66,6 +66,31 @@ describe('createTodoTool', () => {
 
   test('batch-completing 3+ tasks triggers verification nudge', async () => {
     const tool = createTodoTool({ threadId: 't1' })
+    // 先建立 5 个任务：1 in_progress + 4 pending
+    await tool.call({
+      todos: [
+        item('A', 'in_progress', 'Doing A'),
+        item('B', 'pending', 'Doing B'),
+        item('C', 'pending', 'Doing C'),
+        item('D', 'pending', 'Doing D'),
+        item('E', 'pending', 'Doing E'),
+      ],
+    })
+    // 一次把 B/C/D 标完成（A 仍 in_progress, E 仍 pending → not all done, 3 newly completed）
+    const res = await tool.call({
+      todos: [
+        item('A', 'in_progress', 'Doing A'),
+        item('B', 'completed', 'Doing B'),
+        item('C', 'completed', 'Doing C'),
+        item('D', 'completed', 'Doing D'),
+        item('E', 'pending', 'Doing E'),
+      ],
+    })
+    expect(res.content).toContain('verification')
+  })
+
+  test('all-done completion does NOT trigger nudge', async () => {
+    const tool = createTodoTool({ threadId: 't1' })
     await tool.call({
       todos: [
         item('A', 'in_progress', 'Doing A'),
@@ -73,6 +98,7 @@ describe('createTodoTool', () => {
         item('C', 'pending', 'Doing C'),
       ],
     })
+    // 一次性全完成 → allDone=true → 清空 → 不应 nudge
     const res = await tool.call({
       todos: [
         item('A', 'completed', 'Doing A'),
@@ -80,7 +106,8 @@ describe('createTodoTool', () => {
         item('C', 'completed', 'Doing C'),
       ],
     })
-    expect(res.content).toContain('verification')
+    expect(res.content).toBe('No active todos.')
+    expect(res.content).not.toContain('verification')
   })
 
   test('completing tasks one-at-a-time does NOT trigger nudge', async () => {

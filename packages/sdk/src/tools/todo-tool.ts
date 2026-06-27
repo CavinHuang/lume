@@ -154,7 +154,7 @@ export function createTodoTool(opts: { threadId: string }) {
 
       store.set(allDone ? [] : next)
       const base = renderTodos(store.getAll())
-      const shouldNudge = countNewlyCompleted(oldTodos, next) >= 3
+      const shouldNudge = !allDone && countNewlyCompleted(oldTodos, next) >= 3
       return shouldNudge ? base + VERIFICATION_NUDGE : base
     },
   })
