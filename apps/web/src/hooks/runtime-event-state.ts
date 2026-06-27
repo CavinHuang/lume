@@ -8,14 +8,18 @@ export interface ThreadRuntimeEventState {
 
 export type RuntimeEventState = Record<string, ThreadRuntimeEventState>
 
-const MAX_EVENTS_PER_THREAD = 100
+// 每线程保留的 runtime events 上限。runtimeEvents 当前同时承担「流式事件流」
+// 与历史渲染源两个角色：上限过小会 trim 掉早期 turn，导致长对话历史消息消失
+// （AgentMessages 投影优先用 runtimeEvents）。2000 覆盖绝大多数对话；彻底解耦
+// 需让历史来自持久化消息源（待后续重构）。
+const MAX_EVENTS_PER_THREAD = 2000
 
 export function appendRuntimeEvent(
   prev: RuntimeEventState,
   event: LumeRuntimeEvent,
 ): RuntimeEventState {
   const current = prev[event.threadId]
-  if (isDuplicateUserSubmit(current?.events.at(-1), event)) {
+  if (isDuplicateSubmittedUserEvent(current?.events ?? [], event)) {
     return prev
   }
   const events = trimRuntimeEvents(orderedAppend(current?.events ?? [], event))
@@ -46,7 +50,7 @@ export function appendRuntimeEvents(
     const current = next[threadId]
     let acc = current?.events ?? []
     for (const event of list) {
-      if (isDuplicateUserSubmit(acc.at(-1), event)) continue
+      if (isDuplicateSubmittedUserEvent(acc, event)) continue
       acc = orderedAppend(acc, event)
     }
     const trimmed = trimRuntimeEvents(acc)
@@ -204,20 +208,32 @@ function getAssistantMessageId(event: LumeRuntimeEvent): string | undefined {
 
 function trimRuntimeEvents(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
   if (events.length <= MAX_EVENTS_PER_THREAD) return events
-  const tail = events.slice(-MAX_EVENTS_PER_THREAD)
+
+  // 超限时优先从头部丢弃可重建的 assistant.delta / thinking_delta——它们对应的
+  // 历史 turn 已有 assistant.final 提供完整内容（投影时 final 会重建文本），丢了
+  // 不伤历史；而结构事件（user/tool/run/plan/todo/compaction）一旦丢失就是整段
+  // 历史消失。尾部（含当前 streaming）的 delta 是流式内容唯一来源，头部丢弃波及不到。
+  const overflow = events.length - MAX_EVENTS_PER_THREAD
+  let dropped = 0
+  const withoutDelta = events.filter((event) => {
+    if (dropped >= overflow) return true
+    if (event.type === 'assistant.delta' || event.type === 'assistant.thinking_delta') {
+      dropped += 1
+      return false
+    }
+    return true
+  })
+  if (withoutDelta.length <= MAX_EVENTS_PER_THREAD) return withoutDelta
+
+  // 结构事件本身超限：取尾部 MAX + rescue 最近一条 user submit（保留会话起点锚点）
+  const tail = withoutDelta.slice(-MAX_EVENTS_PER_THREAD)
   if (tail.some((event) => event.type === 'message.user.submitted')) {
     return tail
   }
-  const latestUserBeforeTail = [...events.slice(0, -MAX_EVENTS_PER_THREAD)]
+  const latestUserBeforeTail = [...withoutDelta.slice(0, -MAX_EVENTS_PER_THREAD)]
     .reverse()
     .find((event) => event.type === 'message.user.submitted')
   return latestUserBeforeTail ? [latestUserBeforeTail, ...tail.slice(1)] : tail
-}
-
-function isDuplicateUserSubmit(previous: LumeRuntimeEvent | undefined, next: LumeRuntimeEvent): boolean {
-  return previous?.type === 'message.user.submitted'
-    && next.type === 'message.user.submitted'
-    && previous.text === next.text
 }
 
 function getTerminalStatus(event: LumeRuntimeEvent): ThreadRuntimeEventState['terminalStatus'] | undefined {
