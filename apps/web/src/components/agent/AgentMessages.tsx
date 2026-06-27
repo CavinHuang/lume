@@ -317,17 +317,18 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     }
   }, [latestUserMessageKey, liveMessages.length, scrollMessagesToBottom, threadId])
 
-  const latestTodo: TodoBlockData | null = (() => {
-    for (let i = liveMessages.length - 1; i >= 0; i -= 1) {
-      const m = liveMessages[i]!
-      if (m.type !== 'assistant') continue
-      for (let j = m.blocks.length - 1; j >= 0; j -= 1) {
-        const block = m.blocks[j]!
-        if (block.type === 'todo_update') return block.data
+  const latestTodo: TodoBlockData | null = useMemo(() => {
+    // 直接从原始事件流取最新 todo 状态，避免依赖消息 block 的持久性
+    // （跨 turn / projection fallback / stabilize 都可能让消息 block 不可达，
+    // 导致思考或调用其他工具时面板消失）
+    for (let i = runtimeEvents.length - 1; i >= 0; i -= 1) {
+      const event = runtimeEvents[i]!
+      if (event.type === 'todo.state_updated') {
+        return { todos: event.todos, currentActiveForm: event.currentActiveForm }
       }
     }
     return null
-  })()
+  }, [runtimeEvents])
 
   const items: React.ReactNode[] = []
   for (let i = 0; i < liveMessages.length; i++) {
