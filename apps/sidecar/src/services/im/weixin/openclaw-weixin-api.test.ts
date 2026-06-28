@@ -274,6 +274,42 @@ describe("openclaw-weixin-api", () => {
     });
   });
 
+  test("getUpdates parses file media.aes_key into aesKey", async () => {
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com/",
+      token: "token-1"
+    }, async () => Response.json({
+      msgs: [{
+        message_id: 1002,
+        from_user_id: "user-1",
+        item_list: [{
+          type: 4,
+          file_item: {
+            file_name: "code.py",
+            len: "128",
+            media: {
+              encrypt_query_param: "enc-param-1",
+              aes_key: Buffer.from("1".repeat(32)).toString("base64"),
+              encrypt_type: 1,
+            }
+          }
+        }]
+      }]
+    }));
+
+    await expect(api.getUpdates()).resolves.toMatchObject({
+      updates: [{
+        peerId: "user-1",
+        contents: [{
+          type: "file",
+          fileName: "code.py",
+          downloadUrl: "enc-param-1",
+          aesKey: Buffer.from("1".repeat(32)).toString("base64"),
+        }]
+      }]
+    });
+  });
+
   test("getUpdates parses video messages", async () => {
     const api = createOpenClawWeixinApi({
       baseUrl: "https://ilink.example.com/",

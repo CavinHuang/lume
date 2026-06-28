@@ -170,6 +170,7 @@ function extractImageContent(record: Record<string, unknown>): ImMessageContent 
     thumbnailUrl: asString(asRecord(item.thumb_media).full_url),
     width: asNumber(item.thumb_width),
     height: asNumber(item.thumb_height),
+    aesKey: asString(media.aes_key),
   };
 }
 
@@ -193,6 +194,7 @@ function extractFileContent(record: Record<string, unknown>): ImMessageContent {
     md5: asString(item.md5),
     // 优先 full_url（可直接下载）；否则用 encrypt_query_param（由 resolver 拼 CDN URL）
     downloadUrl: asString(media.full_url) ?? asString(media.encrypt_query_param),
+    aesKey: asString(media.aes_key),
   };
 }
 

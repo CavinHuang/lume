@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { resolveMediaContents } from "./im-media-resolver";
+import { aesEcbEncrypt } from "./weixin/openclaw-weixin-cdn";
 import type { ImMessageContent } from "@lume/shared";
 
 describe("im-media-resolver", () => {
@@ -136,5 +138,48 @@ describe("im-media-resolver", () => {
 
     const resolved = await resolveMediaContents(contents, { fetchImpl, saveMedia });
     expect(resolved).toEqual([{ type: "text", text: "[文件: report.pdf（下载失败）]" }]);
+  });
+
+  test("decrypts CDN ciphertext before saving when file has aesKey", async () => {
+    const key = randomBytes(16);
+    const plaintext = Buffer.from("# code.py\nprint('hello 微信文件')\n", "utf-8");
+    const ciphertext = aesEcbEncrypt(plaintext, key);
+    const aesKeyField = Buffer.from(key.toString("hex")).toString("base64"); // file/voice/video encoding
+    const contents: ImMessageContent[] = [
+      { type: "file", fileName: "code.py", fileSize: plaintext.length, downloadUrl: "enc-param-1", aesKey: aesKeyField },
+    ];
+
+    const fetchImpl = async () => new Response(new Uint8Array(ciphertext), { status: 200 });
+    let savedData: Buffer | undefined;
+    const saveMedia = async (input: { filename: string; data: Buffer; mediaType: string }) => {
+      savedData = input.data;
+      return `attachments/${input.filename}`;
+    };
+
+    const resolved = await resolveMediaContents(contents, { fetchImpl, saveMedia, cdnBaseUrl: "https://cdn.example.com/" });
+    expect(resolved[0]).toMatchObject({ type: "file", downloadUrl: "attachments/code.py" });
+    expect(savedData?.equals(plaintext)).toBe(true); // 明文落盘，非密文
+  });
+
+  test("decrypts CDN ciphertext before saving when image has aesKey", async () => {
+    const key = randomBytes(16);
+    const plaintext = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const ciphertext = aesEcbEncrypt(plaintext, key);
+    const aesKeyField = key.toString("base64"); // image encoding: base64(raw 16 bytes)
+    const contents: ImMessageContent[] = [
+      { type: "image", url: "enc-param-img", aesKey: aesKeyField },
+    ];
+
+    const fetchImpl = async () =>
+      new Response(new Uint8Array(ciphertext), { status: 200, headers: { "content-type": "image/png" } });
+    let savedData: Buffer | undefined;
+    const saveMedia = async (input: { filename: string; data: Buffer; mediaType: string }) => {
+      savedData = input.data;
+      return `attachments/${input.filename}`;
+    };
+
+    const resolved = await resolveMediaContents(contents, { fetchImpl, saveMedia, cdnBaseUrl: "https://cdn.example.com/" });
+    expect(resolved[0]).toMatchObject({ type: "image", url: "attachments/im-image-0.png" });
+    expect(savedData?.equals(plaintext)).toBe(true);
   });
 });

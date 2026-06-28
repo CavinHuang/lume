@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { aesEcbEncrypt, aesEcbPaddedSize, uploadMediaToWeixinCdn } from "./openclaw-weixin-cdn";
+import { randomBytes } from "node:crypto";
+import { aesEcbDecrypt, aesEcbEncrypt, aesEcbPaddedSize, parseAesKey, uploadMediaToWeixinCdn } from "./openclaw-weixin-cdn";
 
 describe("openclaw-weixin-cdn", () => {
   describe("aesEcbPaddedSize", () => {
@@ -36,6 +37,40 @@ describe("openclaw-weixin-cdn", () => {
       const enc1 = aesEcbEncrypt(plaintext, key1);
       const enc2 = aesEcbEncrypt(plaintext, key2);
       expect(enc1.equals(enc2)).toBe(false);
+    });
+  });
+
+  describe("aesEcbDecrypt", () => {
+    test("round-trips encrypt → decrypt to original plaintext (PKCS7 stripped)", () => {
+      const key = randomBytes(16);
+      const plaintext = Buffer.from("#!/usr/bin/env python3\nprint('hello 微信文件')\n", "utf-8");
+      const decrypted = aesEcbDecrypt(aesEcbEncrypt(plaintext, key), key);
+      expect(decrypted.equals(plaintext)).toBe(true);
+    });
+
+    test("strips PKCS7 padding for full-block plaintext", () => {
+      const key = randomBytes(16);
+      const plaintext = Buffer.alloc(16, 0x41); // exactly one block → padding adds a full block
+      const decrypted = aesEcbDecrypt(aesEcbEncrypt(plaintext, key), key);
+      expect(decrypted.equals(plaintext)).toBe(true);
+      expect(decrypted.length).toBe(16);
+    });
+  });
+
+  describe("parseAesKey", () => {
+    test("accepts base64(raw 16 bytes) — image form", () => {
+      const key = randomBytes(16);
+      expect(parseAesKey(key.toString("base64")).equals(key)).toBe(true);
+    });
+
+    test("accepts base64(hex string of 16 bytes) — file/voice/video form", () => {
+      const key = randomBytes(16);
+      const field = Buffer.from(key.toString("hex")).toString("base64");
+      expect(parseAesKey(field).equals(key)).toBe(true);
+    });
+
+    test("rejects invalid aes_key", () => {
+      expect(() => parseAesKey(Buffer.from("not-a-key").toString("base64"))).toThrow(/aes_key/);
     });
   });
 
