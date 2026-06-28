@@ -13,6 +13,19 @@ export interface ProjectionState {
   messages: RuntimeMessageView[]
   currentAssistant: MutableAssistantMessage | null
   terminalClosed: boolean
+  // per-runId 的 compaction 段计数：compaction 把同一 run 的 assistant 内容切成多段，
+  // 重建的 assistant 必须用唯一 id（见 assistantIdFor），避免与已 flush 的同 runId 消息
+  // id 冲突 → AgentMessages 列表 React key 撞车（duplicate/omit + 跳变）。
+  assistantSegmentByRun: Map<string, number>
+}
+
+/**
+ * 同一 run 内 compaction 后重建的 assistant 用唯一 id：`assistant:${runId}:c${seg}`。
+ * 首段（seg=0）保持原 `assistant:${runId}`，向后兼容既有 stabilize cache / 测试快照。
+ */
+function assistantIdFor(state: ProjectionState, runId: string): string {
+  const segment = state.assistantSegmentByRun.get(runId) ?? 0
+  return segment > 0 ? `assistant:${runId}:c${segment}` : `assistant:${runId}`
 }
 
 export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): RuntimeMessageView[] {
@@ -21,6 +34,7 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
     messages: [],
     currentAssistant: null,
     terminalClosed: false,
+    assistantSegmentByRun: new Map(),
   }
   for (const event of kept) {
     applyRuntimeEvent(state, event)
@@ -50,7 +64,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       ...(typeof event.versionIndex === 'number' ? { versionIndex: event.versionIndex } : {}),
       ...(typeof event.versionCount === 'number' ? { versionCount: event.versionCount } : {}),
     })
-    state.currentAssistant = createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant = createAssistantMessage(assistantIdFor(state, event.runId))
     state.terminalClosed = false
     return
   }
@@ -72,7 +86,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
 
   if (event.type === 'memory.context.used') {
     if (event.items.length === 0) return
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'memory_context_used')
     state.currentAssistant.blocks.push({
       type: 'memory_context_used',
@@ -89,6 +103,12 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   ) {
     if (state.currentAssistant && assistantHasContent(state.currentAssistant)) {
       flushAssistant(state.messages, state.currentAssistant)
+      // 前段已 flush 为独立消息：递增段号，使 compaction 后同 runId 重建的 assistant 用唯一 id
+      // （`assistant:${runId}:c${seg}`），避免与刚 flush 的消息 id 冲突 → AgentMessages React key 撞车。
+      state.assistantSegmentByRun.set(
+        event.runId,
+        (state.assistantSegmentByRun.get(event.runId) ?? 0) + 1,
+      )
     }
     state.currentAssistant = null
     appendContextCompactionNotice(messages, event)
@@ -132,27 +152,27 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'assistant.delta') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     state.currentAssistant.text += event.delta
     appendAssistantTextBlock(state.currentAssistant, event.delta)
     return
   }
 
   if (event.type === 'assistant.thinking_delta') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     state.currentAssistant.thinking += event.delta
     appendAssistantThinkingBlock(state.currentAssistant, event.delta)
     return
   }
 
   if (event.type === 'assistant.final') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     replaceAssistantContentBlocks(state.currentAssistant, event.blocks)
     return
   }
 
   if (event.type === 'plan.preview') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     state.currentAssistant.blocks.push({
       type: 'plan_preview',
       id: `plan:${event.contractId}`,
@@ -171,7 +191,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'todo.state_updated') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'todo_update')
     state.currentAssistant.blocks.push({
       type: 'todo_update',
@@ -188,7 +208,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'tool.started') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     const toolCall: RuntimeToolCallView = {
       id: event.toolCallId,
       toolName: event.toolName,
@@ -204,7 +224,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'tool.completed' || event.type === 'tool.failed') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     const existing = state.currentAssistant.toolCalls.get(event.toolCallId)
     const isError = event.type === 'tool.failed'
     const permissionState = isError && isToolPermissionTimeoutMessage(event.error.message)
@@ -230,7 +250,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'tool.permission_timeout') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     const existing = state.currentAssistant.toolCalls.get(event.toolCallId)
     const toolCall: RuntimeToolCallView = {
       id: event.toolCallId,
@@ -248,7 +268,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     if (event.type === 'run.turn_limited') {
       appendAssistantTextBlock(state.currentAssistant, TURN_LIMIT_NOTICE)
       recomputeAssistantContent(state.currentAssistant)
@@ -265,7 +285,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'run.failed' || event.type === 'run.cancelled') {
-    state.currentAssistant ??= createAssistantMessage(`assistant:${event.runId}`)
+    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
     state.currentAssistant.status = 'failed'
     state.currentAssistant.error = event.type === 'run.failed' ? event.error.message : (event.reason ?? 'Run cancelled')
     flushAssistant(state.messages, state.currentAssistant)
@@ -732,7 +752,7 @@ export function applyRuntimeEventsIncremental(
     return { messages: buildMessagesView(state), ref: { state, events } }
   }
   // fallback：全量重投影
-  const state: ProjectionState = { messages: [], currentAssistant: null, terminalClosed: false }
+  const state: ProjectionState = { messages: [], currentAssistant: null, terminalClosed: false, assistantSegmentByRun: new Map() }
   const kept = keepLatestVersionTurns(events)
   for (const event of kept) {
     applyRuntimeEvent(state, event)

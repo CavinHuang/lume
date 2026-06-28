@@ -344,6 +344,36 @@ describe('runtime-event-message-projection', () => {
     ])
   })
 
+  test('compaction split keeps assistant message ids unique (no React key collision)', () => {
+    // 同一 run 内发生 context compaction：compaction 前的 assistant 内容被 flush，
+    // compaction 后同 runId 继续输出。投影不得复用同一个 `assistant:${runId}` id，
+    // 否则 AgentMessages 列表会出现两条同 key 消息 → React duplicate/omit + 列表跳变。
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'message.user.submitted', text: 'hi', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: 'before compaction ' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: { command: 'pwd' } }),
+      event({ type: 'tool.completed', toolCallId: 'tool-1', toolName: 'Bash', resultPreview: 'ok' }),
+      event({
+        type: 'context.compaction.started',
+        id: 'compact-start',
+        trigger: 'auto',
+        preTokens: 900,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+      }),
+      event({ type: 'assistant.delta', delta: 'after compaction' }),
+      event({ type: 'run.completed' }),
+    ])
+
+    const ids = messages.map((m) => m.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    // compaction 前后各一条 assistant，id 必须不同
+    const assistantIds = ids.filter((id) => id.startsWith('assistant:'))
+    expect(assistantIds).toHaveLength(2)
+    expect(assistantIds[0]).not.toBe(assistantIds[1])
+  })
+
   test('keeps context compaction start and completion visible as a status timeline', () => {
     expect(projectRuntimeEventMessages([
       event({ type: 'message.user.submitted', text: '继续', messageId: 'user-1' }),
