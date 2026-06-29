@@ -19,12 +19,14 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const subagentDisplayLabel = getSubagentDisplayLabel(request)
 
   useEffect(() => {
     setAnswers({})
     setHidden(false)
     setBusy(false)
+    setError(null)
   }, [threadId, request.toolUseId])
 
   const select = (question: string, label: string) => {
@@ -33,9 +35,14 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
 
   const submit = async () => {
     setBusy(true)
+    setError(null)
     try {
       await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, { threadId, toolUseId: request.toolUseId, answers })
       dismiss()
+    } catch (err) {
+      // Release 构建无 DevTools，把提交失败直接显示在卡片上，便于定位。
+      console.error('[AskUserBanner] submit failed', err)
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
@@ -89,6 +96,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                 <button
                   key={opt.label}
                   type="button"
+                  data-enter-submits
                   onClick={() => select(q.question, opt.label)}
                   className={cn(
                     'flex min-h-10 w-full items-center rounded-[12px] px-2.5 text-left text-[14px] transition-colors',
@@ -109,6 +117,9 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
             </div>
           </div>
         ))}
+        {error && (
+          <p className="px-1 pt-1 text-[12px] leading-5 text-destructive">{error}</p>
+        )}
       </div>
     </InteractiveOverlayFrame>
   )

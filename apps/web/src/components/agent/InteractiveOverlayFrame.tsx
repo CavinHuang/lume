@@ -4,9 +4,11 @@ import type { ReactNode } from 'react'
 
 /**
  * 交互式覆盖层是否应在按下 Enter 时提交。
- * 焦点位于按钮 / 输入框 / 文本域时返回 false——交由原生激活或输入处理，
- * 避免与按钮原生 Enter→click 重复触发，也不打断文本域内的换行；
- * 其余情况（焦点在卡片正文或未聚焦）返回 true，由覆盖层 keydown 监听统一提交。
+ * 焦点位于输入框 / 文本域时返回 false——保留原生输入与换行；
+ * 焦点位于按钮时，仅当该按钮标记了 data-enter-submits（选项按钮）才返回 true，
+ * 由覆盖层统一提交——原生 Enter→click 对选项按钮只会重复选中，无法提交；
+ * 未标记的按钮（提交/忽略/开关）返回 false，交由原生 Enter→click 处理以避免重复触发；
+ * 其余情况（焦点在卡片正文或未聚焦）返回 true。
  */
 export function shouldSubmitInteractiveOverlayOnEnter(
   event: { key: string },
@@ -14,7 +16,10 @@ export function shouldSubmitInteractiveOverlayOnEnter(
 ): boolean {
   if (event.key !== 'Enter') return false
   const element = target as { closest?: (selector: string) => Element | null } | null
-  if (element?.closest?.('button, textarea, input')) return false
+  if (element?.closest?.('textarea, input')) return false
+  if (element?.closest?.('button')) {
+    return Boolean(element.closest('[data-enter-submits]'))
+  }
   return true
 }
 
