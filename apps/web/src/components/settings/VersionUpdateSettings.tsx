@@ -270,7 +270,7 @@ export function VersionUpdateSettings() {
                 ? `Lume ${latestVersion} 可用`
                 : status === 'current'
                   ? '当前版本已是最新'
-                  : '检查 GitHub Release 与 Tauri 更新清单'}
+                  : '检查 GitHub Release 与 Electron 更新清单'}
             </p>
           </div>
           <div className="flex gap-2">

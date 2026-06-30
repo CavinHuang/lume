@@ -9,7 +9,7 @@ import { isNativeAvailable, nativeGrep } from '@lume/natives'
 
 export const GrepTool = defineTool({
   name: 'Grep',
-  description: 'Search file contents using regex patterns. Uses native ripgrep engine if available, falls back to rg/grep. Supports file type filtering and context lines.',
+  description: 'Search file contents using regex patterns. Uses native ripgrep engine when available and falls back to rg/grep. Supports file type filtering and context lines.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -68,7 +68,6 @@ export const GrepTool = defineTool({
       return { data: sandboxError, is_error: true }
     }
 
-    // ── Try native ripgrep first ──────────────────────
     if (isNativeAvailable()) {
       const ctx = input['-C'] ?? input.context
       const mode = outputMode === 'files_with_matches'
@@ -98,7 +97,6 @@ export const GrepTool = defineTool({
           return `No matches found for pattern "${input.pattern}"`
         }
 
-        // Format output to match existing shape
         if (mode === 'filesWithMatches') {
           const files = [...new Set(result.matches.map((m) => m.path))]
           return JSON.stringify({
@@ -112,18 +110,16 @@ export const GrepTool = defineTool({
         }
 
         if (mode === 'count') {
-          const lines = result.matches.map(
-            (m) => `${m.path}:${m.match_count ?? 0}`,
-          )
           return JSON.stringify({
             pattern: input.pattern,
             path: searchPath,
             output_mode: outputMode,
-            matches: lines.slice(0, headLimit),
+            matches: result.matches
+              .map((m) => `${m.path}:${m.match_count ?? 0}`)
+              .slice(0, headLimit),
           }, null, 2)
         }
 
-        // content mode
         const lines = result.matches.map((m) => {
           const parts: string[] = []
           if (m.context_before) {
@@ -145,7 +141,6 @@ export const GrepTool = defineTool({
       }
     }
 
-    // ── Fallback: shell out to rg / grep ──────────────
     const args: string[] = []
     let cmd = 'rg'
 
@@ -212,7 +207,7 @@ export const GrepTool = defineTool({
             }
           })
           grepProc.on('error', () => {
-            resolvePromise(`No matches found for pattern "${input.pattern}"`)
+            resolvePromise(`Error: native grep unavailable and grep fallback failed`)
           })
           return
         }

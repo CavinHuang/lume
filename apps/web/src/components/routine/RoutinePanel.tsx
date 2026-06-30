@@ -22,17 +22,16 @@ function today(): string {
 }
 
 function shiftDate(dateStr: string, days: number): string {
-  const d = new Date(dateStr + "T00:00:00")
-  d.setDate(d.getDate() + days)
-  return d.toISOString().slice(0, 10)
+  const [y, m, d] = dateStr.split("-").map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().slice(0, 10)
 }
 
 export function RoutinePanel() {
   const [currentDate, setCurrentDate] = useState(today())
   const [routine, setRoutine] = useState<DailyRoutine | null>(null)
   const [loading, setLoading] = useState(true)
-  const [hasPrev, setHasPrev] = useState(false)
-  const [hasNext, setHasNext] = useState(false)
   const tabs = useAtomValue(tabsAtom)
   const setTabs = useSetAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
@@ -54,32 +53,12 @@ export function RoutinePanel() {
     void load(currentDate)
   }, [currentDate, load])
 
-  useEffect(() => {
-    let cancelled = false
-    const check = async () => {
-      const [prevData, nextData] = await Promise.all([
-        getRoutineByDate(shiftDate(currentDate, -1)),
-        getRoutineByDate(shiftDate(currentDate, 1)),
-      ])
-      if (!cancelled) {
-        setHasPrev(!!prevData)
-        setHasNext(!!nextData)
-      }
-    }
-    void check()
-    return () => { cancelled = true }
-  }, [currentDate, routine])
-
-  const handlePrevDay = useCallback(async () => {
-    const prev = shiftDate(currentDate, -1)
-    const data = await getRoutineByDate(prev)
-    if (data) setCurrentDate(prev)
+  const handlePrevDay = useCallback(() => {
+    setCurrentDate(shiftDate(currentDate, -1))
   }, [currentDate])
 
-  const handleNextDay = useCallback(async () => {
-    const next = shiftDate(currentDate, 1)
-    const data = await getRoutineByDate(next)
-    if (data) setCurrentDate(next)
+  const handleNextDay = useCallback(() => {
+    setCurrentDate(shiftDate(currentDate, 1))
   }, [currentDate])
 
   const handleTrigger = useCallback(async (entryId: string) => {
@@ -133,7 +112,12 @@ export function RoutinePanel() {
 
   if (!routine) {
     return (
-      <EmptyState onRegenerate={handleRegenerate} />
+      <EmptyState
+        currentDate={currentDate}
+        onPrev={handlePrevDay}
+        onNext={handleNextDay}
+        onRegenerate={handleRegenerate}
+      />
     )
   }
 
@@ -147,8 +131,7 @@ export function RoutinePanel() {
             <button
               type="button"
               onClick={handlePrevDay}
-              disabled={!hasPrev}
-              className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)] disabled:opacity-30 disabled:hover:bg-transparent"
+              className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)]"
             >
               <ChevronLeft size={16} className="text-[var(--text-3)]" />
             </button>
@@ -161,8 +144,7 @@ export function RoutinePanel() {
             <button
               type="button"
               onClick={handleNextDay}
-              disabled={!hasNext}
-              className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)] disabled:opacity-30 disabled:hover:bg-transparent"
+              className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)]"
             >
               <ChevronRight size={16} className="text-[var(--text-3)]" />
             </button>
@@ -291,22 +273,56 @@ function ContextBadge({ icon, label, active }: { icon: React.ReactNode; label: s
   )
 }
 
-function EmptyState({ onRegenerate }: { onRegenerate: () => void }) {
+function EmptyState({
+  currentDate,
+  onPrev,
+  onNext,
+  onRegenerate,
+}: {
+  currentDate: string
+  onPrev: () => void
+  onNext: () => void
+  onRegenerate: () => void
+}) {
+  const isToday = currentDate === today()
   return (
     <div className="flex flex-col items-center justify-center py-20">
+      <div className="mb-6 flex items-center gap-2 text-[13px] text-[var(--text-3)]">
+        <button
+          type="button"
+          onClick={onPrev}
+          className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)]"
+        >
+          <ChevronLeft size={16} className="text-[var(--text-3)]" />
+        </button>
+        <span className="tabular-nums">{formatDateLabel(currentDate)} {formatDayLabel(currentDate)}</span>
+        <button
+          type="button"
+          onClick={onNext}
+          className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)]"
+        >
+          <ChevronRight size={16} className="text-[var(--text-3)]" />
+        </button>
+      </div>
       <div className="flex size-16 items-center justify-center rounded-full bg-[var(--reading-soft)]">
         <CalendarDays size={28} className="text-[var(--reading-accent)]" />
       </div>
-      <h3 className="mt-4 text-[15px] font-medium text-[var(--text-1)]">今日暂无日程</h3>
-      <p className="mt-1.5 text-[13px] text-[var(--text-3)]">点击下方按钮生成今日日程</p>
-      <button
-        type="button"
-        onClick={onRegenerate}
-        className="mt-5 flex items-center gap-2 rounded-[8px] bg-[var(--reading-accent)] px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
-      >
-        <RefreshCw size={14} />
-        生成今日日程
-      </button>
+      <h3 className="mt-4 text-[15px] font-medium text-[var(--text-1)]">
+        {isToday ? "今日暂无日程" : "此日暂无日程"}
+      </h3>
+      <p className="mt-1.5 text-[13px] text-[var(--text-3)]">
+        {isToday ? "点击下方按钮生成今日日程" : "翻到其他日期查看，或返回今日生成"}
+      </p>
+      {isToday && (
+        <button
+          type="button"
+          onClick={onRegenerate}
+          className="mt-5 flex items-center gap-2 rounded-[8px] bg-[var(--reading-accent)] px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+        >
+          <RefreshCw size={14} />
+          生成今日日程
+        </button>
+      )}
     </div>
   )
 }

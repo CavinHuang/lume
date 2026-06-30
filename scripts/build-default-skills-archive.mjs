@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_DIR = resolve(REPO_ROOT, "apps", "sidecar", "default-skills");
-const OUTFILE = resolve(REPO_ROOT, "apps", "desktop", "src-tauri", "resources", "default-skills.tar");
+const OUTFILE = resolve(REPO_ROOT, "apps", "desktop", "resources", "default-skills.tar");
 const BLOCK_SIZE = 512;
 
 function writeString(buffer, offset, length, value) {

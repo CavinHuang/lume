@@ -2,7 +2,7 @@
  * Token Estimation & Counting
  *
  * Provides rough token estimation (character-based) and
- * API-based exact counting when available.
+ * native exact counting when available.
  */
 
 import { countStringTokens } from '@lume/natives'
@@ -27,7 +27,7 @@ export function estimateTokens(text: string): number {
     const nativeCount = countStringTokens(text)
     if (nativeCount > 0) return nativeCount
   } catch {
-    // Fall back to the cheap local estimate when native loading/counting fails.
+    // Keep @lume/agent-sdk usable without native binaries.
   }
   let asciiChars = 0
   let fullTokenChars = 0

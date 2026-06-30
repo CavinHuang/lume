@@ -1,5 +1,4 @@
-import { argv, stdin, stdout, stderr } from "node:process";
-import { createInterface } from "node:readline";
+import { argv, stderr } from "node:process";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
 import { initProxySettings } from "./services/system/proxy-settings-manager";
@@ -15,9 +14,25 @@ import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash } from "./services/agent/agent-thread-manager";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
 import { formatConsoleArgs } from "./services/infra/log-format";
-import { writeLogRecord } from "./services/infra/logger";
+import { setLogRecordNotificationWriter, writeLogRecord } from "./services/infra/logger";
+import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
+import { createProcessRpcTransport } from "./rpc/process-transport";
 
-// JSON-RPC 使用 stdout 作为协议通道，业务日志统一输出到 stderr，避免污染响应流。
+const rpcTransport = createProcessRpcTransport();
+
+function writeResponse(response: JsonRpcResponse): void {
+  rpcTransport.send(JSON.stringify(response));
+}
+
+function writeNotification(method: string, params: unknown): void {
+  rpcTransport.send(JSON.stringify({ method, params }));
+}
+
+if ((process as typeof process & { parentPort?: unknown }).parentPort) {
+  setLogRecordNotificationWriter((record) => writeNotification("system.log", record));
+}
+
+// JSON-RPC 使用 Electron parentPort 或 stdio，业务日志统一输出到 stderr。
 for (const level of ["log", "info", "warn", "error", "debug"] as const) {
   console[level] = (...args: unknown[]) => {
     const line = formatConsoleArgs({
@@ -32,14 +47,6 @@ for (const level of ["log", "info", "warn", "error", "debug"] as const) {
       message: line
     });
   };
-}
-
-function writeResponse(response: JsonRpcResponse): void {
-  stdout.write(`${JSON.stringify(response)}\n`);
-}
-
-function writeNotification(method: string, params: unknown): void {
-  stdout.write(`${JSON.stringify({ method, params })}\n`);
 }
 const handlers = createRpcHandlers({ writeNotification });
 
@@ -106,6 +113,8 @@ async function handleRpcLine(line: string): Promise<void> {
 
 async function boot(): Promise<void> {
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
+  const native = assertSidecarNativeRuntime();
+  console.error(`[sidecar] native ready capabilities=${native.capabilities.join(",")}`);
   void initProxySettings().catch((error) => {
     console.error(`[代理配置] 初始化失败: ${error instanceof Error ? error.message : String(error)}`);
   });
@@ -155,16 +164,15 @@ async function boot(): Promise<void> {
     process.exit(0);
   });
 
-  stdin.setEncoding("utf8");
-  const rl = createInterface({
-    input: stdin,
-    crlfDelay: Infinity
-  });
-  rl.on("line", (line: string) => {
+  rpcTransport.listen((line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
     void handleRpcLine(trimmed);
   });
+  writeNotification("system.ready", { native });
 }
 
-void boot();
+void boot().catch((error) => {
+  console.error(`[sidecar] boot failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  process.exit(1);
+});

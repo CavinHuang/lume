@@ -8,7 +8,6 @@ import { defineTool } from './types.js'
 import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
 import { isNativeAvailable, nativeSummarize } from '@lume/natives'
 
-/** File extensions that have tree-sitter grammar support for summarization. */
 const SUMMARIZABLE_EXTENSIONS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
   '.rs', '.py', '.go',
@@ -17,12 +16,11 @@ const SUMMARIZABLE_EXTENSIONS = new Set([
   '.json', '.yaml', '.yml', '.toml',
   '.sh', '.bash', '.md',
 ])
-
 const SUMMARIZE_THRESHOLD_LINES = 500
 
 export const FileReadTool = defineTool({
   name: 'Read',
-  description: 'Read a text file from the filesystem and return content with line numbers. Large files (>500 lines) are automatically summarized to save context. Image files return metadata only.',
+  description: 'Read a text file from the filesystem and return content with line numbers. Large source files are summarized with native AST support when available. Image files return metadata only.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -84,53 +82,51 @@ export const FileReadTool = defineTool({
       // If user specified offset/limit, always return raw content (explicit read)
       const hasExplicitRange = input.offset !== undefined || input.limit !== undefined
 
-      // Auto-summarize large files with native tree-sitter
       if (
         !hasExplicitRange
         && lines.length > SUMMARIZE_THRESHOLD_LINES
         && isNativeAvailable()
+        && SUMMARIZABLE_EXTENSIONS.has(extname(filePath).toLowerCase())
       ) {
-        const ext = extname(filePath).toLowerCase()
-        if (SUMMARIZABLE_EXTENSIONS.has(ext)) {
-          const summary = nativeSummarize({
-            code: content,
-            path: filePath,
-            min_body_lines: 4,
-            min_comment_lines: 6,
-            unfold_until_lines: 200,
-          })
+        const summary = nativeSummarize({
+          code: content,
+          path: filePath,
+          min_body_lines: 4,
+          min_comment_lines: 6,
+          unfold_until_lines: 200,
+        })
 
-          if (summary && summary.parsed && summary.segments.length > 0) {
-            const keptSegments: string[] = []
-            let keptLines = 0
-            for (const seg of summary.segments) {
-              if (seg.kind === 'kept' && seg.text) {
-                const segLines = seg.text.split('\n').length
-                keptSegments.push(seg.text)
-                keptLines += segLines
-              } else if (seg.kind === 'elided') {
-                const lineCount = seg.endLine - seg.startLine + 1
-                keptSegments.push(`/* ... ${lineCount} lines elided (lines ${seg.startLine}-${seg.endLine}) ... */`)
-              }
+        if (summary && summary.parsed && summary.segments.length > 0) {
+          const keptSegments: string[] = []
+          let keptLines = 0
+          for (const segment of summary.segments) {
+            if (segment.kind === 'kept' && segment.text) {
+              keptSegments.push(segment.text)
+              keptLines += segment.text.split('\n').length
+              continue
             }
+            if (segment.kind === 'elided') {
+              const lineCount = segment.endLine - segment.startLine + 1
+              keptSegments.push(`/* ... ${lineCount} lines elided (lines ${segment.startLine}-${segment.endLine}) ... */`)
+            }
+          }
 
-            return {
-              data: {
-                filePath,
-                content: keptSegments.join('\n'),
-                totalLines: lines.length,
-                summarized: true,
-                keptLines,
-                language: summary.language,
-              },
-            }
+          return {
+            data: {
+              filePath,
+              content: keptSegments.join('\n'),
+              totalLines: lines.length,
+              summarized: true,
+              keptLines,
+              language: summary.language,
+            },
           }
         }
       }
 
       // Default: return raw content with line numbers
       const offset = input.offset || 0
-      const limit = input.limit || 2000
+      const limit = input.limit || (hasExplicitRange ? 2000 : SUMMARIZE_THRESHOLD_LINES)
       const selectedLines = lines.slice(offset, offset + limit)
 
       // Format with line numbers (cat -n style)

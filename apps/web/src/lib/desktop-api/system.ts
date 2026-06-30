@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/desktop-runtime/core'
 import { clearHighlightCache } from '@lume/ui'
 import {
   AGENT_IPC_CHANNELS,

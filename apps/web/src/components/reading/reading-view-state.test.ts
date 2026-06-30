@@ -40,7 +40,7 @@ describe('reading view state', () => {
     })
   })
 
-  test('builds a safe default filename for saving a share card through Tauri', () => {
+  test('builds a safe default filename for saving a share card through the desktop shell', () => {
     expect(buildShareCardFilename({
       id: 'note/1',
       title: '普通人的日常 / 雨夜',

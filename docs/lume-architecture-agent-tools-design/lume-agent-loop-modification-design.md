@@ -105,7 +105,7 @@ Agent Runtime Kernel
 Agent Loop 不应该：
 
 - 管理 sidecar 进程生命周期。
-- 处理 Tauri IPC 或 WebView 投影。
+- 处理 Desktop Host IPC 或 WebView 投影。
 - 直接加载 MCP server、skill 目录或 provider SDK。
 - 自行判断工具可见性和审批。
 - 直接执行后台记忆抽取、标题生成、workspace watcher。

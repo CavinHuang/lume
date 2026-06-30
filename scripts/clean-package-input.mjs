@@ -21,6 +21,18 @@ function addIfExists(bucket, targetPath) {
   }
 }
 
+function addMatchingDirs(bucket, baseDir, prefixes) {
+  if (!existsSync(baseDir)) {
+    return;
+  }
+
+  for (const entry of readdirSync(baseDir, { withFileTypes: true })) {
+    if (entry.isDirectory() && prefixes.some((prefix) => entry.name.startsWith(prefix))) {
+      addIfExists(bucket, path.join(baseDir, entry.name));
+    }
+  }
+}
+
 function collectWorkspaceNodeModules(baseDir) {
   if (!existsSync(baseDir)) {
     return [];
@@ -55,8 +67,16 @@ addIfExists(candidates, path.join(repoRoot, "release"));
 addIfExists(candidates, path.join(repoRoot, ".spec-workflow"));
 addIfExists(candidates, path.join(repoRoot, ".spec-workflow"));
 addIfExists(candidates, path.join(repoRoot, "out"));
-addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "src-tauri", "target"));
-addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "src-tauri", "gen"));
+addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "dist-package"));
+addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "dist-release"));
+addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "dist-unpacked"));
+addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "dist"));
+addMatchingDirs(candidates, path.join(repoRoot, "apps", "desktop"), [
+  "dist-package-",
+  "dist-release-",
+  "dist-unpacked-",
+]);
+addIfExists(candidates, path.join(repoRoot, "apps", "desktop", "resources"));
 addIfExists(candidates, path.join(repoRoot, "apps", "sidecar", "dist"));
 addIfExists(candidates, path.join(repoRoot, "packages", "sdk", "dist"));
 addIfExists(candidates, path.join(repoRoot, "apps", "web", "dist"));

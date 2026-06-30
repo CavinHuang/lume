@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/desktop-runtime/core'
 import { AGENT_IPC_CHANNELS, DATA_CATEGORY_SCAN_SPEC } from '@lume/shared'
 import type {
   EmptyTrashResult,
@@ -10,7 +10,7 @@ import type {
 } from '@lume/shared'
 import { sidecarCall } from './system'
 
-// Tauri 命令用下划线名（与 native.ts 既有 desktop_* 命令同风格，直接 invoke）
+// 桌面命令用下划线名（与 native.ts 既有 desktop_* 命令同风格，直接 invoke）
 export const getStorageStats = () =>
   invoke<StorageStats>('data_get_storage_stats', { categories: DATA_CATEGORY_SCAN_SPEC })
 

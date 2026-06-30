@@ -40,12 +40,11 @@ export const GlobTool = defineTool({
       return { data: sandboxError, is_error: true }
     }
 
-    // ── Try native glob first ────────────────────────
     if (isNativeAvailable()) {
       const result = await nativeGlob({
         pattern,
         path: searchDir,
-        file_type: "file",
+        file_type: 'file',
         hidden: false,
         max_results: 500,
         gitignore: true,
@@ -54,18 +53,16 @@ export const GlobTool = defineTool({
       })
 
       if (result !== null) {
-        const matches = result.matches.map((m) => m.path)
         return {
           data: {
             pattern,
             path: searchDir,
-            matches,
+            matches: result.matches.map((match) => match.path),
           },
         }
       }
     }
 
-    // ── Fallback: Node.js glob or bash ───────────────
     try {
       const { glob } = await import('fs/promises')
 

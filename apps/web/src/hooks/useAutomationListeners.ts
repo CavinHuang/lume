@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useSetAtom } from 'jotai'
-import { listen } from '@tauri-apps/api/event'
+import { listen } from '@/lib/desktop-runtime/event'
 import { automationJobsAtom, automationRunsAtom } from '@/atoms/automation-atoms'
 import { listAutomationJobs, listAutomationRuns } from '@/lib/desktop-api/automation'
 import type { AutomationRun } from '@lume/shared'

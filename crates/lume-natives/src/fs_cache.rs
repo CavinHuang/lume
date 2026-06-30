@@ -575,3 +575,22 @@ pub fn invalidate_fs_scan_cache(path: Option<String>) {
 		None => invalidate_all(),
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn invalidate_cache_without_path_clears_entries() {
+		invalidate_fs_scan_cache(None);
+		assert!(FS_CACHE.is_empty());
+	}
+
+	#[test]
+	fn normalizes_windows_separators_when_needed() {
+		let root = Path::new("root");
+		let normalized = normalize_relative_path(root, Path::new("root/src/main.ts"));
+
+		assert_eq!(normalized, "src/main.ts");
+	}
+}

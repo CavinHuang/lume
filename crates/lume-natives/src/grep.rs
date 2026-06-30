@@ -1770,3 +1770,42 @@ pub fn grep(
 	let ct = task::CancelToken::new(timeout_ms, signal);
 	task::blocking("grep", ct, move |ct| grep_sync(config, on_match.as_ref(), ct))
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn search_options(pattern: &str) -> SearchOptions {
+		SearchOptions {
+			pattern: pattern.to_string(),
+			ignore_case: None,
+			multiline: None,
+			max_count: None,
+			offset: None,
+			context_before: None,
+			context_after: None,
+			context: None,
+			max_columns: None,
+			mode: None,
+		}
+	}
+
+	#[test]
+	fn search_sync_returns_line_matches() {
+		let result = search_sync(b"alpha\nbeta\n", search_options("beta"));
+
+		assert_eq!(result.error, None);
+		assert_eq!(result.match_count, 1);
+		assert_eq!(result.matches.len(), 1);
+		assert_eq!(result.matches[0].line_number, 2);
+		assert_eq!(result.matches[0].line, "beta");
+	}
+
+	#[test]
+	fn search_sync_reports_regex_errors_without_panicking() {
+		let result = search_sync(b"alpha\n", search_options("["));
+
+		assert_eq!(result.match_count, 0);
+		assert!(result.error.is_some());
+	}
+}

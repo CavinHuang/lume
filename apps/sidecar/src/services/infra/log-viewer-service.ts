@@ -77,7 +77,7 @@ export function listLogFiles(): LogFileListResult {
     };
   });
   return {
-    directory,
+    directory: "",
     files,
     totalFiles: files.length,
     totalBytes: files.reduce((sum, file) => sum + file.sizeBytes, 0)
@@ -88,14 +88,14 @@ export function readLogFile(input: ReadLogFileInput): ReadLogFileResult {
   const text = readFileSync(resolveLogPath(input.fileName), "utf-8");
   const rawLines = text.split(/\r?\n/).filter((line) => line.length > 0);
   const allowedLevels = input.levels && input.levels.length > 0 ? new Set(input.levels) : null;
-  const query = input.query?.trim().toLowerCase();
+  const query = parseLogQuery(input.query);
   const maxLines = input.maxLines ?? 5000;
   const lines: LogLineEntry[] = [];
 
   rawLines.forEach((raw, index) => {
     const parsed = parseLogLine(raw);
     if (allowedLevels && !allowedLevels.has(parsed.level)) return;
-    if (query && !parsed.text.toLowerCase().includes(query)) return;
+    if (!matchesLogQuery(parsed, query)) return;
     if (lines.length >= maxLines) return;
     lines.push({
       lineNumber: index + 1,
@@ -110,13 +110,13 @@ export function readLogFile(input: ReadLogFileInput): ReadLogFileResult {
     matchedLines: rawLines.filter((raw) => {
       const parsed = parseLogLine(raw);
       if (allowedLevels && !allowedLevels.has(parsed.level)) return false;
-      return query ? parsed.text.toLowerCase().includes(query) : true;
+      return matchesLogQuery(parsed, query);
     }).length,
     lines
   };
 }
 
-export function exportAllLogFiles(): ExportLogsResult {
+export function exportAllLogFiles(options: { exposePath?: boolean } = {}): ExportLogsResult {
   const directory = getLogsDir();
   const exportDir = join(directory, "exports");
   mkdirSync(exportDir, { recursive: true });
@@ -131,13 +131,25 @@ export function exportAllLogFiles(): ExportLogsResult {
   writeFileSync(exportPath, chunks.join("\n"), "utf-8");
   const stats = statSync(exportPath);
   return {
-    path: exportPath,
+    path: options.exposePath === false ? "" : exportPath,
     fileName,
     sizeBytes: stats.size
   };
 }
 
-function parseLogLine(raw: string): { level: LogViewerLevel; text: string } {
+interface ParsedLogLine {
+  level: LogViewerLevel;
+  text: string;
+  raw: string;
+  source?: string;
+}
+
+interface ParsedLogQuery {
+  text: string;
+  sources: string[];
+}
+
+function parseLogLine(raw: string): ParsedLogLine {
   // Try lume-logger NDJSON first, then pino JSON, then plain text
   const ndjson = parseNdjsonLine(raw);
   if (ndjson) return ndjson;
@@ -145,7 +157,8 @@ function parseLogLine(raw: string): { level: LogViewerLevel; text: string } {
   if (parsed) return parsed;
   return {
     level: inferPlainLogLevel(raw),
-    text: raw
+    text: raw,
+    raw
   };
 }
 
@@ -153,7 +166,7 @@ function parseLogLine(raw: string): { level: LogViewerLevel; text: string } {
  * Parse a lume-logger NDJSON line.
  * lume-logger has `level` as a string (not a number like pino) and uses `ts`/`source`/`context`/`message`.
  */
-function parseNdjsonLine(raw: string): { level: LogViewerLevel; text: string } | null {
+function parseNdjsonLine(raw: string): ParsedLogLine | null {
   if (!raw.trim().startsWith("{")) return null;
   try {
     const record = JSON.parse(raw) as Record<string, unknown>;
@@ -166,7 +179,7 @@ function parseNdjsonLine(raw: string): { level: LogViewerLevel; text: string } |
     const message = typeof record.message === "string" ? record.message : "";
 
     // Collect extra fields (data + any other top-level keys)
-    const skipKeys = new Set(["ts", "level", "source", "context", "message"]);
+    const skipKeys = new Set(["ts", "timestamp", "level", "source", "context", "message"]);
     const extra: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(record)) {
       if (!skipKeys.has(key)) {
@@ -177,6 +190,8 @@ function parseNdjsonLine(raw: string): { level: LogViewerLevel; text: string } |
 
     return {
       level,
+      source,
+      raw,
       text: `[${time}] [${LEVEL_LABELS[level]}] [${source}/${context}] ${message}${suffix}`.trim()
     };
   } catch {
@@ -184,7 +199,7 @@ function parseNdjsonLine(raw: string): { level: LogViewerLevel; text: string } |
   }
 }
 
-function parsePinoLine(raw: string): { level: LogViewerLevel; text: string } | null {
+function parsePinoLine(raw: string): ParsedLogLine | null {
   if (!raw.trim().startsWith("{")) return null;
   try {
     const record = JSON.parse(raw) as Record<string, unknown>;
@@ -203,11 +218,39 @@ function parsePinoLine(raw: string): { level: LogViewerLevel; text: string } | n
     const suffix = Object.keys(data).length > 0 ? `: ${JSON.stringify(data)}` : "";
     return {
       level,
+      raw,
       text: `[${time}] [${LEVEL_LABELS[level]}] [${context}] ${message}${suffix}`.trim()
     };
   } catch {
     return null;
   }
+}
+
+function parseLogQuery(value?: string): ParsedLogQuery {
+  let text = value?.trim() ?? "";
+  const sources: string[] = [];
+  text = text.replace(/"source"\s*:\s*"([^"]+)"/gi, (_match, source: string) => {
+    sources.push(source.toLowerCase());
+    return " ";
+  }).trim().toLowerCase();
+  return { text, sources };
+}
+
+function sourceMatches(actual: string | undefined, expected: string): boolean {
+  if (!actual) return false;
+  const normalized = actual.toLowerCase();
+  if (expected === "webview") return normalized === "renderer" || normalized === "webview";
+  if (expected === "desktop") return normalized === "main" || normalized === "desktop";
+  return normalized === expected;
+}
+
+function matchesLogQuery(parsed: ParsedLogLine, query: ParsedLogQuery): boolean {
+  if (query.sources.length > 0 && !query.sources.some((source) => sourceMatches(parsed.source, source))) {
+    return false;
+  }
+  if (!query.text) return true;
+  const haystack = `${parsed.text}\n${parsed.raw}`.toLowerCase();
+  return haystack.includes(query.text);
 }
 
 function inferPlainLogLevel(raw: string): LogViewerLevel {

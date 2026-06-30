@@ -2,15 +2,85 @@
   "name": "@lume/desktop",
   "version": "0.0.6",
   "private": true,
+  "description": "Lume desktop shell powered by Electron",
+  "author": "Lume Team",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CavinHuang/lume.git"
+  },
   "type": "module",
+  "main": "dist/main/main.mjs",
   "scripts": {
-    "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "build": "bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-binary.mjs && bun ../../scripts/build-default-skills-archive.mjs && tauri build --bundles app",
-    "package": "bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-binary.mjs && bun ../../scripts/build-default-skills-archive.mjs && tauri build --config src-tauri/tauri.release.conf.json",
-    "tauri": "tauri",
-    "typecheck": "echo \"desktop has no ts sources yet\""
+    "dev": "bun ./scripts/dev.ts",
+    "build:runtime": "bun ./scripts/build.ts",
+    "build:natives": "bun ../../scripts/build-natives-binary.mjs",
+    "build": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-unpacked --dir --publish never --config.directories.output=dist-unpacked",
+    "package": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-release --publish never --config.directories.output=dist-release",
+    "typecheck": "tsc -p tsconfig.json --noEmit && node --check ./scripts/electron-runtime.mjs",
+    "test": "bun test ./scripts/desktop-package.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./scripts/electron-runtime.test.mjs ./scripts/electron-security.test.mjs"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0"
+    "electron": "42.5.1",
+    "electron-builder": "24.13.3",
+    "electron-updater": "6.8.9",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.0"
+  },
+  "build": {
+    "appId": "com.lume.desktop",
+    "productName": "Lume",
+    "asar": true,
+    "directories": {
+      "buildResources": "assets",
+      "output": "dist-package"
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "files": [
+      "dist/main/main.mjs",
+      "dist/preload/preload.cjs",
+      "assets"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": "resources/default-skills.tar",
+        "to": "default-skills.tar"
+      },
+      {
+        "from": "resources/sidecar",
+        "to": "sidecar"
+      },
+      {
+        "from": "resources/natives",
+        "to": "natives"
+      }
+    ],
+    "mac": {
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "target": [
+        "AppImage"
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-log": "5.4.4"
   }
 }

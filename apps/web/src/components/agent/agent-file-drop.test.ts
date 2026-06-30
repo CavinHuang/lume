@@ -6,7 +6,7 @@ import {
 } from './agent-file-drop'
 
 describe('agent file drop helpers', () => {
-  test('detects Tauri enter/drop payloads with file paths', () => {
+  test('detects desktop enter/drop payloads with file paths', () => {
     expect(isFileDragPayload({ type: 'enter', paths: ['/tmp/a.md'] })).toBeTrue()
     expect(isFileDragPayload({ type: 'drop', paths: ['/tmp/a.md'] })).toBeTrue()
     expect(isFileDragPayload({ type: 'enter', paths: [] })).toBeFalse()

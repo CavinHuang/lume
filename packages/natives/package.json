@@ -5,8 +5,7 @@
   "main": "./index.ts",
   "types": "./index.ts",
   "scripts": {
-    "build:macos": "cargo build --release --manifest-path ../../crates/lume-natives/Cargo.toml && mkdir -p ./dist && cp ../../crates/lume-natives/target/release/liblume_natives.dylib ./dist/lume-natives.darwin-arm64.node",
-    "build:macos-dev": "cargo build --manifest-path ../../crates/lume-natives/Cargo.toml && mkdir -p ./dist && cp ../../crates/lume-natives/target/debug/liblume_natives.dylib ./dist/lume-natives.darwin-arm64.node",
-    "build:linux": "cargo build --release --manifest-path ../../crates/lume-natives/Cargo.toml && mkdir -p ./dist && cp ../../crates/lume-natives/target/release/liblume_natives.so ./dist/lume-natives.linux-x64-gnu.node"
+    "build": "bun ../../scripts/build-natives-binary.mjs",
+    "test": "bun test ./native-loader.test.ts"
   }
 }

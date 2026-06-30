@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+import { invoke } from '@/lib/desktop-runtime/core'
+import { listen } from '@/lib/desktop-runtime/event'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import type {
   AgentResumeRunInput,

@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "build:binary": "bun ../../scripts/build-sidecar-binary.mjs",
+    "build:bundle": "bun ../../scripts/build-sidecar-bundle.mjs",
     "build:resources": "bun ../../scripts/build-default-skills-archive.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke:rpc": "bun scripts/smoke-rpc.mjs",
@@ -31,6 +31,7 @@
     "@sinclair/typebox": "^0.34.41",
     "@xenova/transformers": "^2.17.2",
     "css-tree": "^3.2.1",
+    "electron-log": "5.4.4",
     "qrcode": "^1.5.4",
     "undici": "^7.16.0",
     "yaml": "^2.8.1",

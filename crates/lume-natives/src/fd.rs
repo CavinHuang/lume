@@ -248,3 +248,27 @@ pub fn fuzzy_find(options: FuzzyFindOptions<'_>) -> task::Promise<FuzzyFindResul
 	let config = FuzzyFindConfig { query, path, hidden, gitignore, max_results, cache };
 	task::blocking("fuzzy_find", ct, move |ct| fuzzy_find_sync(config, ct))
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn normalizes_fuzzy_query_noise() {
+		assert_eq!(normalize_fuzzy_text("Src/Main-Test.ts"), "srcmaintestts");
+	}
+
+	#[test]
+	fn scores_basename_matches_above_path_only_matches() {
+		let query = "main";
+		let normalized = normalize_fuzzy_text(query);
+		let chars: Vec<char> = normalized.chars().collect();
+
+		let basename_score = score_fuzzy_path("src/main.ts", false, query, &normalized, &chars);
+		let path_score = score_fuzzy_path("main/src/file.ts", false, query, &normalized, &chars);
+		let directory_score = score_fuzzy_path("src/main", true, query, &normalized, &chars);
+
+		assert!(basename_score > path_score);
+		assert!(directory_score > basename_score);
+	}
+}

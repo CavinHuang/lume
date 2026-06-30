@@ -63,7 +63,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lockb') }}
+          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
             ${{ runner.os }}-bun-
@@ -88,8 +88,8 @@ jobs:
             packages/shared/dist
             packages/cli/dist
 
-  build-macos-arm:
-    name: Build macOS ARM
+  build-macos:
+    name: Build macOS
     needs: [prepare-release, build-js-assets]
     runs-on: macos-15
     steps:
@@ -103,21 +103,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lockb') }}
+          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
             ${{ runner.os }}-bun-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-      - name: Cache Rust builds
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: aarch64-apple-darwin
-          workspaces: |
-            apps/desktop/src-tauri -> target
-            crates/lume-natives -> target
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Download JS assets
@@ -125,114 +114,61 @@ jobs:
         with:
           name: js-assets
           path: .
-      - name: Prepare desktop bundle resources
-        env:
-          TAURI_TARGET_TRIPLE: aarch64-apple-darwin
+      - name: Build native modules
         run: |
-          bun scripts/build-natives-binary.mjs
-          bun scripts/build-sidecar-binary.mjs
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          bun scripts/build-natives-binary.mjs --target aarch64-apple-darwin
+          bun scripts/build-natives-binary.mjs --target x86_64-apple-darwin
+      - name: Prepare desktop bundle resources
+        run: |
+          bun run --filter @lume/desktop build:runtime
+          bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
       - name: Verify desktop package inputs
-        env:
-          TAURI_TARGET_TRIPLE: aarch64-apple-darwin
         run: bun scripts/verify-desktop-package-inputs.mjs
-      - name: Smoke compiled sidecar
-        env:
-          TAURI_TARGET_TRIPLE: aarch64-apple-darwin
-        run: bun scripts/smoke-compiled-sidecar.mjs
-      - name: Build and upload Tauri bundles
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          LUME_UPDATER_PUBLIC_KEY: ${{ vars.LUME_UPDATER_PUBLIC_KEY }}
-          TAURI_TARGET_TRIPLE: aarch64-apple-darwin
-        with:
-          projectPath: apps/desktop
-          releaseId: ${{ needs.prepare-release.outputs.release_id }}
-          tagName: ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: false
-          args: --target aarch64-apple-darwin --config src-tauri/tauri.release.conf.json
-          updaterJsonPreferNsis: true
+      - name: Build Electron package
+        working-directory: apps/desktop
+        run: node ./scripts/run-electron-builder.mjs --output-dir dist-release --mac --arm64 --x64 --publish never --config.directories.output=dist-release
+      - name: Smoke sidecar bundle
+        run: bun scripts/smoke-sidecar-bundle.mjs
       - name: Verify package artifacts
-        env:
-          TAURI_TARGET_TRIPLE: aarch64-apple-darwin
-        run: bun scripts/verify-desktop-package-artifacts.mjs
-
-  build-macos-intel:
-    name: Build macOS Intel
-    needs: [prepare-release, build-js-assets]
-    runs-on: macos-15-intel
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.13
-      - name: Cache Bun downloads
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.13-
-            ${{ runner.os }}-bun-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-      - name: Cache Rust builds
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: x86_64-apple-darwin
-          workspaces: |
-            apps/desktop/src-tauri -> target
-            crates/lume-natives -> target
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-      - name: Download JS assets
-        uses: actions/download-artifact@v4
-        with:
-          name: js-assets
-          path: .
-      - name: Prepare desktop bundle resources
-        env:
-          TAURI_TARGET_TRIPLE: x86_64-apple-darwin
         run: |
-          bun scripts/build-natives-binary.mjs
-          bun scripts/build-sidecar-binary.mjs
-          bun scripts/build-default-skills-archive.mjs
-      - name: Verify desktop package inputs
+          LUME_DESKTOP_TARGET=aarch64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
+          LUME_DESKTOP_TARGET=x86_64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
+      - name: Smoke installed macOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="$(find apps/desktop/dist-release -maxdepth 1 -name '*.dmg' | head -n 1)"
+          mount_dir="$(mktemp -d)"
+          app_dir="$(mktemp -d)"
+          hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -quiet
+          cp -R "$mount_dir"/*.app "$app_dir/"
+          hdiutil detach "$mount_dir" -quiet
+          app="$(find "$app_dir" -maxdepth 1 -name '*.app' | head -n 1)"
+          xattr -dr com.apple.quarantine "$app" || true
+          log="$(mktemp)"
+          LUME_DESKTOP_STARTUP_LOG="$log" "$app/Contents/MacOS/Lume" &
+          pid="$!"
+          for _ in {1..90}; do
+            if grep -q "sidecar ready" "$log"; then
+              kill "$pid" || true
+              wait "$pid" || true
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$log" || true
+          kill "$pid" || true
+          exit 1
+      - name: Upload release assets
         env:
-          TAURI_TARGET_TRIPLE: x86_64-apple-darwin
-        run: bun scripts/verify-desktop-package-inputs.mjs
-      - name: Smoke compiled sidecar
-        env:
-          TAURI_TARGET_TRIPLE: x86_64-apple-darwin
-        run: bun scripts/smoke-compiled-sidecar.mjs
-      - name: Build and upload Tauri bundles
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          LUME_UPDATER_PUBLIC_KEY: ${{ vars.LUME_UPDATER_PUBLIC_KEY }}
-          TAURI_TARGET_TRIPLE: x86_64-apple-darwin
-        with:
-          projectPath: apps/desktop
-          releaseId: ${{ needs.prepare-release.outputs.release_id }}
-          tagName: ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: false
-          args: --target x86_64-apple-darwin --config src-tauri/tauri.release.conf.json
-          updaterJsonPreferNsis: true
-      - name: Verify package artifacts
-        env:
-          TAURI_TARGET_TRIPLE: x86_64-apple-darwin
-        run: bun scripts/verify-desktop-package-artifacts.mjs
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          find apps/desktop/dist-release -maxdepth 1 -type f ! -name builder-debug.yml -print0 \
+            | xargs -0 -I{} gh release upload "${GITHUB_REF_NAME}" "{}" --clobber
 
   build-windows:
     name: Build Windows
@@ -249,21 +185,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lockb') }}
+          key: ${{ runner.os }}-bun-1.3.13-${{ hashFiles('bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-1.3.13-
             ${{ runner.os }}-bun-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-      - name: Cache Rust builds
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: x86_64-pc-windows-msvc
-          workspaces: |
-            apps/desktop/src-tauri -> target
-            crates/lume-natives -> target
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Download JS assets
@@ -271,45 +196,157 @@ jobs:
         with:
           name: js-assets
           path: .
-      - name: Prepare desktop bundle resources
-        env:
-          TAURI_TARGET_TRIPLE: x86_64-pc-windows-msvc
+      - name: Build native modules
         run: |
-          bun scripts/build-natives-binary.mjs
-          bun scripts/build-sidecar-binary.mjs
+          rustup target add x86_64-pc-windows-msvc
+          bun scripts/build-natives-binary.mjs --target x86_64-pc-windows-msvc
+      - name: Prepare desktop bundle resources
+        run: |
+          bun run --filter @lume/desktop build:runtime
+          bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
       - name: Verify desktop package inputs
-        env:
-          TAURI_TARGET_TRIPLE: x86_64-pc-windows-msvc
         run: bun scripts/verify-desktop-package-inputs.mjs
-      - name: Smoke compiled sidecar
+      - name: Build Electron package
+        working-directory: apps/desktop
+        run: node ./scripts/run-electron-builder.mjs --output-dir dist-release --win --x64 --publish never --config.directories.output=dist-release
+      - name: Smoke sidecar bundle
+        run: bun scripts/smoke-sidecar-bundle.mjs
+      - name: Verify package artifacts
+        run: bun scripts/verify-desktop-package-artifacts.mjs
+      - name: Smoke installed Windows app
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem apps/desktop/dist-release -Filter *.exe |
+            Where-Object { $_.Name -notlike "*.blockmap" } |
+            Select-Object -First 1
+          if (-not $installer) { throw "Missing Windows installer" }
+          Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
+          $appPath = Join-Path $env:LOCALAPPDATA "Programs\Lume\Lume.exe"
+          if (-not (Test-Path $appPath)) { throw "Installed app not found: $appPath" }
+          $log = Join-Path $env:TEMP "lume-startup.log"
+          Remove-Item $log -Force -ErrorAction SilentlyContinue
+          $env:LUME_DESKTOP_STARTUP_LOG = $log
+          $proc = Start-Process -FilePath $appPath -PassThru
+          try {
+            for ($i = 0; $i -lt 90; $i++) {
+              if ((Test-Path $log) -and (Select-String -Path $log -Pattern "sidecar ready" -Quiet)) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                exit 0
+              }
+              Start-Sleep -Seconds 1
+            }
+            if (Test-Path $log) { Get-Content $log }
+            throw "Installed app did not report sidecar ready"
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            $uninstaller = Join-Path $env:LOCALAPPDATA "Programs\Lume\Uninstall Lume.exe"
+            if (Test-Path $uninstaller) {
+              Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait
+            }
+          }
+      - name: Upload release assets
         env:
-          TAURI_TARGET_TRIPLE: x86_64-pc-windows-msvc
-        run: bun scripts/smoke-compiled-sidecar.mjs
-      - name: Build and upload Tauri bundles
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          LUME_UPDATER_PUBLIC_KEY: ${{ vars.LUME_UPDATER_PUBLIC_KEY }}
-          TAURI_TARGET_TRIPLE: x86_64-pc-windows-msvc
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        shell: pwsh
+        run: |
+          Get-ChildItem apps/desktop/dist-release -File |
+            Where-Object { $_.Name -ne "builder-debug.yml" } |
+            ForEach-Object { gh release upload $env:GITHUB_REF_NAME $_.FullName --clobber }
+
+  build-linux:
+    name: Build Linux ${{ matrix.arch }}
+    needs: [prepare-release, build-js-assets]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+            native_target: x86_64-unknown-linux-gnu
+            desktop_target: x86_64-unknown-linux-gnu
+            electron_arch: x64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            native_target: aarch64-unknown-linux-gnu
+            desktop_target: aarch64-unknown-linux-gnu
+            electron_arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          projectPath: apps/desktop
-          releaseId: ${{ needs.prepare-release.outputs.release_id }}
-          tagName: ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: false
-          args: --config src-tauri/tauri.release.conf.json
-          updaterJsonPreferNsis: true
+          bun-version: 1.3.13
+      - name: Cache Bun downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ matrix.arch }}-bun-1.3.13-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-bun-1.3.13-
+            ${{ runner.os }}-bun-
+      - name: Install system package tools
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools xvfb
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Download JS assets
+        uses: actions/download-artifact@v4
+        with:
+          name: js-assets
+          path: .
+      - name: Build native modules
+        run: |
+          rustup target add ${{ matrix.native_target }}
+          bun scripts/build-natives-binary.mjs --target ${{ matrix.native_target }}
+      - name: Prepare desktop bundle resources
+        run: |
+          bun run --filter @lume/desktop build:runtime
+          bun scripts/build-sidecar-bundle.mjs
+          bun scripts/build-default-skills-archive.mjs
+      - name: Verify desktop package inputs
+        run: bun scripts/verify-desktop-package-inputs.mjs
+      - name: Build Electron package
+        working-directory: apps/desktop
+        run: node ./scripts/run-electron-builder.mjs --output-dir dist-release --linux --${{ matrix.electron_arch }} --publish never --config.directories.output=dist-release
+      - name: Smoke sidecar bundle
+        run: xvfb-run -a bun scripts/smoke-sidecar-bundle.mjs
       - name: Verify package artifacts
         env:
-          TAURI_TARGET_TRIPLE: x86_64-pc-windows-msvc
+          LUME_DESKTOP_TARGET: ${{ matrix.desktop_target }}
         run: bun scripts/verify-desktop-package-artifacts.mjs
+      - name: Smoke Linux AppImage
+        run: |
+          set -euo pipefail
+          appimage="$(find apps/desktop/dist-release -maxdepth 1 -name '*.AppImage' | head -n 1)"
+          chmod +x "$appimage"
+          log="$(mktemp)"
+          APPIMAGE_EXTRACT_AND_RUN=1 LUME_DESKTOP_STARTUP_LOG="$log" xvfb-run -a "$appimage" &
+          pid="$!"
+          for _ in $(seq 1 90); do
+            if grep -q "sidecar ready" "$log"; then
+              kill "$pid" || true
+              wait "$pid" || true
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$log" || true
+          kill "$pid" || true
+          exit 1
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          find apps/desktop/dist-release -maxdepth 1 -type f ! -name builder-debug.yml -print0 \
+            | xargs -0 -I{} gh release upload "${GITHUB_REF_NAME}" "{}" --clobber
 
   verify-release-assets:
     name: Verify Release Assets
-    needs: [build-macos-arm, build-macos-intel, build-windows]
+    needs: [build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

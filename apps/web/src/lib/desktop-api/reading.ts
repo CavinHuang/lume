@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/desktop-runtime/core'
 import {
   ALICE_READING_IPC_CHANNELS,
   READING_IPC_CHANNELS,

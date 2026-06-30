@@ -30,6 +30,19 @@ export interface UpdateGeneralSettingsInput {
 
 export type LogViewerLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
 
+export type ElectronLogSource = "main" | "sidecar" | "renderer"
+
+export interface ElectronLogEvent {
+  ts: string
+  timestamp: string
+  level: LogViewerLevel
+  source: ElectronLogSource
+  context: string
+  message: string
+  data?: unknown
+  sessionId?: string
+}
+
 export interface LogFileSummary {
   name: string
   sizeBytes: number
@@ -37,6 +50,7 @@ export interface LogFileSummary {
 }
 
 export interface LogFileListResult {
+  /** Renderer-facing responses intentionally hide the real local logs path. */
   directory: string
   files: LogFileSummary[]
   totalFiles: number
@@ -64,6 +78,7 @@ export interface ReadLogFileResult {
 }
 
 export interface ExportLogsResult {
+  /** Renderer-facing responses intentionally hide the real exported file path. */
   path: string
   fileName: string
   sizeBytes: number

@@ -8,6 +8,7 @@
  * License: MIT — © 2025 Mario Zechner, © 2025-2026 Can Bölük
  */
 
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -108,84 +109,60 @@ export interface NativeListWorkspaceResult {
 
 type NativeModule = {
   countTokens(input: TokenCountInput): TokenCountResult;
-  grep(options: NativeGrepOptions): Promise<NativeGrepResult>;
+  grep(options: Record<string, unknown>): Promise<Record<string, unknown>>;
   search(
     content: string,
-    options: {
-      pattern: string;
-      ignore_case?: boolean;
-      multiline?: boolean;
-      max_count?: number;
-      offset?: number;
-      context_before?: number;
-      context_after?: number;
-      context?: number;
-      max_columns?: number;
-    },
-  ): { matches: NativeGrepMatch[]; total: number; error?: string };
+    options: Record<string, unknown>,
+  ): Record<string, unknown>;
   hasMatch(
     content: string,
     pattern: string,
     ignore_case?: boolean,
     multiline?: boolean,
   ): boolean;
-  glob(options: NativeGlobOptions): Promise<NativeGlobResult>;
-  listWorkspace(options: NativeListWorkspaceOptions): Promise<NativeListWorkspaceResult>;
-  fuzzyFind(options: {
-    query: string;
-    path: string;
-    hidden?: boolean;
-    gitignore?: boolean;
-    cache?: boolean;
-    max_results?: number;
-    timeout_ms?: number;
-  }): Promise<{
-    matches: Array<{
-      path: string;
-      is_directory: boolean;
-      score: number;
-    }>;
-    total_matches: number;
-  }>;
-  invalidateFsScanCache(): void;
-
-  // ── Logger NAPI (merged from lume-logger-napi) ────────
-  initLogger(config?: {
-    level?: string;
-    file_enabled?: boolean;
-    console_enabled?: boolean;
-    retention_days?: number;
-    max_file_size_mb?: number;
-    redact_keys?: string[];
-  }): void;
-  emitLog(input: {
-    level: string;
-    source?: string;
-    context: string;
-    message: string;
-    data?: string;
-  }): void;
-  flushLogger(): void;
-  listLogFiles(): Array<{
-    name: string;
-    size_bytes: number;
-    modified_at: string;
-  }>;
-  readLogFile(query?: {
-    file_name?: string;
-    levels?: string[];
-    keyword?: string;
-    max_lines?: number;
-  }): Array<{
-    line_number: number;
-    level: string;
-    text: string;
-    raw_json?: string;
-  }>;
+  glob(options: Record<string, unknown>): Promise<Record<string, unknown>>;
+  listWorkspace(options: Record<string, unknown>): Promise<Record<string, unknown>>;
+  fuzzyFind(options: Record<string, unknown>): Promise<Record<string, unknown>>;
+  invalidateFsScanCache(path?: string): void;
+  summarize(options: NativeSummarizeOptions): NativeSummaryResult;
 };
 
 let _native: NativeModule | null = null;
 let _loadError: string | null = null;
+let _binaryPath: string | null = null;
+const requireNative = createRequire(import.meta.url);
+
+export const NATIVE_CAPABILITIES = [
+  "tokens",
+  "search",
+  "grep",
+  "glob",
+  "fuzzyFind",
+  "workspace",
+  "summarize",
+  "fsCache",
+] as const;
+
+type NativeCapability = typeof NATIVE_CAPABILITIES[number];
+
+const REQUIRED_EXPORTS: Array<[NativeCapability, keyof NativeModule]> = [
+  ["tokens", "countTokens"],
+  ["search", "search"],
+  ["search", "hasMatch"],
+  ["grep", "grep"],
+  ["glob", "glob"],
+  ["fuzzyFind", "fuzzyFind"],
+  ["workspace", "listWorkspace"],
+  ["summarize", "summarize"],
+  ["fsCache", "invalidateFsScanCache"],
+];
+
+export interface NativeDiagnostics {
+  available: boolean;
+  binaryPath: string | null;
+  error: string | null;
+  capabilities: string[];
+}
 
 function loadNative(): NativeModule | null {
   if (_native !== null || _loadError !== null) return _native;
@@ -202,6 +179,8 @@ function loadNative(): NativeModule | null {
       binaryName = "lume-natives.darwin-x64.node";
     } else if (platform === "linux" && arch === "x64") {
       binaryName = "lume-natives.linux-x64-gnu.node";
+    } else if (platform === "linux" && arch === "arm64") {
+      binaryName = "lume-natives.linux-arm64-gnu.node";
     } else if (platform === "win32" && arch === "x64") {
       binaryName = "lume-natives.win32-x64-msvc.node";
     } else {
@@ -216,7 +195,10 @@ function loadNative(): NativeModule | null {
       envPath && envPath.length > 0
         ? envPath
         : path.join(__dirname, "dist", binaryName);
-    _native = require(binaryPath) as unknown as NativeModule;
+    _binaryPath = binaryPath;
+    const loaded = requireNative(binaryPath) as unknown as NativeModule;
+    validateNativeModule(loaded);
+    _native = loaded;
     return _native;
   } catch (err) {
     _loadError = `failed to load native module: ${err}`;
@@ -224,8 +206,192 @@ function loadNative(): NativeModule | null {
   }
 }
 
+function validateNativeModule(native: NativeModule): void {
+  const missing = REQUIRED_EXPORTS
+    .map(([, exportName]) => exportName)
+    .filter((exportName) => typeof native[exportName] !== "function");
+  if (missing.length > 0) {
+    throw new Error(`missing native exports: ${missing.join(", ")}`);
+  }
+}
+
+const FILE_TYPE_TO_NATIVE = {
+  file: 1,
+  dir: 2,
+  symlink: 3,
+} as const;
+
+function omitUndefined(input: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined),
+  );
+}
+
+function toNativeGrepOptions(options: NativeGrepOptions): Record<string, unknown> {
+  return omitUndefined({
+    pattern: options.pattern,
+    path: options.path,
+    glob: options.glob,
+    type: options.type,
+    ignoreCase: options.ignore_case,
+    multiline: options.multiline,
+    hidden: options.hidden,
+    gitignore: options.gitignore,
+    cache: options.cache,
+    maxCount: options.max_count,
+    offset: options.offset,
+    contextBefore: options.context_before,
+    contextAfter: options.context_after,
+    context: options.context,
+    maxColumns: options.max_columns,
+    mode: options.mode,
+    maxCountPerFile: options.max_count_per_file,
+    timeoutMs: options.timeout_ms,
+  });
+}
+
+function toNativeGlobOptions(options: NativeGlobOptions): Record<string, unknown> {
+  return omitUndefined({
+    pattern: options.pattern,
+    path: options.path,
+    fileType: options.file_type ? FILE_TYPE_TO_NATIVE[options.file_type] : undefined,
+    recursive: options.recursive,
+    hidden: options.hidden,
+    maxResults: options.max_results,
+    gitignore: options.gitignore,
+    cache: options.cache,
+    sortByMtime: options.sort_by_mtime,
+    includeNodeModules: options.include_node_modules,
+    timeoutMs: options.timeout_ms,
+  });
+}
+
+function toNativeListWorkspaceOptions(options: NativeListWorkspaceOptions): Record<string, unknown> {
+  return omitUndefined({
+    path: options.path,
+    maxDepth: options.max_depth,
+    hidden: options.hidden,
+    gitignore: options.gitignore,
+    collectAgentsMd: options.collect_agents_md,
+    timeoutMs: options.timeout_ms,
+  });
+}
+
+function toNativeFuzzyFindOptions(
+  query: string,
+  searchPath: string,
+  maxResults?: number,
+): Record<string, unknown> {
+  return omitUndefined({
+    query,
+    path: searchPath,
+    maxResults: maxResults ?? 100,
+  });
+}
+
+function toNativeSearchOptions(
+  pattern: string,
+  options?: {
+    ignore_case?: boolean;
+    multiline?: boolean;
+    context?: number;
+    max_count?: number;
+  },
+): Record<string, unknown> {
+  return omitUndefined({
+    pattern,
+    ignoreCase: options?.ignore_case,
+    multiline: options?.multiline,
+    context: options?.context,
+    maxCount: options?.max_count,
+  });
+}
+
+function nativeFileTypeToString(value: unknown): "file" | "dir" | "symlink" {
+  if (value === 1 || value === "file" || value === "File") return "file";
+  if (value === 2 || value === "dir" || value === "Dir") return "dir";
+  return "symlink";
+}
+
+function normalizeContextLines(value: unknown): Array<{ line_number: number; line: string }> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((line) => ({
+    line_number: Number(line.line_number ?? line.lineNumber ?? 0),
+    line: String(line.line ?? ""),
+  }));
+}
+
+function normalizeGrepMatch(match: any): NativeGrepMatch {
+  return {
+    path: String(match.path ?? ""),
+    line_number: Number(match.line_number ?? match.lineNumber ?? 0),
+    line: String(match.line ?? ""),
+    context_before: normalizeContextLines(match.context_before ?? match.contextBefore),
+    context_after: normalizeContextLines(match.context_after ?? match.contextAfter),
+    truncated: match.truncated,
+    match_count: match.match_count ?? match.matchCount,
+  };
+}
+
+function normalizeGrepResult(result: any): NativeGrepResult {
+  return {
+    matches: Array.isArray(result.matches) ? result.matches.map(normalizeGrepMatch) : [],
+    total_matches: Number(result.total_matches ?? result.totalMatches ?? 0),
+    files_with_matches: Number(result.files_with_matches ?? result.filesWithMatches ?? 0),
+    files_searched: Number(result.files_searched ?? result.filesSearched ?? 0),
+    limit_reached: result.limit_reached ?? result.limitReached,
+    skipped_oversized: result.skipped_oversized ?? result.skippedOversized,
+    error: result.error,
+  };
+}
+
+function normalizeGlobMatch(match: any): NativeGlobMatch {
+  return {
+    path: String(match.path ?? ""),
+    file_type: nativeFileTypeToString(match.file_type ?? match.fileType),
+    mtime: match.mtime ?? null,
+    size: match.size ?? null,
+  };
+}
+
+function normalizeGlobResult(result: any): NativeGlobResult {
+  const matches = Array.isArray(result.matches)
+    ? result.matches.map(normalizeGlobMatch)
+    : [];
+  return {
+    matches,
+    total_matches: Number(result.total_matches ?? result.totalMatches ?? matches.length),
+  };
+}
+
+function normalizeWorkspaceResult(result: any): NativeListWorkspaceResult {
+  return {
+    entries: Array.isArray(result.entries) ? result.entries.map(normalizeGlobMatch) : [],
+    agents_md_files: result.agents_md_files ?? result.agentsMdFiles ?? [],
+    truncated: Boolean(result.truncated),
+  };
+}
+
 export function isNativeAvailable(): boolean {
   return loadNative() !== null;
+}
+
+export function getNativeDiagnostics(): NativeDiagnostics {
+  const native = loadNative();
+  return {
+    available: native !== null,
+    binaryPath: _binaryPath,
+    error: _loadError,
+    capabilities: native ? [...NATIVE_CAPABILITIES] : [],
+  };
+}
+
+export function assertNativeAvailable(): NativeDiagnostics {
+  const diagnostics = getNativeDiagnostics();
+  if (!diagnostics.available) {
+    throw new Error(`Rust native module unavailable: ${diagnostics.error ?? "unknown error"}`);
+  }
+  return diagnostics;
 }
 
 // ── Tokens ─────────────────────────────────────────────
@@ -254,7 +420,7 @@ export async function nativeGrep(
   if (!native) return null;
 
   try {
-    return await native.grep(options);
+    return normalizeGrepResult(await native.grep(toNativeGrepOptions(options)));
   } catch {
     return null;
   }
@@ -272,17 +438,34 @@ export function nativeSearch(
   if (!native) return null;
 
   try {
-    const result = native.search(content, {
-      pattern,
-      ignore_case: options?.ignore_case,
-      context: options?.context,
-      max_count: options?.max_count,
-    });
-    return result.matches;
+    const result = native.search(content, toNativeSearchOptions(pattern, options));
+    return Array.isArray(result.matches) ? result.matches.map(normalizeGrepMatch) : [];
   } catch {
     return null;
   }
 }
+
+export function nativeHasMatch(
+  content: string,
+  pattern: string,
+  options?: { ignore_case?: boolean; multiline?: boolean },
+): boolean | null {
+  const native = loadNative();
+  if (!native) return null;
+
+  try {
+    return native.hasMatch(
+      content,
+      pattern,
+      options?.ignore_case,
+      options?.multiline,
+    );
+  } catch {
+    return null;
+  }
+}
+
+export const hasMatch = nativeHasMatch;
 
 // ── Glob ───────────────────────────────────────────────
 
@@ -297,7 +480,7 @@ export async function nativeGlob(
   if (!native) return null;
 
   try {
-    return await native.glob(options);
+    return normalizeGlobResult(await native.glob(toNativeGlobOptions(options)));
   } catch {
     return null;
   }
@@ -315,7 +498,9 @@ export async function nativeListWorkspace(
   if (!native) return null;
 
   try {
-    return await native.listWorkspace(options);
+    return normalizeWorkspaceResult(
+      await native.listWorkspace(toNativeListWorkspaceOptions(options)),
+    );
   } catch {
     return null;
   }
@@ -336,14 +521,27 @@ export async function nativeFuzzyFind(
   if (!native) return null;
 
   try {
-    const result = await native.fuzzyFind({
-      query,
-      path: searchPath,
-      max_results: maxResults ?? 100,
-    });
-    return result.matches;
+    const result = await native.fuzzyFind(toNativeFuzzyFindOptions(query, searchPath, maxResults));
+    if (!Array.isArray(result.matches)) return [];
+    return result.matches.map((match: any) => ({
+      path: String(match.path ?? ""),
+      is_directory: Boolean(match.is_directory ?? match.isDirectory),
+      score: Number(match.score ?? 0),
+    }));
   } catch {
     return null;
+  }
+}
+
+export function invalidateFsScanCache(path?: string): boolean {
+  const native = loadNative();
+  if (!native) return false;
+
+  try {
+    native.invalidateFsScanCache(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -386,87 +584,8 @@ export function nativeSummarize(
   if (!native) return null;
 
   try {
-    return (native as any).summarize(options);
+    return native.summarize(options);
   } catch {
     return null;
   }
-}
-
-// ── Logger (merged from @lume/native-logger) ─────────────
-
-export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
-
-export interface LoggerConfig {
-  level?: LogLevel;
-  file_enabled?: boolean;
-  console_enabled?: boolean;
-  retention_days?: number;
-  max_file_size_mb?: number;
-  redact_keys?: string[];
-}
-
-export interface LogInput {
-  level: LogLevel;
-  source?: string;
-  context: string;
-  message: string;
-  data?: string;
-}
-
-export interface LogFileSummary {
-  name: string;
-  size_bytes: number;
-  modified_at: string;
-}
-
-export interface LogLineEntry {
-  line_number: number;
-  level: string;
-  text: string;
-  raw_json?: string;
-}
-
-export interface LogQuery {
-  file_name?: string;
-  levels?: LogLevel[];
-  keyword?: string;
-  max_lines?: number;
-}
-
-/** Initialize the native logger. No-op if native unavailable. */
-export function initLogger(config?: LoggerConfig): void {
-  loadNative()?.initLogger(config);
-}
-
-/** Emit a structured log event. Falls back to stderr if native unavailable. */
-export function emitLog(input: LogInput): void {
-  const n = loadNative();
-  if (n) {
-    n.emitLog(input);
-  } else {
-    const line = JSON.stringify({
-      ts: new Date().toISOString(),
-      level: input.level,
-      source: input.source ?? "sidecar",
-      context: input.context,
-      message: input.message,
-      ...(input.data ? { data: JSON.parse(input.data) } : {}),
-    });
-    process.stderr.write(`${line}\n`);
-  }
-}
-
-/** Flush pending log writes to disk. */
-export function flushLogger(): void {
-  loadNative()?.flushLogger();
-}
-
-/** List log files. Returns empty array if native unavailable. */
-export function listLogFiles(): LogFileSummary[] {
-  return loadNative()?.listLogFiles() ?? [];
-}
-
-/** Read log file with optional filtering. Returns empty array if native unavailable. */
-export function readLogFile(query?: LogQuery): LogLineEntry[] {
-  return loadNative()?.readLogFile(query) ?? [];
 }

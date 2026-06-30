@@ -43,10 +43,10 @@ Lume 区分六种记忆类型：
 
 | 类型 | 含义 | 示例 |
 |------|------|------|
-| **fact** | 事实 | 用户的技术栈是 Rust + React |
+| **fact** | 事实 | 用户的技术栈是 TypeScript + React |
 | **preference** | 偏好 | 偏好简洁回复，不要废话 |
-| **decision** | 决策 | 项目选了 Tauri 而不是 Electron |
-| **lesson** | 教训 | 上次 CI 跑挂是因为忘了装 tauri-cli |
+| **decision** | 决策 | 项目选了 Electron 作为桌面壳 |
+| **lesson** | 教训 | 上次 CI 跑挂是因为忘了配置发布 token |
 | **episode** | 场景 | 昨晚一起 review 了那块渲染性能代码 |
 | **milestone** | 里程碑 | v0.1.0 发布了 |
 
@@ -212,23 +212,22 @@ Lume 可以在你不在的时候替你工作：
 ```
 Lume
 ├── apps/
-│   ├── desktop/              # Tauri 桌面应用（Rust + React）
+│   ├── desktop/              # Electron 桌面应用
 │   ├── web/                  # Vite + React 前端
-│   └── sidecar/              # Bun 运行时核心（Agent runtime + 工具 + 记忆 + IM）
+│   └── sidecar/              # Electron 子进程核心（Agent runtime + 工具 + 记忆 + IM）
 ├── packages/
 │   ├── sdk/                  # @lume/agent-sdk — 可嵌入的 Agent SDK
+│   ├── natives/              # @lume/natives — Rust N-API 性能模块加载器
 │   ├── cli/                  # 命令行工具
 │   ├── shared/               # 跨端共享类型和工具
-│   ├── ui/                   # 共享 UI 组件库
-│   └── natives/              # Tauri 原生桥接
-├── crates/                   # Rust crates
-│   ├── lume-ast/             # Markdown AST 处理
-│   ├── lume-logger/          # 结构化日志
-│   └── lume-natives/         # Tauri 原生命令
+│   └── ui/                   # 共享 UI 组件库
+├── crates/
+│   ├── lume-ast/             # Rust AST 摘要能力
+│   └── lume-natives/         # 输出 .node 动态库，不是桌面 runtime
 └── plugins/                  # 外部插件
 ```
 
-**技术栈**：Tauri 2 · React · TypeScript · Bun · Rust
+**技术栈**：Electron 42.5.1 · React · TypeScript · Bun（包管理与构建）· Rust N-API（仅用于构建 `.node` 性能模块）
 
 所有数据存储在 `~/.lume/` 目录下——记忆、对话、工作区配置、技能定义，全部是你可以直接读写的本地文件。
 
@@ -240,8 +239,7 @@ Lume
 
 - [Node.js](https://nodejs.org/) >= 20
 - [Bun](https://bun.sh/) >= 1.0
-- [Rust](https://www.rust-lang.org/tools/install)（桌面端构建）
-- [Tauri CLI](https://v2.tauri.app/start/prerequisites/)
+- [Rust](https://www.rust-lang.org/) stable（仅构建桌面 native 能力时需要）
 
 ### 安装
 
@@ -263,6 +261,8 @@ bun dev
 ```bash
 bun build:desktop
 ```
+
+桌面版运行时仍只有 Electron。Rust 能力会构建为 `apps/desktop/resources/natives/<platform>-<arch>/lume-natives.node`，由 Electron UtilityProcess sidecar 通过 `LUME_NATIVES_PATH` 加载。
 
 ---
 

@@ -1,9 +1,11 @@
 # Lume 最终态架构边界设计文档包
 
-本目录包含三份设计文档。它们的重点不是短期代码拆分，而是先定义 Lume 最终态的系统边界：谁拥有 runtime 真相，谁只是宿主，哪些能力是 AI 可见工具，哪些能力是后台服务。
+本目录包含三份历史设计文档。它们的重点不是短期代码拆分，而是先定义 Lume 最终态的系统边界：谁拥有 runtime 真相，谁只是宿主，哪些能力是 AI 可见工具，哪些能力是后台服务。
+
+> 状态说明：这些文档写于 Tauri 桌面壳阶段，文中出现的 Tauri/Rust 主进程描述仅作为历史设计背景保留；当前桌面 active runtime/build path 已切换为 Electron Host。
 
 1. `lume-overall-architecture-modification-design.md`  
-   整体架构边界设计：Runtime Kernel、Tauri Host、Sidecar Runtime Host、Tool Runtime、Service Runtime、Adapters、状态真相归属。
+   整体架构边界设计：Runtime Kernel、Desktop Host、Sidecar Runtime Host、Tool Runtime、Service Runtime、Adapters、状态真相归属。
 
 2. `lume-agent-loop-modification-design.md`  
    Agent Loop 边界设计：Agent Runtime Kernel 内部的 loop engine、上下文、事件、checkpoint、interruption、SDK adapter、PostRun 调度边界。
@@ -34,7 +36,7 @@ Agent Runtime Kernel 是 Lume 的产品真相来源。
 Sidecar Runtime Host 只是本地宿主和服务容器。
 Tool Runtime 是 AI 可见能力边界。
 Service Runtime 是系统自动能力边界。
-UI、Tauri、Adapters 不拥有业务状态真相。
+UI、Electron Host、Adapters 不拥有业务状态真相。
 ```
 
 当前已落地的文件边界：

@@ -156,7 +156,7 @@ export function AgentView({ threadId, readOnly }: AgentViewProps) {
     let disposed = false
     let unlisten: (() => void) | undefined
 
-    import('@tauri-apps/api/window')
+    import('@/lib/desktop-runtime/window')
       .then(async ({ getCurrentWindow }) => {
         unlisten = await getCurrentWindow().onDragDropEvent(async (event) => {
           if (disposed) return

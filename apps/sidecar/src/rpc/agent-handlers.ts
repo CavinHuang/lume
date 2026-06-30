@@ -133,7 +133,7 @@ import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
 import { createDefaultPluginMarketService } from "../services/plugins/plugin-market-service";
 import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/config-paths";
-import { createLogger, getLogsDir } from "../services/infra/logger";
+import { createLogger } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
 import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
@@ -1561,7 +1561,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
       return { ok: true };
     },
-    [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: getLogsDir() }),
+    [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: "" }),
     [AGENT_IPC_CHANNELS.GET_WORKSPACE_ROOT_PATH]: async (params) => {
       const input = validateInput(workspaceSlugInputSchema, params, AGENT_IPC_CHANNELS.GET_WORKSPACE_ROOT_PATH);
       return getAgentWorkspacePath(input.workspaceSlug);

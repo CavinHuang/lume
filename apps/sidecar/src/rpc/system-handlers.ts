@@ -38,6 +38,7 @@ import {
 import { testSearchBackend } from "../services/infra/search-test-service";
 import { getActiveProxyConfig } from "../services/system/proxy-settings-manager";
 import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
+import { getSidecarNativeHealth } from "../services/infra/native-runtime";
 import {
   clearCacheInputSchema,
   githubReleaseByTagInputSchema,
@@ -120,7 +121,8 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       ok: true,
       source: "sidecar",
       version: IPC_PROTOCOL_VERSION,
-      pid: process.pid
+      pid: process.pid,
+      native: getSidecarNativeHealth()
     }),
     "rpc:list-methods": async () => context.getMethodNames(),
     [UI_STATE_IPC_CHANNELS.GET]: async () => getPersistedUiState(),
@@ -162,7 +164,7 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
     [GENERAL_SETTINGS_IPC_CHANNELS.EXPORT_LOGS]: async () => {
       const result = exportAllLogFiles();
       openInSystem(result.path);
-      return result;
+      return { ...result, path: "" };
     },
     [GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND]: async (params) => {
       const input = (params ?? {}) as TestSearchBackendInput;

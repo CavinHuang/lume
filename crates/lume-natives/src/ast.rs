@@ -68,3 +68,26 @@ pub fn summarize(options: JsSummaryOptions) -> Result<JsSummaryResult> {
             .collect(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summarizes_supported_source_code() {
+        let result = summarize(JsSummaryOptions {
+            code: "function greet(name: string) {\n  return `hello ${name}`;\n}\n".to_string(),
+            lang: Some("typescript".to_string()),
+            path: None,
+            min_body_lines: Some(1),
+            min_comment_lines: Some(1),
+            unfold_until_lines: Some(1),
+            unfold_limit_lines: Some(1),
+        })
+        .expect("summary succeeds");
+
+        assert!(result.parsed);
+        assert_eq!(result.total_lines, 3);
+        assert!(!result.segments.is_empty());
+    }
+}

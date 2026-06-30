@@ -47,6 +47,7 @@ describe("log-viewer-service", () => {
 
     const result = listLogFiles();
 
+    expect(result.directory).toBe("");
     expect(result.files.map((file) => file.name)).toEqual([
       "2026-05-29.log",
       "2026-05-28.log"
@@ -97,6 +98,25 @@ describe("log-viewer-service", () => {
     expect(() => readLogFile({ fileName: "../settings.json" })).toThrow("日志文件名非法");
   });
 
+  test("matches renderer source logs without exposing raw paths to renderer", () => {
+    writeFileSync(join(logsDir, "lume-2026-06-30.ndjson"), JSON.stringify({
+      ts: "2026-06-30T01:02:03.456Z",
+      timestamp: "2026-06-30T01:02:03.456Z",
+      level: "info",
+      source: "renderer",
+      context: "settings.log-viewer",
+      message: "loaded logs"
+    }), "utf-8");
+
+    const result = readLogFile({
+      fileName: "lume-2026-06-30.ndjson",
+      query: "\"source\":\"webview\""
+    });
+
+    expect(result.matchedLines).toBe(1);
+    expect(result.lines[0]?.text).toContain("[renderer/settings.log-viewer]");
+  });
+
   test("exports all log files into one diagnostic text file", () => {
     writeFileSync(join(logsDir, "2026-05-28.log"), "old", "utf-8");
     writeFileSync(join(logsDir, "2026-05-29.log"), "new", "utf-8");
@@ -110,5 +130,9 @@ describe("log-viewer-service", () => {
     expect(exported).toContain("old");
     expect(exported).toContain("===== 2026-05-29.log =====");
     expect(exported).toContain("new");
+
+    const rendererSafeResult = exportAllLogFiles({ exposePath: false });
+    expect(rendererSafeResult.path).toBe("");
+    expect(rendererSafeResult.fileName).toEndWith(".txt");
   });
 });

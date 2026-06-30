@@ -73,11 +73,34 @@ describe("createRpcHandlers", () => {
       source: string;
       version: string | number;
       pid: number;
+      native: {
+        available: boolean;
+        capabilities: string[];
+        error?: string | null;
+      };
     };
 
     expect(result.ok).toBeTrue();
     expect(result.source).toBe("sidecar");
     expect(result.version).toBeDefined();
     expect(result.pid).toBe(process.pid);
+    expect(typeof result.native.available).toBe("boolean");
+    expect(Array.isArray(result.native.capabilities)).toBeTrue();
+    expect("binaryPath" in result.native).toBeFalse();
+  });
+
+  test("renderer-facing log path methods must not expose local filesystem paths", async () => {
+    const handlers = createRpcHandlers({
+      writeNotification: () => {}
+    });
+    const getLogsDirHandler = handlers[AGENT_IPC_CHANNELS.GET_LOGS_DIR];
+    expect(getLogsDirHandler).toBeDefined();
+    if (!getLogsDirHandler) {
+      throw new Error("缺少 agent:get-logs-dir handler");
+    }
+
+    const result = await getLogsDirHandler(undefined) as { path: string };
+
+    expect(result).toEqual({ path: "" });
   });
 });

@@ -9,8 +9,8 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { listen } from '@tauri-apps/api/event'
-import { relaunch } from '@tauri-apps/plugin-process'
+import { listen } from '@/lib/desktop-runtime/event'
+import { relaunch } from '@/lib/desktop-runtime/process'
 import { DATA_CATEGORY_META } from '@lume/shared'
 import type { StorageStats } from '@lume/shared'
 import { Button } from '@/components/ui/button'

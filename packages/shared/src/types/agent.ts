@@ -1542,7 +1542,7 @@ export const AGENT_IPC_CHANNELS = {
   // 日志
   /** 写入日志（前端 -> sidecar） */
   WRITE_LOG: 'agent:write-log',
-  /** 获取日志目录路径 */
+  /** 日志目录仅供兼容旧调用；桌面 renderer 不返回真实本地路径 */
   GET_LOGS_DIR: 'agent:get-logs-dir',
 
   // 分叉

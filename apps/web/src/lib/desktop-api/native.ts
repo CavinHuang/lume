@@ -1,6 +1,6 @@
-import { convertFileSrc, invoke } from '@tauri-apps/api/core'
-import { relaunch } from '@tauri-apps/plugin-process'
-import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater'
+import { convertFileSrc, invoke } from '@/lib/desktop-runtime/core'
+import { relaunch } from '@/lib/desktop-runtime/process'
+import { check, type DownloadEvent, type Update } from '@/lib/desktop-runtime/updater'
 
 export interface DesktopUpdateInfo {
   currentVersion: string

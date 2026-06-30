@@ -12,20 +12,23 @@ if (!release.isDraft) fail(`release ${tag} is not draft`);
 const names = (release.assets ?? []).map((asset) => asset.name);
 
 requireAsset("macOS ARM dmg", names, [/\.dmg$/i], [/aarch64|arm64/i]);
-requireAsset("macOS ARM updater archive", names, [/\.app\.tar\.gz$/i], [/aarch64|arm64/i]);
-requireAsset("macOS ARM updater signature", names, [/\.app\.tar\.gz\.sig$/i], [/aarch64|arm64/i]);
 requireAsset("macOS Intel dmg", names, [/\.dmg$/i], [/x86_64|x64/i]);
-requireAsset("macOS Intel updater archive", names, [/\.app\.tar\.gz$/i], [/x86_64|x64/i]);
-requireAsset("macOS Intel updater signature", names, [/\.app\.tar\.gz\.sig$/i], [/x86_64|x64/i]);
+requireAsset("macOS updater manifest", names, [/^latest-mac\.yml$/i], []);
 requireAsset("Windows NSIS installer", names, [/\.exe$/i], []);
-requireAsset("Windows NSIS signature", names, [/\.exe\.sig$/i], []);
-requireAsset("latest.json", names, [/^latest\.json$/i], []);
+requireAsset("Windows NSIS blockmap", names, [/\.exe\.blockmap$/i], []);
+requireAsset("Windows updater manifest", names, [/^latest\.yml$/i], []);
+requireAsset("Linux x64 AppImage", names, [/\.AppImage$/i], [/x64|x86_64|amd64/i]);
+requireAsset("Linux ARM64 AppImage", names, [/\.AppImage$/i], [/arm64|aarch64/i]);
+requireAsset("Linux updater manifest", names, [/^latest-linux\.yml$/i], []);
 
-const latest = JSON.parse(downloadReleaseAsset(tag, "latest.json"));
-const platformEntries = collectLatestJsonEntries(latest);
-requireLatestCoverage("macOS ARM", platformEntries, [/darwin|macos/i, /aarch64|arm64/i]);
-requireLatestCoverage("macOS Intel", platformEntries, [/darwin|macos/i, /x86_64|x64/i]);
-requireLatestCoverage("Windows x64", platformEntries, [/windows|win32|msvc/i, /x86_64|x64/i]);
+const windowsLatest = downloadReleaseAsset(tag, "latest.yml");
+if (!/\.exe/i.test(windowsLatest)) fail("latest.yml does not reference a Windows installer");
+
+const macLatest = downloadReleaseAsset(tag, "latest-mac.yml");
+if (!/\.dmg/i.test(macLatest)) fail("latest-mac.yml does not reference a macOS dmg");
+if (!/(?:aarch64|arm64)/i.test(macLatest) || !/(?:x86_64|x64)/i.test(macLatest)) {
+  fail("latest-mac.yml does not reference both macOS ARM and Intel artifacts");
+}
 
 writeSummary(names);
 console.error(`[verify-release-assets] ok for ${tag}`);
@@ -37,30 +40,6 @@ function requireAsset(label, names, requiredPatterns, optionalArchPatterns) {
     return hasRequired && hasArch;
   });
   if (!found) fail(`missing remote asset: ${label}\nassets:\n${names.join("\n")}`);
-}
-
-function collectLatestJsonEntries(value, path = "$", entries = []) {
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => collectLatestJsonEntries(item, `${path}[${index}]`, entries));
-    return entries;
-  }
-  if (value && typeof value === "object") {
-    const record = value;
-    const url = typeof record.url === "string" ? record.url : "";
-    const signature = typeof record.signature === "string" ? record.signature : "";
-    const notes = typeof record.notes === "string" ? record.notes : "";
-    const payload = `${path} ${url} ${signature} ${notes}`;
-    if (url || signature) entries.push(payload);
-    for (const [key, item] of Object.entries(record)) {
-      collectLatestJsonEntries(item, `${path}.${key}`, entries);
-    }
-  }
-  return entries;
-}
-
-function requireLatestCoverage(label, entries, patterns) {
-  const found = entries.some((entry) => patterns.every((pattern) => pattern.test(entry)));
-  if (!found) fail(`latest.json missing updater coverage for ${label}\nentries:\n${entries.join("\n")}`);
 }
 
 function ghJson(args) {

@@ -47,7 +47,7 @@ export interface StorageStats {
 
 /** 导出 zip 命令入参 */
 export interface ExportZipInput {
-  /** 用户通过 Tauri 存框选择的目标绝对路径 */
+  /** 用户通过桌面保存框选择的目标绝对路径 */
   destPath: string;
   /** 是否包含凭证；false 时对所有 .json 做脱敏 */
   includeCredentials: boolean;
@@ -100,7 +100,7 @@ export const DATA_CATEGORY_META: DataCategoryMeta[] = [
 /**
  * 扫描规范：顺序即展示顺序。路径相对 ~/.lume。
  * 核心与派生在 memory 上有重叠，故核心 memory 扫描时 skip 掉 memory/index；
- * workspace 同理。`*` 由 Rust 扫描时展开为 agent-workspaces 下的每个子目录。
+ * workspace 同理。`*` 由桌面统计实现展开为 agent-workspaces 下的每个子目录。
  */
 export const DATA_CATEGORY_SCAN_SPEC: DataCategoryScanSpec[] = [
   {

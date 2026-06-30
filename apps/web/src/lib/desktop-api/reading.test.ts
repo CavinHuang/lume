@@ -9,7 +9,7 @@ import {
 const invokeMock = mock(async (_command: string, _payload?: unknown) => ({}))
 const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
 
-mock.module('@tauri-apps/api/core', () => ({
+mock.module('@/lib/desktop-runtime/core', () => ({
   invoke: invokeMock,
 }))
 

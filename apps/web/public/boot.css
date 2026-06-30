@@ -1,0 +1,92 @@
+/* Static boot layer. React renders the matching boot frame and removes #boot-root after mount. */
+#boot-root {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.lume-boot-static {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: linear-gradient(180deg, #fafbfd 0%, #ffffff 30%, #f3f4f8 100%);
+}
+
+.dark .lume-boot-static {
+  background: linear-gradient(180deg, #202024 0%, #1a1a1d 32%, #242428 100%);
+}
+
+.lume-boot-static-halo {
+  position: absolute;
+  width: 460px;
+  height: 460px;
+  border-radius: 50%;
+  filter: blur(16px);
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgba(139, 92, 246, 0.13),
+    rgba(192, 38, 211, 0.06) 45%,
+    transparent 72%
+  );
+  animation: lume-boot-static-halo 3.6s ease-in-out infinite;
+}
+
+.dark .lume-boot-static-halo {
+  background: radial-gradient(
+    circle at 50% 45%,
+    rgba(167, 139, 250, 0.16),
+    rgba(217, 70, 190, 0.09) 45%,
+    transparent 72%
+  );
+}
+
+.lume-boot-static-logo {
+  position: relative;
+  z-index: 2;
+  width: 200px;
+  height: auto;
+  filter: drop-shadow(0 16px 30px rgba(0, 0, 0, 0.18));
+  animation: lume-boot-static-breathe 2.8s ease-in-out infinite;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.lume-boot-static-status {
+  position: absolute;
+  bottom: 24%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: #6a6a78;
+}
+
+.dark .lume-boot-static-status {
+  color: #9b9ba8;
+}
+
+@keyframes lume-boot-static-breathe {
+  0%,
+  100% {
+    transform: scale(0.97);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+@keyframes lume-boot-static-halo {
+  0%,
+  100% {
+    transform: scale(0.95);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+}

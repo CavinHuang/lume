@@ -1,5 +1,7 @@
 # Lume 整体架构边界设计文档
 
+> 状态说明：本文档是 Tauri 桌面壳阶段的历史架构草案；文中 Tauri/Rust 描述仅解释当时设计背景，不再代表当前 Electron 桌面 runtime/build path。
+
 > 目标：在保留 Lume 当前 Tauri + Sidecar 技术路线的前提下，先定义最终态架构边界，再安排增量实施。最终态不是“sidecar 变成更大的业务层”，而是形成一个本地 Agent Runtime Kernel：它拥有 run/session/event/context/tool/interruption/checkpoint 的产品真相，Tauri、UI、Sidecar Host、Adapters 都围绕它协作。
 
 ---

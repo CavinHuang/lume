@@ -1,36 +1,51 @@
-import { existsSync, readdirSync, appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import asar from "asar";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const target = process.env.TAURI_TARGET_TRIPLE;
-const roots = {
-  "aarch64-apple-darwin": resolve(REPO_ROOT, "apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle"),
-  "x86_64-apple-darwin": resolve(REPO_ROOT, "apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle"),
-  "x86_64-pc-windows-msvc": resolve(REPO_ROOT, "apps/desktop/src-tauri/target/release/bundle"),
-};
+const DESKTOP_DIR = resolve(REPO_ROOT, "apps", "desktop");
+const target = process.env.LUME_DESKTOP_TARGET ?? currentDesktopTarget();
+
 const required = {
-  "aarch64-apple-darwin": [/\/macos\/.*\.app$/, /\/macos\/.*\.app\/Contents\/MacOS\/lume-sidecar$/, /\/macos\/.*\.app\.tar\.gz$/, /\/macos\/.*\.app\.tar\.gz\.sig$/, /\/dmg\/.*\.dmg$/],
-  "x86_64-apple-darwin": [/\/macos\/.*\.app$/, /\/macos\/.*\.app\/Contents\/MacOS\/lume-sidecar$/, /\/macos\/.*\.app\.tar\.gz$/, /\/macos\/.*\.app\.tar\.gz\.sig$/, /\/dmg\/.*\.dmg$/],
-  "x86_64-pc-windows-msvc": [/\/nsis\/.*\.exe$/, /\/nsis\/.*\.exe\.sig$/],
+  "aarch64-apple-darwin": [/\.dmg$/i, /latest-mac\.yml$/i],
+  "x86_64-apple-darwin": [/\.dmg$/i, /latest-mac\.yml$/i],
+  "x86_64-pc-windows-msvc": [/\.exe$/i, /\.blockmap$/i, /latest\.yml$/i],
+  "x86_64-unknown-linux-gnu": [/\.AppImage$/i, /latest-linux\.yml$/i],
+  "aarch64-unknown-linux-gnu": [/\.AppImage$/i, /latest-linux\.yml$/i],
+};
+const targetArtifactPatterns = {
+  "aarch64-apple-darwin": [/\.dmg$/i, /(?:aarch64|arm64)/i],
+  "x86_64-apple-darwin": [/\.dmg$/i, /(?:x86_64|x64)/i],
 };
 
-const root = roots[target];
-if (!root) fail(`unsupported or missing TAURI_TARGET_TRIPLE: ${target ?? "(unset)"}`);
-const files = walk(root);
-for (const pattern of required[target]) {
-  if (!files.some((file) => pattern.test(file))) fail(`missing artifact matching ${pattern} under ${root}`);
+if (!required[target]) fail(`unsupported desktop target: ${target ?? "(unset)"}`);
+
+const { outputDir, files } = findArtifactOutput(required[target]);
+const targetSpecific = targetArtifactPatterns[target];
+if (targetSpecific && !files.some((file) => targetSpecific.every((pattern) => pattern.test(file)))) {
+  fail(`missing target-specific artifact for ${target} under ${outputDir}`);
 }
-writeSummary(`Local package artifacts for ${target}`, files);
+verifyPackagedApplications(files);
+verifyNativeResources(files, target);
+
+writeSummary(`Local Electron package artifacts for ${target}`, files);
 console.error(`[verify-package-artifacts] ok for ${target}`);
 
+function currentDesktopTarget() {
+  if (process.platform === "darwin" && process.arch === "arm64") return "aarch64-apple-darwin";
+  if (process.platform === "darwin") return "x86_64-apple-darwin";
+  if (process.platform === "win32") return "x86_64-pc-windows-msvc";
+  if (process.platform === "linux" && process.arch === "arm64") return "aarch64-unknown-linux-gnu";
+  return "x86_64-unknown-linux-gnu";
+}
+
 function walk(dir) {
-  if (!existsSync(dir)) fail(`bundle directory missing: ${dir}`);
+  if (!existsSync(dir)) return [];
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      out.push(toPosix(full));
       out.push(...walk(full));
     } else {
       out.push(toPosix(full));
@@ -39,8 +54,83 @@ function walk(dir) {
   return out;
 }
 
+function findArtifactOutput(patterns) {
+  const failures = [];
+  for (const candidate of outputCandidates()) {
+    const candidateFiles = walk(candidate).filter((file) => !/builder-debug\.yml$/i.test(file));
+    const missing = patterns.filter((pattern) => !candidateFiles.some((file) => pattern.test(file)));
+    if (missing.length === 0) return { outputDir: candidate, files: candidateFiles };
+    failures.push(`${candidate} missing ${missing.map(String).join(", ")}`);
+  }
+  fail(`missing Electron package artifacts. Checked: ${failures.join("; ")}`);
+}
+
+function outputCandidates() {
+  const configured = process.env.LUME_DESKTOP_OUTPUT_DIR;
+  if (configured) return [resolve(DESKTOP_DIR, configured)];
+
+  const baseName = "dist-release";
+  const prefix = `${baseName}-`;
+  const candidates = readdirSync(DESKTOP_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && (entry.name === baseName || entry.name.startsWith(prefix)))
+    .map((entry) => {
+      const dir = resolve(DESKTOP_DIR, entry.name);
+      return { dir, mtimeMs: statSync(dir).mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .map((entry) => entry.dir);
+
+  return candidates.length > 0 ? candidates : [resolve(DESKTOP_DIR, baseName)];
+}
+
 function toPosix(file) {
   return file.replaceAll("\\", "/");
+}
+
+function verifyPackagedApplications(files) {
+  const archives = files.filter((file) => /\/resources\/app\.asar$/i.test(file));
+  if (archives.length === 0) fail("packaged application app.asar is missing");
+
+  for (const archive of archives) {
+    const entries = asar.listPackage(archive);
+    for (const requiredEntry of ["\\dist\\main\\main.mjs", "\\dist\\preload\\preload.cjs", "\\assets\\icon.png"]) {
+      if (!entries.includes(requiredEntry)) {
+        fail(`${archive} missing ${requiredEntry}`);
+      }
+    }
+    if (entries.some((entry) => entry.startsWith("\\src") || entry.startsWith("\\node_modules"))) {
+      fail(`${archive} must contain only bundled main-process runtime files`);
+    }
+    if (entries.some((entry) => entry.endsWith(".node"))) {
+      fail(`${archive} must not contain native .node binaries`);
+    }
+  }
+}
+
+function verifyNativeResources(files, desktopTarget) {
+  const requiredTargets = desktopTarget.includes("apple-darwin")
+    ? ["darwin-arm64", "darwin-x64"]
+    : [nativeResourceTarget(desktopTarget)];
+
+  for (const nativeTarget of requiredTargets) {
+    const pattern = new RegExp(`/resources/natives/${nativeTarget}/lume-natives\\.node$`, "i");
+    if (!files.some((file) => pattern.test(file))) {
+      fail(`missing native resource for ${nativeTarget}`);
+    }
+  }
+}
+
+function nativeResourceTarget(desktopTarget) {
+  const map = {
+    "x86_64-pc-windows-msvc": "win32-x64-msvc",
+    "x86_64-unknown-linux-gnu": "linux-x64-gnu",
+    "aarch64-unknown-linux-gnu": "linux-arm64-gnu",
+    "aarch64-apple-darwin": "darwin-arm64",
+    "x86_64-apple-darwin": "darwin-x64",
+  };
+  const resourceTarget = map[desktopTarget];
+  if (!resourceTarget) fail(`unsupported native resource target: ${desktopTarget}`);
+  return resourceTarget;
 }
 
 function writeSummary(title, files) {

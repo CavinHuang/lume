@@ -22,7 +22,7 @@ export function AboutSettings() {
       {/* 基本信息 */}
       <div className="rounded-xl border divide-y">
         <InfoRow label="版本" value={<span className="font-mono">{APP_VERSION}</span>} />
-        <InfoRow label="运行时" value="Tauri 2.0 + React" />
+        <InfoRow label="运行时" value="Electron 42 + React" />
         <InfoRow label="开源协议" value="MIT" />
         <InfoRow
           label="项目地址"
@@ -45,7 +45,7 @@ export function AboutSettings() {
         <h3 className="text-[13px] font-medium mb-3">技术栈</h3>
         <div className="grid grid-cols-2 gap-2">
           {[
-            { name: 'Tauri', desc: '桌面框架' },
+            { name: 'Electron', desc: '桌面框架' },
             { name: 'React', desc: 'UI 框架' },
             { name: 'TypeScript', desc: '类型系统' },
             { name: 'Tailwind CSS', desc: '样式方案' },

@@ -1,25 +1,19 @@
 /**
  * 统一日志服务
  *
- * 通过 @lume/natives (napi) 调用 Rust lume-logger 核心，
  * 所有日志统一写入 ~/.lume/logs/lume-YYYY-MM-DD.ndjson。
- *
- * native 不可用时 fallback 到 stderr，
- * 由 Desktop 的 stderr reader 兜底收集。
  */
 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { stderr } from "node:process";
 import { existsSync, mkdirSync } from "node:fs";
-import {
-  initLogger as nativeInit,
-  emitLog as nativeEmitLog,
-  isNativeAvailable,
-  type LogLevel,
-  type LogInput,
-} from "@lume/natives";
+import type { ElectronLogEvent } from "@lume/shared";
+import electronLog from "electron-log/node";
 import { formatStructuredLogLine } from "./log-format";
+
+export type LogLevel = ElectronLogEvent["level"];
+type LogRecordNotificationWriter = (record: ElectronLogEvent) => void;
 
 // ── 日志目录 ───────────────────────────────────────────────
 
@@ -49,30 +43,33 @@ function getConfigDir(): string {
   return join(tmpdir(), "lume");
 }
 
-let logsDir: string | null = null;
+let logsDir: { cacheKey: string; path: string } | null = null;
 
-function getResolvedLogsDir(): string {
-  if (!logsDir) {
-    logsDir = resolveLogsDir();
-  }
-  return logsDir;
+function getLogsDirCacheKey(): string {
+  return [
+    process.env.LUME_CONFIG_DIR?.trim() ?? "",
+    process.env.HOME ?? ""
+  ].join("|");
 }
 
-// ── 初始化 native logger ──────────────────────────────────
+function getResolvedLogsDir(): string {
+  const cacheKey = getLogsDirCacheKey();
+  if (!logsDir || logsDir.cacheKey !== cacheKey) {
+    logsDir = { cacheKey, path: resolveLogsDir() };
+  }
+  return logsDir.path;
+}
 
 const MIN_LEVEL: LogLevel = (process.env.LUME_LOG_LEVEL as LogLevel) || "info";
+let logRecordNotificationWriter: LogRecordNotificationWriter | null = null;
+const sidecarElectronLogger = electronLog.create({ logId: "lume-sidecar-ndjson" });
 
-let nativeReady = false;
+sidecarElectronLogger.transports.console.level = false;
+sidecarElectronLogger.transports.file.format = "{text}";
+sidecarElectronLogger.transports.file.maxSize = 0;
 
-try {
-  nativeInit({
-    level: MIN_LEVEL,
-    file_enabled: true,
-    console_enabled: false,
-  });
-  nativeReady = isNativeAvailable();
-} catch {
-  nativeReady = false;
+export function setLogRecordNotificationWriter(writer: LogRecordNotificationWriter | null): void {
+  logRecordNotificationWriter = writer;
 }
 
 // ── 敏感数据脱敏（保留给 createDiagnosticLogSummary 使用）───
@@ -153,19 +150,61 @@ function shouldEmit(level: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[MIN_LEVEL];
 }
 
-function emit(level: LogLevel, context: string, msg: string, data?: Record<string, unknown>): void {
-  const payload = redactDiagnosticLogData(data ?? {}) as Record<string, unknown>;
+function writeRecordToHost(record: ElectronLogEvent): boolean {
+  if (!logRecordNotificationWriter) return false;
+  try {
+    logRecordNotificationWriter(record);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-  if (nativeReady) {
-    nativeEmitLog({
-      level,
-      source: LOG_SOURCE,
-      context,
-      message: msg,
-      data: Object.keys(payload).length > 0 ? JSON.stringify(payload) : undefined,
-    });
-  } else {
-    // Fallback: write NDJSON to stderr for Desktop's stderr reader
+function getRecordDateFromMessage(message: { data?: unknown[] } | undefined): Date {
+  try {
+    const raw = message?.data?.[0];
+    if (typeof raw !== "string") return new Date();
+    const parsed = JSON.parse(raw) as { timestamp?: unknown; ts?: unknown };
+    const value = parsed.timestamp ?? parsed.ts;
+    return typeof value === "string" ? new Date(value) : new Date();
+  } catch {
+    return new Date();
+  }
+}
+
+function configureSidecarLogFile(): void {
+  sidecarElectronLogger.transports.file.resolvePathFn = (_variables, message) => {
+    const date = getRecordDateFromMessage(message);
+    return join(getResolvedLogsDir(), `lume-${date.toISOString().slice(0, 10)}.ndjson`);
+  };
+}
+
+function emit(level: LogLevel, context: string, msg: string, data?: Record<string, unknown>, sessionId?: string): void {
+  const payload = redactDiagnosticLogData(data ?? {}) as Record<string, unknown>;
+  const timestamp = new Date().toISOString();
+  const record: ElectronLogEvent = {
+    ts: timestamp,
+    timestamp,
+    level,
+    source: LOG_SOURCE,
+    context,
+    message: msg,
+    ...(sessionId ? { sessionId } : {}),
+    ...(Object.keys(payload).length > 0 ? { data: payload } : {}),
+  };
+
+  const wroteToHost = writeRecordToHost(record);
+
+  if (!wroteToHost && shouldWriteLogFile()) {
+    try {
+      configureSidecarLogFile();
+      sidecarElectronLogger.info(JSON.stringify(record));
+    } catch {
+      // Keep logging non-fatal; stderr still gives the desktop host visibility.
+    }
+  }
+
+  if (process.env.LUME_LOG_CONSOLE?.trim().toLowerCase() === "true") {
     stderr.write(
       formatStructuredLogLine({
         source: LOG_SOURCE,
@@ -180,7 +219,7 @@ function emit(level: LogLevel, context: string, msg: string, data?: Record<strin
 export function createLogger(context: string, sessionId?: string): Logger {
   const write = (level: LogLevel, msg: string, data?: Record<string, unknown>): void => {
     if (!shouldEmit(level)) return;
-    emit(level, context, msg, data);
+    emit(level, context, msg, data, sessionId);
   };
 
   return {
@@ -204,7 +243,7 @@ export function writeLogRecord(input: {
   sessionId?: string;
 }): void {
   if (!shouldEmit(input.level)) return;
-  emit(input.level, input.context, input.message, input.data);
+  emit(input.level, input.context, input.message, input.data, input.sessionId);
 }
 
 // ── 默认导出 ───────────────────────────────────────────────

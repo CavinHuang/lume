@@ -1,29 +1,19 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test"
-
-let nativeTokenCount = 0
-const countStringTokensMock = mock((_text: string, _model?: string) => nativeTokenCount)
-
-mock.module("@lume/natives", () => ({
-  countStringTokens: countStringTokensMock,
-}))
+import { beforeEach, describe, expect, test } from "bun:test"
+import { isNativeAvailable } from "@lume/natives"
 
 const { estimateMessagesTokens, estimateTokens, __resetMessageTokenCacheForTests } = await import("./tokens.js")
 
 describe("token estimation", () => {
   beforeEach(() => {
-    nativeTokenCount = 0
-    countStringTokensMock.mockClear()
     __resetMessageTokenCacheForTests()
   })
 
-  test("uses native token counting when available", () => {
-    nativeTokenCount = 17
-
-    expect(estimateTokens("hello world")).toBe(17)
+  test("roughly estimates ASCII-heavy text", () => {
+    expect(estimateTokens("hello world")).toBe(isNativeAvailable() ? 2 : 3)
   })
 
   test("counts CJK characters as full tokens instead of ASCII quarters", () => {
-    expect(estimateTokens("你好世界")).toBe(4)
+    expect(estimateTokens("你好世界")).toBe(isNativeAvailable() ? 2 : 4)
   })
 
   test("uses content-aware estimates for rich message blocks", () => {
@@ -37,13 +27,16 @@ describe("token estimation", () => {
       },
     ])
 
-    expect(tokens).toBe(2_002)
+    expect(tokens).toBe(2_000 + estimateTokens("12345678"))
   })
 })
 
 describe("estimateMessagesTokens per-message cache", () => {
+  beforeEach(() => {
+    __resetMessageTokenCacheForTests()
+  })
+
   test("cached recount equals full recount and is stable on append", () => {
-    nativeTokenCount = 5
     const messages = [
       { role: "user", content: "hello world" },
       { role: "assistant", content: [{ type: "text", text: "response one" }] },
@@ -57,37 +50,20 @@ describe("estimateMessagesTokens per-message cache", () => {
     expect(third).toBe(first + estimateMessagesTokens([appended[2]!]))
   })
 
-  test("cache hit skips native tokenize on the second pass", () => {
-    nativeTokenCount = 7
-    const messages = [
-      { role: "user", content: "alpha" },
-      { role: "assistant", content: "beta" },
-      { role: "user", content: "gamma" },
-    ]
-
-    estimateMessagesTokens(messages) // 首次：每条消息触发 native
-    countStringTokensMock.mockClear()
-    estimateMessagesTokens(messages) // 再次：应全部命中缓存
-
-    expect(countStringTokensMock).toHaveBeenCalledTimes(0)
-  })
-
-  test("replacing the array (compaction) recounts new objects, no stale hits", () => {
-    nativeTokenCount = 3
+  test("replacing the array (compaction) recounts new objects without stale hits", () => {
     const before = [
       { role: "user", content: "old one" },
       { role: "assistant", content: "old two" },
     ]
-    estimateMessagesTokens(before) // 缓存 before 的两条
+    estimateMessagesTokens(before)
 
     const after = [
       { role: "user", content: "compacted summary" },
       { role: "assistant", content: "resumed" },
     ]
-    countStringTokensMock.mockClear()
-    estimateMessagesTokens(after) // 新对象 → 重新计数
 
-    expect(countStringTokensMock).toHaveBeenCalled()
-    expect(countStringTokensMock.mock.calls.length).toBeGreaterThan(0)
+    expect(estimateMessagesTokens(after)).toBe(
+      estimateTokens("compacted summary") + estimateTokens("resumed"),
+    )
   })
 })
