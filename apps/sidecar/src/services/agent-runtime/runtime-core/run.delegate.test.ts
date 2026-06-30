@@ -7,7 +7,7 @@ import {
   listAgentThreads
 } from "../../agent/agent-thread-manager";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
-import { canDelegateFromThread, deriveDelegateTitle } from "./run";
+import { buildSidecarSubagentRunContext, canDelegateFromThread, deriveDelegateTitle } from "./run";
 
 describe("DelegateTool child thread", () => {
   let prevConfigDir: string | undefined;
@@ -27,6 +27,17 @@ describe("DelegateTool child thread", () => {
     const listed = listAgentThreads();
     expect(listed.find((t) => t.id === child.id)).toBeDefined();
     expect(listed.find((t) => t.id === child.id)?.parentThreadId).toBe(parent.id);
+  });
+
+  test("buildSidecarSubagentRunContext 通过 createChildThreadId 注入 thread id（非随机 uuid）", () => {
+    const result = buildSidecarSubagentRunContext({
+      parentThreadId: "parent-thread",
+      toolInput: { prompt: "子任务", subagent_type: "explorer" },
+      policy: { depth: 1, rootThreadId: "parent-thread" },
+      createChildThreadId: () => "fixed-thread-id"
+    });
+    expect(result.childThreadId).toBe("fixed-thread-id");
+    expect(result.registryInput.childThreadId).toBe("fixed-thread-id");
   });
 });
 
@@ -85,5 +96,17 @@ describe("DelegateTool title fallback", () => {
 
   test("折叠输出中的多余空白后再截断", () => {
     expect(deriveDelegateTitle("原标题", "hello    world\nnext")).toBe("hello world next".slice(0, 20));
+  });
+
+  test("按码点截断，不切断 emoji 代理对", () => {
+    // 21 个码点（含 emoji），截断后应为前 20 个码点，且最后一个 emoji 完整
+    const input = "😀😁😂😃😄😅😆😇😈😉😊😋😌😍😎😏😐😑😒😓";
+    const result = deriveDelegateTitle(undefined, input);
+    expect(Array.from(result!).length).toBe(20);
+    // 截断结果应等于按码点取前 20
+    expect(result).toBe(Array.from(input).slice(0, 20).join(""));
+    // 对照：旧的 UTF-16 code unit slice 会切到代理对中间，
+    // slice(0,20) 得到的字符串转码点后 ≠ 20（出现孤立代理项，码点数为 11）
+    expect(Array.from(input.slice(0, 20)).length).not.toBe(20);
   });
 });

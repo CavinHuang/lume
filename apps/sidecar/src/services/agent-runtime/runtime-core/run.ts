@@ -1347,7 +1347,8 @@ export function deriveDelegateTitle(
   output: string | undefined
 ): string | undefined {
   if (output && output.trim().length > 0) {
-    return output.trim().replace(/\s+/g, " ").slice(0, 20);
+    const trimmed = output.trim().replace(/\s+/g, " ");
+    return Array.from(trimmed).slice(0, 20).join("");
   }
   return originalTitle;
 }

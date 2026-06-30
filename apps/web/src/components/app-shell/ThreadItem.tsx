@@ -106,7 +106,8 @@ export const ThreadItem = memo(function ThreadItem({
       ref={anchorRef}
       onMouseEnter={hover.onMouseEnter}
       onMouseLeave={hover.onMouseLeave}
-      className={cn(indent && 'border-l-2 border-l-foreground/20 ml-3 pl-2')}
+      className={cn(indent && 'border-l-2 border-l-foreground/20 ml-3')}
+      style={indent ? { paddingLeft: thread.depth * 12 } : undefined}
     >
     <ContextMenu>
       <ContextMenuTrigger
