@@ -262,13 +262,15 @@ describe('buildLumeSidebarViewModel', () => {
     })
     expect(firstUnassigned?.threads).toEqual(secondUnassigned?.threads)
     expect(firstUnassigned?.threads).toEqual([
-      {
+      expect.objectContaining({
         id: 'legacy-thread',
         title: 'Legacy thread',
         active: false,
         pinned: false,
         updatedAt: threads[0].updatedAt,
-      },
+        depth: 0,
+        isDelegate: false,
+      }),
     ])
     expect(currentFirstWorkspace.collapsedItems).toEqual(
       expect.arrayContaining([
@@ -279,5 +281,73 @@ describe('buildLumeSidebarViewModel', () => {
         }),
       ]),
     )
+  })
+})
+
+describe('buildLumeSidebarViewModel delegate tree', () => {
+  test('子会话挂在父会话 children 下，根线程不含 parentThreadId', () => {
+    const ws = createWorkspace({ id: 'ws-1', name: 'WS' })
+    const parent = createThread({ id: 'p1', workspaceId: 'ws-1', title: '父', updatedAt: 100 })
+    const child = createThread({ id: 'c1', workspaceId: 'ws-1', title: '子', parentThreadId: 'p1', updatedAt: 90 })
+    const model = buildLumeSidebarViewModel({
+      workspaces: [ws],
+      threads: [parent, child],
+      currentWorkspaceId: 'ws-1',
+      activeTabId: null,
+      expandedWorkspaceIds: ['ws-1'],
+    })
+    const wsItem = model.workspaces.find((w) => w.id === 'ws-1')!
+    const parentItem = wsItem.threads.find((t) => t.id === 'p1')!
+
+    expect(parentItem.parentThreadId).toBeUndefined()
+    expect(parentItem.depth).toBe(0)
+    expect(parentItem.isDelegate).toBe(false)
+    expect(parentItem.children?.map((c) => c.id)).toEqual(['c1'])
+    expect(parentItem.children?.[0].depth).toBe(1)
+    expect(parentItem.children?.[0].isDelegate).toBe(true)
+    expect(parentItem.children?.[0].parentThreadId).toBe('p1')
+  })
+
+  test('孤儿子会话（父不在列表）作为根显示，标记为非 delegate 根', () => {
+    const ws = createWorkspace({ id: 'ws-1', name: 'WS' })
+    const orphan = createThread({ id: 'o1', workspaceId: 'ws-1', parentThreadId: 'missing', updatedAt: 1 })
+    const model = buildLumeSidebarViewModel({
+      workspaces: [ws],
+      threads: [orphan],
+      currentWorkspaceId: 'ws-1',
+      activeTabId: null,
+      expandedWorkspaceIds: ['ws-1'],
+    })
+    const wsItem = model.workspaces.find((w) => w.id === 'ws-1')!
+    const orphanItem = wsItem.threads.find((t) => t.id === 'o1')!
+
+    expect(orphanItem).toBeDefined()
+    expect(orphanItem.depth).toBe(0)
+    // 父不在列表 → 当根；保留 parentThreadId 元数据但 isDelegate 按根处理为 false
+    expect(orphanItem.isDelegate).toBe(false)
+    expect(orphanItem.children).toBeUndefined()
+  })
+
+  test('嵌套孙会话 depth 递归递增', () => {
+    const ws = createWorkspace({ id: 'ws-1', name: 'WS' })
+    const root = createThread({ id: 'r1', workspaceId: 'ws-1', updatedAt: 300 })
+    const mid = createThread({ id: 'm1', workspaceId: 'ws-1', parentThreadId: 'r1', updatedAt: 200 })
+    const leaf = createThread({ id: 'l1', workspaceId: 'ws-1', parentThreadId: 'm1', updatedAt: 100 })
+    const model = buildLumeSidebarViewModel({
+      workspaces: [ws],
+      threads: [root, mid, leaf],
+      currentWorkspaceId: 'ws-1',
+      activeTabId: 'l1',
+      expandedWorkspaceIds: ['ws-1'],
+    })
+    const wsItem = model.workspaces.find((w) => w.id === 'ws-1')!
+    const rootItem = wsItem.threads.find((t) => t.id === 'r1')!
+
+    expect(rootItem.depth).toBe(0)
+    expect(rootItem.children?.[0].id).toBe('m1')
+    expect(rootItem.children?.[0].depth).toBe(1)
+    expect(rootItem.children?.[0].children?.[0].id).toBe('l1')
+    expect(rootItem.children?.[0].children?.[0].depth).toBe(2)
+    expect(rootItem.children?.[0].children?.[0].active).toBe(true)
   })
 })

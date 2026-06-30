@@ -215,6 +215,16 @@ class SubagentRunRegistry {
     )).length;
   }
 
+  listActiveByParentSession(parentThreadId: string): SubagentRun[] {
+    this.ensureLoaded();
+    return Array.from(this.runs.values())
+      .filter((run) => (
+        run.parentThreadId === parentThreadId && !this.terminalStatuses.has(run.status)
+      ))
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map(cloneRun);
+  }
+
   listDescendants(runId: string): SubagentRun[] {
     this.ensureLoaded();
     const childrenByParent = new Map<string, SubagentRun[]>();

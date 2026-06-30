@@ -56,6 +56,7 @@ import {
   sanitizeGeneratedTitle
 } from "./session-title-summarizer";
 import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
+import { getSubagentRunRegistry } from "./subagents/subagent-run-registry";
 import { buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
@@ -995,6 +996,15 @@ export function stopAgent(threadId: string): void {
   const sessionStateManager = getSessionStateManager();
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);
+  // D6: 级联中止运行中的委托子会话，避免孤儿进程
+  const registry = getSubagentRunRegistry();
+  const activeChildren = registry.listActiveByParentSession(threadId);
+  for (const child of activeChildren) {
+    registry.update(child.runId, { status: "aborted" });
+    void import("../agent-runtime/runtime-core/attempt")
+      .then((module) => module.stopAgentRuntime(child.childThreadId))
+      .catch(() => undefined);
+  }
   void import("../agent-runtime/runtime-core/attempt")
     .then((module) => module.stopAgentRuntime(threadId))
     .catch(() => undefined);

@@ -1,11 +1,12 @@
 import { memo, useState, useRef } from 'react'
 import { useAtomValue } from 'jotai'
-import { Pin, PinOff, Pencil, Trash2, Archive } from 'lucide-react'
+import { Pin, PinOff, Pencil, Trash2, Archive, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentStreamingStatesFamily } from '@/atoms'
+import { agentStreamingStatesFamily, agentSubagentRunsFamily } from '@/atoms'
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { ThreadItemActions } from './ThreadItemActions'
+import { useThreadMiniMapHover, ThreadMiniMapPopover } from './ThreadMiniMapPopover'
 import type { LumeSidebarThreadItem } from './lume-sidebar-view-model'
 
 interface ThreadItemProps {
@@ -29,6 +30,15 @@ export const ThreadItem = memo(function ThreadItem({
   const [editTitle, setEditTitle] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const justStartedEditing = useRef(false)
+  const anchorRef = useRef<HTMLDivElement>(null)
+  const hover = useThreadMiniMapHover(600, editing)
+
+  const childRuns = useAtomValue(agentSubagentRunsFamily(thread.id)) ?? []
+  const childTotal = thread.children?.length ?? 0
+  const childCompleted = childRuns.filter((r) => r.status === 'completed').length
+  const hasChildren = childTotal > 0
+  const [expanded, setExpanded] = useState(false)
+  const indent = thread.depth > 0
 
   const startEdit = (): void => {
     setEditTitle(thread.title)
@@ -86,7 +96,18 @@ export const ThreadItem = memo(function ThreadItem({
     </>
   )
 
+  const toggleExpand = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    setExpanded((v) => !v)
+  }
+
   return (
+    <div
+      ref={anchorRef}
+      onMouseEnter={hover.onMouseEnter}
+      onMouseLeave={hover.onMouseLeave}
+      className={cn(indent && 'border-l-2 border-l-foreground/20 ml-3 pl-2')}
+    >
     <ContextMenu>
       <ContextMenuTrigger
         render={
@@ -140,6 +161,23 @@ export const ThreadItem = memo(function ThreadItem({
           )}
         </div>
 
+        {hasChildren && !editing && (
+          <span className="flex-shrink-0 text-[11px] tabular-nums leading-none text-[var(--text-3)] group-hover:hidden">
+            {childCompleted}/{childTotal}
+          </span>
+        )}
+
+        {hasChildren && !editing && (
+          <button
+            type="button"
+            aria-label={expanded ? '收起子会话' : '展开子会话'}
+            onClick={toggleExpand}
+            className="flex-shrink-0 flex size-4 items-center justify-center rounded text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]"
+          >
+            <ChevronRight size={12} className={cn('transition-transform', expanded && 'rotate-90')} />
+          </button>
+        )}
+
         {!editing && (
           <ThreadItemActions
             updatedAt={thread.updatedAt}
@@ -155,5 +193,21 @@ export const ThreadItem = memo(function ThreadItem({
         {menuItems(ContextMenuItem, ContextMenuSeparator)}
       </ContextMenuContent>
     </ContextMenu>
+    {hasChildren && expanded && (
+      <div className="flex flex-col gap-px">
+        {thread.children!.map((child) => (
+          <ThreadItem
+            key={child.id}
+            thread={child}
+            onSelect={onSelect}
+            onTogglePin={onTogglePin}
+            onArchive={onArchive}
+            onRename={onRename}
+          />
+        ))}
+      </div>
+    )}
+    <ThreadMiniMapPopover threadId={thread.id} open={hover.open} anchorRef={anchorRef} />
+    </div>
   )
 })

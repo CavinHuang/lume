@@ -1063,3 +1063,83 @@ describe("agent-service", () => {
     expect(visibleMessages.some((message) => message.role === "assistant" && message.content === "mock assistant output")).toBe(true);
   });
 });
+
+describe("stopAgent cascade (D6)", () => {
+  let previousConfigDir: string | undefined;
+  let tempConfigDir = "";
+
+  beforeEach(() => {
+    previousConfigDir = process.env.LUME_CONFIG_DIR;
+    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-stop-agent-cascade-"));
+    process.env.LUME_CONFIG_DIR = tempConfigDir;
+  });
+
+  afterEach(async () => {
+    const { resetSubagentRunRegistryForTest } = await import("./subagents/subagent-run-registry");
+    const { resetAgentRuntimeStatusManagerForTest } = await import("./agent-runtime-status-manager");
+    const { resetAgentRuntimeKernelForTest, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
+    await waitForAgentRuntimeKernelIdleForTest();
+    resetAgentRuntimeStatusManagerForTest();
+    resetAgentRuntimeKernelForTest();
+    resetSubagentRunRegistryForTest();
+    if (previousConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = previousConfigDir;
+    }
+    if (tempConfigDir) {
+      rmSync(tempConfigDir, { recursive: true, force: true });
+      tempConfigDir = "";
+    }
+  });
+
+  test("中止父 thread 时级联中止运行中子会话", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { stopAgent } = await import("./agent-service");
+    const { getSubagentRunRegistry } = await import("./subagents/subagent-run-registry");
+
+    const parent = createAgentThread("父", "channel-test");
+    getSubagentRunRegistry().create({
+      runId: "r-cascade-1",
+      parentThreadId: parent.id,
+      rootThreadId: parent.id,
+      depth: 1,
+      childThreadId: "child-thread-cascade-1",
+      task: "运行中子会话",
+      cleanup: "keep",
+      status: "running"
+    });
+    getSubagentRunRegistry().create({
+      runId: "r-cascade-accepted",
+      parentThreadId: parent.id,
+      rootThreadId: parent.id,
+      depth: 1,
+      childThreadId: "child-thread-cascade-accepted",
+      task: "已接受未启动子会话",
+      cleanup: "keep",
+      status: "accepted"
+    });
+    // 已完成的子会话不应被重复中止
+    getSubagentRunRegistry().create({
+      runId: "r-cascade-done",
+      parentThreadId: parent.id,
+      rootThreadId: parent.id,
+      depth: 1,
+      childThreadId: "child-thread-cascade-done",
+      task: "已完成子会话",
+      cleanup: "keep",
+      status: "completed"
+    });
+
+    stopAgent(parent.id);
+    // 给异步 stopAgentRuntime 一点时间
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const running = getSubagentRunRegistry().get("r-cascade-1");
+    const accepted = getSubagentRunRegistry().get("r-cascade-accepted");
+    const done = getSubagentRunRegistry().get("r-cascade-done");
+    expect(running?.status).toBe("aborted");
+    expect(accepted?.status).toBe("aborted");
+    expect(done?.status).toBe("completed");
+  });
+});

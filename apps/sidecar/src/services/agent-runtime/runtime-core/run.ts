@@ -60,6 +60,7 @@ import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
+import { createAgentThreadWithModelRef, getAgentThreadMeta, updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,
@@ -789,6 +790,129 @@ function buildRuntimeCoreTools(input: {
     }
   };
 
+  const delegateTool: ToolDefinition = {
+    ...AgentTool,
+    name: "Delegate",
+    description:
+      "Delegate a task to an INDEPENDENT, sidebar-visible child session. Use for long-running or important tasks that should be tracked as their own conversation. The child session appears under the parent in the sidebar. Returns the child's final result. Only one level of delegation is allowed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "The task for the delegated child session" },
+        description: { type: "string", description: "A short (3-5 word) description of the task" },
+        thread_title: { type: "string", description: "Optional title for the child session (defaults to description)" },
+        subagent_type: { type: "string" },
+        model: { type: "string" },
+        mode: { type: "string", enum: ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] }
+      },
+      required: ["prompt", "description"]
+    },
+    isConcurrencySafe: () => true,
+    async call(toolInput: any, context: any) {
+      const parentThreadId = context.sessionId ?? "";
+      const policy = resolveSubagentSpawnPolicy({
+        parentThreadId,
+        parentPermissionMode: toolInput.mode
+      });
+      if (!policy.ok) {
+        return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
+      }
+      // D7: 仅允许一级 delegate —— 当前父 thread 若已是某 subagent run 的 child，拒绝
+      const depthGuard = canDelegateFromThread(parentThreadId);
+      if (!depthGuard.ok) {
+        return { type: "tool_result" as const, tool_use_id: "", content: depthGuard.error ?? "depth rejected", is_error: true };
+      }
+      const modelOverride = resolveSubagentModelOverride({
+        toolInput,
+        workspaceSlug: input.workspaceSlug
+      });
+      // ★ 关键差异：创建会话栏可见的子会话 thread（带 parentThreadId）
+      const childMeta = createAgentThreadWithModelRef(
+        typeof toolInput.thread_title === "string" ? toolInput.thread_title
+          : typeof toolInput.description === "string" ? toolInput.description : undefined,
+        modelOverride.modelRef,
+        modelOverride.channelId ?? input.channelId,
+        input.workspaceId,
+        parentThreadId,
+        modelOverride.resolvedModelId ?? context.model
+      );
+      const subagentRun = buildSidecarSubagentRunContext({
+        parentThreadId,
+        parentToolUseId: context.toolUseId,
+        toolInput,
+        policy,
+        createChildThreadId: () => childMeta.id
+      });
+      const enrichedContext = {
+        ...context,
+        emitEvent: input.emitSdkMessage
+          ? (event: SDKMessage) => { input.emitSdkMessage!(event); }
+          : context.emitEvent,
+        onSubagentEnd: async ({ status, output, error }: { status: "completed" | "errored" | "aborted" | "timed_out"; output?: string; error?: string }) => {
+          getSubagentRunRegistry().update(subagentRun.runId, { status, outcome: { output, error } });
+          const run = getSubagentRunRegistry().get(subagentRun.runId);
+          if (run) await announceSubagentCompletion({ run });
+          const newTitle = deriveDelegateTitle(childMeta.title, output);
+          if (newTitle && newTitle !== childMeta.title) {
+            updateAgentThreadMeta(childMeta.id, { title: newTitle });
+          }
+        }
+      };
+      const executionInput = buildSidecarSubagentExecutionInput({
+        forwardedToolInput: subagentRun.forwardedToolInput,
+        modelOverride,
+        runInBackground: false
+      });
+      getSubagentRunRegistry().create({
+        ...subagentRun.registryInput,
+        deliveryThreadId: parentThreadId,
+        parentToolUseId: context.toolUseId,
+        threadBound: true,
+        ...(modelOverride.modelRef ? { modelRef: modelOverride.modelRef } : {}),
+        ...(modelOverride.channelId ? { channelId: modelOverride.channelId } : input.channelId ? { channelId: input.channelId } : {}),
+        ...(modelOverride.resolvedModelId ? { modelId: modelOverride.resolvedModelId } : context.model ? { modelId: context.model } : {})
+      });
+      try {
+        const execution = await runForegroundSubagentWithTimeout({
+          execution: runSidecarSubagent({
+            toolInput: executionInput,
+            context: enrichedContext,
+            runId: subagentRun.runId,
+            childThreadId: childMeta.id,
+            parentThreadId,
+            deliveryThreadId: parentThreadId,
+            parentToolUseId: context.toolUseId,
+            subagentType: subagentRun.registryInput.resolvedAgentId,
+            modelOverride,
+            channelId: input.channelId,
+            workspaceId: input.workspaceId,
+            chatType: input.chatType,
+            messageMetadata: input.messageMetadata,
+            permissionMode,
+            emitAskUserQuestion: input.emitAskUserQuestion,
+            emitToolPermissionRequest: input.emitToolPermissionRequest
+          }),
+          childThreadId: childMeta.id,
+          timeoutMs: resolveForegroundSubagentTimeoutMs(),
+          stopSubagent: async (threadId: string) => {
+            const { stopAgentRuntime } = await import("./attempt");
+            return stopAgentRuntime(threadId);
+          }
+        });
+        await enrichedContext.onSubagentEnd?.({
+          runId: subagentRun.runId,
+          status: execution.status,
+          output: execution.output,
+          error: execution.error
+        });
+        return execution.result;
+      } catch (err: any) {
+        getSubagentRunRegistry().update(subagentRun.runId, { status: "errored", outcome: { error: err?.message ?? String(err) } });
+        throw err;
+      }
+    }
+  };
+
   return ToolRuntime.build({
     cwd: input.cwd,
     sessionId: input.sessionId,
@@ -802,7 +926,7 @@ function buildRuntimeCoreTools(input: {
     groups: [
       { source: "sdk", tools: baseTools },
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
-      { source: "task", tools: [taskReportTool, sidecarAgentTool, todoTool] },
+      { source: "task", tools: [taskReportTool, sidecarAgentTool, delegateTool, todoTool] },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
       ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : []),
       ...(input.pluginCommandTools?.length
@@ -1198,4 +1322,32 @@ export async function createRuntimeCoreSession(
 function getResolvedAgentTools(agent: Agent, fallback: ToolDefinition[]): ToolDefinition[] {
   const tools = (agent as unknown as { toolPool?: ToolDefinition[] }).toolPool;
   return Array.isArray(tools) ? tools : fallback;
+}
+
+/**
+ * D7 一级深度拦截：当前父 thread 若本身是某个 subagent run 的 child，
+ * 则禁止再 delegate（仅允许一级委托）。
+ * 比 resolveSubagentSpawnPolicy 的 maxDepth 更严格。
+ */
+export function canDelegateFromThread(parentThreadId: string): { ok: boolean; error?: string } {
+  const parentRun = getSubagentRunRegistry().getLatestByChildThread(parentThreadId);
+  const parentMeta = getAgentThreadMeta(parentThreadId);
+  if (parentRun || parentMeta?.parentThreadId) {
+    return { ok: false, error: "委托子会话不能再创建新的委托子会话（仅允许一级）" };
+  }
+  return { ok: true };
+}
+
+/**
+ * 子会话完成时用输出摘要派生标题。
+ * output 非空→取前 20 字（折叠空白）；否则保留原标题。
+ */
+export function deriveDelegateTitle(
+  originalTitle: string | undefined,
+  output: string | undefined
+): string | undefined {
+  if (output && output.trim().length > 0) {
+    return output.trim().replace(/\s+/g, " ").slice(0, 20);
+  }
+  return originalTitle;
 }
