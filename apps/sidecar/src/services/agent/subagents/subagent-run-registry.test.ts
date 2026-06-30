@@ -172,3 +172,47 @@ describe("subagent-run-registry", () => {
     expect(summary.errored).toBe(0);
   });
 });
+
+describe("delegation completion signal", () => {
+  test("resolve 唤醒 waitForDelegations(all)", async () => {
+    const reg = getSubagentRunRegistry();
+    reg.create({ runId: "r1", parentThreadId: "p1", rootThreadId: "p1", depth: 1, childThreadId: "c1", task: "t", cleanup: "keep", status: "running" });
+    reg.createDelegationCompletion("r1");
+    const wait = reg.waitForDelegations({ parentThreadId: "p1", mode: "all", timeoutMs: 1000 });
+    // 模拟 delegate background 分支结束：既翻 status 又 resolve completion（S2 真实行为）
+    reg.update("r1", { status: "completed", outcome: { output: "done" } });
+    reg.resolveDelegationCompletion("r1");
+    const result = await wait;
+    expect(result.status).toBe("completed");
+    expect(result.completedCount).toBe(1);
+  });
+
+  test("any 模式 minCompleted=1 首个完成即返回", async () => {
+    const reg = getSubagentRunRegistry();
+    reg.create({ runId: "r1", parentThreadId: "p1", rootThreadId: "p1", depth: 1, childThreadId: "c1", task: "t", cleanup: "keep", status: "running" });
+    reg.create({ runId: "r2", parentThreadId: "p1", rootThreadId: "p1", depth: 1, childThreadId: "c2", task: "t", cleanup: "keep", status: "running" });
+    reg.createDelegationCompletion("r1");
+    reg.createDelegationCompletion("r2");
+    const wait = reg.waitForDelegations({ parentThreadId: "p1", mode: "any", minCompleted: 1, timeoutMs: 1000 });
+    reg.update("r1", { status: "completed", outcome: { output: "done-1" } });
+    reg.resolveDelegationCompletion("r1");
+    const result = await wait;
+    expect(result.status).toBe("completed");
+    expect(result.completedCount).toBeGreaterThanOrEqual(1);
+  });
+
+  test("超时返回 timeout", async () => {
+    const reg = getSubagentRunRegistry();
+    reg.create({ runId: "r1", parentThreadId: "p1", rootThreadId: "p1", depth: 1, childThreadId: "c1", task: "t", cleanup: "keep", status: "running" });
+    reg.createDelegationCompletion("r1");
+    const result = await reg.waitForDelegations({ parentThreadId: "p1", mode: "all", timeoutMs: 50 });
+    expect(result.status).toBe("timeout");
+  });
+
+  test("无 running 立即返回 completed", async () => {
+    const reg = getSubagentRunRegistry();
+    const result = await reg.waitForDelegations({ parentThreadId: "p1", mode: "all", timeoutMs: 1000 });
+    expect(result.status).toBe("completed");
+    expect(result.runningCount).toBe(0);
+  });
+});

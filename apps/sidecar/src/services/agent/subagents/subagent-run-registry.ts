@@ -72,10 +72,13 @@ function buildRunStatusSummary(runs: SubagentRun[]): Record<SubagentRunStatus, n
   return summary;
 }
 
+type DelegationCompletion = { completion: Promise<void>; resolve: () => void };
+
 class SubagentRunRegistry {
   private runs = new Map<string, SubagentRun>();
   private loadDone = false;
   private readonly terminalStatuses = new Set(["completed", "errored", "aborted", "timed_out", "canceled"]);
+  private delegationCompletions = new Map<string, DelegationCompletion>();
 
   private ensureLoaded(): void {
     if (this.loadDone) return;
@@ -298,6 +301,102 @@ class SubagentRunRegistry {
       }
     }
     return cloneRun(next);
+  }
+
+  // ─── Delegation completion signal (for async background delegations) ───
+
+  /**
+   * 为一次后台委派注册一个 completion Promise 信号量。
+   * 由 delegate background 分支在启动子会话前调用，waitForDelegations 依赖它感知完成。
+   */
+  createDelegationCompletion(runId: string): void {
+    if (this.delegationCompletions.has(runId)) return;
+    let resolveFn!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveFn = resolve;
+    });
+    this.delegationCompletions.set(runId, { completion, resolve: resolveFn });
+  }
+
+  /**
+   * 解析某次委派的 completion 信号量（唤醒等待方）。
+   * 由 delegate background 分支在子会话结束/出错时调用。resolve 后立即移除条目，避免泄漏。
+   */
+  resolveDelegationCompletion(runId: string): void {
+    const entry = this.delegationCompletions.get(runId);
+    if (!entry) return;
+    entry.resolve();
+    this.delegationCompletions.delete(runId);
+  }
+
+  /**
+   * 取得某次委派的 completion Promise（供 waitForDelegations 挂载 .then(check)）。
+   */
+  getDelegationCompletion(runId: string): Promise<void> | undefined {
+    return this.delegationCompletions.get(runId)?.completion;
+  }
+
+  /**
+   * 等待父会话下的委派子会话收敛。
+   * - mode "all"：等待所有子会话进入终态；mode "any"：等待至少 minCompleted 个完成。
+   * - 无 running 子会话时立即返回 completed。
+   * - 超时返回 timeout，但返回时仍给出当前 completed/running 计数。
+   */
+  async waitForDelegations(input: {
+    parentThreadId: string;
+    mode: "all" | "any";
+    minCompleted?: number;
+    timeoutMs: number;
+  }): Promise<{ status: "completed" | "timeout"; completedCount: number; runningCount: number }> {
+    const runs = this.listByParentSession(input.parentThreadId);
+    const running = runs.filter((run) => !this.terminalStatuses.has(run.status));
+    const completedCount = runs.length - running.length;
+
+    if (running.length === 0) {
+      return { status: "completed", completedCount, runningCount: 0 };
+    }
+
+    const target = input.mode === "any"
+      ? Math.min(Math.max(input.minCompleted ?? 1, 1), runs.length)
+      : runs.length;
+
+    if (completedCount >= target) {
+      return { status: "completed", completedCount, runningCount: running.length };
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = (status: "completed" | "timeout") => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        const current = this.listByParentSession(input.parentThreadId);
+        const currentRunning = current.filter((run) => !this.terminalStatuses.has(run.status)).length;
+        resolve({
+          status,
+          completedCount: current.length - currentRunning,
+          runningCount: currentRunning
+        });
+      };
+
+      const check = () => {
+        const current = this.listByParentSession(input.parentThreadId);
+        const done = current.filter((run) => this.terminalStatuses.has(run.status)).length;
+        if (done >= target) finish("completed");
+      };
+
+      for (const run of running) {
+        const completion = this.getDelegationCompletion(run.runId);
+        if (completion) completion.then(check);
+      }
+
+      timer = setTimeout(() => finish("timeout"), input.timeoutMs);
+      // 不 unref：unref 在事件循环空闲时（纯 timeout 用例 / 父 wait 时短暂无其他活动）会让 timer 永不 fire，
+      // 使超时语义失效。生产 sidecar 退出走 stopAllAgentRuntimeSessions 中止 runtime，wait 调用随父终止结束，
+      // pending timer 由进程退出回收。
+    });
   }
 }
 

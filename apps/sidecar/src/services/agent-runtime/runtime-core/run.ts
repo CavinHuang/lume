@@ -794,7 +794,7 @@ function buildRuntimeCoreTools(input: {
     ...AgentTool,
     name: "Delegate",
     description:
-      "Delegate a task to an INDEPENDENT, sidebar-visible child session. Use for long-running or important tasks that should be tracked as their own conversation. The child session appears under the parent in the sidebar. Returns the child's final result. Only one level of delegation is allowed.",
+      "Delegate a task to an INDEPENDENT, sidebar-visible child session. Use for long-running or important tasks that should be tracked as their own conversation. The child session appears under the parent in the sidebar. Returns the child's final result. Only one level of delegation is allowed. Set run_in_background=true to start the child asynchronously and return immediately with a delegationId; later collect results with WaitForDelegations.",
     inputSchema: {
       type: "object",
       properties: {
@@ -803,7 +803,8 @@ function buildRuntimeCoreTools(input: {
         thread_title: { type: "string", description: "Optional title for the child session (defaults to description)" },
         subagent_type: { type: "string" },
         model: { type: "string" },
-        mode: { type: "string", enum: ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] }
+        mode: { type: "string", enum: ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] },
+        run_in_background: { type: "boolean", description: "If true, start the child session asynchronously and return immediately with a delegationId. Use WaitForDelegations to collect results later." }
       },
       required: ["prompt", "description"]
     },
@@ -858,10 +859,11 @@ function buildRuntimeCoreTools(input: {
           }
         }
       };
+      const runInBackground = toolInput.run_in_background === true;
       const executionInput = buildSidecarSubagentExecutionInput({
         forwardedToolInput: subagentRun.forwardedToolInput,
         modelOverride,
-        runInBackground: false
+        runInBackground
       });
       getSubagentRunRegistry().create({
         ...subagentRun.registryInput,
@@ -872,26 +874,57 @@ function buildRuntimeCoreTools(input: {
         ...(modelOverride.channelId ? { channelId: modelOverride.channelId } : input.channelId ? { channelId: input.channelId } : {}),
         ...(modelOverride.resolvedModelId ? { modelId: modelOverride.resolvedModelId } : context.model ? { modelId: context.model } : {})
       });
+      const executeSubagent = () => runSidecarSubagent({
+        toolInput: executionInput,
+        context: enrichedContext,
+        runId: subagentRun.runId,
+        childThreadId: childMeta.id,
+        parentThreadId,
+        deliveryThreadId: parentThreadId,
+        parentToolUseId: context.toolUseId,
+        subagentType: subagentRun.registryInput.resolvedAgentId,
+        modelOverride,
+        channelId: input.channelId,
+        workspaceId: input.workspaceId,
+        chatType: input.chatType,
+        messageMetadata: input.messageMetadata,
+        permissionMode,
+        emitAskUserQuestion: input.emitAskUserQuestion,
+        emitToolPermissionRequest: input.emitToolPermissionRequest
+      });
+      if (runInBackground) {
+        // ★ 注册 completion 信号量，供 WaitForDelegations 感知完成（须在 resolve 之前注册）
+        getSubagentRunRegistry().createDelegationCompletion(subagentRun.runId);
+        void executeSubagent()
+          .then(async (execution) => {
+            await enrichedContext.onSubagentEnd?.({
+              runId: subagentRun.runId,
+              status: execution.status,
+              output: execution.output,
+              error: execution.error
+            });
+            // ★ resolve 信号量，唤醒等待方
+            getSubagentRunRegistry().resolveDelegationCompletion(subagentRun.runId);
+          })
+          .catch(async (err: any) => {
+            getSubagentRunRegistry().update(subagentRun.runId, {
+              status: "errored",
+              outcome: { error: err?.message ?? String(err) }
+            });
+            const run = getSubagentRunRegistry().get(subagentRun.runId);
+            if (run) await announceSubagentCompletion({ run });
+            // ★ 出错时也要 resolve，避免等待方永久挂起
+            getSubagentRunRegistry().resolveDelegationCompletion(subagentRun.runId);
+          });
+        return {
+          type: "tool_result" as const,
+          tool_use_id: "",
+          content: JSON.stringify({ delegationId: subagentRun.runId, childThreadId: childMeta.id, status: "started" })
+        };
+      }
       try {
         const execution = await runForegroundSubagentWithTimeout({
-          execution: runSidecarSubagent({
-            toolInput: executionInput,
-            context: enrichedContext,
-            runId: subagentRun.runId,
-            childThreadId: childMeta.id,
-            parentThreadId,
-            deliveryThreadId: parentThreadId,
-            parentToolUseId: context.toolUseId,
-            subagentType: subagentRun.registryInput.resolvedAgentId,
-            modelOverride,
-            channelId: input.channelId,
-            workspaceId: input.workspaceId,
-            chatType: input.chatType,
-            messageMetadata: input.messageMetadata,
-            permissionMode,
-            emitAskUserQuestion: input.emitAskUserQuestion,
-            emitToolPermissionRequest: input.emitToolPermissionRequest
-          }),
+          execution: executeSubagent(),
           childThreadId: childMeta.id,
           timeoutMs: resolveForegroundSubagentTimeoutMs(),
           stopSubagent: async (threadId: string) => {
@@ -913,6 +946,30 @@ function buildRuntimeCoreTools(input: {
     }
   };
 
+  const waitForDelegationsTool: ToolDefinition = {
+    name: "WaitForDelegations",
+    description:
+      "Wait for previously delegated background child sessions to finish and return their results. Use after Delegate(run_in_background=true). Input: mode 'all'(default)|'any', min_completed (for any, default 1), timeout_seconds (default 1800, max 7200). Returns status (completed|timeout), completedCount, runningCount, and a delegations array with each child's result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["all", "any"], description: "'all' waits for every delegation; 'any' returns once min_completed have finished" },
+        min_completed: { type: "number", description: "For mode 'any': number of completions to wait for (default 1)" },
+        timeout_seconds: { type: "number", description: "Max wait in seconds (default 1800, max 7200)" }
+      }
+    },
+    isReadOnly: () => true,
+    isConcurrencySafe: () => false,
+    isEnabled: () => true,
+    async prompt() {
+      return "Wait for delegated background sessions.";
+    },
+    async call(toolInput: any, context: any) {
+      const parentThreadId = context.sessionId ?? "";
+      return buildWaitForDelegationsResult(toolInput ?? {}, parentThreadId, getSubagentRunRegistry());
+    }
+  };
+
   return ToolRuntime.build({
     cwd: input.cwd,
     sessionId: input.sessionId,
@@ -926,7 +983,7 @@ function buildRuntimeCoreTools(input: {
     groups: [
       { source: "sdk", tools: baseTools },
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
-      { source: "task", tools: [taskReportTool, sidecarAgentTool, delegateTool, todoTool] },
+      { source: "task", tools: [taskReportTool, sidecarAgentTool, delegateTool, waitForDelegationsTool, todoTool] },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
       ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : []),
       ...(input.pluginCommandTools?.length
@@ -1031,6 +1088,48 @@ async function applyWorkflowHookEffectsSafely(
   } catch {
     // Hook observe effects must not block runtime session creation.
   }
+}
+
+/**
+ * WaitForDelegations 工具的纯逻辑：根据 registry 收敛结果构造返回 JSON。
+ * 提取为模块级导出函数以便单测（工具闭包本身不可从外部调用）。
+ */
+export async function buildWaitForDelegationsResult(
+  toolInput: { mode?: string; min_completed?: number; timeout_seconds?: number },
+  parentThreadId: string,
+  registry: {
+    waitForDelegations(input: { parentThreadId: string; mode: "all" | "any"; minCompleted?: number; timeoutMs: number }): Promise<{ status: "completed" | "timeout"; completedCount: number; runningCount: number }>;
+    listByParentSession(parentThreadId: string): Array<{ runId: string; childThreadId: string; label?: string; status: string; outcome?: { output?: string; error?: string } }>;
+  }
+): Promise<{ type: "tool_result"; tool_use_id: string; content: string }> {
+  const mode = toolInput.mode === "any" ? "any" : "all";
+  const timeoutMs = Math.min(Math.max((toolInput.timeout_seconds ?? 1800) * 1000, 1000), 2 * 3600 * 1000);
+  const result = await registry.waitForDelegations({
+    parentThreadId,
+    mode,
+    minCompleted: toolInput.min_completed,
+    timeoutMs
+  });
+  const runs = registry.listByParentSession(parentThreadId);
+  const delegations = runs.map((r) => ({
+    delegationId: r.runId,
+    childThreadId: r.childThreadId,
+    ...(r.label ? { label: r.label } : {}),
+    status: r.status,
+    ...(r.outcome?.output ? { outputSummary: r.outcome.output.slice(0, 2000) } : {}),
+    ...(r.outcome?.error ? { error: r.outcome.error } : {})
+  }));
+  return {
+    type: "tool_result" as const,
+    tool_use_id: "",
+    content: JSON.stringify({
+      status: result.status,
+      mode,
+      completedCount: result.completedCount,
+      runningCount: result.runningCount,
+      delegations
+    })
+  };
 }
 
 export async function createRuntimeCoreSession(
