@@ -40,3 +40,15 @@ test('desktop package uses Vite-built TypeScript runtime files', () => {
     assert.equal(existsSync(resolve(DESKTOP_ROOT, file)), true, `missing ${file}`)
   }
 })
+
+test('desktop package includes node-repl resources', () => {
+  assert.deepEqual(
+    pkg.build.extraResources.find((entry) => entry.to === 'node-repl'),
+    {
+      from: 'resources/node-repl',
+      to: 'node-repl',
+    },
+  )
+  assert.match(pkg.scripts.build, /build-node-repl-resources\.mjs/)
+  assert.match(pkg.scripts.package, /build-node-repl-resources\.mjs/)
+})
