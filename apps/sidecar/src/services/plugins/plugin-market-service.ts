@@ -219,8 +219,10 @@ export class PluginMarketService {
 
     const source = await this.resolveInspectSource(parseMarketItemId(input.itemId));
     const inspected = await this.inspectPluginSource(input.workspaceSlug, source);
+    const item = this.toMarketItem(inspected.normalized, input.workspaceSlug, source.type);
+    item.id = input.itemId;
     return {
-      item: { kind: "plugin", plugin: this.toMarketItem(inspected.normalized, input.workspaceSlug, source.type) },
+      item: { kind: "plugin", plugin: item },
       inspect: inspected,
       diagnostics: inspected.diagnostics,
     };

@@ -327,12 +327,14 @@ describe("PluginMarketService", () => {
       kind: "plugin",
       itemId: "local-market:indexed-install"
     });
+    const detailItemId = detail.item.kind === "plugin" ? detail.item.plugin.id : "";
     const hash = detail.inspect?.kind === "plugin" ? detail.inspect.permissionsHash : "";
+    expect(detailItemId).toBe("local-market:indexed-install");
 
     await service.installMarketItem({
       workspaceSlug: "default",
       kind: "plugin",
-      itemId: "local-market:indexed-install",
+      itemId: detailItemId,
       acceptedPermissionsHash: hash,
       enableScope: "workspace"
     });
