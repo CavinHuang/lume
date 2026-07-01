@@ -88,6 +88,7 @@ import {
   clearRuntimeToolDescriptors,
 } from "../tools/tool-descriptor-session";
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
+import { getNodeReplRuntimeRegistry } from "../tools/node-repl/node-repl-runtime-registry";
 import type { LumeToolDescriptor } from "../tools/tool-types";
 import type { TaskContractRecord } from "../plan/task-contract-record-types";
 import {
@@ -655,6 +656,7 @@ function buildRuntimeCoreTools(input: {
   });
   const lumeTools = createLumeRuntimeTools({
     threadId: input.sessionId,
+    cwd: input.cwd,
     workspaceId: input.workspaceId,
     channelId: input.channelId,
     threadType: input.threadType,
@@ -1380,6 +1382,7 @@ export async function createRuntimeCoreSession(
     },
     async dispose() {
       await agent.close();
+      await getNodeReplRuntimeRegistry().shutdown(input.lumeSessionId);
       try {
         await pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG);
       } catch (error) {

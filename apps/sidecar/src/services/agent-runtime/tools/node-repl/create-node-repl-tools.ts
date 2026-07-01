@@ -1,0 +1,170 @@
+import { basename, isAbsolute, win32 } from "node:path";
+import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
+import { getNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
+import {
+  NODE_REPL_MCP_INSTRUCTIONS,
+  type JsExecInput,
+  type NodeReplRuntimeRegistry
+} from "./node-repl-types";
+
+export function createNodeReplTools(input: {
+  sessionId: string;
+  cwd: string;
+  workspaceSlug?: string;
+  registry?: NodeReplRuntimeRegistry;
+}): ToolDefinition[] {
+  const registry = input.registry ?? getNodeReplRuntimeRegistry();
+  const runtimeMetadata = {
+    source: "lume",
+    category: "execute",
+    capability: "external",
+    riskLevel: "high",
+    sideEffects: "process",
+    allowedInPlanMode: true,
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    requiresApprovalByDefault: false,
+    executionPolicy: { allowBackground: false }
+  };
+
+  return [
+    {
+      name: "js",
+      description: NODE_REPL_MCP_INSTRUCTIONS,
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          code: { type: "string" },
+          timeout_ms: { type: "number" },
+          _meta: { type: "object", additionalProperties: true }
+        },
+        required: ["code"]
+      },
+      isReadOnly: () => false,
+      isConcurrencySafe: () => false,
+      isEnabled: () => true,
+      async prompt() {
+        return NODE_REPL_MCP_INSTRUCTIONS;
+      },
+      runtimeMetadata,
+      async call(rawArgs, context) {
+        const parsed = parseJsExecInput(rawArgs);
+        if (!parsed.ok) return errorResult(context.toolUseId, parsed.error);
+        const threadId = context.sessionId ?? input.sessionId;
+        const result = await registry.exec(threadId, parsed.value, { cwd: context.cwd || input.cwd });
+        return {
+          type: "tool_result",
+          tool_use_id: context.toolUseId ?? "",
+          content: result.content,
+          ...(result.isError ? { is_error: true } : {}),
+          ...(result._meta ? { _meta: result._meta } : {})
+        } as ToolResult & { _meta?: Record<string, unknown> };
+      }
+    },
+    {
+      name: "js_reset",
+      description: "Reset persistent JS bindings for the current thread runtime.",
+      inputSchema: { type: "object", properties: {} },
+      isReadOnly: () => false,
+      isConcurrencySafe: () => false,
+      isEnabled: () => true,
+      async prompt() {
+        return "Reset persistent JS bindings for the current thread runtime.";
+      },
+      runtimeMetadata: {
+        ...runtimeMetadata,
+        category: "control",
+        riskLevel: "low",
+        sideEffects: "none"
+      },
+      async call(_args, context) {
+        const threadId = context.sessionId ?? input.sessionId;
+        await registry.reset(threadId, { cwd: context.cwd || input.cwd });
+        return { type: "tool_result", tool_use_id: context.toolUseId ?? "", content: "ok" };
+      }
+    },
+    {
+      name: "js_add_node_module_dir",
+      description: "Register an absolute node_modules directory for future dynamic imports.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          path: { type: "string" }
+        },
+        required: ["path"]
+      },
+      isReadOnly: () => false,
+      isConcurrencySafe: () => false,
+      isEnabled: () => true,
+      async prompt() {
+        return "Register an absolute node_modules directory for future dynamic imports.";
+      },
+      runtimeMetadata: {
+        ...runtimeMetadata,
+        category: "control",
+        riskLevel: "medium"
+      },
+      async call(rawArgs, context) {
+        const dir = readPath(rawArgs);
+        if (!dir) return errorResult(context.toolUseId, "path must be a non-empty string");
+        if (!isAbsolutePath(dir)) return errorResult(context.toolUseId, "path must be an absolute node_modules directory");
+        if (!isNodeModulesDirectory(dir)) return errorResult(context.toolUseId, "path must end with node_modules");
+
+        const threadId = context.sessionId ?? input.sessionId;
+        const added = await registry.addModuleDir(threadId, dir, { cwd: context.cwd || input.cwd });
+        return { type: "tool_result", tool_use_id: context.toolUseId ?? "", content: String(added) };
+      }
+    }
+  ];
+}
+
+function parseJsExecInput(rawArgs: unknown): { ok: true; value: JsExecInput } | { ok: false; error: string } {
+  if (!rawArgs || typeof rawArgs !== "object" || Array.isArray(rawArgs)) {
+    return { ok: false, error: "input must be an object" };
+  }
+  const args = rawArgs as Record<string, unknown>;
+  if (typeof args.code !== "string" || args.code.trim().length === 0) {
+    return { ok: false, error: "code must be a non-empty string" };
+  }
+  if (args.timeout_ms !== undefined && (!Number.isFinite(args.timeout_ms) || Number(args.timeout_ms) <= 0)) {
+    return { ok: false, error: "timeout_ms must be a positive number" };
+  }
+  return {
+    ok: true,
+    value: {
+      code: args.code,
+      ...(typeof args.title === "string" ? { title: args.title } : {}),
+      ...(typeof args.timeout_ms === "number" ? { timeout_ms: args.timeout_ms } : {}),
+      ...(isRecord(args._meta) ? { _meta: args._meta } : {})
+    }
+  };
+}
+
+function readPath(rawArgs: unknown): string | null {
+  if (!rawArgs || typeof rawArgs !== "object" || Array.isArray(rawArgs)) return null;
+  const value = (rawArgs as Record<string, unknown>).path;
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function isAbsolutePath(path: string): boolean {
+  return isAbsolute(path) || win32.isAbsolute(path);
+}
+
+function isNodeModulesDirectory(path: string): boolean {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  return basename(trimmed) === "node_modules" || win32.basename(trimmed) === "node_modules";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function errorResult(toolUseId: string | undefined, content: string): ToolResult {
+  return {
+    type: "tool_result",
+    tool_use_id: toolUseId ?? "",
+    content,
+    is_error: true
+  };
+}
