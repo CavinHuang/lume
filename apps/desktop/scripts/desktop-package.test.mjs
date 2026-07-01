@@ -5,7 +5,17 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DESKTOP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
 const pkg = JSON.parse(readFileSync(resolve(DESKTOP_ROOT, 'package.json'), 'utf8'))
+
+function assertContainsBefore(text, first, second) {
+  const firstIndex = text.indexOf(first)
+  const secondIndex = text.indexOf(second)
+
+  assert.notEqual(firstIndex, -1, `missing ${first}`)
+  assert.notEqual(secondIndex, -1, `missing ${second}`)
+  assert.equal(firstIndex < secondIndex, true, `${first} must appear before ${second}`)
+}
 
 test('desktop package uses Vite-built TypeScript runtime files', () => {
   assert.equal(pkg.main, 'dist/main/main.mjs')
@@ -51,4 +61,13 @@ test('desktop package includes node-repl resources', () => {
   )
   assert.match(pkg.scripts.build, /build-node-repl-resources\.mjs/)
   assert.match(pkg.scripts.package, /build-node-repl-resources\.mjs/)
+  assertContainsBefore(pkg.scripts.build, 'build-node-repl-resources.mjs', 'run-electron-builder.mjs')
+  assertContainsBefore(pkg.scripts.package, 'build-node-repl-resources.mjs', 'run-electron-builder.mjs')
+})
+
+test('node-repl resource build clears generated output before writing resources', () => {
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-node-repl-resources.mjs'), 'utf8')
+
+  assertContainsBefore(script, 'rmSync(OUT_DIR, { recursive: true, force: true })', 'cpSync(SRC_DIR, OUT_DIR')
+  assertContainsBefore(script, 'cpSync(SRC_DIR, OUT_DIR', 'build-node-repl-host.mjs')
 })
