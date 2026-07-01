@@ -135,6 +135,16 @@ describe("PluginMarketService", () => {
     });
     const listed = await registry.list({ enabled: ["reviewed"], disabled: [], directories: [] });
     expect(listed.plugins.map((plugin) => plugin.pluginId)).toEqual(["reviewed"]);
+
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        global: { enabled: ["reviewed"] },
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE]
+      }
+    }), "utf-8");
+    const catalog = await service.getMarketCatalog({ workspaceSlug: "default" });
+    expect(catalog.plugins.find((plugin) => plugin.pluginId === "reviewed")?.installState).toBe("installed");
   });
 
   test("blocks uninstall of enabled plugin unless forced", async () => {

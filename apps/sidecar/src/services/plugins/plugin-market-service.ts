@@ -151,7 +151,7 @@ export class PluginMarketService {
     });
     diagnostics.push(...listed.diagnostics as AgentPluginDiagnostic[]);
     for (const plugin of listed.plugins) {
-      byId.set(plugin.pluginId, this.toMarketItem(plugin, input.workspaceSlug, "local"));
+      byId.set(plugin.pluginId, this.toMarketItem(plugin, input.workspaceSlug, "local", "installed"));
     }
 
     for (const source of runtimeConfig.marketSources) {
