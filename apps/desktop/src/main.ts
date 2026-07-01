@@ -64,6 +64,8 @@ import {
 import {
   createUtilityProcessSidecarForkConfig,
   getNativeBinaryPath,
+  getNodeReplHostBinaryPath,
+  getNodeReplRootPath,
   getSidecarScriptPath,
 } from './sidecar-process'
 
@@ -560,9 +562,24 @@ function createSidecarHost({ onNotification }) {
       resourcesPath: process.resourcesPath,
       desktopRoot: DESKTOP_ROOT,
     })
+    const nodeReplRootPath = getNodeReplRootPath({
+      appIsPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      desktopRoot: DESKTOP_ROOT,
+    })
+    const nodeReplHostBinaryPath = getNodeReplHostBinaryPath({
+      appIsPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      desktopRoot: DESKTOP_ROOT,
+    })
     ensureFile(sidecarScriptPath, 'missing sidecar bundle')
     ensureFile(nativeBinaryPath, 'missing native binary')
+    ensureExistingPath(nodeReplRootPath)
+    ensureFile(nodeReplHostBinaryPath, 'missing node_repl host binary')
     env.LUME_NATIVES_PATH = nativeBinaryPath
+    env.LUME_NODE_REPL_ROOT = nodeReplRootPath
+    env.LUME_NODE_REPL_HOST = nodeReplHostBinaryPath
+    env.LUME_NODE_REPL_ELECTRON = process.execPath
     return createUtilityProcessSidecarForkConfig({
       sidecarScriptPath,
       env,

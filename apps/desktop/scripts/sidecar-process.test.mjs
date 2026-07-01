@@ -5,6 +5,8 @@ import {
   createUtilityProcessSidecarForkConfig,
   getNativeBinaryPath,
   getNativeTargetId,
+  getNodeReplHostBinaryPath,
+  getNodeReplRootPath,
   getSidecarScriptPath,
 } from '../src/sidecar-process.ts'
 
@@ -59,6 +61,52 @@ test('getNativeBinaryPath resolves dev native binary from desktop resources', ()
       arch: 'x64',
     }),
     resolve('/repo/apps/desktop', 'resources', 'natives', 'win32-x64-msvc', 'lume-natives.node'),
+  )
+})
+
+test('getNodeReplRootPath resolves packaged runtime directory', () => {
+  assert.equal(
+    getNodeReplRootPath({
+      appIsPackaged: true,
+      resourcesPath: '/opt/Lume/resources',
+      desktopRoot: '/repo/apps/desktop',
+    }),
+    join('/opt/Lume/resources', 'node-repl'),
+  )
+})
+
+test('getNodeReplRootPath resolves dev runtime directory from desktop resources', () => {
+  assert.equal(
+    getNodeReplRootPath({
+      appIsPackaged: false,
+      resourcesPath: '/unused',
+      desktopRoot: '/repo/apps/desktop',
+    }),
+    resolve('/repo/apps/desktop', 'resources', 'node-repl'),
+  )
+})
+
+test('getNodeReplHostBinaryPath resolves packaged host binary', () => {
+  assert.equal(
+    getNodeReplHostBinaryPath({
+      appIsPackaged: true,
+      resourcesPath: '/opt/Lume/resources',
+      desktopRoot: '/repo/apps/desktop',
+      platform: 'win32',
+    }),
+    join('/opt/Lume/resources', 'node-repl', 'bin', 'node_repl.exe'),
+  )
+})
+
+test('getNodeReplHostBinaryPath resolves dev host binary', () => {
+  assert.equal(
+    getNodeReplHostBinaryPath({
+      appIsPackaged: false,
+      resourcesPath: '/unused',
+      desktopRoot: '/repo/apps/desktop',
+      platform: 'linux',
+    }),
+    resolve('/repo/apps/desktop', 'resources', 'node-repl', 'bin', 'node_repl'),
   )
 })
 
