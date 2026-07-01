@@ -15,6 +15,8 @@ interface ThreadItemProps {
   onTogglePin: (id: string) => void
   onArchive: (id: string) => void
   onRename: (id: string, title: string) => void
+  /** 预留开关：禁用 hover 预览浮层（对齐 Proma disableMiniMap，默认 false） */
+  disableMiniMap?: boolean
 }
 
 export const ThreadItem = memo(function ThreadItem({
@@ -23,15 +25,17 @@ export const ThreadItem = memo(function ThreadItem({
   onTogglePin,
   onArchive,
   onRename,
+  disableMiniMap = false,
 }: ThreadItemProps) {
   const streamingState = useAtomValue(agentStreamingStatesFamily(thread.id))
   const isStreaming = streamingState === 'streaming'
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const justStartedEditing = useRef(false)
   const anchorRef = useRef<HTMLDivElement>(null)
-  const hover = useThreadMiniMapHover(600, editing)
+  const hover = useThreadMiniMapHover(600, editing || menuOpen || disableMiniMap)
 
   const childRuns = useAtomValue(agentSubagentRunsFamily(thread.id)) ?? []
   const childTotal = thread.children?.length ?? 0
@@ -185,7 +189,7 @@ export const ThreadItem = memo(function ThreadItem({
             pinned={thread.pinned}
             onTogglePin={() => onTogglePin(thread.id)}
             onArchive={() => onArchive(thread.id)}
-            onMenuOpenChange={() => {}}
+            onMenuOpenChange={setMenuOpen}
             menuItems={menuItems}
           />
         )}
@@ -208,7 +212,16 @@ export const ThreadItem = memo(function ThreadItem({
         ))}
       </div>
     )}
-    <ThreadMiniMapPopover threadId={thread.id} open={hover.open} anchorRef={anchorRef} />
+    <ThreadMiniMapPopover
+      threadId={thread.id}
+      title={thread.title}
+      workspaceName={thread.workspaceName}
+      open={hover.open}
+      isLeaving={hover.isLeaving}
+      anchorRef={anchorRef}
+      onMouseEnter={hover.handlePanelMouseEnter}
+      onMouseLeave={hover.handlePanelMouseLeave}
+    />
     </div>
   )
 })

@@ -38,6 +38,7 @@ export interface LumeSidebarThreadItem {
   depth: number
   isDelegate: boolean
   children?: LumeSidebarThreadItem[]
+  workspaceName?: string
 }
 
 export interface LumeSidebarSyntheticThreadRow {
@@ -124,7 +125,7 @@ export function buildLumeSidebarViewModel({
     const workspaceThreads = sortThreadsByUpdatedAt(
       threads.filter((thread) => getThreadWorkspaceId(thread) === workspace.id),
     )
-    const allThreads = buildThreadTree(workspaceThreads, activeTabId)
+    const allThreads = buildThreadTree(workspaceThreads, activeTabId, workspace.name)
 
     return {
       id: workspace.id,
@@ -153,7 +154,7 @@ export function buildLumeSidebarViewModel({
       isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
       pinned: false,
       syntheticRow: null,
-      threads: buildThreadTree(unassignedThreads, activeTabId),
+      threads: buildThreadTree(unassignedThreads, activeTabId, UNASSIGNED_THREADS_WORKSPACE_NAME),
     })
   }
 
@@ -207,6 +208,7 @@ function buildThreadItemFromMeta(
   thread: AgentThreadMeta,
   activeTabId: string | null,
   depth: number,
+  workspaceName: string,
 ): LumeSidebarThreadItem {
   return {
     id: thread.id,
@@ -217,12 +219,14 @@ function buildThreadItemFromMeta(
     parentThreadId: thread.parentThreadId,
     depth,
     isDelegate: depth > 0,
+    workspaceName,
   }
 }
 
 function buildThreadTree(
   threads: AgentThreadMeta[],
   activeTabId: string | null,
+  workspaceName: string,
 ): LumeSidebarThreadItem[] {
   const ids = new Set(threads.map((thread) => thread.id))
   const childrenByParent = new Map<string, AgentThreadMeta[]>()
@@ -239,7 +243,7 @@ function buildThreadTree(
   const build = (thread: AgentThreadMeta, depth: number): LumeSidebarThreadItem => {
     const kids = (childrenByParent.get(thread.id) ?? []).map((child) => build(child, depth + 1))
     return {
-      ...buildThreadItemFromMeta(thread, activeTabId, depth),
+      ...buildThreadItemFromMeta(thread, activeTabId, depth, workspaceName),
       ...(kids.length ? { children: kids } : {}),
     }
   }
