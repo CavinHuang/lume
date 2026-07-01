@@ -18,6 +18,14 @@ async function writeJson(path: string, value: unknown) {
   await writeFile(path, JSON.stringify(value, null, 2), "utf-8");
 }
 
+const DISABLED_OFFICIAL_MARKET_SOURCE = {
+  id: "official",
+  name: "Lume Plugins",
+  kind: "remote-index",
+  url: "https://github.com/CavinHuang/lume-plugins",
+  enabled: false
+};
+
 function makeService(root: string, fetchImpl?: typeof fetch) {
   return new PluginMarketService({
     installedRoot: join(root, "installed"),
@@ -179,7 +187,7 @@ describe("PluginMarketService", () => {
     writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
       version: 1,
       plugins: {
-        marketSources: [{ id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
       }
     }), "utf-8");
 
@@ -227,7 +235,7 @@ describe("PluginMarketService", () => {
     writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
       version: 1,
       plugins: {
-        marketSources: [{ id: "superpowers", name: "Superpowers", kind: "local-index", path: marketRoot, enabled: true }]
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "superpowers", name: "Superpowers", kind: "local-index", path: marketRoot, enabled: true }]
       }
     }), "utf-8");
 
@@ -253,7 +261,7 @@ describe("PluginMarketService", () => {
     writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
       version: 1,
       plugins: {
-        marketSources: [{ id: "superpowers", name: "Superpowers", kind: "local-index", path: marketRoot, enabled: true }]
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "superpowers", name: "Superpowers", kind: "local-index", path: marketRoot, enabled: true }]
       }
     }), "utf-8");
 
@@ -309,7 +317,7 @@ describe("PluginMarketService", () => {
     writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
       version: 1,
       plugins: {
-        marketSources: [{ id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
       }
     }), "utf-8");
 

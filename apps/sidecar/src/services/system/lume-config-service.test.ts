@@ -47,7 +47,13 @@ describe("lume-config-service", () => {
     expect(file.plugins?.global?.disabled).toEqual([]);
     expect(file.plugins?.workspaces).toEqual({});
     expect(file.plugins?.directories).toEqual([]);
-    expect(file.plugins?.marketSources).toEqual([]);
+    expect(file.plugins?.marketSources).toEqual([{
+      id: "official",
+      name: "Lume Plugins",
+      kind: "remote-index",
+      enabled: true,
+      url: "https://github.com/CavinHuang/lume-plugins"
+    }]);
     expect(file.permissions?.rules).toEqual([]);
     expect(file.permissions?.classifier?.enabled).toBe(false);
     expect(file.permissions?.privateWriteRoots).toEqual([]);
@@ -328,7 +334,37 @@ describe("lume-config-service", () => {
     expect(file.plugins?.global?.enabled).toEqual(["legacy-a", "legacy-b"]);
     expect(file.plugins?.global?.disabled).toEqual(["legacy-c"]);
     expect(file.plugins?.directories).toEqual(["/plugins"]);
-    expect(file.plugins?.marketSources?.[0]?.id).toBe("official");
+    expect(file.plugins?.marketSources?.[0]).toEqual({
+      id: "official",
+      name: "Lume Plugins",
+      kind: "remote-index",
+      enabled: true,
+      url: "https://github.com/CavinHuang/lume-plugins"
+    });
+  });
+
+  test("应允许显式禁用官方插件市场", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "plugins.marketSources",
+      value: [{
+        id: "official",
+        name: "Wrong name",
+        kind: "remote-index",
+        url: "https://example.com/wrong",
+        enabled: false
+      }]
+    });
+
+    const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
+    expect(file.plugins?.marketSources?.[0]).toEqual({
+      id: "official",
+      name: "Lume Plugins",
+      kind: "remote-index",
+      enabled: false,
+      url: "https://github.com/CavinHuang/lume-plugins"
+    });
+    expect(getEffectivePluginRuntimeConfig("default").marketSources).toEqual([]);
   });
 
   test("应合并 global 与 workspace 插件启用配置", () => {
@@ -356,7 +392,7 @@ describe("lume-config-service", () => {
     expect(runtime.enabled).toEqual(["global-a", "workspace-a"]);
     expect(runtime.disabled).toEqual(["global-off", "shared"]);
     expect(runtime.directories).toEqual(["/global-plugins"]);
-    expect(runtime.marketSources.map((source) => source.id)).toEqual(["team"]);
+    expect(runtime.marketSources.map((source) => source.id)).toEqual(["official", "team"]);
   });
 
   test("应迁移旧 workspace overlay 的 plugins.enabled/disabled", () => {

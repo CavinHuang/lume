@@ -32,6 +32,13 @@ interface UpdateLumeConfigSectionInput {
 }
 
 const CONFIG_VERSION = 1;
+const OFFICIAL_PLUGIN_MARKET_SOURCE: LumeConfigPluginMarketSourceRef = {
+  id: "official",
+  name: "Lume Plugins",
+  kind: "remote-index",
+  enabled: true,
+  url: "https://github.com/CavinHuang/lume-plugins"
+};
 const DEFAULT_INTERNAL_HOOKS = {
   enabled: true,
   memory: true,
@@ -61,7 +68,7 @@ function createDefaultLumeConfig(): LumeConfigFile {
       },
       workspaces: {},
       directories: [],
-      marketSources: []
+      marketSources: [{ ...OFFICIAL_PLUGIN_MARKET_SOURCE }]
     },
     permissions: {
       toolPolicy: {
@@ -198,12 +205,23 @@ function normalizePluginEnablement(value: unknown): LumeConfigPluginEnablement {
 }
 
 function normalizePluginMarketSources(value: unknown): LumeConfigPluginMarketSourceRef[] {
-  if (!Array.isArray(value)) return [];
-  const sources: LumeConfigPluginMarketSourceRef[] = [];
-  const seen = new Set<string>();
+  const sources: LumeConfigPluginMarketSourceRef[] = [{ ...OFFICIAL_PLUGIN_MARKET_SOURCE }];
+  if (!Array.isArray(value)) return sources;
+  const seen = new Set<string>([OFFICIAL_PLUGIN_MARKET_SOURCE.id]);
+  let officialConfigured = false;
   for (const item of value) {
     if (!isPlainObject(item)) continue;
     const id = normalizeOptionalString(item.id);
+    if (id === OFFICIAL_PLUGIN_MARKET_SOURCE.id) {
+      if (!officialConfigured) {
+        sources[0] = {
+          ...OFFICIAL_PLUGIN_MARKET_SOURCE,
+          enabled: item.enabled !== false
+        };
+        officialConfigured = true;
+      }
+      continue;
+    }
     const name = normalizeOptionalString(item.name);
     const kind = item.kind === "local-index" || item.kind === "remote-index" ? item.kind : undefined;
     if (!id || !name || !kind || seen.has(id)) continue;
