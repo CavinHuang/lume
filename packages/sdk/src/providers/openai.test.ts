@@ -95,6 +95,46 @@ describe("OpenAIProvider", () => {
     }])
   })
 
+  test("tool_result array content becomes tool text plus user image parts", async () => {
+    let requestBody: Record<string, any> | undefined
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({
+        id: "chatcmpl-test",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "ok" },
+          finish_reason: "stop",
+        }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test", retryConfig: fastRetry })
+    await provider.createMessage({
+      model: "gpt-test",
+      maxTokens: 100,
+      system: "",
+      messages: [{
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "call_1",
+          content: [
+            { type: "text", text: "generated image" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
+          ],
+        }],
+      }],
+      tools: [],
+    })
+
+    expect(requestBody?.messages).toEqual([
+      { role: "tool", tool_call_id: "call_1", content: "generated image" },
+      { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,ZmFrZQ==" } }] },
+    ])
+  })
+
   test("maps cached prompt tokens from non-streaming usage", async () => {
     globalThis.fetch = (async () => {
       return new Response(JSON.stringify({

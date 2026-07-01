@@ -97,6 +97,15 @@ function imageSourceToUrl(source: unknown): string | null {
   return null
 }
 
+function toolResultImageToUrl(item: { source?: unknown; data?: unknown; mimeType?: unknown }): string | null {
+  const fromSource = imageSourceToUrl(item.source)
+  if (fromSource) return fromSource
+  if (typeof item.data === 'string' && typeof item.mimeType === 'string') {
+    return `data:${item.mimeType};base64,${item.data}`
+  }
+  return null
+}
+
 // --------------------------------------------------------------------------
 // Provider
 // --------------------------------------------------------------------------
@@ -358,10 +367,30 @@ export class OpenAIResponsesProvider implements LLMProvider {
           contentParts.push({ type: 'input_image', image_url: url })
         }
       } else if (block.type === 'tool_result') {
-        toolResults.push({
-          tool_use_id: block.tool_use_id,
-          content: formatToolResultContent(block.content),
-        })
+        if (typeof block.content === 'string') {
+          toolResults.push({
+            tool_use_id: block.tool_use_id,
+            content: block.content,
+          })
+        } else {
+          const text = block.content
+            .filter((item) => item.type === 'text')
+            .map((item) => item.text)
+            .join('\n')
+          if (text) {
+            toolResults.push({
+              tool_use_id: block.tool_use_id,
+              content: text,
+            })
+          }
+          for (const item of block.content) {
+            if (item.type !== 'image') continue
+            const url = toolResultImageToUrl(item)
+            if (url) {
+              contentParts.push({ type: 'input_image', image_url: url })
+            }
+          }
+        }
       }
     }
 
@@ -506,8 +535,4 @@ export class OpenAIResponsesProvider implements LLMProvider {
       return response
     }, this.retryConfig)
   }
-}
-
-function formatToolResultContent(content: string | unknown[]): string {
-  return typeof content === 'string' ? content : JSON.stringify(content)
 }

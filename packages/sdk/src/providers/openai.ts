@@ -493,10 +493,30 @@ export class OpenAIProvider implements LLMProvider {
           contentParts.push({ type: 'image_url', image_url: { url } })
         }
       } else if (block.type === 'tool_result') {
-        toolResults.push({
-          tool_use_id: block.tool_use_id,
-          content: formatToolResultContent(block.content),
-        })
+        if (typeof block.content === 'string') {
+          toolResults.push({
+            tool_use_id: block.tool_use_id,
+            content: block.content,
+          })
+        } else {
+          const text = block.content
+            .filter((item) => item.type === 'text')
+            .map((item) => item.text)
+            .join('\n')
+          if (text) {
+            toolResults.push({
+              tool_use_id: block.tool_use_id,
+              content: text,
+            })
+          }
+          for (const item of block.content) {
+            if (item.type !== 'image') continue
+            const url = toolResultImageToOpenAIUrl(item)
+            if (url) {
+              contentParts.push({ type: 'image_url', image_url: { url } })
+            }
+          }
+        }
       }
     }
 
@@ -660,10 +680,6 @@ export class OpenAIProvider implements LLMProvider {
   }
 }
 
-function formatToolResultContent(content: string | unknown[]): string {
-  return typeof content === 'string' ? content : JSON.stringify(content)
-}
-
 function normalizeOpenAIUsage(usage: OpenAIUsage | OpenAIStreamChunk['usage'] | undefined): CreateMessageResponse['usage'] {
   const promptTokens = tokenValue(usage?.input_tokens ?? usage?.prompt_tokens)
   const outputTokens = tokenValue(usage?.output_tokens ?? usage?.completion_tokens)
@@ -777,6 +793,15 @@ function imageSourceToOpenAIUrl(source: unknown): string | null {
   }
   if (item.type === 'base64' && typeof item.media_type === 'string' && typeof item.data === 'string') {
     return `data:${item.media_type};base64,${item.data}`
+  }
+  return null
+}
+
+function toolResultImageToOpenAIUrl(item: { source?: unknown; data?: unknown; mimeType?: unknown }): string | null {
+  const fromSource = imageSourceToOpenAIUrl(item.source)
+  if (fromSource) return fromSource
+  if (typeof item.data === 'string' && typeof item.mimeType === 'string') {
+    return `data:${item.mimeType};base64,${item.data}`
   }
   return null
 }
