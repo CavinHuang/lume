@@ -8,6 +8,8 @@
  * representation. Providers convert to/from their native API format.
  */
 
+import type { ToolResultContentBlock } from '../types.js'
+
 // --------------------------------------------------------------------------
 // API Type
 // --------------------------------------------------------------------------
@@ -44,7 +46,7 @@ export interface NormalizedMessageParam {
 export type NormalizedContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: any }
-  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+  | { type: 'tool_result'; tool_use_id: string; content: string | ToolResultContentBlock[]; is_error?: boolean; _meta?: Record<string, unknown> }
   | { type: 'image'; source: any }
   | { type: 'thinking'; thinking: string }
 

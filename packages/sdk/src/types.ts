@@ -3,11 +3,15 @@
  */
 
 // Content block types (provider-agnostic, compatible with Anthropic format)
+export type ToolResultContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source?: any; data?: string; mimeType?: string; _meta?: Record<string, unknown> }
+
 export type ContentBlockParam =
   | { type: 'text'; text: string }
   | { type: 'image'; source: any }
   | { type: 'tool_use'; id: string; name: string; input: any }
-  | { type: 'tool_result'; tool_use_id: string; content: string | any[]; is_error?: boolean }
+  | { type: 'tool_result'; tool_use_id: string; content: string | ToolResultContentBlock[]; is_error?: boolean; _meta?: Record<string, unknown> }
 
 export type ContentBlock =
   | { type: 'text'; text: string }
@@ -774,8 +778,9 @@ export interface ToolContext {
 export interface ToolResult {
   type: 'tool_result'
   tool_use_id: string
-  content: string | any[]
+  content: string | ToolResultContentBlock[]
   is_error?: boolean
+  _meta?: Record<string, unknown>
 }
 
 // --------------------------------------------------------------------------

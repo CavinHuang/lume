@@ -834,3 +834,64 @@ describe("QueryEngine usage records", () => {
     ]);
   });
 });
+
+describe("QueryEngine structured tool results", () => {
+  test("keeps array tool results instead of JSON stringifying them", async () => {
+    const structuredTool = {
+      name: "js",
+      description: "structured",
+      inputSchema: { type: "object" as const, properties: {} },
+      isEnabled: () => true,
+      isReadOnly: () => true,
+      isConcurrencySafe: () => true,
+      async call() {
+        return {
+          type: "tool_result" as const,
+          tool_use_id: "",
+          content: [
+            { type: "text", text: "ready" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
+          ],
+          _meta: { traceId: "t-1" },
+        };
+      },
+    };
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        {
+          content: [{ type: "tool_use", id: "tool-1", name: "js", input: {} }],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      ]),
+      tools: [structuredTool],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+    });
+
+    await collectEvents(engine);
+
+    const toolResultMessage = engine.getMessages().find((msg) =>
+      msg.role === "user" &&
+      Array.isArray(msg.content) &&
+      msg.content.some((block: any) => block.type === "tool_result"),
+    );
+
+    expect(toolResultMessage).toBeDefined();
+    expect((toolResultMessage!.content as any[])[0].content).toEqual([
+      { type: "text", text: "ready" },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
+    ]);
+    expect((toolResultMessage!.content as any[])[0]._meta).toEqual({ traceId: "t-1" });
+  });
+});

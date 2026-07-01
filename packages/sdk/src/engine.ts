@@ -1183,11 +1183,9 @@ export class QueryEngine {
         content: toolResults.map((r) => ({
           type: 'tool_result' as const,
           tool_use_id: r.tool_use_id,
-          content:
-            typeof r.content === 'string'
-              ? r.content
-              : JSON.stringify(r.content),
+          content: r.content,
           is_error: r.is_error,
+          ...(r._meta ? { _meta: r._meta } : {}),
         })),
       })
 

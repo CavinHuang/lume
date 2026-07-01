@@ -29,18 +29,7 @@ export function defineTool(config: {
     async call(input: any, context: ToolContext): Promise<ToolResult> {
       try {
         const result = await config.call(input, context)
-        const output = typeof result === 'string'
-          ? result
-          : typeof result.data === 'string'
-            ? result.data
-            : JSON.stringify(result.data, null, 2)
-        const isError = typeof result === 'object' && result.is_error
-        return {
-          type: 'tool_result',
-          tool_use_id: '', // filled by engine
-          content: output,
-          is_error: isError || false,
-        }
+        return normalizeToolCallResult(result)
       } catch (err: any) {
         return {
           type: 'tool_result',
@@ -51,6 +40,39 @@ export function defineTool(config: {
       }
     },
   }
+}
+
+function normalizeToolCallResult(result: string | { data: unknown; is_error?: boolean }): ToolResult {
+  if (typeof result === 'string') {
+    return {
+      type: 'tool_result',
+      tool_use_id: '',
+      content: result,
+      is_error: false,
+    }
+  }
+
+  const payload = result.data
+  if (isRecord(payload) && Array.isArray(payload.content)) {
+    return {
+      type: 'tool_result',
+      tool_use_id: '',
+      content: payload.content,
+      ...(result.is_error ? { is_error: true } : {}),
+      ...(isRecord(payload._meta) ? { _meta: payload._meta } : {}),
+    }
+  }
+
+  return {
+    type: 'tool_result',
+    tool_use_id: '',
+    content: typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2),
+    is_error: result.is_error || false,
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
 /**

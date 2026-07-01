@@ -360,7 +360,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       } else if (block.type === 'tool_result') {
         toolResults.push({
           tool_use_id: block.tool_use_id,
-          content: block.content,
+          content: formatToolResultContent(block.content),
         })
       }
     }
@@ -506,4 +506,8 @@ export class OpenAIResponsesProvider implements LLMProvider {
       return response
     }, this.retryConfig)
   }
+}
+
+function formatToolResultContent(content: string | unknown[]): string {
+  return typeof content === 'string' ? content : JSON.stringify(content)
 }
