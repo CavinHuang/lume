@@ -28,7 +28,7 @@ use crate::{
 pub const SERVER_NAME: &str = "node_repl";
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 
-const MCP_CONTRACT_JSON: &str = include_str!("../../../contracts/node-repl-mcp-contract.json");
+const MCP_CONTRACT_JSON: &str = include_str!("../contracts/node-repl-mcp-contract.json");
 static MCP_CONTRACT: OnceLock<Value> = OnceLock::new();
 
 fn mcp_contract() -> &'static Value {

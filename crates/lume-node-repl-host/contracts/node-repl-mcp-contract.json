@@ -1,0 +1,100 @@
+{
+  "serverInfo": {
+    "name": "node_repl",
+    "version": "0.1.0"
+  },
+  "defaultTimeoutMs": 30000,
+  "instructions": "Use `js` to run JavaScript in the persistent Node-backed kernel. When a skill or prompt says to use `node_repl`, call this server's `js` execution tool. Calls default to a 30000 ms (30 seconds) timeout when `timeout_ms` is omitted. The runtime exposes `nodeRepl.cwd`, `nodeRepl.homeDir`, `nodeRepl.tmpDir`, `nodeRepl.requestMeta`, `nodeRepl.setResponseMeta(...)`, and `await nodeRepl.emitImage(...)`. Top-level bindings persist across `js` calls until `js_reset`; do not redeclare existing `const` or `let` names. Reuse existing bindings, use top-level `var` for reusable state that may be assigned again, or choose a fresh descriptive name. Use `js_add_node_module_dir` before `js` when a skill provides an extra package directory, and use dynamic imports like `await import(\"playwright\")` rather than filesystem paths under `./node_modules`.",
+  "tools": [
+    {
+      "name": "js",
+      "description": "Run JavaScript in a persistent Node-backed kernel with top-level await. This is the JavaScript execution tool for the `node_repl` MCP server; use it whenever instructions say to use `node_repl`, the Node REPL MCP, or run Node REPL code. If `timeout_ms` is omitted, execution times out after 30000 ms (30 seconds); pass a larger `timeout_ms` for slow browser automation or other long-running operations. Use `nodeRepl.cwd`, `nodeRepl.homeDir`, and `nodeRepl.tmpDir` to inspect host paths. Use `nodeRepl.requestMeta` to inspect the current MCP request `_meta` object during a tool call. Use `nodeRepl.setResponseMeta(meta)` to attach top-level MCP result `_meta`; repeated calls shallow-merge object keys for the current tool call. Use `nodeRepl.write(text)` when you want exact text output in the tool result; it writes the string exactly as given and does not append a newline. Prefer it over `console.log(...)` for final output, JSON, or other text you plan to consume programmatically. `console.log(...)` is still useful for ad hoc debugging or object inspection because it formats values and appends line breaks automatically. Use `await nodeRepl.emitImage(imageLike)` to return images; each call adds one image to the outer tool result, so call it multiple times to emit multiple images. Supported image inputs are a data URL, inferred PNG/JPEG/WebP bytes, or `{ bytes, mimeType }`. Saved references to `nodeRepl.write(...)` and `nodeRepl.emitImage(...)` stay reusable across calls, but async callbacks that fire after a call finishes still fail because no exec is active. Top-level bindings persist across calls until `js_reset`. If a call throws, prior bindings remain available and bindings that finished initializing before the throw often remain reusable. For reusable names that may be assigned again later, prefer top-level `var name = ...`; `var` can be redeclared across calls. If you hit `SyntaxError: Identifier 'x' has already been declared`, reuse the existing binding if possible, reassign it only if it was declared with `let` or `var`, or pick a new name instead of resetting immediately; a previous `const x` cannot be changed into `var x`. Use a short `{ ... }` block only for temporary scratch names, and do not wrap an entire call in block scope if you want those names reusable later. Use dynamic imports like `await import(\"playwright\")`, `await import(\"pkg\")`, or `await import(\"./file.js\")`; top-level static `import` is not supported. Import packages by package name after installing them into a directory added with `js_add_node_module_dir`, `NODE_REPL_NODE_MODULE_DIRS`, or the working directory. Do not import package entrypoints by filesystem path such as `./node_modules/playwright/index.mjs`. Imported local files must be ESM `.js` or `.mjs` files and run in the context chosen at their dynamic-import boundary, so they can also use `nodeRepl.*`, the captured `console`, and `import.meta` helpers. Bare package imports always resolve from the REPL-wide search roots (`NODE_REPL_NODE_MODULE_DIRS`, then directories later added with `js_add_node_module_dir`, then cwd), not relative to the imported file's location. Imported local files may statically import other local `.js` / `.mjs` files, available packages, and allowed Node builtins. `import.meta.resolve()` returns importable strings such as `file://...`, bare package names, and `node:...` specifiers. Local file modules reload between execs. `node:` builtins are generally available via dynamic import, but `process` / `node:process` remains blocked for now because the current Rust-server-to-Node-child transport runs over stdio and raw process streams can corrupt it. Prefer `nodeRepl.write(text)` for text output and `nodeRepl.emitImage(...)` for images.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "Short user-facing description of what this code block is doing. Use a few words, for example `Inspect package metadata` or `Render chart preview`."
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "description": "JavaScript source to execute in the persistent Node-backed kernel. The code runs with top-level await and can use the `nodeRepl` helpers. Examples: `nodeRepl.write(nodeRepl.cwd)`, `const { chromium } = await import(\"playwright\")`, or `await nodeRepl.emitImage(pngBuffer)`."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional execution timeout in milliseconds. Defaults to 30000 (30 seconds) when omitted."
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "js_reset",
+      "description": "Reset the persistent JavaScript kernel and clear all bindings created by prior `js` calls. Use this when you need a clean state, or when reusing existing bindings, top-level `var` declarations, or fresh names cannot recover from conflicting declarations.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "js_add_node_module_dir",
+      "description": "Add an absolute `node_modules` directory to the REPL-wide Node module search roots for future package imports. The directory stays available for this MCP server lifetime, including after `js_reset`. Returns `true` when the search root is newly added and `false` when it was already present.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Absolute path to a node_modules directory to add to Node package resolution."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "validation": {
+    "emptyCode": "js expects non-empty JavaScript source",
+    "emptyTitle": "title must be non-empty",
+    "titleTooLong": "title must be at most 120 characters",
+    "invalidTimeout": "timeout_ms must be a positive integer",
+    "emptyPath": "path must be non-empty",
+    "relativePath": "path must be absolute",
+    "notNodeModulesSuffix": "{path}: path must name a node_modules directory"
+  },
+  "results": {
+    "reset": "js kernel reset",
+    "imageDetailMeta": {
+      "codex/imageDetail": "original"
+    }
+  },
+  "alignmentEvidence": {
+    "binaryStringExact": [
+      "instructions",
+      "tools[*].name",
+      "tools[*].description",
+      "tools[*].inputSchema.properties[*].description",
+      "validation.emptyCode",
+      "validation.emptyTitle",
+      "validation.emptyPath",
+      "validation.relativePath",
+      "results.reset"
+    ],
+    "schemaDerived": [
+      "validation.titleTooLong",
+      "validation.invalidTimeout"
+    ],
+    "formatInferred": [
+      "validation.notNodeModulesSuffix"
+    ]
+  }
+}
