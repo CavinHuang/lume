@@ -43,6 +43,7 @@ test("renderer IPC commands are explicitly allowlisted", () => {
 
 test("renderer event subscriptions are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_EVENT_CHANNELS.has("sidecar:event"), true);
+  assert.equal(ALLOWED_RENDERER_EVENT_CHANNELS.has("window-state"), true);
   assert.equal(validateRendererEventChannel("data:migrate-progress"), "data:migrate-progress");
   assert.throws(
     () => validateRendererEventChannel("lume:update:install"),

@@ -32,6 +32,7 @@ const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'sidecar:event',
   'data:migrate-progress',
   'update:download',
+  'window-state',
 ])
 
 function validateRendererInvokeCommand(command) {
@@ -99,6 +100,25 @@ function createWindowBridge() {
         window.removeEventListener('dragover', dragOver)
         window.removeEventListener('dragleave', dragLeave)
         window.removeEventListener('drop', drop)
+      }
+    },
+    async minimize() {
+      return ipcRenderer.invoke('lume:window-control', 'minimize')
+    },
+    async toggleMaximize() {
+      return ipcRenderer.invoke('lume:window-control', 'toggleMaximize')
+    },
+    async close() {
+      return ipcRenderer.invoke('lume:window-control', 'close')
+    },
+    async isMaximized() {
+      return ipcRenderer.invoke('lume:window-control', 'isMaximized')
+    },
+    onMaximizeStateChange(listener) {
+      const handler = (_event, payload) => listener(payload)
+      ipcRenderer.on('lume:event:window-state', handler)
+      return () => {
+        ipcRenderer.removeListener('lume:event:window-state', handler)
       }
     },
   }

@@ -38,6 +38,7 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'sidecar:event',
   'data:migrate-progress',
   'update:download',
+  'window-state',
 ])
 
 export function validateRendererInvokeCommand(command) {
