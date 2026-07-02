@@ -314,13 +314,18 @@ async function createMainWindow() {
     minHeight: 680,
     backgroundColor: '#111827',
     show: false,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // macOS 保留原生交通灯（hiddenInset）；Windows/Linux 仅隐藏标题栏，
+    // 保留原生窗口边框、阴影与 resize 命中区，由渲染层自绘控制按钮。
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     webPreferences: createSecureWebPreferences({
       preload: resolve(DESKTOP_ROOT, 'dist', 'preload', 'preload.cjs'),
     }),
   })
 
   attachWindowBehavior(win)
+  // 最大化/还原态变化推送给渲染层，驱动按钮图标切换。
+  win.on('maximize', () => emitRendererEvent('window-state', { maximized: true }))
+  win.on('unmaximize', () => emitRendererEvent('window-state', { maximized: false }))
   attachWebContentsSecurity(win, {
     allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
       appIsPackaged: app.isPackaged,
@@ -769,6 +774,26 @@ function createSidecarHost({ onNotification }) {
 ipcMain.handle('lume:invoke', async (event, command, payload) => {
   validateIpcSender(event, mainWindow)
   return dispatchCommand(validateRendererInvokeCommand(command), payload)
+})
+ipcMain.handle('lume:window-control', async (event, op) => {
+  validateIpcSender(event, mainWindow)
+  if (!mainWindow) throw new Error('main window is not available')
+  switch (op) {
+    case 'minimize':
+      mainWindow.minimize()
+      return null
+    case 'toggleMaximize':
+      if (mainWindow.isMaximized()) mainWindow.unmaximize()
+      else mainWindow.maximize()
+      return null
+    case 'close':
+      mainWindow.close()
+      return null
+    case 'isMaximized':
+      return mainWindow.isMaximized()
+    default:
+      throw new Error(`unsupported window-control op: ${String(op)}`)
+  }
 })
 ipcMain.handle('lume:relaunch', async (event) => {
   validateIpcSender(event, mainWindow)

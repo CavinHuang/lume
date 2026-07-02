@@ -156,6 +156,25 @@ test("preload allowlists stay in sync with main process allowlists", () => {
   );
 });
 
+test("main window uses frameless title bar with platform-specific style", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.match(
+    mainSource,
+    /titleBarStyle:\s*process\.platform === 'darwin' \? 'hiddenInset' : 'hidden'/,
+  );
+});
+
+test("main process registers a window-control IPC handler", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.match(mainSource, /ipcMain\.handle\('lume:window-control'/);
+});
+
+test("main process pushes window-state events on maximize and unmaximize", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.match(mainSource, /emitRendererEvent\('window-state',\s*\{\s*maximized:\s*true\s*\}\)/);
+  assert.match(mainSource, /emitRendererEvent\('window-state',\s*\{\s*maximized:\s*false\s*\}\)/);
+});
+
 function extractStringSet(source, name) {
   const match = source.match(new RegExp(`const\\s+${name}\\s*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`));
   if (!match) throw new Error(`missing preload set: ${name}`);
