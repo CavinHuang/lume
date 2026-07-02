@@ -122,7 +122,7 @@ export function RightPanelWorkspace() {
 
   return (
     <aside className={cn(
-      'relative z-[60] flex h-full shrink-0 flex-col border-l border-border/70 bg-background pb-2 pr-2 pt-5 transition-[width] duration-200',
+      'relative z-[60] flex h-full shrink-0 flex-col border-l border-border/70 bg-background pb-2 pr-2 transition-[width] duration-200',
       resizing && 'transition-none',
     )}
       style={{ width }}
