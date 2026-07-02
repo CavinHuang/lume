@@ -41,6 +41,13 @@ export interface DesktopBridgeWindow {
   onDragDropEvent?(
     listener: (payload: unknown) => void
   ): Promise<() => void> | (() => void)
+  minimize?(): Promise<void>
+  toggleMaximize?(): Promise<void>
+  close?(): Promise<void>
+  isMaximized?(): Promise<boolean>
+  onMaximizeStateChange?(
+    listener: (payload: { maximized: boolean }) => void
+  ): () => void
 }
 
 export interface DesktopBridgeAPI {
