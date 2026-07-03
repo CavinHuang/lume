@@ -385,8 +385,8 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         >
           {!hasRenderableMessages ? (
             <div className="text-center space-y-1">
-              <p className="text-foreground/50 text-sm font-medium">Agent 已就绪</p>
-              <p className="text-foreground/30 text-xs">输入任务开始</p>
+              <p className="text-[var(--lume-text-secondary)] text-sm font-medium">Agent 已就绪</p>
+              <p className="text-[var(--lume-text-muted)] text-xs">输入任务开始</p>
             </div>
           ) : (
             <>
@@ -406,7 +406,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         <button
           type="button"
           onClick={() => scrollMessagesToBottom('smooth')}
-          className="absolute bottom-4 right-14 z-20 inline-flex size-9 items-center justify-center rounded-full border border-[#e2e5ef] bg-white text-[#667085] shadow-[0_8px_22px_rgba(27,31,45,0.12)] transition-colors hover:border-[#c9cdfb] hover:text-[#625cff]"
+          className="absolute bottom-4 right-14 z-20 inline-flex size-9 items-center justify-center rounded-full border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-secondary)] shadow-[0_12px_30px_-24px_hsl(var(--lume-shadow-panel)/0.72)] transition-colors hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-accent)]"
           aria-label="回到底部"
           title="回到底部"
         >

@@ -70,10 +70,10 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
               type="button"
               onClick={() => image ? onOpenImage?.(attachment) : onOpenFile?.(attachment)}
               className={cn(
-                'flex h-full w-full min-w-0 overflow-hidden rounded-[12px] border text-left shadow-[0_1px_0_rgba(15,23,42,0.03)] transition-colors',
+                'flex h-full w-full min-w-0 overflow-hidden rounded-[12px] border text-left shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)] transition-colors duration-150 ease-out',
                 image
-                  ? 'items-center justify-center border-[#e2e4ec] bg-white hover:border-[#cacfdc]'
-                  : 'items-center gap-4 border-[#e2e4ec] bg-white p-3 hover:border-[#cacfdc]',
+                  ? 'items-center justify-center border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] hover:border-[var(--lume-border-strong)]'
+                  : 'items-center gap-4 border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-3 hover:border-[var(--lume-border-strong)]',
               )}
               title={attachment.filename}
             >
@@ -86,20 +86,20 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
                     loading="lazy"
                   />
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-[#f7f5ff] text-[#8b7df1]">
+                  <div className="flex h-full w-full items-center justify-center bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]">
                     <FileTypeIcon filename={attachment.filename} size={24} />
                   </div>
                 )
               ) : (
                 <>
-                  <span className="flex size-16 shrink-0 items-center justify-center rounded-[12px] bg-[#f7f7f8] text-[#8b7df1]">
+                  <span className="flex size-16 shrink-0 items-center justify-center rounded-[12px] bg-[var(--lume-bg-panel)] text-[var(--lume-accent)]">
                     <FileTypeIcon filename={attachment.filename} size={30} />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[18px] font-semibold leading-6 text-[#1f232b]">
+                    <span className="block truncate text-[18px] font-semibold leading-6 text-[var(--lume-text-primary)]">
                       {attachment.filename}
                     </span>
-                    <span className="mt-1 flex items-center gap-1.5 text-[17px] font-medium uppercase leading-6 text-[#8d929f]">
+                    <span className="mt-1 flex items-center gap-1.5 text-[17px] font-medium uppercase leading-6 text-[var(--lume-text-muted)]">
                       <FileText size={14} />
                       {getFileExtension(attachment.filename).toUpperCase() || 'FILE'}
                     </span>
@@ -112,7 +112,7 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
                 type="button"
                 onClick={() => onRemove?.(attachment.id)}
                 disabled={removeDisabled}
-                className="absolute -right-1.5 -top-1.5 flex size-7 items-center justify-center rounded-full bg-[#17191f] text-white opacity-95 shadow-[0_4px_12px_rgba(23,25,31,0.18)] transition-colors hover:bg-[#2b2f3a] disabled:cursor-not-allowed disabled:opacity-45"
+                className="absolute -right-1.5 -top-1.5 flex size-7 items-center justify-center rounded-full bg-[var(--lume-bg-app)] text-[var(--lume-text-primary)] opacity-95 shadow-[0_8px_18px_-14px_hsl(var(--lume-shadow-panel)/0.9)] transition-colors hover:bg-[var(--lume-bg-elevated)] disabled:cursor-not-allowed disabled:opacity-45"
                 title="移除附件"
               >
                 <X size={13} />

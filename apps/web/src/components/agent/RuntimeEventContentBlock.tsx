@@ -368,7 +368,7 @@ function UserMessageBlock({
             onOpenImage={(attachment) => onOpenThreadImage?.(attachment)}
           />
         )}
-        <div className="rounded-[12px] rounded-tr-[10px] bg-[#e4ddff] px-3 py-2 text-[15px] font-medium leading-[22px] text-[#34384c] shadow-[0_1px_0_rgba(101,91,255,0.08)]">
+        <div className="rounded-[12px] rounded-tr-[10px] bg-[var(--lume-accent-soft)] px-3 py-2 text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)] shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]">
           {editing ? (
             <textarea
               value={draft}
@@ -1216,7 +1216,7 @@ const SmoothText = memo(function SmoothText({
   const renderMarkdown = (content: string, key?: string) => (
     <XMarkdown
       key={key}
-      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[#303445]"
+      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[var(--lume-text-primary)]"
       rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
       streaming={markdownStreaming}
       components={markdownComponents}
@@ -1286,7 +1286,7 @@ export function PlanPreviewCard({
     <article
       data-plan-preview-card="true"
       data-state={expanded ? 'expanded' : 'collapsed'}
-      className="w-full max-w-[920px] overflow-hidden rounded-[24px] border border-[#e6e6e9] bg-[#f4f4f5] px-5 py-5 shadow-[0_18px_50px_rgba(28,31,39,0.08)]"
+      className="w-full max-w-[920px] overflow-hidden rounded-[18px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-5 py-5 shadow-[0_18px_50px_-36px_hsl(var(--lume-shadow-panel)/0.62)]"
     >
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
@@ -1413,7 +1413,7 @@ export function MarkdownCode({
           event.stopPropagation()
           onOpenThreadFile(filePath)
         }}
-        className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-[#d9d2ff] bg-[#f4f1ff] px-1.5 py-0.5 align-baseline font-mono text-[0.92em] font-medium text-[#4f46e5] shadow-[0_1px_0_rgba(103,92,255,0.12)] transition-colors hover:border-[#b9afff] hover:bg-[#edeaff] hover:text-[#4338ca] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#675cff]/35"
+        className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-[color:color-mix(in_oklab,var(--lume-accent)_28%,var(--lume-border-subtle))] bg-[var(--lume-accent-soft)] px-1.5 py-0.5 align-baseline font-mono text-[0.92em] font-medium text-[var(--lume-accent)] shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)] transition-colors hover:border-[color:color-mix(in_oklab,var(--lume-accent)_46%,var(--lume-border-strong))] hover:text-[var(--lume-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lume-focus-ring)]"
         title="在右侧预览文件"
       >
         <span
@@ -1542,7 +1542,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   }
 
   return (
-    <div className="w-full max-w-[460px] overflow-hidden rounded-[10px] border border-[#e1e4ec] bg-white shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <div className="w-full max-w-[460px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_1px_2px_hsl(var(--lume-shadow-panel)/0.08)]">
       <button
         type="button"
         onClick={() => {
@@ -1778,7 +1778,7 @@ function AssistantMessageFooter({
   }
 
   return (
-    <div className="pointer-events-none flex min-h-6 w-full -translate-y-1 items-center justify-between gap-3 pt-2 text-[#6f717a] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
+    <div className="pointer-events-none flex min-h-6 w-full -translate-y-1 items-center justify-between gap-3 pt-2 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
       <div className="flex min-w-0 items-center gap-4">
         {canCopy && (
           <CopyMessageButton
@@ -1824,7 +1824,7 @@ function AssistantMessageFooter({
               role="menu"
               aria-label="选择下载格式"
               hidden={!downloadMenuOpen}
-              className="absolute left-0 top-full z-30 mt-1 min-w-[112px] rounded-lg border border-[#e3e5ee] bg-white p-1 shadow-[0_16px_40px_-24px_rgba(30,34,60,0.45)]"
+              className="absolute left-0 top-full z-30 mt-1 min-w-[112px] rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-1 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)]"
             >
               <DownloadFormatMenuItem onClick={() => handleDownload('html')}>下载 HTML</DownloadFormatMenuItem>
               <DownloadFormatMenuItem onClick={() => handleDownload('txt')}>下载 TXT</DownloadFormatMenuItem>

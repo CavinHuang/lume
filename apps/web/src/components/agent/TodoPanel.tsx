@@ -19,7 +19,7 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
         onMouseLeave={() => setHovered(false)}
       >
         {/* 固定气泡：位置与尺寸恒定，hover 不变化 */}
-        <div className="flex max-w-[320px] items-center gap-2 rounded-lg border border-[#e1e4ec] bg-white/95 px-2.5 py-1.5 text-[12px] font-medium text-foreground/70 shadow-[0_4px_16px_rgba(20,24,40,0.08)] backdrop-blur">
+        <div className="flex max-w-[320px] items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_94%,transparent)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--lume-text-secondary)] shadow-[0_12px_30px_-24px_hsl(var(--lume-shadow-panel)/0.72)] backdrop-blur">
           <ProgressRing completed={completed} total={total} active={active} />
           <span className="shrink-0 tabular-nums text-foreground/50">
             {completed}/{total}
@@ -34,7 +34,7 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
         {/* popup：脱离文档流（absolute），始终在 DOM，opacity 控制可见——hover 不重建列表、不推挤气泡 */}
         <div
           className={cn(
-            'pointer-events-none absolute bottom-full left-1/2 mb-2 w-[280px] -translate-x-1/2 rounded-lg border border-[#e1e4ec] bg-white/95 p-3 text-[12px] opacity-0 shadow-[0_4px_16px_rgba(20,24,40,0.12)] backdrop-blur transition-opacity duration-150',
+            'pointer-events-none absolute bottom-full left-1/2 mb-2 w-[280px] -translate-x-1/2 rounded-lg border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_96%,transparent)] p-3 text-[12px] opacity-0 shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)] backdrop-blur transition-opacity duration-150',
             hovered && 'pointer-events-auto opacity-100',
           )}
         >
@@ -78,7 +78,7 @@ function ProgressRing({ completed, total, active }: { completed: number; total: 
         cy="9"
         r={r}
         fill="none"
-        stroke={active ? '#7567ff' : '#9aa0a6'}
+        stroke={active ? 'var(--lume-accent)' : 'var(--lume-text-muted)'}
         strokeWidth="2"
         strokeDasharray={circumference}
         strokeDashoffset={offset}
