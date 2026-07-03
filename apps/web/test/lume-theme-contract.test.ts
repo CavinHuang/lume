@@ -80,6 +80,9 @@ describe('Lume theme contract', () => {
       '--surface-1: var(--lume-bg-panel);',
       '--text-1: var(--lume-text-primary);',
       '--border-strong: var(--lume-border-strong);',
+      '--app-scrollbar-thumb: color-mix(in oklab, var(--lume-border-subtle) 78%, transparent);',
+      '--app-scrollbar-thumb-active: color-mix(in oklab, var(--lume-text-primary) 16%, var(--lume-border-subtle));',
+      '--app-scrollbar-track: transparent;',
     ]
     const darkTokens = [
       '--lume-bg-app: oklch(0.155 0.012 248);',
@@ -102,6 +105,9 @@ describe('Lume theme contract', () => {
       '--surface-1: var(--lume-bg-panel);',
       '--text-1: var(--lume-text-primary);',
       '--border-strong: var(--lume-border-strong);',
+      '--app-scrollbar-thumb: color-mix(in oklab, var(--lume-border-subtle) 78%, transparent);',
+      '--app-scrollbar-thumb-active: color-mix(in oklab, var(--lume-text-primary) 16%, var(--lume-border-subtle));',
+      '--app-scrollbar-track: transparent;',
     ]
 
     for (const token of rootTokens) {

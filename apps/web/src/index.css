@@ -224,6 +224,9 @@
   --text-2: var(--lume-text-secondary);
   --text-3: var(--lume-text-muted);
   --shadow-panel: 220 42% 8%;
+  --app-scrollbar-thumb: color-mix(in oklab, var(--lume-border-subtle) 78%, transparent);
+  --app-scrollbar-thumb-active: color-mix(in oklab, var(--lume-text-primary) 16%, var(--lume-border-subtle));
+  --app-scrollbar-track: transparent;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -287,6 +290,9 @@
   --text-2: var(--lume-text-secondary);
   --text-3: var(--lume-text-muted);
   --shadow-panel: 220 52% 3%;
+  --app-scrollbar-thumb: color-mix(in oklab, var(--lume-border-subtle) 78%, transparent);
+  --app-scrollbar-thumb-active: color-mix(in oklab, var(--lume-text-primary) 16%, var(--lume-border-subtle));
+  --app-scrollbar-track: transparent;
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
