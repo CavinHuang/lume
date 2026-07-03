@@ -54,7 +54,7 @@ export function InteractiveOverlayFrame({
           <button
             type="button"
             onClick={onIgnore}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-semibold text-[#8a8f98] transition-colors hover:bg-[#f4f4f5] hover:text-[#1f232b]"
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-semibold text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             忽略 <kbd className="rounded-md bg-[#f0f0f2] px-1.5 py-0.5 font-mono text-[12px] text-[#5c626d]">ESC</kbd>
           </button>

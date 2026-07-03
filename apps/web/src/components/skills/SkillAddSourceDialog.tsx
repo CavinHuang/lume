@@ -182,7 +182,7 @@ export function SkillAddSourceDialog({
           type="button"
           disabled={isRemoving || isInstalling}
           onClick={() => void handleRemove(item)}
-          className="flex h-8 items-center gap-1.5 rounded-[6px] border border-[#d8ddec] bg-white px-3 text-[12px] font-semibold text-[#687196] hover:border-[#ba3636] hover:text-[#ba3636] disabled:cursor-wait disabled:opacity-60"
+          className="flex h-8 items-center gap-1.5 rounded-[6px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-semibold text-[var(--text-2)] hover:border-[color:color-mix(in_oklab,var(--lume-danger)_42%,var(--border))] hover:text-[var(--lume-danger)] disabled:cursor-wait disabled:opacity-60"
         >
           {isRemoving && <Loader2 size={13} className="animate-spin" />}
           移除
@@ -196,7 +196,7 @@ export function SkillAddSourceDialog({
           type="button"
           disabled={isInstalling}
           onClick={() => void handleInstall(item)}
-          className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[#4f46e5] px-3 text-[12px] font-semibold text-white hover:bg-[#3730a3] disabled:cursor-wait disabled:opacity-60"
+          className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[var(--brand)] px-3 text-[12px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-wait disabled:opacity-60"
         >
           {isInstalling && <Loader2 size={13} className="animate-spin" />}
           更新
@@ -209,7 +209,7 @@ export function SkillAddSourceDialog({
         type="button"
         disabled={isInstalling}
         onClick={() => void handleInstall(item)}
-        className="flex h-8 items-center gap-1.5 rounded-[6px] border border-[#4f46e5] bg-white px-3 text-[12px] font-semibold text-[#4f46e5] hover:bg-[#f5f6ff] disabled:cursor-wait disabled:opacity-60"
+        className="flex h-8 items-center gap-1.5 rounded-[6px] border border-[color:color-mix(in_oklab,var(--brand)_36%,var(--border-strong))] bg-[var(--surface-1)] px-3 text-[12px] font-semibold text-[var(--brand)] hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] disabled:cursor-wait disabled:opacity-60"
       >
         {isInstalling && <Loader2 size={13} className="animate-spin" />}
         安装
@@ -263,7 +263,7 @@ export function SkillAddSourceDialog({
               <button
                 type="button"
                 onClick={handleManualCreate}
-                className="flex h-9 items-center gap-2 rounded-[8px] bg-[#2f2f31] px-4 text-[13px] font-semibold text-white hover:bg-[#1f2023]"
+                className="flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
               >
                 <Plus size={15} />
                 创建空白技能
@@ -283,7 +283,7 @@ export function SkillAddSourceDialog({
                 <button
                   type="button"
                   onClick={handleOpenMarket}
-                  className="text-[13px] font-semibold text-[#4f46e5] hover:text-[#3730a3]"
+                  className="text-[13px] font-semibold text-[var(--brand)] hover:text-[var(--brand-2)]"
                 >
                   前往市场添加源
                 </button>

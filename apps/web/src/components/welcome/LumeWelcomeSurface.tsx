@@ -96,19 +96,9 @@ export function LumeWelcomeSurface({
     <div
       className="relative flex flex-1 flex-col overflow-hidden"
       style={{
-        background:
-          'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 88%, var(--background)) 0%, var(--background) 30%, color-mix(in oklab, var(--surface-2) 54%, var(--background)) 100%)',
+        background: 'var(--background)',
       }}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-[420px]"
-        style={{
-          background:
-            'radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--brand) 9%, transparent) 0%, transparent 52%), radial-gradient(circle at 30% 8%, color-mix(in oklab, var(--brand-2) 7%, transparent) 0%, transparent 38%)',
-        }}
-      />
-
       <div className="relative flex flex-1 flex-col items-center justify-center overflow-y-auto">
         <div className="relative mx-auto flex w-full max-w-[1104px] flex-col items-center px-5 py-10 md:px-7 lg:px-8">
           <section className="flex w-full max-w-[840px] flex-col items-center text-center">
@@ -145,7 +135,7 @@ export function LumeWelcomeSurface({
               shellStyle={{
                 borderColor: 'color-mix(in oklab, var(--brand) 24%, var(--border-strong))',
                 background: 'color-mix(in oklab, var(--surface-1) 98%, transparent)',
-                boxShadow: '0 22px 48px -38px color-mix(in oklab, var(--brand) 42%, transparent)',
+                boxShadow: 'none',
               }}
               editorClassName="px-4 pb-2 pt-4"
               footerClassName="px-3 py-1.5"
@@ -264,7 +254,7 @@ export function LumeWelcomeSurface({
               }
               actionSlot={
                 composerState.showBusy ? (
-                  <div className="inline-flex size-8 items-center justify-center rounded-lg bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)]">
+                  <div className="inline-flex size-8 items-center justify-center rounded-lg bg-[var(--brand)] text-[var(--brand-foreground)]">
                     <Loader2 size={15} className="animate-spin" />
                   </div>
                 ) : (
@@ -277,7 +267,7 @@ export function LumeWelcomeSurface({
                     className={cn(
                       'inline-flex size-8 items-center justify-center rounded-lg font-medium transition-all',
                       composerState.canSend
-                        ? 'bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)] shadow-[0_16px_30px_-22px_color-mix(in_oklab,var(--brand)_82%,transparent)] hover:translate-y-[-1px]'
+                        ? 'bg-[var(--brand)] text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]'
                         : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--surface-3)_84%,transparent)] text-[var(--text-3)]',
                     )}
                   >

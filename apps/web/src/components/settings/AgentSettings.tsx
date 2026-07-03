@@ -499,7 +499,7 @@ export function AgentSettings() {
               variant="outline"
               onClick={() => void handleReset()}
               disabled={savingModel}
-              className="h-10 gap-2 rounded-[8px] border-[#ffb8be] bg-[var(--surface-1)] px-4 text-[13px] font-medium text-[#ff4d57] shadow-none hover:bg-[#fff5f6] hover:text-[#ff4d57]"
+              className="h-10 gap-2 rounded-[8px] border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[var(--surface-1)] px-4 text-[13px] font-medium text-[var(--lume-danger)] shadow-none hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] hover:text-[var(--lume-danger)]"
             >
               <Trash2 size={15} />
               重置模型设置
@@ -979,9 +979,9 @@ function ImageGenerationSettings({
                     className="grid min-h-12 w-full grid-cols-[26px_minmax(0,1fr)] items-center gap-2 border-b border-[var(--border)] px-3 text-left last:border-b-0 hover:bg-[var(--surface-2)]"
                   >
                     <span className={cn(
-                      'flex size-5 items-center justify-center rounded-[5px] border text-white',
+                      'flex size-5 items-center justify-center rounded-[5px] border text-[var(--brand-foreground)]',
                       selected.has(option.modelRef)
-                        ? 'border-[var(--text-1)] bg-[var(--text-1)]'
+                        ? 'border-[var(--brand)] bg-[var(--brand)]'
                         : 'border-[var(--border-strong)] bg-transparent'
                     )}>
                       {selected.has(option.modelRef) && <Check size={14} />}
@@ -1022,7 +1022,7 @@ function ImageGenerationSettings({
               <GripVertical size={15} className="cursor-grab text-[var(--text-3)]" />
               <span className="text-center text-[12px] font-semibold text-[var(--text-3)]">{index + 1}</span>
               <span className="truncate text-[13px] font-medium text-[var(--text-1)]">{getOptionLabel(options, modelRef)}</span>
-              <button type="button" disabled={disabled} onClick={() => toggleModel(modelRef)} className="flex size-7 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[#ff4d57] disabled:opacity-40">
+              <button type="button" disabled={disabled} onClick={() => toggleModel(modelRef)} className="flex size-7 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--lume-danger)] disabled:opacity-40">
                 <X size={14} />
               </button>
             </div>
@@ -1090,7 +1090,7 @@ function ContextWindowSettings({
                 {formatContextWindow(row.tokens)}
               </span>
               {row.custom ? (
-                <button type="button" disabled={disabled} onClick={() => onRemove(row.modelRef)} className="text-[12px] font-medium text-[#ff4d57] disabled:opacity-40">移除</button>
+                <button type="button" disabled={disabled} onClick={() => onRemove(row.modelRef)} className="text-[12px] font-medium text-[var(--lume-danger)] disabled:opacity-40">移除</button>
               ) : (
                 <span className="text-right text-[11px] text-[var(--text-3)]">内置</span>
               )}

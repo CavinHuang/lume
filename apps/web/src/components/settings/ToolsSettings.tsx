@@ -289,11 +289,11 @@ export function ToolsSettings() {
                       onClick={() => toggleGroup(group.id, !groupEnabled)}
                       className={cn(
                         'relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:cursor-wait disabled:opacity-65',
-                        groupEnabled ? 'bg-[#2f2f31]' : 'bg-[#e6e8ee]',
+                        groupEnabled ? 'bg-[var(--brand)]' : 'bg-[var(--surface-3)]',
                       )}
                     >
                       {savingId === `group-${group.id}` ? (
-                        <Loader2 size={14} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin text-white" />
+                        <Loader2 size={14} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin text-[var(--brand-foreground)]" />
                       ) : (
                         <span
                           className={cn(
@@ -387,11 +387,11 @@ function ToolRowItem({
             onClick={onToggle}
             className={cn(
               'relative h-6 w-11 rounded-full transition-colors disabled:cursor-wait disabled:opacity-65',
-              tool.enabled ? 'bg-[#2f2f31]' : 'bg-[#e6e8ee]',
+              tool.enabled ? 'bg-[var(--brand)]' : 'bg-[var(--surface-3)]',
             )}
           >
             {saving ? (
-              <Loader2 size={12} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin text-white" />
+              <Loader2 size={12} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 animate-spin text-[var(--brand-foreground)]" />
             ) : (
               <span
                 className={cn(

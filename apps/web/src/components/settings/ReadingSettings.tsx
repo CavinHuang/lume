@@ -170,7 +170,7 @@ export function ReadingSettings() {
                 type="button"
                 onClick={() => void openWereadKeyPage()}
                 disabled={keyFlowBusy}
-                className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-green-500 text-[15px] font-semibold text-white transition-colors hover:bg-green-600 disabled:cursor-wait disabled:opacity-70"
+                className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-[var(--brand)] text-[15px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-wait disabled:opacity-70"
               >
                 {keyFlowBusy ? <RefreshCw size={18} className="animate-spin" /> : <LogIn size={18} />}
                 {keyFlowBusy ? '等待扫码登录...' : '微信扫码登录并获取'}

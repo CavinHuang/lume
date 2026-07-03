@@ -75,6 +75,7 @@ interface WereadBookDetailState {
 
 const readingThemeVars = {
   '--reading-accent': '#9a7444',
+  '--reading-accent-foreground': '#fffdf8',
   '--reading-bg': 'color-mix(in oklab, var(--background) 96%, #f4ecdf)',
   '--reading-rail': 'color-mix(in oklab, var(--surface-1) 92%, #f4ecdf)',
   '--reading-panel': 'color-mix(in oklab, var(--surface-1) 88%, #f0e5d6)',
@@ -463,7 +464,7 @@ export function ReadingView() {
                   <button
                     type="button"
                     onClick={openReadingSettings}
-                    className="mt-2 h-8 w-full rounded-[6px] bg-[var(--text-1)] text-[12px] font-medium text-[var(--surface-1)]"
+                    className="mt-2 h-8 w-full rounded-[6px] bg-[var(--brand)] text-[12px] font-medium text-[var(--brand-foreground)]"
                   >
                     {wereadPrompt.actionLabel}
                   </button>
@@ -511,7 +512,7 @@ export function ReadingView() {
                       type="button"
                       onClick={handleRunReading}
                       disabled={runningReading}
-                      className="flex h-9 items-center gap-2 rounded-[8px] bg-[var(--reading-accent)] px-3 text-[13px] font-medium text-white disabled:cursor-wait disabled:opacity-70"
+                      className="flex h-9 items-center gap-2 rounded-[8px] bg-[var(--reading-accent)] px-3 text-[13px] font-medium text-[var(--reading-accent-foreground)] disabled:cursor-wait disabled:opacity-70"
                     >
                       <RefreshCw size={15} className={runningReading ? 'animate-spin' : undefined} />
                       {runningReading ? '正在写' : '写一条'}
@@ -568,7 +569,7 @@ export function ReadingView() {
                       <button
                         type="button"
                         onClick={() => void openWereadKeyPage()}
-                        className="h-9 rounded-[6px] bg-[var(--text-1)] text-[13px] font-medium text-[var(--surface-1)]"
+                        className="h-9 rounded-[6px] bg-[var(--brand)] text-[13px] font-medium text-[var(--brand-foreground)]"
                       >
                         获取 API KEY
                       </button>
@@ -903,7 +904,7 @@ function WereadBookPanel({
                     type="button"
                     onClick={onRunReading}
                     disabled={runningReading}
-                    className="mt-4 rounded-[8px] bg-[var(--reading-accent)] px-4 py-2 text-[13px] font-medium text-white disabled:opacity-65"
+                    className="mt-4 rounded-[8px] bg-[var(--reading-accent)] px-4 py-2 text-[13px] font-medium text-[var(--reading-accent-foreground)] disabled:opacity-65"
                   >
                     {runningReading ? 'Lume 正在认真读...' : '让 Lume 帮我写一份'}
                   </button>
@@ -1180,7 +1181,7 @@ function BookSearchModal({
           <button
             type="button"
             onClick={onSearch}
-            className="h-9 shrink-0 rounded-[8px] bg-[var(--reading-accent)] px-4 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+            className="h-9 shrink-0 rounded-[8px] bg-[var(--reading-accent)] px-4 text-[13px] font-medium text-[var(--reading-accent-foreground)] transition-opacity hover:opacity-90"
           >
             搜索
           </button>
@@ -1241,7 +1242,7 @@ function BookSearchModal({
                             type="button"
                             onClick={() => onAdd(item.id)}
                             disabled={addingSearchItemId === item.id}
-                            className="flex h-6 items-center gap-1 rounded-[4px] border border-[var(--reading-accent)] bg-[var(--reading-card)] px-2 text-[10px] font-medium text-[var(--reading-accent)] transition-colors hover:bg-[var(--reading-accent)] hover:text-white disabled:cursor-default disabled:opacity-50"
+                            className="flex h-6 items-center gap-1 rounded-[4px] border border-[var(--reading-accent)] bg-[var(--reading-card)] px-2 text-[10px] font-medium text-[var(--reading-accent)] transition-colors hover:bg-[var(--reading-accent)] hover:text-[var(--reading-accent-foreground)] disabled:cursor-default disabled:opacity-50"
                           >
                             Lume 评价
                           </button>

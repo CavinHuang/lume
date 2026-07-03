@@ -567,7 +567,7 @@ function MarketCard({
             event.stopPropagation()
             onAction()
           }}
-          className="min-h-8 max-w-full shrink-0 whitespace-nowrap rounded-[6px] border border-[#bdb6ff] px-4 py-1 text-[13px] font-semibold text-[#635bff] transition-colors hover:bg-[#f5f3ff]"
+          className="min-h-8 max-w-full shrink-0 whitespace-nowrap rounded-[6px] border border-[color:color-mix(in_oklab,var(--brand)_36%,var(--border-strong))] px-4 py-1 text-[13px] font-semibold text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]"
         >
           {busy ? '处理中' : card.actionLabel}
         </button>
@@ -605,7 +605,7 @@ function SkillSourcePanel({
       <button
         type="button"
         onClick={onAddSource}
-        className="mt-5 flex h-[52px] w-full items-center justify-center gap-2 rounded-[8px] border border-dashed border-[#bfc5ff] bg-white text-[14px] font-semibold text-[#635bff] transition-colors hover:bg-[#f7f7ff]"
+        className="mt-5 flex h-[52px] w-full items-center justify-center gap-2 rounded-[8px] border border-dashed border-[color:color-mix(in_oklab,var(--brand)_34%,var(--border-strong))] bg-white text-[14px] font-semibold text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_7%,transparent)]"
       >
         <Plus size={18} />
         添加市场源
@@ -615,7 +615,7 @@ function SkillSourcePanel({
         type="button"
         onClick={onSync}
         disabled={loading}
-        className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-[#635bff] text-[14px] font-semibold text-white shadow-[0_16px_30px_-22px_rgba(99,91,255,0.82)] transition-colors hover:bg-[#564dff] disabled:cursor-wait disabled:opacity-70"
+        className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-[var(--brand)] text-[14px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-wait disabled:opacity-70"
       >
         <RefreshCw size={18} className={cn(loading && 'animate-spin')} />
         同步市场
@@ -788,7 +788,7 @@ function AddSkillSourceDialog({
             type="button"
             title="关闭"
             onClick={() => onOpenChange(false)}
-            className="flex size-8 items-center justify-center rounded-[6px] text-[#687196] hover:bg-[#f4f6fb] hover:text-[#121832]"
+            className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <X size={18} />
           </button>
@@ -865,7 +865,7 @@ function AddSkillSourceDialog({
                 type="button"
                 disabled={busy !== null || (pluginMode === 'local' ? !pluginLocalPath.trim() : !pluginUrl.trim())}
                 onClick={() => void handleInspectPlugin()}
-                className="flex h-10 items-center gap-2 rounded-[6px] border border-[#bdb6ff] px-4 text-[13px] font-semibold text-[#635bff] hover:bg-[#f5f3ff] disabled:cursor-not-allowed disabled:opacity-55"
+                className="flex h-10 items-center gap-2 rounded-[6px] border border-[color:color-mix(in_oklab,var(--brand)_36%,var(--border-strong))] px-4 text-[13px] font-semibold text-[var(--brand)] hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] disabled:cursor-not-allowed disabled:opacity-55"
               >
                 {busy === 'plugin-review' ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
                 检查权限
@@ -914,25 +914,25 @@ function AddSkillSourceDialog({
           <button
             type="button"
             onClick={() => setPanel('format')}
-            className="flex h-9 items-center gap-2 rounded-[6px] px-3 text-[13px] font-semibold text-[#60698d] hover:bg-[#f8f9fc]"
+            className="flex h-9 items-center gap-2 rounded-[6px] px-3 text-[13px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]"
           >
             <Info size={16} />
             支持格式
           </button>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => onOpenChange(false)} className="h-9 rounded-[6px] border border-[#dfe3ee] px-4 text-[13px] font-semibold text-[#60698d] hover:bg-[#f8f9fc]">取消</button>
+            <button type="button" onClick={() => onOpenChange(false)} className="h-9 rounded-[6px] border border-[var(--border)] px-4 text-[13px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]">取消</button>
             {panel === 'source' && (
-              <button type="button" disabled={busy !== null || (connectionMode === 'remote' ? !url.trim() : !localPath.trim())} onClick={() => void handleSubmitSource()} className="h-9 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff] disabled:cursor-not-allowed disabled:opacity-55">
+              <button type="button" disabled={busy !== null || (connectionMode === 'remote' ? !url.trim() : !localPath.trim())} onClick={() => void handleSubmitSource()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
                 {busy === 'source' ? '同步中...' : '添加并同步'}
               </button>
             )}
             {panel === 'plugin' && (
-              <button type="button" disabled={busy !== null || !pluginReview} onClick={() => void handleInstallReviewedPlugin()} className="h-9 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff] disabled:cursor-not-allowed disabled:opacity-55">
+              <button type="button" disabled={busy !== null || !pluginReview} onClick={() => void handleInstallReviewedPlugin()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
                 {busy === 'plugin-install' ? '安装中...' : '确认安装插件'}
               </button>
             )}
             {panel === 'skill' && (
-              <button type="button" disabled={busy !== null || (skillMode === 'local' ? !skillLocalPath.trim() : !skillUrl.trim())} onClick={() => void handleInstallSkill()} className="h-9 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff] disabled:cursor-not-allowed disabled:opacity-55">
+              <button type="button" disabled={busy !== null || (skillMode === 'local' ? !skillLocalPath.trim() : !skillUrl.trim())} onClick={() => void handleInstallSkill()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
                 {busy === 'skill-install' ? '安装中...' : '审查并安装技能'}
               </button>
             )}
@@ -972,7 +972,7 @@ function ChooseFolderButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="h-10 rounded-[6px] border border-[#dfe3ee] px-4 text-[13px] font-semibold text-[#46527a] hover:bg-[#f8f9fc]"
+      className="h-10 rounded-[6px] border border-[var(--border)] px-4 text-[13px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]"
     >
       选择目录
     </button>
@@ -1070,7 +1070,7 @@ function SkillSourceRow({ source }: { source: SkillSourceView }) {
         </div>
         <div className="mt-2 text-[13px] text-[#687196]">{source.detail}</div>
       </div>
-      <button type="button" className="flex size-8 items-center justify-center rounded-[6px] text-[#46527a] hover:bg-[#f4f6fb]">
+      <button type="button" className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-2)] hover:bg-[var(--surface-2)]">
         <MoreVertical size={18} />
       </button>
     </div>
@@ -1120,7 +1120,7 @@ function SkillDetailDialog({
             type="button"
             title="关闭"
             onClick={() => onOpenChange(false)}
-            className="flex size-8 items-center justify-center rounded-[6px] text-[#687196] hover:bg-[#f4f6fb] hover:text-[#121832]"
+            className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <X size={18} />
           </button>
@@ -1225,7 +1225,7 @@ function PluginDetailDialog({
             type="button"
             title="关闭"
             onClick={() => onOpenChange(false)}
-            className="flex size-8 items-center justify-center rounded-[6px] text-[#687196] hover:bg-[#f4f6fb] hover:text-[#121832]"
+            className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <X size={18} />
           </button>
@@ -1328,7 +1328,7 @@ function PluginDetailDialog({
               type="button"
               disabled={busy}
               onClick={onUninstall}
-              className="flex h-9 items-center gap-2 rounded-[6px] border border-[#ffd2d2] px-4 text-[13px] font-semibold text-[#ba3636] hover:bg-[#fff8f8] disabled:cursor-wait disabled:opacity-60"
+              className="flex h-9 items-center gap-2 rounded-[6px] border border-[color:color-mix(in_oklab,var(--lume-danger)_32%,var(--border))] px-4 text-[13px] font-semibold text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] disabled:cursor-wait disabled:opacity-60"
             >
               <Trash2 size={16} />
               卸载
@@ -1339,7 +1339,7 @@ function PluginDetailDialog({
               type="button"
               disabled={!canInstall || busy}
               onClick={onInstall}
-              className="flex h-9 items-center gap-2 rounded-[6px] bg-[#635bff] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(99,91,255,0.82)] hover:bg-[#564dff] disabled:cursor-not-allowed disabled:opacity-55"
+              className="flex h-9 items-center gap-2 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55"
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />}
               {item?.installState === 'update-available' ? '确认权限并更新' : '确认权限并安装'}
@@ -1394,7 +1394,7 @@ function SkillFileContentPreview({ file }: { file: SkillFileTreeNode | null }) {
           title="复制文件内容"
           disabled={!content}
           onClick={handleCopy}
-          className="flex h-9 shrink-0 items-center gap-2 rounded-[7px] border border-[#dfe3f0] bg-white px-3 text-[12px] font-semibold text-[#46527a] shadow-[0_1px_4px_rgba(18,24,50,0.04)] hover:border-[#c8cfff] hover:text-[#4f46e5] disabled:cursor-not-allowed disabled:opacity-45"
+          className="flex h-9 shrink-0 items-center gap-2 rounded-[7px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-semibold text-[var(--text-2)] hover:border-[color:color-mix(in_oklab,var(--brand)_30%,var(--border-strong))] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-45"
         >
           {copied ? <Check size={15} /> : <Copy size={15} />}
           {copied ? '已复制' : '复制'}
@@ -1448,7 +1448,7 @@ function SkillFileTree({
               onClick={() => onSelect(node.path)}
               className={cn(
                 'flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[12px] text-[#46527a] hover:bg-white',
-                selectedPath === node.path && 'bg-white font-semibold text-[#4f46e5] shadow-[0_1px_6px_rgba(18,24,50,0.08)]',
+                selectedPath === node.path && 'bg-white font-semibold text-[var(--brand)] shadow-[0_1px_6px_rgba(18,24,50,0.08)]',
               )}
             >
               <span className="w-4 text-center text-[#8a93ad]">·</span>

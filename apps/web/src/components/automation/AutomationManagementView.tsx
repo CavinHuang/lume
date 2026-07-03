@@ -388,7 +388,7 @@ export function AutomationManagementView() {
                   <button
                     type="button"
                     onClick={() => setMenuOpen((value) => !value)}
-                    className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[var(--text-1)] px-3 text-[13px] font-semibold text-white transition-colors hover:opacity-90"
+                    className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[var(--brand)] px-3 text-[13px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
                   >
                     手动创建
                     <ChevronDown size={14} />
@@ -525,7 +525,7 @@ function AutomationSourceTabButton({
       onClick={onClick}
       className={`h-7 rounded-[6px] px-3 text-[12px] font-medium transition-colors ${
         active
-          ? 'bg-[var(--text-1)] text-white'
+          ? 'bg-[var(--brand)] text-[var(--brand-foreground)]'
           : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
       }`}
     >
@@ -877,7 +877,7 @@ function AutomationJobDetail({
                 type="button"
                 onClick={handleSave}
                 disabled={saving || !draft.name.trim() || !draft.prompt.trim()}
-                className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[var(--text-1)] px-4 text-[14px] font-semibold text-white transition-colors hover:opacity-90 disabled:opacity-50"
+                className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[var(--brand)] px-4 text-[14px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:opacity-50"
               >
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 保存
@@ -912,7 +912,7 @@ function AutomationJobDetail({
               <button
                 type="button"
                 onClick={onRun}
-                className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[var(--text-1)] px-4 text-[14px] font-semibold text-white transition-colors hover:opacity-90"
+                className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[var(--brand)] px-4 text-[14px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
               >
                 <Play size={14} />
                 立即运行
@@ -1358,7 +1358,7 @@ function CreateAutomationDialog({
               type="button"
               onClick={() => onSubmit(draft)}
               disabled={submitting || !draft.name.trim() || !draft.prompt.trim()}
-              className="flex h-7 items-center gap-1.5 rounded-[6px] bg-[var(--text-1)] px-3 text-[12px] font-semibold text-white transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex h-7 items-center gap-1.5 rounded-[6px] bg-[var(--brand)] px-3 text-[12px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting && <Loader2 size={13} className="animate-spin" />}
               {isEdit ? '保存' : '创建'}
@@ -1445,7 +1445,7 @@ function SchedulePickerPopup({
                 onClick={() => onDayOfWeekChange(opt.value)}
                 className={`flex size-6 items-center justify-center rounded-[4px] text-[12px] ${
                   dayOfWeek === opt.value
-                    ? 'bg-[var(--text-1)] text-white'
+                    ? 'bg-[var(--brand)] text-[var(--brand-foreground)]'
                     : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
                 }`}
               >

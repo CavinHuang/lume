@@ -308,7 +308,7 @@ export function InfoExtractResult({ result }: InfoExtractResultProps) {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-[#fbfcff]"
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-[var(--surface-2)]"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

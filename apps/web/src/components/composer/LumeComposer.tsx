@@ -25,7 +25,7 @@ const baseShell = {
   borderColor: 'var(--lume-border-subtle)',
   background:
     'linear-gradient(180deg, color-mix(in oklab, var(--lume-bg-elevated) 96%, transparent), color-mix(in oklab, var(--lume-bg-panel) 90%, var(--lume-bg-elevated)))',
-  boxShadow: '0 22px 52px -38px hsl(var(--lume-shadow-panel) / 0.58)',
+  boxShadow: 'none',
 }
 
 const toneStyles: Record<
@@ -36,20 +36,11 @@ const toneStyles: Record<
       background: string
       boxShadow: string
     }
-    glow: {
-      background: string
-      opacity: number
-    }
     dividerColor: string
   }
 > = {
   idle: {
     shell: baseShell,
-    glow: {
-      background:
-        'radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--lume-accent) 10%, transparent) 0%, transparent 58%)',
-      opacity: 0.5,
-    },
     dividerColor: 'var(--lume-border-subtle)',
   },
   ready: {
@@ -58,11 +49,6 @@ const toneStyles: Record<
       borderColor:
         'color-mix(in oklab, var(--lume-accent) 32%, var(--lume-border-strong))',
     },
-    glow: {
-      background:
-        'radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--lume-accent) 14%, transparent) 0%, transparent 56%)',
-      opacity: 0.62,
-    },
     dividerColor: 'var(--lume-border-subtle)',
   },
   streaming: {
@@ -70,10 +56,6 @@ const toneStyles: Record<
       ...baseShell,
       borderColor:
         'color-mix(in oklab, var(--lume-accent) 24%, var(--lume-border-strong))',
-    },
-    glow: {
-      background: 'transparent',
-      opacity: 0,
     },
     dividerColor: 'var(--lume-border-subtle)',
   },
@@ -115,7 +97,7 @@ export function getLumeComposerPrimaryActionClassName({
     'inline-flex items-center gap-2 rounded-full font-medium transition-colors duration-150 ease-out',
     actionSizeClasses[size],
     enabled
-      ? 'bg-[var(--lume-accent)] text-[var(--lume-accent-foreground)] shadow-[0_16px_32px_-24px_hsl(var(--lume-shadow-panel)/0.72)] hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_88%,var(--lume-accent-2))]'
+      ? 'bg-[var(--lume-accent)] text-[var(--lume-accent-foreground)] hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_88%,var(--lume-accent-2))]'
       : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_70%,transparent)] text-[var(--lume-text-muted)]',
   )
 }
@@ -148,12 +130,6 @@ export function LumeComposer({
       )}
       style={{ ...palette.shell, ...shellStyle }}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 transition-opacity duration-200"
-        style={palette.glow}
-      />
-
       <div className="relative">
         {topContent}
 

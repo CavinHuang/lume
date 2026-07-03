@@ -487,7 +487,7 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
         <button
           type="button"
           onClick={handleCreate}
-          className="flex h-10 shrink-0 items-center gap-2 rounded-[8px] bg-[#2f2f31] px-4 text-[13px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(20,24,40,0.62)] hover:bg-[#1f2023]"
+          className="flex h-10 shrink-0 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
         >
           <Plus size={17} />
           添加技能
@@ -583,7 +583,7 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
                 <button
                   type="button"
                   onClick={onOpenMarket}
-                  className="ml-2 font-semibold text-[#4f46e5] hover:text-[#3730a3]"
+                  className="ml-2 font-semibold text-[var(--brand)] hover:text-[var(--brand-2)]"
                 >
                   去技能市场发现技能
                 </button>
@@ -653,7 +653,7 @@ const SkillSettingsRow = ({
             title="编辑技能"
             disabled={editing}
             onClick={onEdit}
-            className="flex size-8 items-center justify-center rounded-[6px] text-[#656d83] hover:bg-white hover:text-[#20232d] disabled:cursor-wait disabled:opacity-60"
+            className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-1)] hover:text-[var(--text-1)] disabled:cursor-wait disabled:opacity-60"
           >
             {editing ? <Loader2 size={16} className="animate-spin" /> : <Pencil size={16} />}
           </button>
@@ -662,7 +662,7 @@ const SkillSettingsRow = ({
             title="删除技能"
             disabled={deleting}
             onClick={onDelete}
-            className="flex size-8 items-center justify-center rounded-[6px] text-[#656d83] hover:bg-white hover:text-[#ba3636] disabled:cursor-wait disabled:opacity-60"
+            className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-1)] hover:text-[var(--lume-danger)] disabled:cursor-wait disabled:opacity-60"
           >
             {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
           </button>
@@ -715,7 +715,7 @@ const SkillEditor = ({
       <button
         type="button"
         onClick={onCancel}
-        className="mb-5 flex h-8 items-center gap-2 rounded-[6px] text-[13px] font-semibold text-[#60698d] hover:text-[#20232d]"
+        className="mb-5 flex h-8 items-center gap-2 rounded-[6px] text-[13px] font-semibold text-[var(--text-2)] hover:text-[var(--text-1)]"
       >
         <ArrowLeft size={17} />
         返回
@@ -729,7 +729,7 @@ const SkillEditor = ({
           <button
             type="button"
             onClick={onCancel}
-            className="h-10 rounded-[8px] px-4 text-[14px] font-semibold text-[#60698d] hover:bg-[#f5f6fa]"
+            className="h-10 rounded-[8px] px-4 text-[14px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]"
           >
             取消
           </button>
@@ -737,7 +737,7 @@ const SkillEditor = ({
             type="button"
             disabled={!canSave}
             onClick={onSave}
-            className="flex h-10 items-center gap-2 rounded-[8px] bg-[#2f2f31] px-5 text-[14px] font-semibold text-white shadow-[0_14px_28px_-22px_rgba(20,24,40,0.62)] hover:bg-[#1f2023] disabled:cursor-not-allowed disabled:opacity-55"
+            className="flex h-10 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-5 text-[14px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55"
           >
             {saving ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
             保存技能
@@ -878,7 +878,7 @@ const SkillEditor = ({
             onClick={() => updateDraft({ disableModelInvocation: !draft.disableModelInvocation })}
             className={cn(
               'relative h-8 w-14 rounded-full transition-colors',
-              draft.disableModelInvocation ? 'bg-[#2f2f31]' : 'bg-[#e6e8ee]',
+              draft.disableModelInvocation ? 'bg-[var(--brand)]' : 'bg-[#e6e8ee]',
             )}
           >
             <span
@@ -1075,7 +1075,7 @@ const SkillEvolutionPanel = ({
           title="分析技能改进"
           disabled={analyzing || applying}
           onClick={() => void handleAnalyze()}
-          className="flex h-9 items-center gap-2 rounded-[8px] border border-[#dfe3f0] bg-white px-3 text-[13px] font-semibold text-[#20232d] hover:border-[#bcc4d8] disabled:cursor-wait disabled:opacity-60"
+          className="flex h-9 items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] font-semibold text-[var(--text-1)] hover:border-[var(--border-strong)] disabled:cursor-wait disabled:opacity-60"
         >
           {analyzing ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
           分析改进
@@ -1102,7 +1102,7 @@ const SkillEvolutionPanel = ({
                 type="button"
                 disabled={applying}
                 onClick={() => void handleApply(updates)}
-                className="mt-3 flex h-9 items-center gap-2 rounded-[8px] bg-[#2f2f31] px-3 text-[13px] font-semibold text-white hover:bg-[#1f2023] disabled:cursor-wait disabled:opacity-60"
+                className="mt-3 flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-3 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-wait disabled:opacity-60"
               >
                 {applying ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
                 应用改进
@@ -1142,7 +1142,7 @@ const SkillEvolutionPanel = ({
                   title={`恢复版本 ${version.filename}`}
                   disabled={restoringFilename === version.filename}
                   onClick={() => void handleRestore(version.filename)}
-                  className="flex size-8 items-center justify-center rounded-[6px] text-[#656d83] hover:bg-[#f5f6fa] hover:text-[#20232d] disabled:cursor-wait disabled:opacity-60"
+                  className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] disabled:cursor-wait disabled:opacity-60"
                 >
                   {restoringFilename === version.filename
                     ? <Loader2 size={15} className="animate-spin" />
@@ -1269,7 +1269,7 @@ const SystemToolsPanel = ({
                   <button
                     type="button"
                     onClick={() => toggleExpand(row.id)}
-                    className="flex size-6 items-center justify-center rounded-[4px] text-[#687196] hover:bg-[#edf0f6]"
+                    className="flex size-6 items-center justify-center rounded-[4px] text-[var(--text-3)] hover:bg-[var(--surface-2)]"
                   >
                     {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   </button>

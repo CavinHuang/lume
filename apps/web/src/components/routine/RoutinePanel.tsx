@@ -317,7 +317,7 @@ function EmptyState({
         <button
           type="button"
           onClick={onRegenerate}
-          className="mt-5 flex items-center gap-2 rounded-[8px] bg-[var(--reading-accent)] px-4 py-2 text-[13px] font-medium text-white transition-opacity hover:opacity-90"
+          className="mt-5 flex items-center gap-2 rounded-[8px] bg-[var(--reading-accent)] px-4 py-2 text-[13px] font-medium text-[var(--reading-accent-foreground)] transition-opacity hover:opacity-90"
         >
           <RefreshCw size={14} />
           生成今日日程

@@ -674,7 +674,7 @@ function McpToolListPanel({
             size="sm"
             onClick={onRetry}
             disabled={retrying}
-            className="h-7 shrink-0 gap-1 px-2 text-[12px] text-[#7c4a03] hover:bg-[#ffe8c7]"
+            className="h-7 shrink-0 gap-1 px-2 text-[12px] text-[var(--lume-warning)] hover:bg-[color:color-mix(in_oklab,var(--lume-warning)_10%,var(--surface-1))]"
           >
             {retrying ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
             重试
@@ -959,7 +959,7 @@ function McpServerForm({
             type="button"
             variant="outline"
             onClick={() => void handleDeleteFromForm(workspaceSlug, existingConfig, draft.name, onSaved)}
-            className="h-9 gap-2 border-[#ff9fa8] text-[#ff4d57] hover:bg-[#fff5f6] hover:text-[#ff4d57]"
+            className="h-9 gap-2 border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] hover:text-[var(--lume-danger)]"
           >
             <Trash2 size={14} />
             删除服务器

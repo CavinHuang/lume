@@ -200,7 +200,7 @@ export function WorkspacesSettings() {
         <button
           type="button"
           onClick={() => setCreateWorkspaceOpen(true)}
-          className="mt-5 inline-flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-medium text-white"
+          className="mt-5 inline-flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-medium text-[var(--brand-foreground)]"
         >
           <Plus size={15} />
           新建工作区
@@ -521,7 +521,7 @@ function WorkspaceOverviewPanel({
         <button
           type="button"
           onClick={() => void handleSave()}
-          className="h-10 rounded-[8px] bg-[var(--brand)] text-[13px] font-medium text-white shadow-[0_8px_20px_rgba(98,91,255,0.22)] hover:bg-[var(--brand)]"
+          className="h-10 rounded-[8px] bg-[var(--brand)] text-[13px] font-medium text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
         >
           保存更改
         </button>
@@ -531,7 +531,7 @@ function WorkspaceOverviewPanel({
               <button
                 type="button"
                 onClick={() => void handleDelete()}
-                className="h-8 min-w-[120px] rounded-[6px] border border-[#ff5a5a] px-5 text-[12px] font-medium text-[#ff4e4e] hover:bg-[#fff5f5]"
+                className="h-8 min-w-[120px] rounded-[6px] border border-[color:color-mix(in_oklab,var(--lume-danger)_38%,var(--border))] px-5 text-[12px] font-medium text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))]"
               >
                 删除工作区
               </button>

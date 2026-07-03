@@ -91,13 +91,22 @@ mock.module('@/lib/desktop-api', () => ({
     getDesktopApiMocks().getSkillMarketCatalog?.(...args),
   getMcpConfig: (...args: unknown[]) => getDesktopApiMocks().getMcpConfig?.(...args),
   getMcpStatus: (...args: unknown[]) => getDesktopApiMocks().getMcpStatus?.(...args),
+  copyFile: mock(async () => undefined),
+  localFilePreviewUrl: (path: string) => `asset://${path}`,
   listSkillVersions: (...args: Parameters<typeof listSkillVersionsMock>) =>
     getDesktopApiMocks().listSkillVersions?.(...args),
   listEditableSkills: (...args: Parameters<typeof listEditableSkillsMock>) =>
     getDesktopApiMocks().listEditableSkills?.(...args),
+  openExternal: mock(async () => undefined),
+  openInSystem: mock(async () => undefined),
+  revealPathInSystem: mock(async () => undefined),
   restoreSkillVersion: (...args: unknown[]) => getDesktopApiMocks().restoreSkillVersion?.(...args),
+  saveFilePathDialog: mock(async () => ({ path: null })),
+  saveTextFileDialog: mock(async () => ({ path: null })),
   saveWorkspaceSkill: (...args: unknown[]) => getDesktopApiMocks().saveWorkspaceSkill?.(...args),
   sidecarCall: (...args: unknown[]) => getDesktopApiMocks().sidecarCall?.(...args),
+  writeBinaryFile: mock(async () => ({ path: '' })),
+  writeClipboardText: mock(async () => undefined),
 }))
 
 mock.module('@/lib/desktop-api/lume-config', () => ({

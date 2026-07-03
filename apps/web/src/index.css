@@ -193,6 +193,7 @@
   --lume-accent-foreground: oklch(0.99 0.004 202);
   --lume-focus-ring: oklch(0.66 0.13 202 / 42%);
   --lume-danger: oklch(0.62 0.18 25);
+  --lume-danger-foreground: oklch(0.99 0.004 25);
   --lume-success: oklch(0.62 0.13 155);
   --lume-warning: oklch(0.52 0.14 75);
   --lume-shadow-panel: var(--shadow-panel);
@@ -205,8 +206,8 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -236,8 +237,8 @@
   --radius: 0.625rem;
   --sidebar: var(--lume-bg-rail);
   --sidebar-foreground: var(--lume-text-primary);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-foreground);
   --sidebar-accent: var(--lume-accent-soft);
   --sidebar-accent-foreground: var(--lume-text-primary);
   --sidebar-border: var(--lume-border-subtle);
@@ -260,6 +261,7 @@
   --lume-accent-foreground: oklch(0.12 0.018 202);
   --lume-focus-ring: oklch(0.74 0.13 202 / 42%);
   --lume-danger: oklch(0.68 0.16 25);
+  --lume-danger-foreground: oklch(0.14 0.025 25);
   --lume-success: oklch(0.72 0.12 155);
   --lume-warning: oklch(0.78 0.13 75);
   --lume-shadow-panel: var(--shadow-panel);
@@ -272,8 +274,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -302,8 +304,8 @@
   --chart-5: oklch(0.269 0 0);
   --sidebar: var(--lume-bg-rail);
   --sidebar-foreground: var(--lume-text-primary);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-foreground);
   --sidebar-accent: var(--lume-accent-soft);
   --sidebar-accent-foreground: var(--lume-text-primary);
   --sidebar-border: var(--lume-border-subtle);

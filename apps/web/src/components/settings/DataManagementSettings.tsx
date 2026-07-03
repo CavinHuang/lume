@@ -296,7 +296,7 @@ export function DataManagementSettings() {
           <Button
             onClick={() => setConfirmEmptyOpen(true)}
             disabled={emptying}
-            className="h-9 gap-1.5 rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-4 text-[13px] text-[#ff4d57] hover:bg-[#ffe9eb]"
+            className="h-9 gap-1.5 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] px-4 text-[13px] text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_12%,var(--surface-1))]"
           >
             清空回收站
           </Button>
@@ -307,7 +307,7 @@ export function DataManagementSettings() {
             <p className="text-[12px] text-[#ff4d57]">确认永久删除回收站中的全部会话？此操作不可撤销。</p>
             <div className="mt-2 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmEmptyOpen(false)} disabled={emptying} className="h-8 rounded-[8px] px-3 text-[12px]">取消</Button>
-              <Button onClick={handleEmptyTrash} disabled={emptying} className="h-8 gap-1.5 rounded-[8px] bg-[#ff4d57] px-3 text-[12px] text-white hover:bg-[#e6454f]">
+              <Button onClick={handleEmptyTrash} disabled={emptying} className="h-8 gap-1.5 rounded-[8px] bg-[var(--lume-danger)] px-3 text-[12px] text-[var(--lume-danger-foreground)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_84%,var(--text-1))]">
                 {emptying ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                 确认清空
               </Button>
@@ -372,7 +372,7 @@ export function DataManagementSettings() {
                 迁移完成。选择旧目录的处理方式后将自动重启。
               </DialogDescription>
               <div className="flex justify-end gap-2">
-                <Button onClick={() => void handleApplyMigrate(true)} className="h-8 rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 text-[12px] text-[#ff4d57] hover:bg-[#ffe9eb]">
+                <Button onClick={() => void handleApplyMigrate(true)} className="h-8 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] px-3 text-[12px] text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_12%,var(--surface-1))]">
                   删除旧目录
                 </Button>
                 <Button onClick={() => void handleApplyMigrate(false)} className="h-8 rounded-[8px] px-3 text-[12px]">
