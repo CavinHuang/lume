@@ -21,6 +21,13 @@ interface LumeComposerProps {
 
 type LumeComposerActionSize = 'compact' | 'hero'
 
+const baseShell = {
+  borderColor: 'var(--lume-border-subtle)',
+  background:
+    'linear-gradient(180deg, color-mix(in oklab, var(--lume-bg-elevated) 96%, transparent), color-mix(in oklab, var(--lume-bg-panel) 90%, var(--lume-bg-elevated)))',
+  boxShadow: '0 22px 52px -38px hsl(var(--lume-shadow-panel) / 0.58)',
+}
+
 const toneStyles: Record<
   LumeComposerTone,
   {
@@ -37,44 +44,38 @@ const toneStyles: Record<
   }
 > = {
   idle: {
-    shell: {
-      borderColor: 'color-mix(in oklab, var(--border-strong) 54%, transparent)',
-      background:
-        'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 95%, transparent), color-mix(in oklab, var(--surface-2) 84%, transparent))',
-      boxShadow: '0 24px 48px -38px hsl(var(--shadow-panel) / 0.34)',
-    },
+    shell: baseShell,
     glow: {
       background:
-        'radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--brand) 12%, transparent) 0%, transparent 58%)',
-      opacity: 0.72,
+        'radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--lume-accent) 10%, transparent) 0%, transparent 58%)',
+      opacity: 0.5,
     },
-    dividerColor: 'color-mix(in oklab, var(--border-strong) 42%, transparent)',
+    dividerColor: 'var(--lume-border-subtle)',
   },
   ready: {
     shell: {
-      borderColor: 'color-mix(in oklab, var(--border-strong) 54%, transparent)',
-      background:
-        'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 95%, transparent), color-mix(in oklab, var(--surface-2) 84%, transparent))',
-      boxShadow: 'none',
+      ...baseShell,
+      borderColor:
+        'color-mix(in oklab, var(--lume-accent) 32%, var(--lume-border-strong))',
     },
     glow: {
-      background: 'transparent',
-      opacity: 0,
+      background:
+        'radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--lume-accent) 14%, transparent) 0%, transparent 56%)',
+      opacity: 0.62,
     },
-    dividerColor: 'color-mix(in oklab, var(--border-strong) 42%, transparent)',
+    dividerColor: 'var(--lume-border-subtle)',
   },
   streaming: {
     shell: {
-      borderColor: 'color-mix(in oklab, var(--border-strong) 54%, transparent)',
-      background:
-        'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 95%, transparent), color-mix(in oklab, var(--surface-2) 84%, transparent))',
-      boxShadow: 'none',
+      ...baseShell,
+      borderColor:
+        'color-mix(in oklab, var(--lume-accent) 24%, var(--lume-border-strong))',
     },
     glow: {
       background: 'transparent',
       opacity: 0,
     },
-    dividerColor: 'color-mix(in oklab, var(--border-strong) 42%, transparent)',
+    dividerColor: 'var(--lume-border-subtle)',
   },
 }
 
@@ -111,11 +112,11 @@ export function getLumeComposerPrimaryActionClassName({
   size?: LumeComposerActionSize
 }) {
   return cn(
-    'inline-flex items-center gap-2 rounded-full font-medium transition-all',
+    'inline-flex items-center gap-2 rounded-full font-medium transition-colors duration-150 ease-out',
     actionSizeClasses[size],
     enabled
-      ? 'bg-[linear-gradient(135deg,var(--brand),var(--brand-2))] text-[var(--brand-foreground)] shadow-[0_18px_34px_-24px_color-mix(in_oklab,var(--brand)_82%,transparent)] hover:translate-y-[-1px]'
-      : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--surface-3)_84%,transparent)] text-[var(--text-3)]',
+      ? 'bg-[var(--lume-accent)] text-[var(--lume-accent-foreground)] shadow-[0_16px_32px_-24px_hsl(var(--lume-shadow-panel)/0.72)] hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_88%,var(--lume-accent-2))]'
+      : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_70%,transparent)] text-[var(--lume-text-muted)]',
   )
 }
 
@@ -141,7 +142,7 @@ export function LumeComposer({
     <div
       data-tone={tone}
       className={cn(
-        'relative overflow-visible border backdrop-blur transition-[border-color,box-shadow,transform] duration-200',
+        'relative overflow-visible border backdrop-blur transition-[border-color,box-shadow,transform,background-color] duration-200 ease-out motion-reduce:transition-none',
         sizing.shell,
         className,
       )}

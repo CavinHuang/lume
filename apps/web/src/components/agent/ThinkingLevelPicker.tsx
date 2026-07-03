@@ -119,8 +119,8 @@ function ThinkingLevelButtons({
             className={cn(
               'min-w-0 rounded-[6px] px-1 text-[12px] font-medium transition-colors',
               selected
-                ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                : 'border border-transparent text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+                ? 'border border-[color-mix(in_oklab,var(--lume-accent)_40%,var(--lume-border-strong))] bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]'
+                : 'border border-transparent text-[var(--lume-text-secondary)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
             )}
           >
             {option.label}
@@ -145,8 +145,8 @@ function ThinkingLevelCard({
       className={cn(
         'group flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all border',
         selected
-          ? 'border-primary/30 bg-primary/5'
-          : 'border-transparent hover:bg-muted/30',
+          ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_34%,var(--lume-border-strong))] bg-[var(--lume-accent-soft)]'
+          : 'border-transparent hover:bg-[var(--lume-bg-elevated)]',
       )}
     >
       <input

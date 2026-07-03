@@ -195,7 +195,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
       </button>
 
       {summary.hasLoadedChannels && summary.isUnavailable && (
-        <span className="inline-flex h-6 items-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 text-[10.5px] font-medium text-amber-700 dark:text-amber-400">
+        <span className="inline-flex h-6 items-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-warning)_28%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 text-[10.5px] font-medium text-[var(--lume-warning)]">
           当前模型不可用
         </span>
       )}

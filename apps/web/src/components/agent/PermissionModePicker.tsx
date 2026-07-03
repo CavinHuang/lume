@@ -96,8 +96,8 @@ function PermissionModeOption({
       className={cn(
         'flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
         selected
-          ? 'border-[color:color-mix(in_oklab,var(--brand)_34%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_8%,var(--surface-1))]'
-          : 'border-transparent hover:bg-[var(--surface-2)]',
+          ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_34%,var(--lume-border-strong))] bg-[var(--lume-accent-soft)]'
+          : 'border-transparent hover:bg-[var(--lume-bg-elevated)]',
       )}
     >
       <span className={cn('flex size-7 shrink-0 items-center justify-center rounded-full border', TONE_CLASS[option.tone])}>

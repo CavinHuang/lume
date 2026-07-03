@@ -918,7 +918,7 @@ export function AgentInput({
 
   return (
     <div className="px-3 pb-4 pt-2">
-      <div className="w-full px-14">
+      <div className="mx-auto w-full max-w-[980px] px-4">
         <div>
           <LumeComposer
             tone={composerState.tone}
@@ -965,7 +965,7 @@ export function AgentInput({
                 <div className="relative">
                   <button
                     onClick={() => setAttachMenuOpen((v) => !v)}
-                    className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
+                    className="inline-flex size-8 items-center justify-center rounded-lg border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_72%,transparent)] text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
                     title="添加"
                     type="button"
                   >
@@ -974,11 +974,11 @@ export function AgentInput({
                   {attachMenuOpen && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
-                      <div className="absolute bottom-full left-0 z-50 mb-2 w-[140px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
+                      <div className="absolute bottom-full left-0 z-50 mb-2 w-[140px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)]">
                         <button
                           type="button"
                           onClick={() => { setAttachMenuOpen(false); handleAttach() }}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
                         >
                           <FileText size={15} className="text-[var(--text-3)]" />
                           文件
@@ -986,7 +986,7 @@ export function AgentInput({
                         <button
                           type="button"
                           onClick={() => { setAttachMenuOpen(false); handleAttach() }}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
                         >
                           <Image size={15} className="text-[var(--text-3)]" />
                           图片
@@ -994,7 +994,7 @@ export function AgentInput({
                         <button
                           type="button"
                           onClick={handleOpenPlugins}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
                         >
                           <Puzzle size={15} className="text-[var(--text-3)]" />
                           插件
@@ -1005,7 +1005,7 @@ export function AgentInput({
                   {pluginsPopoverOpen && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setPluginsPopoverOpen(false)} />
-                      <div className="absolute bottom-full left-0 z-50 mb-2 w-[260px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
+                      <div className="absolute bottom-full left-0 z-50 mb-2 w-[260px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)]">
                         <div className="px-3 py-2 text-[11px] font-medium text-[var(--text-3)]">
                           已安装插件
                         </div>
@@ -1049,7 +1049,7 @@ export function AgentInput({
                 <button
                   type="button"
                   onClick={handleStop}
-                  className="inline-flex h-8 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--brand-2)_26%,transparent)] bg-[color:color-mix(in_oklab,var(--brand-2)_14%,var(--surface-2))] px-3 text-[11.5px] font-medium text-[var(--text-1)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand-2)_34%,transparent)]"
+                  className="inline-flex h-8 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--lume-danger)_28%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-danger)_10%,var(--lume-bg-elevated))] px-3 text-[11.5px] font-medium text-[var(--lume-text-primary)] transition-colors hover:border-[color:color-mix(in_oklab,var(--lume-danger)_40%,var(--lume-border-strong))]"
                   title="停止"
                 >
                   <Square size={12} />
