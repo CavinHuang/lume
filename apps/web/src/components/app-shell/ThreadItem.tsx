@@ -21,18 +21,18 @@ type ThreadStatus = 'blocked' | 'running' | 'completed' | 'idle'
 
 /** 母会话状态色条 class（综合母+子状态，对齐 Proma leftAccent） */
 const TREE_ACCENT_CLASS: Record<ThreadStatus, string> = {
-  blocked: 'bg-orange-500',
-  running: 'bg-blue-500 animate-pulse',
-  completed: 'bg-green-500',
+  blocked: 'bg-[var(--lume-warning)]',
+  running: 'bg-[var(--lume-accent)] animate-pulse',
+  completed: 'bg-[var(--lume-success)]',
   idle: '',
 }
 
 /** 子会话 GitBranch 图标 class（随自身状态） */
 const STATUS_ICON_CLASS: Record<ThreadStatus, string> = {
-  blocked: 'text-orange-500',
-  running: 'text-blue-500',
-  completed: 'text-green-500',
-  idle: 'text-foreground/40',
+  blocked: 'text-[var(--lume-warning)]',
+  running: 'text-[var(--lume-accent)]',
+  completed: 'text-[var(--lume-success)]',
+  idle: 'text-[var(--lume-text-muted)]',
 }
 
 /** 递归判断子树是否含激活会话 */
@@ -102,7 +102,7 @@ export const ThreadItem = memo(function ThreadItem({
   // 色条：状态色优先，否则 active 用 brand，否则无
   const accentClass =
     treeStatus !== 'idle' ? TREE_ACCENT_CLASS[treeStatus]
-      : thread.active ? 'bg-[var(--brand)]'
+      : thread.active ? 'bg-[var(--lume-accent)]'
         : null
 
   // 自动展开（对齐 Proma 双 set）：手动展开 OR（激活在子树 且 未手动收起）
@@ -185,7 +185,7 @@ export const ThreadItem = memo(function ThreadItem({
       ref={anchorRef}
       onMouseEnter={hover.onMouseEnter}
       onMouseLeave={hover.onMouseLeave}
-      className={cn(indent && 'border-l border-l-foreground/10 ml-3')}
+      className={cn(indent && 'border-l border-l-[var(--lume-border-subtle)] ml-3')}
       style={indent ? { paddingLeft: thread.depth * 12 } : undefined}
     >
     <ContextMenu>
@@ -201,8 +201,8 @@ export const ThreadItem = memo(function ThreadItem({
             }}
             className={cn(
               'group relative w-full flex items-center gap-1.5 rounded-md py-1 pl-2.5 pr-1.5 transition-colors duration-100 text-left',
-              thread.active && 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))]',
-              !thread.active && 'hover:bg-[var(--surface-2)]',
+              thread.active && 'bg-[var(--lume-accent-soft)]',
+              !thread.active && 'hover:bg-[var(--lume-bg-elevated)]',
             )}
           />
         }
@@ -222,23 +222,23 @@ export const ThreadItem = memo(function ThreadItem({
               onKeyDown={handleKeyDown}
               onBlur={saveTitle}
               onClick={(e) => e.stopPropagation()}
-              className="w-full bg-transparent text-[13px] leading-5 text-[var(--text-1)] border-b border-[color:color-mix(in_oklab,var(--brand)_50%,transparent)] outline-none px-0 py-0"
+              className="w-full bg-transparent text-[13px] leading-5 text-[var(--lume-text-primary)] border-b border-[color:color-mix(in_oklab,var(--lume-accent)_50%,transparent)] outline-none px-0 py-0"
               maxLength={100}
             />
           ) : (
             <div className={cn(
               'truncate text-[13px] leading-[18px] flex items-center gap-1.5',
-              thread.active ? 'text-[var(--text-1)] font-medium' : 'text-[var(--text-2)]'
+              thread.active ? 'text-[var(--lume-text-primary)] font-medium' : 'text-[var(--lume-text-secondary)]'
             )}>
               {thread.pinned && (
-                <Pin size={11} className="flex-shrink-0 text-[var(--brand)]" />
+                <Pin size={11} className="flex-shrink-0 text-[var(--lume-accent)]" />
               )}
               {thread.isDelegate && (
                 <GitBranch size={11} className={cn('flex-shrink-0', STATUS_ICON_CLASS[selfStatus])} />
               )}
               <span className="truncate">{thread.title}</span>
               {hasChildren && (
-                <span className="flex-shrink-0 text-[11px] leading-4 text-foreground/45">
+                <span className="flex-shrink-0 text-[11px] leading-4 text-[var(--lume-text-muted)]">
                   {childCompleted}/{childTotal}
                 </span>
               )}
@@ -255,7 +255,7 @@ export const ThreadItem = memo(function ThreadItem({
                   aria-label={expanded ? '收起子会话' : '展开子会话'}
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={toggleExpand}
-                  className="flex-shrink-0 flex size-4 items-center justify-center rounded text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]"
+                  className="flex-shrink-0 flex size-4 items-center justify-center rounded text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
                 >
                   <ChevronRight size={12} className={cn('transition-transform', expanded && 'rotate-90')} />
                 </button>

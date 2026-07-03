@@ -96,7 +96,7 @@ export function ThreadItemActions({
       <span
         title={`最后更新：${new Date(updatedAt).toLocaleString('zh-CN')}`}
         className={cn(
-          'min-w-[42px] text-right text-[11px] leading-[18px] tabular-nums text-[var(--text-3)]',
+          'min-w-[42px] text-right text-[11px] leading-[18px] tabular-nums text-[var(--lume-text-muted)]',
           forceVisible ? 'hidden' : 'group-hover:hidden',
         )}
       >
@@ -115,8 +115,8 @@ export function ThreadItemActions({
                 className={cn(
                   'p-0.5 rounded transition-colors',
                   pinned
-                    ? 'text-[var(--brand)] hover:bg-[color:color-mix(in_oklab,var(--brand)_12%,transparent)] hover:text-[var(--brand)]'
-                    : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
+                    ? 'text-[var(--lume-accent)] hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_12%,transparent)] hover:text-[var(--lume-accent)]'
+                    : 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
                 )}
                 onClick={onTogglePin}
               >
@@ -133,8 +133,8 @@ export function ThreadItemActions({
                 className={cn(
                   'p-0.5 rounded transition-colors',
                   archiveConfirming
-                    ? 'text-red-500 bg-red-500/10'
-                    : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
+                    ? 'text-[var(--lume-danger)] bg-[color:color-mix(in_oklab,var(--lume-danger)_10%,transparent)]'
+                    : 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
                 )}
                 onClick={handleArchiveClick}
               >
@@ -149,7 +149,7 @@ export function ThreadItemActions({
         <DropdownMenu onOpenChange={handleMenuOpenChange}>
           <DropdownMenuTrigger
             render={
-              <button className="p-0.5 rounded text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)] transition-colors">
+              <button className="p-0.5 rounded text-[var(--lume-text-muted)] transition-colors hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]">
                 <MoreHorizontal size={14} />
               </button>
             }

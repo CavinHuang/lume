@@ -170,5 +170,8 @@ describe('Lume theme contract', () => {
     expect(expandedRail).toContain('border-sidebar-border')
     expect(collapsedRail).not.toContain('border-[var(--border-strong)]')
     expect(expandedRail).not.toContain('border-[var(--border-strong)]')
+    expect(lumeSidebar).toContain('bg-[var(--lume-bg-rail)]')
+    expect(lumeSidebar).not.toContain('bg-gradient-to-r')
+    expect(lumeSidebar).not.toContain('hover:translate-y-[-1px]')
   })
 })

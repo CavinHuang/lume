@@ -68,13 +68,7 @@ export function LumeSidebar({
     const footerItems = model.collapsedItems.filter((item) => item.kind === 'footer-action')
 
     return (
-      <aside
-        className="flex h-full w-[72px] -ml-2 flex-col border-r border-sidebar-border text-[var(--text-1)]"
-        style={{
-          background:
-            'linear-gradient(180deg, var(--surface-1) 0%, color-mix(in oklab, var(--surface-1) 72%, var(--surface-2)) 100%)',
-        }}
-      >
+      <aside className="flex h-full w-[72px] -ml-2 flex-col border-r border-sidebar-border bg-[var(--lume-bg-rail)] text-[var(--lume-text-primary)]">
         <div className="flex flex-col gap-2 px-3 pb-3 pt-4">
           {topItems.map((item) => (
             <button
@@ -86,10 +80,10 @@ export function LumeSidebar({
               className={cn(
                 'flex h-11 w-11 items-center justify-center rounded-2xl border transition-colors',
                 item.id === 'new-chat'
-                  ? 'border-transparent bg-gradient-to-br from-[var(--brand)] to-[var(--brand-2)] text-[var(--brand-foreground)] shadow-[0_10px_24px_-18px_color-mix(in_oklab,var(--brand)_90%,transparent)]'
-                  : 'border-transparent bg-transparent text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-                item.active && item.id !== 'new-chat' && 'bg-[var(--surface-2)] text-[var(--text-1)]',
-                item.disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-[var(--text-2)]',
+                  ? 'border-transparent bg-[var(--lume-accent)] text-[var(--lume-accent-foreground)] shadow-[0_12px_30px_-24px_hsl(var(--lume-shadow-panel)/0.72)]'
+                  : 'border-transparent bg-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
+                item.active && item.id !== 'new-chat' && 'bg-[var(--lume-accent-soft)] text-[var(--lume-text-primary)]',
+                item.disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-[var(--lume-text-secondary)]',
               )}
             >
               {renderIcon(item.icon, 18)}
@@ -97,7 +91,7 @@ export function LumeSidebar({
           ))}
         </div>
 
-        <div className="mx-4 h-px bg-[color:color-mix(in_oklab,var(--border-strong)_68%,transparent)]" />
+        <div className="mx-4 h-px bg-[var(--lume-border-subtle)]" />
 
         <div className="flex min-h-0 flex-1 flex-col gap-2 px-3 py-3">
           {workspaceItems.map((item) => (
@@ -109,11 +103,11 @@ export function LumeSidebar({
               className={cn(
                 'relative flex h-11 w-11 items-center justify-center rounded-2xl border border-transparent transition-colors',
                 item.active
-                  ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--text-1)]'
-                  : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+                  ? 'bg-[var(--lume-accent-soft)] text-[var(--lume-text-primary)]'
+                  : 'text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
               )}
             >
-              {item.active && <span className="absolute left-1 top-1/2 h-6 w-0.5 -translate-y-1/2 rounded-full bg-[var(--brand)]" />}
+              {item.active && <span className="absolute left-1 top-1/2 h-6 w-0.5 -translate-y-1/2 rounded-full bg-[var(--lume-accent)]" />}
               {renderIcon(item.icon, 18)}
             </button>
           ))}
@@ -124,7 +118,7 @@ export function LumeSidebar({
             type="button"
             title="展开侧边栏"
             onClick={() => onSetCollapsed(false)}
-            className="flex h-11 w-11 items-center justify-center rounded-2xl border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+            className="flex h-11 w-11 items-center justify-center rounded-2xl border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
           >
             <ChevronRight size={18} />
           </button>
@@ -136,9 +130,9 @@ export function LumeSidebar({
               disabled={item.disabled}
               onClick={() => handleCollapsedItemClick(item.id, item.kind, item.workspaceId, onTopAction, onFooterAction, onSelectWorkspace)}
               className={cn(
-                'flex h-11 w-11 items-center justify-center rounded-2xl border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
-                item.active && 'bg-[var(--surface-2)] text-[var(--text-1)]',
-                item.disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-[var(--text-3)]',
+                'flex h-11 w-11 items-center justify-center rounded-2xl border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
+                item.active && 'bg-[var(--lume-accent-soft)] text-[var(--lume-text-primary)]',
+                item.disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-[var(--lume-text-secondary)]',
               )}
             >
               {renderIcon(item.icon, 18)}
@@ -150,13 +144,7 @@ export function LumeSidebar({
   }
 
   return (
-    <aside
-      className="flex h-full w-[286px] min-w-[286px] -ml-2 flex-col border-r border-sidebar-border text-[var(--text-1)]"
-      style={{
-        background:
-          'linear-gradient(180deg, color-mix(in oklab, var(--surface-1) 82%, white) 0%, color-mix(in oklab, var(--surface-1) 74%, var(--surface-2)) 100%)',
-      }}
-    >
+    <aside className="flex h-full w-[286px] min-w-[286px] -ml-2 flex-col border-r border-sidebar-border bg-[var(--lume-bg-rail)] text-[var(--lume-text-primary)]">
       <div className="flex flex-col gap-1 px-3 pb-4 pt-4">
         {model.topActions.map((action) => {
           if (action.id === 'new-chat') {
@@ -165,7 +153,7 @@ export function LumeSidebar({
                 key={action.id}
                 type="button"
                 onClick={() => onTopAction(action.id)}
-                className="flex h-10 w-full items-center gap-3 rounded-xl bg-gradient-to-r from-[var(--brand)] to-[var(--brand-2)] px-4 text-left text-[13px] font-medium text-[var(--brand-foreground)] shadow-[0_16px_28px_-22px_color-mix(in_oklab,var(--brand)_78%,transparent)] transition-transform hover:translate-y-[-1px]"
+                className="flex h-10 w-full items-center gap-3 rounded-xl bg-[var(--lume-accent)] px-4 text-left text-[13px] font-medium text-[var(--lume-accent-foreground)] shadow-[0_12px_30px_-24px_hsl(var(--lume-shadow-panel)/0.72)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_88%,var(--lume-accent-2))]"
               >
                 <SquarePen size={17} />
                 <span className="flex-1">新建聊天</span>
@@ -184,12 +172,12 @@ export function LumeSidebar({
                 key={action.id}
                 type="button"
                 onClick={() => onTopAction(action.id)}
-                className="flex h-10 w-full items-center gap-3 rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_74%,transparent)] px-4 text-left transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_22%,var(--border-strong))] hover:bg-[color:color-mix(in_oklab,var(--surface-2)_72%,var(--surface-3))]"
+                className="flex h-10 w-full items-center gap-3 rounded-xl border border-[var(--lume-border-subtle)] bg-transparent px-4 text-left text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
               >
-                <Search size={16} className="text-[var(--text-3)]" />
-                <span className="flex-1 text-[13px] text-[var(--text-2)]">搜索</span>
+                <Search size={16} />
+                <span className="flex-1 text-[13px]">搜索</span>
                 {action.shortcut && (
-                  <span className="rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_78%,transparent)] bg-[var(--surface-1)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-3)]">
+                  <span className="rounded-full border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] px-2 py-0.5 text-[10px] font-medium text-[var(--lume-text-muted)]">
                     {action.shortcut}
                   </span>
                 )}
@@ -204,23 +192,23 @@ export function LumeSidebar({
               disabled={action.disabled}
               onClick={() => onTopAction(action.id)}
               className={cn(
-                'flex h-9 w-full items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors',
+                'flex h-9 w-full items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
                 action.disabled
-                  ? 'cursor-not-allowed text-[var(--text-3)] opacity-70'
+                  ? 'cursor-not-allowed text-[var(--lume-text-muted)] opacity-70'
                   : action.active
-                    ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]'
-                  : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+                    ? 'bg-[var(--lume-accent-soft)] text-[var(--lume-text-primary)]'
+                  : 'text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
               )}
             >
               <span className={cn(
                 'flex size-5 items-center justify-center',
-                action.disabled ? 'text-[var(--text-3)]' : action.active ? 'text-[var(--brand)]' : 'text-[var(--text-2)]',
+                action.disabled ? 'text-[var(--lume-text-muted)]' : action.active ? 'text-[var(--lume-accent)]' : 'text-[var(--lume-text-secondary)]',
               )}>
                 {renderIcon(action.icon, 16)}
               </span>
               <span className="flex-1">{action.label}</span>
               {action.badge && (
-                <span className="rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_78%,transparent)] bg-[var(--surface-2)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-3)]">
+                <span className="rounded-full border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-2 py-0.5 text-[10px] font-medium text-[var(--lume-text-muted)]">
                   {action.badge}
                 </span>
               )}
@@ -231,7 +219,7 @@ export function LumeSidebar({
 
       <div className="flex items-center justify-between px-3 pb-3 pt-2">
         <div className="flex items-center gap-2">
-          <span className="text-[12px] font-semibold leading-none text-[var(--text-3)]">
+          <span className="text-[12px] font-semibold leading-none text-[var(--lume-text-muted)]">
             工作区
           </span>
         </div>
@@ -240,7 +228,7 @@ export function LumeSidebar({
             type="button"
             title={allExpanded ? '收起全部' : '展开全部'}
             onClick={onToggleAllWorkspaces}
-            className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+            className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
           >
             {allExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
@@ -248,7 +236,7 @@ export function LumeSidebar({
             type="button"
             title="新建工作区"
             onClick={onCreateWorkspace}
-            className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+            className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
           >
             <Plus size={17} strokeWidth={2.1} />
           </button>
@@ -281,7 +269,7 @@ export function LumeSidebar({
         </div>
       </ScrollArea>
 
-      <div className="border-t border-[color:color-mix(in_oklab,var(--border-strong)_50%,transparent)] px-3 pb-4 pt-3">
+      <div className="border-t border-[var(--lume-border-subtle)] px-3 pb-4 pt-3">
         <div className="space-y-1">
           {model.footerActions.map((action) => {
             if (action.id === 'settings') {
@@ -292,10 +280,10 @@ export function LumeSidebar({
                     disabled={action.disabled}
                     onClick={() => onFooterAction(action.id)}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors',
+                      'flex h-full min-w-0 flex-1 items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
                       action.disabled
-                        ? 'cursor-not-allowed text-[var(--text-3)] opacity-70'
-                        : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
+                        ? 'cursor-not-allowed text-[var(--lume-text-muted)] opacity-70'
+                        : 'text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
                     )}
                   >
                     <span className="flex size-5 items-center justify-center">
@@ -307,7 +295,7 @@ export function LumeSidebar({
                     type="button"
                     title="收起侧边栏"
                     onClick={() => onSetCollapsed(true)}
-                    className="flex size-8 items-center justify-center rounded-xl border border-transparent text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+                    className="flex size-8 items-center justify-center rounded-xl border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
                   >
                     <ChevronLeft size={17} />
                   </button>
@@ -322,10 +310,10 @@ export function LumeSidebar({
                 disabled={action.disabled}
                 onClick={() => onFooterAction(action.id)}
                 className={cn(
-                  'flex h-9 w-full items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors',
+                  'flex h-9 w-full items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
                   action.disabled
-                    ? 'cursor-not-allowed text-[var(--text-3)] opacity-70'
-                    : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]',
+                    ? 'cursor-not-allowed text-[var(--lume-text-muted)] opacity-70'
+                    : 'text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
                 )}
               >
                 <span className="flex size-5 items-center justify-center">
