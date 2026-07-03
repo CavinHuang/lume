@@ -195,6 +195,7 @@
   --lume-danger: oklch(0.62 0.18 25);
   --lume-success: oklch(0.62 0.13 155);
   --lume-warning: oklch(0.72 0.14 75);
+  --lume-shadow-panel: var(--shadow-panel);
   --background: var(--lume-bg-app);
   --foreground: var(--lume-text-primary);
   --brand: var(--lume-accent);
@@ -261,6 +262,7 @@
   --lume-danger: oklch(0.68 0.16 25);
   --lume-success: oklch(0.72 0.12 155);
   --lume-warning: oklch(0.78 0.13 75);
+  --lume-shadow-panel: var(--shadow-panel);
   --background: var(--lume-bg-app);
   --foreground: var(--lume-text-primary);
   --brand: var(--lume-accent);
