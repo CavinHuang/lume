@@ -1,3 +1,5 @@
+Spend time on thinking; you do not need to use the commentary channel to report progress to me.
+
 ## Working agreements
 - Write a cleanup plan before modifying code for cleanup/refactor/deslop work.
 - 仅在清理已有测试保护的代码时才锁定行为；新增或无测试的代码不要为了仪式感补写测试。
@@ -129,6 +131,12 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+## 桌面端（Electron）剪贴板写入口
+
+renderer 写剪贴板**必须**用 `writeClipboardText`（`@/lib/desktop-api` → IPC `write_clipboard_text` → 主进程 `clipboard.writeText`，`apps/desktop/src/main.ts`）。**禁止** `navigator.clipboard.writeText`：`setPermissionRequestHandler` 无条件 `callback(false)` 拒绝 `clipboard-write` 权限，会导致复制静默失败（仅 `console.error`，UI 无反馈）。读剪贴板对应 `readClipboardText`（IPC `read_clipboard_text`）。
 
 # cc-connect Integration
 

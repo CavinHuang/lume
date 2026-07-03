@@ -19,7 +19,7 @@ const PREVIEW_TEXT_MAX = 220
 const PANEL_WIDTH = 318
 const PANEL_MIN_HEIGHT = 132
 const PANEL_MAX_HEIGHT = 420
-const PANEL_GAP = 16
+const PANEL_GAP = 8
 const VIEWPORT_MARGIN = 8
 
 type PreviewRole = 'user' | 'assistant' | 'status'
@@ -143,6 +143,13 @@ export function useThreadMiniMapHover(delayMs: number = HOVER_DELAY_MS, disabled
     setIsLeaving(false)
   }
 
+  // 立即打开（清掉所有延迟定时器），供 Cmd+F 等快捷键即时唤起消息级 minimap
+  const openNow = () => {
+    cancelAll()
+    setOpen(true)
+    setIsLeaving(false)
+  }
+
   return {
     open,
     isLeaving,
@@ -151,6 +158,7 @@ export function useThreadMiniMapHover(delayMs: number = HOVER_DELAY_MS, disabled
     handlePanelMouseEnter,
     handlePanelMouseLeave: closeWithDelay,
     cancelNow,
+    openNow,
   }
 }
 
@@ -239,12 +247,47 @@ function getPreferredPanelHeight({
   return Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, 54 + visibleItems * 42))
 }
 
+export interface HoverBridgeRect {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
+/**
+ * 计算「锚点↔面板」之间的不可见悬停桥接区：鼠标穿越间隙时落入桥接即视为仍在浮层内，
+ * 避免触发 160ms 关闭倒计时（hover bridge 模式，对鼠标速度不敏感）。
+ * 水平填补锚点与面板的间隙，垂直覆盖二者并集以容忍斜向移动；
+ * 面板与锚点水平重叠（窄屏 clamp）时返回 null（无间隙无需桥接）。
+ */
+export function computeHoverBridge(
+  anchor: { top: number; bottom: number; left: number; right: number },
+  panel: { top: number; left: number; width: number; height: number },
+): HoverBridgeRect | null {
+  const panelRight = panel.left + panel.width
+  let bridgeLeft: number
+  let bridgeWidth: number
+  if (panel.left >= anchor.right) {
+    bridgeLeft = anchor.right
+    bridgeWidth = panel.left - anchor.right
+  } else if (panelRight <= anchor.left) {
+    bridgeLeft = panelRight
+    bridgeWidth = anchor.left - panelRight
+  } else {
+    return null
+  }
+  if (bridgeWidth <= 0) return null
+  const bridgeTop = Math.min(anchor.top, panel.top)
+  const bridgeBottom = Math.max(anchor.bottom, panel.top + panel.height)
+  return { top: bridgeTop, left: bridgeLeft, width: bridgeWidth, height: bridgeBottom - bridgeTop }
+}
+
 function usePopoverPosition(
   anchorRef: RefObject<HTMLElement | null>,
   open: boolean,
   preferredHeight: number,
-): { top: number; left: number; height: number } | null {
-  const [position, setPosition] = useState<{ top: number; left: number; height: number } | null>(null)
+): { top: number; left: number; height: number; bridge: HoverBridgeRect | null } | null {
+  const [position, setPosition] = useState<{ top: number; left: number; height: number; bridge: HoverBridgeRect | null } | null>(null)
 
   useLayoutEffect(() => {
     if (!open) {
@@ -267,7 +310,11 @@ function usePopoverPosition(
       const preferredTop = rect.top + rect.height / 2 - height / 2
       const maxTop = Math.max(VIEWPORT_MARGIN, viewportHeight - height - VIEWPORT_MARGIN)
       const top = Math.min(Math.max(VIEWPORT_MARGIN, preferredTop), maxTop)
-      setPosition({ top, left, height })
+      const bridge = computeHoverBridge(
+        { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right },
+        { top, left, width: PANEL_WIDTH, height },
+      )
+      setPosition({ top, left, height, bridge })
     }
     update()
     window.addEventListener('resize', update)
@@ -315,7 +362,7 @@ const PREVIEW_MD_COMPONENTS = {
   a: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
 }
 
-function PreviewText({ text }: { text: string }) {
+export function PreviewText({ text }: { text: string }) {
   const isDark = useIsDark()
   if (!text) {
     return <span className="text-[11px] text-muted-foreground/60">(空消息)</span>
@@ -356,12 +403,26 @@ export function ThreadMiniMapPopover({
   if (!open || !position) return null
 
   return createPortal(
-    <div
-      className="fixed z-[9999] pointer-events-auto transition-[top,height] duration-150 ease-out"
-      style={{ top: position.top, left: position.left, width: PANEL_WIDTH, height: position.height }}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-    >
+    <>
+      {position.bridge && (
+        <div
+          className="fixed z-[9998] pointer-events-auto"
+          style={{
+            top: position.bridge.top,
+            left: position.bridge.left,
+            width: position.bridge.width,
+            height: position.bridge.height,
+          }}
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
+        />
+      )}
+      <div
+        className="fixed z-[9999] pointer-events-auto transition-[top,height] duration-150 ease-out"
+        style={{ top: position.top, left: position.left, width: PANEL_WIDTH, height: position.height }}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
       <div
         className={cn(
           'flex h-full flex-col overflow-hidden rounded-xl bg-popover shadow-xl ring-1 ring-black/[0.05] dark:ring-white/[0.08]',
@@ -441,7 +502,8 @@ export function ThreadMiniMapPopover({
           )}
         </div>
       </div>
-    </div>,
+      </div>
+    </>,
     document.body,
   )
 }

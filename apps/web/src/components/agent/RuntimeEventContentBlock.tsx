@@ -9,7 +9,7 @@ import { activeTabIdAtom, agentThreadsAtom, generalSettingsAtom, tabsAtom } from
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import { groupAssistantBlocksForMinimal } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
-import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardText } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
 import { useThreadFileEnv } from './thread-file-env'
@@ -1270,11 +1270,8 @@ export function PlanPreviewCard({
   }, [])
 
   const handleCopy = async () => {
-    const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard)
-    if (!writeText) return
-
     try {
-      await writeText(preview.markdown)
+      await writeClipboardText(preview.markdown)
       showTemporaryCopiedFeedback(feedbackStateRef.current, {
         setCopied,
         setTimer: window.setTimeout,
@@ -2040,11 +2037,8 @@ function CopyMessageButton({
   }, [])
 
   const handleCopy = async () => {
-    const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard)
-    if (!writeText) return
-
     try {
-      await writeText(text)
+      await writeClipboardText(text)
       showTemporaryCopiedFeedback(feedbackStateRef.current, {
         setCopied,
         setTimer: window.setTimeout,

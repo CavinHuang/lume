@@ -71,4 +71,49 @@ function DropdownMenuSeparator({ className }: { className?: string }) {
   )
 }
 
-export { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator }
+function DropdownMenuSub({ ...props }: Menu.SubmenuRoot.Props) {
+  return <Menu.SubmenuRoot data-slot="dropdown-menu-sub" {...props} />
+}
+
+function DropdownMenuSubTrigger({ className, ...props }: Menu.SubmenuTrigger.Props) {
+  return (
+    <Menu.SubmenuTrigger
+      data-slot="dropdown-menu-sub-trigger"
+      className={cn(
+        'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] transition-colors cursor-default',
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
+function DropdownMenuSubContent({ className, children, ...props }: Menu.Popup.Props & { className?: string }) {
+  return (
+    <Menu.Portal>
+      <Menu.Positioner sideOffset={4} align="start" className="z-[9999]">
+        <Menu.Popup
+          data-slot="dropdown-menu-sub-content"
+          className={cn(
+            'min-w-[140px] overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)] animate-in fade-in-0 zoom-in-95',
+            className
+          )}
+          {...props}
+        >
+          {children}
+        </Menu.Popup>
+      </Menu.Positioner>
+    </Menu.Portal>
+  )
+}
+
+export {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+}

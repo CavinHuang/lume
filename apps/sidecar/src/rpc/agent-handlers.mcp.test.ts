@@ -46,6 +46,7 @@ const callToolDiagnosticMock = mock(async (input: {
 }));
 
 mock.module("../services/mcp/workspace-mcp-manager", () => ({
+  WorkspaceMcpManager: class WorkspaceMcpManager {},
   getWorkspaceMcpManager: () => ({
     syncWorkspace: syncWorkspaceMock,
     disposeWorkspace: disposeWorkspaceMock,
@@ -163,8 +164,13 @@ describe("agent-handlers MCP RPC", () => {
     const handlers = await createHandlers();
     syncWorkspaceMock.mockClear();
 
-    expect(await handlers[AGENT_IPC_CHANNELS.GET_MCP_STATUS]!({ workspaceSlug: "demo" })).toEqual({
-      servers: getStatusMock("demo")
+    const result = await handlers[AGENT_IPC_CHANNELS.GET_MCP_STATUS]!({ workspaceSlug: "demo" }) as any;
+
+    expect(result.servers.map((server: { serverId: string }) => server.serverId)).toEqual(["remote", "node_repl"]);
+    expect(result.servers.find((server: { serverId: string }) => server.serverId === "node_repl")).toMatchObject({
+      name: "node_repl",
+      status: "connected",
+      tools: ["mcp__node_repl__js", "mcp__node_repl__js_reset", "mcp__node_repl__js_add_node_module_dir"]
     });
     expect(syncWorkspaceMock).toHaveBeenCalledWith("demo", { waitForConnections: true });
     await expect(handlers[AGENT_IPC_CHANNELS.GET_MCP_STATUS]!({})).rejects.toThrow();

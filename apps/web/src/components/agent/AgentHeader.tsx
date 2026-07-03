@@ -1,7 +1,7 @@
 import { useAtomValue } from 'jotai'
 import { cn } from '@/lib/utils'
 import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily } from '@/atoms'
-import { WorkspacePicker } from './WorkspacePicker'
+import { ThreadMoreActions } from './ThreadMoreActions'
 import type { AgentRuntimePhase } from '@lume/shared'
 
 interface AgentHeaderProps {
@@ -39,7 +39,7 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
         <span className="text-[14px] font-medium text-foreground truncate">
           {thread?.title ?? '新会话'}
         </span>
-        {!readOnly && <WorkspacePicker />}
+        <ThreadMoreActions threadId={threadId} readOnly={readOnly} />
         {phaseStyle && (
           <span
             className={cn(

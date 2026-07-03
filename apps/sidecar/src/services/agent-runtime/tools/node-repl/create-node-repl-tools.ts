@@ -1,11 +1,16 @@
 import { basename, isAbsolute, win32 } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
+import type { McpServerStatus, McpToolDetail } from "@lume/shared";
 import { getNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
 import {
   NODE_REPL_MCP_INSTRUCTIONS,
   type JsExecInput,
   type NodeReplRuntimeRegistry
 } from "./node-repl-types";
+
+export const NODE_REPL_MCP_SERVER_ID = "node_repl";
+export const NODE_REPL_MCP_SERVER_NAME = "node_repl";
+const NODE_REPL_MCP_WRAPPER_PREFIX = `mcp__${NODE_REPL_MCP_SERVER_ID}__`;
 
 export function createNodeReplTools(input: {
   sessionId: string;
@@ -52,7 +57,11 @@ export function createNodeReplTools(input: {
         const parsed = parseJsExecInput(rawArgs);
         if (!parsed.ok) return errorResult(context.toolUseId, parsed.error);
         const threadId = context.sessionId ?? input.sessionId;
-        const result = await registry.exec(threadId, parsed.value, { cwd: context.cwd || input.cwd });
+        const execInput = withRuntimeRequestMeta(parsed.value, {
+          threadId,
+          toolUseId: context.toolUseId
+        });
+        const result = await registry.exec(threadId, execInput, { cwd: context.cwd || input.cwd });
         return {
           type: "tool_result",
           tool_use_id: context.toolUseId ?? "",
@@ -119,6 +128,56 @@ export function createNodeReplTools(input: {
   ];
 }
 
+export function createNodeReplMcpTools(input: {
+  sessionId: string;
+  cwd: string;
+  workspaceSlug?: string;
+  registry?: NodeReplRuntimeRegistry;
+}): ToolDefinition[] {
+  return createNodeReplTools(input).map((tool) => ({
+    ...tool,
+    name: toNodeReplMcpWrapperName(tool.name),
+    runtimeMetadata: {
+      ...(tool.runtimeMetadata ?? {}),
+      source: "mcp",
+      capability: "mcp",
+      mcpServerId: NODE_REPL_MCP_SERVER_ID,
+      builtin: true
+    }
+  }));
+}
+
+export function getNodeReplMcpToolDetails(cwd = process.cwd()): McpToolDetail[] {
+  return createNodeReplTools({ sessionId: "node_repl-status", cwd }).map((tool) => ({
+    name: toNodeReplMcpWrapperName(tool.name),
+    originalName: tool.name,
+    wrapperName: toNodeReplMcpWrapperName(tool.name),
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    serverId: NODE_REPL_MCP_SERVER_ID,
+    serverName: NODE_REPL_MCP_SERVER_NAME
+  }));
+}
+
+export function getNodeReplMcpStatus(now = Date.now()): McpServerStatus {
+  const toolDetails = getNodeReplMcpToolDetails();
+  return {
+    serverId: NODE_REPL_MCP_SERVER_ID,
+    name: NODE_REPL_MCP_SERVER_NAME,
+    transport: "stdio",
+    enabled: true,
+    status: "connected",
+    tools: toolDetails.map((tool) => tool.wrapperName),
+    toolDetails,
+    lastCheckedAt: now,
+    lastConnectedAt: now
+  };
+}
+
+function toNodeReplMcpWrapperName(toolName: string): string {
+  return `${NODE_REPL_MCP_WRAPPER_PREFIX}${toolName}`;
+}
+
 function parseJsExecInput(rawArgs: unknown): { ok: true; value: JsExecInput } | { ok: false; error: string } {
   if (!rawArgs || typeof rawArgs !== "object" || Array.isArray(rawArgs)) {
     return { ok: false, error: "input must be an object" };
@@ -137,6 +196,18 @@ function parseJsExecInput(rawArgs: unknown): { ok: true; value: JsExecInput } | 
       ...(typeof args.title === "string" ? { title: args.title } : {}),
       ...(typeof args.timeout_ms === "number" ? { timeout_ms: args.timeout_ms } : {}),
       ...(isRecord(args._meta) ? { _meta: args._meta } : {})
+    }
+  };
+}
+
+function withRuntimeRequestMeta(input: JsExecInput, runtime: { threadId: string; toolUseId?: string }): JsExecInput {
+  return {
+    ...input,
+    _meta: {
+      sessionId: runtime.threadId,
+      threadId: runtime.threadId,
+      ...(runtime.toolUseId ? { toolUseId: runtime.toolUseId } : {}),
+      ...(input._meta ?? {})
     }
   };
 }

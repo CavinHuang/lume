@@ -105,6 +105,7 @@ import {
   updateAgentWorkspace
 } from "../services/agent/agent-workspace-manager";
 import { getWorkspaceMcpManager } from "../services/mcp/workspace-mcp-manager";
+import { appendBuiltinMcpStatuses } from "../services/mcp/builtin-mcp-status";
 import {
   getGitHubSkillReview,
   installGitHubSkillToWorkspace
@@ -909,7 +910,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       await getWorkspaceMcpManager().syncWorkspace(input.workspaceSlug, {
         waitForConnections: input.waitForConnections !== false
       });
-      return { servers: getWorkspaceMcpManager().getStatus(input.workspaceSlug) };
+      return { servers: appendBuiltinMcpStatuses(getWorkspaceMcpManager().getStatus(input.workspaceSlug)) };
     },
     [AGENT_IPC_CHANNELS.TEST_MCP_SERVER]: async (params) => {
       const input = validateInput(mcpTestServerInputSchema, params, AGENT_IPC_CHANNELS.TEST_MCP_SERVER);

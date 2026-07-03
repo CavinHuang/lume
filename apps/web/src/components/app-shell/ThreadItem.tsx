@@ -1,13 +1,46 @@
 import { memo, useState, useRef } from 'react'
-import { useAtomValue } from 'jotai'
-import { Pin, PinOff, Pencil, Trash2, Archive, ChevronRight } from 'lucide-react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { Pin, PinOff, Pencil, Trash2, Archive, ChevronRight, GitBranch } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentStreamingStatesFamily, agentSubagentRunsFamily } from '@/atoms'
+import {
+  agentStreamingStatesFamily,
+  agentSubagentRunsFamily,
+  agentRuntimeStatusFamily,
+  activeTabIdAtom,
+  expandedThreadIdsAtom,
+  collapsedThreadIdsAtom,
+} from '@/atoms'
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu'
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ThreadItemActions } from './ThreadItemActions'
 import { useThreadMiniMapHover, ThreadMiniMapPopover } from './ThreadMiniMapPopover'
 import type { LumeSidebarThreadItem } from './lume-sidebar-view-model'
+
+type ThreadStatus = 'blocked' | 'running' | 'completed' | 'idle'
+
+/** 母会话状态色条 class（综合母+子状态，对齐 Proma leftAccent） */
+const TREE_ACCENT_CLASS: Record<ThreadStatus, string> = {
+  blocked: 'bg-orange-500',
+  running: 'bg-blue-500 animate-pulse',
+  completed: 'bg-green-500',
+  idle: '',
+}
+
+/** 子会话 GitBranch 图标 class（随自身状态） */
+const STATUS_ICON_CLASS: Record<ThreadStatus, string> = {
+  blocked: 'text-orange-500',
+  running: 'text-blue-500',
+  completed: 'text-green-500',
+  idle: 'text-foreground/40',
+}
+
+/** 递归判断子树是否含激活会话 */
+function threadContainsActive(thread: LumeSidebarThreadItem, activeId: string | null): boolean {
+  if (!activeId) return false
+  if (thread.id === activeId) return true
+  return thread.children?.some((c) => threadContainsActive(c, activeId)) ?? false
+}
 
 interface ThreadItemProps {
   thread: LumeSidebarThreadItem
@@ -29,6 +62,14 @@ export const ThreadItem = memo(function ThreadItem({
 }: ThreadItemProps) {
   const streamingState = useAtomValue(agentStreamingStatesFamily(thread.id))
   const isStreaming = streamingState === 'streaming'
+  const runtimeStatus = useAtomValue(agentRuntimeStatusFamily(thread.id))
+  const childRuns = useAtomValue(agentSubagentRunsFamily(thread.id)) ?? []
+  const activeTabId = useAtomValue(activeTabIdAtom)
+  const expandedSet = useAtomValue(expandedThreadIdsAtom)
+  const collapsedSet = useAtomValue(collapsedThreadIdsAtom)
+  const setExpandedSet = useSetAtom(expandedThreadIdsAtom)
+  const setCollapsedSet = useSetAtom(collapsedThreadIdsAtom)
+
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -37,11 +78,37 @@ export const ThreadItem = memo(function ThreadItem({
   const anchorRef = useRef<HTMLDivElement>(null)
   const hover = useThreadMiniMapHover(600, editing || menuOpen || disableMiniMap)
 
-  const childRuns = useAtomValue(agentSubagentRunsFamily(thread.id)) ?? []
+  // 自身状态：blocked(awaiting) > running(streaming) > completed > idle
+  const phase = runtimeStatus?.phase
+  const selfStatus: ThreadStatus =
+    phase === 'awaiting_permission' || phase === 'awaiting_user_answer' ? 'blocked'
+      : isStreaming ? 'running'
+        : phase === 'completed' ? 'completed'
+          : 'idle'
+
+  // 母会话综合：自身 + 一层子代理 runs
+  // blocked 仅母自身；running 母或子运行；completed 母或子全完成；否则 idle
   const childTotal = thread.children?.length ?? 0
   const childCompleted = childRuns.filter((r) => r.status === 'completed').length
   const hasChildren = childTotal > 0
-  const [expanded, setExpanded] = useState(false)
+  const childRunning = childRuns.some((r) => r.status === 'running' || r.status === 'accepted')
+  const childAllCompleted = childRuns.length > 0 && childRuns.every((r) => r.status === 'completed')
+  const treeStatus: ThreadStatus =
+    selfStatus === 'blocked' ? 'blocked'
+      : selfStatus === 'running' || childRunning ? 'running'
+        : selfStatus === 'completed' || childAllCompleted ? 'completed'
+          : 'idle'
+
+  // 色条：状态色优先，否则 active 用 brand，否则无
+  const accentClass =
+    treeStatus !== 'idle' ? TREE_ACCENT_CLASS[treeStatus]
+      : thread.active ? 'bg-[var(--brand)]'
+        : null
+
+  // 自动展开（对齐 Proma 双 set）：手动展开 OR（激活在子树 且 未手动收起）
+  const activeChildVisible = thread.id !== activeTabId && threadContainsActive(thread, activeTabId)
+  const expanded = hasChildren && (expandedSet.has(thread.id) || (activeChildVisible && !collapsedSet.has(thread.id)))
+
   const indent = thread.depth > 0
 
   const startEdit = (): void => {
@@ -102,7 +169,15 @@ export const ThreadItem = memo(function ThreadItem({
 
   const toggleExpand = (e: React.MouseEvent): void => {
     e.stopPropagation()
-    setExpanded((v) => !v)
+    hover.cancelNow()
+    // 双 set 互斥：收起时记入 collapsed（压制未来自动展开），展开时从 collapsed 删除
+    if (expanded) {
+      setExpandedSet((prev) => { const n = new Set(prev); n.delete(thread.id); return n })
+      setCollapsedSet((prev) => { const n = new Set(prev); n.add(thread.id); return n })
+    } else {
+      setCollapsedSet((prev) => { const n = new Set(prev); n.delete(thread.id); return n })
+      setExpandedSet((prev) => { const n = new Set(prev); n.add(thread.id); return n })
+    }
   }
 
   return (
@@ -110,7 +185,7 @@ export const ThreadItem = memo(function ThreadItem({
       ref={anchorRef}
       onMouseEnter={hover.onMouseEnter}
       onMouseLeave={hover.onMouseLeave}
-      className={cn(indent && 'border-l-2 border-l-foreground/20 ml-3')}
+      className={cn(indent && 'border-l border-l-foreground/10 ml-3')}
       style={indent ? { paddingLeft: thread.depth * 12 } : undefined}
     >
     <ContextMenu>
@@ -132,12 +207,9 @@ export const ThreadItem = memo(function ThreadItem({
           />
         }
       >
-        {(isStreaming || thread.active) && (
+        {accentClass && (
           <span
-            className={cn(
-              'absolute inset-y-0 left-0 w-[3px] rounded-l-md pointer-events-none',
-              isStreaming ? 'bg-blue-500 animate-pulse' : 'bg-[var(--brand)]',
-            )}
+            className={cn('absolute inset-y-0 left-0 w-[3px] rounded-l-md pointer-events-none', accentClass)}
             aria-hidden="true"
           />
         )}
@@ -161,26 +233,36 @@ export const ThreadItem = memo(function ThreadItem({
               {thread.pinned && (
                 <Pin size={11} className="flex-shrink-0 text-[var(--brand)]" />
               )}
+              {thread.isDelegate && (
+                <GitBranch size={11} className={cn('flex-shrink-0', STATUS_ICON_CLASS[selfStatus])} />
+              )}
               <span className="truncate">{thread.title}</span>
+              {hasChildren && (
+                <span className="flex-shrink-0 text-[11px] leading-4 text-foreground/45">
+                  {childCompleted}/{childTotal}
+                </span>
+              )}
             </div>
           )}
         </div>
 
         {hasChildren && !editing && (
-          <span className="flex-shrink-0 text-[11px] tabular-nums leading-none text-[var(--text-3)] group-hover:hidden">
-            {childCompleted}/{childTotal}
-          </span>
-        )}
-
-        {hasChildren && !editing && (
-          <button
-            type="button"
-            aria-label={expanded ? '收起子会话' : '展开子会话'}
-            onClick={toggleExpand}
-            className="flex-shrink-0 flex size-4 items-center justify-center rounded text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]"
-          >
-            <ChevronRight size={12} className={cn('transition-transform', expanded && 'rotate-90')} />
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={expanded ? '收起子会话' : '展开子会话'}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={toggleExpand}
+                  className="flex-shrink-0 flex size-4 items-center justify-center rounded text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)]"
+                >
+                  <ChevronRight size={12} className={cn('transition-transform', expanded && 'rotate-90')} />
+                </button>
+              }
+            />
+            <TooltipContent side="top">{expanded ? '收起子会话' : '展开子会话'}</TooltipContent>
+          </Tooltip>
         )}
 
         {!editing && (

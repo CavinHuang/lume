@@ -55,6 +55,45 @@ export function shouldApplyThreadMessagesResult({
   return !cancelled && requestedThreadId === currentThreadId
 }
 
+export interface ConversationMinimapItem {
+  id: string
+  title: string
+  preview: string
+}
+
+export function collectConversationMinimapItems(
+  messages: RuntimeMessageView[],
+): ConversationMinimapItem[] {
+  const items: ConversationMinimapItem[] = []
+  let currentUser: Extract<RuntimeMessageView, { type: 'user' }> | null = null
+  let assistantParts: string[] = []
+
+  const pushCurrent = () => {
+    if (!currentUser) return
+    items.push({
+      id: currentUser.id,
+      title: currentUser.text,
+      preview: assistantParts.join('\n\n').trim(),
+    })
+    currentUser = null
+    assistantParts = []
+  }
+
+  for (const message of messages) {
+    if (message.type === 'user') {
+      pushCurrent()
+      currentUser = message
+      continue
+    }
+    if (message.type !== 'assistant' || !currentUser) continue
+    const text = message.text.trim()
+    if (text) assistantParts.push(text)
+  }
+
+  pushCurrent()
+  return items
+}
+
 export type ReconcileCache = Map<string, {
   projectedRef: RuntimeMessageView
   visibleRef: AgentMessage | undefined

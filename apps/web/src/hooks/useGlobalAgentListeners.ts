@@ -157,6 +157,18 @@ export function useGlobalAgentListeners() {
           setMessageQueues((prev) => ({ ...prev, [snapshot.threadId]: snapshot }))
           break
         }
+        case AGENT_IPC_CHANNELS.THREAD_LIST_CHANGED: {
+          // 后端 thread-manager 在线程创建（含 Task/Delegate 子会话）后广播；
+          // 主动刷新线程列表缓存，避免侧栏等母会话下一条消息才显示新子会话。
+          void sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS)
+            .then((result) => {
+              setThreads(Array.isArray(result) ? result : [])
+            })
+            .catch((error) => {
+              console.error('[useGlobalAgentListeners] 刷新线程列表失败 (THREAD_LIST_CHANGED)', error)
+            })
+          break
+        }
         case AGENT_IPC_CHANNELS.MESSAGE_APPENDED: {
           const event = params as AgentMessageAppendedEvent
           void sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS)

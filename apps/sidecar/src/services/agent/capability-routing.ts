@@ -87,6 +87,31 @@ function containsAny(text: string, patterns: string[]): boolean {
   return patterns.some((pattern) => text.includes(pattern));
 }
 
+function hasExplicitSkillInvocation(message: string, skills: SkillMeta[]): boolean {
+  const invocableSkills = skills.filter((skill) => skill.disableModelInvocation !== true);
+  if (invocableSkills.length === 0) return false;
+
+  const pattern = /\$([\w-]+)(?::([\w-]+))?/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(message)) !== null) {
+    const pluginName = match[1]?.toLowerCase();
+    const skillSlug = match[2]?.toLowerCase();
+    if (!pluginName) continue;
+    const namespacedSlug = skillSlug ? `${pluginName}:${skillSlug}` : undefined;
+    if (invocableSkills.some((skill) => {
+      const slug = skill.slug.toLowerCase();
+      const name = skill.name.toLowerCase();
+      if (namespacedSlug) {
+        return slug === namespacedSlug || name === namespacedSlug;
+      }
+      return slug === pluginName || slug.startsWith(`${pluginName}:`) || name === pluginName;
+    })) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): CapabilityRoutingDecision {
   const lanes = inferCapabilityLanes(input.availableTools);
   const laneSet = new Set(lanes);
@@ -130,6 +155,13 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
     && skillText.length > 0
     && message.split(/[\s,.;:!?，。；：！？()（）]+/).filter((token) => token.length >= 3)
       .some((token) => skillText.includes(token));
+  if (laneSet.has("skills") && hasExplicitSkillInvocation(message, input.loadedSkills ?? [])) {
+    return {
+      lanes,
+      preferredLane: "skills",
+      reason: "explicit skill invocation matched a loaded skill"
+    };
+  }
   if (skillLikelyMatch) {
     return {
       lanes,

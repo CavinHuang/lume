@@ -220,20 +220,21 @@ function readPluginEditableSkills(): EditableSkillMeta[] {
   const bySlug = new Map<string, EditableSkillMeta>();
   for (const entry of readdirSync(pluginsRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const pluginDir = join(pluginsRoot, entry.name);
-    const skillsDir = join(pluginDir, "skills");
-    if (!existsSync(skillsDir)) continue;
+    for (const pluginRoot of resolvePluginRootCandidates(entry.name)) {
+      const skillsDir = join(pluginRoot, "skills");
+      if (!existsSync(skillsDir)) continue;
 
-    for (const skill of readEditableSkillsFromDir(skillsDir, "plugin")) {
-      // Namespace the slug with plugin name using ":" separator for explicit invocation
-      const namespacedSlug = `${entry.name}:${skill.slug}`;
-      bySlug.set(namespacedSlug, {
-        ...skill,
-        slug: namespacedSlug,
-        name: `${entry.name}: ${skill.name}`,
-        managementSurface: "plugin" as const,
-        sourceType: "plugin" as const,
-      });
+      for (const skill of readEditableSkillsFromDir(skillsDir, "plugin")) {
+        // Namespace the slug with plugin name using ":" separator for explicit invocation
+        const namespacedSlug = `${entry.name}:${skill.slug}`;
+        bySlug.set(namespacedSlug, {
+          ...skill,
+          slug: namespacedSlug,
+          name: `${entry.name}: ${skill.name}`,
+          managementSurface: "plugin" as const,
+          sourceType: "plugin" as const,
+        });
+      }
     }
   }
 
@@ -417,7 +418,7 @@ export const __internal = {
   writeSkillFileAtomically
 };
 
-export function resolvePluginSkillPath(pluginName: string, skillSlug: string): string {
+function resolvePluginBaseDir(pluginName: string): { pluginsRoot: string; pluginDir: string } {
   const pluginsRoot = join(homedir(), ".lume", "plugins");
   const pluginDir = resolve(pluginsRoot, pluginName);
   const pluginRelative = relative(pluginsRoot, pluginDir);
@@ -431,7 +432,55 @@ export function resolvePluginSkillPath(pluginName: string, skillSlug: string): s
     throw new Error("非法 Skill 路径");
   }
 
-  const skillsRoot = resolve(pluginDir, "skills");
+  return { pluginsRoot, pluginDir };
+}
+
+function readActivePluginRoots(pluginName: string, pluginDir: string): string[] {
+  const statePath = join(homedir(), ".lume", "plugins-state.json");
+  if (!existsSync(statePath)) return [];
+  try {
+    const state = JSON.parse(readFileSync(statePath, "utf-8")) as {
+      plugins?: Record<string, {
+        activeVersion?: string;
+        versions?: Record<string, { installedRoot?: string }>;
+      }>;
+    };
+    const record = state.plugins?.[pluginName];
+    const activeVersion = record?.activeVersion;
+    if (!activeVersion) return [];
+    return [
+      record?.versions?.[activeVersion]?.installedRoot,
+      join(pluginDir, activeVersion)
+    ].filter((value): value is string => typeof value === "string" && value.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function resolvePluginRootCandidates(pluginName: string): string[] {
+  const { pluginDir } = resolvePluginBaseDir(pluginName);
+  const candidates = [
+    pluginDir,
+    ...readActivePluginRoots(pluginName, pluginDir)
+  ];
+
+  if (existsSync(pluginDir)) {
+    for (const entry of readdirSync(pluginDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) candidates.push(join(pluginDir, entry.name));
+    }
+  }
+
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const resolved = resolve(candidate);
+    if (seen.has(resolved)) return false;
+    seen.add(resolved);
+    return true;
+  });
+}
+
+function resolvePluginSkillPathInRoot(pluginRoot: string, skillSlug: string): string {
+  const skillsRoot = resolve(pluginRoot, "skills");
   const skillDir = resolve(skillsRoot, normalizeSkillSlug(skillSlug));
   const skillRelative = relative(skillsRoot, skillDir);
 
@@ -447,18 +496,29 @@ export function resolvePluginSkillPath(pluginName: string, skillSlug: string): s
   return join(skillDir, "SKILL.md");
 }
 
+export function resolvePluginSkillPath(pluginName: string, skillSlug: string): string {
+  const [pluginRoot] = resolvePluginRootCandidates(pluginName);
+  return resolvePluginSkillPathInRoot(pluginRoot ?? resolvePluginBaseDir(pluginName).pluginDir, skillSlug);
+}
+
 export function readPluginSkillContent(pluginName: string, skillSlug: string): string | null {
-  const skillPath = resolvePluginSkillPath(pluginName, skillSlug);
-  if (!existsSync(skillPath)) return null;
-  return readFileSync(skillPath, "utf-8");
+  for (const pluginRoot of resolvePluginRootCandidates(pluginName)) {
+    const skillPath = resolvePluginSkillPathInRoot(pluginRoot, skillSlug);
+    if (existsSync(skillPath)) return readFileSync(skillPath, "utf-8");
+  }
+  return null;
 }
 
 export function listPluginSkillDirs(pluginName: string): string[] {
-  const pluginsRoot = join(homedir(), ".lume", "plugins");
-  const pluginDir = join(pluginsRoot, pluginName);
-  const skillsDir = join(pluginDir, "skills");
-  if (!existsSync(skillsDir)) return [];
-  return readdirSync(skillsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && existsSync(join(skillsDir, entry.name, "SKILL.md")))
-    .map((entry) => entry.name);
+  const skillDirs = new Set<string>();
+  for (const pluginRoot of resolvePluginRootCandidates(pluginName)) {
+    const skillsDir = join(pluginRoot, "skills");
+    if (!existsSync(skillsDir)) continue;
+    for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+      if (entry.isDirectory() && existsSync(join(skillsDir, entry.name, "SKILL.md"))) {
+        skillDirs.add(entry.name);
+      }
+    }
+  }
+  return Array.from(skillDirs);
 }

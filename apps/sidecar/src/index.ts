@@ -11,7 +11,7 @@ import { imRuntimeManager } from "./services/im/im-runtime-manager";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
-import { cleanupExpiredTrash } from "./services/agent/agent-thread-manager";
+import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
 import { formatConsoleArgs } from "./services/infra/log-format";
 import { setLogRecordNotificationWriter, writeLogRecord } from "./services/infra/logger";
@@ -145,8 +145,12 @@ async function boot(): Promise<void> {
   const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
     writeNotification(AGENT_IPC_CHANNELS.SUBAGENT_COMPLETED, event);
   });
+  const unsubscribeThreadListChanged = subscribeThreadListChanged(() => {
+    writeNotification(AGENT_IPC_CHANNELS.THREAD_LIST_CHANGED, null);
+  });
   const stopWatcher = (): void => {
     unsubscribeSubagentAnnounce();
+    unsubscribeThreadListChanged();
     stopWorkspaceWatcher();
     void getWorkspaceMcpManager().disposeAll().catch(() => {});
     void stopAutomationRunner().catch(() => {});

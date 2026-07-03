@@ -147,6 +147,33 @@ describe('mcp settings state', () => {
     ])
   })
 
+  test('includes built-in MCP servers that are present only in live status', () => {
+    const rows = buildMcpServerRows({}, [{
+      serverId: 'node_repl',
+      name: 'node_repl',
+      transport: 'stdio',
+      enabled: true,
+      status: 'connected',
+      tools: ['mcp__node_repl__js'],
+      toolDetails: [{
+        name: 'mcp__node_repl__js',
+        originalName: 'js',
+        wrapperName: 'mcp__node_repl__js',
+        serverId: 'node_repl',
+        serverName: 'node_repl',
+      }],
+    }])
+
+    expect(rows).toMatchObject([{
+      name: 'node_repl',
+      displayName: 'node_repl',
+      source: '内置',
+      enabled: true,
+      status: 'connected',
+      toolCount: 1,
+    }])
+  })
+
   test('marks disabled MCP tools from server config', () => {
     const rows = buildMcpServerRows({
       demo: {

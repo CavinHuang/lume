@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -76,6 +76,29 @@ describe("interruption-store", () => {
     expect(resolved?.status).toBe("approved");
     expect(resolved?.resolution?.rememberDecision).toBeTrue();
     expect(await store.listPendingByThread("thread-1")).toEqual([]);
+  });
+
+  test("persists interruption ids with Windows-safe filenames", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-interruption-safe-filename-"));
+    const store = createFileBackedLumeInterruptionStore(dir);
+    const interruptionId = "tool_approval:chatcmpl-tool-aff3844795842db8";
+
+    await store.upsert({
+      id: interruptionId,
+      threadId: "thread-1",
+      type: "tool_approval",
+      status: "pending",
+      title: "Approve tool",
+      message: "node_repl needs approval",
+      payload: { requestId: "chatcmpl-tool-aff3844795842db8" },
+      source: { toolCallId: "chatcmpl-tool-aff3844795842db8" },
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    const files = readdirSync(join(dir, "interruptions"));
+    expect(files.some((file) => file.includes(":"))).toBeFalse();
+    expect(await store.get(interruptionId)).toMatchObject({ id: interruptionId });
   });
 
   test("mirrors pending and resolved interruptions into active run state", async () => {

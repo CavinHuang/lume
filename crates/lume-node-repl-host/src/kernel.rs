@@ -58,6 +58,7 @@ pub struct RuntimeOptions {
     pub codex_home: PathBuf,
     pub config_file: PathBuf,
     pub native_pipe_connect_timeout: Duration,
+    #[cfg(unix)]
     pub native_pipe_allowed_roots: Vec<PathBuf>,
     pub max_native_pipe_connections: usize,
     pub active_exec_registry_dir: Option<PathBuf>,
@@ -150,6 +151,7 @@ impl RuntimeOptions {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(5_000),
             ),
+            #[cfg(unix)]
             native_pipe_allowed_roots: split_paths(env::var_os(
                 "NODE_REPL_NATIVE_PIPE_ALLOWED_ROOTS",
             )),

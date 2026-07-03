@@ -13,7 +13,7 @@ import { createPersonalizeUiTool } from "./ui/create-personalize-ui-tool";
 import { createSdkOfficeTools } from "./office/create-office-tools";
 import { createRoutineTools } from "./routine/create-routine-tools";
 import { createImageGenTools } from "./image-gen/create-image-gen-tools";
-import { createNodeReplTools } from "./node-repl/create-node-repl-tools";
+import { createNodeReplMcpTools } from "./node-repl/create-node-repl-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -77,7 +77,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     threadId: input.threadId,
     workspaceSlug: input.workspaceSlug,
   });
-  const nodeReplTools = createNodeReplTools({
+  const nodeReplTools = createNodeReplMcpTools({
     sessionId: input.threadId,
     cwd: input.cwd ?? process.cwd(),
     workspaceSlug: input.workspaceSlug,

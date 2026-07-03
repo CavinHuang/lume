@@ -157,6 +157,29 @@ export function listAgentThreads(): AgentThreadMeta[] {
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+// ─── Thread list change notification (pub/sub) ───
+// listAgentThreads 结果变更后（创建/归档/删除等）广播给订阅者；
+// sidecar 层订阅后经 writeNotification(THREAD_LIST_CHANGED) 推送前端刷新缓存，
+// 使"子会话创建即同步显示"等场景不再依赖母会话 MESSAGE_APPENDED 的副作用刷新。
+const threadListChangedListeners = new Set<() => void>();
+
+function notifyThreadListChanged(): void {
+  for (const listener of threadListChangedListeners) {
+    try {
+      listener();
+    } catch {
+      // 忽略单个 listener 失败，避免影响其他订阅者与主流程
+    }
+  }
+}
+
+export function subscribeThreadListChanged(listener: () => void): () => void {
+  threadListChangedListeners.add(listener);
+  return () => {
+    threadListChangedListeners.delete(listener);
+  };
+}
+
 export function getAgentThreadMeta(id: string): AgentThreadMeta | undefined {
   return readIndex().threads.find((thread) => thread.id === id);
 }
@@ -225,6 +248,7 @@ export function createAgentThreadWithModelRef(
   }
 
   console.log(`[Agent 线程] 已创建线程: ${meta.title} (${meta.id})`);
+  notifyThreadListChanged();
   return meta;
 }
 

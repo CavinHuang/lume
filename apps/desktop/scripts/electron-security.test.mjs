@@ -123,6 +123,28 @@ test("main process does not opt BrowserWindow renderers out of sandbox", () => {
   assert.match(mainSource, /createSecureWebPreferences\(/);
 });
 
+test("main process opens DevTools only for development windows", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const devToolsIndex = mainSource.indexOf("win.webContents.openDevTools({ mode: 'detach' })");
+  const devGuardIndex = mainSource.indexOf("if (!app.isPackaged) {");
+  const packagedLoadIndex = mainSource.indexOf("await win.loadURL(getPackagedAppUrl())");
+
+  assert.notEqual(devToolsIndex, -1, "development DevTools opener is missing");
+  assert.notEqual(devGuardIndex, -1, "DevTools opener must be guarded by app.isPackaged");
+  assert.notEqual(packagedLoadIndex, -1, "packaged load branch is missing");
+  assert.equal(devGuardIndex < devToolsIndex, true, "DevTools must only open inside the dev guard");
+  assert.equal(packagedLoadIndex < devToolsIndex, true, "DevTools must not open before packaged load branch");
+});
+
+test("main window is registered before its renderer can invoke IPC", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const registerIndex = mainSource.indexOf("mainWindow = win");
+  const loadIndex = mainSource.indexOf("await win.loadURL");
+
+  assert.notEqual(registerIndex, -1, "main window is never registered during creation");
+  assert.equal(registerIndex < loadIndex, true, "main window must be registered before loading its renderer");
+});
+
 test("preload bridge is compatible with Electron sandbox require limits", () => {
   const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "preload.ts"), "utf8");
   assert.match(preloadSource, /from ['"]electron['"]/);

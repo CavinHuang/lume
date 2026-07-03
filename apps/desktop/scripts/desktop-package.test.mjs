@@ -71,3 +71,10 @@ test('node-repl resource build clears generated output before writing resources'
   assertContainsBefore(script, 'rmSync(OUT_DIR, { recursive: true, force: true })', 'cpSync(SRC_DIR, OUT_DIR')
   assertContainsBefore(script, 'cpSync(SRC_DIR, OUT_DIR', 'build-node-repl-host.mjs')
 })
+
+test('desktop dev builds node-repl resources before launching Electron', () => {
+  const script = readFileSync(resolve(DESKTOP_ROOT, 'scripts/dev.ts'), 'utf8')
+
+  assert.match(script, /build-node-repl-resources\.mjs/)
+  assertContainsBefore(script, 'spawnSync("node", [buildNodeReplResourcesScript]', 'spawn(electronBin')
+})

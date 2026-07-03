@@ -16,7 +16,7 @@ describe("plugin skill activation integration", () => {
     );
   });
 
-  test("injects skill content into userMessageForModel via hook bus", async () => {
+  test("injects plugin skill context while preserving the cleaned user request", async () => {
     const runtime = createLumeWorkflowHookRuntime({
       config: { enabled: true },
       services: {
@@ -55,7 +55,9 @@ describe("plugin skill activation integration", () => {
     );
     expect(skillEffect).toBeDefined();
     const effect = skillEffect!.effect as unknown as Record<string, unknown>;
-    expect(effect.userMessageForModel).toContain("Hello skill instructions.");
-    expect(effect.userMessageForModel).toContain("用户请求: 帮我写个测试");
+    expect(effect.content).toContain("Hello skill instructions.");
+    expect(effect.userMessageForModel).toContain("<activated_plugin_skills>");
+    expect(effect.userMessageForModel).toContain("immediately execute the task in <user_request>");
+    expect(effect.userMessageForModel).toContain("<user_request>\n帮我写个测试\n</user_request>");
   });
 });

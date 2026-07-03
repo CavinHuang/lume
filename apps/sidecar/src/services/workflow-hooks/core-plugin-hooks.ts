@@ -2,9 +2,9 @@ import type { LumeWorkflowHookHandlerRegistry } from "./hook-events";
 import { readPluginSkillContent, listPluginSkillDirs } from "../skills/workspace-skill-editor-service";
 
 // Matches $plugin:skill syntax
-const PLUGIN_SKILL_PATTERN = /\$([\w-]+):(\w+)/g;
+const PLUGIN_SKILL_PATTERN = /\$([\w-]+):([\w-]+)/g;
 // Matches bare $plugin syntax (not followed by :)
-const PLUGIN_ONLY_PATTERN = /\$([\w-]+)(?![:\w])/g;
+const PLUGIN_ONLY_PATTERN = /\$([\w-]+)(?![:\w-])/g;
 
 export function createCorePluginHookHandlers(): LumeWorkflowHookHandlerRegistry {
   return {
@@ -55,9 +55,10 @@ export function createCorePluginHookHandlers(): LumeWorkflowHookHandlerRegistry 
           `[Skill: ${pluginName}:${skillSlug}]\n${content}\n[/Skill]`
       ).join("\n\n");
 
-      const userMessageForModel = cleanedMessage.length > 0
-        ? `${skillContextBlocks}\n\n用户请求: ${cleanedMessage}`
-        : skillContextBlocks;
+      const userMessageForModel = formatPluginSkillUserMessage({
+        skillContextBlocks,
+        cleanedMessage
+      });
 
       return {
         effects: [{
@@ -71,4 +72,23 @@ export function createCorePluginHookHandlers(): LumeWorkflowHookHandlerRegistry 
       };
     }
   };
+}
+
+function formatPluginSkillUserMessage(input: {
+  skillContextBlocks: string;
+  cleanedMessage: string;
+}): string {
+  const userRequest = input.cleanedMessage.length > 0
+    ? input.cleanedMessage
+    : "用户只触发了插件 Skill，没有提供具体任务。请简要说明该插件已可用，并询问下一步。";
+  return [
+    "The following plugin Skill documents were explicitly activated by the user. They are operational instructions, not the user's request text.",
+    "After reading these instructions, immediately execute the task in <user_request>. Do not stop after setup/initialization, and do not ask the user to repeat the task unless <user_request> says no concrete task was provided.",
+    "<activated_plugin_skills>",
+    input.skillContextBlocks,
+    "</activated_plugin_skills>",
+    "<user_request>",
+    userRequest,
+    "</user_request>"
+  ].join("\n");
 }

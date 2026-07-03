@@ -321,6 +321,7 @@ async function createMainWindow() {
       preload: resolve(DESKTOP_ROOT, 'dist', 'preload', 'preload.cjs'),
     }),
   })
+  mainWindow = win
 
   attachWindowBehavior(win)
   // 最大化/还原态变化推送给渲染层，驱动按钮图标切换。
@@ -342,6 +343,10 @@ async function createMainWindow() {
     await win.loadURL(getPackagedAppUrl())
   } else {
     await win.loadURL(getDevServerUrl())
+  }
+
+  if (!app.isPackaged) {
+    win.webContents.openDevTools({ mode: 'detach' })
   }
 
   win.once('ready-to-show', () => win.show())
@@ -866,7 +871,7 @@ app.whenReady().then(async () => {
   logDesktopStartup('tray ready')
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
-  mainWindow = await createMainWindow()
+  await createMainWindow()
   logDesktopStartup('main window ready')
 }).catch((error) => {
   logDesktopStartup(`startup failed: ${error.stack ?? error}`)
@@ -875,7 +880,7 @@ app.whenReady().then(async () => {
 
 app.on('activate', async () => {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    mainWindow = await createMainWindow()
+    await createMainWindow()
     return
   }
   showMainWindow()

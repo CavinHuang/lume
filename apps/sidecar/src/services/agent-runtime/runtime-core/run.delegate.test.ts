@@ -3,14 +3,18 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  archiveAgentThread,
   createAgentThread,
-  listAgentThreads
+  createAgentThreadWithModelRef,
+  getAgentThreadMeta,
+  listAgentThreads,
+  subscribeThreadListChanged
 } from "../../agent/agent-thread-manager";
 import {
   getSubagentRunRegistry,
   resetSubagentRunRegistryForTest
 } from "../../agent/subagents/subagent-run-registry";
-import { buildSidecarSubagentRunContext, buildWaitForDelegationsResult, canDelegateFromThread, deriveDelegateTitle } from "./run";
+import { buildSidecarSubagentRunContext, buildWaitForDelegationsResult, canDelegateFromThread, deriveDelegateTitle, resolveTaskThreadInitialTitle } from "./run";
 
 describe("DelegateTool child thread", () => {
   let prevConfigDir: string | undefined;
@@ -269,5 +273,128 @@ describe("WaitForDelegations tool result structure", () => {
     const res = await buildWaitForDelegationsResult({ mode: "all" }, "parent-x", stub);
     const body = JSON.parse(res.content);
     expect(body.delegations[0].outputSummary.length).toBe(2000);
+  });
+});
+
+// ─── Task 工具子会话（侧栏可见）───
+// sidecarAgentTool.call 闭包耦合 runtime（同 delegateTool，见上 S2 注释），完整 mock 代价过高。
+// 此处验证改造所依赖的契约组合：createAgentThreadWithModelRef + buildSidecarSubagentRunContext({createChildThreadId})
+// 能产出侧栏可见（listAgentThreads 可见、parentThreadId 正确、childThreadId === childMeta.id）的子会话。
+describe("TaskTool child thread (sidebar-visible)", () => {
+  let prevConfigDir: string | undefined;
+  beforeEach(() => {
+    prevConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-task-thread-"));
+  });
+  afterEach(() => {
+    if (prevConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+    else process.env.LUME_CONFIG_DIR = prevConfigDir;
+  });
+
+  test("Task 创建的子会话带 parentThreadId 且进入 listAgentThreads（侧栏可见）", () => {
+    const parent = createAgentThread("母会话", undefined, "ws-1");
+    // 复刻 sidecarAgentTool 改造后的行为：创建持久 childMeta 并注入 createChildThreadId
+    const childMeta = createAgentThreadWithModelRef(
+      "探索代码库", undefined, undefined, "ws-1", parent.id
+    );
+    const run = buildSidecarSubagentRunContext({
+      parentThreadId: parent.id,
+      parentToolUseId: "tool-use-1",
+      toolInput: { prompt: "探索代码库并报告依赖", description: "探索代码库", subagent_type: "Explore" },
+      policy: { depth: 1, rootThreadId: parent.id },
+      createChildThreadId: () => childMeta.id
+    });
+    // 契约1：childThreadId 来自 childMeta（非随机 uuid）→ 消息流能正确持久化到该 thread
+    expect(run.childThreadId).toBe(childMeta.id);
+    expect(run.registryInput.childThreadId).toBe(childMeta.id);
+    // 契约2：child 进入 listAgentThreads 且 parentThreadId 正确 → 前端 buildThreadTree 可构子会话树
+    const listed = listAgentThreads();
+    const listedChild = listed.find((t) => t.id === childMeta.id);
+    expect(listedChild).toBeDefined();
+    expect(listedChild?.parentThreadId).toBe(parent.id);
+  });
+
+  test("Task 子会话随父归档级联清理（D8，侧栏不残留）", () => {
+    const parent = createAgentThread("母会话", undefined, "ws-1");
+    const child = createAgentThreadWithModelRef("子任务", undefined, undefined, "ws-1", parent.id);
+    archiveAgentThread(parent.id);
+    expect(getAgentThreadMeta(child.id)?.status).toBe("archived");
+  });
+
+  test("resolveTaskThreadInitialTitle：description 非空时优先用 description", () => {
+    expect(resolveTaskThreadInitialTitle({ description: "探索代码库", prompt: "探索代码库并报告依赖" }))
+      .toBe("探索代码库");
+  });
+
+  test("resolveTaskThreadInitialTitle：description 缺失时用 prompt（≤20 字原样）", () => {
+    expect(resolveTaskThreadInitialTitle({ prompt: "探索代码库并报告依赖关系图" }))
+      .toBe("探索代码库并报告依赖关系图");
+  });
+
+  test("resolveTaskThreadInitialTitle：prompt 超长时按码点截断到 20 字（不切断 emoji 代理对）", () => {
+    const long = "探索代码库并报告依赖关系图以及模块划分情况和调用链路的更多细节";
+    const result = resolveTaskThreadInitialTitle({ prompt: long });
+    expect(result).toBe(Array.from(long).slice(0, 20).join(""));
+    expect(Array.from(result ?? "").length).toBe(20);
+  });
+
+  test("resolveTaskThreadInitialTitle：description 仅空白时回退到 prompt", () => {
+    expect(resolveTaskThreadInitialTitle({ description: "   \t  ", prompt: "清理无用导入" }))
+      .toBe("清理无用导入");
+  });
+
+  test("resolveTaskThreadInitialTitle：description 与 prompt 皆空时返回 undefined", () => {
+    expect(resolveTaskThreadInitialTitle({})).toBeUndefined();
+    expect(resolveTaskThreadInitialTitle({ description: "  ", prompt: "" })).toBeUndefined();
+  });
+});
+
+// ─── Thread list changed 通知（前端同步刷新的触发源）───
+// sidecar 层订阅此 pub/sub 后转 writeNotification(THREAD_LIST_CHANGED) 推送前端，
+// 前端在 useGlobalAgentListeners 里据此 setThreads(listThreads)，使子会话"创建即同步显示"。
+describe("ThreadListChanged notification", () => {
+  let prevConfigDir: string | undefined;
+  beforeEach(() => {
+    prevConfigDir = process.env.LUME_CONFIG_DIR;
+    process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-thread-list-changed-"));
+  });
+  afterEach(() => {
+    if (prevConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+    else process.env.LUME_CONFIG_DIR = prevConfigDir;
+  });
+
+  test("createAgentThreadWithModelRef 触发 THREAD_LIST_CHANGED 通知", () => {
+    let notifyCount = 0;
+    const unsub = subscribeThreadListChanged(() => { notifyCount += 1; });
+    try {
+      const parent = createAgentThread("母", undefined, "ws-1");
+      const child = createAgentThreadWithModelRef("子", undefined, undefined, "ws-1", parent.id);
+      expect(child.parentThreadId).toBe(parent.id);
+      // parent 与 child 各创建一次 → 广播 2 次
+      expect(notifyCount).toBe(2);
+    } finally {
+      unsub();
+    }
+  });
+
+  test("unsubscribe 后不再收到通知", () => {
+    let notifyCount = 0;
+    const unsub = subscribeThreadListChanged(() => { notifyCount += 1; });
+    unsub();
+    createAgentThread("x", undefined, "ws-1");
+    expect(notifyCount).toBe(0);
+  });
+
+  test("单个 listener 抛错不影响其他 listener 与主流程", () => {
+    let secondCalled = false;
+    const unsub1 = subscribeThreadListChanged(() => { throw new Error("boom"); });
+    const unsub2 = subscribeThreadListChanged(() => { secondCalled = true; });
+    try {
+      expect(() => createAgentThread("x", undefined, "ws-1")).not.toThrow();
+      expect(secondCalled).toBe(true);
+    } finally {
+      unsub1();
+      unsub2();
+    }
   });
 });

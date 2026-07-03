@@ -4,6 +4,7 @@ import type { AgentMessage } from '@lume/shared'
 import { areRuntimeEventContentBlockPropsEqual } from './RuntimeEventContentBlock'
 import {
   collectNewRuntimeMessageIds,
+  collectConversationMinimapItems,
   getProgrammaticScrollHoldUntil,
   getLatestUserMessageKey,
   isNearScrollBottom,
@@ -50,6 +51,73 @@ describe('collectNewRuntimeMessageIds', () => {
     ]
 
     expect(collectNewRuntimeMessageIds(new Set(['user:1']), messages)).toEqual(new Set(['assistant:run-1']))
+  })
+})
+
+describe('collectConversationMinimapItems', () => {
+  test('builds dense minimap anchors from user turns with assistant previews', () => {
+    const messages: RuntimeMessageView[] = [
+      {
+        id: 'user:1',
+        type: 'user',
+        text: 'first question',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
+      {
+        id: 'assistant:1',
+        type: 'assistant',
+        text: 'first answer',
+        thinking: '',
+        toolCalls: [],
+        blocks: [{ type: 'text', id: 'text:1', text: 'first answer' }],
+        status: 'completed',
+      },
+      {
+        id: 'assistant:2',
+        type: 'assistant',
+        text: 'follow-up detail',
+        thinking: '',
+        toolCalls: [],
+        blocks: [{ type: 'text', id: 'text:2', text: 'follow-up detail' }],
+        status: 'completed',
+      },
+      {
+        id: 'system:1',
+        type: 'system',
+        variant: 'context_compaction',
+        status: 'active',
+        text: '压缩中',
+        createdAt: '2026-05-01T00:00:01.000Z',
+      },
+      {
+        id: 'user:2',
+        type: 'user',
+        text: 'second question',
+        createdAt: '2026-05-01T00:00:02.000Z',
+      },
+      {
+        id: 'assistant:3',
+        type: 'assistant',
+        text: 'second answer',
+        thinking: '',
+        toolCalls: [],
+        blocks: [{ type: 'text', id: 'text:3', text: 'second answer' }],
+        status: 'completed',
+      },
+    ]
+
+    expect(collectConversationMinimapItems(messages)).toEqual([
+      {
+        id: 'user:1',
+        title: 'first question',
+        preview: 'first answer\n\nfollow-up detail',
+      },
+      {
+        id: 'user:2',
+        title: 'second question',
+        preview: 'second answer',
+      },
+    ])
   })
 })
 

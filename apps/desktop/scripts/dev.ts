@@ -14,6 +14,7 @@ const devServerUrl = process.env.LUME_DESKTOP_DEV_SERVER_URL?.trim() || "http://
 const buildDesktopRuntimeScript = resolve(desktopRoot, "scripts", "build.ts");
 const buildSidecarBundleScript = resolve(desktopRoot, "..", "..", "scripts", "build-sidecar-bundle.mjs");
 const buildNativesBinaryScript = resolve(desktopRoot, "..", "..", "scripts", "build-natives-binary.mjs");
+const buildNodeReplResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-node-repl-resources.mjs");
 
 let child = null;
 let stopping = false;
@@ -87,6 +88,14 @@ const bundleResult = spawnSync("bun", [buildSidecarBundleScript], {
 });
 if (bundleResult.status !== 0) {
   process.exit(bundleResult.status ?? 1);
+}
+
+const nodeReplResourcesResult = spawnSync("node", [buildNodeReplResourcesScript], {
+  cwd: resolve(desktopRoot, "..", ".."),
+  stdio: "inherit",
+});
+if (nodeReplResourcesResult.status !== 0) {
+  process.exit(nodeReplResourcesResult.status ?? 1);
 }
 
 child = spawn(electronBin, [desktopRoot], {

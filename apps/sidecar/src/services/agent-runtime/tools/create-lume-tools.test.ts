@@ -28,15 +28,16 @@ describe("create-lume-tools", () => {
     expect(result.availableToolNames).toContain("weread_export_all_notes");
   });
 
-  test("includes built-in node_repl tools for runtime threads", () => {
+  test("includes built-in node_repl tools as MCP-wrapped runtime tools", () => {
     const result = createLumeRuntimeTools({ ...baseInput(), workspaceSlug: "workspace-1" });
     const toolNames = result.customTools.map((tool) => tool.name);
 
-    expect(toolNames).toContain("js");
-    expect(toolNames).toContain("js_reset");
-    expect(toolNames).toContain("js_add_node_module_dir");
-    expect(result.availableToolNames).toContain("js");
-    expect(result.availableToolNames).toContain("js_reset");
-    expect(result.availableToolNames).toContain("js_add_node_module_dir");
+    expect(toolNames).toContain("mcp__node_repl__js");
+    expect(toolNames).toContain("mcp__node_repl__js_reset");
+    expect(toolNames).toContain("mcp__node_repl__js_add_node_module_dir");
+    expect(result.availableToolNames).toContain("mcp__node_repl__js");
+    expect(result.availableToolNames).toContain("mcp__node_repl__js_reset");
+    expect(result.availableToolNames).toContain("mcp__node_repl__js_add_node_module_dir");
+    expect(toolNames).not.toContain("js");
   });
 });

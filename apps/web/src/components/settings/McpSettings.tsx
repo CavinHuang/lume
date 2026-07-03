@@ -550,6 +550,7 @@ function McpServiceTable({
         const toolItems = buildMcpToolDisplayItems(row)
         const isExpanded = expandedServerName === row.name
         const toolListTitle = toolItems.map((item) => item.label).join(', ') || '暂无工具'
+        const isBuiltIn = row.source === '内置'
 
         return (
           <React.Fragment key={row.name}>
@@ -572,6 +573,7 @@ function McpServiceTable({
                 <Switch
                   checked={row.enabled}
                   onCheckedChange={(checked) => onToggle(row.name, checked)}
+                  disabled={isBuiltIn}
                   aria-label={`${row.displayName} 启用状态`}
                 />
                 <Button
@@ -579,7 +581,7 @@ function McpServiceTable({
                   variant="ghost"
                   size="sm"
                   onClick={() => onTest(row.name)}
-                  disabled={testingServerId === row.name || !row.enabled}
+                  disabled={isBuiltIn || testingServerId === row.name || !row.enabled}
                   className="h-7 gap-1 px-2 text-[12px]"
                 >
                   {testingServerId === row.name
@@ -604,9 +606,10 @@ function McpServiceTable({
                   variant="ghost"
                   size="sm"
                   onClick={() => onEdit(row.name, row.entry)}
+                  disabled={isBuiltIn}
                   className="h-7 px-2 text-[12px]"
                 >
-                  编辑
+                  {isBuiltIn ? '内置' : '编辑'}
                 </Button>
               </div>
             </div>
@@ -617,6 +620,7 @@ function McpServiceTable({
                 errorMessage={row.errorMessage}
                 retrying={testingServerId === row.name}
                 onRetry={() => onTest(row.name)}
+                readOnly={isBuiltIn}
                 onToggleTool={(originalToolName, nextEnabled) =>
                   onToggleTool(row.name, originalToolName, nextEnabled)}
               />
@@ -634,6 +638,7 @@ function McpToolListPanel({
   errorMessage,
   retrying,
   onRetry,
+  readOnly = false,
   onToggleTool,
 }: {
   serviceName: string
@@ -641,6 +646,7 @@ function McpToolListPanel({
   errorMessage?: string
   retrying: boolean
   onRetry: () => void
+  readOnly?: boolean
   onToggleTool: (originalToolName: string, nextEnabled: boolean) => void
 }) {
   return (
@@ -705,6 +711,7 @@ function McpToolListPanel({
                 <Switch
                   checked={item.enabled}
                   onCheckedChange={(checked) => onToggleTool(item.originalName, checked)}
+                  disabled={readOnly}
                   aria-label={`${item.label} 启用状态`}
                 />
               </div>

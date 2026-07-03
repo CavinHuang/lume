@@ -691,15 +691,26 @@ function buildRuntimeCoreTools(input: {
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
       }
+      const modelOverride = resolveSubagentModelOverride({
+        toolInput,
+        workspaceSlug: input.workspaceSlug
+      });
+      // ★ 与 Delegate 对齐：创建会话栏可见的子会话 thread（带 parentThreadId），
+      // 使 Task 派生的 subagent 在左侧栏母会话下显示为子会话节点。
+      const childMeta = createAgentThreadWithModelRef(
+        resolveTaskThreadInitialTitle(toolInput),
+        modelOverride.modelRef,
+        modelOverride.channelId ?? input.channelId,
+        input.workspaceId,
+        parentThreadId,
+        modelOverride.resolvedModelId ?? context.model
+      );
       const subagentRun = buildSidecarSubagentRunContext({
         parentThreadId,
         parentToolUseId: context.toolUseId,
         toolInput,
-        policy
-      });
-      const modelOverride = resolveSubagentModelOverride({
-        toolInput,
-        workspaceSlug: input.workspaceSlug
+        policy,
+        createChildThreadId: () => childMeta.id
       });
       const enrichedContext = {
         ...context,
@@ -710,6 +721,11 @@ function buildRuntimeCoreTools(input: {
           getSubagentRunRegistry().update(subagentRun.runId, { status, outcome: { output, error } });
           const run = getSubagentRunRegistry().get(subagentRun.runId);
           if (run) await announceSubagentCompletion({ run });
+          // 子会话完成时用输出摘要派生标题（与 Delegate 对齐）
+          const newTitle = deriveDelegateTitle(childMeta.title, output);
+          if (newTitle && newTitle !== childMeta.title) {
+            updateAgentThreadMeta(childMeta.id, { title: newTitle });
+          }
         }
       };
       const runInBackground = toolInput.run_in_background === true;
@@ -1453,4 +1469,25 @@ export function deriveDelegateTitle(
     return Array.from(trimmed).slice(0, 20).join("");
   }
   return originalTitle;
+}
+
+/**
+ * Task 工具派生子会话时的初始侧栏标题解析。
+ *
+ * 策略：description 非空→用 description（LLM 写的短摘要，侧栏最易识别）；
+ * 否则取 prompt 前 20 字（码点安全，与 deriveDelegateTitle 同策略，不切断 emoji 代理对）；
+ * 两者皆空→返回 undefined（由 createAgentThreadWithModelRef 兜底为 "新 Agent 线程"）。
+ *
+ * 初始标题是临时态：完成时还会经 deriveDelegateTitle 用输出摘要覆盖
+ * （见 sidecarAgentTool.onSubagentEnd），故优先保证"进行中可识别"而非完美。
+ */
+export function resolveTaskThreadInitialTitle(toolInput: Record<string, unknown>): string | undefined {
+  const description = typeof toolInput.description === "string" ? toolInput.description.trim() : "";
+  if (description) return description;
+
+  const prompt = typeof toolInput.prompt === "string" ? toolInput.prompt.trim() : "";
+  if (!prompt) return undefined;
+
+  const folded = prompt.replace(/\s+/g, " ");
+  return Array.from(folded).slice(0, 20).join("");
 }

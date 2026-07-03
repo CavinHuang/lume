@@ -1257,6 +1257,8 @@ export const AGENT_IPC_CHANNELS = {
   LIST_THREADS: 'agent:list-threads',
   /** 创建线程 */
   CREATE_THREAD: 'agent:create-thread',
+  /** 线程列表变更通知（push：thread-manager 在线程创建后广播，前端据此刷新列表）*/
+  THREAD_LIST_CHANGED: 'agent:thread-list-changed',
   /** 获取线程消息 */
   GET_THREAD_MESSAGES: 'agent:get-thread-messages',
   /** 获取线程产品级 RuntimeEvent 历史 */

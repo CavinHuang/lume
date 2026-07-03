@@ -17,10 +17,13 @@ import {
 } from './runtime-event-message-projection'
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
 import { TodoPanel } from './TodoPanel'
+import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
+import { summarizeMessageForPreview } from '@/components/app-shell/ThreadMiniMapPopover'
 import type { TodoBlockData } from './runtime-message-view'
 import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
 import {
   collectNewRuntimeMessageIds,
+  collectConversationMinimapItems,
   collectRuntimeMessageIds,
   getLatestUserMessageKey,
   getProgrammaticScrollHoldUntil,
@@ -84,6 +87,14 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     ),
     [projectedMessages, visibleThreadMessages],
   )
+  const minimapItems = useMemo<MinimapItem[]>(
+    () => collectConversationMinimapItems(liveMessages).map((item) => ({
+      id: item.id,
+      title: summarizeMessageForPreview(item.title),
+      preview: item.preview.trim(),
+    })),
+    [liveMessages],
+  )
   const newMessageIds = useMemo(() => {
     const previousIds = previousMessageIdsRef.current.threadId === threadId
       ? previousMessageIdsRef.current.ids
@@ -115,6 +126,11 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     programmaticScrollUntilRef.current = 0
     clearProgrammaticScrollReleaseTimeout()
   }, [clearProgrammaticScrollReleaseTimeout])
+  // 用户通过消息级 minimap 主动跳转/拖拽 → 停止自动贴底并释放程序化滚动锁
+  const handleMinimapNavigate = useCallback(() => {
+    shouldAutoScrollRef.current = false
+    releaseProgrammaticScroll()
+  }, [releaseProgrammaticScroll])
   const markProgrammaticScroll = useCallback((behavior: ScrollBehavior) => {
     clearProgrammaticScrollReleaseTimeout()
     programmaticScrollUntilRef.current = getProgrammaticScrollHoldUntil({
@@ -335,17 +351,18 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     const msg = liveMessages[i]
     const activeStreamingMessage = streaming && i === liveMessages.length - 1
     items.push(
-      <RuntimeEventContentBlock
-        key={`runtime-event-${msg.id}`}
-        message={msg}
-        animate={activeStreamingMessage && newMessageIds.has(msg.id)}
-        streaming={activeStreamingMessage}
-        threadId={threadId}
-        onOpenThreadFile={onOpenThreadFile}
-        onOpenThreadImage={onOpenThreadImage}
-        onOpenMemorySource={onOpenMemorySource}
-        onUserResizeStart={suspendScrollCompensationForUserResize}
-      />
+      <div key={`runtime-event-${msg.id}`} data-message-id={msg.id}>
+        <RuntimeEventContentBlock
+          message={msg}
+          animate={activeStreamingMessage && newMessageIds.has(msg.id)}
+          streaming={activeStreamingMessage}
+          threadId={threadId}
+          onOpenThreadFile={onOpenThreadFile}
+          onOpenThreadImage={onOpenThreadImage}
+          onOpenMemorySource={onOpenMemorySource}
+          onUserResizeStart={suspendScrollCompensationForUserResize}
+        />
+      </div>,
     )
   }
   const hasRenderableMessages = liveMessages.length > 0
@@ -380,11 +397,16 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         </div>
       </div>
       <TodoPanel data={latestTodo} />
+      <ScrollMinimap
+        items={minimapItems}
+        scrollContainerRef={scrollContainerRef}
+        onNavigate={handleMinimapNavigate}
+      />
       {showScrollButton && hasRenderableMessages && (
         <button
           type="button"
           onClick={() => scrollMessagesToBottom('smooth')}
-          className="absolute bottom-4 right-5 z-20 inline-flex size-9 items-center justify-center rounded-full border border-[#e2e5ef] bg-white text-[#667085] shadow-[0_8px_22px_rgba(27,31,45,0.12)] transition-colors hover:border-[#c9cdfb] hover:text-[#625cff]"
+          className="absolute bottom-4 right-14 z-20 inline-flex size-9 items-center justify-center rounded-full border border-[#e2e5ef] bg-white text-[#667085] shadow-[0_8px_22px_rgba(27,31,45,0.12)] transition-colors hover:border-[#c9cdfb] hover:text-[#625cff]"
           aria-label="回到底部"
           title="回到底部"
         >

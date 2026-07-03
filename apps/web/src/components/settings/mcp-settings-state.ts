@@ -162,7 +162,8 @@ export function buildMcpServerRows(
   now = Date.now()
 ): McpServerRow[] {
   const statusById = new Map(statuses.map((status) => [status.serverId, status]))
-  return Object.entries(servers ?? {}).map(([name, entry]) => {
+  const configuredServerIds = new Set(Object.keys(servers ?? {}))
+  const configuredRows = Object.entries(servers ?? {}).map(([name, entry]) => {
     const live = statusById.get(name)
     const transport = live?.transport ?? normalizeMcpTransport(entry) ?? 'stdio'
     const rowStatus = resolveRowStatus(entry, live)
@@ -182,6 +183,32 @@ export function buildMcpServerRows(
       ...(live?.error?.message ? { errorMessage: live.error.message } : {}),
     }
   })
+  const builtinRows = statuses
+    .filter((status) => !configuredServerIds.has(status.serverId))
+    .map((live) => {
+      const entry: McpServerEntry = {
+        name: live.name,
+        enabled: live.enabled,
+        transport: live.transport,
+      }
+      const rowStatus = mapPublicStatus(live.status)
+      return {
+        name: live.serverId,
+        displayName: live.name,
+        entry,
+        transport: live.transport,
+        enabled: live.enabled,
+        status: rowStatus,
+        statusLabel: formatMcpRowStatus(rowStatus, live.enabled),
+        source: '内置',
+        lastChecked: formatMcpLastChecked(live.lastCheckedAt, now),
+        toolCount: countEnabledMcpTools(entry, live),
+        tools: live.tools,
+        toolDetails: live.toolDetails,
+        ...(live.error?.message ? { errorMessage: live.error.message } : {}),
+      }
+    })
+  return [...configuredRows, ...builtinRows]
 }
 
 export function buildMcpToolDisplayItems(row: Pick<McpServerRow, 'tools' | 'toolDetails'> & {

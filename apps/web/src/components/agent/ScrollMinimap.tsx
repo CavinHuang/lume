@@ -34,7 +34,7 @@ const PREVIEW_EDGE_PADDING_PX = 64
 const PREVIEW_CARD_WIDTH = 404
 const MINIMAP_HIT_WIDTH = 34
 const RAIL_RIGHT_INSET = 12
-const PREVIEW_GAP = 16
+const PREVIEW_GAP = 8
 const OVERLAY_WIDTH = PREVIEW_CARD_WIDTH + PREVIEW_GAP + MINIMAP_HIT_WIDTH + RAIL_RIGHT_INSET
 /** 横杠高度（px）—— 对齐 Proma 极简刻度的纤细感，恒定不波动 */
 const BAR_HEIGHT = 2
@@ -216,6 +216,20 @@ export function ScrollMinimap({ items, scrollContainerRef, onNavigate }: ScrollM
       style={{ width: OVERLAY_WIDTH, paddingRight: RAIL_RIGHT_INSET }}
     >
       {hovered && previewItem && (
+        <>
+        {/* hover bridge：填补预览卡与右侧锚点 rail 的间隙，鼠标穿越时保持打开（对鼠标速度不敏感） */}
+        <div
+          className="pointer-events-auto"
+          style={{
+            position: 'absolute',
+            right: MINIMAP_HIT_WIDTH + RAIL_RIGHT_INSET,
+            width: PREVIEW_GAP,
+            top: 0,
+            bottom: 0,
+          }}
+          onMouseEnter={handlePanelMouseEnter}
+          onMouseLeave={handlePanelMouseLeave}
+        />
         <div
           className={cn(
             'absolute rounded-2xl bg-popover/95 px-3 py-2 text-left text-popover-foreground shadow-[0_10px_28px_rgba(0,0,0,0.15)] ring-1 ring-border/60 backdrop-blur-sm pointer-events-auto dark:bg-foreground/[0.16] dark:ring-white/[0.08]',
@@ -238,6 +252,7 @@ export function ScrollMinimap({ items, scrollContainerRef, onNavigate }: ScrollM
             <PreviewSnippet text={previewItem.preview} />
           </div>
         </div>
+        </>
       )}
 
       <div

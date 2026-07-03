@@ -203,5 +203,5 @@ function readJsonFileSync<T>(path: string): T | null {
 }
 
 function safeFileSegment(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._:-]/g, "_");
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
