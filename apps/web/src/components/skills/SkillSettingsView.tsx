@@ -548,7 +548,7 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
                 {builtInSkills.map((skill) => (
                   <article
                     key={skill.slug}
-                    className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[color:color-mix(in_oklab,var(--brand)_16%,var(--border))] bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))] px-4 py-3"
+                    className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[color:color-mix(in_oklab,var(--brand)_16%,var(--border))] bg-[var(--surface-1)] px-4 py-3"
                   >
                     <div className="min-w-0">
                       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
