@@ -525,7 +525,7 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
               </Select>
             </div>
           )}
-          <div className="mb-3 text-[13px] font-medium text-[#687196]">{activeScopeMeta.label}技能</div>
+          <div className="mb-3 text-[13px] font-medium text-[var(--text-3)]">{activeScopeMeta.label}技能</div>
           <div className="grid gap-3">
             {visibleSkills.map((skill) => (
               <SkillSettingsRow
@@ -543,24 +543,24 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
           </div>
           {builtInSkills.length > 0 && (
             <>
-              <div className="mt-5 mb-3 text-[13px] font-medium text-[#687196]">系统内置技能</div>
+              <div className="mt-5 mb-3 text-[13px] font-medium text-[var(--text-3)]">系统内置技能</div>
               <div className="grid gap-3">
                 {builtInSkills.map((skill) => (
                   <article
                     key={skill.slug}
-                    className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[#edf0f6] bg-[#f5f4ff] px-4 py-3"
+                    className="grid min-h-[72px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[color:color-mix(in_oklab,var(--brand)_16%,var(--border))] bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))] px-4 py-3"
                   >
                     <div className="min-w-0">
                       <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-                        <h2 className="truncate text-[15px] font-semibold text-[#20232d]" title={skill.name}>{skill.name}</h2>
-                        <span className="font-mono text-[12px] text-[#4f566d]">/{skill.slug}</span>
-                        <span className="inline-flex items-center rounded-full bg-[#eae6ff] px-2 py-0.5 text-[11px] font-medium text-[#635bff]">
+                        <h2 className="truncate text-[15px] font-semibold text-[var(--text-1)]" title={skill.name}>{skill.name}</h2>
+                        <span className="font-mono text-[12px] text-[var(--text-2)]">/{skill.slug}</span>
+                        <span className="inline-flex items-center rounded-full bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] px-2 py-0.5 text-[11px] font-medium text-[var(--brand)]">
                           系统内置 · 全局可用
                         </span>
-                        {skill.version && <span className="text-[12px] text-[#8a91a8]">v{skill.version}</span>}
+                        {skill.version && <span className="text-[12px] text-[var(--text-3)]">v{skill.version}</span>}
                       </div>
                       {skill.description && (
-                        <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[#687196]">{skill.description}</p>
+                        <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[var(--text-3)]">{skill.description}</p>
                       )}
                     </div>
                     <div className="flex items-center">
@@ -618,24 +618,24 @@ const SkillSettingsRow = ({
   onToggle: (checked: boolean) => void
 }) => {
   return (
-    <article className="grid min-h-[108px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[#edf0f6] bg-[#fbfbfa] px-4 py-3">
+    <article className="grid min-h-[108px] grid-cols-[minmax(0,1fr)_auto] gap-4 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-          <h2 className="truncate text-[15px] font-semibold text-[#20232d]" title={skill.name}>{skill.name}</h2>
-          <span className="font-mono text-[12px] text-[#4f566d]">/{skill.slug}</span>
-          <span className="text-[12px] text-[#8a91a8]">{formatSkillStorageScopeLabel(skill.storageScope)}</span>
-          {skill.version && <span className="text-[12px] text-[#8a91a8]">v{skill.version}</span>}
+          <h2 className="truncate text-[15px] font-semibold text-[var(--text-1)]" title={skill.name}>{skill.name}</h2>
+          <span className="font-mono text-[12px] text-[var(--text-2)]">/{skill.slug}</span>
+          <span className="text-[12px] text-[var(--text-3)]">{formatSkillStorageScopeLabel(skill.storageScope)}</span>
+          {skill.version && <span className="text-[12px] text-[var(--text-3)]">v{skill.version}</span>}
         </div>
         {skill.description && (
-          <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[#687196]">{skill.description}</p>
+          <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-[var(--text-3)]">{skill.description}</p>
         )}
         {skill.whenToUse && (
-          <p className="mt-1 line-clamp-1 text-[13px] italic leading-5 text-[#20232d]">{skill.whenToUse}</p>
+          <p className="mt-1 line-clamp-1 text-[13px] italic leading-5 text-[var(--text-1)]">{skill.whenToUse}</p>
         )}
         {skill.allowedTools && skill.allowedTools.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
             {skill.allowedTools.slice(0, 8).map((tool) => (
-              <span key={tool} className="font-mono text-[12px] text-[#20232d]">{tool}</span>
+              <span key={tool} className="font-mono text-[12px] text-[var(--text-1)]">{tool}</span>
             ))}
           </div>
         )}
