@@ -122,7 +122,7 @@ export function RightPanelWorkspace() {
 
   return (
     <aside className={cn(
-      'relative z-[60] flex h-full shrink-0 flex-col border-l border-border/70 bg-background pb-2 pr-2 transition-[width] duration-200',
+      'relative z-[60] flex h-full shrink-0 flex-col border-l border-[var(--lume-border-subtle)] bg-[var(--lume-bg-app)] pb-2 pr-2 transition-[width] duration-200 ease-out',
       resizing && 'transition-none',
     )}
       style={{ width }}
@@ -134,12 +134,12 @@ export function RightPanelWorkspace() {
           aria-label="调整右侧面板宽度"
           title="拖动调整右侧面板宽度"
           onPointerDown={startResize}
-          className="absolute left-0 top-0 z-20 h-full w-2 -translate-x-1 cursor-col-resize touch-none transition-colors hover:bg-foreground/10"
+          className="absolute left-0 top-0 z-20 h-full w-2 -translate-x-1 cursor-col-resize touch-none transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_14%,transparent)]"
         />
       )}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-border/60 bg-background">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]">
         {compact ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center text-foreground/38">
+          <div className="flex min-h-0 flex-1 items-center justify-center text-[var(--lume-text-muted)]">
             <PanelRightOpen size={18} />
           </div>
         ) : (

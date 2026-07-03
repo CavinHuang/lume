@@ -161,6 +161,13 @@ describe('Lume theme contract', () => {
     expect(mainArea).not.toContain('dark:bg-zinc-900/95')
   })
 
+  test('TabBar uses Lume surface tokens without legacy zinc tabs', () => {
+    const tabBar = readWebFile('src', 'components', 'tabs', 'TabBar.tsx')
+    expect(tabBar).toContain('bg-[var(--lume-bg-elevated)]')
+    expect(tabBar).not.toContain('bg-white')
+    expect(tabBar).not.toContain('dark:bg-zinc')
+  })
+
   test('LumeSidebar uses the unified sidebar border token for its main rail divider', () => {
     const lumeSidebar = readWebFile('src', 'components', 'app-shell', 'LumeSidebar.tsx')
     const collapsedRail = lumeSidebar.match(/className="([^"]*w-\[72px\][^"]*)"/)?.[1] ?? ''

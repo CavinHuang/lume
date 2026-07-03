@@ -55,7 +55,7 @@ export function RightPanelTabBar({
   }, [menuOpen])
 
   return (
-    <div className="relative flex h-11 shrink-0 items-center gap-1 border-b border-border/60 px-3">
+    <div className="relative flex h-11 shrink-0 items-center gap-1 border-b border-[var(--lume-border-subtle)] px-3">
       <div className="flex min-w-0 items-center gap-1">
         {openedFunctions.map((type) => {
           const { label, Icon } = FUNCTION_META[type]
@@ -67,8 +67,8 @@ export function RightPanelTabBar({
               className={cn(
                 'group flex h-8 min-w-0 items-center rounded-[8px] text-[13px] font-medium transition-colors',
                 active
-                  ? 'bg-foreground/[0.08] text-foreground'
-                  : 'text-foreground/58 hover:bg-foreground/[0.05] hover:text-foreground/82',
+                  ? 'bg-[var(--lume-bg-elevated)] text-[var(--lume-text-primary)]'
+                  : 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-secondary)]',
               )}
             >
               <button
@@ -109,7 +109,7 @@ export function RightPanelTabBar({
           </button>
 
           {menuOpen && availableFunctions.length > 0 && (
-            <div className="absolute left-0 top-10 z-20 min-w-[240px] rounded-[10px] border border-border/80 bg-background/98 p-2 shadow-[0_18px_55px_rgba(0,0,0,0.16)] backdrop-blur">
+            <div className="absolute left-0 top-10 z-20 min-w-[240px] rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_18px_55px_-32px_hsl(var(--lume-shadow-panel)/0.62)] backdrop-blur">
               {availableFunctions.map((type) => {
                 const { label, Icon, shortcut } = FUNCTION_META[type]
                 return (
@@ -117,7 +117,7 @@ export function RightPanelTabBar({
                     key={type}
                     type="button"
                     onClick={() => openFunction(type)}
-                    className="flex h-9 w-full items-center gap-2 rounded-[7px] px-2.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/[0.06]"
+                    className="flex h-9 w-full items-center gap-2 rounded-[7px] px-2.5 text-left text-[13px] font-medium text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
                   >
                     <Icon size={16} className="shrink-0 text-foreground/58" />
                     <span className="min-w-0 flex-1 truncate">{label}</span>

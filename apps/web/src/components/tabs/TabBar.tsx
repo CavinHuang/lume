@@ -27,17 +27,17 @@ export function TabBar() {
             key={tab.id}
             onClick={() => setActiveTabId(tab.id)}
             className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[13px] whitespace-nowrap transition-colors',
+              'flex items-center gap-1.5 rounded-t-lg border border-transparent px-3 py-1.5 text-[13px] whitespace-nowrap transition-[background-color,border-color,color] duration-150 ease-out',
               activeTabId === tab.id
-                ? 'bg-white dark:bg-zinc-800 text-foreground shadow-sm'
-                : 'text-foreground/60 hover:text-foreground hover:bg-white/50 dark:hover:bg-zinc-800/50'
+                ? 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-primary)] shadow-[0_10px_28px_-24px_hsl(var(--lume-shadow-panel)/0.5)]'
+                : 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-secondary)]'
             )}
           >
             <span className="max-w-[140px] truncate">{tab.title}</span>
             <span
               role="button"
               onClick={(e) => closeTab(tab.id, e)}
-              className="size-4 flex items-center justify-center rounded hover:bg-foreground/10 text-foreground/40 hover:text-foreground/70"
+              className="size-4 flex items-center justify-center rounded text-[var(--lume-text-muted)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-text-primary)]"
             >
               <X size={11} />
             </span>

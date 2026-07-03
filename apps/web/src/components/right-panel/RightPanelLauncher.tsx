@@ -26,12 +26,12 @@ export function RightPanelLauncher({ onOpen }: RightPanelLauncherProps) {
             key={type}
             type="button"
             onClick={() => onOpen(type)}
-            className="flex h-11 w-full items-center gap-3 rounded-[8px] bg-foreground/[0.04] px-3 text-left text-[15px] font-medium text-foreground transition-colors hover:bg-foreground/[0.08]"
+            className="flex h-11 w-full items-center gap-3 rounded-[8px] border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_68%,transparent)] px-3 text-left text-[15px] font-medium text-[var(--lume-text-primary)] transition-colors duration-150 ease-out hover:border-[var(--lume-border-strong)] hover:bg-[var(--lume-bg-elevated)]"
           >
             <Icon size={17} className="shrink-0 text-foreground/58" />
             <span className="min-w-0 flex-1 truncate">{label}</span>
             {shortcut && (
-              <span className="rounded-full bg-foreground/[0.06] px-2 py-0.5 text-[12px] font-medium text-foreground/50">
+              <span className="rounded-full bg-[var(--lume-accent-soft)] px-2 py-0.5 text-[12px] font-medium text-[var(--lume-text-secondary)]">
                 {shortcut}
               </span>
             )}
