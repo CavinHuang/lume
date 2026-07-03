@@ -75,7 +75,7 @@ describe('Lume theme contract', () => {
       '--lume-focus-ring: oklch(0.66 0.13 202 / 42%);',
       '--lume-danger: oklch(0.62 0.18 25);',
       '--lume-success: oklch(0.62 0.13 155);',
-      '--lume-warning: oklch(0.72 0.14 75);',
+      '--lume-warning: oklch(0.52 0.14 75);',
       '--lume-shadow-panel: var(--shadow-panel);',
       '--brand: var(--lume-accent);',
       '--surface-1: var(--lume-bg-panel);',
