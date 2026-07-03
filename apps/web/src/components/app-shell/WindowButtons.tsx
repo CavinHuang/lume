@@ -27,10 +27,10 @@ export function WindowButtonGroup({
   style,
 }: WindowButtonGroupProps) {
   const buttonClass = cn(
-    'flex size-8 items-center justify-center rounded-[8px] text-foreground/55 transition-colors',
+    'flex size-8 items-center justify-center rounded-[8px] text-[var(--lume-text-muted)] transition-colors duration-150 ease-out',
     focused
-      ? 'hover:bg-foreground/[0.06] hover:text-foreground'
-      : 'text-foreground/30',
+      ? 'hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)] active:bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_82%,black)]'
+      : 'text-[color:color-mix(in_oklab,var(--lume-text-muted)_56%,transparent)]',
   )
 
   return (
@@ -54,7 +54,7 @@ export function WindowButtonGroup({
       <button
         type="button"
         title="关闭"
-        className={cn(buttonClass, 'hover:bg-red-500/80 hover:text-white')}
+        className={cn(buttonClass, 'hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_20%,var(--lume-bg-elevated))] hover:text-[var(--lume-text-primary)]')}
         onClick={() => getCurrentWindow().close().catch(() => {})}
       >
         <X size={16} />

@@ -23,9 +23,9 @@ export function RightPanelWindowControls({ className }: RightPanelWindowControls
           }))
         }}
         className={cn(
-          'flex size-8 items-center justify-center rounded-[8px] text-foreground/55 transition-colors',
+          'flex size-8 items-center justify-center rounded-[8px] text-[var(--lume-text-muted)] transition-colors duration-150 ease-out',
           layout.open
-            ? 'hover:bg-foreground/[0.06] hover:text-foreground'
+            ? 'hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]'
             : 'cursor-not-allowed opacity-35',
         )}
         title={expanded ? '缩小右侧面板' : '扩大右侧面板'}
@@ -43,10 +43,10 @@ export function RightPanelWindowControls({ className }: RightPanelWindowControls
           }))
         }}
         className={cn(
-          'flex size-10 items-center justify-center rounded-[12px] transition-colors',
+          'flex size-10 items-center justify-center rounded-[12px] transition-colors duration-150 ease-out',
           layout.open
-            ? 'bg-foreground/[0.08] text-foreground hover:bg-foreground/[0.12]'
-            : 'text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground',
+            ? 'bg-[var(--lume-bg-elevated)] text-[var(--lume-text-primary)] hover:bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_86%,var(--lume-accent-soft))]'
+            : 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
         )}
         title={layout.open ? '关闭右侧面板' : '打开右侧面板'}
       >

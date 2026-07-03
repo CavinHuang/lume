@@ -41,7 +41,7 @@ export function TitleBar({ variant = resolveVariant() }: { variant?: TitleBarVar
       data-variant={variant}
       style={DRAG_REGION}
       className={cn(
-        'flex h-10 items-center gap-2 pr-2 select-none bg-background text-foreground',
+        'flex h-10 items-center gap-2 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] pr-2 text-[var(--lume-text-primary)] select-none',
         variant === 'macos' ? 'pl-[80px]' : 'pl-2',
       )}
       onDoubleClick={variant === 'custom-controls' ? () => {
@@ -55,12 +55,12 @@ export function TitleBar({ variant = resolveVariant() }: { variant?: TitleBarVar
           type="button"
           title={collapsed ? '展开侧栏' : '收起侧栏'}
           onClick={() => setCollapsed(!collapsed)}
-          className="flex size-8 items-center justify-center rounded-[8px] text-foreground/55 hover:bg-foreground/[0.06] hover:text-foreground"
+          className="flex size-8 items-center justify-center rounded-[8px] text-[var(--lume-text-muted)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)] active:bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_78%,black)]"
         >
           <PanelLeft size={16} />
         </button>
         <div className="flex items-center gap-1.5 px-1">
-          <Sparkles size={16} className="text-primary" />
+          <Sparkles size={16} className="text-[var(--lume-accent)]" />
           <span className="text-sm font-medium">Lume</span>
         </div>
       </div>
@@ -71,7 +71,7 @@ export function TitleBar({ variant = resolveVariant() }: { variant?: TitleBarVar
           type="button"
           style={NO_DRAG_REGION}
           onClick={() => setOpen(true)}
-          className="flex h-8 w-full max-w-[420px] items-center gap-2 rounded-[8px] bg-foreground/[0.04] px-3 text-sm text-foreground/40 hover:bg-foreground/[0.08]"
+          className="flex h-8 w-full max-w-[420px] items-center gap-2 rounded-[8px] border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_62%,transparent)] px-3 text-sm text-[var(--lume-text-muted)] transition-colors duration-150 ease-out hover:border-[var(--lume-border-strong)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-secondary)]"
         >
           <Search size={14} />
           <span>搜索 / 跳转…</span>

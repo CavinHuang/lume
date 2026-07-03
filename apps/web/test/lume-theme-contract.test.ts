@@ -126,8 +126,8 @@ describe('Lume theme contract', () => {
       'w-screen',
       'flex',
       'overflow-hidden',
-      'bg-background',
-      'text-foreground',
+      'bg-[var(--lume-bg-app)]',
+      'text-[var(--lume-text-primary)]',
     ]
 
     expectClassListToContain(appShell, /<div className="([^"]+)">\s*<TitleBar \/>/s, requiredClasses)
@@ -142,14 +142,14 @@ describe('Lume theme contract', () => {
       'h-full',
       'flex',
       'flex-col',
-      'bg-background',
       'overflow-hidden',
+      'bg-[var(--lume-bg-panel)]',
     ]
     const contentClasses = [
       'flex-1',
       'min-h-0',
       'flex',
-      'bg-background',
+      'bg-[var(--lume-bg-panel)]',
     ]
 
     expectClassListToContain(mainArea, /<div className="([^"]+)">\s*<TabBar \/>/s, wrapperClasses)
