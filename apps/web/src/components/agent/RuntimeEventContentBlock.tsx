@@ -147,8 +147,8 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
 
   return (
     <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
-      <div className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[#ded6ff] bg-white text-[#675cff] shadow-[0_2px_8px_rgba(103,92,255,0.07)]">
-        <Sparkles size={21} strokeWidth={1.8} fill="#675cff" fillOpacity={0.08} />
+      <div className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-bg-elevated)] text-[var(--lume-accent)] shadow-[0_10px_24px_-20px_hsl(var(--lume-shadow-panel)/0.72)]">
+        <Sparkles size={21} strokeWidth={1.8} fill="currentColor" fillOpacity={0.1} />
       </div>
       <div className="min-w-0 flex-1 space-y-4 pt-2">
         {useMinimalMode ? (
@@ -226,7 +226,7 @@ function ImDeliveryStatusLine({
   return (
     <div
       className={cn(
-        'flex min-h-5 items-center gap-1.5 text-[12px] leading-5 text-[#9aa1b3]',
+        'flex min-h-5 items-center gap-1.5 text-[12px] leading-5 text-[var(--lume-text-muted)]',
         failed && 'text-destructive/75',
       )}
       title={delivery.error}
@@ -266,27 +266,27 @@ function ContextCompactionDivider({
   const hasSummary = message.status === 'completed' && Boolean(message.summary)
   return (
     <div className={cn('flex w-full flex-col gap-1', className)}>
-      <div className="flex w-full items-center gap-4 px-6 py-1 text-[15px] font-semibold leading-6 text-[#7d8494]">
-        <span className="h-px min-w-8 flex-1 bg-[#dde1e8]" />
+      <div className="flex w-full items-center gap-4 px-6 py-1 text-[15px] font-semibold leading-6 text-[var(--lume-text-muted)]">
+        <span className="h-px min-w-8 flex-1 bg-[var(--lume-border-subtle)]" />
         <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap">
           {active
-            ? <Loader2 size={17} className="animate-spin text-[#8b91a0]" strokeWidth={2} />
-            : <History size={17} className="text-[#7d8494]" strokeWidth={2} />}
+            ? <Loader2 size={17} className="animate-spin text-[var(--lume-text-muted)]" strokeWidth={2} />
+            : <History size={17} className="text-[var(--lume-text-muted)]" strokeWidth={2} />}
           {message.text}
           {hasSummary && (
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="ml-1 text-[12px] font-medium text-[#8b91a0] underline-offset-2 hover:underline"
+              className="ml-1 text-[12px] font-medium text-[var(--lume-text-muted)] underline-offset-2 hover:text-[var(--lume-accent)] hover:underline"
             >
               {expanded ? '收起总结' : '查看总结'}
             </button>
           )}
         </span>
-        <span className="h-px min-w-8 flex-1 bg-[#dde1e8]" />
+        <span className="h-px min-w-8 flex-1 bg-[var(--lume-border-subtle)]" />
       </div>
       {hasSummary && expanded && (
-        <div className="mx-auto max-h-60 w-full max-w-3xl overflow-y-auto whitespace-pre-wrap rounded-lg bg-[#f5f6f8] px-4 py-3 text-[13px] font-normal leading-6 text-[#3f4452]">
+        <div className="mx-auto max-h-60 w-full max-w-3xl overflow-y-auto whitespace-pre-wrap rounded-lg bg-[var(--lume-bg-elevated)] px-4 py-3 text-[13px] font-normal leading-6 text-[var(--lume-text-secondary)]">
           {message.summary}
         </div>
       )}
@@ -373,19 +373,19 @@ function UserMessageBlock({
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              className="min-h-20 w-[min(520px,70vw)] resize-y rounded-lg border border-[#c8c0fb] bg-white/80 px-2 py-1.5 text-[14px] leading-6 text-[#34384c] outline-none focus:border-[#8d7af5]"
+              className="min-h-20 w-[min(520px,70vw)] resize-y rounded-lg border border-[var(--lume-border-strong)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_82%,transparent)] px-2 py-1.5 text-[14px] leading-6 text-[var(--lume-text-primary)] outline-none focus:border-[var(--lume-accent)]"
               autoFocus
             />
           ) : (
             <UserAgentRoleInvocationContent text={message.text} />
           )}
         </div>
-        <div className="pointer-events-none flex -translate-y-1 items-center gap-1 text-[#8b8fa3] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:translate-y-0 group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:translate-y-0 group-focus-within/user-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
+        <div className="pointer-events-none flex -translate-y-1 items-center gap-1 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:translate-y-0 group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:translate-y-0 group-focus-within/user-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
           {canShowVersions && (
             <button
               type="button"
               onClick={() => void loadVersions()}
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff]"
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
               title="查看历史版本"
             >
               <History size={13} />
@@ -394,7 +394,7 @@ function UserMessageBlock({
           )}
           <CopyMessageButton
             text={visibleMessageText}
-            className="rounded-md p-1 transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff] data-[state=copied]:text-emerald-600"
+            className="rounded-md p-1 transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)] data-[state=copied]:text-[var(--lume-success)]"
             iconSize={14}
           />
           {editing ? (
@@ -403,7 +403,7 @@ function UserMessageBlock({
                 type="button"
                 disabled={submitting}
                 onClick={() => void submitEdit()}
-                className="rounded-md p-1 transition-colors hover:bg-emerald-500/10 hover:text-emerald-600 disabled:opacity-50"
+                className="rounded-md p-1 transition-colors hover:bg-[color:color-mix(in_oklab,var(--lume-success)_12%,transparent)] hover:text-[var(--lume-success)] disabled:opacity-50"
                 title="保存并重新发送"
               >
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
@@ -429,7 +429,7 @@ function UserMessageBlock({
                 setDraft(message.text)
                 setEditing(true)
               }}
-              className="rounded-md p-1 transition-colors hover:bg-[#f4f2ff] hover:text-[#675cff] disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-md p-1 transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)] disabled:cursor-not-allowed disabled:opacity-40"
               title={canEdit ? '编辑并重新发送' : '旧消息暂不支持编辑'}
             >
               <Edit3 size={14} />
@@ -437,18 +437,18 @@ function UserMessageBlock({
           )}
         </div>
         {versionsOpen && (
-          <div className="w-[min(520px,70vw)] rounded-xl border border-[#e5e0ff] bg-white p-2 text-left shadow-[0_12px_32px_rgba(57,48,120,0.12)]">
+          <div className="w-[min(520px,70vw)] rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 text-left shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)]">
             {versionsLoading ? (
-              <div className="flex items-center gap-2 px-2 py-1.5 text-[12px] text-[#8b8fa3]">
+              <div className="flex items-center gap-2 px-2 py-1.5 text-[12px] text-[var(--lume-text-muted)]">
                 <Loader2 size={13} className="animate-spin" />
                 加载版本...
               </div>
             ) : (
               <div className="space-y-1">
                 {versions.map((version) => (
-                  <div key={version.id} className="rounded-lg bg-[#f8f7ff] px-2 py-1.5">
-                    <div className="mb-1 text-[11px] font-medium text-[#786ef0]">版本 {version.versionIndex}</div>
-                    <div className="whitespace-pre-wrap text-[12px] leading-5 text-[#4d5368]">{version.content}</div>
+                  <div key={version.id} className="rounded-lg bg-[var(--lume-accent-soft)] px-2 py-1.5">
+                    <div className="mb-1 text-[11px] font-medium text-[var(--lume-accent)]">版本 {version.versionIndex}</div>
+                    <div className="whitespace-pre-wrap text-[12px] leading-5 text-[var(--lume-text-secondary)]">{version.content}</div>
                   </div>
                 ))}
               </div>
@@ -456,7 +456,7 @@ function UserMessageBlock({
           </div>
         )}
       </div>
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#9377f4] text-[15px] font-semibold text-white shadow-[0_4px_10px_rgba(118,97,230,0.18)]">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
         L
       </div>
     </div>
@@ -529,21 +529,21 @@ export function UserAgentRoleInvocationContent({ text }: { text: string }) {
 
   return (
     <div data-agent-role-message={invocation.role.id} className="min-w-0 space-y-2">
-      <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-white/45 bg-white/50 px-2 py-1 shadow-[0_1px_0_rgba(101,91,255,0.08)]">
+      <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_76%,var(--lume-accent-soft))] px-2 py-1 shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]">
         <img
           src={AGENT_ROLE_ASSETS.roles[invocation.role.id]}
           alt=""
-          className="size-6 shrink-0 rounded-full object-cover ring-1 ring-white/80"
+          className="size-6 shrink-0 rounded-full object-cover ring-1 ring-[color:color-mix(in_oklab,var(--lume-accent)_22%,transparent)]"
         />
-        <span className="min-w-0 truncate text-[13px] font-semibold leading-5 text-[#34384c]">
+        <span className="min-w-0 truncate text-[13px] font-semibold leading-5 text-[var(--lume-text-primary)]">
           {invocation.role.displayName}
         </span>
-        <span className="shrink-0 text-[12px] font-medium leading-5 text-[#6f7488]">
+        <span className="shrink-0 text-[12px] font-medium leading-5 text-[var(--lume-text-secondary)]">
           {invocation.role.title}
         </span>
       </div>
       {invocation.task && (
-        <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[15px] leading-[22px] text-[#34384c]">{invocation.task}</div>
+        <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[15px] leading-[22px] text-[var(--lume-text-primary)]">{invocation.task}</div>
       )}
     </div>
   )
@@ -716,7 +716,7 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
     // 运行中：当前动作 + 已完成步数 + 总已用时
     summaryUnits.push(
       <span key="run" className="inline-flex items-center gap-1">
-        <span className="size-1.5 animate-pulse rounded-full bg-blue-500" />
+        <span className="size-1.5 animate-pulse rounded-full bg-[var(--lume-accent)]" />
         {derived.todoActiveForm ?? `正在执行 ${derived.runningTool.toolName}`}
       </span>,
     )
@@ -1074,7 +1074,7 @@ function TaskProgressStatusLine({ event }: { event: TaskProgressViewEvent }) {
 
 function ShimmerStatusLine({ text }: { text: string }) {
   return (
-    <div className="flex min-h-5 items-center text-[13px] font-medium leading-5 text-[#8a92a6]">
+    <div className="flex min-h-5 items-center text-[13px] font-medium leading-5 text-[var(--lume-text-muted)]">
       <span className="lume-shimmer-text truncate">{text}</span>
     </div>
   )
@@ -1128,7 +1128,7 @@ const RuntimeEventThinkingBlock = memo(function RuntimeEventThinkingBlock({ text
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-[#8a91a6]">{text}</p>
+          <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-[var(--lume-text-muted)]">{text}</p>
         </div>
       </div>
     </div>
@@ -1157,7 +1157,7 @@ const MARKDOWN_INCOMPLETE_COMPONENTS = {
 const AfterglowLine = memo(function AfterglowLine({ text }: { text: string }) {
   return (
     <p
-      className="my-1.5 select-none text-[13px] italic leading-6 text-[#6b7280]/70"
+      className="my-1.5 select-none text-[13px] italic leading-6 text-[color:color-mix(in_oklab,var(--lume-text-muted)_70%,transparent)]"
       aria-hidden="true"
       data-afterglow="true"
       data-afterglow-text={`⟡ ${text}`}
@@ -1290,26 +1290,26 @@ export function PlanPreviewCard({
     >
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
-          <div className="text-[14px] font-semibold leading-5 text-[#20242c]">计划</div>
-          <h3 className="mt-6 text-[28px] font-semibold leading-[1.18] tracking-normal text-[#1f232b]">
+          <div className="text-[14px] font-semibold leading-5 text-[var(--lume-text-primary)]">计划</div>
+          <h3 className="mt-6 text-[28px] font-semibold leading-[1.18] tracking-normal text-[var(--lume-text-primary)]">
             {preview.title}
           </h3>
           {preview.summary && (
-            <p className="mt-3 text-[15px] leading-7 text-[#4f5663]">{preview.summary}</p>
+            <p className="mt-3 text-[15px] leading-7 text-[var(--lume-text-secondary)]">{preview.summary}</p>
           )}
           {preview.planFilePath && (
-            <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[12px] text-[#777d88]">
+            <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[12px] text-[var(--lume-text-muted)]">
               <FileText size={13} className="shrink-0" />
               <span className="truncate font-mono">{preview.planFilePath}</span>
-              {preview.planVerified ? <span className="shrink-0 text-emerald-600">已验证</span> : null}
+              {preview.planVerified ? <span className="shrink-0 text-[var(--lume-success)]">已验证</span> : null}
             </div>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-1 text-[#858991]">
+        <div className="flex shrink-0 items-center gap-1 text-[var(--lume-text-muted)]">
           <button
             type="button"
             onClick={() => void handleCopy()}
-            className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-black/[0.05] hover:text-[#20242c]"
+            className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-text-primary)]"
             title={copied ? '已复制' : '复制 Markdown'}
             aria-label="复制计划"
           >
@@ -1323,7 +1323,7 @@ export function PlanPreviewCard({
                 if (preview.planFilePath) onOpenThreadFile?.(preview.planFilePath)
               }}
               disabled={!canOpenFile}
-              className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-black/[0.05] hover:text-[#20242c] disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-text-primary)] disabled:cursor-not-allowed disabled:opacity-50"
               title={preview.planFilePath}
             >
               <FileText size={15} />
@@ -1333,7 +1333,7 @@ export function PlanPreviewCard({
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
-            className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-black/[0.05] hover:text-[#20242c]"
+            className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-text-primary)]"
             aria-label={expanded ? '收起计划' : '展开计划'}
           >
             <ChevronDown size={16} className={cn('transition-transform', expanded && 'rotate-180')} />
@@ -1370,7 +1370,7 @@ const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
 
   return (
     <XMarkdown
-      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[#303445]"
+      className="agent-message-markdown x-markdown text-[15px] leading-7 text-[var(--lume-text-primary)]"
       rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
       components={components}
     >
@@ -1551,12 +1551,12 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           }
           setCollapsed((value) => !value)
         }}
-        className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[#59637a] transition-colors hover:bg-[#fbfcff]"
+        className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
       >
-        <Icon size={15} className="shrink-0 text-[#68718a]" />
-        <span className="font-mono font-semibold text-[#4d566f]">{toolCall.toolName}</span>
+        <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
+        <span className="font-mono font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
         {getToolPermissionTitleBadgeText(toolCall) && (
-          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[12px] font-semibold text-amber-700">
+          <span className="rounded-full bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 py-0.5 text-[12px] font-semibold text-[var(--lume-warning)]">
             {getToolPermissionTitleBadgeText(toolCall)}
           </span>
         )}
@@ -1564,27 +1564,27 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           'rounded-full px-2 py-0.5 text-[12px] font-semibold',
           toolCall.status === 'failed'
             ? 'bg-destructive/10 text-destructive'
-            : 'bg-[#f0efff] text-[#7567ff]',
+            : 'bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]',
         )}>
           {isRunning ? '执行中' : toolCall.status === 'failed' ? '失败' : '已完成'}
         </span>
         {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
-          <span className="tabular-nums text-[11px] font-medium text-[#9aa0a6]">
+          <span className="tabular-nums text-[11px] font-medium text-[var(--lume-text-muted)]">
             {formatDurationLabel(toolCall.durationMs)}
           </span>
         )}
-        <span className="min-w-0 flex-1 truncate text-[#68718a]">{summarizeInput(input)}</span>
-        {isRunning && <Loader2 size={13} className="shrink-0 animate-spin text-[#7567ff]" />}
+        <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
+        {isRunning && <Loader2 size={13} className="shrink-0 animate-spin text-[var(--lume-accent)]" />}
         {!isRunning && (
           <ChevronDown
             size={16}
-            className={cn('shrink-0 text-[#7f8794] transition-transform', !collapsed && 'rotate-180')}
+            className={cn('shrink-0 text-[var(--lume-text-muted)] transition-transform', !collapsed && 'rotate-180')}
           />
         )}
       </button>
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
-          <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[#edf0f5] p-3">
+          <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">
             <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>
@@ -1613,18 +1613,18 @@ function FooterMemoryNotice({
         type="button"
         onClick={() => setExpanded(v => !v)}
         aria-expanded={expanded}
-        className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[#8a92a6] transition-colors hover:text-[#6770ff]"
+        className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[var(--lume-text-muted)] transition-colors hover:text-[var(--lume-accent)]"
       >
         <Database size={13} strokeWidth={1.8} />
         <span>引用了 {totalCount} 条记忆</span>
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
       </button>
       {expanded && (
-        <div className="absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[220px] max-w-[360px] overflow-y-auto rounded-lg border border-[#e3e5ee] bg-white p-2 shadow-[0_16px_40px_-24px_rgba(30,34,60,0.45)]">
-          <div className="space-y-2 text-[11px] leading-5 text-[#8a92a6]">
+        <div className="absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[220px] max-w-[360px] overflow-y-auto rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)]">
+          <div className="space-y-2 text-[11px] leading-5 text-[var(--lume-text-muted)]">
             {groups.map(group => (
               <div key={group.key}>
-                <div className="mb-0.5 text-[#9aa3b8]">{group.label}</div>
+                <div className="mb-0.5 text-[var(--lume-text-muted)]">{group.label}</div>
                 <ol className="space-y-1">
                   {group.items.map((item, index) => {
                     const sourcePath = normalizeMemoryCitationPath(item.citation)
@@ -1637,7 +1637,7 @@ function FooterMemoryNotice({
                     )
                     if (!sourcePath || !onOpenMemorySource) {
                       return (
-                        <li key={item.id} className="flex items-center gap-1.5 font-mono text-[#7b849c]" title={item.citation}>
+                        <li key={item.id} className="flex items-center gap-1.5 font-mono text-[var(--lume-text-secondary)]" title={item.citation}>
                           {content}
                         </li>
                       )
@@ -1647,7 +1647,7 @@ function FooterMemoryNotice({
                         <button
                           type="button"
                           onClick={() => onOpenMemorySource(sourcePath)}
-                          className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[#7b849c] transition-colors hover:bg-[#f1f3f8] hover:text-[#4f46e5]"
+                          className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
                           title={item.citation}
                         >
                           {content}
@@ -1785,7 +1785,7 @@ function AssistantMessageFooter({
             text={copyText}
             label="复制"
             copiedLabel="已复制"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[#6770ff] data-[state=copied]:text-emerald-600"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)] data-[state=copied]:text-[var(--lume-success)]"
             iconSize={15}
             strokeWidth={1.8}
           />
@@ -1795,7 +1795,7 @@ function AssistantMessageFooter({
             type="button"
             disabled={forking}
             onClick={() => void handleFork()}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[#6770ff] disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)] disabled:cursor-not-allowed disabled:opacity-50"
             title="创建分支"
             aria-label="创建分支"
           >
@@ -1811,7 +1811,7 @@ function AssistantMessageFooter({
               ref={downloadTriggerRef}
               type="button"
               onClick={() => setDownloadMenuOpen((current) => !current)}
-              className="inline-flex items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[#6770ff]"
+              className="inline-flex items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)]"
               title="下载"
               aria-label="下载"
               aria-haspopup="menu"
@@ -1832,7 +1832,7 @@ function AssistantMessageFooter({
           </div>
         )}
         {completedTimeLabel && (
-          <span className="inline-flex shrink-0 items-center rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[#9aa1b3]">
+          <span className="inline-flex shrink-0 items-center rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[var(--lume-text-muted)]">
             {completedTimeLabel}
           </span>
         )}
@@ -1862,7 +1862,7 @@ function DownloadFormatMenuItem({
       type="button"
       role="menuitem"
       onClick={onClick}
-      className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12px] font-medium leading-5 text-[#4c5162] transition-colors hover:bg-[#f5f6fb] hover:text-[#6770ff]"
+      className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12px] font-medium leading-5 text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
     >
       {children}
     </button>
@@ -1872,7 +1872,7 @@ function DownloadFormatMenuItem({
 function AssistantTokenUsageMetrics({ usage }: { usage: FooterTokenUsage }) {
   return (
     <div
-      className="ml-auto flex shrink-0 items-center gap-3 text-[12px] font-medium leading-5 text-[#6f717a] tabular-nums"
+      className="ml-auto flex shrink-0 items-center gap-3 text-[12px] font-medium leading-5 text-[var(--lume-text-muted)] tabular-nums"
       title={usage.title}
       aria-label={usage.title}
     >

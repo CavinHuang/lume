@@ -158,7 +158,7 @@ export function WorkspaceSelector() {
                       className="flex-1 min-w-0 bg-transparent text-[12px] text-foreground border-b border-primary/50 outline-none"
                       maxLength={50}
                     />
-                    <button onClick={handleRename} className="size-5 flex items-center justify-center text-green-500 hover:bg-green-500/10 rounded">
+                    <button onClick={handleRename} className="size-5 flex items-center justify-center rounded text-[var(--lume-success)] hover:bg-[color:color-mix(in_oklab,var(--lume-success)_12%,transparent)]">
                       <Check size={11} />
                     </button>
                     <button onClick={() => setEditingId(null)} className="size-5 flex items-center justify-center text-foreground/40 hover:bg-foreground/10 rounded">

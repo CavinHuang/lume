@@ -236,7 +236,7 @@ export function FilesRightPanelTab({
             <MoreHorizontal size={16} />
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-56 rounded-[10px] border border-border/80 bg-background/98 p-2 shadow-[0_18px_55px_rgba(0,0,0,0.16)] backdrop-blur">
+            <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-56 rounded-[10px] border border-border/80 bg-background/98 p-2 shadow-[0_18px_55px_-32px_hsl(var(--lume-shadow-panel)/0.62)] backdrop-blur">
               <MenuButton disabled={!selectedPath} icon={<Copy size={15} />} onClick={copySelectedPath}>
                 复制路径
               </MenuButton>

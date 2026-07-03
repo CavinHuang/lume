@@ -158,7 +158,7 @@ export function LumeSidebar({
                 <SquarePen size={17} />
                 <span className="flex-1">新建聊天</span>
                 {action.shortcut && (
-                  <span className="rounded-full border border-white/25 bg-white/14 px-2 py-0.5 text-[10px] font-semibold text-white/92">
+                  <span className="rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent-foreground)_28%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-accent-foreground)_14%,transparent)] px-2 py-0.5 text-[10px] font-semibold text-[var(--lume-accent-foreground)]">
                     {action.shortcut}
                   </span>
                 )}

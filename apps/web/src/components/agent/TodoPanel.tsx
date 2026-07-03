@@ -44,7 +44,7 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
                 {t.status === 'completed' ? (
                   <Check size={12} className="shrink-0 text-foreground/40" />
                 ) : t.status === 'in_progress' ? (
-                  <Loader2 size={12} className="shrink-0 animate-spin text-[#7567ff]" />
+                  <Loader2 size={12} className="shrink-0 animate-spin text-[var(--lume-accent)]" />
                 ) : (
                   <Circle size={12} className="shrink-0 text-foreground/30" />
                 )}

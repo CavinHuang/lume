@@ -382,8 +382,8 @@ export function PreviewText({ text }: { text: string }) {
 
 function ItemIcon({ role }: { role: PreviewRole }) {
   if (role === 'user') return <User className="mt-0.5 size-4 shrink-0 text-muted-foreground/70" />
-  if (role === 'assistant') return <Bot className="mt-0.5 size-4 shrink-0 text-blue-500/70" />
-  return <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500/70" />
+  if (role === 'assistant') return <Bot className="mt-0.5 size-4 shrink-0 text-[var(--lume-accent)] opacity-70" />
+  return <AlertTriangle className="mt-0.5 size-4 shrink-0 text-[var(--lume-warning)] opacity-70" />
 }
 
 export function ThreadMiniMapPopover({

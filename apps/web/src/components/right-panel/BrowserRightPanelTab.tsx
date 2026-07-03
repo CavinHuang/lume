@@ -107,7 +107,7 @@ export function BrowserRightPanelTab({ state, onChange }: BrowserRightPanelTabPr
             <MoreVertical size={16} />
           </IconButton>
           {menuOpen && (
-            <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-64 rounded-[10px] border border-border/80 bg-background/98 p-2 shadow-[0_18px_55px_rgba(0,0,0,0.16)] backdrop-blur">
+            <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-64 rounded-[10px] border border-border/80 bg-background/98 p-2 shadow-[0_18px_55px_-32px_hsl(var(--lume-shadow-panel)/0.62)] backdrop-blur">
               <MenuButton disabled={!activeUrl} onClick={forceReload}>强制重新加载</MenuButton>
               <MenuButton onClick={() => update({ deviceToolbarVisible: !state.deviceToolbarVisible })}>
                 {state.deviceToolbarVisible ? '隐藏设备工具栏' : '显示设备工具栏'}
@@ -184,7 +184,7 @@ export function BrowserRightPanelTab({ state, onChange }: BrowserRightPanelTabPr
                     <div className="truncate text-[15px] font-medium text-foreground">{service.title}</div>
                     <div className="truncate text-[13px] text-foreground/50">{service.url.replace(/^https?:\/\//, '')}</div>
                   </div>
-                  <span className="size-2.5 shrink-0 rounded-full bg-green-500" />
+                  <span className="size-2.5 shrink-0 rounded-full bg-[var(--lume-success)]" />
                 </button>
               ))}
             </div>
