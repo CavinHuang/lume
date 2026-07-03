@@ -156,6 +156,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
         onAskUserQuestion: () => {
           runtimeError = "任务执行需要用户交互，自动化模式当前不支持";
         },
+        onBrowserAuthRequest: () => {
+          runtimeError = "任务执行需要浏览器安全凭证交互，自动化模式当前不支持";
+        },
         onToolPermissionRequest: () => {
           waitingForApproval = true;
         }

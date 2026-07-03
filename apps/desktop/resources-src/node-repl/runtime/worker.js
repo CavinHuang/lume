@@ -491,10 +491,29 @@ const nativePipeBridge = Object.freeze({
         return createNativePipeConnection(connectionId, state, hasPendingClose, pendingError);
     },
 });
+const browserAuthBridge = Object.freeze({
+    request(requestValue) {
+        let state;
+        try {
+            state = getCurrentExecState();
+        }
+        catch (error) {
+            return makeRejectedThenable(error);
+        }
+        const operation = (async () => {
+            const request = await requestValue;
+            if (!isPlainObject(request))
+                throw new Error("nodeRepl.browserAuth.request expected a request object");
+            return hostCall("browserAuth.request", structuredClone(request), state);
+        })();
+        return trackBackground(state, operation);
+    },
+});
 const telemetryBridge = options.responseMetaTrace ? createTelemetryBridge() : undefined;
 const privilegedProperties = {
     launchServices: { value: launchServicesBridge, enumerable: true, writable: false, configurable: false },
     config: { value: configBridge, enumerable: true, writable: false, configurable: false },
+    browserAuth: { value: browserAuthBridge, enumerable: true, writable: false, configurable: false },
     env: { value: fullEnv, enumerable: true, writable: false, configurable: false },
     createElicitation: {
         enumerable: true, writable: false, configurable: false,

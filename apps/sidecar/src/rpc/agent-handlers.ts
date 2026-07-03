@@ -157,6 +157,10 @@ import { redactTraceForLevel, type TraceRedactionLevel } from "../services/agent
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
 import { listPendingAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
+import {
+  listPendingBrowserAuthRequests,
+  submitBrowserAuthResponse
+} from "../services/agent-runtime/interruption/browser-auth-session";
 import { listPendingToolPermissionRequests } from "../services/agent-runtime/interruption/tool-permission-session";
 import {
   getAgentProxyStatus,
@@ -225,6 +229,7 @@ import {
   threadRunEventsInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
+  submitBrowserAuthInputSchema,
   submitTaskApprovalInputSchema,
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
@@ -373,6 +378,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         },
         onAskUserQuestion: (request) => {
           context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
+        },
+        onBrowserAuthRequest: (request) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
         },
         onToolPermissionRequest: (request) => {
           context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
@@ -530,6 +538,19 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             });
           }
           context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
+        },
+      onBrowserAuthRequest: (request: unknown) =>
+        {
+          const authRequest = request as { reason?: string; origin?: string };
+          if (options?.taskRunId) {
+            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
+              threadId,
+              taskRunId: options.taskRunId,
+              waitingFor: "user",
+              reason: authRequest.reason || (authRequest.origin ? `等待 ${authRequest.origin} 安全凭证输入` : "等待浏览器安全凭证输入")
+            });
+          }
+          context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
         },
       onToolPermissionRequest: (request: unknown) =>
         {
@@ -754,10 +775,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE
       );
       const askRequests = listPendingAskUserQuestionRequests();
+      const browserAuthRequests = listPendingBrowserAuthRequests();
       const toolRequests = listPendingToolPermissionRequests();
       const taskApprovalRequests = await listPendingTaskApprovalRequests();
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
+      for (const request of browserAuthRequests) threadIds.add(request.threadId);
       for (const request of toolRequests) threadIds.add(request.threadId);
       for (const request of taskApprovalRequests) threadIds.add(request.threadId);
 
@@ -765,11 +788,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       for (const threadId of threadIds) {
         if (input.threadId && input.threadId !== threadId) continue;
         const askUserQuestions = askRequests.filter((request) => request.threadId === threadId);
+        const browserAuthForThread = browserAuthRequests.filter((request) => request.threadId === threadId);
         const toolPermissions = toolRequests.filter((request) => request.threadId === threadId);
         const taskApprovals = taskApprovalRequests.filter((request) => request.threadId === threadId);
         result.push({
           threadId,
           ...(askUserQuestions.length > 0 ? { askUserQuestions } : {}),
+          ...(browserAuthForThread.length > 0 ? { browserAuthRequests: browserAuthForThread } : {}),
           ...(toolPermissions.length > 0 ? { toolPermissions } : {}),
           ...(taskApprovals.length > 0 ? { taskApprovals } : {})
         });
@@ -1447,6 +1472,15 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         }
       }
       return result;
+    },
+    [AGENT_IPC_CHANNELS.SUBMIT_BROWSER_AUTH]: async (params) => {
+      const input = validateInput(
+        submitBrowserAuthInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.SUBMIT_BROWSER_AUTH
+      );
+      const handled = await submitBrowserAuthResponse(input);
+      return { handled };
     },
     [AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION]: async (params) => {
       const input = validateInput(

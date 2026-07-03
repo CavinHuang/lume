@@ -5,6 +5,7 @@ import type {
   AgentMessageQueueSnapshot,
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
+  AgentBrowserAuthRequest,
   AgentPendingGuidance,
   AgentPromoteQueuedMessageToGuidanceInput,
   AgentQueuedMessage,
@@ -76,6 +77,7 @@ type AgentStreamEmitter = {
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
+  onBrowserAuthRequest: (request: AgentBrowserAuthRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 };
 
@@ -812,6 +814,14 @@ export async function sendAgentMessage(
         subagentRunId: request.subagentRunId
       });
       emit.onAskUserQuestion(request);
+    },
+    onBrowserAuthRequest: (request) => {
+      runtimeStatusManager.markAwaitingUserAnswer(threadId, {
+        toolUseId: request.requestId,
+        originThreadId: request.originThreadId,
+        subagentRunId: request.subagentRunId
+      });
+      emit.onBrowserAuthRequest(request);
     },
     onToolPermissionRequest: (request) => {
       runtimeStatusManager.markAwaitingPermission(threadId, {

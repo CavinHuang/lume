@@ -867,6 +867,7 @@ describe("runtime-core run", () => {
         onComplete: () => {},
         onError: () => {},
         onAskUserQuestion: () => {},
+        onBrowserAuthRequest: () => {},
         onToolPermissionRequest: () => {}
       },
       {
@@ -935,6 +936,7 @@ describe("runtime-core run", () => {
         onComplete: () => {},
         onError: () => {},
         onAskUserQuestion: () => {},
+        onBrowserAuthRequest: () => {},
         onToolPermissionRequest: () => {}
       },
       {

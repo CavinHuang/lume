@@ -3,9 +3,11 @@ import { createInterface } from "node:readline";
 import { join } from "node:path";
 import type {
   JsExecInput,
+  NodeReplBrowserAuthRequest,
   NodeReplContentBlock,
   NodeReplExecutionResult,
   NodeReplRuntimeClient,
+  NodeReplRuntimeExecOptions,
   RuntimeFactoryInput
 } from "./node-repl-types";
 
@@ -18,6 +20,14 @@ interface RuntimeControlResponse {
   ok: boolean;
   value?: unknown;
   error?: string;
+}
+
+interface RuntimeHostCall {
+  type: "runtime_host_call";
+  id: string;
+  exec_id: string;
+  method: string;
+  args?: unknown;
 }
 
 interface RuntimeExecutionImage {
@@ -38,6 +48,11 @@ interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+}
+
+interface ActiveExec {
+  options?: NodeReplRuntimeExecOptions;
+  abortController: AbortController;
 }
 
 interface JsonlNodeReplRuntimeClientOptions {
@@ -63,17 +78,27 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
   private pending = new Map<string, PendingCall>();
+  private activeExecs = new Map<string, ActiveExec>();
   private stderr = "";
 
   constructor(private readonly options: JsonlNodeReplRuntimeClientOptions) {}
 
-  async exec(input: JsExecInput): Promise<NodeReplExecutionResult> {
-    const value = await this.call("exec", {
-      code: input.code,
-      ...(input.timeout_ms ? { timeout_ms: input.timeout_ms } : {}),
-      ...(input._meta ? { request_meta: input._meta } : {})
-    }, callTimeoutMs(input.timeout_ms));
-    return mapExecutionValue(value);
+  async exec(input: JsExecInput, options?: NodeReplRuntimeExecOptions): Promise<NodeReplExecutionResult> {
+    const execId = `node-repl-exec-${Date.now()}-${this.nextId++}`;
+    const abortController = new AbortController();
+    this.activeExecs.set(execId, { options, abortController });
+    try {
+      const value = await this.call("exec", {
+        id: execId,
+        code: input.code,
+        ...(input.timeout_ms ? { timeout_ms: input.timeout_ms } : {}),
+        ...(input._meta ? { request_meta: input._meta } : {})
+      }, callTimeoutMs(input.timeout_ms));
+      return mapExecutionValue(value);
+    } finally {
+      abortController.abort();
+      this.activeExecs.delete(execId);
+    }
   }
 
   async addNodeModuleDirectory(dir: string): Promise<boolean> {
@@ -171,10 +196,14 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
     const trimmed = line.trim();
     if (!trimmed) return;
 
-    let message: RuntimeControlResponse;
+    let message: RuntimeControlResponse | RuntimeHostCall;
     try {
-      message = JSON.parse(trimmed) as RuntimeControlResponse;
+      message = JSON.parse(trimmed) as RuntimeControlResponse | RuntimeHostCall;
     } catch {
+      return;
+    }
+    if (message.type === "runtime_host_call") {
+      void this.handleRuntimeHostCall(message);
       return;
     }
     if (message.type !== "runtime_response") return;
@@ -197,6 +226,39 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       pending.reject(error);
     }
     this.pending.clear();
+  }
+
+  private async handleRuntimeHostCall(message: RuntimeHostCall): Promise<void> {
+    const active = this.activeExecs.get(message.exec_id);
+    if (message.method !== "browserAuth.request" || !active?.options?.emitBrowserAuthRequest) {
+      this.writeHostResult(message.id, true, { status: "unavailable" });
+      return;
+    }
+
+    try {
+      const result = await active.options.emitBrowserAuthRequest(
+        isRecord(message.args) ? message.args as NodeReplBrowserAuthRequest : {},
+        active.abortController.signal
+      );
+      this.writeHostResult(message.id, true, result);
+    } catch {
+      this.writeHostResult(message.id, true, { status: "unavailable" });
+    }
+  }
+
+  private writeHostResult(id: string, ok: boolean, value?: unknown, error?: string): void {
+    const child = this.child;
+    if (!child || !child.stdin.writable) return;
+    child.stdin.write(`${JSON.stringify({
+      request_id: `host-result-${this.nextId++}`,
+      method: "host_result",
+      params: {
+        id,
+        ok,
+        ...(value !== undefined ? { value } : {}),
+        ...(error ? { error } : {})
+      }
+    })}\n`, "utf8");
   }
 }
 

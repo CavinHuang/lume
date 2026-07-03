@@ -23,6 +23,7 @@ import {
   type AgentThreadRuntimeEventsResult,
   type AgentThreadMeta,
   type AgentAskUserQuestionRequest,
+  type AgentBrowserAuthRequest,
   type AgentToolPermissionRequest,
   type AgentSubagentCompletionEvent,
   type AgentMessageQueueSnapshot,
@@ -34,6 +35,7 @@ import {
   removePendingToolPermissionEverywhere,
   removePendingTaskApprovalsForThread,
   upsertPendingAskUserQuestion,
+  upsertPendingBrowserAuthRequest,
   upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from './pending-interactive-state'
@@ -76,6 +78,9 @@ export function useGlobalAgentListeners() {
           for (const state of states ?? []) {
             for (const request of state.askUserQuestions ?? []) {
               next = upsertPendingAskUserQuestion(next, request)
+            }
+            for (const request of state.browserAuthRequests ?? []) {
+              next = upsertPendingBrowserAuthRequest(next, request)
             }
             for (const request of state.toolPermissions ?? []) {
               next = upsertPendingToolPermission(next, request)
@@ -190,6 +195,11 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.ASK_USER_QUESTION: {
           const req = params as AgentAskUserQuestionRequest
           setPendingInteractive((prev) => upsertPendingAskUserQuestion(prev, req))
+          break
+        }
+        case AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST: {
+          const req = params as AgentBrowserAuthRequest
+          setPendingInteractive((prev) => upsertPendingBrowserAuthRequest(prev, req))
           break
         }
         case AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST: {

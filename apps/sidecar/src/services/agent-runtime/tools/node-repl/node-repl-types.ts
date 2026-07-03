@@ -18,8 +18,36 @@ export interface NodeReplExecutionResult {
   _meta?: Record<string, unknown>;
 }
 
+export interface NodeReplBrowserAuthRequest {
+  context?: {
+    threadId?: string;
+    browserSessionId?: string;
+    browserTurnId?: string;
+  };
+  tabId?: string;
+  origin?: string;
+  reason?: string;
+  expires_at?: string;
+  fields?: Array<{
+    id?: string;
+    label?: string;
+    type?: string;
+    autocomplete?: string;
+    required?: boolean;
+  }>;
+}
+
+export interface NodeReplBrowserAuthResult {
+  status: "approved" | "declined" | "cancelled" | "unavailable" | "expired" | "origin_changed" | "page_changed" | "locator_invalid" | "submission_failed";
+  values?: Record<string, string>;
+}
+
+export interface NodeReplRuntimeExecOptions {
+  emitBrowserAuthRequest?: (request: NodeReplBrowserAuthRequest, signal: AbortSignal) => Promise<NodeReplBrowserAuthResult>;
+}
+
 export interface NodeReplRuntimeClient {
-  exec(input: JsExecInput): Promise<NodeReplExecutionResult>;
+  exec(input: JsExecInput, options?: NodeReplRuntimeExecOptions): Promise<NodeReplExecutionResult>;
   addNodeModuleDirectory(dir: string): Promise<boolean>;
   reset(): Promise<void>;
   shutdown(): Promise<void>;
@@ -34,7 +62,7 @@ export type RuntimeFactory = (input: RuntimeFactoryInput) => NodeReplRuntimeClie
 
 export interface NodeReplRuntimeRegistry {
   addModuleDir(threadId: string, dir: string, options?: { cwd?: string }): Promise<boolean>;
-  exec(threadId: string, input: JsExecInput, options?: { cwd?: string }): Promise<NodeReplExecutionResult>;
+  exec(threadId: string, input: JsExecInput, options?: { cwd?: string } & NodeReplRuntimeExecOptions): Promise<NodeReplExecutionResult>;
   reset(threadId: string, options?: { cwd?: string }): Promise<void>;
   shutdown(threadId: string): Promise<void>;
   debugSnapshot(threadId: string): { moduleDirs: string[]; cwd: string } | null;

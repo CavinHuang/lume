@@ -1,5 +1,5 @@
 import type { SDKMessage, ToolDefinition } from "@lume/agent-sdk";
-import type { AgentAskUserQuestionRequest, AgentToolPermissionRequest } from "@lume/shared";
+import type { AgentAskUserQuestionRequest, AgentBrowserAuthRequest, AgentToolPermissionRequest } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory-v2/policy";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
@@ -36,6 +36,7 @@ export interface CreateLumeRuntimeToolsInput {
   automationExecution?: boolean;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
+  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 }
 
@@ -81,6 +82,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     sessionId: input.threadId,
     cwd: input.cwd ?? process.cwd(),
     workspaceSlug: input.workspaceSlug,
+    emitBrowserAuthRequest: input.emitBrowserAuthRequest,
   });
   const customTools = [
     ...memoryTools,

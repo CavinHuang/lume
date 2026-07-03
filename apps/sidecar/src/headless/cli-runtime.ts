@@ -254,6 +254,9 @@ async function dispatchThreadMessage(input: SendCliThreadMessageInput): Promise<
       onAskUserQuestion: () => {
         settle(() => reject(new Error("CLI 模式暂不支持 AskUserQuestion 交互")));
       },
+      onBrowserAuthRequest: () => {
+        settle(() => reject(new Error("CLI 模式暂不支持浏览器安全凭证交互")));
+      },
       onToolPermissionRequest: () => {
         settle(() => reject(new Error("CLI 模式暂不支持工具权限交互")));
       }

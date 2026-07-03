@@ -1,6 +1,7 @@
 import type { SDKMessage } from "@lume/agent-sdk";
 import type { AgentSendInput } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
+import type { AgentBrowserAuthRequest } from "@lume/shared";
 import type { AgentToolPermissionRequest } from "@lume/shared";
 import type { LumeRuntimeEvent } from "@lume/shared";
 import type { TaskContractPlanPreview } from "../plan/task-contract-write-tool";
@@ -12,6 +13,7 @@ export interface AgentRuntimeEmitter {
   onComplete: (payload?: { reason?: "max_turns" }) => void;
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
+  onBrowserAuthRequest: (request: AgentBrowserAuthRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
   onTaskContractUpdated?: (contract: TaskContractRecord, preview?: TaskContractPlanPreview) => void;
   onTodoUpdated?: (state: { todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[]; currentActiveForm: string | null }) => void;

@@ -50,6 +50,7 @@ function createEmitter(events: string[]): AgentRuntimeEmitter {
     onComplete: () => events.push("complete"),
     onError: (message) => events.push(`error:${message}`),
     onAskUserQuestion: () => {},
+    onBrowserAuthRequest: () => {},
     onToolPermissionRequest: () => {}
   };
 }

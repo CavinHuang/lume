@@ -98,6 +98,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
     permissionMode: input.permissionMode,
     messageMetadata: input.messageMetadata,
     emitAskUserQuestion: emit.onAskUserQuestion,
+    emitBrowserAuthRequest: emit.onBrowserAuthRequest,
     emitToolPermissionRequest: emit.onToolPermissionRequest
   });
   const { session, sessionManager } = upstream;
@@ -302,6 +303,7 @@ export async function runRuntimeCoreMockCompactionAttempt(
     permissionMode: input.permissionMode,
     messageMetadata: input.messageMetadata,
     emitAskUserQuestion: emit.onAskUserQuestion,
+    emitBrowserAuthRequest: emit.onBrowserAuthRequest,
     emitToolPermissionRequest: emit.onToolPermissionRequest
   });
   const { session, sessionManager } = upstream;
@@ -374,6 +376,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
     permissionMode: input.permissionMode,
     messageMetadata: input.messageMetadata,
     emitAskUserQuestion: emit.onAskUserQuestion,
+    emitBrowserAuthRequest: emit.onBrowserAuthRequest,
     emitToolPermissionRequest: emit.onToolPermissionRequest
   });
   const { session, sessionManager } = upstream;

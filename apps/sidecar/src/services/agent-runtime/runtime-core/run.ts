@@ -34,6 +34,7 @@ import {
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
+  AgentBrowserAuthRequest,
   AgentSendInput,
   AgentToolPermissionRequest
 } from "@lume/shared";
@@ -132,6 +133,7 @@ export interface CreateRuntimeCoreSessionInput {
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -321,6 +323,7 @@ async function runSidecarSubagent(input: {
   messageMetadata?: Record<string, unknown>;
   permissionMode?: AgentSendInput["permissionMode"];
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
 }): Promise<{
   result: ToolResult;
@@ -431,6 +434,7 @@ async function runSidecarSubagent(input: {
       subagentErrorMessage = error;
     },
     onAskUserQuestion: input.emitAskUserQuestion ?? (() => undefined),
+    onBrowserAuthRequest: input.emitBrowserAuthRequest ?? (() => undefined),
     onToolPermissionRequest: input.emitToolPermissionRequest ?? (() => undefined)
   });
 
@@ -617,6 +621,7 @@ function buildRuntimeCoreTools(input: {
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -668,6 +673,7 @@ function buildRuntimeCoreTools(input: {
     automationExecution,
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion ?? (() => {}),
+    emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {})
   });
 
@@ -758,6 +764,7 @@ function buildRuntimeCoreTools(input: {
         messageMetadata: input.messageMetadata,
         permissionMode,
         emitAskUserQuestion: input.emitAskUserQuestion,
+        emitBrowserAuthRequest: input.emitBrowserAuthRequest,
         emitToolPermissionRequest: input.emitToolPermissionRequest
       });
       if (runInBackground) {
@@ -908,6 +915,7 @@ function buildRuntimeCoreTools(input: {
         messageMetadata: input.messageMetadata,
         permissionMode,
         emitAskUserQuestion: input.emitAskUserQuestion,
+        emitBrowserAuthRequest: input.emitBrowserAuthRequest,
         emitToolPermissionRequest: input.emitToolPermissionRequest
       });
       if (runInBackground) {
@@ -1250,6 +1258,7 @@ export async function createRuntimeCoreSession(
     messageMetadata: input.messageMetadata,
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion,
+    emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
     emitTodoUpdated: input.emitTodoUpdated,

@@ -1,5 +1,6 @@
 import type {
   AgentAskUserQuestionRequest,
+  AgentBrowserAuthRequest,
   AgentPendingInteractiveState,
   AgentTaskApprovalRequest,
   AgentToolPermissionRequest,
@@ -52,6 +53,21 @@ export function upsertPendingToolPermission(
   }
 }
 
+export function upsertPendingBrowserAuthRequest(
+  prev: Record<string, AgentPendingInteractiveState>,
+  request: AgentBrowserAuthRequest,
+): Record<string, AgentPendingInteractiveState> {
+  const current = prev[request.threadId] ?? { threadId: request.threadId }
+  return {
+    ...prev,
+    [request.threadId]: {
+      ...current,
+      threadId: request.threadId,
+      browserAuthRequests: upsertByKey(current.browserAuthRequests, request, (item) => item.requestId),
+    },
+  }
+}
+
 export function upsertPendingTaskApproval(
   prev: Record<string, AgentPendingInteractiveState>,
   request: AgentTaskApprovalRequest,
@@ -96,6 +112,22 @@ export function removePendingAskUserQuestion(
     [threadId]: {
       ...current,
       askUserQuestions: (current.askUserQuestions ?? []).filter((item) => item.toolUseId !== toolUseId),
+    },
+  }
+}
+
+export function removePendingBrowserAuthRequest(
+  prev: Record<string, AgentPendingInteractiveState>,
+  threadId: string,
+  requestId: string,
+): Record<string, AgentPendingInteractiveState> {
+  const current = prev[threadId]
+  if (!current) return prev
+  return {
+    ...prev,
+    [threadId]: {
+      ...current,
+      browserAuthRequests: (current.browserAuthRequests ?? []).filter((item) => item.requestId !== requestId),
     },
   }
 }

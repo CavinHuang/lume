@@ -1,12 +1,15 @@
 import { basename, isAbsolute, win32 } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
-import type { McpServerStatus, McpToolDetail } from "@lume/shared";
+import type { AgentBrowserAuthRequest, McpServerStatus, McpToolDetail } from "@lume/shared";
 import { getNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
 import {
   NODE_REPL_MCP_INSTRUCTIONS,
   type JsExecInput,
+  type NodeReplBrowserAuthRequest,
+  type NodeReplBrowserAuthResult,
   type NodeReplRuntimeRegistry
 } from "./node-repl-types";
+import { waitForBrowserAuthResponse } from "../../interruption/browser-auth-session";
 
 export const NODE_REPL_MCP_SERVER_ID = "node_repl";
 export const NODE_REPL_MCP_SERVER_NAME = "node_repl";
@@ -16,6 +19,7 @@ export function createNodeReplTools(input: {
   sessionId: string;
   cwd: string;
   workspaceSlug?: string;
+  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   registry?: NodeReplRuntimeRegistry;
 }): ToolDefinition[] {
   const registry = input.registry ?? getNodeReplRuntimeRegistry();
@@ -61,7 +65,18 @@ export function createNodeReplTools(input: {
           threadId,
           toolUseId: context.toolUseId
         });
-        const result = await registry.exec(threadId, execInput, { cwd: context.cwd || input.cwd });
+        const result = await registry.exec(threadId, execInput, {
+          cwd: context.cwd || input.cwd,
+          emitBrowserAuthRequest: input.emitBrowserAuthRequest
+            ? (request, signal) => resolveBrowserAuthRequest({
+              request,
+              signal,
+              threadId,
+              toolUseId: context.toolUseId,
+              emit: input.emitBrowserAuthRequest!,
+            })
+            : undefined
+        });
         return {
           type: "tool_result",
           tool_use_id: context.toolUseId ?? "",
@@ -132,6 +147,7 @@ export function createNodeReplMcpTools(input: {
   sessionId: string;
   cwd: string;
   workspaceSlug?: string;
+  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   registry?: NodeReplRuntimeRegistry;
 }): ToolDefinition[] {
   return createNodeReplTools(input).map((tool) => ({
@@ -209,6 +225,53 @@ function withRuntimeRequestMeta(input: JsExecInput, runtime: { threadId: string;
       ...(runtime.toolUseId ? { toolUseId: runtime.toolUseId } : {}),
       ...(input._meta ?? {})
     }
+  };
+}
+
+let browserAuthRequestSeq = 1;
+
+async function resolveBrowserAuthRequest(input: {
+  request: NodeReplBrowserAuthRequest;
+  signal: AbortSignal;
+  threadId: string;
+  toolUseId?: string;
+  emit: (request: AgentBrowserAuthRequest) => void;
+}): Promise<NodeReplBrowserAuthResult> {
+  const normalized = normalizeBrowserAuthRequest(input.request, input.threadId, input.toolUseId);
+  if (!normalized) return { status: "unavailable" };
+  const result = await waitForBrowserAuthResponse(normalized, input.signal, input.emit);
+  if (result.status === "submitted") {
+    return { status: "approved", values: result.values ?? {} };
+  }
+  return { status: result.status };
+}
+
+function normalizeBrowserAuthRequest(
+  request: NodeReplBrowserAuthRequest,
+  fallbackThreadId: string,
+  toolUseId?: string,
+): AgentBrowserAuthRequest | null {
+  const origin = typeof request.origin === "string" ? request.origin.trim() : "";
+  if (!origin) return null;
+  const fields = Array.isArray(request.fields) ? request.fields : [];
+  return {
+    threadId: request.context?.threadId || fallbackThreadId,
+    requestId: `browser_auth:${toolUseId ?? "node_repl"}:${browserAuthRequestSeq++}`,
+    origin,
+    ...(typeof request.reason === "string" && request.reason.trim() ? { reason: request.reason.trim() } : {}),
+    expiresAt: typeof request.expires_at === "string" && request.expires_at.trim()
+      ? request.expires_at
+      : new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    fields: fields.map((field, index) => ({
+      id: typeof field.id === "string" && field.id.trim() ? field.id : `field-${index + 1}`,
+      label: typeof field.label === "string" && field.label.trim() ? field.label : `Field ${index + 1}`,
+      type: typeof field.type === "string" && field.type.trim() ? field.type : "text",
+      ...(typeof field.autocomplete === "string" && field.autocomplete.trim() ? { autocomplete: field.autocomplete } : {}),
+      ...(field.required !== undefined ? { required: field.required === true } : {})
+    })),
+    ...(request.context?.browserSessionId ? { browserSessionId: request.context.browserSessionId } : {}),
+    ...(request.context?.browserTurnId ? { browserTurnId: request.context.browserTurnId } : {}),
+    ...(typeof request.tabId === "string" && request.tabId.trim() ? { tabId: request.tabId } : {})
   };
 }
 

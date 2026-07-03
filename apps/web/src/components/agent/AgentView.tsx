@@ -14,6 +14,7 @@ import { AgentMessages } from './AgentMessages'
 import { AgentInput, type PendingMessageAttachment } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
+import { BrowserAuthBanner } from './BrowserAuthBanner'
 import { PlanApprovalOverlay } from './PlanApprovalOverlay'
 import { ErrorBanner } from './ErrorBanner'
 import { ThreadFileEnvProvider } from './thread-file-env'
@@ -42,12 +43,18 @@ export function AgentView({ threadId, readOnly }: AgentViewProps) {
   const streamingState = useAtomValue(agentStreamingStatesFamily(threadId)) ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveFamily(threadId))
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
+  const pendingBrowserAuthRequests = pendingInteractive?.browserAuthRequests ?? []
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
   const pendingTaskApprovals = pendingInteractive?.taskApprovals ?? []
   const activeTaskApproval = pendingTaskApprovals[0]
   const activeToolPermission = activeTaskApproval ? undefined : pendingToolPermissions[0]
-  const activeAskUserQuestion = activeTaskApproval || activeToolPermission ? undefined : pendingAskUserQuestions[0]
-  const hasComposerOverlay = Boolean(activeTaskApproval || activeToolPermission || activeAskUserQuestion)
+  const activeBrowserAuthRequest = activeTaskApproval || activeToolPermission ? undefined : pendingBrowserAuthRequests[0]
+  const activeAskUserQuestion = activeTaskApproval || activeToolPermission || activeBrowserAuthRequest
+    ? undefined
+    : pendingAskUserQuestions[0]
+  const hasComposerOverlay = Boolean(
+    activeTaskApproval || activeToolPermission || activeBrowserAuthRequest || activeAskUserQuestion
+  )
   const [approvalOverlayVisible, setApprovalOverlayVisible] = useState(Boolean(activeTaskApproval))
 
   const threads = useAtomValue(agentThreadsAtom)
@@ -236,6 +243,11 @@ export function AgentView({ threadId, readOnly }: AgentViewProps) {
               {activeToolPermission && (
                 <div className="absolute inset-x-0 bottom-0 z-30">
                   <PermissionBanner threadId={threadId} request={activeToolPermission} />
+                </div>
+              )}
+              {activeBrowserAuthRequest && (
+                <div className="absolute inset-x-0 bottom-0 z-30">
+                  <BrowserAuthBanner threadId={threadId} request={activeBrowserAuthRequest} />
                 </div>
               )}
               {activeAskUserQuestion && (

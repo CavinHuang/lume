@@ -1126,6 +1126,23 @@ export const submitAskUserQuestionInputSchema = z.object({
   answers: z.record(z.string(), z.string()).optional()
 });
 
+export const submitBrowserAuthInputSchema = z.object({
+  threadId: idSchema,
+  requestId: idSchema,
+  status: z.enum([
+    "submitted",
+    "declined",
+    "cancelled",
+    "unavailable",
+    "expired",
+    "origin_changed",
+    "page_changed",
+    "locator_invalid",
+    "submission_failed"
+  ]),
+  values: z.record(z.string(), z.string()).optional()
+});
+
 export const submitToolPermissionInputSchema = z.object({
   threadId: idSchema,
   requestId: idSchema,

@@ -4,6 +4,7 @@ import type {
   NodeReplExecutionResult,
   NodeReplRuntimeClient,
   NodeReplRuntimeRegistry,
+  NodeReplRuntimeExecOptions,
   RuntimeFactory
 } from "./node-repl-types";
 
@@ -40,10 +41,10 @@ export function createNodeReplRuntimeRegistry(
       }
       return added;
     },
-    async exec(threadId: string, input: JsExecInput, options?: { cwd?: string }): Promise<NodeReplExecutionResult> {
+    async exec(threadId: string, input: JsExecInput, options?: { cwd?: string } & NodeReplRuntimeExecOptions): Promise<NodeReplExecutionResult> {
       const entry = await ensure(threadId, options);
       try {
-        return await entry.client.exec(input);
+        return await entry.client.exec(input, options);
       } catch (error) {
         await entry.client.shutdown().catch(() => undefined);
         entries.delete(threadId);

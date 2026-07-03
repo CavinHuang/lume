@@ -34,6 +34,11 @@ pub trait Elicitor: Send + Sync {
     async fn elicit(&self, message: &str, requested_schema: Value, meta: Value) -> Result<Value>;
 }
 
+#[async_trait]
+pub trait HostCallHandler: Send + Sync {
+    async fn call(&self, id: String, exec_id: String, method: String, args: Value) -> Result<Value>;
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeOptions {
     pub cwd: PathBuf,
@@ -187,6 +192,7 @@ pub struct Runtime {
     execution_lock: Mutex<()>,
     host: HostServices,
     elicitor: Mutex<Option<Arc<dyn Elicitor>>>,
+    host_call_handler: Mutex<Option<Arc<dyn HostCallHandler>>>,
     #[cfg(any(unix, windows))]
     pipes: Arc<Mutex<HashMap<String, Arc<Mutex<PipeWriter>>>>>,
     sandbox_initialized: AtomicBool,
@@ -213,6 +219,7 @@ impl Runtime {
             execution_lock: Mutex::new(()),
             host,
             elicitor: Mutex::new(None),
+            host_call_handler: Mutex::new(None),
             #[cfg(any(unix, windows))]
             pipes: Arc::new(Mutex::new(HashMap::new())),
             sandbox_initialized: AtomicBool::new(false),
@@ -225,6 +232,10 @@ impl Runtime {
 
     pub async fn set_elicitor(&self, elicitor: Arc<dyn Elicitor>) {
         *self.elicitor.lock().await = Some(elicitor);
+    }
+
+    pub async fn set_host_call_handler(&self, handler: Arc<dyn HostCallHandler>) {
+        *self.host_call_handler.lock().await = Some(handler);
     }
 
     pub async fn execute(
@@ -363,6 +374,10 @@ impl Runtime {
                 "elicit" => {
                     self.assert_token(&session, &next)?;
                     self.handle_elicitation(&session, &next).await?;
+                }
+                "lume_host_call" => {
+                    self.assert_token(&session, &next)?;
+                    self.handle_lume_host_call(&session, &next).await?;
                 }
                 "native_pipe_request" => {
                     self.assert_token(&session, &next)?;
@@ -699,6 +714,23 @@ impl Runtime {
             Err(error) => {
                 json!({ "type": "elicitation_result", "id": id, "ok": false, "error": error.to_string() })
             }
+        };
+        send_value(&session.writer, &response).await
+    }
+
+    async fn handle_lume_host_call(&self, session: &KernelSession, message: &Value) -> Result<()> {
+        let id = required_string(message, "id")?.to_string();
+        let exec_id = required_string(message, "exec_id")?.to_string();
+        let method = required_string(message, "method")?.to_string();
+        let args = message.get("args").cloned().unwrap_or(Value::Null);
+        let handler = self.host_call_handler.lock().await.clone();
+        let response = if let Some(handler) = handler {
+            match handler.call(id.clone(), exec_id, method, args).await {
+                Ok(value) => json!({ "type": "lume_host_result", "id": id, "ok": true, "value": value }),
+                Err(error) => json!({ "type": "lume_host_result", "id": id, "ok": false, "error": error.to_string() })
+            }
+        } else {
+            json!({ "type": "lume_host_result", "id": id, "ok": false, "error": "lume host call is unavailable" })
         };
         send_value(&session.writer, &response).await
     }

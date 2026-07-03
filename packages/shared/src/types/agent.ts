@@ -708,6 +708,48 @@ export interface AgentAskUserQuestionResponseInput {
   canceled?: boolean
 }
 
+export type AgentBrowserAuthStatus =
+  | 'submitted'
+  | 'declined'
+  | 'cancelled'
+  | 'unavailable'
+  | 'expired'
+  | 'origin_changed'
+  | 'page_changed'
+  | 'locator_invalid'
+  | 'submission_failed'
+
+export interface AgentBrowserAuthField {
+  id: string
+  label: string
+  type: string
+  autocomplete?: string
+  required?: boolean
+}
+
+export interface AgentBrowserAuthRequest {
+  threadId: string
+  runId?: string
+  originThreadId?: string
+  subagentRunId?: string
+  subagentLabel?: string
+  requestId: string
+  origin: string
+  reason?: string
+  expiresAt: string
+  fields: AgentBrowserAuthField[]
+  browserSessionId?: string
+  browserTurnId?: string
+  tabId?: string
+}
+
+export interface AgentBrowserAuthResponseInput {
+  threadId: string
+  requestId: string
+  status: AgentBrowserAuthStatus
+  values?: Record<string, string>
+}
+
 export type AgentToolPermissionRiskLevel = 'low' | 'medium' | 'high'
 
 export type AgentToolPermissionDecision = 'allow_once' | 'allow_always' | 'deny'
@@ -774,6 +816,7 @@ export interface AgentToolPermissionResponseInput {
 export interface AgentPendingInteractiveState {
   threadId: string
   askUserQuestions?: AgentAskUserQuestionRequest[]
+  browserAuthRequests?: AgentBrowserAuthRequest[]
   toolPermissions?: AgentToolPermissionRequest[]
   taskApprovals?: AgentTaskApprovalRequest[]
 }
@@ -1421,6 +1464,10 @@ export const AGENT_IPC_CHANNELS = {
   ASK_USER_QUESTION: 'agent:ask-user-question',
   /** AskUserQuestion 回答提交（web -> sidecar） */
   SUBMIT_ASK_USER_QUESTION: 'agent:submit-ask-user-question',
+  /** 浏览器安全凭证请求（sidecar -> web） */
+  BROWSER_AUTH_REQUEST: 'agent:browser-auth-request',
+  /** 浏览器安全凭证提交（web -> sidecar） */
+  SUBMIT_BROWSER_AUTH: 'agent:submit-browser-auth',
   /** 工具权限确认请求（sidecar -> web） */
   TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
   /** 工具权限确认结果（web -> sidecar） */
