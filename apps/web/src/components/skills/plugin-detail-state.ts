@@ -68,17 +68,24 @@ export function buildPermissionRows(item: PluginMarketItem): PermissionRow[] {
 }
 
 export function buildPluginSetupItems(item: PluginMarketItem): PluginSetupItem[] {
-  const installed = item.installState === 'installed'
+  const currentVersionInstalled = item.installState === 'installed'
+  const updateAvailable = item.installState === 'update-available'
   const enabled = item.enableState === 'global-enabled' || item.enableState === 'workspace-enabled'
   const needsLocalConnection = item.permissions.networkOutbound.some((entry) =>
     entry.includes('127.0.0.1') || entry.includes('localhost')
   )
   const hasMcp = item.capabilities.mcpServerNames.length > 0 || item.permissions.mcpRegister
+  let installDescription = '安装后才能启用和配置连接。'
+  if (currentVersionInstalled) {
+    installDescription = `当前版本 ${item.version} 已安装。`
+  } else if (updateAvailable) {
+    installDescription = `当前已安装，发现可更新版本 ${item.version}。`
+  }
   const items: PluginSetupItem[] = [
     {
       title: '确认插件已安装',
-      description: installed ? `当前版本 ${item.version} 已安装。` : '安装后才能启用和配置连接。',
-      status: installed ? 'done' : 'attention',
+      description: installDescription,
+      status: currentVersionInstalled ? 'done' : 'attention',
     },
     {
       title: '启用当前工作区',

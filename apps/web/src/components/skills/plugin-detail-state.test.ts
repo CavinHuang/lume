@@ -67,6 +67,24 @@ describe('plugin-detail-state', () => {
     expect(items.some((item) => item.status === 'attention')).toBe(true)
   })
 
+  test('formats setup install item for installed, updateable, and missing plugins', () => {
+    expect(buildPluginSetupItems(plugin({ installState: 'not-installed', enableState: 'not-installed' }))[0]).toEqual({
+      title: '确认插件已安装',
+      description: '安装后才能启用和配置连接。',
+      status: 'attention',
+    })
+    expect(buildPluginSetupItems(plugin({ installState: 'installed' }))[0]).toEqual({
+      title: '确认插件已安装',
+      description: '当前版本 1.0.0 已安装。',
+      status: 'done',
+    })
+    expect(buildPluginSetupItems(plugin({ installState: 'update-available' }))[0]).toEqual({
+      title: '确认插件已安装',
+      description: '当前已安装，发现可更新版本 1.0.0。',
+      status: 'attention',
+    })
+  })
+
   test('formats README metadata', () => {
     expect(formatReadmeMeta({ markdown: '# Demo', path: 'README.md', truncated: false })).toBe('README.md')
     expect(formatReadmeMeta({ markdown: '# Demo', path: 'README.md', truncated: true })).toBe('README.md · 已截断')
