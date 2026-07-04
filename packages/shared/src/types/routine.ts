@@ -8,6 +8,7 @@ export type PredefinedRoutineActivity =
   | "todo_review"
   | "interest_digest"
   | "work_overview"
+  | "book_discover"
 
 export type RoutineActivity = PredefinedRoutineActivity | (string & {})
 
@@ -33,6 +34,7 @@ export interface RoutineEntry {
 
 export interface RoutineContext {
   activeBooks: number
+  queuedBooks: number
   unfinishedTodos: number
   lastSyncAt?: number
   dayOfWeek: number

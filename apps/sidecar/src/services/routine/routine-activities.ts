@@ -54,6 +54,29 @@ const executors: RoutineActivityExecutor[] = [
     estimatedMinutes: 2,
   },
   {
+    activity: "book_discover",
+    shouldInclude(ctx) {
+      // 仅当「无在读」且「无 queued 待读」时触发：完全没书可读才去发现新书。
+      // 有在读/待读时由 reading_progress / reading_note / pick_next 覆盖。
+      return ctx.activeBooks === 0 && ctx.queuedBooks === 0
+    },
+    buildJobInput(entry, _ctx) {
+      return {
+        name: "发现新书",
+        prompt:
+          "当前书库没有在读或待读的书，需要为用户挑选下一本要读的书。" +
+          "先调用 lume_reading_snapshot 查看已读书目、笔记与偏好画像；" +
+          "再推荐一本与用户兴趣契合、且容易获取的书（优先公共领域或广可获取的作品，避免冷门或难寻的版本）。" +
+          "然后用 lume_add_book 把推荐的书加入书架（status 必须设为 queued），" +
+          "紧接着调用 lume_reading_pick_next 把它从 queued 晋升为 reading，让后续读书活动恢复。" +
+          "最后简要说明推荐理由。如果实在没有合适的推荐，请明确说明，不要凭空捏造书名或作者。",
+        schedule: { type: "once", runAt: entry.scheduledAt },
+        enabled: true,
+      }
+    },
+    estimatedMinutes: 2,
+  },
+  {
     activity: "memory_organize",
     shouldInclude(ctx) {
       return ctx.pendingMemories > 0

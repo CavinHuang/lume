@@ -15,12 +15,14 @@ function collectRoutineContext(): RoutineContext {
   const now = Date.now()
   const books = listReadingBooks()
   const activeBooks = books.filter((b) => b.status !== "finished").length
+  const queuedBooks = books.filter((b) => b.status === "queued").length
   const notes = listReadingNotes({ includeHidden: true })
   const recentNotes = notes.filter((n) => now - n.createdAt < 7 * 86400_000).length
   const settings = getReadingSettings()
 
   return {
     activeBooks,
+    queuedBooks,
     unfinishedTodos: 0,
     lastSyncAt: settings.weread.lastSyncAt,
     dayOfWeek: new Date().getDay(),
@@ -61,6 +63,7 @@ const PRIORITY_ORDER: RoutineActivity[] = [
   "work_overview",
   "reading_progress",
   "reading_note",
+  "book_discover",
   "todo_review",
   "interest_digest",
   "weekly_summary",
