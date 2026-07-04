@@ -16,6 +16,8 @@ import {
   type ProjectionRef,
 } from './runtime-event-message-projection'
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
+import { TodoPanel } from './TodoPanel'
+import type { TodoBlockData } from './runtime-message-view'
 import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
 import {
   collectNewRuntimeMessageIds,
@@ -315,6 +317,19 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     }
   }, [latestUserMessageKey, liveMessages.length, scrollMessagesToBottom, threadId])
 
+  const latestTodo: TodoBlockData | null = useMemo(() => {
+    // 直接从原始事件流取最新 todo 状态，避免依赖消息 block 的持久性
+    // （跨 turn / projection fallback / stabilize 都可能让消息 block 不可达，
+    // 导致思考或调用其他工具时面板消失）
+    for (let i = runtimeEvents.length - 1; i >= 0; i -= 1) {
+      const event = runtimeEvents[i]!
+      if (event.type === 'todo.state_updated') {
+        return { todos: event.todos, currentActiveForm: event.currentActiveForm }
+      }
+    }
+    return null
+  }, [runtimeEvents])
+
   const items: React.ReactNode[] = []
   for (let i = 0; i < liveMessages.length; i++) {
     const msg = liveMessages[i]
@@ -364,6 +379,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           )}
         </div>
       </div>
+      <TodoPanel data={latestTodo} />
       {showScrollButton && hasRenderableMessages && (
         <button
           type="button"

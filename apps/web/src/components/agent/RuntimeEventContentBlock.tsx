@@ -116,8 +116,18 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   }
 
   const latestTaskProgressBlock = findLatestTaskProgressBlock(message.blocks)
-  const contentBlocks = message.blocks.filter((block) => block.type !== 'task_progress')
+  // message.blocks 引用由 stabilizeRuntimeMessages 稳定化（内容未变 → 同引用），
+  // memo 化两次 filter 的结果，让下游 MinimalAssistantContent 的分组 useMemo 命中、
+  // segments 引用稳定（否则每帧新数组 → 分组重算 → 段 blocks 新引用）。
+  const contentBlocks = useMemo(
+    () => message.blocks.filter((block) => block.type !== 'task_progress'),
+    [message.blocks],
+  )
   const useMinimalMode = useAtomValue(generalSettingsAtom).agentMessageDisplayMode === 'minimal'
+  const minimalBlocks = useMemo(
+    () => contentBlocks.filter((block) => block.type !== 'memory_context_used'),
+    [contentBlocks],
+  )
   const activeStreamingTextBlockId = streaming === true && message.status === 'streaming'
     ? findActiveStreamingTextBlockId(message.blocks)
     : null
@@ -143,7 +153,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
       <div className="min-w-0 flex-1 space-y-4 pt-2">
         {useMinimalMode ? (
           <MinimalAssistantContent
-            blocks={contentBlocks.filter((b) => b.type !== 'memory_context_used')}
+            blocks={minimalBlocks}
             threadId={threadId}
             isStreamingMessage={streaming === true && message.status === 'streaming'}
             onOpenThreadFile={onOpenThreadFile}
@@ -581,6 +591,10 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
     return null
   }
 
+  if (block.type === 'todo_update') {
+    return null
+  }
+
   return (
     <RuntimeEventToolCallBlock
       toolCall={block.toolCall}
@@ -590,116 +604,170 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
   )
 })
 
-function MinimalProcessGroup({
-  blocks,
-  threadId,
-  isStreamingMessage,
-  onUserResizeStart,
-}: {
+type MinimalProcessGroupProps = {
   blocks: RuntimeAssistantBlock[]
   threadId: string
   isStreamingMessage: boolean
   onUserResizeStart?: () => void
+}
+
+/**
+ * memo 比较函数：blocks 逐元素引用比较（未变 block 引用在投影层已稳定，
+ * 见 runtime-event-message-projection 流式 block 引用稳定测试）。
+ * 让"已完成 process 段"在活跃段流式追加或计时重渲染时跳过 re-render，
+ * 消除简洁模式下多段同时重渲染导致的列表抖动与高度跳变。
+ * - 标量 props（isStreamingMessage/threadId）直接比较；
+ * - onUserResizeStart 由父级 useCallback 保证引用稳定，不参与比较。
+ */
+function areMinimalProcessGroupPropsEqual(
+  prev: MinimalProcessGroupProps,
+  next: MinimalProcessGroupProps,
+): boolean {
+  if (prev.isStreamingMessage !== next.isStreamingMessage) return false
+  if (prev.threadId !== next.threadId) return false
+  const prevBlocks = prev.blocks
+  const nextBlocks = next.blocks
+  if (prevBlocks === nextBlocks) return true
+  if (prevBlocks.length !== nextBlocks.length) return false
+  for (let i = 0; i < prevBlocks.length; i += 1) {
+    if (prevBlocks[i] !== nextBlocks[i]) return false
+  }
+  return true
+}
+
+/**
+ * 运行态总用时数字：自维护 setInterval(1000)，每秒只重渲染本 span，
+ * 不连带重渲染整个 MinimalProcessGroup（design 7.3：运行态 ⏱ 每秒跳动是有意行为，保留）。
+ * - baseMs：过程组内已完成 toolCall 的累计用时（非 Agent + Agent）；
+ * - startedAt：当前 running tool 起始时间；缺失时 elapsedMs=0（退化为只显示 baseMs，保留原行为）。
+ * tabular-nums 防宽度抖动；text 为空（total≤0 的瞬态）return null。
+ */
+const RunningDurationClock = memo(function RunningDurationClock({
+  baseMs,
+  startedAt,
+}: {
+  baseMs: number
+  startedAt?: string
 }) {
-  const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-
-  const toolCalls = blocks
-    .filter((b): b is Extract<RuntimeAssistantBlock, { type: 'tool_call' }> => b.type === 'tool_call')
-    .map((b) => b.toolCall)
-  const subagentCount = toolCalls.filter((tc) => tc.toolName === 'Agent').length
-  const nonAgentCount = toolCalls.length - subagentCount
-  const failedCount = toolCalls.filter((tc) => tc.status === 'failed').length
-  const completedCount = toolCalls.filter((tc) => tc.status === 'completed').length
-  // 仅展示第一个运行中的工具：agent 绝大多数情况顺序执行工具；并发多工具时其余的进度不单独展示。
-  const runningTool = toolCalls.find((tc) => tc.status === 'running')
-  const hasRunning = isStreamingMessage && Boolean(runningTool)
-
   useEffect(() => {
-    if (!hasRunning) return
+    // interval 只挂一次；startedAt/baseMs 变化由 props 流入，render body 用最新值重算。
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
-  }, [hasRunning])
-
-  const nonAgentDurationMs = toolCalls
-    .filter((tc) => tc.toolName !== 'Agent')
-    .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
-  const subagentDurationMs = toolCalls
-    .filter((tc) => tc.toolName === 'Agent')
-    .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
-  const runningElapsedMs = hasRunning && runningTool?.startedAt
-    ? Math.max(0, now - Date.parse(runningTool.startedAt))
-    : 0
-  const runningOnSubagent = hasRunning && runningTool?.toolName === 'Agent'
-  const toolDurationMs = nonAgentDurationMs + (runningOnSubagent ? 0 : runningElapsedMs)
-  const subagentTotalMs = subagentDurationMs + (runningOnSubagent ? runningElapsedMs : 0)
-  const thinkingCount = blocks.filter((b) => b.type === 'thinking').length
-
-  const fmtDuration = (ms: number) => (
-    ms <= 0
-      ? ''
-      : ms / 1000 < 60
-        ? `${(ms / 1000).toFixed(hasRunning ? 0 : 1)}s`
-        : formatDurationLabel(ms)
+  }, [])
+  const elapsedMs = startedAt ? Math.max(0, now - Date.parse(startedAt)) : 0
+  const text = formatRunningDuration(baseMs + elapsedMs)
+  if (!text) return null
+  return (
+    <span data-running-clock className="inline-flex items-center gap-1 tabular-nums">
+      <Clock size={12} />
+      {text}
+    </span>
   )
+})
+
+const MinimalProcessGroup = memo(function MinimalProcessGroup({
+  blocks,
+  threadId,
+  isStreamingMessage,
+  onUserResizeStart,
+}: MinimalProcessGroupProps) {
+  const [expanded, setExpanded] = useState(false)
+
+  // 派生计算 memo：blocks 引用由 stabilizeRuntimeMessages + 项 A contentBlocks memo 稳定化，
+  // blocks 不变时跳过重算。项 B 移除 now/计时后派生不再依赖时间，可干净 memo。
+  const derived = useMemo(() => {
+    const toolCalls = blocks
+      .filter((b): b is Extract<RuntimeAssistantBlock, { type: 'tool_call' }> => b.type === 'tool_call')
+      .map((b) => b.toolCall)
+    const subagentCount = toolCalls.filter((tc) => tc.toolName === 'Agent').length
+    const nonAgentCount = toolCalls.length - subagentCount
+    const failedCount = toolCalls.filter((tc) => tc.status === 'failed').length
+    const completedCount = toolCalls.filter((tc) => tc.status === 'completed').length
+    // 仅展示第一个运行中的工具：agent 绝大多数情况顺序执行工具；并发多工具时其余的进度不单独展示。
+    const runningTool = toolCalls.find((tc) => tc.status === 'running') ?? null
+    const todoBlock = blocks.find((b): b is Extract<RuntimeAssistantBlock, { type: 'todo_update' }> => b.type === 'todo_update')
+    const nonAgentDurationMs = toolCalls
+      .filter((tc) => tc.toolName !== 'Agent')
+      .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
+    const subagentDurationMs = toolCalls
+      .filter((tc) => tc.toolName === 'Agent')
+      .reduce((sum, tc) => sum + (typeof tc.durationMs === 'number' ? tc.durationMs : 0), 0)
+    const thinkingCount = blocks.filter((b) => b.type === 'thinking').length
+    return {
+      toolCalls,
+      subagentCount,
+      nonAgentCount,
+      failedCount,
+      completedCount,
+      runningTool,
+      todoActiveForm: todoBlock?.data.currentActiveForm ?? null,
+      nonAgentDurationMs,
+      subagentDurationMs,
+      thinkingCount,
+    }
+  }, [blocks])
+
+  const hasRunning = isStreamingMessage && Boolean(derived.runningTool)
 
   // 折叠行摘要：图标 + 文本单元，用 · 分隔（不再使用 emoji）
   const summaryUnits: ReactNode[] = []
-  if (hasRunning && runningTool) {
+  if (hasRunning && derived.runningTool) {
     // 运行中：当前动作 + 已完成步数 + 总已用时
     summaryUnits.push(
       <span key="run" className="inline-flex items-center gap-1">
         <span className="size-1.5 animate-pulse rounded-full bg-blue-500" />
-        正在执行 {runningTool.toolName}
+        {derived.todoActiveForm ?? `正在执行 ${derived.runningTool.toolName}`}
       </span>,
     )
     summaryUnits.push(
       <span key="done">
-        已完成 {completedCount} 步{failedCount > 0 ? ` · ${failedCount} 失败` : ''}
+        已完成 {derived.completedCount} 步{derived.failedCount > 0 ? ` · ${derived.failedCount} 失败` : ''}
       </span>,
     )
-    const elapsed = fmtDuration(runningElapsedMs + nonAgentDurationMs + subagentDurationMs)
-    if (elapsed) {
+    // 运行态总用时跳动隔离到 RunningDurationClock：每秒只重渲染该数字，不连带重渲染整个 group。
+    // 等价原 if(elapsed) 守卫——有已完成 tool 耗时或 running tool 起始时间才显示（不依赖 now）。
+    const runningBaseMs = derived.nonAgentDurationMs + derived.subagentDurationMs
+    if (runningBaseMs > 0 || derived.runningTool.startedAt) {
       summaryUnits.push(
-        <span key="dur" className="inline-flex items-center gap-1 tabular-nums">
-          <Clock size={12} />
-          {elapsed}
-        </span>,
+        <RunningDurationClock key="dur" baseMs={runningBaseMs} startedAt={derived.runningTool.startedAt} />,
       )
     }
   } else {
-    // 完成态：按分类（思考次数 / 工具调用数+时长 / 子代理数+时长 / 失败），按需省略
-    if (thinkingCount > 0) {
+    // 完成态：按分类（思考次数 / 工具调用数+时长 / 子代理数+时长 / 失败），按需省略。
+    // 完成态时长定格：!hasRunning 下原 toolDurationMs/subagentTotalMs 分别退化为
+    // nonAgentDurationMs/subagentDurationMs（runningElapsedMs 恒 0），直接用。
+    if (derived.thinkingCount > 0) {
       summaryUnits.push(
         <span key="think" className="inline-flex items-center gap-1">
           <Brain size={12} />
-          思考 {thinkingCount} 次
+          思考 {derived.thinkingCount} 次
         </span>,
       )
     }
-    if (nonAgentCount > 0) {
-      const d = fmtDuration(toolDurationMs)
+    if (derived.nonAgentCount > 0) {
+      const d = formatCompletedDuration(derived.nonAgentDurationMs)
       summaryUnits.push(
         <span key="ops" className="inline-flex items-center gap-1 tabular-nums">
           <Wrench size={12} />
-          {nonAgentCount} 个工具调用{d ? ` ${d}` : ''}
+          {derived.nonAgentCount} 个工具调用{d ? ` ${d}` : ''}
         </span>,
       )
     }
-    if (subagentCount > 0) {
-      const d = fmtDuration(subagentTotalMs)
+    if (derived.subagentCount > 0) {
+      const d = formatCompletedDuration(derived.subagentDurationMs)
       summaryUnits.push(
         <span key="sub" className="inline-flex items-center gap-1 tabular-nums">
           <Bot size={12} />
-          {subagentCount} 子代理{d ? ` ${d}` : ''}
+          {derived.subagentCount} 子代理{d ? ` ${d}` : ''}
         </span>,
       )
     }
-    if (failedCount > 0) {
+    if (derived.failedCount > 0) {
       summaryUnits.push(
         <span key="fail" className="inline-flex items-center gap-1 text-destructive/70">
           <TriangleAlert size={12} />
-          {failedCount} 失败
+          {derived.failedCount} 失败
         </span>,
       )
     }
@@ -749,9 +817,9 @@ function MinimalProcessGroup({
       )}
     </div>
   )
-}
+}, areMinimalProcessGroupPropsEqual)
 
-function MinimalToolCallRow({ toolCall }: { toolCall: RuntimeToolCallView }) {
+const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { toolCall: RuntimeToolCallView }) {
   const [open, setOpen] = useState(false)
   const input = asRecord(toolCall.input)
   const isRunning = toolCall.status === 'running'
@@ -799,9 +867,9 @@ function MinimalToolCallRow({ toolCall }: { toolCall: RuntimeToolCallView }) {
       )}
     </div>
   )
-}
+})
 
-function MinimalThinkingRow({ text }: { text: string }) {
+const MinimalThinkingRow = memo(function MinimalThinkingRow({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div>
@@ -821,9 +889,9 @@ function MinimalThinkingRow({ text }: { text: string }) {
       </AnimatedCollapsiblePanel>
     </div>
   )
-}
+})
 
-function MinimalSubagentRow({
+const MinimalSubagentRow = memo(function MinimalSubagentRow({
   toolCall,
   threadId,
   onUserResizeStart,
@@ -865,7 +933,7 @@ function MinimalSubagentRow({
       </AnimatedCollapsiblePanel>
     </div>
   )
-}
+})
 
 function MinimalAssistantContent({
   blocks,
@@ -2013,6 +2081,25 @@ function formatDurationLabel(ms: number): string {
   if (s < 3600) return `${mm}:${String(ss).padStart(2, '0')}`
   const hh = Math.floor(mm / 60)
   return `${hh}:${String(mm % 60).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
+}
+
+/**
+ * 运行态总用时格式化：<60s 取整秒（design 7.3：运行态按整秒跳动），
+ * ≥60s 复用 formatDurationLabel（mm:ss / h:mm:ss）。供 RunningDurationClock 使用。
+ */
+export function formatRunningDuration(ms: number): string {
+  if (ms <= 0) return ''
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(0)}s`
+  return formatDurationLabel(ms)
+}
+
+/**
+ * 完成态时长格式化：<60s 保留 1 位小数，≥60s 复用 formatDurationLabel。
+ */
+export function formatCompletedDuration(ms: number): string {
+  if (ms <= 0) return ''
+  return formatDurationLabel(ms)
 }
 
 function summarizeInput(input: unknown): string {

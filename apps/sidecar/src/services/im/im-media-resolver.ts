@@ -1,6 +1,13 @@
 import type { ImMessageContent } from "@lume/shared";
+import { aesEcbDecrypt, parseAesKey } from "./weixin/openclaw-weixin-cdn";
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** 若带 aesKey，则按腾讯 CDN 协议 AES-128-ECB 解密；否则视为明文原样返回。 */
+function decryptIfEncrypted(data: Buffer, aesKey: string | undefined): Buffer {
+  if (!aesKey) return data;
+  return aesEcbDecrypt(data, parseAesKey(aesKey));
+}
 
 export interface ResolveMediaOptions {
   fetchImpl?: FetchLike;
@@ -48,7 +55,7 @@ async function resolveImageContent(
       const ext = imageExtensionFor(mediaType);
       const threadPath = await options.saveMedia({
         filename: `im-image-${index}.${ext}`,
-        data,
+        data: decryptIfEncrypted(data, content.aesKey),
         mediaType,
       });
       if (threadPath) {
@@ -83,7 +90,7 @@ async function resolveFileContent(
     const mediaType = deriveFileMediaType(content.fileName);
     const threadPath = await options.saveMedia({
       filename: content.fileName || `im-file-${index}`,
-      data,
+      data: decryptIfEncrypted(data, content.aesKey),
       mediaType,
     });
     if (threadPath) {

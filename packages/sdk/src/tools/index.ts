@@ -71,7 +71,7 @@ import { LSPTool } from './lsp-tool.js'
 import { ConfigTool } from './config-tool.js'
 
 // Todo
-import { TodoWriteTool } from './todo-tool.js'
+import { createTodoTool } from './todo-tool.js'
 
 // Skill
 import { SkillTool } from './skill-tool.js'
@@ -137,9 +137,6 @@ const ALL_TOOLS: ToolDefinition[] = [
 
   // Config
   ConfigTool,
-
-  // Todo
-  TodoWriteTool,
 
   // Skill
   SkillTool,
@@ -262,7 +259,7 @@ export {
   // Config
   ConfigTool,
   // Todo
-  TodoWriteTool,
+  createTodoTool,
   // Skill
   SkillTool,
 }

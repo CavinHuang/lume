@@ -12,6 +12,7 @@ import { createSdkReadingTools } from "./reading/create-reading-tools";
 import { createPersonalizeUiTool } from "./ui/create-personalize-ui-tool";
 import { createSdkOfficeTools } from "./office/create-office-tools";
 import { createRoutineTools } from "./routine/create-routine-tools";
+import { createImageGenTools } from "./image-gen/create-image-gen-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -70,6 +71,10 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const routineTools = createRoutineTools({
     workspaceId: input.workspaceId,
   });
+  const imageGenTools = createImageGenTools({
+    threadId: input.threadId,
+    workspaceSlug: input.workspaceSlug,
+  });
   const customTools = [
     ...memoryTools,
     ...cronTools,
@@ -80,6 +85,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...uiTools,
     ...officeTools,
     ...routineTools,
+    ...imageGenTools,
   ];
   const customToolNames = customTools.map((tool) => tool.name);
 

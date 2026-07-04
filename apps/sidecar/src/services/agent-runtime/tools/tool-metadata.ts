@@ -474,7 +474,7 @@ registerToolMetadata({
   category: "control",
   riskLevel: "low",
   description: "管理任务列表",
-  allowedInPlanMode: true
+  allowedInPlanMode: false
 });
 
 // LSP 工具
@@ -507,4 +507,19 @@ registerToolMetadata({
   category: "control",
   riskLevel: "low",
   description: "搜索 MCP 工具"
+});
+
+// 图像生成工具
+registerToolMetadata({
+  name: "image_gen",
+  category: "execute",
+  riskLevel: "medium",
+  description: "调用配置的图像生成模型生成或编辑图片"
+});
+
+registerToolMetadata({
+  name: "list_image_models",
+  category: "read",
+  riskLevel: "low",
+  description: "列出已配置的图像生成模型及可用性"
 });

@@ -582,7 +582,16 @@ export function listTrashedThreads(): AgentThreadMeta[] {
 
 export function archiveAgentThread(id: string): AgentThreadMeta {
   console.log(`[Agent 线程] 归档 ${id.slice(0, 8)}`);
-  return updateAgentThreadMeta(id, { status: "archived" });
+  const archived = updateAgentThreadMeta(id, { status: "archived" });
+
+  // ★ D8: 级联归档委托子会话（delegate 仅一级，无孙会话，递归调用自身安全）
+  // 子会话在父归档时仍为 active，可通过 listAgentThreads 取得。
+  const childThreads = listAgentThreads().filter((t) => t.parentThreadId === id);
+  for (const child of childThreads) {
+    archiveAgentThread(child.id);
+  }
+
+  return archived;
 }
 
 export function restoreAgentThread(id: string): AgentThreadMeta {

@@ -5,6 +5,7 @@ export type LumeRunItem =
   | LumeToolResultItem
   | LumeModelStreamItem
   | LumePlanPreviewItem
+  | LumeTodoStateItem
   | LumeSystemEventItem
   | LumeApprovalItem
   | LumeSubagentItem
@@ -80,6 +81,14 @@ export interface LumePlanPreviewItem {
   planFilePath?: string;
   planVerified?: boolean;
   stepCount: number;
+  createdAt: string;
+}
+
+export interface LumeTodoStateItem {
+  type: "todo_state";
+  id: string;
+  todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[];
+  currentActiveForm: string | null;
   createdAt: string;
 }
 

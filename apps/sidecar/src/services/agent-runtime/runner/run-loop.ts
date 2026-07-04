@@ -105,6 +105,10 @@ export function createObservedRuntimeEmitter(
         observer.recordPlanPreview(preview, emit.onRuntimeEvent);
       }
       emit.onTaskContractUpdated?.(contract, preview);
+    },
+    onTodoUpdated: (state) => {
+      observer.recordTodoState(state, emit.onRuntimeEvent);
+      emit.onTodoUpdated?.(state);
     }
   };
 }

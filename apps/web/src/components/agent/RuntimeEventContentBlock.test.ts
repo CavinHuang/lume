@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  formatCompletedDuration,
   formatMessageAttachmentSize,
+  formatRunningDuration,
   getAssistantCopyText,
   getAssistantDownloadPayload,
   getCopyTextWithoutAfterglow,
@@ -234,5 +236,41 @@ describe('getToolPermissionTitleBadgeText', () => {
       isError: true,
       permissionState: 'timeout',
     })).toBe('权限超时')
+  })
+})
+
+describe('formatRunningDuration', () => {
+  test('<60s 取整秒（运行态，round-half-up）', () => {
+    expect(formatRunningDuration(500)).toBe('1s') // 0.5s → 1s
+    expect(formatRunningDuration(1200)).toBe('1s') // 1.2s → 1s
+    expect(formatRunningDuration(1500)).toBe('2s') // 1.5s → 2s
+    expect(formatRunningDuration(59999)).toBe('60s') // 59.999s → 60s（进位）
+  })
+  test('>=60s 用 mm:ss', () => {
+    expect(formatRunningDuration(65000)).toBe('1:05')
+  })
+  test('>=1h 用 h:mm:ss', () => {
+    expect(formatRunningDuration(3723000)).toBe('1:02:03')
+  })
+  test('<=0 返回空串', () => {
+    expect(formatRunningDuration(0)).toBe('')
+    expect(formatRunningDuration(-5)).toBe('')
+  })
+})
+
+describe('formatCompletedDuration', () => {
+  test('<60s 保留 1 位小数（完成态）', () => {
+    expect(formatCompletedDuration(1500)).toBe('1.5s')
+    expect(formatCompletedDuration(2300)).toBe('2.3s')
+  })
+  test('>=60s 用 mm:ss', () => {
+    expect(formatCompletedDuration(65000)).toBe('1:05')
+  })
+  test('>=1h 用 h:mm:ss', () => {
+    expect(formatCompletedDuration(3723000)).toBe('1:02:03')
+  })
+  test('<=0 返回空串', () => {
+    expect(formatCompletedDuration(0)).toBe('')
+    expect(formatCompletedDuration(-5)).toBe('')
   })
 })

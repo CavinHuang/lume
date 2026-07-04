@@ -20,7 +20,7 @@ export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]):
   }
 
   for (const block of blocks) {
-    if (block.type === 'thinking' || block.type === 'tool_call') {
+    if (block.type === 'thinking' || block.type === 'tool_call' || block.type === 'todo_update') {
       buffer.push(block)
     } else {
       flush()

@@ -18,6 +18,7 @@ import type {
   AgentGetMessageVersionsInput,
   AgentMessageVersionsResult,
   AgentMessage,
+  AgentRecentThreadMessagesResult,
   AgentThreadRuntimeEventsResult,
   AgentMessageQueueInput,
   AgentMessageQueueOperationResult,
@@ -56,6 +57,12 @@ export const getThreadMessages = (threadId: string) =>
   invoke<AgentMessage[]>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES,
     params: { threadId },
+  })
+
+export const getRecentThreadMessages = (threadId: string, limit: number) =>
+  invoke<AgentRecentThreadMessagesResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_RECENT_THREAD_MESSAGES,
+    params: { threadId, limit },
   })
 
 export const getThreadMessageVersions = (input: AgentGetMessageVersionsInput) =>

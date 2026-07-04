@@ -18,7 +18,9 @@ import {
   sidecarCall,
 } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
+import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
@@ -221,6 +223,18 @@ export function AgentInput({
   const [channelsLoaded, setChannelsLoaded] = useState(false)
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
+  const draft = useAtomValue(agentInputDraftFamily(threadId))
+  const setDraftState = useSetAtom(agentInputDraftAtom)
+  const isNavigatingHistoryRef = useRef(false) // true = 当前编辑器内容由程序填充（恢复/回溯），不应存为草稿
+  const historyIndexRef = useRef(-1) // -1 = 未回溯（显示草稿）；0..n = 回溯到 history[index]
+  const navigateHistoryRef = useRef<(dir: 1 | -1) => void>(() => {})
+  const resetToDraftRef = useRef<() => void>(() => {})
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const history = useAtomValue(agentInputHistoryFamily(threadId)) ?? []
+  const setHistoryState = useSetAtom(agentInputHistoryAtom)
+  const historyRef = useRef(history)
+  historyRef.current = history
   const [confirmState, setConfirmState] = useState<{
     open: boolean
     title: string
@@ -246,6 +260,29 @@ export function AgentInput({
     workspaces,
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
+
+  const saveDraft = useCallback((json: AgentInputDraftJSON | undefined) => {
+    setDraftState((prev) =>
+      isEmptyDraft(json) ? removeDraft(prev, threadId) : upsertDraft(prev, threadId, json as AgentInputDraftJSON),
+    )
+  }, [setDraftState, threadId])
+
+  const clearDraftState = useCallback(() => {
+    setDraftState((prev) => removeDraft(prev, threadId))
+  }, [setDraftState, threadId])
+
+  const pushHistoryEntry = useCallback(
+    (json: AgentInputDraftJSON) => {
+      setHistoryState((prev) => prependHistory(prev, threadId, json))
+    },
+    [setHistoryState, threadId],
+  )
+
+  // 防抖写草稿，避免每次按键写 localStorage
+  const debouncedSaveDraft = useMemo(
+    () => debounce(400, (json: AgentInputDraftJSON | undefined) => saveDraft(json)),
+    [saveDraft],
+  )
 
   const applyEffectiveConfig = useCallback((config: LumeEffectiveConfig) => {
     const nextDefaultPermissionMode = config.agent?.permissionMode ?? 'default'
@@ -410,6 +447,28 @@ export function AgentInput({
           debouncedSend()
           return true
         }
+        if (!editor) return false
+        const atFirstLine = editor.state.selection.empty && editor.state.selection.$from.pos === 0
+        // ↑：空框或光标在首行时回溯到更旧
+        if (event.key === 'ArrowUp' && (editor.isEmpty || atFirstLine)) {
+          if (historyRef.current.length > 0) {
+            event.preventDefault()
+            navigateHistoryRef.current(1)
+            return true
+          }
+        }
+        // ↓：回溯中则走向更新
+        if (event.key === 'ArrowDown' && historyIndexRef.current >= 0) {
+          event.preventDefault()
+          navigateHistoryRef.current(-1)
+          return true
+        }
+        // Esc：直接回草稿
+        if (event.key === 'Escape' && historyIndexRef.current >= 0) {
+          event.preventDefault()
+          resetToDraftRef.current()
+          return true
+        }
         return false
       },
     },
@@ -418,8 +477,37 @@ export function AgentInput({
     },
     onUpdate({ editor }) {
       setEditorText(editor.getText())
+      // 程序填充（回溯/恢复）用 setContent(..., { emitUpdate: false })，不会进此回调；
+      // 进此回调即用户真实输入。
+      if (isNavigatingHistoryRef.current) {
+        isNavigatingHistoryRef.current = false
+        historyIndexRef.current = -1 // 用户在回溯态手动输入 → 退出回溯
+      }
+      debouncedSaveDraft(editor.getJSON())
     },
   })
+
+  // 草稿恢复：threadId 变化或 editor 就绪时，把存盘草稿填回编辑器
+  useEffect(() => {
+    if (!editor) return
+    isNavigatingHistoryRef.current = true
+    historyIndexRef.current = -1
+    const json = draftRef.current
+    try {
+      if (json && !isEmptyDraft(json)) {
+        editor.commands.setContent(json, { emitUpdate: false })
+      } else {
+        editor.commands.clearContent(false)
+      }
+    } catch {
+      editor.commands.clearContent(false)
+    }
+    setEditorText(editor.getText())
+    // 下一 tick 解除标志，让后续真实输入正常存草稿
+    queueMicrotask(() => {
+      isNavigatingHistoryRef.current = false
+    })
+  }, [threadId, editor])
 
   const hasComposerPayload = editorText.trim().length > 0 || pendingAttachments.length > 0
   const submitState = deriveAgentInputSubmitState({
@@ -597,8 +685,12 @@ export function AgentInput({
       return
     }
     const createdAt = new Date().toISOString()
+    const sentJson = editor.getJSON()
     editor.commands.clearContent()
     setEditorText('')
+    pushHistoryEntry(sentJson)
+    clearDraftState()
+    ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
     try {
       const result = await agentSend({
         threadId,
@@ -654,10 +746,59 @@ export function AgentInput({
     streaming,
     thinkingLevel,
     threadId,
+    clearDraftState,
+    pushHistoryEntry,
   ])
   sendNowRef.current = () => { void handleSend() }
 
+  const applyContent = (json: AgentInputDraftJSON | undefined) => {
+    if (!editor) return
+    isNavigatingHistoryRef.current = true
+    try {
+      if (json && !isEmptyDraft(json)) {
+        editor.commands.setContent(json, { emitUpdate: false })
+      } else {
+        editor.commands.clearContent(false)
+      }
+    } catch {
+      editor.commands.clearContent(false)
+    }
+    setEditorText(editor.getText())
+  }
+
+  navigateHistoryRef.current = (dir) => {
+    if (!editor) return
+    const list = historyRef.current
+    const nextIndex = historyIndexRef.current + dir
+    if (nextIndex < 0) {
+      historyIndexRef.current = -1
+      applyContent(draftRef.current)
+      return
+    }
+    if (nextIndex >= list.length) return // 超界不动
+    historyIndexRef.current = nextIndex
+    applyContent(list[nextIndex])
+  }
+
+  resetToDraftRef.current = () => {
+    if (!editor) return
+    historyIndexRef.current = -1
+    applyContent(draftRef.current)
+  }
+
   useEffect(() => () => cancelPendingDebouncedAgentInputSend(debouncedSend), [debouncedSend])
+
+  // 卸载或 threadId 变化时，把当前编辑器内容同步写入旧 threadId 草稿，避免防抖未触发而丢草稿
+  useEffect(() => {
+    return () => {
+      ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
+      if (editor && !isNavigatingHistoryRef.current) {
+        saveDraft(editor.getJSON())
+      }
+    }
+    // 故意只依赖 threadId：仅在切换会话/卸载时 flush
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId])
 
   const handleStop = async () => {
     try {

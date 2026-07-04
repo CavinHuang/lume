@@ -156,6 +156,8 @@ export interface ImImageContent {
   thumbnailUrl?: string;
   width?: number;
   height?: number;
+  /** CDN aes_key (base64) when the media is AES-128-ECB encrypted; consumed by the media resolver to decrypt. */
+  aesKey?: string;
 }
 
 export interface ImVoiceContent {
@@ -172,6 +174,8 @@ export interface ImFileContent {
   fileSize: number;
   md5?: string;
   downloadUrl?: string;
+  /** CDN aes_key (base64) when the media is AES-128-ECB encrypted; consumed by the media resolver to decrypt. */
+  aesKey?: string;
 }
 
 export interface ImVideoContent {

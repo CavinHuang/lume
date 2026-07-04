@@ -1,4 +1,4 @@
-import { createCipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { OpenClawWeixinAccountAuth } from "./openclaw-weixin-api";
 import type { WeixinUploadedMedia, WeixinUploadMediaTypeValue } from "./openclaw-weixin-media-types";
 import { createLogger } from "../../infra/logger";
@@ -21,6 +21,29 @@ export function aesEcbEncrypt(plaintext: Buffer, key: Buffer): Buffer {
 export function aesEcbPaddedSize(rawSize: number): number {
   const remainder = rawSize % 16;
   return rawSize + (16 - remainder);
+}
+
+/** AES-128-ECB decrypt with PKCS7 padding auto-stripped. Mirrors Tencent openclaw-weixin `decryptAesEcb`. */
+export function aesEcbDecrypt(ciphertext: Buffer, key: Buffer): Buffer {
+  const decipher = createDecipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+
+/**
+ * Parse a CDN media `aes_key` (base64) into a raw 16-byte AES key.
+ * Two encodings appear in the wild (per Tencent openclaw-weixin `parseAesKey`):
+ *   - base64(raw 16 bytes)           → images
+ *   - base64(hex string of 16 bytes) → file / voice / video
+ */
+export function parseAesKey(aesKeyBase64: string): Buffer {
+  const decoded = Buffer.from(aesKeyBase64, "base64");
+  if (decoded.length === 16) return decoded;
+  if (decoded.length === 32 && /^[0-9a-fA-F]{32}$/.test(decoded.toString("ascii"))) {
+    return Buffer.from(decoded.toString("ascii"), "hex");
+  }
+  throw new Error(
+    `aes_key must decode to 16 raw bytes or a 32-char hex string, got ${decoded.length} bytes`
+  );
 }
 
 async function readPayload(response: Response): Promise<Record<string, unknown>> {

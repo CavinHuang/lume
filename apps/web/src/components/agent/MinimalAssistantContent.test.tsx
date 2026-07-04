@@ -140,4 +140,117 @@ describe('MinimalAssistantContent', () => {
     // No total-style X/Y step counter rendered.
     expect(markup).not.toMatch(/步 \/ 总/)
   })
+
+  test('completed group shows frozen duration and no running clock', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-done',
+      type: 'assistant',
+      text: '',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      blocks: [
+        {
+          type: 'tool_call',
+          id: 'tool:bash-done',
+          toolCall: {
+            id: 'bash-done',
+            toolName: 'Bash',
+            input: { command: 'echo hi' },
+            status: 'completed',
+            durationMs: 1500,
+            output: JSON.stringify({ output: 'hi' }),
+          },
+        },
+      ],
+    }
+
+    const markup = renderMessage(
+      <RuntimeEventContentBlock message={message} threadId="thread-done" />,
+    )
+
+    // 完成态时长定格，1 位小数
+    expect(markup).toContain('1 个工具调用 1.5s')
+    // 完成态不挂运行态时钟
+    expect(markup).not.toContain('data-running-clock')
+  })
+
+  test('streaming group mounts RunningDurationClock and shows running action', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-run',
+      type: 'assistant',
+      text: '',
+      thinking: '',
+      status: 'streaming',
+      toolCalls: [],
+      blocks: [
+        {
+          type: 'tool_call',
+          id: 'tool:bash-run-clock',
+          toolCall: {
+            id: 'bash-run-clock',
+            toolName: 'Bash',
+            input: { command: 'sleep 2' },
+            status: 'running',
+            // 很久以前 → SSR 下 elapsed 巨大 → text 非空 → 时钟渲染
+            startedAt: '2020-01-01T00:00:00.000Z',
+          },
+        },
+      ],
+    }
+
+    const markup = renderMessage(
+      <RuntimeEventContentBlock message={message} streaming={true} threadId="thread-run" />,
+    )
+
+    // 运行态挂载时钟组件（跳动行为靠手动验证，SSR 只断言组件存在）
+    expect(markup).toContain('data-running-clock')
+    expect(markup).toContain('正在执行')
+  })
+
+  test('completed group splits duration by tool category', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-multi',
+      type: 'assistant',
+      text: '',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      blocks: [
+        { type: 'thinking', id: 'think-1', text: '想一想' },
+        {
+          type: 'tool_call',
+          id: 'tool:read-multi',
+          toolCall: {
+            id: 'read-multi',
+            toolName: 'Read',
+            input: { file_path: '/a/b.md' },
+            status: 'completed',
+            durationMs: 2300,
+          },
+        },
+        {
+          type: 'tool_call',
+          id: 'tool:agent-multi',
+          toolCall: {
+            id: 'agent-multi',
+            toolName: 'Agent',
+            input: { description: '探索' },
+            status: 'completed',
+            durationMs: 4200,
+          },
+        },
+      ],
+    }
+
+    const markup = renderMessage(
+      <RuntimeEventContentBlock message={message} threadId="thread-multi" />,
+    )
+
+    // 完成态分类时长：非 Agent 工具 / Agent 子代理各自求和（守护项 C 变量替换）
+    expect(markup).toContain('思考 1 次')
+    expect(markup).toContain('1 个工具调用 2.3s')
+    expect(markup).toContain('1 子代理 4.2s')
+    expect(markup).not.toContain('data-running-clock')
+  })
 })

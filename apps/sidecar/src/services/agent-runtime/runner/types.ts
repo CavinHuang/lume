@@ -14,6 +14,7 @@ export interface AgentRuntimeEmitter {
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
   onTaskContractUpdated?: (contract: TaskContractRecord, preview?: TaskContractPlanPreview) => void;
+  onTodoUpdated?: (state: { todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[]; currentActiveForm: string | null }) => void;
 }
 
 export type AgentRuntimeRunStatus = "completed" | "aborted" | "errored" | "turn_limited";

@@ -477,6 +477,18 @@ describe("agent-thread-manager advanced ops", () => {
       "Agent 线程不存在"
     );
   });
+
+  test("归档父会话时应级联归档其委托子会话（parentThreadId）", () => {
+    const parent = createAgentThread("父会话", undefined, "ws-1");
+    const child = createAgentThread("子会话", undefined, "ws-1", parent.id);
+
+    archiveAgentThread(parent.id);
+
+    // 父会话被归档后从 active 列表中消失
+    expect(listAgentThreads().find((t) => t.id === parent.id)).toBeUndefined();
+    // D8: 委托子会话也应被级联归档，不再出现在 active 列表
+    expect(listAgentThreads().find((t) => t.id === child.id)).toBeUndefined();
+  });
 });
 
 describe("clearAgentThreadMessages", () => {

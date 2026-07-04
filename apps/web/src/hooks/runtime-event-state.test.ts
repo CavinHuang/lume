@@ -127,6 +127,52 @@ describe('runtime-event-state', () => {
     ])
   })
 
+  test('appendRuntimeEvent 全局去重 user submit：中间隔 delta 也不重复', () => {
+    // 乐观追加后，后端先推 assistant.delta（使 acc.at(-1) 不再是 user submit），
+    // 再推真实 user submit → 必须按全局去重，不能因 at(-1) 已变而重复。
+    const first = appendRuntimeEvent({}, runtimeEvent({
+      id: 'optimistic',
+      type: 'message.user.submitted',
+      text: 'hello',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }))
+    const withDelta = appendRuntimeEvent(first, runtimeEvent({
+      id: 'delta-1',
+      type: 'assistant.delta',
+      delta: 'response',
+      createdAt: '2026-05-11T00:00:00.500Z',
+    }))
+    const next = appendRuntimeEvent(withDelta, runtimeEvent({
+      id: 'persisted',
+      type: 'message.user.submitted',
+      text: 'hello',
+      createdAt: '2026-05-11T00:00:01.000Z',
+    }))
+
+    const userSubmits = next['thread-1']?.events.filter((e) => e.type === 'message.user.submitted') ?? []
+    expect(userSubmits).toHaveLength(1)
+    expect(userSubmits[0]?.id).toBe('optimistic')
+  })
+
+  test('appendRuntimeEvents 全局去重 user submit：批量内含 delta 也不重复', () => {
+    // 乐观追加已在 atom，后端 rAF 批量推送 [assistant.delta, 真实 user submit]
+    // → 必须按 acc 全局去重（真实路径：RUNTIME_EVENT 批量 flush）。
+    const first = appendRuntimeEvent({}, runtimeEvent({
+      id: 'optimistic',
+      type: 'message.user.submitted',
+      text: 'hello',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }))
+    const next = appendRuntimeEvents(first, [
+      runtimeEvent({ id: 'delta-1', type: 'assistant.delta', delta: 'response', createdAt: '2026-05-11T00:00:00.500Z' }),
+      runtimeEvent({ id: 'persisted', type: 'message.user.submitted', text: 'hello', createdAt: '2026-05-11T00:00:01.000Z' }),
+    ])
+
+    const userSubmits = next['thread-1']?.events.filter((e) => e.type === 'message.user.submitted') ?? []
+    expect(userSubmits).toHaveLength(1)
+    expect(userSubmits[0]?.id).toBe('optimistic')
+  })
+
   test('hydrates persisted RuntimeEvents into empty thread state', () => {
     const result: AgentThreadRuntimeEventsResult = {
       threadId: 'thread-1',
@@ -222,9 +268,8 @@ describe('runtime-event-state', () => {
     expect(hydrated['thread-1']?.terminalStatus).toBe('completed')
   })
 
-  test('超过 MAX_EVENTS_PER_THREAD(100) 时裁剪到尾部并 rescue 最近一条 user 提交', () => {
+  test('超过 MAX_EVENTS_PER_THREAD 时优先丢头部 delta，保留结构事件与 user 提交', () => {
     let state: Record<string, { events: LumeRuntimeEvent[] }> = {}
-    // u0 必须与后续 deltas 同线程（t1），否则 rescue 分支无法被触发
     const u0 = {
       id: 'u0',
       type: 'message.user.submitted',
@@ -234,16 +279,47 @@ describe('runtime-event-state', () => {
       text: 'hi',
     } as LumeRuntimeEvent
     state = appendRuntimeEvent(state, u0)
-    // 120 条 distinct owner 的 assistant.delta（不同 messageId → 不合并 → 120 条独立事件）
-    for (let i = 1; i <= 120; i++) {
+    // MAX+5 条 distinct owner 的 assistant.delta（不同 messageId → 不合并 → 独立事件）。
+    // 用相同 createdAt + 递增 sequence 保证尾部有序，避免每次 append 触发全量 sort。
+    const over = 2005
+    for (let i = 1; i <= over; i++) {
       state = appendRuntimeEvent(
         state,
-        deltaEvent(`d${i}`, i, `chunk${i}`, `2026-06-21T00:00:${String(i).padStart(2, '0')}.${String(i).padStart(3, '0')}Z`, `msg-${i}`),
+        deltaEvent(`d${i}`, i, `chunk${i}`, '2026-06-21T00:00:00.000Z', `msg-${i}`),
       )
     }
-    // 121 事件 > 100 → trimRuntimeEvents 取 tail=slice(-100)（全部是 delta），
-    // tail 内无 user submit → latestUserBeforeTail rescue 分支把 u0 提到头部 → [u0, ...99 deltas]
-    expect(state.t1.events.length).toBeLessThanOrEqual(100)
+    // 1 + over 条事件 > MAX(2000) → trimRuntimeEvents 从头部丢 overflow 个 delta（可由 final 重建），
+    // 结构事件全保留 → [u0, ...1999 deltas]，u0 仍在头部
+    expect(state.t1.events.length).toBeLessThanOrEqual(2000)
+    expect(state.t1.events[0].type).toBe('message.user.submitted')
+    expect((state.t1.events[0] as any).text).toBe('hi')
+  })
+
+  test('结构事件超过 MAX 时尾部截断并 rescue 最近一条 user 提交', () => {
+    // 无足够 delta 可丢时回退到尾部截断 + rescue：保留尾部 MAX 结构事件，
+    // 并把截断点前最近的 user submit 提到头部作为会话起点锚点。
+    let state: Record<string, { events: LumeRuntimeEvent[] }> = {}
+    const u0 = {
+      id: 'u0',
+      type: 'message.user.submitted',
+      threadId: 't1',
+      runId: 'run-1',
+      createdAt: '2026-06-21T00:00:00.000Z',
+      text: 'hi',
+    } as LumeRuntimeEvent
+    state = appendRuntimeEvent(state, u0)
+    // 2005 个结构事件（tool.started，不同 toolCallId，无 delta 可丢）→ 触发 rescue 分支
+    for (let i = 1; i <= 2005; i++) {
+      state = appendRuntimeEvent(state, runtimeEvent({
+        id: `tool-${i}`,
+        type: 'tool.started',
+        threadId: 't1',
+        toolCallId: `tc-${i}`,
+        toolName: 'Read',
+        createdAt: '2026-06-21T00:00:00.000Z',
+      }))
+    }
+    expect(state.t1.events.length).toBeLessThanOrEqual(2000)
     expect(state.t1.events[0].type).toBe('message.user.submitted')
     expect((state.t1.events[0] as any).text).toBe('hi')
   })

@@ -344,6 +344,36 @@ describe('runtime-event-message-projection', () => {
     ])
   })
 
+  test('compaction split keeps assistant message ids unique (no React key collision)', () => {
+    // 同一 run 内发生 context compaction：compaction 前的 assistant 内容被 flush，
+    // compaction 后同 runId 继续输出。投影不得复用同一个 `assistant:${runId}` id，
+    // 否则 AgentMessages 列表会出现两条同 key 消息 → React duplicate/omit + 列表跳变。
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'message.user.submitted', text: 'hi', messageId: 'user-1' }),
+      event({ type: 'assistant.delta', delta: 'before compaction ' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: { command: 'pwd' } }),
+      event({ type: 'tool.completed', toolCallId: 'tool-1', toolName: 'Bash', resultPreview: 'ok' }),
+      event({
+        type: 'context.compaction.started',
+        id: 'compact-start',
+        trigger: 'auto',
+        preTokens: 900,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+      }),
+      event({ type: 'assistant.delta', delta: 'after compaction' }),
+      event({ type: 'run.completed' }),
+    ])
+
+    const ids = messages.map((m) => m.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    // compaction 前后各一条 assistant，id 必须不同
+    const assistantIds = ids.filter((id) => id.startsWith('assistant:'))
+    expect(assistantIds).toHaveLength(2)
+    expect(assistantIds[0]).not.toBe(assistantIds[1])
+  })
+
   test('keeps context compaction start and completion visible as a status timeline', () => {
     expect(projectRuntimeEventMessages([
       event({ type: 'message.user.submitted', text: '继续', messageId: 'user-1' }),
@@ -853,5 +883,49 @@ describe('applyRuntimeEventsIncremental 引用稳定', () => {
       expect(textBlock2).toBe(textBlock1)
       expect((textBlock2 as any).text).toBe('Hello world')
     }
+  })
+})
+
+describe('todo_update block 稳定性', () => {
+  test('多次 todo.state_updated 事件：block id 跨事件稳定（不带变化的 createdAt）', () => {
+    // 简洁模式下 MinimalProcessGroup 段 key = `process:${段首block.id}`。
+    // 若 todo_update 为段首且 id 含每次事件都不同的 createdAt，段 key 会漂移 →
+    // React 卸载重建整个 process 段 → 列表抖动 + 滚动跳顶。
+    // 故同 run 内 todo_update block id 必须稳定（filter 已保证单例，runId 足够唯一）。
+    const events = [
+      event({ type: 'message.user.submitted', text: 'do task', messageId: 'u-todo' }),
+      event({ type: 'run.started', runId: 'r-todo' }),
+      event({
+        type: 'todo.state_updated',
+        runId: 'r-todo',
+        createdAt: '2026-05-11T00:00:01.000Z',
+        todos: [
+          { content: 'step1', status: 'in_progress' },
+          { content: 'step2', status: 'pending' },
+        ],
+        currentActiveForm: 'doing step1',
+      }),
+      event({
+        type: 'todo.state_updated',
+        runId: 'r-todo',
+        createdAt: '2026-05-11T00:00:05.000Z',
+        todos: [
+          { content: 'step1', status: 'completed' },
+          { content: 'step2', status: 'in_progress' },
+        ],
+        currentActiveForm: 'doing step2',
+      }),
+    ]
+    const messages = projectRuntimeEventMessages(events)
+    const assistant = messages.find((m) => m.type === 'assistant')!
+    expect(assistant.type).toBe('assistant')
+    if (assistant.type !== 'assistant') return
+    const todoBlocks = assistant.blocks.filter((b) => b.type === 'todo_update')
+    // filter 保证同 run 内只有一个 todo_update block
+    expect(todoBlocks.length).toBe(1)
+    // id 不含变化的 createdAt，跨事件稳定
+    expect(todoBlocks[0]!.id).toBe('todo:r-todo')
+    // 内容仍为最新一次 todo 状态
+    expect((todoBlocks[0] as any).data.currentActiveForm).toBe('doing step2')
   })
 })

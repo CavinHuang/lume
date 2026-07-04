@@ -34,6 +34,10 @@ export interface LumeSidebarThreadItem {
   active: boolean
   pinned: boolean
   updatedAt: number
+  parentThreadId?: string
+  depth: number
+  isDelegate: boolean
+  children?: LumeSidebarThreadItem[]
 }
 
 export interface LumeSidebarSyntheticThreadRow {
@@ -120,9 +124,7 @@ export function buildLumeSidebarViewModel({
     const workspaceThreads = sortThreadsByUpdatedAt(
       threads.filter((thread) => getThreadWorkspaceId(thread) === workspace.id),
     )
-    const allThreads = workspaceThreads.map((thread) =>
-      buildThreadItem(thread, activeTabId),
-    )
+    const allThreads = buildThreadTree(workspaceThreads, activeTabId)
 
     return {
       id: workspace.id,
@@ -151,7 +153,7 @@ export function buildLumeSidebarViewModel({
       isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
       pinned: false,
       syntheticRow: null,
-      threads: unassignedThreads.map((thread) => buildThreadItem(thread, activeTabId)),
+      threads: buildThreadTree(unassignedThreads, activeTabId),
     })
   }
 
@@ -201,9 +203,10 @@ function sortThreadsByUpdatedAt(threads: AgentThreadMeta[]): AgentThreadMeta[] {
   return [...threads].sort((left, right) => right.updatedAt - left.updatedAt)
 }
 
-function buildThreadItem(
+function buildThreadItemFromMeta(
   thread: AgentThreadMeta,
   activeTabId: string | null,
+  depth: number,
 ): LumeSidebarThreadItem {
   return {
     id: thread.id,
@@ -211,5 +214,34 @@ function buildThreadItem(
     active: activeTabId === thread.id,
     pinned: !!thread.pinned,
     updatedAt: thread.updatedAt,
+    parentThreadId: thread.parentThreadId,
+    depth,
+    isDelegate: depth > 0,
   }
+}
+
+function buildThreadTree(
+  threads: AgentThreadMeta[],
+  activeTabId: string | null,
+): LumeSidebarThreadItem[] {
+  const ids = new Set(threads.map((thread) => thread.id))
+  const childrenByParent = new Map<string, AgentThreadMeta[]>()
+  const roots: AgentThreadMeta[] = []
+  for (const thread of threads) {
+    if (thread.parentThreadId && ids.has(thread.parentThreadId)) {
+      const siblings = childrenByParent.get(thread.parentThreadId) ?? []
+      siblings.push(thread)
+      childrenByParent.set(thread.parentThreadId, siblings)
+    } else {
+      roots.push(thread)
+    }
+  }
+  const build = (thread: AgentThreadMeta, depth: number): LumeSidebarThreadItem => {
+    const kids = (childrenByParent.get(thread.id) ?? []).map((child) => build(child, depth + 1))
+    return {
+      ...buildThreadItemFromMeta(thread, activeTabId, depth),
+      ...(kids.length ? { children: kids } : {}),
+    }
+  }
+  return roots.map((thread) => build(thread, 0))
 }
