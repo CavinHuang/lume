@@ -354,6 +354,81 @@ describe("PluginMarketService", () => {
     expect(getEffectivePluginRuntimeConfig("default").enabled).toEqual(["indexed-install"]);
   });
 
+  test("plugin detail returns README content for local plugin sources", async () => {
+    const pluginRoot = join(root, "source", "readme-plugin");
+    const indexPath = join(root, "market.json");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "readme-plugin",
+      version: "1.0.0",
+      description: "README demo"
+    });
+    await writeFile(join(pluginRoot, "README.md"), "# README demo\n\nUse this plugin carefully.", "utf-8");
+    await writeJson(indexPath, {
+      items: [
+        {
+          kind: "plugin",
+          id: "readme-plugin",
+          name: "README Plugin",
+          source: { type: "local", path: pluginRoot }
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+
+    const detail = await makeService(root).getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:readme-plugin"
+    });
+
+    expect(detail.readme).toMatchObject({
+      markdown: "# README demo\n\nUse this plugin carefully.",
+      truncated: false
+    });
+    expect(detail.readme?.path).toEndWith("README.md");
+  });
+
+  test("plugin detail tolerates missing README", async () => {
+    const pluginRoot = join(root, "source", "missing-readme-plugin");
+    const indexPath = join(root, "market.json");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "missing-readme-plugin",
+      version: "1.0.0"
+    });
+    await writeJson(indexPath, {
+      items: [
+        {
+          kind: "plugin",
+          id: "missing-readme-plugin",
+          name: "Missing README Plugin",
+          source: { type: "local", path: pluginRoot }
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+
+    const detail = await makeService(root).getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:missing-readme-plugin"
+    });
+
+    expect(detail.item.kind).toBe("plugin");
+    expect(detail.readme).toBeUndefined();
+  });
+
   test("github inspect uses mocked GitHub tree and raw files", async () => {
     const fetchImpl = (async (url: string) => {
       if (url.includes("/git/trees/main")) {

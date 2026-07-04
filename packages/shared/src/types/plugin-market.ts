@@ -228,8 +228,15 @@ export interface UninstallPluginResult {
   diagnostics?: AgentPluginDiagnostic[]
 }
 
+export interface PluginReadmePreview {
+  markdown: string
+  path?: string
+  truncated?: boolean
+}
+
 export interface GetMarketDetailResult {
   item: MarketCatalogItem
   inspect?: InspectMarketSourceResult
   diagnostics: AgentPluginDiagnostic[]
+  readme?: PluginReadmePreview
 }

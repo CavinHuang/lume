@@ -26,6 +26,7 @@ import type {
   PluginEnableState,
   PluginMarketItem,
   PluginPermissionSummary,
+  PluginReadmePreview,
   PluginSourceRef,
   SetPluginEnablementInput,
   SetPluginEnablementResult,
@@ -43,6 +44,7 @@ import { FilePluginStateStore, type PluginInstallRecord } from "../agent-runtime
 import { PluginRegistry } from "../agent-runtime/plugins/plugin-registry";
 
 const execFileAsync = promisify(execFile);
+const README_MAX_BYTES = 256 * 1024;
 
 export class PluginMarketError extends Error {
   constructor(
@@ -220,11 +222,13 @@ export class PluginMarketService {
     const source = await this.resolveInspectSource(parseMarketItemId(input.itemId));
     const inspected = await this.inspectPluginSource(input.workspaceSlug, source);
     const item = this.toMarketItem(inspected.normalized, input.workspaceSlug, source.type);
+    const readme = await this.readPluginReadme(source);
     item.id = input.itemId;
     return {
       item: { kind: "plugin", plugin: item },
       inspect: inspected,
       diagnostics: inspected.diagnostics,
+      ...(readme ? { readme } : {}),
     };
   }
 
@@ -468,6 +472,37 @@ export class PluginMarketService {
     } catch (error) {
       throw new PluginMarketError("invalid_manifest", error instanceof Error ? error.message : String(error));
     }
+  }
+
+  private async readPluginReadme(source: PluginSourceRef): Promise<PluginReadmePreview | undefined> {
+    try {
+      if (source.type === "subscribed-market") {
+        return this.readPluginReadme(source.resolved);
+      }
+      if (source.type === "github") {
+        return await this.readGitHubReadme(source);
+      }
+      return this.readLocalReadme(source.path);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private readLocalReadme(pluginRoot: string): PluginReadmePreview | undefined {
+    const readmePath = join(resolve(pluginRoot), "README.md");
+    if (!existsSync(readmePath)) return undefined;
+    return truncateReadme(readFileSync(readmePath, "utf-8"), readmePath);
+  }
+
+  private async readGitHubReadme(source: Extract<PluginSourceRef, { type: "github" }>): Promise<PluginReadmePreview | undefined> {
+    const tree = await this.fetchGitHubTree(source);
+    const prefix = source.subdir ? `${source.subdir.replace(/\/$/, "")}/` : "";
+    const match = tree.find((entry) =>
+      entry.type === "blob"
+      && entry.path.toLowerCase() === `${prefix}readme.md`.toLowerCase()
+    );
+    if (!match) return undefined;
+    return truncateReadme(await this.fetchText(rawGitHubUrl(source, match.path)), match.path);
   }
 
   private async fetchGitHubTree(source: Extract<PluginSourceRef, { type: "github" }>): Promise<GitHubTreeEntry[]> {
@@ -832,6 +867,18 @@ export class PluginMarketService {
 function readJsonIfExists(path: string): Record<string, unknown> | undefined {
   if (!existsSync(path)) return undefined;
   return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+}
+
+function truncateReadme(markdown: string, path: string): PluginReadmePreview {
+  if (Buffer.byteLength(markdown, "utf-8") <= README_MAX_BYTES) {
+    return { markdown, path, truncated: false };
+  }
+  const buffer = Buffer.from(markdown, "utf-8").subarray(0, README_MAX_BYTES);
+  return {
+    markdown: buffer.toString("utf-8").replace(/\uFFFD+$/g, ""),
+    path,
+    truncated: true,
+  };
 }
 
 function createInstallRecord(pluginId: string): PluginInstallRecord {
