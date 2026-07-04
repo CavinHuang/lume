@@ -38,4 +38,12 @@ describe('skill market boundary', () => {
     expect(content).toContain('.codex-plugin/plugin.json')
     expect(content).toContain('SKILL.md')
   })
+
+  test('plugin details use an independent page rather than a modal dialog', () => {
+    const content = source('apps/web/src/components/skills/SkillsMarketView.tsx')
+
+    expect(content).toContain('PluginDetailPage')
+    expect(content).not.toContain('PluginDetailDialog')
+    expect(content).not.toContain('pluginDetailOpen')
+  })
 })

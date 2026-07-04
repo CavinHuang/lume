@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import {
   Check,
   Code2,
@@ -20,12 +20,11 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
-  Trash2,
   Sparkles,
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, tabsAtom } from '@/atoms'
 import {
   deleteWorkspaceSkill,
   getEffectiveLumeConfig,
@@ -68,16 +67,13 @@ import {
   type MarketCardKind,
   type MarketCardView,
 } from './plugin-market-ui-state'
-import {
-  buildPermissionRows,
-  formatPluginEnableState,
-  formatPluginInstallState,
-  formatRiskLabel,
-} from './plugin-detail-state'
+import { formatRiskLabel } from './plugin-detail-state'
 
+import { upsertWelcomeTab } from '@/components/app-shell/LeftSidebar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { PluginDetailPage } from './PluginDetailPage'
 type SkillVisualTone = 'violet' | 'mint' | 'figma' | 'green' | 'blue' | 'orange'
 
 interface MarketDisplayCard extends MarketCardView {
@@ -106,6 +102,8 @@ const SKILL_VISUALS: Record<string, Pick<MarketDisplayCard, 'category' | 'action
 export function SkillsMarketView() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSlug = workspace?.slug ?? null
   const [activeKind, setActiveKind] = useState<MarketCardKind>('plugin')
@@ -123,7 +121,7 @@ export function SkillsMarketView() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [skillDetail, setSkillDetail] = useState<SkillMarketDetailResult | null>(null)
-  const [pluginDetailOpen, setPluginDetailOpen] = useState(false)
+  const [selectedPlugin, setSelectedPlugin] = useState<PluginMarketItem | null>(null)
   const [pluginDetailLoading, setPluginDetailLoading] = useState(false)
   const [pluginDetailError, setPluginDetailError] = useState<string | null>(null)
   const [pluginDetail, setPluginDetail] = useState<GetMarketDetailResult | null>(null)
@@ -219,15 +217,17 @@ export function SkillsMarketView() {
     setPluginDetailError(null)
     setError(null)
     try {
+      const installState = pluginDetail.inspect.kind === 'plugin' ? pluginDetail.inspect.installState : marketItem.installState
       await installMarketItem({
         workspaceSlug,
         kind: 'plugin',
         itemId: marketItem.id,
         acceptedPermissionsHash: pluginDetail.inspect.permissionsHash,
         enableScope: 'workspace',
-        overwrite: marketItem.installState === 'update-available',
+        overwrite: installState === 'update-available',
       })
-      setPluginDetailOpen(false)
+      setSelectedPlugin(null)
+      setPluginDetail(null)
       await loadCatalog()
     } catch (err) {
       setPluginDetailError(err instanceof Error ? err.message : String(err))
@@ -245,13 +245,58 @@ export function SkillsMarketView() {
     setError(null)
     try {
       await uninstallPlugin({ pluginId: marketItem.pluginId, version: marketItem.version, force: true })
-      setPluginDetailOpen(false)
+      setSelectedPlugin(null)
+      setPluginDetail(null)
       await loadCatalog()
     } catch (err) {
       setPluginDetailError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusyItemId(null)
     }
+  }
+
+  const handleBackFromPluginDetail = () => {
+    setSelectedPlugin(null)
+    setPluginDetail(null)
+    setPluginDetailError(null)
+    setPluginDetailLoading(false)
+  }
+
+  const handleTogglePluginFromDetail = async () => {
+    const marketItem = pluginDetail?.item.kind === 'plugin' ? pluginDetail.item.plugin : selectedPlugin
+    if (!workspaceSlug || !marketItem) return
+    const enableState = pluginDetail?.inspect?.kind === 'plugin' ? pluginDetail.inspect.enableState : marketItem.enableState
+    const installState = pluginDetail?.inspect?.kind === 'plugin' ? pluginDetail.inspect.installState : marketItem.installState
+    if (installState !== 'installed' && installState !== 'update-available') return
+
+    setBusyItemId(`plugin:${marketItem.id}`)
+    setPluginDetailError(null)
+    setError(null)
+    try {
+      const enabled = enableState !== 'global-enabled' && enableState !== 'workspace-enabled'
+      await setPluginEnablement({
+        workspaceSlug,
+        pluginId: marketItem.pluginId,
+        scope: 'workspace',
+        enabled,
+      })
+      const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: marketItem.id })
+      setPluginDetail(refreshed)
+      if (refreshed.item.kind === 'plugin') {
+        setSelectedPlugin(refreshed.item.plugin)
+      }
+      await loadCatalog()
+    } catch (err) {
+      setPluginDetailError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyItemId(null)
+    }
+  }
+
+  const handleTryPluginInChat = () => {
+    const workspaceId = workspace?.id ?? null
+    setTabs((previous) => upsertWelcomeTab(previous, workspaceId))
+    setActiveTabId('__welcome__')
   }
 
   const handleOpenSkillDetail = async (item: SkillCatalogItem) => {
@@ -272,7 +317,7 @@ export function SkillsMarketView() {
 
   const handleOpenPluginDetail = async (item: PluginMarketItem) => {
     if (!workspaceSlug) return
-    setPluginDetailOpen(true)
+    setSelectedPlugin(item)
     setPluginDetailLoading(true)
     setPluginDetailError(null)
     setPluginDetail(null)
@@ -310,6 +355,22 @@ export function SkillsMarketView() {
       marketSources,
     })
     await loadCatalog()
+  }
+
+  if (selectedPlugin || pluginDetailLoading || pluginDetail) {
+    return (
+      <PluginDetailPage
+        detail={pluginDetail}
+        loading={pluginDetailLoading}
+        error={pluginDetailError}
+        busy={busyItemId !== null}
+        onBack={handleBackFromPluginDetail}
+        onInstall={() => void handleInstallPluginFromDetail()}
+        onUninstall={() => void handleUninstallPluginFromDetail()}
+        onToggleEnable={() => void handleTogglePluginFromDetail()}
+        onTryInChat={handleTryPluginInChat}
+      />
+    )
   }
 
   return (
@@ -406,16 +467,6 @@ export function SkillsMarketView() {
         error={detailError}
         detail={skillDetail}
         onOpenChange={setDetailOpen}
-      />
-      <PluginDetailDialog
-        open={pluginDetailOpen}
-        loading={pluginDetailLoading}
-        error={pluginDetailError}
-        detail={pluginDetail}
-        busy={busyItemId !== null}
-        onInstall={() => void handleInstallPluginFromDetail()}
-        onUninstall={() => void handleUninstallPluginFromDetail()}
-        onOpenChange={setPluginDetailOpen}
       />
     </div>
   )
@@ -1201,186 +1252,6 @@ function SkillDetailDialog({
           )}
         </div>
       </section>
-    </div>
-  )
-}
-
-function PluginDetailDialog({
-  open,
-  loading,
-  error,
-  detail,
-  busy,
-  onInstall,
-  onUninstall,
-  onOpenChange,
-}: {
-  open: boolean
-  loading: boolean
-  error: string | null
-  detail: GetMarketDetailResult | null
-  busy: boolean
-  onInstall: () => void
-  onUninstall: () => void
-  onOpenChange: (open: boolean) => void
-}) {
-  const item = detail?.item.kind === 'plugin' ? detail.item.plugin : null
-  const inspected = detail?.inspect?.kind === 'plugin' ? detail.inspect : null
-  const permissionRows = item ? buildPermissionRows(item) : []
-  const canInstall = Boolean(item && inspected && item.installState !== 'installed')
-
-  if (!open) return null
-
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[color:color-mix(in_oklab,var(--text-1)_28%,transparent)] p-4 backdrop-blur-[2px]">
-      <section className="grid max-h-[88vh] w-full max-w-[820px] grid-rows-[auto_minmax(0,1fr)_auto] rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_24px_72px_-40px_hsl(var(--lume-shadow-panel)/0.5)]">
-        <header className="flex items-start justify-between border-b border-[var(--border)] px-6 py-5">
-          <div className="min-w-0">
-            <h2 className="truncate text-[19px] font-semibold leading-7 text-[var(--text-1)]">
-              {item?.displayName ?? item?.name ?? '插件详情'}
-            </h2>
-            <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">
-              安装前检查插件能力、权限摘要与来源状态。
-            </p>
-          </div>
-          <Button
-                variant="ghost"
-            type="button"
-            title="关闭"
-            onClick={() => onOpenChange(false)}
-            className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
-          >
-            <X size={18} />
-          </Button>
-        </header>
-
-        <div className="min-h-0 overflow-y-auto px-6 py-5">
-          {loading ? (
-            <div className="flex h-[220px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
-              <Loader2 size={16} className="animate-spin" />
-              正在检查插件...
-            </div>
-          ) : error && !item ? (
-            <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-5 text-[13px] leading-6 text-[var(--lume-danger)]">
-              {error}
-            </div>
-          ) : item ? (
-            <div className="space-y-5">
-              {error && (
-                <div className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4 text-[13px] leading-6 text-[var(--lume-warning)]">
-                  {error}
-                </div>
-              )}
-
-              <section className="lume-subpanel p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass('插件'))}>插件</span>
-                  <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(PLUGIN_SOURCE_LABELS[item.sourceType]))}>
-                    {PLUGIN_SOURCE_LABELS[item.sourceType]}
-                  </span>
-                  <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--text-2)]">
-                    {formatPluginInstallState(item.installState)}
-                  </span>
-                  <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--text-2)]">
-                    {formatPluginEnableState(item.enableState)}
-                  </span>
-                  <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--text-2)]">v{item.version}</span>
-                </div>
-                <p className="mt-3 text-[13px] leading-6 text-[var(--text-2)]">
-                  {item.description ?? '暂无描述。'}
-                </p>
-              </section>
-
-              <section className="grid gap-3 md:grid-cols-4">
-                <PluginMetric label="技能" value={item.capabilities.skillCount} />
-                <PluginMetric label="命令工具" value={item.capabilities.commandToolNames.length} />
-                <PluginMetric label="MCP 服务" value={item.capabilities.mcpServerNames.length} />
-                <PluginMetric label="Hook 事件" value={item.capabilities.hookEvents.length} />
-              </section>
-
-              <section className="lume-subpanel p-4">
-                <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
-                  <ShieldCheck size={18} className="text-[var(--lume-success)]" />
-                  权限审核
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {item.permissions.riskLabels.length > 0 ? item.permissions.riskLabels.map((risk) => (
-                    <span key={risk} className="rounded-[5px] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] px-2 py-1 text-[12px] font-semibold text-[var(--lume-warning)]">
-                      {formatRiskLabel(risk)}
-                    </span>
-                  )) : (
-                    <span className="rounded-[5px] bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] px-2 py-1 text-[12px] font-semibold text-[var(--lume-success)]">低风险</span>
-                  )}
-                </div>
-                <div className="mt-4 space-y-3">
-                  {permissionRows.map((row) => (
-                    <div key={row.label} className="grid gap-2 rounded-[8px] bg-[var(--surface-1)] px-3 py-2 text-[12px] leading-5 md:grid-cols-[120px_minmax(0,1fr)]">
-                      <span className="font-semibold text-[var(--text-1)]">{row.label}</span>
-                      <span className="break-all text-[var(--text-2)]">{row.value}</span>
-                    </div>
-                  ))}
-                </div>
-                {inspected && (
-                  <div className="mt-4 rounded-[8px] bg-[var(--surface-1)] px-3 py-2 text-[12px] leading-5 text-[var(--text-2)]">
-                    权限 hash：<span className="font-mono">{inspected.permissionsHash}</span>
-                  </div>
-                )}
-              </section>
-
-              {item.diagnostics && item.diagnostics.length > 0 && (
-                <section className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4">
-                  <div className="text-[13px] font-semibold text-[var(--lume-warning)]">诊断信息</div>
-                  <ul className="mt-2 space-y-1 text-[12px] leading-5 text-[var(--lume-warning)]">
-                    {item.diagnostics.map((diagnostic, index) => (
-                      <li key={`${diagnostic.code}-${index}`}>{diagnostic.message}</li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-[8px] border border-dashed border-[var(--border)] p-8 text-center text-[13px] text-[var(--text-3)]">
-              暂无插件详情。
-            </div>
-          )}
-        </div>
-
-        <footer className="flex items-center justify-end gap-3 border-t border-[var(--border)] px-6 py-4">
-          {item?.installState === 'installed' && (
-            <Button
-                variant="ghost"
-              type="button"
-              disabled={busy}
-              onClick={onUninstall}
-              className="flex h-9 items-center gap-2 rounded-[6px] border border-[color:color-mix(in_oklab,var(--lume-danger)_32%,var(--border))] px-4 text-[13px] font-semibold text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] disabled:cursor-wait disabled:opacity-60"
-            >
-              <Trash2 size={16} />
-              卸载
-            </Button>
-          )}
-          {item?.installState !== 'installed' && (
-            <Button
-                variant="ghost"
-              type="button"
-              disabled={!canInstall || busy}
-              onClick={onInstall}
-              className="flex h-9 items-center gap-2 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55"
-            >
-              {busy ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />}
-              {item?.installState === 'update-available' ? '确认权限并更新' : '确认权限并安装'}
-            </Button>
-          )}
-        </footer>
-      </section>
-    </div>
-  )
-}
-
-function PluginMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="lume-subpanel p-3">
-      <div className="text-[12px] font-semibold text-[var(--text-3)]">{label}</div>
-      <div className="mt-1 text-[20px] font-semibold leading-7 text-[var(--text-1)]">{value}</div>
     </div>
   )
 }
