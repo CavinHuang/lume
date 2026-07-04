@@ -202,6 +202,38 @@ test('storage stats skip configured derived subdirectories without changing conf
   }
 })
 
+test('storage stats do not descend into per-thread lume config snapshots', () => {
+  const dir = makeTempDir('lume-desktop-stats-nested-config-')
+  try {
+    const threadRoot = join(dir, 'agent-workspaces', 'default', 'threads', 'thread-a')
+    const snapshotRoot = join(threadRoot, '.lume-config')
+    const nestedThreadRoot = join(snapshotRoot, 'agent-workspaces', 'default', 'threads', 'thread-a')
+    const nestedSnapshotRoot = join(nestedThreadRoot, '.lume-config')
+
+    mkdirSync(nestedSnapshotRoot, { recursive: true })
+    writeFileSync(join(threadRoot, 'message.jsonl'), 'live')
+    writeFileSync(join(snapshotRoot, 'settings.json'), 'snapshot')
+    writeFileSync(join(nestedThreadRoot, 'message.jsonl'), 'nested')
+    writeFileSync(join(nestedSnapshotRoot, 'settings.json'), 'deeper')
+
+    assert.deepEqual(computeStorageStats(dir, [
+      {
+        key: 'core',
+        scanPaths: ['agent-workspaces/*/threads'],
+        skipSubdirs: [],
+      },
+    ]), {
+      total: 4,
+      configDir: dir,
+      categories: [
+        { key: 'core', bytes: 4 },
+      ],
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('data export zip redacts JSON credentials and keeps non-JSON files unchanged', () => {
   const dir = makeTempDir('lume-desktop-export-')
   const zipPath = join(tmpdir(), `lume-export-${process.pid}-${Date.now()}.zip`)
@@ -219,6 +251,29 @@ test('data export zip redacts JSON credentials and keeps non-JSON files unchange
     assert.match(settings, /\[REDACTED\]/)
     assert.doesNotMatch(settings, /sk-secret/)
     assert.equal(strFromU8(archive['note.txt']), 'plain text')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(zipPath, { force: true })
+  }
+})
+
+test('data export zip does not include per-thread lume config snapshots', () => {
+  const dir = makeTempDir('lume-desktop-export-nested-config-')
+  const zipPath = join(tmpdir(), `lume-export-nested-${process.pid}-${Date.now()}.zip`)
+  try {
+    const threadRoot = join(dir, 'agent-workspaces', 'default', 'threads', 'thread-a')
+    const snapshotRoot = join(threadRoot, '.lume-config')
+
+    mkdirSync(snapshotRoot, { recursive: true })
+    writeFileSync(join(threadRoot, 'message.jsonl'), 'live')
+    writeFileSync(join(snapshotRoot, 'settings.json'), JSON.stringify({ apiKey: 'sk-secret' }))
+
+    const result = exportZip(dir, { destPath: zipPath, includeCredentials: false })
+    assert.equal(result.fileCount, 1)
+
+    const archive = unzipSync(readFileSync(zipPath))
+    assert.equal(strFromU8(archive['agent-workspaces/default/threads/thread-a/message.jsonl']), 'live')
+    assert.equal(archive['agent-workspaces/default/threads/thread-a/.lume-config/settings.json'], undefined)
   } finally {
     rmSync(dir, { recursive: true, force: true })
     rmSync(zipPath, { force: true })

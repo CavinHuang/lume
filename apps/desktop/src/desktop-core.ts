@@ -361,6 +361,30 @@ export function redactJsonBuffer(buffer) {
   }
 }
 
+const generatedConfigSnapshotDirName = '.lume-config'
+
+function statOrNull(path, ignoreErrors = false) {
+  if (!existsSync(path)) return null
+  try {
+    return statSync(path)
+  } catch (error) {
+    if (!ignoreErrors) throw error
+    return null
+  }
+}
+
+function safeRealpath(path) {
+  try {
+    return realpathSync(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
+function hasPathSegment(path, segment) {
+  return resolve(path).split(/[\\/]+/).includes(segment)
+}
+
 export function expandRelativePattern(root, relativePattern) {
   if (!relativePattern.includes('*')) {
     return [resolve(root, relativePattern)]
@@ -368,12 +392,16 @@ export function expandRelativePattern(root, relativePattern) {
 
   const [prefix, suffix = ''] = relativePattern.split('*')
   const baseDir = resolve(root, prefix.replace(/[\\/]+$/, ''))
-  if (!existsSync(baseDir) || !statSync(baseDir).isDirectory()) return []
+  if (!statOrNull(baseDir, true)?.isDirectory()) return []
 
   const normalizedSuffix = suffix.replace(/^[\\/]+/, '')
-  return readdirSync(baseDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => resolve(baseDir, entry.name, normalizedSuffix))
+  try {
+    return readdirSync(baseDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => resolve(baseDir, entry.name, normalizedSuffix))
+  } catch {
+    return []
+  }
 }
 
 export function isSameOrInsidePath(parentPath, candidatePath) {
@@ -384,34 +412,62 @@ export function isSameOrInsidePath(parentPath, candidatePath) {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
 }
 
-export function walkFiles(path, visit) {
-  if (!existsSync(path)) return
-  const stats = statSync(path)
+function shouldSkipWalkPath(path, skipPaths) {
+  return hasPathSegment(path, generatedConfigSnapshotDirName)
+    || skipPaths.some((skipPath) => isSameOrInsidePath(skipPath, path))
+}
+
+function walkFilesWithState(path, visit, state) {
+  if (shouldSkipWalkPath(path, state.skipPaths)) return
+  const stats = statOrNull(path, state.ignoreErrors)
+  if (!stats) return
   if (stats.isFile()) {
     visit(path, stats)
     return
   }
   if (!stats.isDirectory()) return
 
-  for (const entry of readdirSync(path, { withFileTypes: true })) {
-    walkFiles(join(path, entry.name), visit)
+  const directoryKey = safeRealpath(path)
+  if (state.visitedDirectories.has(directoryKey)) return
+  state.visitedDirectories.add(directoryKey)
+
+  let entries = []
+  try {
+    entries = readdirSync(path, { withFileTypes: true })
+  } catch (error) {
+    if (!state.ignoreErrors) throw error
+    return
   }
+  for (const entry of entries) {
+    walkFilesWithState(join(path, entry.name), visit, state)
+  }
+}
+
+export function walkFiles(path, visit, options = {}) {
+  walkFilesWithState(path, visit, {
+    skipPaths: options.skipPaths ?? [],
+    visitedDirectories: options.visitedDirectories ?? new Set(),
+    ignoreErrors: options.ignoreErrors ?? false,
+  })
 }
 
 export function computeStorageStats(configDir, categories) {
   const stats = categories.map((category) => {
     const skipPaths = category.skipSubdirs.flatMap((pattern) => expandRelativePattern(configDir, pattern))
-    const visited = new Set()
+    const visitedFiles = new Set()
+    const visitedDirectories = new Set()
     let bytes = 0
 
     for (const scanPath of category.scanPaths.flatMap((pattern) => expandRelativePattern(configDir, pattern))) {
       walkFiles(scanPath, (filePath, fileStats) => {
-        if (skipPaths.some((skipPath) => isSameOrInsidePath(skipPath, filePath))) {
-          return
-        }
-        if (visited.has(filePath)) return
-        visited.add(filePath)
+        const fileKey = safeRealpath(filePath)
+        if (visitedFiles.has(fileKey)) return
+        visitedFiles.add(fileKey)
         bytes += fileStats.size
+      }, {
+        skipPaths,
+        visitedDirectories,
+        ignoreErrors: true,
       })
     }
 
