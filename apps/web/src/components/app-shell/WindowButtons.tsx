@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * WindowButtons - Windows/Linux 自绘窗口控制按钮
  *
@@ -35,30 +36,33 @@ export function WindowButtonGroup({
 
   return (
     <div className={cn('flex items-center gap-1', className)} style={{ ...NO_DRAG_REGION, ...style }}>
-      <button
+      <Button
+        variant="ghost"
         type="button"
         title="最小化"
         className={buttonClass}
         onClick={() => getCurrentWindow().minimize().catch(() => {})}
       >
         <Minus size={16} />
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="ghost"
         type="button"
         title={maximized ? '还原' : '最大化'}
         className={buttonClass}
         onClick={() => getCurrentWindow().toggleMaximize().catch(() => {})}
       >
         {maximized ? <Copy size={14} /> : <Square size={14} />}
-      </button>
-      <button
+      </Button>
+      <Button
+                variant="ghost"
         type="button"
         title="关闭"
         className={cn(buttonClass, 'hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_20%,var(--lume-bg-elevated))] hover:text-[var(--lume-text-primary)]')}
         onClick={() => getCurrentWindow().close().catch(() => {})}
       >
         <X size={16} />
-      </button>
+      </Button>
     </div>
   )
 }

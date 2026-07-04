@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * TitleBar - 桌面端自定义标题栏（实体栏）
  *
@@ -51,14 +52,15 @@ export function TitleBar({ variant = resolveVariant() }: { variant?: TitleBarVar
     >
       {/* 左段：侧栏开关 + Logo */}
       <div className="flex items-center gap-2" style={NO_DRAG_REGION}>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           title={collapsed ? '展开侧栏' : '收起侧栏'}
           onClick={() => setCollapsed(!collapsed)}
           className="flex size-8 items-center justify-center rounded-[8px] text-[var(--lume-text-muted)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)] active:bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_78%,black)]"
         >
           <PanelLeft size={16} />
-        </button>
+        </Button>
         <div className="flex items-center gap-1.5 px-1">
           <Sparkles size={16} className="text-[var(--lume-accent)]" />
           <span className="text-sm font-medium">Lume</span>
@@ -67,7 +69,8 @@ export function TitleBar({ variant = resolveVariant() }: { variant?: TitleBarVar
 
       {/* 中段：搜索 / 命令入口（两侧留白可拖窗，按钮本身 no-drag） */}
       <div className="flex-1 flex justify-center" style={DRAG_REGION}>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           style={NO_DRAG_REGION}
           onClick={() => setOpen(true)}
@@ -75,7 +78,7 @@ export function TitleBar({ variant = resolveVariant() }: { variant?: TitleBarVar
         >
           <Search size={14} />
           <span>搜索 / 跳转…</span>
-        </button>
+        </Button>
       </div>
 
       {/* 右段：右面板控件 + （Win/Linux）窗口按钮 */}

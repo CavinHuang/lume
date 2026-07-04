@@ -94,23 +94,8 @@ export interface ModelProviderRow {
   channelId?: string
 }
 
-const PROVIDER_TONES: Partial<Record<ProviderType, string>> = {
-  openai: 'bg-[#efe9ff] text-[#7a54f2]',
-  anthropic: 'bg-[#f5e4b8] text-[#6e5928]',
-  google: 'bg-[#e6f0ff] text-[#346df1]',
-  deepseek: 'bg-[#e9f1ff] text-[#3a65e5]',
-  openrouter: 'bg-[#eff4ff] text-[#111827]',
-  custom: 'bg-[#eadcff] text-[#7a52e8]',
-  zai: 'bg-[#eee7ff] text-[#7557ff]',
-  'zai-coding-plan': 'bg-[#eee7ff] text-[#7557ff]',
-  moonshot: 'bg-[#111827] text-white',
-  'aliyun-coding-plan': 'bg-[#ff6a00]/10 text-[#ff6a00]',
-  'volcengine-coding-plan': 'bg-[#3370ff]/10 text-[#3370ff]',
-  'minimax-token-plan': 'bg-[#3d5afe]/10 text-[#3d5afe]',
-  'xiaomi-token-plan': 'bg-[#ff6900]/10 text-[#ff6900]',
-  stepfun: 'bg-[#6c5ce7]/10 text-[#6c5ce7]',
-  'stepfun-coding-plan': 'bg-[#6c5ce7]/10 text-[#6c5ce7]',
-}
+const PROVIDER_TONE = 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]'
+const CUSTOM_PROVIDER_TONE = 'bg-[var(--surface-2)] text-[var(--text-2)]'
 
 export function buildModelProviderRows(channels: Channel[]): ModelProviderRow[] {
   // 内置 Provider
@@ -120,7 +105,7 @@ export function buildModelProviderRows(channels: Channel[]): ModelProviderRow[] 
       provider,
       label,
       channel: channels.find((channel) => channel.provider === provider) ?? null,
-      tone: PROVIDER_TONES[provider] ?? 'bg-[#eef2f7] text-[#4d566f]',
+      tone: provider === 'custom' ? CUSTOM_PROVIDER_TONE : PROVIDER_TONE,
       channelId: undefined as string | undefined,
       index,
     }))
@@ -132,7 +117,7 @@ export function buildModelProviderRows(channels: Channel[]): ModelProviderRow[] 
       provider: 'custom' as ProviderType,
       label: channel.name || '自定义供应商',
       channel,
-      tone: PROVIDER_TONES['custom'] ?? 'bg-[#eadcff] text-[#7a52e8]',
+      tone: CUSTOM_PROVIDER_TONE,
       channelId: channel.id as string,
       index: builtInRows.length + index,
     }))

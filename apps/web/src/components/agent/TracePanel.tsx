@@ -16,6 +16,7 @@ import {
 } from './runtime-state-projections'
 import type { AgentTraceRedactionLevel } from '@lume/shared'
 
+import { Button } from '@/components/ui/button'
 interface TracePanelProps {
   threadId: string
 }
@@ -80,7 +81,8 @@ export function TracePanel({ threadId }: TracePanelProps) {
           </div>
           <div className="flex gap-1.5 overflow-x-auto pb-0.5">
             {runRows.map((run) => (
-              <button
+              <Button
+                variant="ghost"
                 key={run.id}
                 type="button"
                 onClick={() => setSelectedRunId(run.id)}
@@ -99,7 +101,7 @@ export function TracePanel({ threadId }: TracePanelProps) {
                 </div>
                 <div className="mt-1 truncate text-[10px] text-foreground/35">{run.detail}</div>
                 <div className="mt-0.5 text-[10px] text-foreground/25">{run.createdAt}</div>
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -231,21 +233,22 @@ function TraceRedactionTabs({
   ]
 
   return (
-    <div className="flex rounded-md bg-foreground/[0.04] p-0.5">
+    <div className="lume-segmented flex">
       {options.map((option) => (
-        <button
+        <Button
+                variant="ghost"
           key={option.value}
           type="button"
           onClick={() => onChange(option.value)}
           className={cn(
-            'rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+            'lume-segmented-item px-2 text-[10px]',
             value === option.value
-              ? 'bg-background text-foreground shadow-sm'
-              : 'text-foreground/45 hover:text-foreground/70',
+              ? 'lume-segmented-item-active'
+              : '',
           )}
         >
           {option.label}
-        </button>
+        </Button>
       ))}
     </div>
   )

@@ -8,6 +8,7 @@ import { sidecarCall } from '@/lib/desktop-api'
 import type { FileEntry } from '@lume/shared'
 import { normalizeDirectoryEntriesResponse } from './FileBrowser'
 
+import { Button } from '@/components/ui/button'
 interface WorkspaceFileBrowserProps {
   workspaceSlug?: string
   listChannel?: string
@@ -73,17 +74,18 @@ export function WorkspaceFileBrowser({
       {showHeader && (
         <div className="flex items-center justify-between border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-2.5">
           <span className="text-[12px] font-medium text-[var(--text-3)]">工作区共享</span>
-          <button
+          <Button
+                variant="ghost"
             onClick={handleRefresh}
             className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
             title="刷新"
           >
             <RefreshCw size={12} className={cn(loading && 'animate-spin')} />
-          </button>
+          </Button>
         </div>
       )}
       <ScrollArea className="flex-1 min-h-0">
-        <div className={cn('py-2', showHeader ? 'px-2' : 'px-4')}>
+        <div className={cn('py-2', showHeader ? 'px-2' : 'px-3')}>
           {entries.filter((entry) => matchesSearch(entry, searchQuery)).map((entry) => (
             <WorkspaceFileTreeItem
               key={entry.path}
@@ -163,7 +165,8 @@ function WorkspaceFileTreeItem({
   }
 
   const rowButton = (
-    <button
+    <Button
+                variant="ghost"
       onClick={toggle}
       className={cn(
         'w-full flex h-9 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-[var(--surface-2)]',
@@ -181,7 +184,7 @@ function WorkspaceFileTreeItem({
         : <FileTypeIcon filename={entry.name} size={largeRows ? 16 : 13} />
       }
       <span className={cn('truncate text-[var(--text-2)]', largeRows ? 'text-[13px]' : 'text-[12px]', !entry.isDirectory && selectedPath === entry.path && 'text-[var(--brand-2)]')}>{entry.name}</span>
-    </button>
+    </Button>
   )
 
   return (

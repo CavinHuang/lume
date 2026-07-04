@@ -1,3 +1,5 @@
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 /**
  * ModelPicker - 线程模型覆盖选择器
  *
@@ -182,7 +184,8 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
   return (
     <div ref={menuRef} className="relative flex items-center gap-1.5">
       {/* Trigger button */}
-      <button
+      <Button
+        variant="ghost"
         onClick={() => setOpen((v) => !v)}
         className={composerControlTriggerClassName}
         title={summary.isUnavailable ? '当前线程模型不可用，点击重新选择' : '切换模型'}
@@ -192,7 +195,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
         )}
         <span className="max-w-[160px] truncate">{summary.label}</span>
         <ChevronDown size={12} className={composerControlChevronClassName} />
-      </button>
+      </Button>
 
       {summary.hasLoadedChannels && summary.isUnavailable && (
         <span className="inline-flex h-6 items-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-warning)_28%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 text-[10.5px] font-medium text-[var(--lume-warning)]">
@@ -209,13 +212,13 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
           <div className="border-b border-[var(--border)] p-1.5">
             <div className="flex items-center gap-1.5 rounded-lg bg-[var(--surface-2)] px-2 py-1">
               <Search size={13} className="text-muted-foreground/50 shrink-0" />
-              <input
+              <Input
                 ref={searchInputRef}
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索模型..."
-                className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/50 outline-none"
+                className="flex-1 border-0 bg-transparent px-0 text-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/50 focus-visible:ring-0"
               />
             </div>
           </div>
@@ -242,7 +245,8 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
 
           {canRestoreDefault && (
             <div className="border-t border-border/50 p-1">
-              <button
+              <Button
+                variant="ghost"
                 onClick={handleRestoreDefault}
                 className={cn(
                   'w-full rounded-md px-3 py-1.5 text-left text-[12px] transition-colors',
@@ -250,7 +254,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
                 )}
               >
                 恢复默认策略
-              </button>
+              </Button>
             </div>
           )}
         </div>

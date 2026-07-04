@@ -1,5 +1,5 @@
 import { memo, useState, useRef } from 'react'
-import { FolderOpen, Plus, MoreHorizontal, Pencil, Trash2, Check, X, Home, Box } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen, Plus, MoreHorizontal, Pencil, Trash2, Check, X, Home, Box } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import {
@@ -10,8 +10,10 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { ThreadItem } from './ThreadItem'
-import type { LumeSidebarSyntheticThreadRow, LumeSidebarThreadItem } from './lume-sidebar-view-model'
+import type { LumeSidebarThreadItem } from './lume-sidebar-view-model'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 const THREAD_EXPAND_STEP = 10
 const THREAD_PREVIEW_LIMIT = 5
 
@@ -21,9 +23,8 @@ interface WorkspaceGroupItemProps {
   isCurrent: boolean
   isExpanded: boolean
   pinned: boolean
-  syntheticRow: LumeSidebarSyntheticThreadRow | null
   threads: LumeSidebarThreadItem[]
-  onSelectWorkspace: (workspaceId: string) => void
+  onToggleWorkspace: (workspaceId: string) => void
   onOpenThread: (threadId: string, workspaceId?: string) => void
   onToggleThreadPin: (threadId: string) => void
   onArchiveThread: (threadId: string) => void
@@ -40,9 +41,8 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
   isCurrent,
   isExpanded,
   pinned,
-  syntheticRow,
   threads,
-  onSelectWorkspace,
+  onToggleWorkspace,
   onOpenThread,
   onToggleThreadPin,
   onArchiveThread,
@@ -95,81 +95,99 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
   const isPersonal = name.toLowerCase() === 'personal'
 
   return (
-    <section className={cn('relative py-0.5 rounded-md', !isExpanded && 'mb-1')}>
-      <div className="group/workspace relative flex items-center">
+    <section
+      className={cn(
+        'relative rounded-lg transition-colors duration-150 ease-out',
+        !isExpanded && 'mb-1',
+      )}
+    >
+      <div className="group/workspace relative flex h-8 items-center">
         {renaming ? (
           <div
             className={cn(
-              'relative flex-1 min-w-0 flex items-center gap-1 px-1 py-1 rounded-md text-left',
+              'relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left',
               isCurrent ? 'text-[var(--lume-text-primary)]' : 'text-[var(--lume-text-secondary)]',
             )}
           >
-            {isPersonal ? <Home size={13} className="flex-shrink-0 text-[var(--lume-text-muted)]" /> : <FolderOpen size={13} className="flex-shrink-0 text-[var(--lume-text-muted)]" />}
-            <input
+            {isPersonal ? <Home size={13} className="shrink-0 text-[var(--lume-text-muted)]" /> : <FolderOpen size={13} className="shrink-0 text-[var(--lume-text-muted)]" />}
+            <Input
               ref={inputRef}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleRenameKeyDown}
               onBlur={commitRename}
-              className="flex-1 min-w-0 bg-transparent text-[13px] font-medium text-[var(--lume-text-primary)] border-b border-[color:color-mix(in_oklab,var(--lume-accent)_50%,transparent)] outline-none px-0.5 leading-[18px]"
+              className="h-7 min-w-0 flex-1 rounded-none border-0 border-b border-[color:color-mix(in_oklab,var(--lume-accent)_50%,transparent)] bg-transparent px-0.5 py-0 text-[13px] font-medium leading-[18px] text-[var(--lume-text-primary)] outline-none focus-visible:ring-0"
               maxLength={50}
             />
-            <button
+            <Button
+              variant="ghost"
               type="button"
               onClick={commitRename}
-              className="flex size-5 items-center justify-center rounded-full text-[var(--lume-accent)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_12%,transparent)]"
+              className="size-6 rounded-md p-0 text-[var(--lume-accent)] hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_12%,transparent)]"
             >
               <Check size={12} />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
               type="button"
               onClick={() => { setDraft(name); setRenaming(false) }}
-              className="flex size-5 items-center justify-center rounded-full text-[var(--lume-text-muted)] transition-colors hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
+              className="size-6 rounded-md p-0 text-[var(--lume-text-muted)] hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
             >
               <X size={12} />
-            </button>
+            </Button>
           </div>
         ) : (
-          <button
+          <Button
+            variant="ghost"
             type="button"
-            onClick={() => onSelectWorkspace(id)}
+            data-expanded={isExpanded}
+            onClick={() => onToggleWorkspace(id)}
             className={cn(
-              'relative flex-1 min-w-0 flex items-center gap-1 px-1 py-1 rounded-md text-left transition-colors duration-150 ease-out group-hover/workspace:pr-11 hover:bg-[var(--lume-bg-elevated)]',
+              'h-8 min-w-0 flex-1 shrink justify-start gap-2 rounded-lg bg-transparent px-2 text-left transition-colors duration-150 ease-out group-hover/workspace:pr-14 hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
               isCurrent
                 ? 'text-[var(--lume-text-primary)]'
                 : 'text-[var(--lume-text-secondary)] hover:text-[var(--lume-text-primary)]',
             )}
           >
             {isPersonal
-              ? <Home size={13} strokeWidth={2} className={cn('flex-shrink-0', isCurrent ? 'text-[var(--lume-accent)]' : 'text-[var(--lume-text-muted)]')} />
-              : <Box size={13} strokeWidth={2} className={cn('flex-shrink-0', isCurrent ? 'text-[var(--lume-accent)]' : 'text-[var(--lume-text-muted)]')} />
+              ? <Home size={14} strokeWidth={2} className={cn('shrink-0', isCurrent ? 'text-[var(--lume-accent)]' : 'text-[var(--lume-text-muted)]')} />
+              : <Box size={14} strokeWidth={2} className={cn('shrink-0', isCurrent ? 'text-[var(--lume-accent)]' : 'text-[var(--lume-text-muted)]')} />
             }
-            <span className="flex-1 min-w-0 truncate text-[13px] font-medium leading-[18px]">
-              {name}
+            <span className="flex min-w-0 flex-1 items-center gap-1">
+              <span className="min-w-0 truncate text-[13px] font-semibold leading-[18px]">
+                {name}
+              </span>
+              <span
+                className="flex size-4 shrink-0 items-center justify-center text-[var(--lume-text-muted)] opacity-0 transition-opacity duration-150 group-hover/workspace:opacity-100"
+                aria-hidden="true"
+              >
+                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </span>
             </span>
             <span className={cn(
-              'shrink-0 text-[11px] font-medium leading-none text-[var(--lume-text-muted)]',
+              'px-1 text-[11px] font-semibold leading-none text-[var(--lume-text-muted)]',
               'group-hover/workspace:opacity-0',
             )}>
               {threads.length}
             </span>
-          </button>
+          </Button>
         )}
 
         <Tooltip>
           <TooltipTrigger
             render={
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 aria-label={`在「${name}」中新建会话`}
                 onClick={(e) => {
                   e.stopPropagation()
                   onNewThread(id)
                 }}
-                className="absolute right-5 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-[var(--lume-text-secondary)] opacity-0 transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)] group-hover/workspace:opacity-100"
+                className="absolute right-8 top-1/2 size-6 -translate-y-1/2 rounded-md p-0 text-[var(--lume-text-secondary)] opacity-0 transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)] group-hover/workspace:opacity-100"
               >
                 <Plus size={13} />
-              </button>
+              </Button>
             }
           />
           <TooltipContent side="top">在此工作区新建会话</TooltipContent>
@@ -178,13 +196,14 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 aria-label="工作区菜单"
-                className="absolute right-0 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-[var(--lume-text-secondary)] opacity-0 transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)] group-hover/workspace:opacity-100"
+                className="absolute right-2 top-1/2 size-6 -translate-y-1/2 rounded-md p-0 text-[var(--lume-text-secondary)] opacity-0 transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)] group-hover/workspace:opacity-100"
               >
                 <MoreHorizontal size={13} />
-              </button>
+              </Button>
             }
           />
           <DropdownMenuContent>
@@ -206,35 +225,9 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
       </div>
 
       {isExpanded && (
-        <div className="ml-4 mt-px">
-          {syntheticRow && (
-            <button
-              type="button"
-              onClick={() => onOpenThread(syntheticRow.id, syntheticRow.workspaceId)}
-              className={cn(
-                'group relative w-full flex items-center gap-1.5 rounded-md py-1 pl-2.5 pr-1.5 transition-colors duration-100 text-left',
-                syntheticRow.active
-                  ? 'bg-[var(--lume-accent-soft)]'
-                  : 'hover:bg-[var(--lume-bg-elevated)]',
-              )}
-            >
-              {syntheticRow.active && (
-                <span
-                  className="absolute inset-y-0 left-0 w-[3px] rounded-l-md pointer-events-none bg-[var(--lume-accent)]"
-                  aria-hidden="true"
-                />
-              )}
-              <span className={cn(
-                'truncate text-[13px] leading-[18px] flex items-center gap-1.5',
-                syntheticRow.active ? 'text-[var(--lume-text-primary)] font-medium' : 'text-[var(--lume-text-secondary)]',
-              )}>
-                ✨ {syntheticRow.label}
-              </span>
-            </button>
-          )}
-
+        <div className="mt-0.5 pb-1">
           {threads.length > 0 ? (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-0.5">
               {visibleThreads.map((thread) => (
                 <ThreadItem
                   key={thread.id}
@@ -247,27 +240,29 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
               ))}
 
               {currentHiddenCount > 0 && (
-                <button
+                <Button
+                  variant="ghost"
                   type="button"
                   onClick={() => setExtraCount((prev) => prev + THREAD_EXPAND_STEP)}
-                  className="w-full text-left px-1.5 py-1 rounded-md text-[12px] text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
+                  className="mt-1 h-8 w-full justify-center rounded-lg bg-transparent px-2 text-[12px] font-medium text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
                 >
                   显示更多（{currentHiddenCount}）
-                </button>
+                </Button>
               )}
 
               {extraCount > 0 && (
-                <button
+                <Button
+                  variant="ghost"
                   type="button"
                   onClick={() => setExtraCount(0)}
-                  className="w-full text-left px-1.5 py-1 rounded-md text-[12px] text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
+                  className="h-8 w-full justify-center rounded-lg bg-transparent px-2 text-[12px] font-medium text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
                 >
                   收起
-                </button>
+                </Button>
               )}
             </div>
           ) : (
-            <div className="px-1.5 py-0.5 text-[12px] text-[var(--lume-text-muted)] select-none">
+            <div className="select-none px-2 py-2 text-[12px] text-[var(--lume-text-muted)]">
               暂无会话
             </div>
           )}

@@ -41,6 +41,7 @@ import type { PermissionModeValue } from '@/components/settings/agent-settings-s
 import { createSuggestionRenderer } from '@/components/agent/editor-mention-suggestions'
 import { attachmentDataUrl, isImageAttachment } from '@/components/agent/AgentAttachmentGrid'
 
+import { Button } from '@/components/ui/button'
 interface WelcomeViewProps {
   workspaceId?: string
 }
@@ -391,23 +392,25 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         >
           <Folder size={13} />
           {folder.name}
-          <button
+          <Button
+                variant="ghost"
             type="button"
             className="ml-0.5 text-[var(--text-3)] hover:text-[var(--text-1)]"
             onClick={() => setPendingFolders((prev) => prev.filter((f) => f.id !== folder.id))}
           >
             <X size={12} />
-          </button>
+          </Button>
         </span>
       ))}
-      <button
+      <Button
+                variant="ghost"
         type="button"
         className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-3)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_50%,transparent)] hover:text-[var(--text-2)]"
         onClick={handleAttachFolder}
       >
         <Plus size={13} />
         选择附加的项目文件夹
-      </button>
+      </Button>
     </div>
   )
 

@@ -34,6 +34,7 @@ import {
   sanitizeRightPanelWorkspace,
 } from '@/components/right-panel'
 
+import { Button } from '@/components/ui/button'
 interface AgentViewProps {
   threadId: string
   readOnly?: boolean
@@ -313,14 +314,15 @@ function ThreadImagePreviewDialog({
           <div className="min-w-0 truncate text-[13px] font-medium text-white/82">
             {preview.attachment.filename}
           </div>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={onClose}
             className="flex size-7 items-center justify-center rounded-md text-white/65 transition-colors hover:bg-white/10 hover:text-white"
             title="关闭预览"
           >
             <X size={16} />
-          </button>
+          </Button>
         </div>
         <div className="flex min-h-[320px] min-w-[320px] items-center justify-center bg-black/24 p-4">
           {preview.loading ? (

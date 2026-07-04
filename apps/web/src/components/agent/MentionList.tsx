@@ -5,6 +5,7 @@ import { normalizeSlashSuggestionItems, type MentionItem } from './slash-command
 import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
 import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
 
+import { Button } from '@/components/ui/button'
 interface MentionListProps {
   items: MentionItem[]
   command: (item: { id: string; label: string }) => void
@@ -109,12 +110,13 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         <div className="w-full overflow-hidden rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_98%,transparent)] shadow-[0_18px_46px_-34px_hsl(var(--shadow-panel)/0.42)]">
           {/* 标题栏 */}
           <div className="flex items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-2.5">
-            <button
+            <Button
+                variant="ghost"
               className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-3)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_52%,transparent)] hover:text-[var(--text-2)]"
               onClick={() => setPanelMode('commands')}
             >
               <ArrowLeft size={14} />
-            </button>
+            </Button>
             <span className="text-[12px] font-medium text-[var(--text-1)]">MCP 服务状态</span>
           </div>
 
@@ -202,7 +204,8 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                       技能
                     </div>
                   ) : null}
-                  <button
+                  <Button
+                variant="ghost"
                     className={cn(
                       'grid min-h-8 w-full grid-cols-[24px_minmax(0,auto)_minmax(0,1fr)_auto] items-center gap-2 rounded-[0.75rem] py-1 pl-0.5 pr-1 text-left transition-colors',
                       index === selectedIndex
@@ -230,7 +233,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                         {item.meta}
                       </span>
                     ) : null}
-                  </button>
+                  </Button>
                 </div>
               )
             })}
@@ -271,7 +274,8 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                     {getMentionSectionLabel(item.section)}
                   </div>
                 ) : null}
-                <button
+                <Button
+                variant="ghost"
                   className={cn(
                     'group w-full rounded-[1rem] border px-3 py-2.5 text-left transition-all',
                     index === selectedIndex
@@ -308,7 +312,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                       ) : null}
                     </div>
                   </div>
-                </button>
+                </Button>
               </div>
             )
           })}

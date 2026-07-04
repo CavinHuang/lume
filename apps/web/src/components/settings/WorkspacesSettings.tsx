@@ -29,6 +29,8 @@ import { Switch } from '@/components/ui/switch'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBrowser'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 type WorkspaceSettingsTab = 'overview' | 'files' | 'capabilities'
 
 interface WorkspaceFilePreview {
@@ -191,20 +193,21 @@ export function WorkspacesSettings() {
 
   if (!selectedWorkspace) {
     return (
-      <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-10 text-center shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <section className="lume-panel p-10 text-center">
         <div className="mx-auto flex size-12 items-center justify-center rounded-[12px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]">
           <Box size={22} />
         </div>
         <h3 className="mt-4 text-[16px] font-semibold text-[var(--text-1)]">暂无工作区</h3>
         <p className="mt-2 text-[13px] text-[var(--text-2)]">创建工作区后即可管理本地目录、默认行为和工作流边界。</p>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={() => setCreateWorkspaceOpen(true)}
           className="mt-5 inline-flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-medium text-[var(--brand-foreground)]"
         >
           <Plus size={15} />
           新建工作区
-        </button>
+        </Button>
         <CreateWorkspaceDialog
           open={createWorkspaceOpen}
           onOpenChange={setCreateWorkspaceOpen}
@@ -226,21 +229,22 @@ export function WorkspacesSettings() {
         lastOpenedLabel={formatRelativeDay(selectedWorkspace.updatedAt)}
       />
 
-      <div className="flex items-center gap-1 rounded-[10px] border border-border bg-[var(--surface-1)] p-1 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <div className="lume-segmented flex items-center gap-1">
         {WORKSPACE_SETTINGS_TABS.map((item) => (
-          <button
+          <Button
+                variant="ghost"
             key={item.id}
             type="button"
             onClick={() => setActiveTab(item.id)}
             className={cn(
-              'h-8 rounded-[8px] px-3 text-[13px] font-medium transition-colors',
+              'lume-segmented-item',
               activeTab === item.id
-                ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
+                ? 'lume-segmented-item-active'
+                : ''
             )}
           >
             {item.label}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -343,35 +347,37 @@ function WorkspaceOverviewPanel({
     <>
       <div className="grid grid-cols-[minmax(0,438px)_minmax(0,1fr)] gap-4">
         <div className="space-y-4">
-          <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+          <section className="lume-panel p-4">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-[17px] font-semibold leading-6 text-[var(--text-1)]">工作区列表</h3>
               <div className="flex items-center gap-2">
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   onClick={() => setCreateWorkspaceOpen(true)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-[7px] border border-border bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-[0_1px_1px_rgba(20,24,40,0.02)] hover:bg-[var(--surface-2)]"
+                  className="lume-action-tile h-8 gap-1.5 px-3 text-[12px] shadow-none"
                 >
                   <Plus size={14} />
                   新建工作区
-                </button>
-                <button
+                </Button>
+                <Button
+                variant="ghost"
                   type="button"
-                  className="flex size-8 items-center justify-center rounded-[7px] border border-border bg-[var(--surface-1)] text-[var(--text-2)] hover:bg-[var(--surface-2)]"
+                  className="lume-action-tile flex size-8 items-center justify-center p-0 shadow-none"
                   aria-label="更多工作区操作"
                 >
                   <MoreHorizontal size={16} />
-                </button>
+                </Button>
               </div>
             </div>
 
             <label className="mb-3 flex h-9 items-center gap-2 rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
               <Search size={15} />
-              <input
+              <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="搜索工作区"
-                className="min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+                className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
               />
             </label>
 
@@ -389,9 +395,9 @@ function WorkspaceOverviewPanel({
             </div>
           </section>
 
-          <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+          <section className="lume-panel p-4">
             <h3 className="mb-3 text-[17px] font-semibold leading-6 text-[var(--text-1)]">本地目录</h3>
-            <div className="overflow-hidden rounded-[8px] border border-border">
+            <div className="lume-subpanel overflow-hidden">
               {WORKSPACE_DIRS.map((item, index) => (
                 <div
                   key={item.path}
@@ -407,43 +413,46 @@ function WorkspaceOverviewPanel({
                   <div className="truncate font-mono text-[11px] text-[var(--text-3)]">
                     {compactPath(rootPath, item.path)}
                   </div>
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => void handleOpenResources(item.path)}
-                    className="h-7 rounded-[6px] border border-border bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
+                    className="lume-action-tile h-7 px-3 text-[12px] shadow-none"
                   >
                     打开
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                variant="ghost"
                     type="button"
-                    className="h-7 rounded-[6px] border border-border bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
+                    className="lume-action-tile h-7 px-3 text-[12px] shadow-none"
                   >
                     更改
-                  </button>
+                  </Button>
                 </div>
               ))}
             </div>
           </section>
         </div>
 
-        <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-5 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+        <section className="lume-panel p-5">
           <h3 className="mb-5 text-[17px] font-semibold leading-6 text-[var(--text-1)]">工作区概览</h3>
           <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-6">
             <div className="space-y-4">
               <div className="flex size-[106px] items-center justify-center rounded-[12px] bg-gradient-to-br from-[#6d5cff] to-[#9b84ff] text-white shadow-[0_12px_28px_rgba(98,91,255,0.24)]">
                 <Box size={58} strokeWidth={1.9} />
               </div>
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 className="h-9 w-full rounded-[7px] border border-border bg-[var(--surface-1)] text-[12px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
               >
                 更换图标
-              </button>
+              </Button>
             </div>
 
             <div className="space-y-4">
               <WorkspaceField label="工作区名称">
-                <input
+                <Input
                   value={workspaceName}
                   onChange={(event) => setWorkspaceName(event.target.value)}
                   className="h-10 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-1)] outline-none focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))] focus:ring-3 focus:ring-[var(--brand)]/10"
@@ -451,22 +460,23 @@ function WorkspaceOverviewPanel({
               </WorkspaceField>
               <WorkspaceField label="本地路径">
                 <div className="grid grid-cols-[minmax(0,1fr)_76px] gap-2">
-                  <input
+                  <Input
                     value={rootPath || `~/Documents/Lume/${selectedWorkspace.slug}`}
                     readOnly
                     className="h-10 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-2)] outline-none"
                   />
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => void handleOpenResources()}
                     className="h-10 rounded-[8px] border border-border bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
                   >
                     打开目录
-                  </button>
+                  </Button>
                 </div>
               </WorkspaceField>
               <WorkspaceField label="工作区描述">
-                <input
+                <Input
                   value={workspaceDescription}
                   onChange={(event) => setWorkspaceDescription(event.target.value)}
                   className="h-10 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))] focus:ring-3 focus:ring-[var(--brand)]/10"
@@ -497,7 +507,7 @@ function WorkspaceOverviewPanel({
             </WorkspaceField>
           </div>
 
-          <div className="mt-5 rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] font-medium text-[var(--text-2)]">
+          <div className="lume-subpanel mt-5 px-3 py-2 text-[12px] font-medium text-[var(--text-2)]">
             <span className="mr-2 inline-flex size-4 items-center justify-center rounded-full border border-[var(--brand)] text-[11px] text-[var(--brand)]">i</span>
             这些设置仅作用于当前工作区。
           </div>
@@ -505,43 +515,48 @@ function WorkspaceOverviewPanel({
       </div>
 
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_152px_minmax(360px,420px)] gap-3 border-t border-border pt-4">
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={() => setWorkspaceName(selectedWorkspace.name)}
           className="h-10 rounded-[8px] border border-border bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
         >
           取消
-        </button>
-        <button
+        </Button>
+        <Button
+                variant="ghost"
           type="button"
           className="h-10 rounded-[8px] border border-border bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
         >
           导出工作区配置
-        </button>
-        <button
+        </Button>
+        <Button
+                variant="ghost"
           type="button"
           onClick={() => void handleSave()}
           className="h-10 rounded-[8px] bg-[var(--brand)] text-[13px] font-medium text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
         >
           保存更改
-        </button>
-        <div className="rounded-[10px] border border-[#ffb7b7] px-4 py-3">
-          <div className="text-[12px] font-semibold leading-4 text-[#ff5252]">危险操作</div>
+        </Button>
+        <div className="lume-subpanel border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] px-4 py-3">
+          <div className="text-[12px] font-semibold leading-4 text-[var(--lume-danger)]">危险操作</div>
           <div className="mt-2 flex min-w-0 items-center gap-3">
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => void handleDelete()}
                 className="h-8 min-w-[120px] rounded-[6px] border border-[color:color-mix(in_oklab,var(--lume-danger)_38%,var(--border))] px-5 text-[12px] font-medium text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))]"
               >
                 删除工作区
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => selectedWorkspace.id === currentWorkspaceId && setCurrentWorkspaceId(null)}
                 className="h-8 min-w-[128px] rounded-[6px] border border-border px-5 text-[12px] font-medium text-[var(--text-3)] hover:bg-[var(--surface-2)]"
               >
                 移除默认状态
-              </button>
+              </Button>
           </div>
         </div>
       </div>
@@ -648,7 +663,7 @@ function WorkspaceFilesPanel({ workspace }: { workspace: AgentWorkspace }) {
   })
 
   return (
-    <section className="grid min-h-[560px] grid-cols-[minmax(280px,360px)_minmax(0,1fr)] overflow-hidden rounded-[10px] border border-border bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel grid min-h-[560px] grid-cols-[minmax(280px,360px)_minmax(0,1fr)] overflow-hidden">
       <div className="min-h-0 border-r border-border">
         <div className="border-b border-border p-3">
           <div className="flex items-center justify-between gap-2">
@@ -656,22 +671,23 @@ function WorkspaceFilesPanel({ workspace }: { workspace: AgentWorkspace }) {
               <h3 className="text-[15px] font-semibold text-[var(--text-1)]">工作区文件</h3>
               <p className="mt-1 truncate text-[12px] text-[var(--text-3)]">{workspace.name}</p>
             </div>
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => void handleUpload()}
-              className="inline-flex h-8 items-center gap-1.5 rounded-[7px] border border-border bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] hover:bg-[var(--surface-2)]"
+              className="lume-action-tile h-8 gap-1.5 px-3 text-[12px] shadow-none"
             >
               {busyAction === 'upload' ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
               上传
-            </button>
+            </Button>
           </div>
-          <label className="mt-3 flex h-9 items-center gap-2 rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
+          <label className="lume-action-tile mt-3 flex h-9 justify-start px-3 text-[var(--text-3)] shadow-none">
             <Search size={15} />
-            <input
+            <Input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="筛选文件"
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+              className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
             />
           </label>
         </div>
@@ -714,7 +730,7 @@ function WorkspaceFilesPanel({ workspace }: { workspace: AgentWorkspace }) {
           ) : preview ? (
             <div className="space-y-3">
               {preview.truncated && (
-                <div className="rounded-[8px] border border-amber-300/30 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
+                <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-warning)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-warning)_8%,var(--surface-1))] px-3 py-2 text-[12px] text-[var(--lume-warning)]">
                   文件内容过长，当前仅显示前 512 KB。
                 </div>
               )}
@@ -810,7 +826,7 @@ function WorkspaceCapabilitiesPanel({ workspace }: { workspace: AgentWorkspace }
 
   if (loading) {
     return (
-      <div className="flex h-[320px] items-center justify-center rounded-[10px] border border-border bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
+      <div className="lume-panel flex h-[320px] items-center justify-center text-[13px] text-[var(--text-3)]">
         <Loader2 size={14} className="mr-2 animate-spin" />
         加载能力开关...
       </div>
@@ -895,8 +911,8 @@ function WorkspaceStats({
   const stats = [
     { label: '工作区数量', value: String(workspaceCount), Icon: Box, iconClass: 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]' },
     { label: '默认工作区', value: defaultWorkspaceName, Icon: FolderOpen, iconClass: 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]' },
-    { label: '最近打开', value: lastOpenedLabel, Icon: Clock3, iconClass: 'bg-[#eaf3ff] text-[#2f86ff]' },
-    { label: '本地模式', value: '已启用', Icon: ShieldCheck, iconClass: 'bg-[#ddfae8] text-[#20b566]' },
+    { label: '最近打开', value: lastOpenedLabel, Icon: Clock3, iconClass: 'bg-[var(--surface-2)] text-[var(--text-2)]' },
+    { label: '本地模式', value: '已启用', Icon: ShieldCheck, iconClass: 'bg-[color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] text-[var(--lume-success)]' },
   ]
 
   return (
@@ -904,14 +920,14 @@ function WorkspaceStats({
       {stats.map(({ label, value, Icon, iconClass }) => (
         <div
           key={label}
-          className="flex h-[72px] items-center gap-4 rounded-[10px] border border-border bg-[var(--surface-1)] px-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]"
+          className="lume-panel flex h-[72px] items-center gap-4 px-4"
         >
           <div className={cn('flex size-11 items-center justify-center rounded-full', iconClass)}>
             <Icon size={24} strokeWidth={1.9} />
           </div>
           <div className="min-w-0">
             <div className="text-[12px] font-medium leading-4 text-[var(--text-2)]">{label}</div>
-            <div className={cn('mt-1 truncate text-[18px] font-semibold leading-6 text-[var(--text-1)]', label === '本地模式' && 'text-[#20b566]')}>
+            <div className={cn('mt-1 truncate text-[18px] font-semibold leading-6 text-[var(--text-1)]', label === '本地模式' && 'text-[var(--lume-success)]')}>
               {value}
             </div>
           </div>
@@ -935,7 +951,8 @@ function WorkspaceListItem({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onClick}
       className={cn(
@@ -958,7 +975,7 @@ function WorkspaceListItem({
         </span>
       )}
       <ChevronRight size={16} className="text-[var(--text-3)]" />
-    </button>
+    </Button>
   )
 }
 
@@ -982,13 +999,14 @@ function PreferenceRow({ label, children }: { label: string; children: React.Rea
 
 function SelectLike({ value }: { value: string }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       className="flex h-10 w-full items-center justify-between rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-2)]"
     >
       {value}
       <ChevronDown size={15} className="text-[var(--text-3)]" />
-    </button>
+    </Button>
   )
 }
 
@@ -1020,7 +1038,8 @@ function IconButton({
   tone?: 'neutral' | 'danger'
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       disabled={disabled}
       onClick={onClick}
@@ -1031,7 +1050,7 @@ function IconButton({
       )}
     >
       {children}
-    </button>
+    </Button>
   )
 }
 
@@ -1056,7 +1075,7 @@ function SettingsPanel({
   title: string
 }) {
   return (
-    <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel p-4">
       <h3 className="text-[17px] font-semibold leading-6 text-[var(--text-1)]">{title}</h3>
       <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{description}</p>
       <div className="mt-4">{children}</div>
@@ -1074,13 +1093,13 @@ function CapabilitySearchInput({
   value: string
 }) {
   return (
-    <label className="mb-3 flex h-9 items-center gap-2 rounded-[8px] border border-border bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
+    <label className="lume-action-tile mb-3 flex h-9 justify-start px-3 text-[var(--text-3)] shadow-none">
       <Search size={15} />
-      <input
+      <Input
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+      className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
       />
     </label>
   )
@@ -1112,7 +1131,7 @@ function ToggleRow({
 
 function EmptyLine({ label }: { label: string }) {
   return (
-    <div className="rounded-[8px] border border-dashed border-border px-3 py-8 text-center text-[13px] text-[var(--text-3)]">
+    <div className="lume-subpanel border-dashed px-3 py-8 text-center text-[13px] text-[var(--text-3)]">
       {label}
     </div>
   )

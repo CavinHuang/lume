@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * WebSearch 工具结果渲染器
  *
@@ -58,7 +59,8 @@ export function WebSearchResult({ input, result }: WebSearchResultProps) {
       ) : (
         <div className="space-y-1.5">
           {items.map((item, i) => (
-            <button
+            <Button
+                variant="ghost"
               key={i}
               onClick={() => item.url && openExternal(item.url)}
               className="w-full text-left px-3 py-2 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors group"
@@ -81,7 +83,7 @@ export function WebSearchResult({ input, result }: WebSearchResultProps) {
                 </div>
                 <ExternalLink size={11} className="text-muted-foreground/40 mt-0.5 shrink-0 group-hover:text-primary/60" />
               </div>
-            </button>
+            </Button>
           ))}
         </div>
       )}

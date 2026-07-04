@@ -1,6 +1,6 @@
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 
-export type LumeSidebarTopActionId = 'new-chat' | 'search' | 'lume' | 'skills' | 'automations'
+export type LumeSidebarTopActionId = 'new-chat' | 'lume' | 'skills' | 'automations'
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
 export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
 const UNASSIGNED_THREADS_WORKSPACE_NAME = '未分配'
@@ -18,7 +18,7 @@ export interface LumeSidebarAction<TId extends string> {
   id: TId
   label: string
   icon: string
-  kind: 'button' | 'search'
+  kind: 'button'
   shortcut?: string
   badge?: string
   disabled?: boolean
@@ -41,14 +41,6 @@ export interface LumeSidebarThreadItem {
   workspaceName?: string
 }
 
-export interface LumeSidebarSyntheticThreadRow {
-  type: 'synthetic-thread'
-  id: '__welcome__'
-  workspaceId: string
-  label: '新对话'
-  active: boolean
-}
-
 export interface LumeSidebarWorkspaceItem {
   id: string
   name: string
@@ -56,7 +48,6 @@ export interface LumeSidebarWorkspaceItem {
   isCurrent: boolean
   isExpanded: boolean
   pinned: boolean
-  syntheticRow: LumeSidebarSyntheticThreadRow | null
   threads: LumeSidebarThreadItem[]
 }
 
@@ -78,16 +69,6 @@ export interface LumeSidebarViewModel {
   collapsedItems: LumeSidebarCollapsedItem[]
 }
 
-function buildWelcomeRow(workspaceId: string, active: boolean): LumeSidebarSyntheticThreadRow {
-  return {
-    type: 'synthetic-thread',
-    id: '__welcome__',
-    workspaceId,
-    label: '新对话',
-    active,
-  }
-}
-
 export function buildLumeSidebarViewModel({
   workspaces,
   threads,
@@ -102,7 +83,6 @@ export function buildLumeSidebarViewModel({
 
   const topActions: LumeSidebarTopAction[] = [
     { id: 'new-chat', label: '新建聊天', icon: 'square-pen', kind: 'button', shortcut: 'Ctrl N' },
-    { id: 'search', label: '搜索', icon: 'search', kind: 'search', shortcut: 'Ctrl K' },
     { id: 'lume', label: 'Lume', icon: 'bot', kind: 'button', active: activeTabId === '__lume__' },
     { id: 'skills', label: '技能 / 插件', icon: 'box', kind: 'button', active: activeTabId === '__skills__' },
     {
@@ -134,10 +114,6 @@ export function buildLumeSidebarViewModel({
       isCurrent: workspace.id === selectedWorkspaceId,
       isExpanded: expandedSet.has(workspace.id),
       pinned: pinnedSet.has(workspace.id),
-      syntheticRow: buildWelcomeRow(
-        workspace.id,
-        workspace.id === selectedWorkspaceId && activeTabId === '__welcome__',
-      ),
       threads: allThreads,
     }
   })
@@ -153,7 +129,6 @@ export function buildLumeSidebarViewModel({
       isCurrent: false,
       isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
       pinned: false,
-      syntheticRow: null,
       threads: buildThreadTree(unassignedThreads, activeTabId, UNASSIGNED_THREADS_WORKSPACE_NAME),
     })
   }

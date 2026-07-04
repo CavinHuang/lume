@@ -37,6 +37,7 @@ import {
   type RuntimeMessageStabilizeCache,
 } from './agent-message-state'
 
+import { Button } from '@/components/ui/button'
 interface AgentMessagesProps {
   threadId: string
   streaming: boolean
@@ -403,7 +404,8 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         onNavigate={handleMinimapNavigate}
       />
       {showScrollButton && hasRenderableMessages && (
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={() => scrollMessagesToBottom('smooth')}
           className="absolute bottom-4 right-14 z-20 inline-flex size-9 items-center justify-center rounded-full border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-secondary)] shadow-[0_12px_30px_-24px_hsl(var(--lume-shadow-panel)/0.72)] transition-colors hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-accent)]"
@@ -411,7 +413,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           title="回到底部"
         >
           <ArrowDown size={17} strokeWidth={2.2} />
-        </button>
+        </Button>
       )}
     </div>
   )

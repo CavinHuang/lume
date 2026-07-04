@@ -10,6 +10,7 @@ import { resolveSubagentRoleDisplay } from './subagent-role-display'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 
+import { Button } from '@/components/ui/button'
 interface SubagentInlinePanelProps {
   runId?: string
   threadId: string
@@ -153,7 +154,8 @@ export function SubagentHeader({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       onClick={onClick}
       className={cn(
         'w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left',
@@ -184,7 +186,7 @@ export function SubagentHeader({
         {isRunning ? '运行中' : isDone ? '完成' : isError ? '错误' : '等待'}
       </span>
       <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">{formatElapsed(elapsed)}</span>
-    </button>
+    </Button>
   )
 }
 
@@ -334,7 +336,8 @@ export function SubagentResultCard({ output }: { output: string }) {
           <Check size={12} className="shrink-0 text-green-500" />
           <span className="truncate">结果已完成</span>
         </div>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={() => void copyOutput()}
           className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-foreground/50 transition-colors hover:bg-background/70 hover:text-foreground"
@@ -343,7 +346,7 @@ export function SubagentResultCard({ output }: { output: string }) {
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
           <span>{copied ? '已复制' : '复制结果'}</span>
-        </button>
+        </Button>
       </div>
       {truncated && (
         <div

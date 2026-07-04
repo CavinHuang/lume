@@ -8,10 +8,12 @@ import type {
   WebSearchStrategy,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { getEffectiveLumeConfig, updateWebSearchConfig } from '@/lib/desktop-api/lume-config'
 import { testSearchBackend } from '@/lib/desktop-api/system'
 
+import { Input } from '@/components/ui/input'
 interface ProviderMeta {
   id: WebSearchProvider
   label: string
@@ -271,7 +273,7 @@ export function WebSearchSettings() {
 
   if (loading) {
     return (
-      <div className="flex h-[280px] items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
+      <div className="lume-panel flex h-[280px] items-center justify-center text-[13px] text-[var(--text-3)]">
         <Loader2 size={14} className="mr-2 animate-spin" />
         加载网络搜索设置...
       </div>
@@ -285,30 +287,33 @@ export function WebSearchSettings() {
           {STRATEGY_OPTIONS.map((option) => {
             const selected = strategy === option.value
             return (
-              <button
+              <Button
+                variant="ghost"
                 key={option.value}
                 type="button"
                 onClick={() => void handleSaveStrategy(option.value)}
                 className={cn(
-                  'flex-1 rounded-[14px] border px-4 py-3 text-left transition-all',
+                  'lume-subpanel flex-1 px-4 py-3 text-left transition-all',
                   selected
                     ? 'border-[color-mix(in_oklab,var(--brand)_30%,transparent)] bg-[color-mix(in_oklab,var(--brand)_8%,var(--surface-1))]'
-                    : 'border-[var(--border)] bg-[var(--surface-2)] hover:bg-[var(--surface-1)]'
+                    : 'hover:bg-[var(--surface-1)]'
                 )}
               >
                 <div className="mb-0.5 flex items-center gap-2">
                   <span
                     className={cn(
-                      'h-[14px] w-[14px] shrink-0 rounded-full border-2',
-                      selected ? 'border-[var(--brand)] bg-[var(--brand)]' : 'border-[var(--text-3)]'
+                      'flex h-[14px] w-[14px] shrink-0 items-center justify-center rounded-full border-2',
+                      selected ? 'border-[var(--brand)]' : 'border-[var(--text-3)]'
                     )}
-                  />
+                  >
+                    {selected && <span className="h-[5px] w-[5px] rounded-full bg-[var(--brand)]" />}
+                  </span>
                   <p className={cn('text-[13px] font-medium', selected ? 'text-[var(--brand)]' : 'text-[var(--text-1)]')}>
                     {option.label}
                   </p>
                 </div>
                 <p className="ml-[22px] text-[11px] leading-[18px] text-[var(--text-3)]">{option.desc}</p>
-              </button>
+              </Button>
             )
           })}
         </div>
@@ -328,7 +333,7 @@ export function WebSearchSettings() {
               <div
                 key={meta.id}
                 className={cn(
-                  'rounded-[12px] bg-[var(--surface-2)] p-4 transition-opacity',
+                  'lume-subpanel p-4 transition-opacity',
                   draft.enabled ? '' : 'opacity-50'
                 )}
               >
@@ -369,37 +374,35 @@ export function WebSearchSettings() {
                       {meta.linkLabel}
                     </a>
                   </div>
-                  <label className="relative ml-3 mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
-                    <input
-                      type="checkbox"
-                      className="peer sr-only"
-                      checked={draft.enabled}
-                      onChange={(e) => void handleToggleProvider(meta.id, e.target.checked)}
-                    />
-                    <div className="peer h-5 w-9 rounded-full bg-[var(--border)] transition-colors after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-[var(--brand)] peer-checked:after:translate-x-4" />
-                  </label>
+                  <Switch
+                    checked={draft.enabled}
+                    onCheckedChange={(checked) => void handleToggleProvider(meta.id, checked)}
+                    className="ml-3 mt-0.5 shrink-0"
+                  />
                 </div>
 
                 {meta.needsApiKey ? (
                   <div className="flex gap-2">
                     <div className="relative min-w-0 flex-1">
-                      <input
+                      <Input
                         type={showKey ? 'text' : 'password'}
                         value={draft.apiKey}
                         onChange={(e) => updateDraft(meta.id, { apiKey: e.target.value })}
                         placeholder={draft.hasExistingKey ? '留空保留已有 Key' : meta.apiKeyPlaceholder}
                         className="h-9 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 pr-9 font-mono text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
                       />
-                      <button
+                      <Button
+                variant="ghost"
                         type="button"
                         onClick={() => toggleKeyVisibility(meta.id)}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-2)]"
                         tabIndex={-1}
                       >
                         {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                      </button>
+                      </Button>
                     </div>
                     <Button
+                variant="ghost"
                       type="button"
                       className={cn(
                         'h-9 shrink-0 rounded-[10px] px-3 text-[13px] font-medium',
@@ -429,7 +432,7 @@ export function WebSearchSettings() {
           })}
 
           {/* Bing fallback */}
-          <div className="rounded-[12px] bg-[var(--surface-2)] p-4">
+          <div className="lume-subpanel p-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--border)] text-[11px] font-bold text-[var(--text-3)]">
@@ -462,7 +465,7 @@ export function WebSearchSettings() {
           return (
             <div
               className={cn(
-                'rounded-[12px] bg-[var(--surface-2)] p-5 transition-opacity',
+                'lume-subpanel p-5 transition-opacity',
                 draft.enabled ? '' : 'opacity-50'
               )}
             >
@@ -482,7 +485,7 @@ export function WebSearchSettings() {
                             badge === '第三方'
                               ? 'bg-orange-500/10 text-orange-500'
                               : badge === '免费'
-                                ? 'bg-green-600/10 text-green-600'
+                                ? 'bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] text-[var(--lume-success)]'
                                 : 'bg-[color-mix(in_oklab,var(--brand)_12%,var(--surface-1))] text-[var(--brand)]'
                           )}
                         >
@@ -490,15 +493,11 @@ export function WebSearchSettings() {
                         </span>
                       ))}
                     </div>
-                    <label className="relative mt-0.5 inline-flex shrink-0 cursor-pointer items-center">
-                      <input
-                        type="checkbox"
-                        className="peer sr-only"
-                        checked={draft.enabled}
-                        onChange={(e) => void handleToggleProvider(meta.id, e.target.checked)}
-                      />
-                      <div className="peer h-5 w-9 rounded-full bg-[var(--border)] transition-colors after:absolute after:top-0.5 after:left-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-[var(--brand)] peer-checked:after:translate-x-4" />
-                    </label>
+                    <Switch
+                      checked={draft.enabled}
+                      onCheckedChange={(checked) => void handleToggleProvider(meta.id, checked)}
+                      className="mt-0.5 shrink-0"
+                    />
                   </div>
                   <p className="mt-2 text-[13px] leading-6 text-[var(--text-3)]">
                     观澜是一个开源的中文互联网研究工具（MIT License），让 AI Agent 看懂中文互联网。Alice 内置了以下能力：
@@ -541,7 +540,8 @@ export function WebSearchSettings() {
 
 function TestButton({ status, onClick, hasKey }: { status: TestStatus; onClick: () => void; hasKey: boolean }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onClick}
       disabled={status === 'testing'}
@@ -549,9 +549,9 @@ function TestButton({ status, onClick, hasKey }: { status: TestStatus; onClick: 
       className={cn(
         'h-9 shrink-0 rounded-[10px] border px-3 text-[13px] font-medium transition-all disabled:opacity-50',
         status === 'ok'
-          ? 'border-green-600/60 text-green-600 bg-green-600/5'
+          ? 'border-[color:color-mix(in_oklab,var(--lume-success)_45%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-success)_7%,var(--surface-1))] text-[var(--lume-success)]'
           : status === 'fail' || status === 'empty'
-            ? 'border-red-500/60 text-red-500 bg-red-500/5'
+            ? 'border-[color:color-mix(in_oklab,var(--lume-danger)_45%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] text-[var(--lume-danger)]'
             : 'border-[var(--border)] text-[var(--text-3)] hover:bg-[var(--surface-1)] hover:text-[var(--text-1)]'
       )}
     >
@@ -572,13 +572,13 @@ function TestButton({ status, onClick, hasKey }: { status: TestStatus; onClick: 
       ) : (
         '测试'
       )}
-    </button>
+    </Button>
   )
 }
 
 function SettingsCard({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel-padded">
       <div className="mb-4">
         <h3 className="text-[16px] font-semibold text-[var(--text-1)]">{title}</h3>
         {description && <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{description}</p>}

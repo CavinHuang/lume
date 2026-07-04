@@ -4,6 +4,7 @@ import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
 import { useThreadFileEnv } from './thread-file-env'
 import { cn } from '@/lib/utils'
 
+import { Button } from '@/components/ui/button'
 export interface AgentAttachmentGridItem {
   id: string
   filename: string
@@ -66,7 +67,8 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
             data-agent-attachment-kind={image ? 'image' : 'file'}
             className={cn('group/attachment relative min-w-0', image ? 'h-[108px] w-[108px]' : 'h-[108px] w-[250px] max-w-full')}
           >
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => image ? onOpenImage?.(attachment) : onOpenFile?.(attachment)}
               className={cn(
@@ -106,9 +108,10 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
                   </span>
                 </>
               )}
-            </button>
+            </Button>
             {removable && (
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => onRemove?.(attachment.id)}
                 disabled={removeDisabled}
@@ -116,7 +119,7 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
                 title="移除附件"
               >
                 <X size={13} />
-              </button>
+              </Button>
             )}
           </div>
         )

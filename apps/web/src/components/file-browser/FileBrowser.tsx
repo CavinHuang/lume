@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { FileEntry } from '@lume/shared'
 
+import { Button } from '@/components/ui/button'
 interface FileBrowserProps {
   threadId: string
   workspaceSlug?: string
@@ -68,13 +69,14 @@ export function FileBrowser({
       {showHeader && (
         <div className="flex items-center justify-between border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-2.5">
           <span className="text-[12px] font-medium text-[var(--text-3)]">文件浏览器</span>
-          <button
+          <Button
+                variant="ghost"
             onClick={handleRefresh}
             className="rounded p-1 text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
             title="刷新"
           >
             <RefreshCw size={12} className={cn(loading && 'animate-spin')} />
-          </button>
+          </Button>
         </div>
       )}
       <ScrollArea className="flex-1 min-h-0">
@@ -159,7 +161,8 @@ function FileTreeItem({
   }
 
   const rowButton = (
-    <button
+    <Button
+                variant="ghost"
       onClick={toggle}
       className={cn(
         'w-full flex h-9 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-[var(--surface-2)]',
@@ -186,7 +189,7 @@ function FileTreeItem({
       >
         {entry.name}
       </span>
-    </button>
+    </Button>
   )
 
   return (

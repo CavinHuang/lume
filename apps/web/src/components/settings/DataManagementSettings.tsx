@@ -14,6 +14,7 @@ import { relaunch } from '@/lib/desktop-runtime/process'
 import { DATA_CATEGORY_META } from '@lume/shared'
 import type { StorageStats } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -162,7 +163,7 @@ export function DataManagementSettings() {
   return (
     <div className="space-y-3">
       {/* ① 存储概览 */}
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <section className="lume-panel-padded">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[16px] font-semibold leading-6 text-[var(--text-1)]">存储概览</h2>
           <Button variant="outline" onClick={() => void refreshStats()} disabled={loadingStats} className="h-8 gap-1.5 rounded-[8px] px-3 text-[12px]">
@@ -195,17 +196,15 @@ export function DataManagementSettings() {
       </section>
 
       {/* ② 清理 */}
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <section className="lume-panel-padded">
         <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">清理</h2>
         <div className="space-y-2">
           {CLEANUP_OPTIONS.map((option) => (
-            <label key={option.key} className="flex items-center gap-3 rounded-[8px] border border-[var(--border)] px-3 py-2">
-              <input
-                type="checkbox"
+            <label key={option.key} className="lume-subpanel flex items-center gap-3 px-3 py-2">
+              <Checkbox
                 checked={selection[option.key]}
-                onChange={(e) => setSelection((cur) => ({ ...cur, [option.key]: e.currentTarget.checked }))}
+                onCheckedChange={(checked) => setSelection((cur) => ({ ...cur, [option.key]: Boolean(checked) }))}
                 disabled={clearing}
-                className="size-4 accent-[var(--brand)]"
               />
               <div className="min-w-0 flex-1">
                 <div className="text-[13px] font-medium text-[var(--text-2)]">{option.label}</div>
@@ -225,20 +224,19 @@ export function DataManagementSettings() {
       </section>
 
       {/* ③ 导出 */}
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <section className="lume-panel-padded">
         <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">导出</h2>
         <p className="mb-3 text-[12px] leading-5 text-[var(--text-3)]">
           将 <code className="rounded bg-[var(--surface-2)] px-1">~/.lume/</code> 打包为 zip。默认对所有配置 JSON 做凭证脱敏。
         </p>
-        <label className="mb-3 flex items-center gap-2 rounded-[8px] border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-          <input
-            type="checkbox"
+        <label className="mb-3 flex items-center gap-2 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-warning)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-warning)_7%,var(--surface-1))] px-3 py-2">
+          <Checkbox
             checked={includeCreds}
-            onChange={(e) => setIncludeCreds(e.currentTarget.checked)}
+            onCheckedChange={(checked) => setIncludeCreds(Boolean(checked))}
             disabled={exporting}
-            className="size-4 accent-amber-600"
+            className="data-checked:border-[var(--lume-warning)] data-checked:bg-[var(--lume-warning)]"
           />
-          <span className="flex items-center gap-1 text-[12px] text-amber-800 dark:text-amber-200">
+          <span className="flex items-center gap-1 text-[12px] text-[var(--lume-warning)]">
             <TriangleAlert size={13} />
             包含凭证（API Key / Token / IM 凭证将以明文导出）
           </span>
@@ -252,7 +250,7 @@ export function DataManagementSettings() {
       </section>
 
       {/* ④ 数据位置 */}
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <section className="lume-panel-padded">
         <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">数据位置</h2>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 text-[13px] text-[var(--text-2)]">
@@ -263,7 +261,7 @@ export function DataManagementSettings() {
               variant="outline"
               disabled={!stats?.configDir}
               onClick={() => stats?.configDir && revealPathInSystem(stats.configDir).catch(() => toast.error('打开目录失败'))}
-              className="h-8 gap-1.5 rounded-[8px] px-3 text-[12px]"
+              className="lume-action-tile h-8 gap-1.5 px-3 text-[12px] shadow-none"
             >
               <FolderOpen size={13} />
               打开目录
@@ -271,7 +269,7 @@ export function DataManagementSettings() {
             <Button
               variant="outline"
               onClick={() => { setMigrateOpen(true); setMigrateResult(null); setMigrateError(null); setMigrateDest(null); setMigrateProgress(null); setMigrating(false) }}
-              className="h-8 gap-1.5 rounded-[8px] px-3 text-[12px]"
+              className="lume-action-tile h-8 gap-1.5 px-3 text-[12px] shadow-none"
             >
               <FolderInput size={13} />
               迁移目录
@@ -284,16 +282,17 @@ export function DataManagementSettings() {
       </section>
 
       {/* 清空回收站（危险，独立折叠） */}
-      <section className="rounded-[10px] border border-[#ff9fa8] bg-[var(--surface-1)] px-5 py-4">
+      <section className="lume-panel border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] px-5 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="flex items-center gap-1.5 text-[15px] font-semibold text-[#ff4d57]">
+            <h2 className="flex items-center gap-1.5 text-[15px] font-semibold text-[var(--lume-danger)]">
               <Trash2 size={15} />
               清空回收站
             </h2>
             <p className="mt-1 text-[11px] text-[var(--text-3)]">永久删除所有已放入回收站的会话，不可恢复。</p>
           </div>
           <Button
+                variant="ghost"
             onClick={() => setConfirmEmptyOpen(true)}
             disabled={emptying}
             className="h-9 gap-1.5 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] px-4 text-[13px] text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_12%,var(--surface-1))]"
@@ -303,11 +302,12 @@ export function DataManagementSettings() {
         </div>
 
         {confirmEmptyOpen && (
-          <div className="mt-3 rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 py-3">
-            <p className="text-[12px] text-[#ff4d57]">确认永久删除回收站中的全部会话？此操作不可撤销。</p>
+          <div className="mt-3 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] px-3 py-3">
+            <p className="text-[12px] text-[var(--lume-danger)]">确认永久删除回收站中的全部会话？此操作不可撤销。</p>
             <div className="mt-2 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmEmptyOpen(false)} disabled={emptying} className="h-8 rounded-[8px] px-3 text-[12px]">取消</Button>
-              <Button onClick={handleEmptyTrash} disabled={emptying} className="h-8 gap-1.5 rounded-[8px] bg-[var(--lume-danger)] px-3 text-[12px] text-[var(--lume-danger-foreground)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_84%,var(--text-1))]">
+              <Button
+                variant="ghost" onClick={handleEmptyTrash} disabled={emptying} className="h-8 gap-1.5 rounded-[8px] bg-[var(--lume-danger)] px-3 text-[12px] text-[var(--lume-danger-foreground)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_84%,var(--text-1))]">
                 {emptying ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                 确认清空
               </Button>
@@ -347,7 +347,7 @@ export function DataManagementSettings() {
                 </div>
               )}
               {migrateError && (
-                <div className="rounded-[8px] border border-[#ff9fa8] bg-[#fff5f6] px-3 py-2 text-[12px] text-[#ff4d57]">
+                <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] px-3 py-2 text-[12px] text-[var(--lume-danger)]">
                   迁移失败：{migrateError}。旧目录未改动，建议重启应用以恢复。
                 </div>
               )}
@@ -372,7 +372,8 @@ export function DataManagementSettings() {
                 迁移完成。选择旧目录的处理方式后将自动重启。
               </DialogDescription>
               <div className="flex justify-end gap-2">
-                <Button onClick={() => void handleApplyMigrate(true)} className="h-8 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] px-3 text-[12px] text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_12%,var(--surface-1))]">
+                <Button
+                variant="ghost" onClick={() => void handleApplyMigrate(true)} className="h-8 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] px-3 text-[12px] text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_12%,var(--surface-1))]">
                   删除旧目录
                 </Button>
                 <Button onClick={() => void handleApplyMigrate(false)} className="h-8 rounded-[8px] px-3 text-[12px]">

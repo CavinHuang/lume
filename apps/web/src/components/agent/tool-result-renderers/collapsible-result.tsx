@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * 可折叠长内容包装器
  *
@@ -45,7 +46,8 @@ export function CollapsibleResult({
       {renderContent(displayContent)}
 
       {needsCollapse && (
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={() => setExpanded(!expanded)}
           className="flex items-center gap-1 mt-1.5 text-[11px] text-muted-foreground/60 hover:text-foreground/80 transition-colors"
@@ -61,7 +63,7 @@ export function CollapsibleResult({
               显示全部 ({content.length.toLocaleString()} 字符, {content.split('\n').length} 行)
             </>
           )}
-        </button>
+        </Button>
       )}
     </div>
   )

@@ -8,6 +8,7 @@ import {
   type ThreadRightPanelWorkspace,
 } from './right-panel-state'
 
+import { Button } from '@/components/ui/button'
 interface RightPanelTabBarProps {
   workspace: ThreadRightPanelWorkspace
   onActivate: (type: RightPanelFunction) => void
@@ -65,13 +66,14 @@ export function RightPanelTabBar({
             <div
               key={type}
               className={cn(
-                'group flex h-8 min-w-0 items-center rounded-[8px] text-[13px] font-medium transition-colors',
+                'group flex h-8 min-w-0 items-center rounded-[8px] border border-transparent text-[13px] font-medium transition-colors',
                 active
-                  ? 'bg-[var(--lume-bg-elevated)] text-[var(--lume-text-primary)]'
-                  : 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-secondary)]',
+                  ? 'border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border))] bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                  : 'text-[var(--lume-text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--lume-text-secondary)]',
               )}
             >
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => onActivate(type)}
                 className="flex h-full min-w-0 items-center gap-2 rounded-l-[8px] pl-2.5 pr-1"
@@ -79,41 +81,44 @@ export function RightPanelTabBar({
               >
                 <Icon size={15} className="shrink-0" />
                 <span className="min-w-0 max-w-[128px] truncate">{label}</span>
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => onClose(type)}
                 className="mr-1 flex size-5 shrink-0 items-center justify-center rounded text-foreground/42 opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground group-hover:opacity-100"
                 title={`关闭${label}`}
               >
                 <X size={12} />
-              </button>
+              </Button>
             </div>
           )
         })}
 
         <div className="relative shrink-0" ref={menuRef}>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             disabled={availableFunctions.length === 0}
             onClick={() => setMenuOpen((open) => !open)}
             className={cn(
-              'flex size-8 items-center justify-center rounded-[8px] text-foreground/55 transition-colors',
+              'flex size-8 items-center justify-center rounded-[8px] border border-transparent text-foreground/55 transition-colors',
               availableFunctions.length === 0
                 ? 'cursor-not-allowed opacity-40'
-                : 'hover:bg-foreground/[0.06] hover:text-foreground',
+                : 'hover:border-[var(--border)] hover:bg-[var(--surface-2)] hover:text-foreground',
             )}
             title={availableFunctions.length === 0 ? '全部功能已打开' : '打开功能'}
           >
             <Plus size={17} />
-          </button>
+          </Button>
 
           {menuOpen && availableFunctions.length > 0 && (
             <div className="absolute left-0 top-10 z-20 min-w-[240px] rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_18px_55px_-32px_hsl(var(--lume-shadow-panel)/0.62)] backdrop-blur">
               {availableFunctions.map((type) => {
                 const { label, Icon, shortcut } = FUNCTION_META[type]
                 return (
-                  <button
+                  <Button
+                variant="ghost"
                     key={type}
                     type="button"
                     onClick={() => openFunction(type)}
@@ -122,7 +127,7 @@ export function RightPanelTabBar({
                     <Icon size={16} className="shrink-0 text-foreground/58" />
                     <span className="min-w-0 flex-1 truncate">{label}</span>
                     {shortcut && <span className="text-[12px] text-foreground/42">{shortcut}</span>}
-                  </button>
+                  </Button>
                 )
               })}
             </div>

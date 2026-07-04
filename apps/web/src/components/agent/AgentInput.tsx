@@ -77,6 +77,7 @@ import {
 } from './agent-input-role-recommendations'
 import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
 
+import { Button } from '@/components/ui/button'
 type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
 
 function normalizeListPluginsResult(result: unknown): InstalledPluginSummary[] {
@@ -963,42 +964,46 @@ export function AgentInput({
             leadingTools={
               <>
                 <div className="relative">
-                  <button
+                  <Button
+                variant="ghost"
                     onClick={() => setAttachMenuOpen((v) => !v)}
                     className="inline-flex size-8 items-center justify-center rounded-lg border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_72%,transparent)] text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
                     title="添加"
                     type="button"
                   >
                     <Plus size={13} />
-                  </button>
+                  </Button>
                   {attachMenuOpen && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
                       <div className="absolute bottom-full left-0 z-50 mb-2 w-[140px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)]">
-                        <button
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={() => { setAttachMenuOpen(false); handleAttach() }}
                           className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
                         >
                           <FileText size={15} className="text-[var(--text-3)]" />
                           文件
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={() => { setAttachMenuOpen(false); handleAttach() }}
                           className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
                         >
                           <Image size={15} className="text-[var(--text-3)]" />
                           图片
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={handleOpenPlugins}
                           className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
                         >
                           <Puzzle size={15} className="text-[var(--text-3)]" />
                           插件
-                        </button>
+                        </Button>
                       </div>
                     </>
                   )}
@@ -1046,7 +1051,8 @@ export function AgentInput({
             trailingTools={<ContextWindowIndicator progress={contextWindowProgress} />}
             actionSlot={
               submitState.action === 'stop' ? (
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   onClick={handleStop}
                   className="inline-flex h-8 items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--lume-danger)_28%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-danger)_10%,var(--lume-bg-elevated))] px-3 text-[11.5px] font-medium text-[var(--lume-text-primary)] transition-colors hover:border-[color:color-mix(in_oklab,var(--lume-danger)_40%,var(--lume-border-strong))]"
@@ -1054,9 +1060,9 @@ export function AgentInput({
                 >
                   <Square size={12} />
                   停止
-                </button>
+                </Button>
               ) : (
-                <button
+                <Button
                   type="button"
                   onClick={debouncedSend}
                   disabled={!submitState.canSubmit}
@@ -1068,7 +1074,7 @@ export function AgentInput({
                 >
                   {submitState.label}
                   <Send size={12} />
-                </button>
+                </Button>
               )
             }
           />
@@ -1101,7 +1107,8 @@ function AgentRoleRecommendationChips({
         推荐角色
       </span>
       {recommendations.map((recommendation) => (
-        <button
+        <Button
+                variant="ghost"
           key={recommendation.role.id}
           type="button"
           onClick={() => onSelect(recommendation)}
@@ -1110,7 +1117,7 @@ function AgentRoleRecommendationChips({
         >
           <span className="truncate font-medium">{recommendation.label}</span>
           <span className="shrink-0 text-[var(--text-3)]">命中 {recommendation.score}</span>
-        </button>
+        </Button>
       ))}
     </div>
   )

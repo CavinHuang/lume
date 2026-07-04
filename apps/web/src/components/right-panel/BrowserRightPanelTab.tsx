@@ -16,6 +16,8 @@ import { cn } from '@/lib/utils'
 import type { BrowserTabState } from './right-panel-state'
 import { getDefaultLocalBrowserServices, normalizeRightPanelBrowserUrl } from './right-panel-browser-utils'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface BrowserRightPanelTabProps {
   state: BrowserTabState
   onChange: (next: BrowserTabState) => void
@@ -90,7 +92,7 @@ export function BrowserRightPanelTab({ state, onChange }: BrowserRightPanelTabPr
             navigate(state.addressInput)
           }}
         >
-          <input
+          <Input
             value={state.addressInput}
             onChange={(event) => update({ addressInput: event.target.value })}
             placeholder="输入 URL"
@@ -116,23 +118,25 @@ export function BrowserRightPanelTab({ state, onChange }: BrowserRightPanelTabPr
               <div className="flex h-9 items-center justify-between gap-2 px-2.5 text-[13px] font-medium text-foreground">
                 <span>缩放</span>
                 <div className="flex items-center overflow-hidden rounded-[8px] border border-border/70">
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => setZoom(state.zoom - 0.1)}
                     className="flex size-7 items-center justify-center text-foreground/58 hover:bg-foreground/[0.06] hover:text-foreground"
                     title="缩小"
                   >
                     <Minus size={13} />
-                  </button>
+                  </Button>
                   <span className="w-14 text-center text-[13px]">{Math.round(state.zoom * 100)}%</span>
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => setZoom(state.zoom + 0.1)}
                     className="flex size-7 items-center justify-center text-foreground/58 hover:bg-foreground/[0.06] hover:text-foreground"
                     title="放大"
                   >
                     <Plus size={13} />
-                  </button>
+                  </Button>
                 </div>
               </div>
               <div className="my-1 border-t border-border/70" />
@@ -171,7 +175,8 @@ export function BrowserRightPanelTab({ state, onChange }: BrowserRightPanelTabPr
             <div className="mb-3 text-[13px] font-medium text-foreground/45">本地</div>
             <div className="flex flex-col gap-2">
               {getDefaultLocalBrowserServices().map((service) => (
-                <button
+                <Button
+                variant="ghost"
                   key={service.url}
                   type="button"
                   onClick={() => navigate(service.url)}
@@ -185,7 +190,7 @@ export function BrowserRightPanelTab({ state, onChange }: BrowserRightPanelTabPr
                     <div className="truncate text-[13px] text-foreground/50">{service.url.replace(/^https?:\/\//, '')}</div>
                   </div>
                   <span className="size-2.5 shrink-0 rounded-full bg-[var(--lume-success)]" />
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -207,7 +212,8 @@ function IconButton({
   title: string
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       disabled={disabled}
       onClick={onClick}
@@ -218,7 +224,7 @@ function IconButton({
       title={title}
     >
       {children}
-    </button>
+    </Button>
   )
 }
 
@@ -234,7 +240,8 @@ function MenuButton({
   title?: string
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       disabled={disabled}
       onClick={onClick}
@@ -242,6 +249,6 @@ function MenuButton({
       className="flex h-9 w-full items-center rounded-[7px] px-2.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
     >
       {children}
-    </button>
+    </Button>
   )
 }

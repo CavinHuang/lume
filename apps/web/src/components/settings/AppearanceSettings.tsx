@@ -7,6 +7,7 @@ import { generalSettingsAtom } from '@/atoms'
 import { cn } from '@/lib/utils'
 import { mergeGeneralSettings } from './general-settings-state'
 
+import { Button } from '@/components/ui/button'
 const DISPLAY_MODE_OPTIONS: Array<{ value: AgentMessageDisplayMode; label: string; desc: string }> = [
   { value: 'minimal', label: '极简', desc: '只显示文字结论，过程收进可展开的一行' },
   { value: 'verbose', label: '明细', desc: '每个工具/思考/子代理独立折叠展示' },
@@ -35,7 +36,7 @@ export function AppearanceSettings() {
   }
 
   return (
-    <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel-padded">
       <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">Agent 消息显示</h2>
       <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
         <div className="min-w-0">
@@ -44,23 +45,24 @@ export function AppearanceSettings() {
             控制 agent 回合中工具调用 / 思考 / 子代理的展示密度
           </div>
         </div>
-        <div className="grid h-9 w-[220px] grid-cols-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
+        <div className="lume-segmented grid w-[220px] grid-cols-2">
           {DISPLAY_MODE_OPTIONS.map((option) => (
-            <button
+            <Button
+                variant="ghost"
               key={option.value}
               type="button"
               onClick={() => void handleChange(option.value)}
               disabled={saving}
               title={option.desc}
               className={cn(
-                'inline-flex items-center justify-center rounded-[6px] text-[13px] font-medium transition-colors disabled:opacity-60',
+                'lume-segmented-item disabled:opacity-60',
                 settings.agentMessageDisplayMode === option.value
-                  ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                  : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]',
+                  ? 'lume-segmented-item-active'
+                  : '',
               )}
             >
               {option.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>

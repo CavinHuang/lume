@@ -14,6 +14,8 @@ import {
   composerControlTriggerClassName,
 } from '@/components/agent/composer-control-styles'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface WelcomeModelPickerProps {
   onModelChange: (modelRef?: string, channelId?: string, modelId?: string) => void
   selectedChannelId?: string
@@ -196,7 +198,8 @@ export function WelcomeModelPicker({
 
   return (
     <div className="relative flex items-center gap-1.5" ref={menuRef}>
-      <button
+      <Button
+        variant="ghost"
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
@@ -220,20 +223,20 @@ export function WelcomeModelPicker({
           size={variant === 'hero' ? 13 : 12}
           className={cn('shrink-0', variant === 'hero' ? 'text-[var(--text-3)]' : composerControlChevronClassName)}
         />
-      </button>
+      </Button>
 
       {open && (
         <div className={menuClassName}>
           <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] p-3">
             <div className="flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-2">
               <Search size={13} className="shrink-0 text-[var(--text-3)]" />
-              <input
+              <Input
                 ref={searchInputRef}
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索模型..."
-                className="flex-1 bg-transparent text-[12px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+                className="flex-1 border-0 bg-transparent px-0 text-[12px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
               />
             </div>
           </div>

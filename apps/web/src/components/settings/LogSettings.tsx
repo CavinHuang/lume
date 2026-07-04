@@ -16,9 +16,11 @@ import type {
   ReadLogFileResult,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { exportLogs, listLogFiles, openLogsDir, readLogFile } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 
+import { Input } from '@/components/ui/input'
 const LEVEL_OPTIONS: Array<{ value: 'all' | LogViewerLevel; label: string }> = [
   { value: 'all', label: '全部级别' },
   { value: 'trace', label: 'Trace' },
@@ -170,8 +172,7 @@ export function LogSettings() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-[20px] font-semibold leading-7 text-[var(--text-1)]">应用日志</h3>
-          <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">
+          <p className="text-[13px] leading-5 text-[var(--text-2)]">
             所有运行日志按日期存储在本地文件，共 {snapshot?.totalFiles ?? 0} 个文件，{formatBytes(snapshot?.totalBytes ?? 0)}
           </p>
         </div>
@@ -192,54 +193,54 @@ export function LogSettings() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <SelectShell className="w-[304px]">
-          <select
-            value={selectedFileName}
-            onChange={(event) => setSelectedFileName(event.target.value)}
-            className="h-full w-full appearance-none bg-transparent px-4 pr-9 text-[14px] font-medium text-[var(--text-1)] outline-none"
-            disabled={loadingFiles || !snapshot?.files.length}
-          >
+        <Select
+          value={selectedFileName || '__none__'}
+          onValueChange={(value) => setSelectedFileName(value && value !== '__none__' ? value : '')}
+          disabled={loadingFiles || !snapshot?.files.length}
+        >
+          <SelectTrigger className="h-[46px] w-[304px] border-[color:color-mix(in_oklab,var(--border)_78%,transparent)] bg-[var(--surface-1)] px-4 text-[14px] font-medium text-[var(--text-1)] shadow-none focus-visible:ring-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
             {snapshot?.files.length ? snapshot.files.map((file) => (
-              <option key={file.name} value={file.name}>
+              <SelectItem key={file.name} value={file.name}>
                 {file.name} ({formatBytes(file.sizeBytes)})
-              </option>
+              </SelectItem>
             )) : (
-              <option value="">暂无日志文件</option>
+              <SelectItem value="__none__">暂无日志文件</SelectItem>
             )}
-          </select>
-        </SelectShell>
+          </SelectContent>
+        </Select>
 
-        <SelectShell className="w-[140px]">
-          <select
-            value={level}
-            onChange={(event) => setLevel(event.target.value as 'all' | LogViewerLevel)}
-            className="h-full w-full appearance-none bg-transparent px-4 pr-9 text-[14px] font-medium text-[var(--text-1)] outline-none"
-          >
+        <Select value={level} onValueChange={(value) => { if (value) setLevel(value as 'all' | LogViewerLevel) }}>
+          <SelectTrigger className="h-[46px] w-[140px] border-[color:color-mix(in_oklab,var(--border)_78%,transparent)] bg-[var(--surface-1)] px-4 text-[14px] font-medium text-[var(--text-1)] shadow-none focus-visible:ring-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
             {LEVEL_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
             ))}
-          </select>
-        </SelectShell>
+          </SelectContent>
+        </Select>
 
-        <SelectShell className="w-[140px]">
-          <select
-            value={source}
-            onChange={(event) => setSource(event.target.value)}
-            className="h-full w-full appearance-none bg-transparent px-4 pr-9 text-[14px] font-medium text-[var(--text-1)] outline-none"
-          >
+        <Select value={source} onValueChange={(value) => { if (value) setSource(value) }}>
+          <SelectTrigger className="h-[46px] w-[140px] border-[color:color-mix(in_oklab,var(--border)_78%,transparent)] bg-[var(--surface-1)] px-4 text-[14px] font-medium text-[var(--text-1)] shadow-none focus-visible:ring-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
             {SOURCE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
             ))}
-          </select>
-        </SelectShell>
+          </SelectContent>
+        </Select>
 
-        <div className="flex h-[46px] min-w-[260px] flex-1 items-center gap-2 rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-4">
+        <div className="lume-panel flex h-[46px] min-w-[260px] flex-1 items-center gap-2 px-4">
           <Search size={16} className="shrink-0 text-[var(--text-3)]" />
-          <input
+          <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索日志内容..."
-            className="min-w-0 flex-1 bg-transparent text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[14px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
           />
         </div>
 
@@ -326,23 +327,15 @@ function LogLine({ line, showRawJson }: { line: LogLineEntryExt; showRawJson: bo
       >
         {displayText}
       </div>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={handleCopy}
         className="absolute right-0 top-0 hidden p-1 text-[var(--text-3)] opacity-0 transition-opacity hover:text-[var(--text-1)] group-hover:block group-hover:opacity-100"
         title="复制此行"
       >
         {copied ? <span className="text-[11px] text-green-600">✓</span> : <Copy size={13} />}
-      </button>
-    </div>
-  )
-}
-
-function SelectShell({ className, children }: { className?: string; children: React.ReactNode }) {
-  return (
-    <div className={cn('relative h-[46px] rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)]', className)}>
-      {children}
-      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]">⌄</span>
+      </Button>
     </div>
   )
 }

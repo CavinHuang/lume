@@ -17,6 +17,7 @@ import { sidecarCall } from '@/lib/desktop-api'
 import { removeDraft, removeHistory } from '@/lib/agent-input-draft-state'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
+import { Button } from '@/components/ui/button'
 type View = 'archive' | 'trash'
 
 const TRASH_RETENTION_DAYS = 30
@@ -245,14 +246,15 @@ function ArchiveView({
       <Section
         title="归档会话"
         extra={
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={onOpenTrash}
             className="flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <Trash size={13} />
             回收站{trashedCount > 0 ? ` (${trashedCount})` : ''}
-          </button>
+          </Button>
         }
       >
         {totalArchived === 0 ? (
@@ -263,7 +265,7 @@ function ArchiveView({
               <div className="mb-1.5 px-1 text-[12px] font-medium uppercase tracking-wide text-[var(--text-3)]">
                 {getWorkspaceName(workspaceKey === '__unassigned__' ? undefined : workspaceKey)}
               </div>
-              <div className="overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)]">
+              <div className="lume-panel overflow-hidden">
                 {threads.map((thread, i) => (
                   <ThreadRow
                     key={thread.id}
@@ -303,30 +305,32 @@ function TrashView({
     <>
       {/* Back button + header */}
       <div className="flex items-center justify-between">
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={onBack}
           className="flex items-center gap-1.5 text-[13px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]"
         >
           <ChevronRight size={14} className="rotate-180" />
           返回归档
-        </button>
+        </Button>
         {trashedThreads.length > 0 && (
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={onEmptyTrash}
-            className="flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[12px] font-medium text-[var(--danger)] hover:bg-[var(--surface-2)]"
+            className="flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[12px] font-medium text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))]"
           >
             <Trash2 size={13} />
             清空回收站
-          </button>
+          </Button>
         )}
       </div>
 
       {trashedThreads.length === 0 ? (
         <EmptyState text="回收站为空" />
       ) : (
-        <div className="overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)]">
+        <div className="lume-panel overflow-hidden">
           {trashedThreads.map((thread, i) => {
             const days = thread.trashedAt ? getDaysRemaining(thread.trashedAt) : TRASH_RETENTION_DAYS
             return (
@@ -364,7 +368,7 @@ function Section({ title, extra, children }: { title: string; extra?: React.Reac
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="flex items-center justify-center rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] py-10 text-[13px] text-[var(--text-3)]">
+    <div className="lume-panel flex items-center justify-center py-10 text-[13px] text-[var(--text-3)]">
       {text}
     </div>
   )
@@ -425,7 +429,7 @@ function ActionButton({
   variant?: 'default' | 'danger'
 }) {
   return (
-    <button
+    <Button
       type="button"
       onClick={onClick}
       className={cn(
@@ -437,6 +441,6 @@ function ActionButton({
     >
       <Icon size={13} />
       {label}
-    </button>
+    </Button>
   )
 }

@@ -9,6 +9,7 @@ import { removePendingToolPermissionEverywhere } from '@/hooks/pending-interacti
 import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
 
+import { Button } from '@/components/ui/button'
 interface PermissionBannerProps {
   threadId: string
   request: AgentToolPermissionRequest
@@ -163,7 +164,8 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
           danger
         />
         {canAllowAlways && (
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => {
               const next = !allowAllInThread
@@ -182,7 +184,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
             </span>
             <span className="min-w-0 flex-1 font-semibold">本线程全部允许</span>
             {allowAllInThread && <Check size={15} className="text-[#5f9cff]" />}
-          </button>
+          </Button>
         )}
         {error && (
           <p className="px-1 pt-1 text-[12px] leading-5 text-red-600">{error}</p>
@@ -206,7 +208,8 @@ function PermissionChoice({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       data-enter-submits
       onClick={onClick}
@@ -220,6 +223,6 @@ function PermissionChoice({
         {label}
         {selected && <Check size={15} className={danger ? 'text-destructive' : 'text-[#5f9cff]'} />}
       </span>
-    </button>
+    </Button>
   )
 }

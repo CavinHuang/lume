@@ -20,6 +20,8 @@ import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
 import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
 
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
@@ -274,13 +276,14 @@ function ContextCompactionDivider({
             : <History size={17} className="text-[var(--lume-text-muted)]" strokeWidth={2} />}
           {message.text}
           {hasSummary && (
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => setExpanded((v) => !v)}
               className="ml-1 text-[12px] font-medium text-[var(--lume-text-muted)] underline-offset-2 hover:text-[var(--lume-accent)] hover:underline"
             >
               {expanded ? '收起总结' : '查看总结'}
-            </button>
+            </Button>
           )}
         </span>
         <span className="h-px min-w-8 flex-1 bg-[var(--lume-border-subtle)]" />
@@ -370,7 +373,7 @@ function UserMessageBlock({
         )}
         <div className="rounded-[12px] rounded-tr-[10px] bg-[var(--lume-accent-soft)] px-3 py-2 text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)] shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]">
           {editing ? (
-            <textarea
+            <Textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               className="min-h-20 w-[min(520px,70vw)] resize-y rounded-lg border border-[var(--lume-border-strong)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_82%,transparent)] px-2 py-1.5 text-[14px] leading-6 text-[var(--lume-text-primary)] outline-none focus:border-[var(--lume-accent)]"
@@ -382,7 +385,8 @@ function UserMessageBlock({
         </div>
         <div className="pointer-events-none flex -translate-y-1 items-center gap-1 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:translate-y-0 group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:translate-y-0 group-focus-within/user-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
           {canShowVersions && (
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => void loadVersions()}
               className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
@@ -390,7 +394,7 @@ function UserMessageBlock({
             >
               <History size={13} />
               v{message.versionIndex}/{message.versionCount}
-            </button>
+            </Button>
           )}
           <CopyMessageButton
             text={visibleMessageText}
@@ -399,7 +403,8 @@ function UserMessageBlock({
           />
           {editing ? (
             <>
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 disabled={submitting}
                 onClick={() => void submitEdit()}
@@ -407,8 +412,9 @@ function UserMessageBlock({
                 title="保存并重新发送"
               >
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
                 disabled={submitting}
                 onClick={() => {
@@ -419,10 +425,11 @@ function UserMessageBlock({
                 title="取消"
               >
                 <X size={14} />
-              </button>
+              </Button>
             </>
           ) : (
-            <button
+            <Button
+                variant="ghost"
               type="button"
               disabled={!canEdit}
               onClick={() => {
@@ -433,7 +440,7 @@ function UserMessageBlock({
               title={canEdit ? '编辑并重新发送' : '旧消息暂不支持编辑'}
             >
               <Edit3 size={14} />
-            </button>
+            </Button>
           )}
         </div>
         {versionsOpen && (
@@ -783,7 +790,8 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
 
   return (
     <div>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
@@ -791,7 +799,7 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
       >
         {summaryNodes}
         <ChevronRight size={12} className={cn('shrink-0 transition-transform', expanded && 'rotate-90')} />
-      </button>
+      </Button>
       {expanded && (
         <div className="mt-1.5 space-y-0.5 pl-1">
           {blocks.map((block) => {
@@ -839,7 +847,8 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { tool
 
   return (
     <div>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         disabled={isRunning}
         onClick={() => setOpen((value) => !value)}
@@ -857,7 +866,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { tool
         ) : (
           <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
         )}
-      </button>
+      </Button>
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
@@ -873,7 +882,8 @@ const MinimalThinkingRow = memo(function MinimalThinkingRow({ text }: { text: st
   const [open, setOpen] = useState(false)
   return (
     <div>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => setOpen((value) => !value)}
         className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
@@ -881,7 +891,7 @@ const MinimalThinkingRow = memo(function MinimalThinkingRow({ text }: { text: st
         <Brain size={12} className="shrink-0" />
         <span className="flex-1">思考过程</span>
         <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
-      </button>
+      </Button>
       <AnimatedCollapsiblePanel open={open}>
         <p className="mb-1 mt-1 whitespace-pre-wrap rounded-md bg-foreground/[0.03] p-2 text-[11.5px] leading-relaxed text-foreground/50">
           {text}
@@ -905,7 +915,8 @@ const MinimalSubagentRow = memo(function MinimalSubagentRow({
   const label = asString(input.description ?? input.prompt) ?? '子代理'
   return (
     <div>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => setOpen((value) => !value)}
         className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
@@ -916,7 +927,7 @@ const MinimalSubagentRow = memo(function MinimalSubagentRow({
           <span className="shrink-0 tabular-nums">{formatDurationLabel(toolCall.durationMs)}</span>
         )}
         <ChevronRight size={12} className={cn('shrink-0 transition-transform', open && 'rotate-90')} />
-      </button>
+      </Button>
       <AnimatedCollapsiblePanel open={open}>
         <div className="mb-1 mt-1">
           <SubagentInlinePanel
@@ -1113,14 +1124,15 @@ const RuntimeEventThinkingBlock = memo(function RuntimeEventThinkingBlock({ text
 
   return (
     <div className="border-l-2 border-dashed border-foreground/20 pl-3">
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => setCollapsed((value) => !value)}
         className="flex items-center gap-1 text-[12px] text-foreground/40 transition-colors hover:text-foreground/60"
       >
         <ChevronRight size={12} className={cn('transition-transform', !collapsed && 'rotate-90')} />
         思考过程
-      </button>
+      </Button>
       <div
         className={cn(
           'grid transition-[grid-template-rows,opacity] duration-200 ease-out',
@@ -1306,7 +1318,8 @@ export function PlanPreviewCard({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1 text-[var(--lume-text-muted)]">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => void handleCopy()}
             className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-text-primary)]"
@@ -1315,9 +1328,10 @@ export function PlanPreviewCard({
           >
             {copied ? <Check size={15} /> : <Copy size={15} />}
             <span>复制计划</span>
-          </button>
+          </Button>
           {preview.planFilePath && (
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => {
                 if (preview.planFilePath) onOpenThreadFile?.(preview.planFilePath)
@@ -1328,9 +1342,10 @@ export function PlanPreviewCard({
             >
               <FileText size={15} />
               <span>打开计划文件</span>
-            </button>
+            </Button>
           )}
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setExpanded((value) => !value)}
             className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-[12px] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-text-primary)]"
@@ -1338,7 +1353,7 @@ export function PlanPreviewCard({
           >
             <ChevronDown size={16} className={cn('transition-transform', expanded && 'rotate-180')} />
             <span>{expanded ? '收起计划' : '展开计划'}</span>
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1403,7 +1418,8 @@ export function MarkdownCode({
 
   if (filePath && onOpenThreadFile) {
     const button = (
-      <button
+      <Button
+                variant="ghost"
         type="button"
         data-thread-file-link="true"
         data-file-link-highlight="true"
@@ -1424,7 +1440,7 @@ export function MarkdownCode({
           <FileTypeIcon filename={filePath} size={13} />
         </span>
         <span className="truncate">{children}</span>
-      </button>
+      </Button>
     )
     return (
       <FileLinkContextMenu
@@ -1543,7 +1559,8 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
 
   return (
     <div className="w-full max-w-[460px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_1px_2px_hsl(var(--lume-shadow-panel)/0.08)]">
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => {
           if (!isRunning) {
@@ -1581,7 +1598,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
             className={cn('shrink-0 text-[var(--lume-text-muted)] transition-transform', !collapsed && 'rotate-180')}
           />
         )}
-      </button>
+      </Button>
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">
@@ -1609,7 +1626,8 @@ function FooterMemoryNotice({
   const groups = groupMemoryCitationItems(events.flatMap(e => e.items))
   return (
     <div className="relative">
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => setExpanded(v => !v)}
         aria-expanded={expanded}
@@ -1618,7 +1636,7 @@ function FooterMemoryNotice({
         <Database size={13} strokeWidth={1.8} />
         <span>引用了 {totalCount} 条记忆</span>
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-      </button>
+      </Button>
       {expanded && (
         <div className="absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[220px] max-w-[360px] overflow-y-auto rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)]">
           <div className="space-y-2 text-[11px] leading-5 text-[var(--lume-text-muted)]">
@@ -1644,14 +1662,15 @@ function FooterMemoryNotice({
                     }
                     return (
                       <li key={item.id}>
-                        <button
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={() => onOpenMemorySource(sourcePath)}
                           className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
                           title={item.citation}
                         >
                           {content}
-                        </button>
+                        </Button>
                       </li>
                     )
                   })}
@@ -1791,7 +1810,8 @@ function AssistantMessageFooter({
           />
         )}
         {canFork && (
-          <button
+          <Button
+                variant="ghost"
             type="button"
             disabled={forking}
             onClick={() => void handleFork()}
@@ -1803,11 +1823,12 @@ function AssistantMessageFooter({
               ? <Loader2 size={15} className="animate-spin" strokeWidth={1.8} />
               : <GitFork size={15} strokeWidth={1.8} />}
             <span>创建分支</span>
-          </button>
+          </Button>
         )}
         {canDownload && (
           <div className="relative shrink-0" ref={downloadMenuRef}>
-            <button
+            <Button
+                variant="ghost"
               ref={downloadTriggerRef}
               type="button"
               onClick={() => setDownloadMenuOpen((current) => !current)}
@@ -1819,7 +1840,7 @@ function AssistantMessageFooter({
             >
               <Download size={15} strokeWidth={1.8} />
               <span>下载</span>
-            </button>
+            </Button>
             <div
               role="menu"
               aria-label="选择下载格式"
@@ -1858,14 +1879,15 @@ function DownloadFormatMenuItem({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       role="menuitem"
       onClick={onClick}
       className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12px] font-medium leading-5 text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
     >
       {children}
-    </button>
+    </Button>
   )
 }
 
@@ -2050,19 +2072,20 @@ function CopyMessageButton({
   }
 
   return (
-    <button
+    <Button
+      variant="ghost"
       type="button"
       aria-label={copied ? '复制成功' : '复制消息'}
       data-state={copied ? 'copied' : 'idle'}
       onClick={() => void handleCopy()}
-      className={className}
+      className={cn('h-auto justify-start', className)}
       title={copied ? '已复制' : '复制'}
     >
       {copied
         ? <Check size={iconSize} strokeWidth={strokeWidth} />
         : <Copy size={iconSize} strokeWidth={strokeWidth} />}
       {displayLabel && <span>{displayLabel}</span>}
-    </button>
+    </Button>
   )
 }
 

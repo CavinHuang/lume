@@ -21,6 +21,8 @@ import {
 } from '@/components/skills/system-tools-state'
 import { TOOL_METADATA, RISK_LEVEL_CONFIG, CATEGORY_CONFIG } from './tool-metadata'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface ToolRow {
   name: string
   label: string
@@ -209,31 +211,31 @@ export function ToolsSettings() {
       </div>
 
       {/* Search */}
-      <label className="mb-4 flex h-10 items-center gap-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[var(--text-2)]">
+      <label className="lume-panel mb-4 flex h-10 items-center gap-3 px-4 text-[var(--text-2)]">
         <Search size={18} />
-        <input
+        <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索工具名称、描述或类别..."
-          className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+          className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
         />
       </label>
 
       {/* Error */}
       {error && (
-        <div className="mb-4 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
+        <div className="mb-4 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-4 text-[13px] text-[var(--lume-danger)]">
           {error}
         </div>
       )}
 
       {/* Tool Groups */}
       {loading ? (
-        <div className="flex h-[200px] items-center justify-center gap-2 rounded-[8px] border border-[var(--border)] text-[13px] text-[var(--text-2)]">
+        <div className="lume-panel flex h-[200px] items-center justify-center gap-2 text-[13px] text-[var(--text-2)]">
           <Loader2 size={16} className="animate-spin" />
           正在读取工具...
         </div>
       ) : groupedTools.length === 0 ? (
-        <div className="rounded-[8px] border border-dashed border-[var(--border)] p-8 text-center text-[13px] text-[var(--text-2)]">
+        <div className="lume-subpanel border-dashed p-8 text-center text-[13px] text-[var(--text-2)]">
           没有匹配的工具。
         </div>
       ) : (
@@ -256,13 +258,14 @@ export function ToolsSettings() {
               >
                 {/* Group Header */}
                 <div className="flex items-center gap-3 px-4 py-3">
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => toggleGroupExpanded(group.id)}
                     className="flex size-6 items-center justify-center rounded-[4px] text-[var(--text-2)] hover:bg-[var(--surface-2)]"
                   >
                     {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                  </button>
+                  </Button>
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
@@ -281,7 +284,8 @@ export function ToolsSettings() {
                   </div>
 
                   {!group.locked && (
-                    <button
+                    <Button
+                variant="ghost"
                       type="button"
                       aria-label={`${groupEnabled ? '禁用' : '启用'}${group.label}`}
                       aria-pressed={groupEnabled}
@@ -302,7 +306,7 @@ export function ToolsSettings() {
                           )}
                         />
                       )}
-                    </button>
+                    </Button>
                   )}
                 </div>
 
@@ -379,7 +383,8 @@ function ToolRowItem({
             锁定
           </span>
         ) : (
-          <button
+          <Button
+                variant="ghost"
             type="button"
             aria-label={`${tool.enabled ? '禁用' : '启用'}${tool.label}`}
             aria-pressed={tool.enabled}
@@ -400,7 +405,7 @@ function ToolRowItem({
                 )}
               />
             )}
-          </button>
+          </Button>
         )}
       </div>
     </div>

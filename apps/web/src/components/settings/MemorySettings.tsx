@@ -35,6 +35,7 @@ import type {
   MemorySettingsSnapshot,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
@@ -93,6 +94,8 @@ import {
   type MemoryIngestTargetScopeMode,
 } from './memory-settings-state'
 
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 function pollOrganizeJob(input: {
   jobId: string
   setJob: React.Dispatch<React.SetStateAction<MemoryOrganizeJob | null>>
@@ -523,7 +526,7 @@ export function MemorySettings() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <section className="lume-panel p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-[12px] font-medium text-[var(--text-3)]">
@@ -537,14 +540,15 @@ export function MemorySettings() {
           </div>
           <div className="flex items-center gap-2">
             {snapshot?.counts.pending.total ? (
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => setView('pending')}
-                className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-amber-200 bg-amber-50 px-2 text-[12px] font-medium text-amber-700 transition-colors hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
+                className="inline-flex h-8 items-center gap-1.5 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-warning)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-warning)_8%,var(--surface-1))] px-2 text-[12px] font-medium text-[var(--lume-warning)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))]"
               >
                 <AlertTriangle size={14} />
                 {pendingNotice(snapshot.counts.pending)}
-              </button>
+              </Button>
             ) : null}
             <Button variant="outline" size="sm" onClick={() => void refresh()} disabled={busyAction !== null}>
               <RefreshCw size={14} />
@@ -554,21 +558,22 @@ export function MemorySettings() {
         </div>
       </section>
 
-      <div className="grid overflow-hidden rounded-[10px] border border-border bg-[var(--surface-2)] p-1 sm:grid-cols-4">
+      <div className="lume-segmented grid overflow-hidden sm:grid-cols-4">
         {MEMORY_SETTINGS_VIEWS.map((item) => (
-          <button
+          <Button
+                variant="ghost"
             key={item.id}
             type="button"
             onClick={() => setView(item.id)}
             className={cn(
-              'min-h-10 rounded-[8px] px-3 text-center text-[13px] font-semibold transition-colors',
+              'lume-segmented-item min-h-10 text-center font-semibold',
               view === item.id
-                ? 'bg-[var(--surface-1)] text-[var(--text-1)] shadow-sm'
-                : 'text-[var(--text-3)] hover:bg-[var(--surface-1)] hover:text-[var(--text-1)]',
+                ? 'lume-segmented-item-active'
+                : '',
             )}
           >
             {item.label}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -691,7 +696,7 @@ function OverviewPanel({
   const entryOrganizeRunning = entryOrganizeJob?.status === 'running'
   const historyOrganizeRunning = historyOrganizeJob?.status === 'running'
   return (
-    <details className="group rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <details className="lume-panel group p-4">
       <summary className="cursor-pointer list-none">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -700,7 +705,7 @@ function OverviewPanel({
               模型、语义召回、整理记忆和外部资料导入。默认配置已经可用，通常不需要调整。
             </p>
           </div>
-          <span className="rounded-[8px] border border-border bg-[var(--surface-2)] px-2 py-1 text-[12px] font-medium text-[var(--text-3)]">
+          <span className="lume-subpanel px-2 py-1 text-[12px] font-medium text-[var(--text-3)]">
             <span className="group-open:hidden">展开</span>
             <span className="hidden group-open:inline">收起</span>
           </span>
@@ -708,7 +713,7 @@ function OverviewPanel({
       </summary>
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-5">
         {metrics.map((metric) => (
-          <div key={metric.label} className="rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+          <div key={metric.label} className="lume-subpanel p-3">
             <div className="text-[12px] text-[var(--text-3)]">{metric.label}</div>
             <div className={cn(
               'mt-1 text-[18px] font-semibold',
@@ -724,7 +729,7 @@ function OverviewPanel({
 
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         {layerMetrics.map((metric) => (
-          <div key={metric.label} className="rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+          <div key={metric.label} className="lume-subpanel p-3">
             <div className="text-[12px] font-medium text-[var(--text-3)]">{metric.label}</div>
             <div className="mt-1 text-[17px] font-semibold text-[var(--text-1)]">{metric.value}</div>
             <div className="mt-1 text-[11px] leading-4 text-[var(--text-3)]">{metric.desc}</div>
@@ -742,7 +747,7 @@ function OverviewPanel({
                 'flex min-h-[76px] items-center justify-between gap-3 rounded-[8px] border p-3',
                 checked
                   ? 'border-[color-mix(in_oklab,var(--brand)_35%,var(--border))] bg-[color-mix(in_oklab,var(--brand)_8%,var(--surface-1))]'
-                  : 'border-border bg-[var(--surface-2)]',
+                  : 'lume-subpanel',
               )}
             >
               <span className="min-w-0">
@@ -759,32 +764,33 @@ function OverviewPanel({
         })}
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+      <div className="lume-subpanel mt-4 flex flex-wrap items-center justify-between gap-3 p-3">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
           <ShieldCheck size={15} />
           回复下方引用
         </div>
-        <div className="flex rounded-[8px] border border-border bg-[var(--surface-1)] p-0.5">
+        <div className="lume-segmented flex">
           {(['auto', 'on', 'off'] as const).map((mode) => (
-            <button
+            <Button
+                variant="ghost"
               key={mode}
               type="button"
               disabled={!runtimeConfig || busyAction !== null}
               onClick={() => onCitationsMode(mode)}
               className={cn(
-                'h-7 rounded-[6px] px-2 text-[12px] font-medium',
+                'lume-segmented-item px-2 text-[12px]',
                 runtimeConfig?.citations === mode
-                  ? 'bg-[var(--surface-2)] text-[var(--text-1)] shadow-sm'
-                  : 'text-[var(--text-3)]',
+                  ? 'lume-segmented-item-active'
+                  : '',
               )}
             >
               {MEMORY_CITATION_MODE_LABELS[mode]}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
 
-      <div className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+      <div className="lume-subpanel mt-4 p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
@@ -795,22 +801,23 @@ function OverviewPanel({
               {snapshot?.retrieval.semantic.message ?? '基础召回可用'}
             </p>
           </div>
-          <div className="flex rounded-[8px] border border-border bg-[var(--surface-1)] p-0.5">
+          <div className="lume-segmented flex">
             {(['auto', 'off'] as const).map((mode) => (
-              <button
+              <Button
+                variant="ghost"
                 key={mode}
                 type="button"
                 disabled={!runtimeConfig || busyAction !== null}
                 onClick={() => onSemanticMode(mode)}
                 className={cn(
-                  'h-7 rounded-[6px] px-2 text-[12px] font-medium',
+                  'lume-segmented-item px-2 text-[12px]',
                   runtimeConfig?.retrieval.semantic === mode
-                    ? 'bg-[var(--surface-2)] text-[var(--text-1)] shadow-sm'
-                    : 'text-[var(--text-3)]',
+                    ? 'lume-segmented-item-active'
+                    : '',
                 )}
               >
                 {mode === 'auto' ? '自动' : '关闭'}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -840,7 +847,7 @@ function OverviewPanel({
         ) : null}
       </div>
 
-      <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+      <div className="lume-subpanel mt-4 flex flex-wrap items-start justify-between gap-3 p-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
             <History size={15} />
@@ -865,7 +872,7 @@ function OverviewPanel({
         </Button>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-start justify-between gap-3 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+      <div className="lume-subpanel mt-4 flex flex-wrap items-start justify-between gap-3 p-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
             <Clock3 size={15} />
@@ -890,7 +897,7 @@ function OverviewPanel({
         </Button>
       </div>
 
-      <div className="mt-4 rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+      <div className="lume-subpanel mt-4 p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
@@ -914,32 +921,33 @@ function OverviewPanel({
               {summarizeMemoryExtractionStatus(snapshot?.extraction)}
             </p>
           </div>
-          <div className="flex rounded-[8px] border border-border bg-[var(--surface-1)] p-0.5">
+          <div className="lume-segmented flex">
             {([
               ['auto', '自动'],
               ['workspace', '工作区'],
               ['global', '全局'],
             ] as const).map(([scope, label]) => (
-              <button
+              <Button
+                variant="ghost"
                 key={scope}
                 type="button"
                 disabled={busyAction !== null || ingestRunning}
                 onClick={() => onIngestTargetScope(scope)}
                 className={cn(
-                  'h-7 rounded-[6px] px-2 text-[12px] font-medium',
+                  'lume-segmented-item px-2 text-[12px]',
                   ingestTargetScope === scope
-                    ? 'bg-[var(--surface-2)] text-[var(--text-1)] shadow-sm'
-                    : 'text-[var(--text-3)]',
+                    ? 'lume-segmented-item-active'
+                    : '',
                 )}
               >
                 {label}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <div className="space-y-2">
-            <textarea
+            <Textarea
               className="min-h-[92px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-1)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--brand)]"
               placeholder="例如：叫我 Mason。以后默认用中文回答。我的写作风格偏好简洁、有温度。"
               value={externalText}
@@ -957,7 +965,7 @@ function OverviewPanel({
             </Button>
           </div>
           <div className="space-y-2">
-            <input
+            <Input
               className="h-9 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--brand)]"
               placeholder="工作区文件路径，例如 docs/project.md"
               value={workspaceFilePath}
@@ -1078,7 +1086,7 @@ function UserMemoryPanel({
     [category, entries],
   )
   return (
-    <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
@@ -1087,15 +1095,15 @@ function UserMemoryPanel({
           </div>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{meta.desc}</p>
         </div>
-        <div className="rounded-[8px] border border-border bg-[var(--surface-2)] px-2 py-1 text-[12px] font-medium text-[var(--text-3)]">
+        <div className="lume-subpanel px-2 py-1 text-[12px] font-medium text-[var(--text-3)]">
           {filteredEntries.length} 条
         </div>
       </div>
       <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.3fr)]">
         <div className="space-y-3">
-          <div className="rounded-[10px] border border-border bg-[var(--surface-2)] p-3">
+          <div className="lume-subpanel p-3">
             <div className="flex gap-2">
-              <input
+              <Input
                 value={manualMemoryText}
                 onChange={(event) => onManualMemoryTextChange(event.target.value)}
                 onKeyDown={(event) => {
@@ -1158,7 +1166,7 @@ function PendingMemoryPanel({
 }) {
   const openItems = items.filter((item) => item.status === 'open')
   return (
-    <section className="rounded-[10px] border border-border bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel p-4">
       <div className="space-y-2">
         {openItems.map((item) => (
           <PendingMemoryCard
@@ -1213,7 +1221,7 @@ function PendingMemoryCard({
   })
 
   return (
-    <div className="rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+    <div className="lume-subpanel p-3">
       <div className="flex flex-wrap items-center gap-2 text-[12px] font-medium text-[var(--text-3)]">
         <StatusBadge tone={item.type === 'conflict' ? 'warn' : 'neutral'}>
           {MEMORY_PENDING_LABELS[item.type]}
@@ -1222,7 +1230,7 @@ function PendingMemoryCard({
         <span>{formatDate(item.created)}</span>
       </div>
       <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        <div className="rounded-[8px] border border-border bg-[var(--surface-1)] p-3">
+        <div className="lume-panel p-3">
           <div className="flex flex-wrap items-center gap-2 text-[12px] font-semibold text-[var(--text-3)]">
             候选记忆
             <StatusBadge tone="neutral">{memoryPendingCandidateLayerLabel(item.candidate)}</StatusBadge>
@@ -1231,35 +1239,35 @@ function PendingMemoryCard({
           </div>
           {mergeMode ? (
             <div className="mt-2 space-y-2">
-              <textarea
+              <Textarea
                 className="min-h-[86px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-2)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none focus:border-[var(--brand)]"
                 value={statement}
                 disabled={busyAction !== null}
                 onChange={(event) => setStatement(event.target.value)}
               />
               <div className="grid gap-2 sm:grid-cols-2">
-                <select
-                  className="h-8 rounded-[8px] border border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)]"
-                  value={kind}
-                  disabled={busyAction !== null}
-                  onChange={(event) => setKind(event.target.value as MemoryKind)}
-                >
+                <Select value={kind} onValueChange={(value) => { if (value) setKind(value as MemoryKind) }} disabled={busyAction !== null}>
+                  <SelectTrigger className="h-8 w-full border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
                   {EDITABLE_MEMORY_KINDS.map((memoryKind) => (
-                    <option key={memoryKind} value={memoryKind}>{MEMORY_KIND_LABELS[memoryKind]}</option>
+                    <SelectItem key={memoryKind} value={memoryKind}>{MEMORY_KIND_LABELS[memoryKind]}</SelectItem>
                   ))}
-                </select>
-                <select
-                  className="h-8 rounded-[8px] border border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)]"
-                  value={confidence}
-                  disabled={busyAction !== null}
-                  onChange={(event) => setConfidence(event.target.value as MemorySettingsEntrySummary['confidence'])}
-                >
+                  </SelectContent>
+                </Select>
+                <Select value={confidence} onValueChange={(value) => { if (value) setConfidence(value as MemorySettingsEntrySummary['confidence']) }} disabled={busyAction !== null}>
+                  <SelectTrigger className="h-8 w-full border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
                   {(['low', 'medium', 'high'] as const).map((value) => (
-                    <option key={value} value={value}>{MEMORY_CONFIDENCE_LABELS[value]}</option>
+                    <SelectItem key={value} value={value}>{MEMORY_CONFIDENCE_LABELS[value]}</SelectItem>
                   ))}
-                </select>
+                  </SelectContent>
+                </Select>
               </div>
-              <input
+              <Input
                 className="h-8 w-full rounded-[8px] border border-border bg-[var(--surface-2)] px-2 text-[12px] text-[var(--text-1)] outline-none focus:border-[var(--brand)]"
                 value={tagsText}
                 disabled={busyAction !== null}
@@ -1276,11 +1284,11 @@ function PendingMemoryCard({
             </>
           )}
         </div>
-        <div className="rounded-[8px] border border-border bg-[var(--surface-1)] p-3">
+        <div className="lume-panel p-3">
           <div className="text-[12px] font-semibold text-[var(--text-3)]">现有相关记忆</div>
           <div className="mt-2 space-y-2">
             {item.existingEntries.map((entry) => (
-              <div key={entry.id} className="rounded-[8px] border border-border bg-[var(--surface-2)] p-2">
+              <div key={entry.id} className="lume-subpanel p-2">
                 <div className="flex flex-wrap items-center gap-2 text-[11px] text-[var(--text-3)]">
                   <span>{summarizeMemoryEntry(entry)}</span>
                   <StatusBadge tone="neutral">{memoryEntryLayerLabel(entry)}</StatusBadge>
@@ -1381,7 +1389,8 @@ function FileRow({
   onOpenFile: (path: string) => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={() => onOpenFile(file.path)}
       className="flex min-h-[58px] w-full items-center justify-between gap-3 rounded-[8px] border border-border bg-[var(--surface-2)] p-3 text-left hover:bg-[var(--surface-3)]"
@@ -1394,7 +1403,7 @@ function FileRow({
         <span className="mt-1 block truncate text-[12px] text-[var(--text-3)]">{formatDate(file.updatedAt)}</span>
       </span>
       <StatusBadge tone="neutral">{MEMORY_FILE_KIND_LABELS[file.kind]}</StatusBadge>
-    </button>
+    </Button>
   )
 }
 
@@ -1410,7 +1419,8 @@ function EntryRow({
   selected: boolean
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={() => onInspectEntry(entry)}
       className={cn(
@@ -1431,7 +1441,7 @@ function EntryRow({
         <span>{MEMORY_CONFIDENCE_LABELS[entry.confidence]}</span>
         <span>{formatDate(entry.updated)}</span>
       </div>
-    </button>
+    </Button>
   )
 }
 
@@ -1576,7 +1586,7 @@ function MemoryDetailPanel({
         <div className="mt-3 space-y-2">
           <label className="block">
             <span className="text-[12px] font-medium text-[var(--text-3)]">内容</span>
-            <textarea
+            <Textarea
               className="mt-1 min-h-[96px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-1)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none focus:border-[var(--brand)]"
               value={statement}
               disabled={busyAction !== null}
@@ -1586,34 +1596,34 @@ function MemoryDetailPanel({
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="block">
               <span className="text-[12px] font-medium text-[var(--text-3)]">类型</span>
-              <select
-                className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
-                value={kind}
-                disabled={busyAction !== null}
-                onChange={(event) => setKind(event.target.value as MemoryKind)}
-              >
+              <Select value={kind} onValueChange={(value) => { if (value) setKind(value as MemoryKind) }} disabled={busyAction !== null}>
+                <SelectTrigger className="mt-1 h-8 w-full border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
                 {EDITABLE_MEMORY_KINDS.map((item) => (
-                  <option key={item} value={item}>{MEMORY_KIND_LABELS[item]}</option>
+                  <SelectItem key={item} value={item}>{MEMORY_KIND_LABELS[item]}</SelectItem>
                 ))}
-              </select>
+                </SelectContent>
+              </Select>
             </label>
             <label className="block">
               <span className="text-[12px] font-medium text-[var(--text-3)]">置信度</span>
-              <select
-                className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)]"
-                value={confidence}
-                disabled={busyAction !== null}
-                onChange={(event) => setConfidence(event.target.value as MemorySettingsEntrySummary['confidence'])}
-              >
+              <Select value={confidence} onValueChange={(value) => { if (value) setConfidence(value as MemorySettingsEntrySummary['confidence']) }} disabled={busyAction !== null}>
+                <SelectTrigger className="mt-1 h-8 w-full border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
                 {(['low', 'medium', 'high'] as const).map((item) => (
-                  <option key={item} value={item}>{MEMORY_CONFIDENCE_LABELS[item]}</option>
+                  <SelectItem key={item} value={item}>{MEMORY_CONFIDENCE_LABELS[item]}</SelectItem>
                 ))}
-              </select>
+                </SelectContent>
+              </Select>
             </label>
           </div>
           <label className="block">
             <span className="text-[12px] font-medium text-[var(--text-3)]">标签</span>
-            <input
+            <Input
               className="mt-1 h-8 w-full rounded-[8px] border border-border bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-1)] outline-none focus:border-[var(--brand)]"
               value={tagsText}
               disabled={busyAction !== null}
@@ -1657,8 +1667,8 @@ function StatusBadge({
   return (
     <span className={cn(
       'inline-flex h-5 items-center rounded-[6px] px-1.5 text-[11px] font-medium',
-      tone === 'good' && 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200',
-      tone === 'warn' && 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-200',
+      tone === 'good' && 'bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] text-[var(--lume-success)]',
+      tone === 'warn' && 'bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] text-[var(--lume-warning)]',
       tone === 'neutral' && 'bg-[var(--surface-1)] text-[var(--text-3)]',
     )}>
       {children}
@@ -1668,7 +1678,7 @@ function StatusBadge({
 
 function EmptyInline({ text }: { text: string }) {
   return (
-    <div className="rounded-[8px] border border-dashed border-border bg-[var(--surface-2)] p-4 text-center text-[13px] text-[var(--text-3)]">
+    <div className="lume-subpanel border-dashed p-4 text-center text-[13px] text-[var(--text-3)]">
       {text}
     </div>
   )
@@ -1676,7 +1686,7 @@ function EmptyInline({ text }: { text: string }) {
 
 function EmptyPanel({ title, desc }: { title: string; desc: string }) {
   return (
-    <div className="rounded-[10px] border border-dashed border-border bg-[var(--surface-1)] p-6 text-center">
+    <div className="lume-panel border-dashed p-6 text-center">
       <div className="text-[15px] font-semibold text-[var(--text-1)]">{title}</div>
       <p className="mt-2 text-[13px] text-[var(--text-3)]">{desc}</p>
     </div>

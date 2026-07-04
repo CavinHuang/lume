@@ -11,6 +11,7 @@ import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, type AgentListPluginsResult, type AgentPluginListItem, type AgentWelcomeSuggestion } from '@lume/shared'
 import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
 
+import { Button } from '@/components/ui/button'
 type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
 
 function normalizeListPluginsResult(result: unknown): InstalledPluginSummary[] {
@@ -164,7 +165,8 @@ export function LumeWelcomeSurface({
               leadingTools={
                 <>
                   <div className="relative">
-                    <button
+                    <Button
+                variant="ghost"
                       type="button"
                       aria-label="添加"
                       title="添加"
@@ -173,35 +175,38 @@ export function LumeWelcomeSurface({
                       className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
                     >
                       <Plus size={15} />
-                    </button>
+                    </Button>
                     {attachMenuOpen && (
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
                         <div className="absolute bottom-full left-0 z-50 mb-2 w-[140px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
-                          <button
+                          <Button
+                variant="ghost"
                             type="button"
                             onClick={() => { setAttachMenuOpen(false); onAttach() }}
                             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
                           >
                             <FileText size={15} className="text-[var(--text-3)]" />
                             文件
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                variant="ghost"
                             type="button"
                             onClick={() => { setAttachMenuOpen(false); onAttach() }}
                             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
                           >
                             <Image size={15} className="text-[var(--text-3)]" />
                             图片
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                variant="ghost"
                             type="button"
                             onClick={handleOpenPlugins}
                             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
                           >
                             <Puzzle size={15} className="text-[var(--text-3)]" />
                             插件
-                          </button>
+                          </Button>
                         </div>
                       </>
                     )}
@@ -219,7 +224,8 @@ export function LumeWelcomeSurface({
                           ) : (
                             <div className="max-h-[200px] overflow-y-auto">
                               {installedPlugins.map((plugin) => (
-                                <button
+                                <Button
+                variant="ghost"
                                   key={plugin.name}
                                   type="button"
                                   onClick={() => handleSelectPlugin(plugin.name)}
@@ -235,7 +241,7 @@ export function LumeWelcomeSurface({
                                       {plugin.description ? ` · ${plugin.description}` : ''}
                                     </div>
                                   </div>
-                                </button>
+                                </Button>
                               ))}
                             </div>
                           )}
@@ -258,7 +264,8 @@ export function LumeWelcomeSurface({
                     <Loader2 size={15} className="animate-spin" />
                   </div>
                 ) : (
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     aria-label="发送"
                     title="发送"
@@ -272,7 +279,7 @@ export function LumeWelcomeSurface({
                     )}
                   >
                     <Send size={15} />
-                  </button>
+                  </Button>
                 )
               }
             />
@@ -287,7 +294,8 @@ export function LumeWelcomeSurface({
           {suggestions && suggestions.length > 0 && (
             <div className="mt-4 flex w-full max-w-[840px] flex-wrap justify-center gap-2">
               {suggestions.map((suggestion) => (
-                <button
+                <Button
+                variant="ghost"
                   key={suggestion.id}
                   type="button"
                   title={suggestion.prompt}
@@ -296,7 +304,7 @@ export function LumeWelcomeSurface({
                   className="inline-flex max-w-full items-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_46%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_82%,transparent)] px-3 py-1.5 text-[13px] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_20%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span className="truncate">{suggestion.title}</span>
-                </button>
+                </Button>
               ))}
             </div>
           )}

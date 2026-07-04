@@ -8,6 +8,7 @@ import {
   type PermissionModeValue,
   type PermissionOption,
 } from '@/components/settings/agent-settings-state'
+import { Button } from '@/components/ui/button'
 import {
   composerControlChevronClassName,
   composerControlMenuClassName,
@@ -51,7 +52,8 @@ export function PermissionModePicker({ value, onChange }: PermissionModePickerPr
 
   return (
     <div ref={menuRef} className="relative">
-      <button
+      <Button
+        variant="ghost"
         type="button"
         onClick={() => setOpen((isOpen) => !isOpen)}
         className={composerControlTriggerClassName}
@@ -60,7 +62,7 @@ export function PermissionModePicker({ value, onChange }: PermissionModePickerPr
         <CurrentIcon size={14} />
         <span>{current.label}</span>
         <ChevronDown size={12} className={composerControlChevronClassName} />
-      </button>
+      </Button>
 
       {open && (
         <div className={cn(composerControlMenuClassName, 'w-[268px] p-1.5')}>
@@ -90,11 +92,12 @@ function PermissionModeOption({
   const Icon = iconMap[option.icon]
 
   return (
-    <button
+    <Button
+      variant="ghost"
       type="button"
       onClick={onSelect}
       className={cn(
-        'flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
+        'flex h-auto min-h-[52px] w-full items-center justify-start gap-2.5 rounded-lg border px-2.5 py-2 text-left whitespace-normal transition-colors',
         selected
           ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_34%,var(--lume-border-strong))] bg-[var(--lume-accent-soft)]'
           : 'border-transparent hover:bg-[var(--lume-bg-elevated)]',
@@ -113,6 +116,6 @@ function PermissionModeOption({
         <span className="mt-0.5 block truncate text-[11px] text-[var(--text-3)]">{option.desc}</span>
       </span>
       {selected && <Check size={14} className="shrink-0 text-[var(--brand)]" />}
-    </button>
+    </Button>
   )
 }

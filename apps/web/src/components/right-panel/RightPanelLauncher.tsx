@@ -1,6 +1,7 @@
 import { ClipboardCheck, FolderOpen, Globe, Terminal, type LucideIcon } from 'lucide-react'
 import type { RightPanelFunction } from './right-panel-state'
 
+import { Button } from '@/components/ui/button'
 interface RightPanelLauncherProps {
   onOpen: (type: RightPanelFunction) => void
 }
@@ -22,7 +23,8 @@ export function RightPanelLauncher({ onOpen }: RightPanelLauncherProps) {
     <div className="flex min-h-0 flex-1 items-end px-7 pb-14">
       <div className="flex w-full flex-col gap-2">
         {LAUNCHER_ITEMS.map(({ type, label, shortcut, Icon }) => (
-          <button
+          <Button
+                variant="ghost"
             key={type}
             type="button"
             onClick={() => onOpen(type)}
@@ -35,7 +37,7 @@ export function RightPanelLauncher({ onOpen }: RightPanelLauncherProps) {
                 {shortcut}
               </span>
             )}
-          </button>
+          </Button>
         ))}
       </div>
     </div>

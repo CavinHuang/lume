@@ -3,6 +3,7 @@ import { useAtom } from 'jotai'
 import { rightPanelLayoutAtom } from '@/atoms'
 import { cn } from '@/lib/utils'
 
+import { Button } from '@/components/ui/button'
 interface RightPanelWindowControlsProps {
   className?: string
 }
@@ -13,7 +14,8 @@ export function RightPanelWindowControls({ className }: RightPanelWindowControls
 
   return (
     <div className={cn('flex items-center gap-2', className)}>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         disabled={!layout.open}
         onClick={() => {
@@ -31,9 +33,10 @@ export function RightPanelWindowControls({ className }: RightPanelWindowControls
         title={expanded ? '缩小右侧面板' : '扩大右侧面板'}
       >
         {expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-      </button>
+      </Button>
 
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => {
           setLayout((current) => ({
@@ -51,7 +54,7 @@ export function RightPanelWindowControls({ className }: RightPanelWindowControls
         title={layout.open ? '关闭右侧面板' : '打开右侧面板'}
       >
         {layout.open ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-      </button>
+      </Button>
     </div>
   )
 }

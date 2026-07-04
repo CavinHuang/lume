@@ -17,6 +17,8 @@ import { ThreadItemActions } from './ThreadItemActions'
 import { useThreadMiniMapHover, ThreadMiniMapPopover } from './ThreadMiniMapPopover'
 import type { LumeSidebarThreadItem } from './lume-sidebar-view-model'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 type ThreadStatus = 'blocked' | 'running' | 'completed' | 'idle'
 
 /** 母会话状态色条 class（综合母+子状态，对齐 Proma leftAccent） */
@@ -172,11 +174,11 @@ export const ThreadItem = memo(function ThreadItem({
     hover.cancelNow()
     // 双 set 互斥：收起时记入 collapsed（压制未来自动展开），展开时从 collapsed 删除
     if (expanded) {
-      setExpandedSet((prev) => { const n = new Set(prev); n.delete(thread.id); return n })
-      setCollapsedSet((prev) => { const n = new Set(prev); n.add(thread.id); return n })
+      setExpandedSet((prev: Set<string>) => { const n = new Set(prev); n.delete(thread.id); return n })
+      setCollapsedSet((prev: Set<string>) => { const n = new Set(prev); n.add(thread.id); return n })
     } else {
-      setCollapsedSet((prev) => { const n = new Set(prev); n.delete(thread.id); return n })
-      setExpandedSet((prev) => { const n = new Set(prev); n.add(thread.id); return n })
+      setCollapsedSet((prev: Set<string>) => { const n = new Set(prev); n.delete(thread.id); return n })
+      setExpandedSet((prev: Set<string>) => { const n = new Set(prev); n.add(thread.id); return n })
     }
   }
 
@@ -185,9 +187,17 @@ export const ThreadItem = memo(function ThreadItem({
       ref={anchorRef}
       onMouseEnter={hover.onMouseEnter}
       onMouseLeave={hover.onMouseLeave}
-      className={cn(indent && 'border-l border-l-[var(--lume-border-subtle)] ml-3')}
-      style={indent ? { paddingLeft: thread.depth * 12 } : undefined}
+      className={cn('relative', indent && 'ml-3 border-l border-l-[color:color-mix(in_oklab,var(--lume-border-subtle)_86%,transparent)] pl-2')}
     >
+      <div
+        className={cn(
+          'group relative rounded-lg transition-colors duration-100',
+          thread.active
+            ? 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--lume-bg-elevated))]'
+            : 'hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
+        )}
+        style={indent && thread.depth > 1 ? { paddingLeft: (thread.depth - 1) * 10 } : undefined}
+      >
     <ContextMenu>
       <ContextMenuTrigger
         render={
@@ -199,11 +209,7 @@ export const ThreadItem = memo(function ThreadItem({
               e.stopPropagation()
               startEdit()
             }}
-            className={cn(
-              'group relative w-full flex items-center gap-1.5 rounded-md py-1 pl-2.5 pr-1.5 transition-colors duration-100 text-left',
-              thread.active && 'bg-[var(--lume-accent-soft)]',
-              !thread.active && 'hover:bg-[var(--lume-bg-elevated)]',
-            )}
+            className="relative flex min-h-8 w-full items-center gap-1.5 px-2 py-1.5 text-left"
           />
         }
       >
@@ -215,30 +221,30 @@ export const ThreadItem = memo(function ThreadItem({
         )}
         <div className="flex-1 min-w-0">
           {editing ? (
-            <input
+            <Input
               ref={inputRef}
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={saveTitle}
               onClick={(e) => e.stopPropagation()}
-              className="w-full bg-transparent text-[13px] leading-5 text-[var(--lume-text-primary)] border-b border-[color:color-mix(in_oklab,var(--lume-accent)_50%,transparent)] outline-none px-0 py-0"
+              className="h-7 w-full rounded-none border-0 border-b border-[color:color-mix(in_oklab,var(--lume-accent)_50%,transparent)] bg-transparent px-0 py-0 text-[13px] leading-5 text-[var(--lume-text-primary)] outline-none focus-visible:ring-0"
               maxLength={100}
             />
           ) : (
             <div className={cn(
-              'truncate text-[13px] leading-[18px] flex items-center gap-1.5',
-              thread.active ? 'text-[var(--lume-text-primary)] font-medium' : 'text-[var(--lume-text-secondary)]'
+              'flex min-w-0 items-center gap-1.5 truncate text-[13px] leading-[18px]',
+              thread.active ? 'font-semibold text-[var(--lume-text-primary)]' : 'text-[var(--lume-text-secondary)]'
             )}>
               {thread.pinned && (
-                <Pin size={11} className="flex-shrink-0 text-[var(--lume-accent)]" />
+                <Pin size={11} className="shrink-0 text-[var(--lume-accent)]" />
               )}
               {thread.isDelegate && (
-                <GitBranch size={11} className={cn('flex-shrink-0', STATUS_ICON_CLASS[selfStatus])} />
+                <GitBranch size={11} className={cn('shrink-0', STATUS_ICON_CLASS[selfStatus])} />
               )}
               <span className="truncate">{thread.title}</span>
               {hasChildren && (
-                <span className="flex-shrink-0 text-[11px] leading-4 text-[var(--lume-text-muted)]">
+                <span className="shrink-0 rounded-full border border-[color:color-mix(in_oklab,var(--lume-border-subtle)_68%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_74%,transparent)] px-1.5 py-0.5 text-[11px] font-semibold leading-none text-[var(--lume-text-muted)]">
                   {childCompleted}/{childTotal}
                 </span>
               )}
@@ -250,15 +256,16 @@ export const ThreadItem = memo(function ThreadItem({
           <Tooltip>
             <TooltipTrigger
               render={
-                <button
+                <Button
+                  variant="ghost"
                   type="button"
                   aria-label={expanded ? '收起子会话' : '展开子会话'}
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={toggleExpand}
-                  className="flex-shrink-0 flex size-4 items-center justify-center rounded text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
+                  className="size-6 shrink-0 rounded-md p-0 text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
                 >
                   <ChevronRight size={12} className={cn('transition-transform', expanded && 'rotate-90')} />
-                </button>
+                </Button>
               }
             />
             <TooltipContent side="top">{expanded ? '收起子会话' : '展开子会话'}</TooltipContent>
@@ -268,9 +275,6 @@ export const ThreadItem = memo(function ThreadItem({
         {!editing && (
           <ThreadItemActions
             updatedAt={thread.updatedAt}
-            pinned={thread.pinned}
-            onTogglePin={() => onTogglePin(thread.id)}
-            onArchive={() => onArchive(thread.id)}
             onMenuOpenChange={setMenuOpen}
             menuItems={menuItems}
           />
@@ -280,8 +284,11 @@ export const ThreadItem = memo(function ThreadItem({
         {menuItems(ContextMenuItem, ContextMenuSeparator)}
       </ContextMenuContent>
     </ContextMenu>
+    </div>
     {hasChildren && expanded && (
-      <div className="flex flex-col gap-px">
+      <div
+        className="mt-0.5 flex flex-col gap-0.5"
+      >
         {thread.children!.map((child) => (
           <ThreadItem
             key={child.id}

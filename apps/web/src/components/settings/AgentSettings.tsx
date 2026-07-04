@@ -34,6 +34,7 @@ import {
   PROVIDER_GROUPS,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { createChannel, decryptChannelKey, listChannels, updateChannel, deleteChannel } from '@/lib/desktop-api/channel'
@@ -69,6 +70,7 @@ import {
   type ModelProviderRow,
 } from './agent-settings-state'
 
+import { Input } from '@/components/ui/input'
 export function AgentSettings() {
   const [channels, setChannels] = React.useState<Channel[]>([])
   const [config, setConfig] = React.useState<LumeEffectiveConfig | null>(null)
@@ -430,7 +432,7 @@ export function AgentSettings() {
 
   if (loading) {
     return (
-      <div className="flex h-[280px] items-center justify-center rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
+      <div className="lume-panel flex h-[280px] items-center justify-center text-[13px] text-[var(--text-3)]">
         <Loader2 size={14} className="mr-2 animate-spin" />
         加载模型设置...
       </div>
@@ -438,26 +440,27 @@ export function AgentSettings() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <div className="flex rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-1">
+        <div className="lume-segmented flex">
           {[
             ['providers', '模型供应商'],
             ['actions', '模型设置'],
           ].map(([id, label]) => (
-            <button
+            <Button
+              variant="ghost"
               key={id}
               type="button"
               onClick={() => setActiveTab(id as 'providers' | 'actions')}
               className={cn(
-                'h-8 rounded-[6px] px-3 text-[13px] font-medium transition-colors',
+                'lume-segmented-item',
                 activeTab === id
-                  ? 'bg-[var(--surface-2)] text-[var(--text-1)] shadow-sm'
-                  : 'text-[var(--text-3)] hover:text-[var(--text-1)]'
+                  ? 'lume-segmented-item-active'
+                  : ''
               )}
             >
               {label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -564,24 +567,24 @@ function ModelProviderStats({
     tone: string
     status?: 'success'
   }> = [
-    { icon: KeyRound, label: '已连接供应商', value: String(connectedProviderCount), tone: 'bg-[color-mix(in_oklab,var(--brand)_15%,var(--surface-2))] text-[var(--brand)]' },
-    { icon: Box, label: '可用模型', value: String(availableModelCount), tone: 'bg-[color-mix(in_oklab,oklch(0.55_0.2_260)_15%,var(--surface-2))] text-[oklch(0.55_0.2_260)]' },
-    { icon: UserRound, label: '默认供应商', value: defaultProviderLabel, tone: 'bg-[color-mix(in_oklab,oklch(0.7_0.15_85)_15%,var(--surface-2))] text-[oklch(0.7_0.15_85)]' },
-    { icon: Activity, label: '连接状态', value: connectedProviderCount > 0 ? '正常' : '待配置', tone: 'bg-[color-mix(in_oklab,oklch(0.65_0.2_145)_15%,var(--surface-2))] text-[oklch(0.65_0.2_145)]', status: 'success' },
+    { icon: KeyRound, label: '已连接供应商', value: String(connectedProviderCount), tone: 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]' },
+    { icon: Box, label: '可用模型', value: String(availableModelCount), tone: 'bg-[var(--surface-2)] text-[var(--text-2)]' },
+    { icon: UserRound, label: '默认供应商', value: defaultProviderLabel, tone: 'bg-[var(--surface-2)] text-[var(--text-2)]' },
+    { icon: Activity, label: '连接状态', value: connectedProviderCount > 0 ? '正常' : '待配置', tone: 'bg-[color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] text-[var(--lume-success)]', status: 'success' },
   ]
 
   return (
-    <section className="grid h-[78px] grid-cols-4 overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel grid h-[76px] grid-cols-4 overflow-hidden">
       {stats.map((stat, index) => {
         const Icon = stat.icon
         return (
-          <div key={stat.label} className={cn('flex items-center gap-4 px-5', index > 0 && 'border-l border-[var(--border)]')}>
-            <div className={cn('flex size-12 items-center justify-center rounded-full', stat.tone)}>
-              <Icon size={21} strokeWidth={2} />
+          <div key={stat.label} className={cn('flex items-center gap-3 px-5', index > 0 && 'border-l border-[color:color-mix(in_oklab,var(--border)_52%,transparent)]')}>
+            <div className={cn('flex size-10 items-center justify-center rounded-[8px]', stat.tone)}>
+              <Icon size={18} strokeWidth={2} />
             </div>
             <div className="min-w-0">
               <div className="text-[12px] font-medium leading-4 text-[var(--text-2)]">{stat.label}</div>
-              <div className={cn('mt-1 truncate text-[20px] font-semibold leading-6 text-[var(--text-1)]', stat.status === 'success' && 'text-[#18b969]')}>
+              <div className={cn('mt-1 truncate text-[18px] font-semibold leading-6 text-[var(--text-1)]', stat.status === 'success' && 'text-[var(--lume-success)]')}>
                 {stat.value}
               </div>
             </div>
@@ -672,7 +675,7 @@ function ModelActionSettings({
   const inheritBackground = '与轻量模型相同'
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <SettingsCard
         title="主力模型"
         description="核心对话、复杂推理和日程规划使用的模型。"
@@ -867,31 +870,37 @@ function ActionModelRow({
   onChange: (value: string) => void
 }) {
   const hasCurrentOption = !value || options.some((option) => option.modelRef === value)
+  const selectValue = value || '__inherit__'
 
   return (
-    <div className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_minmax(220px,340px)] items-center gap-5 border-b border-[var(--border)] py-3 last:border-b-0">
+    <div className="grid min-h-[62px] grid-cols-[minmax(0,1fr)_minmax(220px,340px)] items-center gap-5 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] py-3 last:border-b-0">
       <div className="min-w-0">
         <div className="text-[13px] font-semibold leading-5 text-[var(--text-1)]">{title}</div>
         <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">{description}</div>
       </div>
-      <SelectShell>
-        <select
-          value={value}
-          disabled={disabled || (options.length === 0 && !inheritLabel)}
-          onChange={(event) => onChange(event.target.value)}
-          className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[var(--text-1)] outline-none disabled:opacity-60"
-        >
+      <Select
+        value={selectValue}
+        onValueChange={(nextValue) => {
+          if (nextValue == null) return
+          onChange(nextValue === '__inherit__' ? '' : nextValue)
+        }}
+        disabled={disabled || (options.length === 0 && !inheritLabel)}
+      >
+        <SelectTrigger className="h-9 w-full border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] text-[13px] font-medium text-[var(--text-1)] shadow-none focus-visible:ring-0">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
           {inheritLabel ? (
-            <option value="">{inheritLabel}</option>
+            <SelectItem value="__inherit__">{inheritLabel}</SelectItem>
           ) : options.length === 0 ? (
-            <option value="">未配置可用模型</option>
+            <SelectItem value="__inherit__">未配置可用模型</SelectItem>
           ) : null}
-          {value && !hasCurrentOption && <option value={value}>{value}</option>}
+          {value && !hasCurrentOption && <SelectItem value={value}>{value}</SelectItem>}
           {options.map((option) => (
-            <option key={option.modelRef} value={option.modelRef}>{option.label}</option>
+            <SelectItem key={option.modelRef} value={option.modelRef}>{option.label}</SelectItem>
           ))}
-        </select>
-      </SelectShell>
+        </SelectContent>
+      </Select>
     </div>
   )
 }
@@ -948,35 +957,37 @@ function ImageGenerationSettings({
           }}
         >
           <span className="text-[12px] font-medium text-[var(--text-3)]">选择用于图像生成的模型</span>
-          <button
+          <Button
+            variant="ghost"
             type="button"
             disabled={disabled || options.length === 0}
             onClick={() => setOpen((next) => !next)}
-            className="mt-1 flex h-10 w-full items-center justify-between rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-left text-[13px] font-medium text-[var(--text-1)] outline-none transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border))] disabled:opacity-60"
+            className="mt-1 flex h-10 w-full items-center justify-between rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] px-3 text-left text-[13px] font-medium text-[var(--text-1)] outline-none transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border))] disabled:opacity-60"
           >
             <span>{priority.length > 0 ? `已选 ${priority.length} 个模型` : '选择模型'}</span>
             <ChevronDown size={16} className={cn('text-[var(--text-3)] transition-transform', open && 'rotate-180')} />
-          </button>
+          </Button>
           {open && (
-            <div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_18px_42px_rgba(15,23,42,0.12)]">
-              <div className="flex h-10 items-center gap-2 border-b border-[var(--border)] px-3">
+            <div className="absolute left-0 right-0 z-30 mt-2 overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-1)] shadow-[0_18px_42px_-34px_hsl(var(--lume-shadow-panel)/0.34)]">
+              <div className="flex h-10 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] px-3">
                 <Search size={15} className="text-[var(--text-3)]" />
-                <input
+                <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="过滤模型..."
-                  className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+                  className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
                 />
               </div>
               <div className="max-h-[260px] overflow-y-auto">
                 {filteredOptions.length === 0 ? (
                   <div className="px-3 py-4 text-[12px] text-[var(--text-3)]">没有匹配的模型</div>
                 ) : filteredOptions.map((option) => (
-                  <button
+                  <Button
+                    variant="ghost"
                     key={option.modelRef}
                     type="button"
                     onClick={() => toggleModel(option.modelRef)}
-                    className="grid min-h-12 w-full grid-cols-[26px_minmax(0,1fr)] items-center gap-2 border-b border-[var(--border)] px-3 text-left last:border-b-0 hover:bg-[var(--surface-2)]"
+                    className="grid h-auto min-h-12 w-full grid-cols-[26px_minmax(0,1fr)] items-center justify-start gap-2 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] px-3 text-left whitespace-normal last:border-b-0 hover:bg-[var(--surface-2)]"
                   >
                     <span className={cn(
                       'flex size-5 items-center justify-center rounded-[5px] border text-[var(--brand-foreground)]',
@@ -990,7 +1001,7 @@ function ImageGenerationSettings({
                       <span className="block truncate text-[13px] font-medium text-[var(--text-1)]">{option.label}</span>
                       <span className="block truncate text-[12px] text-[var(--text-3)]">{option.modelRef}</span>
                     </span>
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -1015,16 +1026,22 @@ function ImageGenerationSettings({
               onDrop={() => moveByDrop(modelRef)}
               onDragEnd={() => setDraggingRef(null)}
               className={cn(
-                'grid min-h-10 grid-cols-[24px_28px_minmax(0,1fr)_32px] items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3',
+                'grid min-h-10 grid-cols-[24px_28px_minmax(0,1fr)_32px] items-center gap-2 rounded-[8px] bg-[var(--surface-2)] px-3',
                 draggingRef === modelRef && 'opacity-50'
               )}
             >
               <GripVertical size={15} className="cursor-grab text-[var(--text-3)]" />
               <span className="text-center text-[12px] font-semibold text-[var(--text-3)]">{index + 1}</span>
               <span className="truncate text-[13px] font-medium text-[var(--text-1)]">{getOptionLabel(options, modelRef)}</span>
-              <button type="button" disabled={disabled} onClick={() => toggleModel(modelRef)} className="flex size-7 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--lume-danger)] disabled:opacity-40">
+              <Button
+                variant="ghost"
+                type="button"
+                disabled={disabled}
+                onClick={() => toggleModel(modelRef)}
+                className="flex size-7 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--lume-danger)] disabled:opacity-40"
+              >
                 <X size={14} />
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -1063,34 +1080,42 @@ function ContextWindowSettings({
     >
       <div className="space-y-3">
         <div className="grid grid-cols-[minmax(0,1fr)_150px_72px] gap-2">
-          <input
+          <Input
             value={modelRef}
             onChange={(event) => onModelRefChange(event.target.value)}
             placeholder="模型名（如 gpt-5.5）"
-            className="h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+            className="h-9 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
           />
-          <input
+          <Input
             value={tokens}
             onChange={(event) => onTokensChange(event.target.value)}
             placeholder="128000"
             inputMode="numeric"
-            className="h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+            className="h-9 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
           />
           <Button type="button" disabled={disabled} onClick={onAdd} className="h-9 rounded-[8px] text-[13px]">添加</Button>
         </div>
 
-        <div className="max-h-[360px] overflow-y-auto rounded-[8px] border border-[var(--border)]">
+        <div className="max-h-[360px] overflow-y-auto rounded-[8px] bg-[var(--surface-2)]">
           {rows.map((row) => (
-            <div key={row.modelRef} className="grid min-h-11 grid-cols-[minmax(0,1fr)_86px_54px] items-center gap-2 border-b border-[var(--border)] px-3 last:border-b-0">
+            <div key={row.modelRef} className="grid min-h-11 grid-cols-[minmax(0,1fr)_86px_54px] items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] px-3 last:border-b-0">
               <div className="min-w-0">
                 <div className="truncate text-[12px] font-semibold text-[var(--text-1)]">{row.modelRef}</div>
                 <div className="truncate text-[11px] text-[var(--text-3)]">{row.label}</div>
               </div>
-              <span className="justify-self-end rounded-[7px] border border-[var(--border)] px-2 py-1 text-[12px] font-semibold text-[var(--text-2)]">
+              <span className="justify-self-end rounded-[7px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-semibold text-[var(--text-2)]">
                 {formatContextWindow(row.tokens)}
               </span>
               {row.custom ? (
-                <button type="button" disabled={disabled} onClick={() => onRemove(row.modelRef)} className="text-[12px] font-medium text-[var(--lume-danger)] disabled:opacity-40">移除</button>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onRemove(row.modelRef)}
+                  className="text-[12px] font-medium text-[var(--lume-danger)] disabled:opacity-40"
+                >
+                  移除
+                </Button>
               ) : (
                 <span className="text-right text-[11px] text-[var(--text-3)]">内置</span>
               )}
@@ -1200,35 +1225,36 @@ function ProviderConfigurationWorkbench({
   const activeLabel = activeProviderRow?.label ?? PROVIDER_LABELS[activeProvider as ProviderType]
 
   return (
-    <div className="grid min-h-[365px] grid-cols-[282px_minmax(0,1fr)] items-stretch overflow-hidden rounded-[9px] border border-[var(--border)] bg-[var(--surface-1)]">
-      <div className="relative min-h-0 rounded-l-[9px] border-r border-[var(--border)] bg-[var(--surface-1)]">
-        <div className="absolute inset-0 flex min-h-0 flex-col p-4">
+    <div className="lume-subpanel grid min-h-[365px] grid-cols-[276px_minmax(0,1fr)] items-stretch overflow-hidden rounded-[9px]">
+      <div className="relative min-h-0 bg-[var(--surface-2)]">
+        <div className="absolute inset-0 flex min-h-0 flex-col p-3">
           {/* 分组标签栏 */}
           <div className="flex flex-wrap gap-1">
             {PROVIDER_GROUPS.map((group) => (
-              <button
+              <Button
+                variant="ghost"
                 key={group.key}
                 type="button"
                 onClick={() => onActiveGroupChange(group.key)}
                 className={cn(
                   'rounded-[5px] px-2 py-1 text-[11px] font-medium transition-colors',
                   activeGroup === group.key
-                    ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                    ? 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]'
                     : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
                 )}
               >
                 {group.label}
-              </button>
+              </Button>
             ))}
           </div>
 
           <div className="relative mt-2">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]" />
-            <input
+            <Input
               value={providerSearch}
               onChange={(event) => onProviderSearchChange(event.target.value)}
               placeholder="搜索供应商"
-              className="h-8 w-full rounded-[7px] border border-[var(--border)] bg-[var(--surface-1)] pl-9 pr-3 text-[12px] font-medium text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+              className="h-8 w-full rounded-[7px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-1)] pl-9 pr-3 text-[12px] font-medium text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
             />
           </div>
 
@@ -1251,7 +1277,8 @@ function ProviderConfigurationWorkbench({
 
           {/* 自定义分组：添加按钮 */}
           {activeGroup === 'custom' && (
-            <button
+            <Button
+              variant="ghost"
               type="button"
               onClick={() => {
                 onActiveProviderChange('__new_custom__')
@@ -1260,12 +1287,12 @@ function ProviderConfigurationWorkbench({
             >
               <span className="text-[14px]">＋</span>
               添加自定义供应商
-            </button>
+            </Button>
           )}
         </div>
       </div>
 
-      <div className="min-w-0 rounded-r-[9px] bg-[var(--surface-1)] p-4">
+      <div className="min-w-0 border-l border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] bg-[var(--surface-1)] p-4">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h3 className="text-[15px] font-semibold leading-5 text-[var(--text-1)]">{activeLabel}</h3>
@@ -1285,12 +1312,12 @@ function ProviderConfigurationWorkbench({
         </div>
 
         {apiKeyLoading ? (
-          <div className="flex h-[290px] items-center gap-2 rounded-[9px] border border-[var(--border)] px-4 text-[13px] text-[var(--text-3)]">
+          <div className="flex h-[290px] items-center gap-2 rounded-[9px] bg-[var(--surface-2)] px-4 text-[13px] text-[var(--text-3)]">
             <Loader2 size={14} className="animate-spin" />
             加载供应商详情...
           </div>
         ) : (
-          <div className="rounded-[9px] border border-[var(--border)] p-4">
+          <div className="rounded-[9px] bg-[var(--surface-1)]">
             <ChannelForm
               key={activeProviderRow?.channelId ?? activeProvider}
               mode={activeChannel ? 'edit' : 'create'}
@@ -1323,14 +1350,15 @@ function ProviderListItem({
   const connected = Boolean(row.channel?.enabled)
 
   return (
-    <button
+    <Button
+      variant="ghost"
       type="button"
       onClick={onClick}
       className={cn(
-        'grid h-9 w-full grid-cols-[28px_minmax(0,1fr)_56px_14px] items-center gap-2 rounded-[7px] border px-2 text-left transition-colors',
+        'grid h-9 w-full grid-cols-[28px_minmax(0,1fr)_56px_14px] items-center gap-2 rounded-[7px] px-2 text-left transition-colors',
         selected
-          ? 'border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-          : 'border-transparent bg-[var(--surface-1)] text-[#3d465d] hover:border-[var(--border)]'
+          ? 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]'
+          : 'text-[var(--text-2)] hover:bg-[var(--surface-1)] hover:text-[var(--text-1)]'
       )}
     >
       <span className={cn('flex size-6 items-center justify-center rounded-[6px]', row.tone)}>
@@ -1338,7 +1366,7 @@ function ProviderListItem({
       </span>
       <span className="truncate text-[12px] font-semibold">{row.label}</span>
       <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]">
-        <span className={cn('size-1.5 rounded-full', connected ? 'bg-[#22c76f]' : configured ? 'bg-[var(--text-3)]' : 'bg-[#b8c0cf]')} />
+        <span className={cn('size-1.5 rounded-full', connected ? 'bg-[var(--lume-success)]' : configured ? 'bg-[var(--text-3)]' : 'bg-[var(--border-strong)]')} />
         {configured ? '已配置' : '未配置'}
       </span>
       {showDelete && onDelete ? (
@@ -1347,14 +1375,14 @@ function ProviderListItem({
           tabIndex={0}
           onClick={(e) => { e.stopPropagation(); onDelete() }}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onDelete() } }}
-          className="text-[var(--text-3)] hover:text-[#ff4d57] cursor-pointer"
+          className="cursor-pointer text-[var(--text-3)] hover:text-[var(--lume-danger)]"
         >
           <Trash2 size={14} />
         </span>
       ) : (
         <ChevronDown size={14} className="-rotate-90 text-[var(--text-3)]" />
       )}
-    </button>
+    </Button>
   )
 }
 
@@ -1370,12 +1398,12 @@ function SettingsCard({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel px-4 py-3">
       {(title || action) && (
-        <div className="mb-3 flex min-h-8 items-start justify-between gap-4">
+        <div className="mb-3 flex min-h-8 items-start justify-between gap-4 border-b border-[color:color-mix(in_oklab,var(--border)_48%,transparent)] pb-3">
           <div className="min-w-0">
-            {title && <h2 className="text-[16px] font-semibold leading-6 text-[var(--text-1)]">{title}</h2>}
-            {description && <p className="mt-0.5 text-[11px] font-medium leading-4 text-[var(--text-3)]">{description}</p>}
+            {title && <h2 className="text-[15px] font-semibold leading-5 text-[var(--text-1)]">{title}</h2>}
+            {description && <p className="mt-1 text-[12px] leading-4 text-[var(--text-3)]">{description}</p>}
           </div>
           {action}
         </div>
@@ -1385,24 +1413,12 @@ function SettingsCard({
   )
 }
 
-function SelectShell({ className, children }: { className?: string; children: React.ReactNode }) {
-  return (
-    <div className={cn('relative h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)]', className)}>
-      {children}
-      <ChevronDown
-        size={15}
-        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-3)]"
-      />
-    </div>
-  )
-}
-
 function LumeSwitch(props: React.ComponentProps<typeof Switch>) {
   return (
     <Switch
       {...props}
       className={cn(
-        'data-[size=default]:h-[18px] data-[size=default]:w-[32px] data-checked:bg-[var(--brand)] data-unchecked:bg-[#d8dee9]',
+        'data-[size=default]:h-[18px] data-[size=default]:w-[32px] data-checked:bg-[var(--brand)] data-unchecked:bg-[var(--surface-3)]',
         '[&_[data-slot=switch-thumb]]:size-[14px] data-checked:[&_[data-slot=switch-thumb]]:translate-x-[14px]'
       )}
     />

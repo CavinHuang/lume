@@ -64,6 +64,8 @@ import {
 } from './reading-view-state'
 import { renderReadingCardElementToPngBase64 } from './reading-card-export'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface WereadBookDetailState {
   loading: boolean
   bookmarks: WereadTextItem[]
@@ -74,16 +76,16 @@ interface WereadBookDetailState {
 }
 
 const readingThemeVars = {
-  '--reading-accent': '#9a7444',
-  '--reading-accent-foreground': '#fffdf8',
-  '--reading-bg': 'color-mix(in oklab, var(--background) 96%, #f4ecdf)',
-  '--reading-rail': 'color-mix(in oklab, var(--surface-1) 92%, #f4ecdf)',
-  '--reading-panel': 'color-mix(in oklab, var(--surface-1) 88%, #f0e5d6)',
-  '--reading-card': 'color-mix(in oklab, var(--surface-1) 96%, #fbf6ee)',
-  '--reading-soft': 'color-mix(in oklab, var(--surface-2) 88%, #f4ecdf)',
-  '--reading-active': 'color-mix(in oklab, #9a7444 16%, var(--surface-1))',
-  '--reading-pill': 'color-mix(in oklab, #9a7444 14%, var(--surface-1))',
-  '--reading-border': 'color-mix(in oklab, var(--border) 80%, #d9cdbb)',
+  '--reading-accent': 'var(--brand)',
+  '--reading-accent-foreground': 'var(--brand-foreground)',
+  '--reading-bg': 'var(--background)',
+  '--reading-rail': 'var(--surface-1)',
+  '--reading-panel': 'var(--surface-2)',
+  '--reading-card': 'var(--surface-1)',
+  '--reading-soft': 'var(--surface-2)',
+  '--reading-active': 'color-mix(in oklab, var(--brand) 10%, var(--surface-1))',
+  '--reading-pill': 'color-mix(in oklab, var(--brand) 8%, var(--surface-1))',
+  '--reading-border': 'color-mix(in oklab, var(--border) 52%, transparent)',
   '--reading-serif': '"Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", STSong, SimSun, serif',
 } as CSSProperties
 
@@ -406,7 +408,8 @@ export function ReadingView() {
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex shrink-0 items-center gap-1 border-b border-[var(--reading-border)] bg-[var(--reading-rail)] px-4 py-2">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => { setViewTab("reading"); setSelectedId("__all__") }}
             className={cn(
@@ -417,8 +420,9 @@ export function ReadingView() {
             )}
           >
             一起读书
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setViewTab("routine")}
             className={cn(
@@ -429,7 +433,7 @@ export function ReadingView() {
             )}
           >
             今日日程
-          </button>
+          </Button>
         </div>
         <div className="flex min-h-0 flex-1">
           {viewTab === "reading" && (
@@ -437,7 +441,8 @@ export function ReadingView() {
             <div className="flex h-full min-h-0 flex-col gap-4">
               <div className="shrink-0 space-y-2">
                 {rail?.items.map((item) => (
-                  <button
+                  <Button
+                variant="ghost"
                     key={item.id}
                     type="button"
                     onClick={() => selectReadingItem(item.id)}
@@ -453,21 +458,22 @@ export function ReadingView() {
                       <span className="block truncate text-[12px] font-normal">{item.title}</span>
                       <ReadingRailItemMeta item={item} />
                     </span>
-                  </button>
+                  </Button>
                 ))}
               </div>
 
               {rail?.showWereadPrompt && wereadPrompt && (
-                <div className="shrink-0 rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-3">
+                <div className="shrink-0 rounded-[8px] bg-[var(--reading-card)] p-3">
                   <div className="text-[13px] font-semibold text-[var(--text-1)]">{wereadPrompt.title}</div>
                   <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{wereadPrompt.body}</p>
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={openReadingSettings}
                     className="mt-2 h-8 w-full rounded-[6px] bg-[var(--brand)] text-[12px] font-medium text-[var(--brand-foreground)]"
                   >
                     {wereadPrompt.actionLabel}
-                  </button>
+                  </Button>
                 </div>
               )}
 
@@ -499,16 +505,18 @@ export function ReadingView() {
               <div className="flex items-center justify-between gap-4">
                 <h1 className="text-[21px] font-semibold tracking-normal">一起读书</h1>
                 <div className="flex items-center gap-2">
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => setSearchModalOpen(true)}
                     className="flex h-9 items-center gap-2 rounded-[8px] bg-[var(--reading-card)] px-3 text-[13px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
                   >
                     <Search size={15} />
                     搜索书籍
-                  </button>
+                  </Button>
                   {canRunReading && (
-                    <button
+                    <Button
+                variant="ghost"
                       type="button"
                       onClick={handleRunReading}
                       disabled={runningReading}
@@ -516,7 +524,7 @@ export function ReadingView() {
                     >
                       <RefreshCw size={15} className={runningReading ? 'animate-spin' : undefined} />
                       {runningReading ? '正在写' : '写一条'}
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -566,20 +574,22 @@ export function ReadingView() {
                       连接后，Lume 能看到你的书架、划线和想法，聊到相关话题时会自动关联你读过的内容，也能帮你整理别人精彩的书评。
                     </p>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <button
+                      <Button
+                variant="ghost"
                         type="button"
                         onClick={() => void openWereadKeyPage()}
                         className="h-9 rounded-[6px] bg-[var(--brand)] text-[13px] font-medium text-[var(--brand-foreground)]"
                       >
                         获取 API KEY
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                variant="ghost"
                         type="button"
                         onClick={openReadingSettings}
                         className="h-9 rounded-[6px] bg-[var(--reading-card)] text-[13px] font-medium text-[var(--text-1)]"
                       >
                         去设置中填入
-                      </button>
+                      </Button>
                     </div>
                   </section>
                 )}
@@ -592,7 +602,7 @@ export function ReadingView() {
 
                 <div className="space-y-5">
                   {visibleNotes.length === 0 && (
-                    <div className="rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] px-6 py-6 text-center text-[13px] text-[var(--text-3)]">
+                    <div className="rounded-[8px] bg-[var(--reading-card)] px-6 py-6 text-center text-[13px] text-[var(--text-3)]">
                       还没有读书笔记
                     </div>
                   )}
@@ -608,7 +618,7 @@ export function ReadingView() {
                     >
                       <article
                         ref={(element) => { noteRefs.current[note.id] = element }}
-                        className="rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-5 shadow-[0_10px_28px_-24px_rgba(18,22,32,0.32)]"
+                        className="rounded-[8px] bg-[var(--reading-card)] p-5"
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div>
@@ -662,7 +672,7 @@ export function ReadingView() {
       </div>
 
       {showNav && (
-        <div className="fixed right-6 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-1 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-1 shadow-[0_18px_40px_-28px_rgba(18,22,32,0.42)]">
+        <div className="fixed right-6 top-1/2 z-30 flex -translate-y-1/2 flex-col gap-1 rounded-[8px] bg-[var(--surface-1)] p-1 shadow-[0_14px_36px_-28px_hsl(var(--lume-shadow-panel)/0.5)]">
           <NavButton title="顶部" onClick={() => scrollToNote(navigation.topId)} icon={<ChevronsUp size={17} />} />
           <NavButton title="上一条" onClick={() => scrollToNote(navigation.previousId)} icon={<ChevronUp size={17} />} />
           <NavButton title="下一条" onClick={() => scrollToNote(navigation.nextId)} icon={<ChevronDown size={17} />} />
@@ -754,14 +764,15 @@ function WereadRailGroup({
   if (books.length === 0) return null
   return (
     <div>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={onToggle}
         className="mb-2 flex h-6 w-full items-center justify-between rounded-[6px] px-1 text-left text-[12px] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
       >
         <span>{title}</span>
         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-      </button>
+      </Button>
       {expanded && <div className="space-y-1.5">
         {books.map((book) => (
           <WereadRailBookButton
@@ -787,7 +798,8 @@ function WereadRailBookButton({
 }) {
   const badgeLabel = formatWereadNotebookBadgeLabel(book.noteCount)
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onSelect}
       className={cn(
@@ -809,7 +821,7 @@ function WereadRailBookButton({
       {book.progressLabel && (
         <span className="shrink-0 text-[12px] text-[var(--text-3)]">{book.progressLabel}</span>
       )}
-    </button>
+    </Button>
   )
 }
 
@@ -900,21 +912,22 @@ function WereadBookPanel({
               <div className="rounded-[8px] bg-[var(--reading-panel)] px-5 py-7 text-center">
                 <div className="text-[13px] text-[var(--text-3)]">还没有读书笔记</div>
                 {book.localBookId && (
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={onRunReading}
                     disabled={runningReading}
                     className="mt-4 rounded-[8px] bg-[var(--reading-accent)] px-4 py-2 text-[13px] font-medium text-[var(--reading-accent-foreground)] disabled:opacity-65"
                   >
                     {runningReading ? 'Lume 正在认真读...' : '让 Lume 帮我写一份'}
-                  </button>
+                  </Button>
                 )}
               </div>
             ) : localNotes.map((note) => (
               <div key={note.id} className="space-y-2">
                 <article
                   ref={(element) => { localNoteRefs.current[note.id] = element }}
-                  className="rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] p-4"
+                  className="rounded-[8px] bg-[var(--reading-card)] p-4"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
@@ -946,7 +959,8 @@ function WereadBookPanel({
 
 function WereadTabButton({ active, label, count, onClick }: { active: boolean; label: string; count?: number; onClick: () => void }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onClick}
       className={cn(
@@ -955,7 +969,7 @@ function WereadTabButton({ active, label, count, onClick }: { active: boolean; l
       )}
     >
       {label}{typeof count === 'number' && count > 0 ? ` · ${count}` : ''}
-    </button>
+    </Button>
   )
 }
 
@@ -1055,28 +1069,31 @@ function formatWereadReadHours(seconds: number | undefined): string {
 
 function NavButton({ title, icon, onClick }: { title: string; icon: ReactNode; onClick: () => void }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       title={title}
       onClick={onClick}
       className="flex size-9 items-center justify-center rounded-[6px] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
     >
       {icon}
-    </button>
+    </Button>
   )
 }
 
 function ReadingNoteActions({ onChat, onSave }: { onChat: () => void; onSave: () => void }) {
   return (
     <div className="flex justify-end gap-3 px-1 text-[11px] text-[var(--text-3)]">
-      <button type="button" onClick={onChat} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
+      <Button
+                variant="ghost" type="button" onClick={onChat} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
         <MessageSquare size={14} />
         聊一聊
-      </button>
-      <button type="button" onClick={onSave} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
+      </Button>
+      <Button
+                variant="ghost" type="button" onClick={onSave} className="flex items-center gap-1.5 hover:text-[var(--text-1)]">
         <ImageDown size={14} />
         存为图片
-      </button>
+      </Button>
     </div>
   )
 }
@@ -1148,43 +1165,45 @@ function BookSearchModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[color:color-mix(in_oklab,var(--text-1)_32%,transparent)]" onClick={onClose}>
       <div
-        className="flex max-h-[80vh] w-[520px] flex-col overflow-hidden rounded-[12px] border border-[var(--reading-border)] bg-[var(--reading-panel)] shadow-[0_24px_64px_-16px_rgba(18,22,32,0.5)]"
+        className="flex max-h-[80vh] w-[520px] flex-col overflow-hidden rounded-[12px] border border-[var(--reading-border)] bg-[var(--reading-panel)] shadow-[0_24px_64px_-28px_hsl(var(--lume-shadow-panel)/0.5)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--reading-border)] px-5 py-4">
           <h2 className="text-[16px] font-semibold text-[var(--text-1)]">搜索书籍</h2>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={onClose}
             className="flex size-7 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <X size={16} />
-          </button>
+          </Button>
         </div>
 
         {/* Search bar */}
         <div className="flex items-center gap-2 border-b border-[var(--reading-border)] px-5 py-3">
           <div className="flex flex-1 items-center gap-2 rounded-[8px] bg-[var(--reading-card)] px-3 py-2">
             <Search size={14} className="shrink-0 text-[var(--text-3)]" />
-            <input
+            <Input
               value={searchDraft}
               onChange={(e) => onSearchDraftChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') onSearch() }}
               placeholder="搜索书名或作者..."
-              className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-[var(--text-3)]"
+              className="min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
               autoFocus
             />
           </div>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={onSearch}
             className="h-9 shrink-0 rounded-[8px] bg-[var(--reading-accent)] px-4 text-[13px] font-medium text-[var(--reading-accent-foreground)] transition-opacity hover:opacity-90"
           >
             搜索
-          </button>
+          </Button>
         </div>
 
         {/* Results */}
@@ -1212,7 +1231,7 @@ function BookSearchModal({
                           <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[var(--text-3)]">
                             {typeof item.rating === 'number' && (
                               <>
-                                <span className="text-[#ffc107]">{renderStars(item.rating)}</span>
+                                <span className="text-[var(--lume-warning)]">{renderStars(item.rating)}</span>
                                 <span className="font-medium text-[var(--text-2)]">{(item.rating / 10).toFixed(1)}</span>
                               </>
                             )}
@@ -1228,7 +1247,8 @@ function BookSearchModal({
 
                       {/* Actions */}
                       <div className="flex shrink-0 items-center gap-1.5 invisible group-hover:visible">
-                        <button
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={() => onAdd(item.id)}
                           disabled={item.alreadyAdded || addingSearchItemId === item.id}
@@ -1236,28 +1256,30 @@ function BookSearchModal({
                         >
                           {item.alreadyAdded ? <Check size={10} /> : <Plus size={10} />}
                           {item.alreadyAdded ? '已添加' : '推荐'}
-                        </button>
+                        </Button>
                         {!item.alreadyAdded && (
-                          <button
+                          <Button
+                variant="ghost"
                             type="button"
                             onClick={() => onAdd(item.id)}
                             disabled={addingSearchItemId === item.id}
                             className="flex h-6 items-center gap-1 rounded-[4px] border border-[var(--reading-accent)] bg-[var(--reading-card)] px-2 text-[10px] font-medium text-[var(--reading-accent)] transition-colors hover:bg-[var(--reading-accent)] hover:text-[var(--reading-accent-foreground)] disabled:cursor-default disabled:opacity-50"
                           >
                             Lume 评价
-                          </button>
+                          </Button>
                         )}
                       </div>
 
                       {/* Expand toggle */}
                       {canExpand && (
-                        <button
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={() => void handleToggleExpand(item)}
                           className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
                         >
                           {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
+                        </Button>
                       )}
                     </div>
 

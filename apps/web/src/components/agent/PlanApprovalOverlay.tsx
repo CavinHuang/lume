@@ -8,6 +8,8 @@ import { cn } from '@/lib/utils'
 import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
 import type { AgentTaskApprovalRequest, AgentTaskApprovalResponseInput, AgentTaskApprovalResponseResult } from '@lume/shared'
 
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 type PlanApprovalChoice = 'approve' | 'revise'
 
 interface PlanApprovalOverlayProps {
@@ -137,7 +139,8 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
       onSubmit={() => void submit()}
     >
       <div className="space-y-1">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             data-enter-submits
             onClick={() => {
@@ -154,7 +157,7 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
               是，实施此计划
               {choice === 'approve' && <Check size={15} className="text-[#5f9cff]" />}
             </span>
-          </button>
+          </Button>
 
           <div
             onClick={() => setChoice('revise')}
@@ -167,7 +170,7 @@ export function PlanApprovalOverlay({ threadId, request, onVisibilityChange }: P
               <span className="w-7 shrink-0 text-[#b0b4bc]">2.</span>
               <span className="min-w-0 flex-1 font-semibold">否，请告知 Lume 如何调整</span>
             </div>
-            <textarea
+            <Textarea
               value={feedback}
               onFocus={() => setChoice('revise')}
               onChange={(event) => {

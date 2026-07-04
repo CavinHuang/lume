@@ -9,6 +9,7 @@ import { removePendingAskUserQuestion } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
 
+import { Button } from '@/components/ui/button'
 interface AskUserBannerProps {
   threadId: string
   request: AgentAskUserQuestionRequest
@@ -93,7 +94,8 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
             <p className="mb-1.5 px-1 text-[13px] font-semibold leading-5 text-[#1f232b]">{q.question}</p>
             <div className="space-y-1">
               {q.options.map((opt) => (
-                <button
+                <Button
+                variant="ghost"
                   key={opt.label}
                   type="button"
                   data-enter-submits
@@ -112,7 +114,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                   {opt.description && opt.description !== opt.label && (
                     <span className="ml-3 max-w-[45%] truncate text-[12px] font-medium text-[#9aa0aa]">{opt.description}</span>
                   )}
-                </button>
+                </Button>
               ))}
             </div>
           </div>

@@ -3,6 +3,7 @@ import { useRef, useState } from 'react'
 import type { AgentMessageQueueSnapshot, AgentQueuedMessage } from '@lume/shared'
 import { cn } from '@/lib/utils'
 
+import { Button } from '@/components/ui/button'
 type QueueDropPlacement = 'before' | 'after'
 
 interface AgentMessageQueueListProps {
@@ -117,7 +118,8 @@ function QueuedMessageRow({
       <GripVertical size={15} strokeWidth={2} className="shrink-0 cursor-grab text-[var(--text-3)]" />
       <CornerDownRight size={15} strokeWidth={2} className="shrink-0 text-[var(--text-3)]" />
       <span className="min-w-0 flex-1 truncate font-medium text-[var(--text-2)]">{item.text}</span>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={onPromoteToGuidance}
         className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[color:color-mix(in_oklab,var(--surface-3)_76%,transparent)] px-3 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:text-[var(--text-1)]"
@@ -125,33 +127,37 @@ function QueuedMessageRow({
       >
         <CornerDownRight size={14} strokeWidth={2} />
         引导
-      </button>
-      <button
+      </Button>
+      <Button
+                variant="ghost"
         type="button"
         onClick={onRemove}
         className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_70%,transparent)] hover:text-[var(--text-1)]"
         title="删除排队消息"
       >
         <Trash2 size={14} strokeWidth={2} />
-      </button>
-      <button
+      </Button>
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => setMenuOpen((open) => !open)}
         className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--surface-3)_72%,transparent)] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
         title="更多"
       >
         <MoreHorizontal size={15} strokeWidth={2.1} />
-      </button>
+      </Button>
       {menuOpen && (
         <>
-          <button
+          <Button
+            variant="ghost"
             type="button"
             aria-label="关闭菜单"
-            className="fixed inset-0 z-10 cursor-default"
+            className="fixed inset-0 z-10 h-auto w-auto cursor-default bg-transparent p-0 hover:bg-transparent"
             onClick={() => setMenuOpen(false)}
           />
           <div className="absolute right-4 top-9 z-20 min-w-[132px] overflow-hidden rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] py-1 shadow-[0_14px_42px_rgba(28,32,58,0.16)]">
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => {
                 setMenuOpen(false)
@@ -161,8 +167,9 @@ function QueuedMessageRow({
             >
               <Edit3 size={14} strokeWidth={2} className="text-[var(--text-3)]" />
               编辑消息
-            </button>
-            <button
+            </Button>
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => {
                 setMenuOpen(false)
@@ -172,7 +179,7 @@ function QueuedMessageRow({
             >
               <CornerDownRight size={14} strokeWidth={2} className="text-[var(--text-3)]" />
               关闭排队
-            </button>
+            </Button>
           </div>
         </>
       )}

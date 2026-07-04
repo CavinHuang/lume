@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * AboutSettings - 关于页面
  *
@@ -27,13 +28,14 @@ export function AboutSettings() {
         <InfoRow
           label="项目地址"
           value={
-            <button
+            <Button
+                variant="ghost"
               onClick={() => openExternal(GITHUB_URL)}
               className="text-primary hover:underline inline-flex items-center gap-1"
             >
               GitHub
               <ExternalLink size={11} />
-            </button>
+            </Button>
           }
         />
       </div>

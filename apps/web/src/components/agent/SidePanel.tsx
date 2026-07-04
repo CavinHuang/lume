@@ -14,6 +14,8 @@ import { readMemory } from '@/lib/desktop-api/memory'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import type { Dispatch, PointerEvent as ReactPointerEvent, SetStateAction } from 'react'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 type FileTab = 'thread' | 'workspace' | 'memory'
 type PanelTabView = Exclude<SidePanelView, null>
 
@@ -255,25 +257,28 @@ export function SidePanel({
                       </div>
 
                       <div className="relative flex items-center" ref={menuRef}>
-                        <button
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={() => setMenuOpen((value) => !value)}
                           className="flex size-7 items-center justify-center rounded-md text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
                           title="更多操作"
                         >
                           <MoreHorizontal size={16} />
-                        </button>
+                        </Button>
                         {menuOpen && (
                           <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-60 rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[var(--popover)] p-1.5 text-[var(--popover-foreground)] shadow-[0_18px_42px_-28px_hsl(var(--shadow-panel)/0.42)]">
-                            <button
+                            <Button
+                variant="ghost"
                               type="button"
                               onClick={() => void handleCopyPath()}
                               className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[14px] transition-colors hover:bg-[var(--surface-2)]"
                             >
                               {copied ? <Check size={17} className="text-[var(--text-3)]" /> : <Copy size={17} className="text-[var(--text-3)]" />}
                               {copied ? '已复制路径' : '复制路径'}
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                variant="ghost"
                               type="button"
                               onClick={() => {
                                 setEnhancedView((value) => !value)
@@ -283,7 +288,7 @@ export function SidePanel({
                             >
                               <span className="text-[16px] text-[var(--text-3)]">{'{}'}</span>
                               {enhancedView ? '禁用增强视图' : '启用增强视图'}
-                            </button>
+                            </Button>
                           </div>
                         )}
                       </div>
@@ -347,36 +352,38 @@ export function SidePanel({
                     <div className="flex shrink-0 items-center px-4 pt-0">
                       <label className="flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_38%,transparent)] bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
                         <Search size={15} />
-                        <input
+                        <Input
                           value={searchQuery}
                           onChange={(event) => setSearchQuery(event.target.value)}
                           placeholder="筛选文件..."
-                          className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]/70"
+                          className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)]/70 focus-visible:ring-0"
                         />
                       </label>
                     </div>
                     <div className="shrink-0 px-4 pt-1">
-                      <div className="flex items-center gap-2 text-[12px] text-[var(--text-3)]">
-                        <button
+                      <div className="lume-segmented flex items-center gap-1">
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={() => setFileTab('thread')}
                           className={cn(
-                            'rounded-full px-3 py-1.5 transition-colors',
-                            fileTab === 'thread' ? 'bg-[var(--surface-2)] text-[var(--text-1)]' : 'hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+                            'lume-segmented-item px-3 text-[12px]',
+                            fileTab === 'thread' ? 'lume-segmented-item-active' : '',
                           )}
                         >
                           线程
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                variant="ghost"
                           type="button"
                           onClick={() => setFileTab('workspace')}
                           className={cn(
-                            'rounded-full px-3 py-1.5 transition-colors',
-                            fileTab === 'workspace' ? 'bg-[var(--surface-2)] text-[var(--text-1)]' : 'hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+                            'lume-segmented-item px-3 text-[12px]',
+                            fileTab === 'workspace' ? 'lume-segmented-item-active' : '',
                           )}
                         >
                           工作区
-                        </button>
+                        </Button>
                       </div>
                     </div>
 

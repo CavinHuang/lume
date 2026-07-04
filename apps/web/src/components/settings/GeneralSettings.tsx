@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { useAtom, useSetAtom } from 'jotai'
 import {
-  ChevronDown,
   FileCog,
   Loader2,
   Monitor,
@@ -21,6 +20,7 @@ import type {
   UpdateGeneralSettingsInput,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom } from '@/atoms'
 import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
@@ -35,6 +35,7 @@ import {
   normalizeProxyDraft,
 } from './general-settings-state'
 
+import { Input } from '@/components/ui/input'
 const THEME_ICONS: Record<ThemeMode, LucideIcon> = {
   system: Monitor,
   light: Sun,
@@ -153,7 +154,7 @@ export function GeneralSettings() {
 
   if (loading) {
     return (
-      <div className="flex h-[260px] items-center justify-center rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
+      <div className="lume-panel flex h-[260px] items-center justify-center text-[13px] text-[var(--text-3)]">
         <Loader2 size={14} className="mr-2 animate-spin" />
         加载通用设置...
       </div>
@@ -164,43 +165,51 @@ export function GeneralSettings() {
     <div className="space-y-3">
         <SettingsCard title="工作区">
           <SettingsRow label="默认工作区" desc="新会话默认使用的本地工作区">
-            <SelectShell className="w-[180px]">
-              <select
-                value={currentWorkspace?.id ?? ''}
-                onChange={(event) => setCurrentWorkspaceId(event.target.value || null)}
-                className="h-full w-full appearance-none bg-transparent pl-3 pr-8 text-[13px] font-medium text-[var(--text-2)] outline-none"
-              >
+            <Select
+              value={currentWorkspace?.id ?? '__none__'}
+              onValueChange={(value) => setCurrentWorkspaceId(value === '__none__' ? null : value)}
+            >
+              <SelectTrigger className="h-9 w-[180px] border-[color:color-mix(in_oklab,var(--border)_70%,transparent)] bg-[var(--surface-2)] text-[13px] font-medium text-[var(--text-2)] shadow-none focus-visible:ring-0">
+                <SelectValue>
+                  {(value) => {
+                    if (!value || value === '__none__') return '未选择'
+                    return workspaces.find((w) => w.id === value)?.name ?? '未选择'
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
                 {workspaces.length === 0 ? (
-                  <option value="">未选择</option>
+                  <SelectItem value="__none__">未选择</SelectItem>
                 ) : workspaces.map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+                  <SelectItem key={workspace.id} value={workspace.id}>{workspace.name}</SelectItem>
                 ))}
-              </select>
-            </SelectShell>
+              </SelectContent>
+            </Select>
           </SettingsRow>
         </SettingsCard>
 
         <SettingsCard title="外观">
           <SettingsRow label="主题">
-            <div className="grid h-9 w-[306px] grid-cols-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
+            <div className="lume-segmented grid w-[306px] grid-cols-3">
               {THEME_MODE_OPTIONS.map((option) => {
                 const Icon = THEME_ICONS[option.value]
                 return (
-                  <button
+                  <Button
+                variant="ghost"
                     key={option.value}
                     type="button"
                     onClick={() => handleThemeChange(option.value)}
                     disabled={saving}
                     className={cn(
-                      'inline-flex items-center justify-center gap-1.5 rounded-[6px] text-[13px] font-medium transition-colors disabled:opacity-60',
+                      'lume-segmented-item disabled:opacity-60',
                       settings.themeMode === option.value
-                        ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                        : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
+                        ? 'lume-segmented-item-active'
+                        : ''
                     )}
                   >
                     <Icon size={14} />
                     {option.label}
-                  </button>
+                  </Button>
                 )
               })}
             </div>
@@ -208,7 +217,7 @@ export function GeneralSettings() {
         </SettingsCard>
 
         <SettingsCard title="窗口行为">
-          <div className="divide-y divide-[var(--border)]">
+          <div className="divide-y divide-[color:color-mix(in_oklab,var(--border)_64%,transparent)]">
             <SettingsRow
               label="最小化到托盘"
               desc="点击最小化时保留后台运行"
@@ -243,30 +252,31 @@ export function GeneralSettings() {
         <SettingsCard title="网络代理">
           <div className="space-y-3">
             <SettingsRow label="代理模式" desc="用于 sidecar 中需要联网的工具">
-              <div className="grid h-9 w-[306px] grid-cols-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
+              <div className="lume-segmented grid w-[306px] grid-cols-3">
                 {PROXY_MODE_OPTIONS.map((option) => (
-                  <button
+                  <Button
+                variant="ghost"
                     key={option.value}
                     type="button"
                     onClick={() => handleProxyModeChange(option.value)}
                     disabled={saving}
                     title={option.desc}
                     className={cn(
-                      'inline-flex items-center justify-center gap-1.5 rounded-[6px] text-[13px] font-medium transition-colors disabled:opacity-60',
+                      'lume-segmented-item disabled:opacity-60',
                       proxyDraft.mode === option.value
-                        ? 'border border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                        : 'text-[var(--text-2)] hover:bg-[var(--surface-2)]'
+                        ? 'lume-segmented-item-active'
+                        : ''
                     )}
                   >
                     <Network size={14} />
                     {option.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </SettingsRow>
 
             {proxyDraft.mode === 'system' && (
-              <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 text-[var(--text-3)]">
+              <div className="rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 text-[var(--text-3)]">
                 <div>HTTP: {proxyStatus?.systemProxy.httpProxy || '未检测到'}</div>
                 <div>HTTPS: {proxyStatus?.systemProxy.httpsProxy || proxyStatus?.systemProxy.httpProxy || '未检测到'}</div>
                 <div>NO_PROXY: {proxyStatus?.systemProxy.noProxy || '未设置'}</div>
@@ -305,7 +315,7 @@ export function GeneralSettings() {
                 variant="outline"
                 disabled={!proxyChanged || saving}
                 onClick={handleSaveProxy}
-                className="h-9 rounded-[8px] border-[color-mix(in_oklab,var(--brand)_25%,var(--border-strong))] bg-[var(--surface-1)] px-4 text-[13px] font-medium text-[var(--brand)] shadow-none hover:bg-[color-mix(in_oklab,var(--brand)_8%,var(--surface-1))] disabled:opacity-50"
+                className="h-9 rounded-[8px] border-transparent bg-[color-mix(in_oklab,var(--brand)_8%,var(--surface-1))] px-4 text-[13px] font-medium text-[var(--brand)] shadow-none hover:bg-[color-mix(in_oklab,var(--brand)_12%,var(--surface-1))] disabled:opacity-50"
               >
                 保存代理
               </Button>
@@ -329,7 +339,7 @@ export function GeneralSettings() {
 
 function SettingsCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel-padded">
       <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">{title}</h2>
       {children}
     </section>
@@ -352,18 +362,6 @@ function SettingsRow({
         {desc && <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">{desc}</div>}
       </div>
       <div className="shrink-0">{children}</div>
-    </div>
-  )
-}
-
-function SelectShell({ className, children }: { className?: string; children: React.ReactNode }) {
-  return (
-    <div className={cn('relative h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)]', className)}>
-      {children}
-      <ChevronDown
-        size={15}
-        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-2)]"
-      />
     </div>
   )
 }
@@ -396,12 +394,12 @@ function ProxyInput({
   return (
     <label className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-2 text-[12px] font-medium text-[var(--text-2)]">
       <span>{label}</span>
-      <input
+      <Input
         value={value}
         placeholder={placeholder}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 min-w-0 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-1)] outline-none transition-colors placeholder:text-[var(--text-3)] focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))] disabled:opacity-60"
+        className="h-9 min-w-0 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_70%,transparent)] bg-[var(--surface-2)] px-3 text-[13px] font-medium text-[var(--text-1)] outline-none transition-colors placeholder:text-[var(--text-3)] focus:border-[color-mix(in_oklab,var(--brand)_50%,var(--border-strong))] disabled:opacity-60"
       />
     </label>
   )
@@ -421,7 +419,7 @@ function QuickAction({
       type="button"
       variant="outline"
       onClick={onClick}
-      className="h-10 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] text-[13px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
+      className="lume-action-tile h-10 gap-2 shadow-none"
     >
       <Icon size={15} />
       {label}

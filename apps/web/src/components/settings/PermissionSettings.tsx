@@ -9,6 +9,7 @@ import type {
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   getEffectiveLumeConfig,
   updateAgentPermissionMode,
@@ -31,6 +32,7 @@ import {
   type PermissionSettingsDraft,
 } from './permission-settings-state'
 
+import { Input } from '@/components/ui/input'
 const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   shield: Shield,
   pencil: Pencil,
@@ -169,7 +171,7 @@ export function PermissionSettings() {
 
   if (loading || !draft) {
     return (
-      <div className="flex h-[280px] items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] text-[13px] text-[var(--text-3)]">
+      <div className="lume-panel flex h-[280px] items-center justify-center text-[13px] text-[var(--text-3)]">
         <Loader2 size={14} className="mr-2 animate-spin" />
         加载权限设置...
       </div>
@@ -178,7 +180,7 @@ export function PermissionSettings() {
 
   return (
     <div className="space-y-4">
-      <section className="flex flex-wrap items-center justify-between gap-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <section className="lume-panel flex flex-wrap items-center justify-between gap-3 px-4 py-3">
         <div className="min-w-0">
           <div className="text-[14px] font-semibold text-[var(--text-1)]">配置作用域</div>
           <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
@@ -187,15 +189,19 @@ export function PermissionSettings() {
         </div>
         <label className="flex min-w-[260px] max-w-full items-center gap-2 text-[12px] font-medium text-[var(--text-2)]">
           作用域
-          <select
+          <Select
             value={scopeValue}
-            onChange={(event) => setScopeValue(event.target.value)}
-            className="h-9 min-w-0 flex-1 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none"
+            onValueChange={(value) => { if (value) setScopeValue(value) }}
           >
+            <SelectTrigger className="h-9 min-w-0 flex-1 border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
             {scopeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
             ))}
-          </select>
+            </SelectContent>
+          </Select>
         </label>
       </section>
 
@@ -208,15 +214,16 @@ export function PermissionSettings() {
             const selected = draft.permissionMode === option.value
             const Icon = ICON_MAP[option.icon]
             return (
-              <button
+              <Button
+                variant="ghost"
                 key={option.value}
                 type="button"
                 onClick={() => void handlePermissionModeChange(option.value)}
                 className={cn(
-                  'flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                  'lume-subpanel flex h-auto min-h-[52px] w-full items-center justify-start gap-2.5 px-2.5 py-2 text-left whitespace-normal transition-colors',
                   selected
                     ? 'border-[color:color-mix(in_oklab,var(--brand)_34%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_8%,var(--surface-1))]'
-                    : 'border-transparent hover:bg-[var(--surface-2)]',
+                    : 'hover:bg-[var(--surface-1)]',
                 )}
               >
                 <span className={cn('flex size-7 shrink-0 items-center justify-center rounded-full border', TONE_CLASS[option.tone])}>
@@ -232,7 +239,7 @@ export function PermissionSettings() {
                   <span className="mt-0.5 block truncate text-[11px] text-[var(--text-3)]">{option.desc}</span>
                 </span>
                 {selected && <Check size={14} className="shrink-0 text-[var(--brand)]" />}
-              </button>
+              </Button>
             )
           })}
         </div>
@@ -261,28 +268,32 @@ export function PermissionSettings() {
                   key={`${rule.id ?? 'rule'}-${index}`}
                   className="grid grid-cols-[150px_minmax(120px,1fr)_minmax(190px,1.2fr)_minmax(170px,1fr)_36px] gap-2"
                 >
-                  <select
+                  <Select
                     value={rule.action}
-                    onChange={(event) => updateRule(index, { action: event.target.value as LumeConfigPermissionRuleAction })}
-                    className="h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none"
+                    onValueChange={(value) => { if (value) updateRule(index, { action: value as LumeConfigPermissionRuleAction }) }}
                   >
+                    <SelectTrigger className="h-9 w-full border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] shadow-none focus-visible:ring-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
                     {RULE_ACTION_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
-                  </select>
-                  <input
+                    </SelectContent>
+                  </Select>
+                  <Input
                     value={rule.tool}
                     onChange={(event) => updateRule(index, { tool: event.target.value })}
                     placeholder="bash"
                     className="h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
                   />
-                  <input
+                  <Input
                     value={rule.commandPattern}
                     onChange={(event) => updateRule(index, { commandPattern: event.target.value })}
                     placeholder="npm\\s+install"
                     className="h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
                   />
-                  <input
+                  <Input
                     value={rule.pathPattern}
                     onChange={(event) => updateRule(index, { pathPattern: event.target.value })}
                     placeholder="src/**"
@@ -339,7 +350,7 @@ function SettingsCard({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel-padded">
       <div className="mb-4">
         <h3 className="text-[16px] font-semibold text-[var(--text-1)]">{title}</h3>
         {description && <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{description}</p>}

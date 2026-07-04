@@ -53,6 +53,9 @@ import { listChannels } from '@/lib/desktop-api/channel'
 import type { AutomationJob, AutomationRun, AutomationSchedule, Channel } from '@lume/shared'
 import { openAutomationRunReplay } from './automation-run-replay'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 interface WorkspaceOption {
   id: string
   name: string
@@ -373,26 +376,29 @@ export function AutomationManagementView() {
                 <div>
                   <h1 className="text-[22px] font-semibold leading-7 text-[var(--text-1)]">自动化</h1>
                   <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">
-                    按计划或按需运行聊天。<button type="button" className="text-[var(--brand)]">了解更多</button>
+                    按计划或按需运行聊天。<Button
+                variant="ghost" type="button" className="text-[var(--brand)]">了解更多</Button>
                   </p>
                 </div>
 
                 <div className="relative flex items-center gap-2">
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => setTemplatesOpen(true)}
                     className="h-8 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-1)] shadow-[0_1px_2px_rgba(31,35,70,0.04)] transition-colors hover:bg-[var(--surface-2)]"
                   >
                     查看模板
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => setMenuOpen((value) => !value)}
                     className="flex h-8 items-center gap-1.5 rounded-[8px] bg-[var(--brand)] px-3 text-[13px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
                   >
                     手动创建
                     <ChevronDown size={14} />
-                  </button>
+                  </Button>
 
                   {menuOpen && (
                     <div className="absolute right-0 top-10 z-20 w-[168px] rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-1.5 shadow-[0_18px_50px_rgba(28,32,58,0.18)]">
@@ -473,7 +479,8 @@ function EmptyAutomationState({
         {TEMPLATES.slice(0, 3).map((template) => {
           const Icon = template.icon
           return (
-            <button
+            <Button
+                variant="ghost"
               key={template.id}
               type="button"
               onClick={() => onCreateTemplate(template)}
@@ -481,7 +488,7 @@ function EmptyAutomationState({
             >
               <Icon size={17} />
               {template.name}
-            </button>
+            </Button>
           )
         })}
       </div>
@@ -501,7 +508,7 @@ function AutomationSourceTabs({
   onChange: (value: AutomationListTab) => void
 }) {
   return (
-    <div className="mt-8 inline-flex w-fit rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
+    <div className="lume-segmented mt-8 inline-flex w-fit">
       <AutomationSourceTabButton active={value === 'manual'} label="用户创建" count={manualCount} onClick={() => onChange('manual')} />
       <AutomationSourceTabButton active={value === 'system'} label="系统日程" count={systemCount} onClick={() => onChange('system')} />
     </div>
@@ -520,17 +527,18 @@ function AutomationSourceTabButton({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onClick}
-      className={`h-7 rounded-[6px] px-3 text-[12px] font-medium transition-colors ${
+      className={`lume-segmented-item px-3 text-[12px] ${
         active
-          ? 'bg-[var(--brand)] text-[var(--brand-foreground)]'
-          : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
+          ? 'lume-segmented-item-active'
+          : ''
       }`}
     >
       {label} {count}
-    </button>
+    </Button>
   )
 }
 
@@ -557,14 +565,15 @@ function AutomationList({ jobs, runs, onEdit, onSelect }: { jobs: AutomationJob[
           />
           {completedJobs.length > 0 && (
             <div>
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => setCompletedOpen((value) => !value)}
                 className="mb-2 flex h-7 items-center gap-1.5 text-[12px] font-medium text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
               >
                 {completedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 已完成 {completedJobs.length}
-              </button>
+              </Button>
               {completedOpen && (
                 <AutomationJobGroup
                   jobs={completedJobs}
@@ -684,46 +693,51 @@ function AutomationJobRow({
 
       {/* Hover：显示操作按钮 */}
       <div className="hidden items-center gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={onRun}
           title="立即运行"
           className="flex size-7 items-center justify-center rounded-[6px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
         >
           <Play size={15} />
-        </button>
-        <button
+        </Button>
+        <Button
+                variant="ghost"
           type="button"
           onClick={onEdit}
           title="编辑"
           className="flex size-7 items-center justify-center rounded-[6px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
         >
           <Pencil size={15} />
-        </button>
+        </Button>
         <div className="relative">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
             className="flex size-7 items-center justify-center rounded-[6px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <EllipsisVertical size={15} />
-          </button>
+          </Button>
           {menuOpen && (
             <div className="absolute right-0 top-9 z-20 w-[120px] rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-1 shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => { setMenuOpen(false); onToggle() }}
                 className="flex h-8 w-full items-center gap-2 rounded-[6px] px-2.5 text-left text-[13px] text-[var(--text-1)] hover:bg-[var(--surface-2)]"
               >
                 暂停
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => { setMenuOpen(false); onDelete() }}
                 className="flex h-8 w-full items-center gap-2 rounded-[6px] px-2.5 text-left text-[13px] text-red-500 hover:bg-[var(--surface-2)]"
               >
                 删除
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -845,9 +859,11 @@ function AutomationJobDetail({
     <>
       {/* 面包屑 */}
       <nav className="flex items-center gap-1.5 text-[14px] text-[var(--text-3)]">
-        <button type="button" onClick={onBack} className="transition-colors hover:text-[var(--text-1)]">主页</button>
+        <Button
+                variant="ghost" type="button" onClick={onBack} className="transition-colors hover:text-[var(--text-1)]">主页</Button>
         <ChevronRight size={14} />
-        <button type="button" onClick={onBack} className="transition-colors hover:text-[var(--text-1)]">工作流</button>
+        <Button
+                variant="ghost" type="button" onClick={onBack} className="transition-colors hover:text-[var(--text-1)]">工作流</Button>
         <ChevronRight size={14} />
         <span className="text-[var(--text-1)]">{editing ? draft.name : job.name}</span>
       </nav>
@@ -855,7 +871,7 @@ function AutomationJobDetail({
       {/* 标题 + 操作按钮 */}
       <div className="mt-6 flex items-center justify-between">
         {editing ? (
-          <input
+          <Input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
             className="min-w-0 flex-1 bg-transparent text-[28px] font-semibold leading-9 text-[var(--text-1)] outline-none"
@@ -866,14 +882,16 @@ function AutomationJobDetail({
         <div className="flex items-center gap-3">
           {editing ? (
             <>
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={handleCancel}
                 className="h-8 rounded-[6px] px-3 text-[14px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)]"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={handleSave}
                 disabled={saving || !draft.name.trim() || !draft.prompt.trim()}
@@ -881,42 +899,46 @@ function AutomationJobDetail({
               >
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 保存
-              </button>
+              </Button>
             </>
           ) : (
             <>
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => setEditing(true)}
                 title="编辑"
                 className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
               >
                 <Pencil size={18} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={onToggle}
                 title={job.enabled ? '暂停' : '启用'}
                 className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
               >
                 <Pause size={18} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={onDelete}
                 title="删除"
                 className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950"
               >
                 <Trash2 size={18} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={onRun}
                 className="flex h-8 items-center gap-1.5 rounded-[6px] bg-[var(--brand)] px-4 text-[14px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
               >
                 <Play size={14} />
                 立即运行
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -927,7 +949,7 @@ function AutomationJobDetail({
         {/* 左侧：提示词 */}
         <div className="min-w-0 flex-1">
           {editing ? (
-            <textarea
+            <Textarea
               value={draft.prompt}
               onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
               className="min-h-[200px] w-full resize-none bg-transparent text-[16px] leading-6 text-[var(--text-2)] outline-none"
@@ -965,14 +987,15 @@ function AutomationJobDetail({
                 <div className="relative pt-3">
                   <div className="flex items-center justify-between">
                     <span className="text-[14px] text-[var(--text-2)]">重复次数</span>
-                    <button
+                    <Button
+                variant="ghost"
                       type="button"
                       onClick={() => setScheduleOpen((v) => !v)}
                       className="flex items-center gap-1 text-[14px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
                     >
                       {scheduleLabelForDraft(draft.scheduleFrequency, draft.scheduleMinute, draft.scheduleDayOfWeek, draft.customCronExpr)}
                       <ChevronDown size={14} />
-                    </button>
+                    </Button>
                   </div>
                   {scheduleOpen && (
                     <SchedulePickerPopup
@@ -1097,14 +1120,15 @@ function MenuButton({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onClick}
       className="flex h-9 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[13px] font-medium text-[var(--text-1)] transition-colors hover:bg-[var(--surface-2)]"
     >
       <Icon size={16} />
       {label}
-    </button>
+    </Button>
   )
 }
 
@@ -1130,20 +1154,22 @@ function AutomationTemplateDialog({
         <header className="flex items-center justify-between gap-4">
           <h2 className="text-[22px] font-semibold leading-7 text-[var(--text-1)]">自动化模板</h2>
           <div className="flex items-center gap-4">
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={onManualSetup}
               className="h-9 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[13px] font-semibold text-[var(--text-1)] transition-colors hover:bg-[var(--surface-2)]"
             >
               手动设置
-            </button>
-            <button
+            </Button>
+            <Button
+                variant="ghost"
               type="button"
               onClick={onClose}
               className="flex size-8 items-center justify-center rounded-[8px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
             >
               <X size={18} />
-            </button>
+            </Button>
           </div>
         </header>
 
@@ -1171,7 +1197,8 @@ function AutomationTemplateCard({
   const Icon = template.icon
 
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onCreate}
       title={template.name}
@@ -1182,7 +1209,7 @@ function AutomationTemplateCard({
       </div>
       <h3 className="text-[13px] text-[var(--text-1)]">{template.name}</h3>
       <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">{template.description}</p>
-    </button>
+    </Button>
   )
 }
 
@@ -1251,7 +1278,7 @@ function CreateAutomationDialog({
       >
         {/* 顶部：标题输入 + 操作按钮 */}
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
-          <input
+          <Input
             value={draft.name}
             onChange={(event) => setDraft({ ...draft, name: event.target.value })}
             placeholder="自动化功能标题"
@@ -1259,26 +1286,28 @@ function CreateAutomationDialog({
           />
           <div className="flex items-center gap-2">
             {!isEdit && (
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={onOpenTemplates}
                 className="h-7 rounded-[6px] border border-[var(--border)] bg-[var(--surface-1)] px-2.5 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)]"
               >
                 使用模板
-              </button>
+              </Button>
             )}
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={onCancel}
               className="flex size-7 items-center justify-center rounded-[6px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
             >
               <X size={16} />
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* 中间：提示词输入 */}
-        <textarea
+        <Textarea
           value={draft.prompt}
           onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
           placeholder="添加提示词，例如：在 $sentry 中查找崩溃"
@@ -1290,14 +1319,15 @@ function CreateAutomationDialog({
           <div className="flex items-center gap-1.5">
             {/* 定时计划 */}
             <div className="relative">
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => setScheduleOpen((v) => !v)}
                 className="flex h-7 items-center gap-1.5 rounded-[6px] border border-[var(--border)] bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)]"
               >
                 <Clock3 size={12} className="text-[var(--text-3)]" />
                 {scheduleLabelForDraft(draft.scheduleFrequency, draft.scheduleMinute, draft.scheduleDayOfWeek, draft.customCronExpr)}
-              </button>
+              </Button>
               {scheduleOpen && (
                 <SchedulePickerPopup
                   frequency={draft.scheduleFrequency}
@@ -1347,14 +1377,16 @@ function CreateAutomationDialog({
             </ShadcnSelect>
           </div>
           <div className="flex items-center gap-2">
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={onCancel}
               className="h-7 rounded-[6px] px-3 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)]"
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => onSubmit(draft)}
               disabled={submitting || !draft.name.trim() || !draft.prompt.trim()}
@@ -1362,7 +1394,7 @@ function CreateAutomationDialog({
             >
               {submitting && <Loader2 size={13} className="animate-spin" />}
               {isEdit ? '保存' : '创建'}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -1410,18 +1442,20 @@ function SchedulePickerPopup({
       <div className="absolute bottom-full left-0 mb-1.5 z-40 w-[176px] overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
         {/* 频率选择 */}
         <div className="border-b border-[var(--border)]">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setFreqOpen((v) => !v)}
             className="flex w-full items-center justify-between px-3 py-2 text-[13px] text-[var(--text-1)] hover:bg-[var(--surface-2)]"
           >
             {selectedLabel}
             <ChevronDown size={14} className={`text-[var(--text-3)] transition-transform ${freqOpen ? 'rotate-180' : ''}`} />
-          </button>
+          </Button>
           {freqOpen && (
             <div className="border-t border-[var(--border)]">
               {FREQUENCY_OPTIONS.map((opt) => (
-                <button
+                <Button
+                variant="ghost"
                   key={opt.id}
                   type="button"
                   onClick={() => { onFrequencyChange(opt.id); setFreqOpen(false) }}
@@ -1429,7 +1463,7 @@ function SchedulePickerPopup({
                 >
                   {opt.label}
                   {frequency === opt.id && <Check size={14} className="text-[var(--brand)]" />}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -1439,7 +1473,8 @@ function SchedulePickerPopup({
         {!freqOpen && frequency === 'weekly' && (
           <div className="flex gap-1 border-b border-[var(--border)] px-2.5 py-2">
             {DOW_OPTIONS.map((opt) => (
-              <button
+              <Button
+                variant="ghost"
                 key={opt.value}
                 type="button"
                 onClick={() => onDayOfWeekChange(opt.value)}
@@ -1450,7 +1485,7 @@ function SchedulePickerPopup({
                 }`}
               >
                 {opt.label}
-              </button>
+              </Button>
             ))}
           </div>
         )}
@@ -1459,7 +1494,7 @@ function SchedulePickerPopup({
         {!freqOpen && (
           frequency === 'custom' ? (
             <div className="p-2.5">
-              <input
+              <Input
                 value={customCron}
                 onChange={(e) => onCustomCronChange(e.target.value)}
                 placeholder="0 9 * * *"
@@ -1469,7 +1504,8 @@ function SchedulePickerPopup({
           ) : needsTime ? (
             <div ref={listRef} className="max-h-[200px] overflow-y-auto p-1">
               {TIME_OPTIONS.map((opt) => (
-                <button
+                <Button
+                variant="ghost"
                   key={opt.value}
                   type="button"
                   data-active={opt.value === minuteOfDay ? '' : undefined}
@@ -1481,7 +1517,7 @@ function SchedulePickerPopup({
                   }`}
                 >
                   {opt.label}
-                </button>
+                </Button>
               ))}
             </div>
           ) : null

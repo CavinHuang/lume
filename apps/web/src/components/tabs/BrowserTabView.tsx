@@ -6,6 +6,8 @@ import { tabsAtom } from '@/atoms'
 import { openExternal } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface BrowserTabViewProps {
   tab: Tab
 }
@@ -50,27 +52,30 @@ export function BrowserTabView({ tab }: BrowserTabViewProps) {
             commitUrl(inputValue)
           }}
         >
-          <input
+          <Input
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
             placeholder="输入 URL，例如 localhost:3000"
             className="h-11 min-w-0 flex-1 rounded-[16px] border border-white/10 bg-white/[0.04] px-4 text-[15px] text-white outline-none placeholder:text-white/30"
           />
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setInputValue(currentUrl)}
             className="flex size-11 items-center justify-center rounded-[16px] bg-white/[0.05] text-white/72 transition-colors hover:bg-white/[0.08] hover:text-white"
             title="恢复当前地址"
           >
             <RotateCcw size={18} />
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             type="submit"
             className="rounded-[16px] bg-white/[0.08] px-4 py-3 text-[14px] font-medium text-white transition-colors hover:bg-white/[0.12]"
           >
             打开
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => activeUrl && openExternal(activeUrl)}
             disabled={!activeUrl}
@@ -81,7 +86,7 @@ export function BrowserTabView({ tab }: BrowserTabViewProps) {
             title="在系统浏览器打开"
           >
             <ExternalLink size={18} />
-          </button>
+          </Button>
         </form>
       </div>
 

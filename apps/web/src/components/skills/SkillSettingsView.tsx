@@ -78,6 +78,9 @@ import {
   type PendingSkillImprovementSuggestion,
 } from '@/hooks/skill-listeners-state'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 export interface SkillSettingsViewHandle {
   createNewSkill: (storageScope: SkillStorageScope) => void
 }
@@ -455,9 +458,10 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
   return (
     <section className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
       <div className="flex flex-wrap items-center gap-3">
-        <div className="inline-flex rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
+        <div className="lume-segmented inline-flex py-[3px]">
           {storageScopes.map((scope) => (
-              <button
+              <Button
+                variant="ghost"
                 key={scope.value}
                 type="button"
                 onClick={() => {
@@ -465,54 +469,55 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
                   setActiveStorageScope(scope.value)
                 }}
                 className={cn(
-                  'h-8 rounded-[6px] px-3 text-[13px] font-semibold transition-colors',
+                  'lume-segmented-item px-3 font-semibold',
                   activeStorageScope === scope.value
-                    ? 'bg-white text-[#20232d] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]'
-                    : 'text-[#687196] hover:text-[#20232d]',
+                    ? 'lume-segmented-item-active'
+                    : '',
                 )}
               >
                 {scope.label}
-              </button>
+              </Button>
             ))}
         </div>
-        <label className="flex h-10 min-w-[280px] flex-1 items-center gap-3 rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[#687196] shadow-[0_8px_20px_-18px_rgba(48,58,110,0.32)]">
+        <label className="lume-action-tile flex h-10 min-w-[280px] flex-1 justify-start px-4 shadow-none">
           <Search size={18} />
-          <input
+          <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索技能名称、描述或触发条件..."
-            className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-[#1d2440] outline-none placeholder:text-[#8b94b4]"
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
           />
         </label>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={handleCreate}
           className="flex h-10 shrink-0 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
         >
           <Plus size={17} />
           添加技能
-        </button>
+        </Button>
       </div>
 
       {loading ? (
-        <div className="mt-6 flex h-[180px] items-center justify-center gap-2 rounded-[8px] border border-[#e4e7f1] text-[13px] text-[#626b8f]">
+        <div className="lume-panel mt-6 flex h-[180px] items-center justify-center gap-2 text-[13px] text-[var(--text-2)]">
           <Loader2 size={16} className="animate-spin" />
           正在读取技能...
         </div>
       ) : error ? (
-        <div className="mt-6 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
+        <div className="mt-6 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-4 text-[13px] text-[var(--lume-danger)]">
           {error}
         </div>
       ) : (
         <div className="mt-5 min-h-0 overflow-y-auto pr-2">
           {activeStorageScope === 'workspace' && availableWorkspaces && availableWorkspaces.length > 0 && onWorkspaceChange && (
             <div className="mb-4 flex items-center gap-2">
-              <span className="text-[12px] font-medium text-[#687196]">当前工作区</span>
+              <span className="text-[12px] font-medium text-[var(--text-2)]">当前工作区</span>
               <Select
                 value={workspaceSlug ?? ''}
                 onValueChange={(val) => { if (val) onWorkspaceChange?.(val) }}
               >
-                <SelectTrigger className="h-8 flex-1 max-w-[280px] border border-[#e4e7f1] bg-white px-3 text-[13px] font-medium text-[#20232d] shadow-none hover:border-[#cfd5e8]">
+                <SelectTrigger className="h-8 flex-1 max-w-[280px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-1)] shadow-none hover:border-[var(--border-strong)]">
                   {availableWorkspaces.find((w) => w.slug === workspaceSlug)?.name ?? '选择工作区'}
                 </SelectTrigger>
                 <SelectContent>
@@ -577,16 +582,17 @@ export const SkillSettingsView = forwardRef<SkillSettingsViewHandle, {
             </>
           )}
           {visibleSkills.length === 0 && builtInSkills.length === 0 && (
-            <div className="rounded-[8px] border border-dashed border-[#d8ddec] p-8 text-center text-[13px] leading-6 text-[#687196]">
+            <div className="lume-subpanel border-dashed p-8 text-center text-[13px] leading-6 text-[var(--text-2)]">
               {activeScopeMeta.emptyLabel}
               {activeStorageScope === 'workspace' && (
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   onClick={onOpenMarket}
                   className="ml-2 font-semibold text-[var(--brand)] hover:text-[var(--brand-2)]"
                 >
                   去技能市场发现技能
-                </button>
+                </Button>
               )}
             </div>
           )}
@@ -648,7 +654,8 @@ const SkillSettingsRow = ({
           onCheckedChange={onToggle}
         />
         <div className="flex items-start gap-1">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             title="编辑技能"
             disabled={editing}
@@ -656,8 +663,9 @@ const SkillSettingsRow = ({
             className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-1)] hover:text-[var(--text-1)] disabled:cursor-wait disabled:opacity-60"
           >
             {editing ? <Loader2 size={16} className="animate-spin" /> : <Pencil size={16} />}
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             type="button"
             title="删除技能"
             disabled={deleting}
@@ -665,7 +673,7 @@ const SkillSettingsRow = ({
             className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-1)] hover:text-[var(--lume-danger)] disabled:cursor-wait disabled:opacity-60"
           >
             {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-          </button>
+          </Button>
         </div>
       </div>
     </article>
@@ -712,28 +720,31 @@ const SkillEditor = ({
 
   return (
     <section className="min-h-0">
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={onCancel}
         className="mb-5 flex h-8 items-center gap-2 rounded-[6px] text-[13px] font-semibold text-[var(--text-2)] hover:text-[var(--text-1)]"
       >
         <ArrowLeft size={17} />
         返回
-      </button>
+      </Button>
 
       <div className="mb-5 flex items-center justify-between gap-4">
         <h2 className="text-[20px] font-semibold text-[#121832]">
           {draft.mode === 'create' ? '添加技能' : `编辑「${draft.name || draft.skillSlug}」`}
         </h2>
         <div className="flex shrink-0 items-center gap-3">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={onCancel}
             className="h-10 rounded-[8px] px-4 text-[14px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]"
           >
             取消
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             type="button"
             disabled={!canSave}
             onClick={onSave}
@@ -741,16 +752,17 @@ const SkillEditor = ({
           >
             {saving ? <Loader2 size={17} className="animate-spin" /> : <Save size={17} />}
             保存技能
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="grid max-w-[980px] gap-5">
         <div>
-          <div className="mb-2 text-[13px] font-semibold text-[#6b7286]">存储位置</div>
+          <div className="mb-2 text-[13px] font-semibold text-[var(--text-2)]">存储位置</div>
           <div className="flex flex-wrap gap-3">
             {storageScopes.map((scope) => (
-              <button
+              <Button
+                variant="ghost"
                 key={scope.value}
                 type="button"
                 disabled={!canChangeScope && draft.storageScope !== scope.value}
@@ -758,61 +770,62 @@ const SkillEditor = ({
                   if (canChangeScope) updateDraft({ storageScope: scope.value })
                 }}
                 className={cn(
-                  'h-11 rounded-[8px] border px-5 text-[14px] font-semibold transition-colors',
+                  'lume-action-tile h-11 px-5 text-[14px] shadow-none',
                   draft.storageScope === scope.value
-                    ? 'border-[#2f2f31] text-[#2f2f31]'
-                    : 'border-[#e4e7f1] text-[#9aa2b8]',
-                  canChangeScope && draft.storageScope !== scope.value && 'hover:border-[#cfd5e8] hover:text-[#60698d]',
+                    ? 'lume-segmented-item-active'
+                    : '',
+                  canChangeScope && draft.storageScope !== scope.value && 'hover:border-[var(--border-strong)] hover:text-[var(--text-1)]',
                   !canChangeScope && 'disabled:cursor-not-allowed disabled:opacity-55',
                 )}
               >
                 {scope.label}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
 
         <SkillEditorField label="技能 ID">
-          <input
+          <Input
             value={draft.skillSlug}
             disabled={draft.mode === 'edit'}
             onChange={(event) => updateDraft({ skillSlug: event.target.value })}
             placeholder="code-review"
-            className="h-12 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-4 font-mono text-[14px] text-[#20232d] outline-none placeholder:text-[#9aa2b8] focus:border-[#bdb6ff] disabled:bg-[#fafafa] disabled:text-[#8a91a8]"
+            className="h-12 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 font-mono text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))] disabled:bg-[var(--surface-2)] disabled:text-[var(--text-3)]"
           />
         </SkillEditorField>
 
         <SkillEditorField label="展示名称">
-          <input
+          <Input
             value={draft.name}
             onChange={(event) => updateDraft({ name: event.target.value })}
             placeholder="Skill 生成器"
-            className="h-12 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[14px] text-[#20232d] outline-none placeholder:text-[#9aa2b8] focus:border-[#bdb6ff]"
+            className="h-12 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
           />
         </SkillEditorField>
 
         <SkillEditorField label="描述">
-          <input
+          <Input
             value={draft.description}
             onChange={(event) => updateDraft({ description: event.target.value })}
             placeholder="帮助用户创建、优化或评测 Skill"
-            className="h-12 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[14px] text-[#20232d] outline-none placeholder:text-[#9aa2b8] focus:border-[#bdb6ff]"
+            className="h-12 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
           />
         </SkillEditorField>
 
         <SkillEditorField label="触发条件">
-          <input
+          <Input
             value={draft.whenToUse}
             onChange={(event) => updateDraft({ whenToUse: event.target.value })}
             placeholder="当用户说「帮我创建一个 skill」时"
-            className="h-12 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[14px] text-[#20232d] outline-none placeholder:text-[#9aa2b8] focus:border-[#bdb6ff]"
+            className="h-12 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
           />
         </SkillEditorField>
 
         <SkillEditorField label="允许使用的工具">
           <div className="flex flex-wrap gap-2">
             {allowedToolRows.map((tool) => (
-              <button
+              <Button
+                variant="ghost"
                 key={tool.value}
                 type="button"
                 disabled={tool.disabled}
@@ -824,61 +837,62 @@ const SkillEditor = ({
                   }
                 }}
                 className={cn(
-                  'h-9 rounded-[8px] border px-3 font-mono text-[13px] transition-colors',
+                  'lume-action-tile h-9 px-3 font-mono text-[13px] shadow-none',
                   tool.selected
-                    ? 'border-[#2f2f31] bg-white text-[#20232d]'
-                    : 'border-[#dfe3f0] bg-white text-[#60698d] hover:border-[#bcc4d8] hover:text-[#20232d]',
-                  tool.disabled && 'cursor-not-allowed border-[#edf0f6] bg-[#fafafa] text-[#a7adbd] hover:border-[#edf0f6] hover:text-[#a7adbd]',
+                    ? 'lume-segmented-item-active'
+                    : 'hover:border-[var(--border-strong)] hover:text-[var(--text-1)]',
+                  tool.disabled && 'cursor-not-allowed opacity-55 hover:border-[var(--border)] hover:text-[var(--text-2)]',
                 )}
               >
                 {tool.label}
-              </button>
+              </Button>
             ))}
           </div>
-          <input
+          <Input
             value={draft.allowedToolsText}
             onChange={(event) => updateDraft({ allowedToolsText: event.target.value })}
             placeholder="custom_tool, mcp__server__tool"
-            className="mt-3 h-11 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-4 font-mono text-[13px] text-[#20232d] outline-none placeholder:text-[#9aa2b8] focus:border-[#bdb6ff]"
+            className="mt-3 h-11 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 font-mono text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
           />
           {allowedTools.length > 0 && (
-            <div className="mt-2 text-[12px] font-medium text-[#687196]">
-              当前: <span className="font-mono text-[#20232d]">{allowedTools.join(', ')}</span>
+            <div className="mt-2 text-[12px] font-medium text-[var(--text-2)]">
+              当前: <span className="font-mono text-[var(--text-1)]">{allowedTools.join(', ')}</span>
             </div>
           )}
         </SkillEditorField>
 
         <div className="grid gap-5 md:grid-cols-2">
           <SkillEditorField label="版本">
-            <input
+            <Input
               value={draft.version}
               onChange={(event) => updateDraft({ version: event.target.value })}
               placeholder="1.0.0"
-              className="h-12 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[14px] text-[#20232d] outline-none placeholder:text-[#9aa2b8] focus:border-[#bdb6ff]"
+              className="h-12 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
             />
           </SkillEditorField>
           <SkillEditorField label="参数提示">
-            <input
+            <Input
               value={draft.argumentHint}
               onChange={(event) => updateDraft({ argumentHint: event.target.value })}
               placeholder="请告诉我文件路径"
-              className="h-12 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[14px] text-[#20232d] outline-none placeholder:text-[#9aa2b8] focus:border-[#bdb6ff]"
+              className="h-12 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 text-[14px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
             />
           </SkillEditorField>
         </div>
 
-        <div className="flex min-h-[68px] items-center justify-between gap-4 border-y border-[#edf0f6] py-4">
+        <div className="flex min-h-[68px] items-center justify-between gap-4 border-y border-[var(--border)] py-4">
           <div>
-            <div className="text-[14px] font-semibold text-[#20232d]">禁止模型自动调用</div>
-            <div className="mt-1 text-[13px] text-[#687196]">开启后仅允许手动触发</div>
+            <div className="text-[14px] font-semibold text-[var(--text-1)]">禁止模型自动调用</div>
+            <div className="mt-1 text-[13px] text-[var(--text-2)]">开启后仅允许手动触发</div>
           </div>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             aria-pressed={draft.disableModelInvocation}
             onClick={() => updateDraft({ disableModelInvocation: !draft.disableModelInvocation })}
             className={cn(
               'relative h-8 w-14 rounded-full transition-colors',
-              draft.disableModelInvocation ? 'bg-[var(--brand)]' : 'bg-[#e6e8ee]',
+              draft.disableModelInvocation ? 'bg-[var(--brand)]' : 'bg-[var(--border)]',
             )}
           >
             <span
@@ -887,15 +901,15 @@ const SkillEditor = ({
                 draft.disableModelInvocation ? 'translate-x-7' : 'translate-x-1',
               )}
             />
-          </button>
+          </Button>
         </div>
 
         <SkillEditorField label="提示词内容">
-          <textarea
+          <Textarea
             value={draft.prompt}
             onChange={(event) => updateDraft({ prompt: event.target.value })}
             spellCheck={false}
-            className="min-h-[320px] w-full resize-y rounded-[8px] border border-[#e4e7f1] bg-white px-4 py-3 font-mono text-[14px] leading-6 text-[#20232d] outline-none placeholder:text-[#9aa2b8] focus:border-[#bdb6ff]"
+            className="min-h-[320px] w-full resize-y rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 font-mono text-[14px] leading-6 text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
             placeholder="这里是 SKILL.md 的正文，支持 ${ARG} 占位符。"
           />
         </SkillEditorField>
@@ -912,7 +926,7 @@ const SkillEditor = ({
         )}
 
         {error && (
-          <div className="rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-3 text-[13px] leading-5 text-[#ba3636]">
+          <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-3 text-[13px] leading-5 text-[var(--lume-danger)]">
             {error}
           </div>
         )}
@@ -1059,46 +1073,48 @@ const SkillEvolutionPanel = ({
   const updates = analysis?.updates ?? []
 
   return (
-    <section className="rounded-[8px] border border-[#edf0f6] bg-[#fbfbfa] p-4">
+    <section className="lume-subpanel p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2 text-[14px] font-semibold text-[#20232d]">
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
             <Sparkles size={16} />
             技能进化
           </div>
-          <p className="mt-1 text-[13px] leading-5 text-[#687196]">
+          <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">
             基于使用记录分析自有技能，并在应用或恢复前自动备份旧版本。
           </p>
         </div>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           title="分析技能改进"
           disabled={analyzing || applying}
           onClick={() => void handleAnalyze()}
-          className="flex h-9 items-center gap-2 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] font-semibold text-[var(--text-1)] hover:border-[var(--border-strong)] disabled:cursor-wait disabled:opacity-60"
+          className="lume-action-tile h-9 gap-2 px-3 text-[13px] font-semibold shadow-none disabled:cursor-wait disabled:opacity-60"
         >
           {analyzing ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
           分析改进
-        </button>
+        </Button>
       </div>
 
       {analysis && (
-        <div className="mt-4 rounded-[8px] border border-[#e4e7f1] bg-white p-3">
-          <div className="mb-2 text-[12px] font-semibold text-[#687196]">
+        <div className="lume-subpanel mt-4 p-3">
+          <div className="mb-2 text-[12px] font-semibold text-[var(--text-2)]">
             使用记录 {analysis.usageCount} 条，分析会话 {analysis.analyzedSessionIds.length} 个
           </div>
           {updates.length > 0 ? (
             <>
               <div className="grid gap-2">
                 {updates.map((update, index) => (
-                  <div key={`${update.section}-${index}`} className="rounded-[6px] bg-[#f7f8fb] p-3 text-[13px] leading-5">
-                    <div className="font-semibold text-[#20232d]">{update.section}</div>
-                    <div className="mt-1 text-[#20232d]">{update.change}</div>
-                    <div className="mt-1 text-[#687196]">{update.reason}</div>
+                  <div key={`${update.section}-${index}`} className="lume-panel p-3 text-[13px] leading-5">
+                    <div className="font-semibold text-[var(--text-1)]">{update.section}</div>
+                    <div className="mt-1 text-[var(--text-1)]">{update.change}</div>
+                    <div className="mt-1 text-[var(--text-2)]">{update.reason}</div>
                   </div>
                 ))}
               </div>
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 disabled={applying}
                 onClick={() => void handleApply(updates)}
@@ -1106,21 +1122,21 @@ const SkillEvolutionPanel = ({
               >
                 {applying ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
                 应用改进
-              </button>
+              </Button>
             </>
           ) : (
-            <div className="text-[13px] leading-5 text-[#687196]">暂无改进建议。</div>
+            <div className="text-[13px] leading-5 text-[var(--text-2)]">暂无改进建议。</div>
           )}
         </div>
       )}
 
       <div className="mt-5">
-        <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[#20232d]">
+        <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-[var(--text-1)]">
           <History size={15} />
           版本历史
         </div>
         {versionsLoading ? (
-          <div className="flex h-16 items-center justify-center gap-2 rounded-[8px] border border-[#edf0f6] bg-white text-[13px] text-[#687196]">
+          <div className="lume-panel flex h-16 items-center justify-center gap-2 text-[13px] text-[var(--text-2)]">
             <Loader2 size={15} className="animate-spin" />
             正在读取版本...
           </div>
@@ -1129,15 +1145,16 @@ const SkillEvolutionPanel = ({
             {versions.map((version) => (
               <div
                 key={version.filename}
-                className="grid min-h-[44px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-[8px] bg-white px-3 py-2"
+                className="lume-panel grid min-h-[44px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2"
               >
                 <div className="min-w-0">
-                  <div className="truncate font-mono text-[12px] text-[#20232d]" title={version.filename}>
+                  <div className="truncate font-mono text-[12px] text-[var(--text-1)]" title={version.filename}>
                     {version.filename}
                   </div>
-                  <div className="mt-1 text-[12px] text-[#687196]">{version.timestamp}</div>
+                  <div className="mt-1 text-[12px] text-[var(--text-2)]">{version.timestamp}</div>
                 </div>
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   title={`恢复版本 ${version.filename}`}
                   disabled={restoringFilename === version.filename}
@@ -1147,24 +1164,24 @@ const SkillEvolutionPanel = ({
                   {restoringFilename === version.filename
                     ? <Loader2 size={15} className="animate-spin" />
                     : <RotateCcw size={15} />}
-                </button>
+                </Button>
               </div>
             ))}
           </div>
         ) : (
-          <div className="rounded-[8px] border border-dashed border-[#d8ddec] bg-white p-4 text-center text-[13px] text-[#687196]">
+          <div className="lume-panel border-dashed p-4 text-center text-[13px] text-[var(--text-2)]">
             还没有历史版本。
           </div>
         )}
       </div>
 
       {notice && (
-        <div className="mt-3 rounded-[8px] border border-[#dcebd8] bg-[#f7fbf5] p-3 text-[13px] leading-5 text-[#4c7a41]">
+        <div className="mt-3 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-success)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-success)_7%,var(--surface-1))] p-3 text-[13px] leading-5 text-[var(--lume-success)]">
           {notice}
         </div>
       )}
       {error && (
-        <div className="mt-3 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-3 text-[13px] leading-5 text-[#ba3636]">
+        <div className="mt-3 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-3 text-[13px] leading-5 text-[var(--lume-danger)]">
           {error}
         </div>
       )}
@@ -1224,31 +1241,31 @@ const SystemToolsPanel = ({
   }
 
   return (
-    <section className="mt-10 border-t border-[#edf0f6] pt-8">
+    <section className="mt-10 border-t border-[var(--border)] pt-8">
       <div className="mb-5">
-        <h2 className="text-[18px] font-semibold text-[#20232d]">系统工具</h2>
-        <p className="mt-2 text-[13px] leading-5 text-[#687196]">
+        <h2 className="text-[18px] font-semibold text-[var(--text-1)]">系统工具</h2>
+        <p className="mt-2 text-[13px] leading-5 text-[var(--text-2)]">
           管理 Lume 可使用的内置工具。锁定工具为核心能力，不允许关闭。
         </p>
       </div>
 
-      <label className="mb-5 flex h-10 items-center gap-3 rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[#687196] shadow-[0_8px_20px_-18px_rgba(48,58,110,0.32)]">
+      <label className="lume-action-tile mb-5 flex h-10 justify-start px-4 text-[var(--text-2)] shadow-none">
         <Search size={18} />
-        <input
+        <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="搜索工具名称或描述..."
-          className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-[#1d2440] outline-none placeholder:text-[#8b94b4]"
+          className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
         />
       </label>
 
       {loading ? (
-        <div className="flex h-[128px] items-center justify-center gap-2 rounded-[8px] border border-[#edf0f6] text-[13px] text-[#626b8f]">
+        <div className="lume-panel flex h-[128px] items-center justify-center gap-2 text-[13px] text-[var(--text-2)]">
           <Loader2 size={16} className="animate-spin" />
           正在读取系统工具...
         </div>
       ) : error ? (
-        <div className="rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
+        <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-4 text-[13px] text-[var(--lume-danger)]">
           {error}
         </div>
       ) : (
@@ -1261,33 +1278,34 @@ const SystemToolsPanel = ({
               <div
                 key={row.id}
                 className={cn(
-                  'rounded-[8px] border transition-colors',
-                  row.enabled ? 'border-[#edf0f6] bg-[#fbfbfa]' : 'border-[#f0d0d0] bg-[#fef8f8]',
+                  'lume-subpanel transition-colors',
+                  !row.enabled && 'border-[color:color-mix(in_oklab,var(--lume-danger)_28%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_6%,var(--surface-1))]',
                 )}
               >
                 <div className="flex items-center gap-3 px-4 py-3">
-                  <button
+                  <Button
+                variant="ghost"
                     type="button"
                     onClick={() => toggleExpand(row.id)}
                     className="flex size-6 items-center justify-center rounded-[4px] text-[var(--text-3)] hover:bg-[var(--surface-2)]"
                   >
                     {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                  </button>
+                  </Button>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-[14px] font-semibold text-[#20232d]">{row.label}</h3>
-                      <span className="text-[12px] text-[#687196]">{tools.length} 个工具</span>
+                      <h3 className="text-[14px] font-semibold text-[var(--text-1)]">{row.label}</h3>
+                      <span className="text-[12px] text-[var(--text-2)]">{tools.length} 个工具</span>
                       {row.locked && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-[#f0f0f0] px-2 py-0.5 text-[11px] font-medium text-[#6b7280]">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--surface-1)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-2)]">
                           <ShieldCheck size={11} />
                           锁定
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 text-[12px] text-[#8a91a8]">{row.description}</p>
+                    <p className="mt-0.5 text-[12px] text-[var(--text-3)]">{row.description}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {isSaving && <Loader2 size={14} className="animate-spin text-[#687196]" />}
+                    {isSaving && <Loader2 size={14} className="animate-spin text-[var(--text-2)]" />}
                     {!row.locked && (
                       <Switch
                         checked={row.enabled}
@@ -1298,7 +1316,7 @@ const SystemToolsPanel = ({
                   </div>
                 </div>
                 {isExpanded && tools.length > 0 && (
-                  <div className="border-t border-[#edf0f6]">
+                  <div className="border-t border-[var(--border)]">
                     {tools.map((tool) => (
                       <div
                         key={tool.name}
@@ -1307,10 +1325,10 @@ const SystemToolsPanel = ({
                         <div className="size-3 shrink-0" />
                         <div className="min-w-0">
                           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="text-[13px] font-medium text-[#20232d]">{tool.label}</span>
-                            <span className="font-mono text-[11px] text-[#8a91a8]">{tool.name}</span>
+                            <span className="text-[13px] font-medium text-[var(--text-1)]">{tool.label}</span>
+                            <span className="font-mono text-[11px] text-[var(--text-3)]">{tool.name}</span>
                           </div>
-                          <p className="mt-0.5 text-[12px] text-[#8a91a8]">{tool.description}</p>
+                          <p className="mt-0.5 text-[12px] text-[var(--text-3)]">{tool.description}</p>
                         </div>
                       </div>
                     ))}
@@ -1320,14 +1338,14 @@ const SystemToolsPanel = ({
             )
           })}
           {visibleRows.length === 0 && (
-            <div className="rounded-[8px] border border-dashed border-[#d8ddec] p-6 text-center text-[13px] leading-6 text-[#687196]">
+            <div className="lume-subpanel border-dashed p-6 text-center text-[13px] leading-6 text-[var(--text-2)]">
               没有匹配的系统工具。
             </div>
           )}
         </div>
       )}
 
-      <p className="mt-5 text-[12px] leading-5 text-[#687196]">
+      <p className="mt-5 text-[12px] leading-5 text-[var(--text-2)]">
         禁用工具后，模型将无法在对话中调用该工具组。MCP 工具请在「MCP」设置中管理。
       </p>
     </section>
@@ -1342,5 +1360,4 @@ function formatSkillStorageScopeLabel(scope: SkillStorageScope): string {
 function skillSettingsKey(skill: EditableSkillMeta): string {
   return `${skill.storageScope}:${skill.slug}`
 }
-
 

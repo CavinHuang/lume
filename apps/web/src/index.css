@@ -134,6 +134,92 @@
   animation: lume-shimmer-text 1.45s ease-in-out infinite;
 }
 
+:where(.lume-segmented) {
+  border: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
+  border-radius: 10px;
+  background: var(--surface-1);
+  padding: 4px;
+  box-shadow: 0 1px 2px hsl(var(--lume-shadow-panel) / 0.04);
+}
+
+:where(.lume-segmented-item) {
+  display: inline-flex;
+  min-width: 0;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+:where(.lume-segmented-item:hover) {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.lume-segmented-item-active,
+.lume-segmented-item.is-active,
+.lume-segmented-item[data-active] {
+  border-color: color-mix(in oklab, var(--brand) 28%, var(--border));
+  background: color-mix(in oklab, var(--brand) 10%, var(--surface-1));
+  color: var(--brand);
+  box-shadow: 0 1px 1px hsl(var(--lume-shadow-panel) / 0.04);
+}
+
+:where(.lume-segmented-item:disabled) {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+:where(.lume-panel),
+:where(.lume-panel-padded) {
+  border: 1px solid color-mix(in oklab, var(--border) 64%, transparent);
+  border-radius: 10px;
+  background: var(--surface-1);
+  box-shadow: 0 2px 8px -5px hsl(var(--lume-shadow-panel) / 0.24);
+}
+
+:where(.lume-panel-padded) {
+  padding: 16px 20px;
+}
+
+:where(.lume-subpanel) {
+  border: 1px solid color-mix(in oklab, var(--border) 68%, transparent);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+:where(.lume-action-tile) {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid color-mix(in oklab, var(--border) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--surface-1) 92%, var(--brand) 4%);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 1px 1px hsl(var(--lume-shadow-panel) / 0.04);
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+:where(.lume-action-tile:hover) {
+  border-color: color-mix(in oklab, var(--brand) 26%, var(--border));
+  background: color-mix(in oklab, var(--surface-1) 86%, var(--brand) 7%);
+  color: var(--text-1);
+  box-shadow: 0 6px 16px -14px hsl(var(--lume-shadow-panel) / 0.34);
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: 'Geist Variable', sans-serif;

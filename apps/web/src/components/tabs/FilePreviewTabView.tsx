@@ -24,6 +24,8 @@ import { AGENT_IPC_CHANNELS, type FileEntry } from '@lume/shared'
 import { normalizeDirectoryEntriesResponse } from '@/components/file-browser/FileBrowser'
 import { buildFileTab, upsertTab } from './file-tabs'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface FilePreviewTabViewProps {
   tab: Tab
 }
@@ -163,34 +165,38 @@ export function FilePreviewTabView({ tab }: FilePreviewTabViewProps) {
           </div>
           <div className="relative flex items-center gap-2" ref={menuRef}>
             {canShowTree && (
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => setTreeCollapsed((value) => !value)}
                 className="flex size-10 items-center justify-center rounded-[14px] text-white/72 transition-colors hover:bg-white/7 hover:text-white"
                 title={treeCollapsed ? '展开文件树' : '收起文件树'}
               >
                 {treeCollapsed ? <PanelRightOpen size={19} /> : <PanelRightClose size={19} />}
-              </button>
+              </Button>
             )}
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={handleOpenExternal}
               className="flex size-10 items-center justify-center rounded-[14px] text-white/72 transition-colors hover:bg-white/7 hover:text-white"
               title="用系统应用打开"
             >
               <ExternalLink size={19} />
-            </button>
-            <button
+            </Button>
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => setMenuOpen((value) => !value)}
               className="flex size-10 items-center justify-center rounded-[14px] text-white/72 transition-colors hover:bg-white/7 hover:text-white"
               title="更多"
             >
               <MoreHorizontal size={19} />
-            </button>
+            </Button>
             {menuOpen && (
               <div className="absolute right-0 top-[calc(100%+10px)] z-20 w-64 rounded-[22px] border border-white/8 bg-[#2a2a2a] p-2 shadow-[0_20px_50px_rgba(0,0,0,0.35)]">
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   onClick={() => {
                     setEnhancedView((value) => !value)
@@ -200,7 +206,7 @@ export function FilePreviewTabView({ tab }: FilePreviewTabViewProps) {
                 >
                   <Braces size={20} className="text-white/72" />
                   {enhancedView ? '禁用增强视图' : '启用增强视图'}
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -315,11 +321,11 @@ function FileTreeSidebar({
       <div className="px-4 pb-3 pt-4">
         <label className="flex h-11 items-center gap-3 rounded-[16px] border border-white/10 bg-white/[0.03] px-4 text-white/56">
           <Search size={17} />
-          <input
+          <Input
             value={searchQuery}
             onChange={(event) => onSearchQueryChange(event.target.value)}
             placeholder="筛选文件..."
-            className="h-full min-w-0 flex-1 bg-transparent text-[15px] text-white outline-none placeholder:text-white/34"
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[15px] text-white shadow-none outline-none placeholder:text-white/34 focus-visible:ring-0"
           />
         </label>
       </div>
@@ -414,7 +420,8 @@ function PreviewTreeItem({
 
   return (
     <div>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => {
           if (!entry.isDirectory) {
@@ -442,7 +449,7 @@ function PreviewTreeItem({
           : <FileTypeIcon filename={entry.name} size={16} />
         }
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-      </button>
+      </Button>
       {entry.isDirectory && open && visibleChildren.map((child) => (
         <PreviewTreeItem
           key={child.path}

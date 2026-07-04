@@ -53,9 +53,9 @@ import {
 
 const toneClassName: Record<ImStatusTone, string> = {
   neutral: 'border-[var(--border)] text-[var(--text-2)]',
-  success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  warning: 'border-amber-200 bg-amber-50 text-amber-700',
-  danger: 'border-red-200 bg-red-50 text-red-700',
+  success: 'border-[color:color-mix(in_oklab,var(--lume-success)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-success)_8%,var(--surface-1))] text-[var(--lume-success)]',
+  warning: 'border-[color:color-mix(in_oklab,var(--lume-warning)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-warning)_8%,var(--surface-1))] text-[var(--lume-warning)]',
+  danger: 'border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] text-[var(--lume-danger)]',
 }
 
 const NO_WORKSPACE_VALUE = '__none__'
@@ -269,7 +269,7 @@ export function ImSettings() {
   }
 
   return (
-    <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)]">
+    <section className="lume-panel">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex size-8 items-center justify-center rounded-[8px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]">
@@ -300,7 +300,7 @@ export function ImSettings() {
               加载中
             </div>
           ) : accounts.length === 0 ? (
-            <div className="rounded-[8px] border border-dashed border-[var(--border)] p-6 text-center text-[13px] text-[var(--text-3)]">
+            <div className="lume-subpanel border-dashed p-6 text-center text-[13px] text-[var(--text-3)]">
               {formatImAccountsEmptyCopy(accounts)}
             </div>
           ) : accounts.map((account) => (
@@ -328,7 +328,7 @@ export function ImSettings() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-3">
+            <div className="lume-subpanel p-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-[13px] font-medium text-[var(--text-1)]">扫码链接</p>
@@ -402,7 +402,7 @@ export function ImSettings() {
               </Select>
             </div>
 
-            <details className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-3">
+            <details className="lume-subpanel p-3">
               <summary className="cursor-pointer text-[13px] font-medium text-[var(--text-2)]">
                 手动链接
               </summary>
@@ -419,7 +419,7 @@ export function ImSettings() {
                   <Label htmlFor="im-base-url">Base URL</Label>
                   <Input id="im-base-url" value={draft.baseUrl} onChange={(event) => updateDraft({ baseUrl: event.target.value })} />
                 </div>
-                <div className="flex items-center justify-between rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2">
+                <div className="lume-panel flex items-center justify-between px-3 py-2">
                   <span className="text-[13px] text-[var(--text-2)]">启用</span>
                   <Switch checked={draft.enabled} onCheckedChange={(enabled) => updateDraft({ enabled })} />
                 </div>
@@ -462,7 +462,7 @@ function AccountRow({
   const badge = formatImStatusBadge(account.status)
   const accountMeta = [account.uin || account.id, workspaceName].filter(Boolean).join(' · ')
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5">
+    <div className="lume-subpanel flex flex-wrap items-center gap-3 px-3 py-2.5">
       <div className="min-w-[160px] flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[13px] font-medium text-[var(--text-1)]">{account.label}</span>

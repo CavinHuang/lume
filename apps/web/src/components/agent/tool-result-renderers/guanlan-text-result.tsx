@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * Guanlan 文本工具共享渲染器
  *
@@ -55,12 +56,13 @@ export function GuanlanTextResult({ variant, input, result }: GuanlanTextResultP
         <Icon size={12} />
         <span>{config.label}:</span>
         {variant === 'read' && headerText ? (
-          <button
+          <Button
+                variant="ghost"
             onClick={() => openExternal(headerText)}
             className="truncate hover:text-primary transition-colors"
           >
             {headerText}
-          </button>
+          </Button>
         ) : (
           <span className="truncate">{headerText}</span>
         )}

@@ -4,10 +4,12 @@ import type { ChannelCreateInput, ProviderType, ChannelModel, ProviderApiFamily,
 import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS, normalizeChannelModel } from '@lume/shared'
 import { fetchChannelModels } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 
 export interface ChannelFormValue extends ChannelCreateInput {}
 
@@ -200,12 +202,16 @@ export function ChannelForm({
   const visibleModels = filterChannelModels(models, modelSearch)
   const visibleModelIds = visibleModels.map((model) => model.id)
   const apiKeyRequired = isChannelApiKeyRequired(provider)
+  const fieldClass = 'border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] text-[var(--text-1)] placeholder:text-[var(--text-3)] focus-visible:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))] focus-visible:ring-0'
+  const selectClass = 'w-full border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] text-[var(--text-1)] focus-visible:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))] focus-visible:ring-0'
+  const outlineButtonClass = 'h-8 rounded-[7px] border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-3)] hover:text-[var(--text-1)] focus-visible:ring-0'
+  const primaryButtonClass = 'h-8 rounded-[7px] bg-[var(--brand)] px-3 text-[12px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] focus-visible:ring-0'
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5 max-w-lg">
+    <form onSubmit={handleSubmit} className="max-w-none space-y-4 text-[var(--text-1)]">
       <div>
-        <h2 className="text-[15px] font-semibold">{mode === 'edit' ? '编辑渠道' : '添加渠道'}</h2>
-        <p className="text-[12px] text-muted-foreground mt-0.5">
+        <h2 className="text-[15px] font-semibold text-[var(--text-1)]">{mode === 'edit' ? '编辑渠道' : '添加渠道'}</h2>
+        <p className="mt-0.5 text-[12px] text-[var(--text-3)]">
           {disabled ? '开启后即可填写该供应商的连接信息' : mode === 'edit' ? '更新当前渠道配置' : '配置 AI 供应商连接'}
         </p>
       </div>
@@ -229,7 +235,7 @@ export function ChannelForm({
             }}
             disabled={disabled}
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="openai-chat-completions">OpenAI Compatible (Chat Completions)</SelectItem>
               <SelectItem value="openai-responses">OpenAI Compatible (Responses)</SelectItem>
@@ -246,10 +252,10 @@ export function ChannelForm({
             value={providerId}
             onChange={(e) => setProviderId(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
             placeholder="my-openai"
-            className="font-mono text-[12px]"
+            className={cn(fieldClass, 'font-mono text-[12px]')}
             disabled={disabled}
           />
-          <p className="text-[11px] text-muted-foreground">用于 modelRef 格式：标识符/模型ID</p>
+          <p className="text-[11px] text-[var(--text-3)]">用于 modelRef 格式：标识符/模型ID</p>
         </div>
       )}
 
@@ -258,10 +264,10 @@ export function ChannelForm({
           <Label>供应商</Label>
           <Select
             value={provider}
-            onValueChange={(v) => handleProviderChange(v as ProviderType)}
+            onValueChange={(v) => { if (v) handleProviderChange(v as ProviderType) }}
             disabled={providerLocked || disabled}
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
             <SelectContent>
               {PROVIDERS.map(([id, label]) => (
                 <SelectItem key={id} value={id}>{label}</SelectItem>
@@ -276,10 +282,10 @@ export function ChannelForm({
           <Label>协议类型</Label>
           <Select
             value={`openai-${openaiApiMode}`}
-            onValueChange={(v) => setOpenaiApiMode((v ?? '').replace('openai-', '') as OpenAiApiMode)}
+            onValueChange={(v) => { if (v) setOpenaiApiMode(v.replace('openai-', '') as OpenAiApiMode) }}
             disabled={disabled}
           >
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger className={selectClass}><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="openai-chat-completions">Chat Completions</SelectItem>
               <SelectItem value="openai-responses">Responses</SelectItem>
@@ -290,12 +296,12 @@ export function ChannelForm({
 
       <div className="space-y-1.5">
         <Label>名称</Label>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={PROVIDER_LABELS[provider]} disabled={disabled} />
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={PROVIDER_LABELS[provider]} className={fieldClass} disabled={disabled} />
       </div>
 
       <div className="space-y-1.5">
         <Label>Base URL</Label>
-        <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="font-mono text-[12px]" disabled={disabled} />
+        <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className={cn(fieldClass, 'font-mono text-[12px]')} disabled={disabled} />
       </div>
 
       <div className="space-y-1.5">
@@ -306,17 +312,18 @@ export function ChannelForm({
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={apiKeyRequired ? 'sk-...' : '本地服务通常可留空'}
-            className="font-mono text-[12px] pr-9"
+            className={cn(fieldClass, 'pr-9 font-mono text-[12px]')}
             disabled={disabled}
           />
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setShowApiKey((v) => !v)}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-1)]"
             tabIndex={-1}
           >
             {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -330,25 +337,26 @@ export function ChannelForm({
               size="sm"
               onClick={() => { setShowAddModel((v) => !v); setAddError('') }}
               disabled={disabled}
+              className={outlineButtonClass}
             >
               <Plus size={11} className="mr-1" />
               手动添加
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={disabled || fetching || (apiKeyRequired && !apiKey)}>
+            <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={disabled || fetching || (apiKeyRequired && !apiKey)} className={outlineButtonClass}>
               {fetching && <Loader2 size={11} className="animate-spin mr-1" />}
               拉取模型列表
             </Button>
           </div>
         </div>
         {showAddModel && (
-          <div className="space-y-2 rounded-lg border p-3">
+          <div className="space-y-2 rounded-[8px] bg-[var(--surface-2)] p-3">
             <div className="space-y-1">
               <Label className="text-[11px]">模型 ID</Label>
               <Input
                 value={newModelId}
                 onChange={(e) => { setNewModelId(e.target.value); setAddError('') }}
                 placeholder="claude-sonnet-4-5"
-                className="font-mono text-[12px] h-8"
+                className={cn(fieldClass, 'h-8 font-mono text-[12px]')}
                 disabled={disabled}
                 autoFocus
               />
@@ -359,17 +367,18 @@ export function ChannelForm({
                 value={newModelName}
                 onChange={(e) => setNewModelName(e.target.value)}
                 placeholder={newModelId.trim() || '默认使用模型 ID'}
-                className="text-[12px] h-8"
+                className={cn(fieldClass, 'h-8 text-[12px]')}
                 disabled={disabled}
               />
             </div>
-            {addError && <p className="text-[11px] text-red-500">{addError}</p>}
+            {addError && <p className="text-[11px] text-[var(--lume-danger)]">{addError}</p>}
             <div className="flex items-center gap-2">
-              <Button type="button" size="sm" onClick={handleAddModel} disabled={disabled}>添加</Button>
+              <Button type="button" size="sm" onClick={handleAddModel} disabled={disabled} className={primaryButtonClass}>添加</Button>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
+                className="h-8 rounded-[7px] text-[12px] text-[var(--text-2)] hover:bg-[var(--surface-3)] hover:text-[var(--text-1)] focus-visible:ring-0"
                 onClick={() => { setShowAddModel(false); setNewModelId(''); setNewModelName(''); setAddError('') }}
               >
                 取消
@@ -377,7 +386,7 @@ export function ChannelForm({
             </div>
           </div>
         )}
-        {fetchMsg && <p className="text-[11px] text-muted-foreground">{fetchMsg}</p>}
+        {fetchMsg && <p className="text-[11px] text-[var(--text-3)]">{fetchMsg}</p>}
         {models.length > 0 && (
           <div className="space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -385,7 +394,7 @@ export function ChannelForm({
                 value={modelSearch}
                 onChange={(e) => setModelSearch(e.target.value)}
                 placeholder="搜索模型 ID 或名称"
-                className="h-8 text-[12px]"
+                className={cn(fieldClass, 'h-8 text-[12px]')}
                 disabled={disabled}
               />
               <div className="flex shrink-0 gap-2">
@@ -395,6 +404,7 @@ export function ChannelForm({
                   size="sm"
                   disabled={disabled || visibleModelIds.length === 0}
                   onClick={() => setModels((prev) => setChannelModelsEnabled(prev, visibleModelIds, true))}
+                  className={outlineButtonClass}
                 >
                   全选
                 </Button>
@@ -404,29 +414,29 @@ export function ChannelForm({
                   size="sm"
                   disabled={disabled || visibleModelIds.length === 0}
                   onClick={() => setModels((prev) => invertChannelModelsEnabled(prev, visibleModelIds))}
+                  className={outlineButtonClass}
                 >
                   反选
                 </Button>
               </div>
             </div>
             {modelSearch.trim() && (
-              <p className="text-[11px] text-muted-foreground">匹配 {visibleModels.length} / {models.length} 个模型</p>
+              <p className="text-[11px] text-[var(--text-3)]">匹配 {visibleModels.length} / {models.length} 个模型</p>
             )}
-            <ScrollArea className="max-h-48 rounded-lg border">
-              <div className="divide-y">
+            <ScrollArea className="max-h-48 rounded-[8px] bg-[var(--surface-2)]">
+              <div className="divide-y divide-[color:color-mix(in_oklab,var(--border)_55%,transparent)]">
                 {visibleModels.map((m) => (
-                  <label key={m.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-muted/50">
-                    <input
-                      type="checkbox"
+                  <label key={m.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 hover:bg-[var(--surface-3)]">
+                    <Checkbox
                       checked={m.enabled}
                       disabled={disabled}
-                      onChange={(e) => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: e.target.checked } : x))}
+                      onCheckedChange={(checked) => setModels((prev) => prev.map((x) => x.id === m.id ? { ...x, enabled: Boolean(checked) } : x))}
                     />
-                    <span className="text-[12px] font-mono truncate">{m.id}</span>
+                    <span className="truncate font-mono text-[12px] text-[var(--text-1)]">{m.id}</span>
                   </label>
                 ))}
                 {visibleModels.length === 0 && (
-                  <div className="px-3 py-6 text-center text-[12px] text-muted-foreground">没有匹配的模型</div>
+                  <div className="px-3 py-6 text-center text-[12px] text-[var(--text-3)]">没有匹配的模型</div>
                 )}
               </div>
             </ScrollArea>
@@ -435,11 +445,11 @@ export function ChannelForm({
       </div>
 
       <div className="flex items-center gap-2 pt-2">
-        <Button type="submit" disabled={disabled || saving || (mode === 'create' && apiKeyRequired && !apiKey)}>
+        <Button type="submit" disabled={disabled || saving || (mode === 'create' && apiKeyRequired && !apiKey)} className={primaryButtonClass}>
           {saving && <Loader2 size={13} className="animate-spin mr-1" />}
           {mode === 'edit' ? '保存修改' : '保存'}
         </Button>
-        {onCancel && <Button type="button" variant="ghost" onClick={onCancel}>取消</Button>}
+        {onCancel && <Button type="button" variant="ghost" onClick={onCancel} className="h-8 rounded-[7px] text-[12px] text-[var(--text-2)] hover:bg-[var(--surface-3)] hover:text-[var(--text-1)] focus-visible:ring-0">取消</Button>}
       </div>
     </form>
   )

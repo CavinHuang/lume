@@ -10,6 +10,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Brain, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   THINKING_LEVEL_OPTIONS,
   TONE_CLASS,
@@ -59,7 +61,8 @@ export function ThinkingLevelPicker({ value, onChange, inline }: ThinkingLevelPi
 
   return (
     <div ref={menuRef} className="relative">
-      <button
+      <Button
+        variant="ghost"
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={composerControlTriggerClassName}
@@ -67,7 +70,7 @@ export function ThinkingLevelPicker({ value, onChange, inline }: ThinkingLevelPi
         <Brain size={14} />
         <span>思考: {current.label}</span>
         <ChevronDown size={12} className={composerControlChevronClassName} />
-      </button>
+      </Button>
 
       {open && (
         <div className={cn(composerControlMenuClassName, 'min-w-[240px] p-1.5')}>
@@ -86,16 +89,19 @@ function ThinkingLevelCards({
   onSelect: (v: LumeConfigThinkingLevel) => void
 }) {
   return (
-    <div className="space-y-1">
+    <RadioGroup
+      value={value}
+      onValueChange={(nextValue) => { if (nextValue) onSelect(nextValue as LumeConfigThinkingLevel) }}
+      className="space-y-1"
+    >
       {THINKING_LEVEL_OPTIONS.map((opt) => (
         <ThinkingLevelCard
           key={opt.value}
           option={opt}
           selected={value === opt.value}
-          onSelect={() => onSelect(opt.value)}
         />
       ))}
-    </div>
+    </RadioGroup>
   )
 }
 
@@ -107,24 +113,25 @@ function ThinkingLevelButtons({
   onSelect: (v: LumeConfigThinkingLevel) => void
 }) {
   return (
-    <div className="grid h-9 w-full grid-cols-5 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-0.5">
+    <div className="lume-segmented grid w-full grid-cols-5">
       {THINKING_LEVEL_OPTIONS.map((option) => {
         const selected = value === option.value
         return (
-          <button
+          <Button
+                variant="ghost"
             key={option.value}
             type="button"
             title={`${option.label} - ${option.desc}`}
             onClick={() => onSelect(option.value)}
             className={cn(
-              'min-w-0 rounded-[6px] px-1 text-[12px] font-medium transition-colors',
+              'lume-segmented-item px-1 text-[12px]',
               selected
-                ? 'border border-[color-mix(in_oklab,var(--lume-accent)_40%,var(--lume-border-strong))] bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]'
-                : 'border border-transparent text-[var(--lume-text-secondary)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
+                ? 'lume-segmented-item-active'
+                : '',
             )}
           >
             {option.label}
-          </button>
+          </Button>
         )
       })}
     </div>
@@ -134,11 +141,9 @@ function ThinkingLevelButtons({
 function ThinkingLevelCard({
   option,
   selected,
-  onSelect,
 }: {
   option: ThinkingLevelOption
   selected: boolean
-  onSelect: () => void
 }) {
   return (
     <label
@@ -149,13 +154,9 @@ function ThinkingLevelCard({
           : 'border-transparent hover:bg-[var(--lume-bg-elevated)]',
       )}
     >
-      <input
-        type="radio"
-        name="thinkingLevel"
+      <RadioGroupItem
         value={option.value}
-        checked={selected}
-        onChange={onSelect}
-        className="accent-primary shrink-0"
+        className="shrink-0"
       />
       <Brain
         size={15}
@@ -179,7 +180,7 @@ function ThinkingLevelCard({
             {option.emphasis}
           </Badge>
         </div>
-        <div className="text-[10.5px] text-muted-foreground mt-0.5">{option.desc}</div>
+        <div className="mt-0.5 text-[10.5px] text-[var(--text-3)]">{option.desc}</div>
       </div>
     </label>
   )

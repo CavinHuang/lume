@@ -241,7 +241,7 @@ export function VersionUpdateSettings() {
         <MetricCard icon={Clock3} label="上次检查" value={lastCheckText} tint="violet" />
       </div>
 
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+      <section className="lume-panel p-5">
         <div className="flex items-center gap-5">
           <img src={logoUrl} alt="" className="size-20 rounded-[18px]" />
           <div className="min-w-0 flex-1">
@@ -261,7 +261,7 @@ export function VersionUpdateSettings() {
         </div>
       </section>
 
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+      <section className="lume-panel p-5">
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h3 className="text-[15px] font-semibold text-[var(--text-1)]">更新详情</h3>
@@ -374,12 +374,12 @@ function MetricCard({
   const tintClass = {
     brand: 'bg-[color-mix(in_oklab,var(--brand)_12%,var(--surface-1))] text-[var(--brand)]',
     blue: 'bg-[color-mix(in_oklab,#3b82f6_13%,var(--surface-1))] text-[#2563eb]',
-    green: 'bg-[color-mix(in_oklab,#22c55e_14%,var(--surface-1))] text-[#16a34a]',
+    green: 'bg-[color-mix(in_oklab,var(--lume-success)_12%,var(--surface-1))] text-[var(--lume-success)]',
     violet: 'bg-[color-mix(in_oklab,#8b5cf6_13%,var(--surface-1))] text-[#7c3aed]',
   }[tint]
 
   return (
-    <div className="flex min-h-[96px] items-center gap-3 rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-4">
+    <div className="lume-panel flex min-h-[96px] items-center gap-3 px-4">
       <div className={cn('flex size-11 items-center justify-center rounded-full', tintClass)}>
         <Icon size={21} />
       </div>
@@ -402,7 +402,7 @@ function InfoLine({ label, value }: { label: string; value: string }) {
 
 function SettingsBox({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-3 rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+    <section className="lume-panel space-y-3 p-5">
       <h3 className="text-[15px] font-semibold text-[var(--text-1)]">{title}</h3>
       {children}
     </section>

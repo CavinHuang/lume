@@ -1,3 +1,5 @@
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 /**
  * WorkspaceSelector - 侧边栏工作区下拉选择器
  *
@@ -92,7 +94,8 @@ export function WorkspaceSelector() {
   return (
     <div ref={containerRef} className="relative">
       {/* ——— 触发按钮 ——— */}
-      <button
+      <Button
+                variant="ghost"
         onClick={() => setOpen((v) => !v)}
         className={cn(
           'w-full flex items-center gap-2 px-3 py-2 rounded-[10px] text-[13px] transition-colors',
@@ -111,7 +114,7 @@ export function WorkspaceSelector() {
             open && 'rotate-180'
           )}
         />
-      </button>
+      </Button>
 
       {/* ——— 下拉面板 ——— */}
       {open && (
@@ -119,7 +122,8 @@ export function WorkspaceSelector() {
           {/* 列表头部 */}
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40">
             <span className="text-[11px] font-medium text-foreground/40 select-none">工作区</span>
-            <button
+            <Button
+                variant="ghost"
               onClick={(e) => {
                 e.stopPropagation()
                 setOpen(false)
@@ -129,7 +133,7 @@ export function WorkspaceSelector() {
               title="新建工作区"
             >
               <Plus size={13} />
-            </button>
+            </Button>
           </div>
 
           {/* 工作区列表 */}
@@ -145,7 +149,7 @@ export function WorkspaceSelector() {
                 return (
                   <div key={ws.id} className="flex items-center gap-1.5 px-3 py-[6px] mx-1">
                     <FolderOpen size={13} className="text-foreground/40 flex-shrink-0" />
-                    <input
+                    <Input
                       ref={editInputRef}
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
@@ -158,19 +162,22 @@ export function WorkspaceSelector() {
                       className="flex-1 min-w-0 bg-transparent text-[12px] text-foreground border-b border-primary/50 outline-none"
                       maxLength={50}
                     />
-                    <button onClick={handleRename} className="size-5 flex items-center justify-center rounded text-[var(--lume-success)] hover:bg-[color:color-mix(in_oklab,var(--lume-success)_12%,transparent)]">
+                    <Button
+                variant="ghost" onClick={handleRename} className="size-5 flex items-center justify-center rounded text-[var(--lume-success)] hover:bg-[color:color-mix(in_oklab,var(--lume-success)_12%,transparent)]">
                       <Check size={11} />
-                    </button>
-                    <button onClick={() => setEditingId(null)} className="size-5 flex items-center justify-center text-foreground/40 hover:bg-foreground/10 rounded">
+                    </Button>
+                    <Button
+                variant="ghost" onClick={() => setEditingId(null)} className="size-5 flex items-center justify-center text-foreground/40 hover:bg-foreground/10 rounded">
                       <X size={11} />
-                    </button>
+                    </Button>
                   </div>
                 )
               }
 
               return (
                 <div key={ws.id} className="group relative mx-1">
-                  <button
+                  <Button
+                variant="ghost"
                     onClick={() => {
                       setCurrentId(ws.id)
                       setOpen(false)
@@ -194,14 +201,15 @@ export function WorkspaceSelector() {
                       </span>
                     )}
                     {isSelected && <Check size={12} className="text-primary flex-shrink-0" />}
-                  </button>
+                  </Button>
 
                   {/* hover 操作按钮 */}
                   <div className={cn(
                     'absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5',
                     'opacity-0 group-hover:opacity-100 transition-opacity'
                   )}>
-                    <button
+                    <Button
+                variant="ghost"
                       onClick={(e) => {
                         e.stopPropagation()
                         setEditingId(ws.id)
@@ -211,9 +219,10 @@ export function WorkspaceSelector() {
                       title="重命名"
                     >
                       <Pencil size={10} />
-                    </button>
+                    </Button>
                     {workspaces.length > 1 && (
-                      <button
+                      <Button
+                variant="ghost"
                         onClick={(e) => {
                           e.stopPropagation()
                           handleDelete(ws)
@@ -222,7 +231,7 @@ export function WorkspaceSelector() {
                         title="删除"
                       >
                         <Trash2 size={10} />
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -236,7 +245,8 @@ export function WorkspaceSelector() {
 
           {/* 底部新建入口 */}
           <div className="border-t border-border/40">
-            <button
+            <Button
+                variant="ghost"
               onClick={(e) => {
                 e.stopPropagation()
                 setOpen(false)
@@ -246,7 +256,7 @@ export function WorkspaceSelector() {
             >
               <Plus size={12} />
               新建工作区
-            </button>
+            </Button>
           </div>
         </div>
       )}

@@ -30,6 +30,7 @@ import {
   type SettingsViewTab,
 } from './settings-view-state'
 
+import { Button } from '@/components/ui/button'
 export function SettingsView() {
   const initialTab = useAtomValue(settingsInitialTabAtom)
   const clearInitialTab = useSetAtom(settingsInitialTabAtom)
@@ -56,7 +57,7 @@ export function SettingsView() {
 
   return (
     <div className="flex flex-1 min-w-0 min-h-0 gap-8 bg-[var(--background)]">
-      <aside className="w-[174px] shrink-0 rounded-tr-[12px] border-r border-t border-[var(--border)] bg-[var(--surface-1)] px-3 py-5 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <aside className="w-[174px] shrink-0 bg-[var(--surface-1)] px-3 py-5 shadow-[6px_0_18px_-14px_hsl(var(--lume-shadow-panel)_/_0.32)]">
         <h1 className="mb-3 px-2.5 text-[22px] font-semibold leading-7 text-[var(--text-1)]">设置</h1>
         <nav className="space-y-1.5">
           {SETTINGS_NAV_ITEMS.map((item) => {
@@ -64,12 +65,13 @@ export function SettingsView() {
             const selected = tab === item.id
 
             return (
-              <button
+              <Button
+                variant="ghost"
                 key={item.id}
                 type="button"
                 onClick={() => setTab(item.id)}
                 className={cn(
-                  'flex h-9 w-full items-center gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors',
+                  'flex h-9 w-full items-center justify-start gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors',
                   selected
                     ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
                     : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
@@ -77,7 +79,7 @@ export function SettingsView() {
               >
                 <Icon size={16} strokeWidth={1.9} className="shrink-0" />
                 <span>{item.label}</span>
-              </button>
+              </Button>
             )
           })}
         </nav>
@@ -119,7 +121,7 @@ export function SettingsView() {
 
 function SettingsContentShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <div className="lume-panel overflow-hidden">
       {children}
     </div>
   )

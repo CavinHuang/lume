@@ -6,7 +6,6 @@ import {
   agentWorkspacesAtom,
   activeTabIdAtom,
   archiveInitialViewAtom,
-  commandPaletteOpenAtom,
   currentWorkspaceIdAtom,
   settingsInitialTabAtom,
   sidebarCollapsedAtom,
@@ -41,7 +40,6 @@ export function LeftSidebar() {
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const [pinnedIds, setPinnedIds] = useAtom(workspacePinnedIdsAtom)
-  const setOpenCommandPalette = useSetAtom(commandPaletteOpenAtom)
   const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
   const setArchiveInitialView = useSetAtom(archiveInitialViewAtom)
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
@@ -263,9 +261,6 @@ export function LeftSidebar() {
     switch (actionId) {
       case 'new-chat':
         handleNewThread()
-        return
-      case 'search':
-        setOpenCommandPalette(true)
         return
       case 'lume':
         openLume()

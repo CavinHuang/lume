@@ -11,6 +11,8 @@ import {
 import { cn } from '@/lib/utils'
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts
   const minutes = Math.floor(diff / 60_000)
@@ -150,13 +152,13 @@ export function CommandPalette() {
         {/* 搜索输入 */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
           <Search size={16} className="text-muted-foreground flex-shrink-0" />
-          <input
+          <Input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="搜索线程标题..."
-            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            className="flex-1 border-0 bg-transparent px-0 text-sm shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0"
           />
           {query && results.length > 0 && (
             <span className="text-xs text-muted-foreground flex-shrink-0">
@@ -233,7 +235,8 @@ function ResultItem({
   onMouseEnter: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       onClick={onClick}
       onMouseEnter={onMouseEnter}
       className={cn(
@@ -252,6 +255,6 @@ function ResultItem({
           {workspace.name}
         </span>
       )}
-    </button>
+    </Button>
   )
 }

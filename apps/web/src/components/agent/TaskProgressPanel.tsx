@@ -7,6 +7,7 @@ import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, RotateCcw, Ski
 
 import type { AgentTaskRunTask, LumeRuntimeEvent } from '@lume/shared'
 
+import { Button } from '@/components/ui/button'
 interface TaskProgressPanelProps {
   threadId: string
 }
@@ -140,19 +141,21 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
             />
           </div>
           {canContinueTasks && (
-            <button
+            <Button
+                variant="ghost"
               type="button"
               disabled={continueBusy}
               onClick={() => void runTaskIntent('continue')}
               className="mt-3 h-8 w-full rounded-lg bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] px-2 text-[11px] font-medium text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_14%,var(--surface-1))] disabled:opacity-50"
             >
               {continueBusy ? '继续中...' : '继续执行'}
-            </button>
+            </Button>
           )}
           {(canRetryTasks || canSkipTasks) && (
             <div className="mt-2 grid grid-cols-2 gap-2">
               {canRetryTasks && (
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   disabled={continueBusy}
                   onClick={() => void runTaskIntent('retry')}
@@ -160,10 +163,11 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
                 >
                   <RotateCcw size={12} />
                   重试
-                </button>
+                </Button>
               )}
               {canSkipTasks && (
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   disabled={continueBusy}
                   onClick={() => void runTaskIntent('skip')}
@@ -171,7 +175,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
                 >
                   <SkipForward size={12} />
                   跳过
-                </button>
+                </Button>
               )}
             </div>
           )}

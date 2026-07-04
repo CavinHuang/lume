@@ -22,6 +22,8 @@ import { cn } from '@/lib/utils'
 import { FILE_TREE_DEFAULT_WIDTH, getRightPanelFileTreeDragWidth } from './right-panel-layout'
 import type { FilesTabState } from './right-panel-state'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface FilesRightPanelTabProps {
   state: FilesTabState
   workspaceSlug?: string
@@ -209,7 +211,8 @@ export function FilesRightPanelTab({
         </div>
 
         <div className="relative flex shrink-0 items-center gap-1.5" ref={menuRef}>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             disabled={!canShowTree}
             onClick={() => update({ treeVisible: !state.treeVisible })}
@@ -217,8 +220,9 @@ export function FilesRightPanelTab({
             title={state.treeVisible ? '收起文件树' : '展开文件树'}
           >
             {state.treeVisible ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             type="button"
             disabled={!selectedPath}
             onClick={openSelectedFile}
@@ -226,15 +230,16 @@ export function FilesRightPanelTab({
             title="用系统应用打开"
           >
             <ExternalLink size={16} />
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setMenuOpen((open) => !open)}
             className="flex size-8 items-center justify-center rounded-[8px] text-foreground/55 transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
             title="更多"
           >
             <MoreHorizontal size={16} />
-          </button>
+          </Button>
           {menuOpen && (
             <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-56 rounded-[10px] border border-border/80 bg-background/98 p-2 shadow-[0_18px_55px_-32px_hsl(var(--lume-shadow-panel)/0.62)] backdrop-blur">
               <MenuButton disabled={!selectedPath} icon={<Copy size={15} />} onClick={copySelectedPath}>
@@ -317,7 +322,7 @@ export function FilesRightPanelTab({
             >
               <div className="border-b border-border/60 px-3 py-3">
                 {workspaceSlug && (
-                  <div className="mb-2 grid grid-cols-2 rounded-[8px] bg-foreground/[0.04] p-1">
+                  <div className="lume-segmented mb-2 grid grid-cols-2">
                     <SourceButton active={source === 'thread'} onClick={() => update({ source: 'thread', selectedPath: null })}>
                       线程文件
                     </SourceButton>
@@ -328,11 +333,11 @@ export function FilesRightPanelTab({
                 )}
                 <label className="flex h-9 items-center gap-2 rounded-[8px] border border-border/70 bg-background px-3 text-foreground/52">
                   <Search size={15} />
-                  <input
+                  <Input
                     value={state.searchQuery}
                     onChange={(event) => update({ searchQuery: event.target.value })}
                     placeholder="筛选文件..."
-                    className="h-full min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-foreground/38"
+                    className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] text-foreground shadow-none outline-none placeholder:text-foreground/38 focus-visible:ring-0"
                   />
                 </label>
               </div>
@@ -376,7 +381,8 @@ function MenuButton({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       disabled={disabled}
       onClick={onClick}
@@ -384,7 +390,7 @@ function MenuButton({
     >
       <span className="text-foreground/58">{icon}</span>
       <span>{children}</span>
-    </button>
+    </Button>
   )
 }
 
@@ -398,16 +404,17 @@ function SourceButton({
   onClick: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onClick}
       className={cn(
-        'h-7 rounded-[6px] text-[12px] font-medium transition-colors',
-        active ? 'bg-background text-foreground shadow-sm' : 'text-foreground/52 hover:text-foreground',
+        'lume-segmented-item text-[12px]',
+        active ? 'lume-segmented-item-active' : '',
       )}
     >
       {children}
-    </button>
+    </Button>
   )
 }
 

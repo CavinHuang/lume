@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { cn } from "../../lib/utils"
 
+import { Button } from '@/components/ui/button'
 const ACTIVITY_CONFIG: Record<PredefinedRoutineActivity, { label: string; icon: typeof BookOpen; color: string; tooltip: string }> = {
   reading_note: { label: "读书笔记", icon: BookMarked, color: "#9a7444", tooltip: "为在读的书籍自动生成读书笔记，基于已读内容总结要点和感悟" },
   reading_progress: { label: "读书进度", icon: BookOpen, color: "#7c6c3f", tooltip: "自动推进在读书籍的阅读进度，读完后自动标记为已读完" },
@@ -158,14 +159,15 @@ export function RoutineEntryItem({ entry, onTrigger, onViewResult }: RoutineEntr
         {/* Expandable result */}
         {hasResult && (
           <div className="mt-2 pl-7">
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
               className="flex items-center gap-1 text-[11px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)]"
             >
               {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               {expanded ? "收起结果" : "查看结果"}
-            </button>
+            </Button>
             {expanded && (
               <div className="mt-2 max-h-[200px] overflow-y-auto whitespace-pre-wrap rounded-xl border bg-[var(--reading-panel)] px-4 py-3 text-[13px] leading-6 text-[var(--text-2)]">
                 {entry.result!.summary}

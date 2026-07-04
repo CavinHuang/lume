@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * InfoExtractResult 工具结果渲染器
  *
@@ -54,7 +55,8 @@ function ExpertCard({ expert }: { expert: InfoExtractExpert }) {
   return (
     <div className="mb-3 overflow-hidden rounded-xl border border-[#e5e7eb] bg-white shadow-sm">
       {/* Header */}
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => setExpanded((v) => !v)}
         className="flex w-full items-center gap-3 p-3 text-left transition-colors hover:bg-gray-50/80"
@@ -108,7 +110,7 @@ function ExpertCard({ expert }: { expert: InfoExtractExpert }) {
             {expert.description}
           </p>
         </div>
-      </button>
+      </Button>
 
       {/* Expanded detail */}
       <AnimatedCollapsiblePanel open={expanded}>
@@ -262,10 +264,11 @@ function StepItem({
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <button
+        <Button
+          variant="ghost"
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="w-full text-left"
+          className="flex h-auto w-full flex-col items-start justify-start p-0 text-left hover:bg-transparent"
         >
           <span
             className="text-[12px] font-medium"
@@ -285,7 +288,7 @@ function StepItem({
               执行中...
             </span>
           )}
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -305,10 +308,11 @@ export function InfoExtractResult({ result }: InfoExtractResultProps) {
   return (
     <div className="w-full max-w-[460px] overflow-hidden rounded-xl border border-[#e1e4ec] bg-white shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
       {/* Header */}
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-[var(--surface-2)]"
+        className="flex h-auto w-full items-center justify-start gap-2 px-4 py-2.5 text-left transition-colors hover:bg-[var(--surface-2)]"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -331,7 +335,7 @@ export function InfoExtractResult({ result }: InfoExtractResultProps) {
             · {data.sourceDocument}
           </span>
         )}
-      </button>
+      </Button>
 
       {/* Expandable content */}
       <AnimatedCollapsiblePanel open={expanded}>

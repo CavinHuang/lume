@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
+import { Button } from '@/components/ui/button'
 function AppInner() {
   useGlobalAgentListeners()
   useReadingListeners()
@@ -58,12 +59,13 @@ export function App() {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-background gap-3">
         <p className="text-destructive font-medium text-[14px]">{error}</p>
-        <button
+        <Button
+                variant="ghost"
           onClick={() => window.location.reload()}
           className="px-4 py-1.5 rounded-lg border border-border text-[12px] text-foreground/70 hover:bg-muted/50 transition-colors"
         >
           重试
-        </button>
+        </Button>
       </div>
     )
   }

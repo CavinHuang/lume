@@ -3,6 +3,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { agentErrorMessagesAtom, agentStreamingStatesAtom } from '@/atoms'
 import { agentSend } from '@/lib/desktop-api'
 
+import { Button } from '@/components/ui/button'
 interface ErrorBannerProps {
   threadId: string
 }
@@ -39,20 +40,22 @@ export function ErrorBanner({ threadId }: ErrorBannerProps) {
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button
+          <Button
+                variant="ghost"
             onClick={handleRetry}
             className="p-1 rounded-md text-destructive/60 hover:text-destructive hover:bg-destructive/10 transition-colors"
             title="重试"
           >
             <RotateCcw size={14} />
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             onClick={handleDismiss}
             className="p-1 rounded-md text-destructive/60 hover:text-destructive hover:bg-destructive/10 transition-colors"
             title="关闭"
           >
             <X size={14} />
-          </button>
+          </Button>
         </div>
       </div>
     </div>

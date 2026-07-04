@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import {
   Check,
-  ChevronDown,
   Code2,
   Copy,
   Database,
@@ -76,6 +75,9 @@ import {
   formatRiskLabel,
 } from './plugin-detail-state'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 type SkillVisualTone = 'violet' | 'mint' | 'figma' | 'green' | 'blue' | 'orange'
 
 interface MarketDisplayCard extends MarketCardView {
@@ -311,38 +313,39 @@ export function SkillsMarketView() {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-hidden bg-white px-7 pb-8 pt-8 text-[#121832]">
+    <div className="min-h-0 flex-1 overflow-hidden bg-[var(--background)] px-7 pb-8 pt-8 text-[var(--text-1)]">
       <div className="mx-auto flex h-full max-w-[1230px] flex-col">
         <header className="mb-6 flex items-start justify-between gap-5">
           <div className="min-w-0">
-            <h1 className="text-[25px] font-semibold leading-tight text-[#121832]">插件市场</h1>
-            <p className="mt-2 text-[14px] leading-6 text-[#60698d]">
+            <h1 className="text-[25px] font-semibold leading-tight text-[var(--text-1)]">插件市场</h1>
+            <p className="mt-2 text-[14px] leading-6 text-[var(--text-2)]">
               市场用于发现、审核和安装插件与技能，可在插件和技能视图之间快速切换。
             </p>
           </div>
-          <div className="inline-flex shrink-0 rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
+          <div className="lume-segmented inline-flex shrink-0">
             {([
               { id: 'plugin', label: `插件 ${summary.totalPlugins}` },
               { id: 'skill', label: `技能 ${summary.totalSkills}` },
             ] as const).map((section) => (
-              <button
+              <Button
+                variant="ghost"
                 key={section.id}
                 type="button"
                 onClick={() => setActiveKind(section.id)}
                 className={cn(
-                  'h-9 rounded-[6px] px-4 text-[13px] font-semibold transition-colors',
+                  'lume-segmented-item px-4 font-semibold',
                   activeKind === section.id
-                    ? 'bg-white text-[#121832] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]'
-                    : 'text-[#687196] hover:text-[#121832]',
+                    ? 'lume-segmented-item-active'
+                    : '',
                 )}
               >
                 {section.label}
-              </button>
+              </Button>
             ))}
           </div>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_338px] gap-5">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_292px] gap-4">
           <main className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
             <SkillFilterBar
               query={query}
@@ -354,12 +357,12 @@ export function SkillsMarketView() {
             />
 
             {loading ? (
-              <div className="mt-6 flex h-[180px] items-center justify-center gap-2 rounded-[8px] border border-[#e4e7f1] text-[13px] text-[#626b8f]">
+              <div className="lume-subpanel mt-6 flex h-[180px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
                 <Loader2 size={16} className="animate-spin" />
                 正在同步市场...
               </div>
             ) : error ? (
-              <div className="mt-6 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-4 text-[13px] text-[#ba3636]">
+              <div className="mt-6 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-4 text-[13px] text-[var(--lume-danger)]">
                 {error}
               </div>
             ) : (
@@ -434,15 +437,15 @@ function SkillFilterBar({
   onSourceChange: (value: string) => void
 }) {
   return (
-    <section className="rounded-[8px] border border-[#e4e7f1] bg-white px-4 py-3">
+    <section className="lume-subpanel px-4 py-2">
       <div className="grid grid-cols-[minmax(210px,1fr)_minmax(190px,255px)_minmax(190px,255px)] gap-5">
-        <label className="flex h-10 items-center gap-3 rounded-[8px] border border-[#e4e7f1] bg-white px-4 text-[#687196] shadow-[0_8px_20px_-18px_rgba(48,58,110,0.32)]">
-          <Search size={18} />
-          <input
+        <label className="flex h-9 items-center gap-2.5 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_70%,transparent)] bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
+          <Search size={16} />
+          <Input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
             placeholder="搜索插件或技能"
-            className="min-w-0 flex-1 bg-transparent text-[13px] font-medium text-[#1d2440] outline-none placeholder:text-[#6c7699]"
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
           />
         </label>
         <MarketSelect value={category} options={[...MARKET_CATEGORY_OPTIONS]} onChange={onCategoryChange} />
@@ -462,20 +465,18 @@ function MarketSelect({
   onChange: (value: string) => void
 }) {
   return (
-    <label className="relative flex h-10 items-center rounded-[8px] border border-[#e4e7f1] bg-white text-[13px] font-medium text-[#60698d] shadow-[0_8px_20px_-18px_rgba(48,58,110,0.32)]">
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-full w-full appearance-none bg-transparent px-4 pr-10 outline-none"
-      >
+    <Select value={value} onValueChange={(nextValue) => { if (nextValue) onChange(nextValue) }}>
+      <SelectTrigger className="h-9 w-full rounded-[8px] border-[color:color-mix(in_oklab,var(--border)_70%,transparent)] bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-2)] shadow-none focus-visible:ring-0">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
         {options.map((option) => (
-          <option key={option} value={option}>
+          <SelectItem key={option} value={option}>
             {option}
-          </option>
+          </SelectItem>
         ))}
-      </select>
-      <ChevronDown size={16} className="pointer-events-none absolute right-4 text-[#46527a]" />
-    </label>
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -504,7 +505,7 @@ function MarketCardGrid({
         />
       ))}
       {cards.length === 0 && (
-        <div className="col-span-3 rounded-[8px] border border-dashed border-[#d8ddec] p-10 text-center text-[13px] text-[#687196]">
+        <div className="col-span-3 rounded-[8px] border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-[var(--text-3)]">
           {activeKind === 'plugin'
             ? '当前工作区还没有可展示的插件。可添加本地或 GitHub marketplace root 进行同步。'
             : '当前工作区还没有可展示的 Agent 技能。可添加市场源或同步已有来源。'}
@@ -542,23 +543,23 @@ function MarketCard({
           onOpenDetail()
         }
       }}
-      className="flex h-[216px] min-w-0 cursor-pointer flex-col overflow-hidden rounded-[8px] border border-[#e4e7f1] bg-white p-4 [overflow-wrap:anywhere] shadow-[0_16px_36px_-32px_rgba(43,52,103,0.48)] transition-colors hover:border-[#cfd5e8] hover:bg-[#fbfcff]"
+      className="flex h-[216px] min-w-0 cursor-pointer flex-col overflow-hidden rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_58%,transparent)] bg-[var(--surface-1)] p-4 shadow-[0_2px_8px_-5px_hsl(var(--lume-shadow-panel)/0.24)] [overflow-wrap:anywhere] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,var(--border))] hover:bg-[var(--surface-2)]"
     >
       <div className="flex min-w-0 items-center gap-3">
         <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-[8px]', iconToneClass(card.tone))}>
           <Icon size={21} strokeWidth={2.2} />
         </div>
-        <h2 className="min-w-0 flex-1 truncate text-[16px] font-semibold leading-6 text-[#121832]" title={card.name}>
+        <h2 className="min-w-0 flex-1 truncate text-[16px] font-semibold leading-6 text-[var(--text-1)]" title={card.name}>
           {card.name}
         </h2>
         {card.enabled && (
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#35c977] text-white">
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--lume-success)_15%,var(--surface-1))] text-[var(--lume-success)]">
             <Check size={16} strokeWidth={2.5} />
           </span>
         )}
       </div>
       <div className="mt-4 min-w-0 flex-1 overflow-hidden">
-        <p className="line-clamp-4 break-all text-[13px] leading-[20px] text-[#687196]">
+        <p className="line-clamp-4 break-all text-[13px] leading-[20px] text-[var(--text-2)]">
           {card.description ?? '暂无描述。'}
         </p>
       </div>
@@ -566,17 +567,18 @@ function MarketCard({
         <span className={cn('min-w-0 break-all rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(card.category))}>
           {card.category}
         </span>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           disabled={!actionable || busy}
           onClick={(event) => {
             event.stopPropagation()
             onAction()
           }}
-          className="min-h-8 max-w-full shrink-0 whitespace-nowrap rounded-[6px] border border-[color:color-mix(in_oklab,var(--brand)_36%,var(--border-strong))] px-4 py-1 text-[13px] font-semibold text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]"
+          className="min-h-8 max-w-full shrink-0 whitespace-nowrap rounded-[6px] border border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border))] px-4 py-1 text-[13px] font-semibold text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? '处理中' : card.actionLabel}
-        </button>
+        </Button>
       </div>
     </article>
   )
@@ -598,43 +600,45 @@ function SkillSourcePanel({
   onSync: () => void
 }) {
   return (
-    <aside className="h-fit rounded-[8px] border border-[#e4e7f1] bg-white p-5 shadow-[0_18px_40px_-36px_rgba(43,52,103,0.52)]">
-      <h2 className="text-[17px] font-semibold text-[#121832]">市场源</h2>
-      <p className="mt-3 text-[13px] leading-6 text-[#60698d]">管理插件与技能来源，并同步获取最新市场内容。</p>
+    <aside className="h-fit rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_60%,transparent)] bg-[var(--surface-1)] p-3 shadow-[0_2px_8px_-5px_hsl(var(--lume-shadow-panel)/0.24)]">
+      <h2 className="text-[14px] font-semibold leading-5 text-[var(--text-1)]">市场源</h2>
+      <p className="mt-1 text-[12px] leading-4 text-[var(--text-3)]">管理插件与技能来源，并同步获取最新内容。</p>
 
-      <div className="mt-5 space-y-4">
+      <div className="lume-subpanel mt-2.5 space-y-0.5 p-1">
         {sources.map((source) => (
           <SkillSourceRow key={source.id} source={source} />
         ))}
       </div>
 
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={onAddSource}
-        className="mt-5 flex h-[52px] w-full items-center justify-center gap-2 rounded-[8px] border border-dashed border-[color:color-mix(in_oklab,var(--brand)_34%,var(--border-strong))] bg-white text-[14px] font-semibold text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_7%,transparent)]"
+        className="mt-2.5 flex h-9 w-full items-center justify-center gap-1.5 rounded-[7px] border border-dashed border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border))] bg-[var(--surface-1)] text-[12px] font-semibold text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))]"
       >
-        <Plus size={18} />
+        <Plus size={14} />
         添加市场源
-      </button>
+      </Button>
 
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={onSync}
         disabled={loading}
-        className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-[8px] bg-[var(--brand)] text-[14px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-wait disabled:opacity-70"
+        className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-[7px] bg-[var(--brand)] text-[12px] font-semibold text-[var(--brand-foreground)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-wait disabled:opacity-70"
       >
-        <RefreshCw size={18} className={cn(loading && 'animate-spin')} />
+        <RefreshCw size={14} className={cn(loading && 'animate-spin')} />
         同步市场
-      </button>
+      </Button>
 
-      <div className="my-6 h-px bg-[#edf0f6]" />
+      <div className="my-3 h-px bg-[color:color-mix(in_oklab,var(--border)_48%,transparent)]" />
 
-      <div className="rounded-[8px] border border-[#edf0f6] bg-white p-4">
-        <div className="flex items-center gap-3 text-[#687196]">
-          <ShieldCheck size={19} className="text-[#20c579]" />
-          <span className="text-[13px]">上次同步：{formatSyncTime(lastSyncedAt)}</span>
+      <div className="rounded-[7px] bg-[var(--surface-2)] p-2.5">
+        <div className="flex items-center gap-1.5 text-[var(--text-2)]">
+          <ShieldCheck size={14} className="text-[var(--lume-success)]" />
+          <span className="text-[11px] font-medium">上次同步：{formatSyncTime(lastSyncedAt)}</span>
         </div>
-        <div className="mt-3 pl-8 text-[13px] text-[#687196]">
+        <div className="mt-1.5 pl-5 text-[11px] leading-4 text-[var(--text-3)]">
           已发现 {summary.totalPlugins} 个插件、{summary.totalSkills} 个技能；当前工作区已启用 {summary.enabledPlugins} 个插件，已安装 {summary.installedSkills} 个技能
         </div>
       </div>
@@ -781,34 +785,36 @@ function AddSkillSourceDialog({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#111735]/32 p-6 backdrop-blur-[2px]">
-      <section className="grid max-h-[88vh] w-full max-w-[720px] grid-rows-[auto_minmax(0,1fr)_auto] rounded-[8px] border border-[#e4e7f1] bg-white shadow-[0_28px_80px_-42px_rgba(18,24,50,0.62)]">
-        <header className="flex items-start justify-between border-b border-[#edf0f6] px-6 py-5">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[color:color-mix(in_oklab,var(--text-1)_28%,transparent)] p-6 backdrop-blur-[2px]">
+      <section className="grid max-h-[88vh] w-full max-w-[720px] grid-rows-[auto_minmax(0,1fr)_auto] rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_24px_72px_-40px_hsl(var(--lume-shadow-panel)/0.5)]">
+        <header className="flex items-start justify-between border-b border-[var(--border)] px-6 py-5">
           <div>
-            <h2 className="text-[19px] font-semibold leading-7 text-[#121832]">添加技能 / 插件</h2>
-            <p className="mt-1 text-[13px] leading-5 text-[#687196]">
+            <h2 className="text-[19px] font-semibold leading-7 text-[var(--text-1)]">添加技能 / 插件</h2>
+            <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">
               添加 marketplace root，或单独安装插件目录、技能目录、GitHub 地址。
             </p>
           </div>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             title="关闭"
             onClick={() => onOpenChange(false)}
             className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <X size={18} />
-          </button>
+          </Button>
         </header>
 
         <div className="min-h-0 overflow-y-auto px-6 py-5">
-          <div className="mb-5 grid grid-cols-4 gap-2 rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
+          <div className="lume-segmented mb-5 grid grid-cols-4 gap-2">
             {([
               { id: 'source', label: '市场源' },
               { id: 'plugin', label: '单独安装插件' },
               { id: 'skill', label: '单独安装技能' },
               { id: 'format', label: '格式说明' },
             ] as const).map((option) => (
-              <button
+              <Button
+                variant="ghost"
                 key={option.id}
                 type="button"
                 onClick={() => {
@@ -816,12 +822,12 @@ function AddSkillSourceDialog({
                   setError(null)
                 }}
                 className={cn(
-                  'h-9 rounded-[6px] px-3 text-[12px] font-semibold transition-colors',
-                  panel === option.id ? 'bg-white text-[#121832] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]' : 'text-[#687196] hover:text-[#121832]',
+                  'lume-segmented-item px-3 text-[12px] font-semibold',
+                  panel === option.id ? 'lume-segmented-item-active' : '',
                 )}
               >
                 {option.label}
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -867,26 +873,27 @@ function AddSkillSourceDialog({
                   setPluginReview(null)
                 }} />
               )}
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 disabled={busy !== null || (pluginMode === 'local' ? !pluginLocalPath.trim() : !pluginUrl.trim())}
                 onClick={() => void handleInspectPlugin()}
-                className="flex h-10 items-center gap-2 rounded-[6px] border border-[color:color-mix(in_oklab,var(--brand)_36%,var(--border-strong))] px-4 text-[13px] font-semibold text-[var(--brand)] hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] disabled:cursor-not-allowed disabled:opacity-55"
+                className="flex h-10 items-center gap-2 rounded-[6px] border border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border))] px-4 text-[13px] font-semibold text-[var(--brand)] hover:bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))] disabled:cursor-not-allowed disabled:opacity-55"
               >
                 {busy === 'plugin-review' ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
                 检查权限
-              </button>
+              </Button>
               {pluginReview && (
-                <div className="rounded-[8px] border border-[#e4e7f1] bg-[#fbfcff] p-4">
-                  <div className="text-[13px] font-semibold text-[#121832]">{pluginReview.name} v{pluginReview.version}</div>
+                <div className="lume-subpanel p-4">
+                  <div className="text-[13px] font-semibold text-[var(--text-1)]">{pluginReview.name} v{pluginReview.version}</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {pluginReview.risks.length > 0 ? pluginReview.risks.map((risk) => (
-                      <span key={risk} className="rounded-[5px] bg-[#fff4e5] px-2 py-1 text-[12px] font-semibold text-[#a45f00]">{risk}</span>
+                      <span key={risk} className="rounded-[5px] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] px-2 py-1 text-[12px] font-semibold text-[var(--lume-warning)]">{risk}</span>
                     )) : (
-                      <span className="rounded-[5px] bg-[#eaf8f0] px-2 py-1 text-[12px] font-semibold text-[#168653]">低风险</span>
+                      <span className="rounded-[5px] bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] px-2 py-1 text-[12px] font-semibold text-[var(--lume-success)]">低风险</span>
                     )}
                   </div>
-                  <div className="mt-3 break-all font-mono text-[12px] leading-5 text-[#687196]">{pluginReview.permissionsHash}</div>
+                  <div className="mt-3 break-all font-mono text-[12px] leading-5 text-[var(--text-3)]">{pluginReview.permissionsHash}</div>
                 </div>
               )}
             </div>
@@ -903,7 +910,7 @@ function AddSkillSourceDialog({
               ) : (
                 <SkillSourceField label="GitHub 技能地址" value={skillUrl} placeholder="https://github.com/org/repo/tree/main/skills/debugging" onChange={setSkillUrl} />
               )}
-              <div className="rounded-[8px] border border-[#e1e9ff] bg-[#f7f9ff] p-4 text-[12px] leading-5 text-[#687196]">
+              <div className="lume-subpanel p-4 text-[12px] leading-5 text-[var(--text-2)]">
                 本地可以选择一个包含 SKILL.md 的技能目录，也可以选择包含多个技能子目录的父目录。远程地址会先走 GitHub skill review，再安装到当前工作区。
               </div>
             </div>
@@ -912,35 +919,40 @@ function AddSkillSourceDialog({
           {panel === 'format' && <MarketplaceFormatGuide />}
 
           {error && (
-            <div className="mt-5 rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-3 text-[12px] leading-5 text-[#ba3636]">{error}</div>
+            <div className="mt-5 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-3 text-[12px] leading-5 text-[var(--lume-danger)]">{error}</div>
           )}
         </div>
 
-        <footer className="flex items-center justify-between gap-3 border-t border-[#edf0f6] px-6 py-4">
-          <button
+        <footer className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-6 py-4">
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setPanel('format')}
             className="flex h-9 items-center gap-2 rounded-[6px] px-3 text-[13px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]"
           >
             <Info size={16} />
             支持格式
-          </button>
+          </Button>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => onOpenChange(false)} className="h-9 rounded-[6px] border border-[var(--border)] px-4 text-[13px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]">取消</button>
+            <Button
+                variant="ghost" type="button" onClick={() => onOpenChange(false)} className="h-9 rounded-[6px] border border-[var(--border)] px-4 text-[13px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]">取消</Button>
             {panel === 'source' && (
-              <button type="button" disabled={busy !== null || (connectionMode === 'remote' ? !url.trim() : !localPath.trim())} onClick={() => void handleSubmitSource()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
+              <Button
+                variant="ghost" type="button" disabled={busy !== null || (connectionMode === 'remote' ? !url.trim() : !localPath.trim())} onClick={() => void handleSubmitSource()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
                 {busy === 'source' ? '同步中...' : '添加并同步'}
-              </button>
+              </Button>
             )}
             {panel === 'plugin' && (
-              <button type="button" disabled={busy !== null || !pluginReview} onClick={() => void handleInstallReviewedPlugin()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
+              <Button
+                variant="ghost" type="button" disabled={busy !== null || !pluginReview} onClick={() => void handleInstallReviewedPlugin()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
                 {busy === 'plugin-install' ? '安装中...' : '确认安装插件'}
-              </button>
+              </Button>
             )}
             {panel === 'skill' && (
-              <button type="button" disabled={busy !== null || (skillMode === 'local' ? !skillLocalPath.trim() : !skillUrl.trim())} onClick={() => void handleInstallSkill()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
+              <Button
+                variant="ghost" type="button" disabled={busy !== null || (skillMode === 'local' ? !skillLocalPath.trim() : !skillUrl.trim())} onClick={() => void handleInstallSkill()} className="h-9 rounded-[6px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] disabled:cursor-not-allowed disabled:opacity-55">
                 {busy === 'skill-install' ? '安装中...' : '审查并安装技能'}
-              </button>
+              </Button>
             )}
           </div>
         </footer>
@@ -962,12 +974,12 @@ function SkillSourceField({
 }) {
   return (
     <label className="block">
-      <span className="text-[13px] font-semibold text-[#121832]">{label}</span>
-      <input
+      <span className="text-[13px] font-semibold text-[var(--text-1)]">{label}</span>
+      <Input
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-2 h-10 w-full rounded-[8px] border border-[#e4e7f1] bg-white px-3 text-[13px] text-[#121832] outline-none placeholder:text-[#9aa2bd] focus:border-[#bdb6ff]"
+        className="mt-2 h-10 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_50%,var(--border-strong))]"
       />
     </label>
   )
@@ -975,13 +987,14 @@ function SkillSourceField({
 
 function ChooseFolderButton({ onClick }: { onClick: () => void }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onClick}
       className="h-10 rounded-[6px] border border-[var(--border)] px-4 text-[13px] font-semibold text-[var(--text-2)] hover:bg-[var(--surface-2)]"
     >
       选择目录
-    </button>
+    </Button>
   )
 }
 
@@ -1002,19 +1015,20 @@ function SourceModeSwitch({
         { id: 'local', label: localLabel },
         { id: 'remote', label: remoteLabel },
       ] as const).map((option) => (
-        <button
+        <Button
+                variant="ghost"
           key={option.id}
           type="button"
           onClick={() => onChange(option.id)}
           className={cn(
             'rounded-[8px] border p-3 text-left text-[13px] font-semibold transition-colors',
             value === option.id
-              ? 'border-[#635bff] bg-[#f4f2ff] text-[#121832]'
-              : 'border-[#e4e7f1] bg-white text-[#60698d] hover:bg-[#f8f9fc]',
+              ? 'border-transparent bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--text-1)]'
+              : 'border-transparent bg-[var(--surface-2)] text-[var(--text-2)] hover:bg-[var(--surface-3)]',
           )}
         >
           {option.label}
-        </button>
+        </Button>
       ))}
     </div>
   )
@@ -1022,8 +1036,8 @@ function SourceModeSwitch({
 
 function FormatHint({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="rounded-[8px] border border-[#e1e9ff] bg-[#f7f9ff] p-4 text-[12px] leading-5 text-[#687196]">
-      市场源必须是 marketplace root，根目录下存在 <span className="font-mono text-[#46527a]">.lume-plugin/marketplace.json</span>
+    <div className="lume-subpanel p-4 text-[12px] leading-5 text-[var(--text-2)]">
+      市场源必须是 marketplace root，根目录下存在 <span className="font-mono text-[var(--text-1)]">.lume-plugin/marketplace.json</span>
       {compact ? '。' : '，其中 plugins[] 和 skills[] 的 source 都是相对 root 的目录路径。'}
     </div>
   )
@@ -1031,11 +1045,11 @@ function FormatHint({ compact = false }: { compact?: boolean }) {
 
 function MarketplaceFormatGuide() {
   return (
-    <div className="space-y-4 text-[13px] leading-6 text-[#60698d]">
+    <div className="space-y-4 text-[13px] leading-6 text-[var(--text-2)]">
       <FormatHint />
-      <div className="rounded-[8px] border border-[#e4e7f1] bg-white p-4">
-        <div className="font-semibold text-[#121832]">marketplace.json</div>
-        <pre className="mt-3 overflow-auto rounded-[8px] bg-[#fbfcff] p-3 font-mono text-[12px] leading-5 text-[#26304f]">
+      <div className="lume-subpanel p-4">
+        <div className="font-semibold text-[var(--text-1)]">marketplace.json</div>
+        <pre className="mt-3 overflow-auto rounded-[8px] bg-[var(--surface-1)] p-3 font-mono text-[12px] leading-5 text-[var(--text-1)]">
 {`{
   "name": "superpowers-dev",
   "description": "Development marketplace",
@@ -1048,7 +1062,7 @@ function MarketplaceFormatGuide() {
 }`}
         </pre>
       </div>
-      <div className="rounded-[8px] border border-[#e4e7f1] bg-white p-4">
+      <div className="lume-subpanel p-4">
         插件目录需要包含 <span className="font-mono">.lume-plugin/plugin.json</span> 或 <span className="font-mono">.codex-plugin/plugin.json</span>。
         技能目录需要包含 <span className="font-mono">SKILL.md</span>。<span className="font-mono">plugins[]</span> 和 <span className="font-mono">skills[]</span> 至少有一个非空数组。
       </div>
@@ -1060,25 +1074,26 @@ function SkillSourceRow({ source }: { source: SkillSourceView }) {
   const Icon = source.icon
 
   return (
-    <div className="flex h-[82px] items-center gap-4 rounded-[8px] border border-[#e9ecf4] bg-white px-4">
-      <div className={cn('flex size-12 items-center justify-center rounded-[8px]', iconToneClass(source.tone))}>
-        <Icon size={25} strokeWidth={2.2} />
+    <div className="flex min-h-12 items-center gap-2.5 rounded-[6px] px-2 py-1.5 transition-colors hover:bg-[var(--surface-1)]">
+      <div className={cn('flex size-8 shrink-0 items-center justify-center rounded-[6px]', iconToneClass(source.tone))}>
+        <Icon size={16} strokeWidth={2} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-[15px] font-semibold text-[#121832]">{source.name}</span>
+        <div className="flex min-w-0 items-center gap-1">
+          <span className="truncate text-[12px] font-semibold leading-4 text-[var(--text-1)]">{source.name}</span>
           {source.enabled && (
             <>
-              <span className="size-2 rounded-full bg-[#23c66d]" />
-              <span className="text-[12px] font-semibold text-[#11aa5a]">已启用</span>
+              <span className="size-1 shrink-0 rounded-full bg-[var(--lume-success)]" />
+              <span className="shrink-0 text-[10px] font-medium text-[var(--lume-success)]">已启用</span>
             </>
           )}
         </div>
-        <div className="mt-2 text-[13px] text-[#687196]">{source.detail}</div>
+        <div className="truncate text-[11px] leading-4 text-[var(--text-3)]">{source.detail}</div>
       </div>
-      <button type="button" className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-2)] hover:bg-[var(--surface-2)]">
-        <MoreVertical size={18} />
-      </button>
+      <Button
+                variant="ghost" type="button" className="flex size-6 shrink-0 items-center justify-center rounded-[5px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]">
+        <MoreVertical size={14} />
+      </Button>
     </div>
   )
 }
@@ -1111,66 +1126,67 @@ function SkillDetailDialog({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#111735]/32 p-4 backdrop-blur-[2px]">
-      <section className="grid max-h-[90vh] w-full max-w-[1180px] grid-rows-[auto_minmax(0,1fr)] rounded-[8px] border border-[#e4e7f1] bg-white shadow-[0_28px_80px_-42px_rgba(18,24,50,0.62)]">
-        <header className="flex items-start justify-between border-b border-[#edf0f6] px-6 py-5">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[color:color-mix(in_oklab,var(--text-1)_28%,transparent)] p-4 backdrop-blur-[2px]">
+      <section className="grid max-h-[90vh] w-full max-w-[1180px] grid-rows-[auto_minmax(0,1fr)] rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_24px_72px_-40px_hsl(var(--lume-shadow-panel)/0.5)]">
+        <header className="flex items-start justify-between border-b border-[var(--border)] px-6 py-5">
           <div className="min-w-0">
-            <h2 className="truncate text-[19px] font-semibold leading-7 text-[#121832]">
+            <h2 className="truncate text-[19px] font-semibold leading-7 text-[var(--text-1)]">
               {detail?.item.name ?? '技能详情'}
             </h2>
-            <p className="mt-1 text-[13px] leading-5 text-[#687196]">
+            <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">
               查看该 Agent 技能的来源、安装状态与包含文件树。
             </p>
           </div>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             title="关闭"
             onClick={() => onOpenChange(false)}
             className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <X size={18} />
-          </button>
+          </Button>
         </header>
 
         <div className="min-h-0 overflow-y-auto px-6 py-5">
           {loading ? (
-            <div className="flex h-[220px] items-center justify-center gap-2 text-[13px] text-[#687196]">
+            <div className="flex h-[220px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
               <Loader2 size={16} className="animate-spin" />
               正在读取技能文件...
             </div>
           ) : error ? (
-            <div className="rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-5 text-[13px] leading-6 text-[#ba3636]">
+            <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-5 text-[13px] leading-6 text-[var(--lume-danger)]">
               {error}
             </div>
           ) : detail ? (
             <div className="space-y-5">
-              <section className="rounded-[8px] border border-[#e4e7f1] bg-[#fbfcff] p-4">
+              <section className="lume-subpanel p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(SKILL_SOURCE_LABELS[detail.item.sourceType]))}>
                     {SKILL_SOURCE_LABELS[detail.item.sourceType]}
                   </span>
-                  <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
+                  <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--text-2)]">
                     {formatInstallState(detail.item.installState)}
                   </span>
                   {detail.item.version && (
-                    <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
+                    <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--text-2)]">
                       v{detail.item.version}
                     </span>
                   )}
                 </div>
-                <p className="mt-3 text-[13px] leading-6 text-[#60698d]">
+                <p className="mt-3 text-[13px] leading-6 text-[var(--text-2)]">
                   {detail.item.description ?? '暂无描述。'}
                 </p>
-                <div className="mt-4 border-t border-[#e4e7f1] pt-3">
-                  <div className="text-[12px] font-semibold text-[#121832]">技能目录</div>
-                  <div className="mt-2 break-all text-[12px] leading-5 text-[#687196]">{detail.rootPath}</div>
+                <div className="mt-4 border-t border-[var(--border)] pt-3">
+                  <div className="text-[12px] font-semibold text-[var(--text-1)]">技能目录</div>
+                  <div className="mt-2 break-all text-[12px] leading-5 text-[var(--text-3)]">{detail.rootPath}</div>
                 </div>
               </section>
 
               <div className="grid h-[min(620px,calc(90vh-250px))] min-h-[420px] gap-4 md:grid-cols-[300px_minmax(0,1fr)]">
-                <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] rounded-[8px] border border-[#e4e7f1] bg-white p-4">
-                  <h3 className="text-[14px] font-semibold text-[#121832]">文件树</h3>
-                  <div className="mt-3 min-h-0 overflow-y-auto rounded-[6px] bg-[#fbfcff] p-2">
+                <section className="lume-subpanel grid min-h-0 grid-rows-[auto_minmax(0,1fr)] p-4">
+                  <h3 className="text-[14px] font-semibold text-[var(--text-1)]">文件树</h3>
+                  <div className="mt-3 min-h-0 overflow-y-auto rounded-[6px] bg-[var(--surface-1)] p-2">
                     <SkillFileTree nodes={detail.files} selectedPath={selectedPath} onSelect={setSelectedPath} />
                   </div>
                 </section>
@@ -1179,7 +1195,7 @@ function SkillDetailDialog({
               </div>
             </div>
           ) : (
-            <div className="rounded-[8px] border border-dashed border-[#d8ddec] p-8 text-center text-[13px] text-[#687196]">
+            <div className="rounded-[8px] border border-dashed border-[var(--border)] p-8 text-center text-[13px] text-[var(--text-3)]">
               暂无技能详情。
             </div>
           )}
@@ -1216,60 +1232,61 @@ function PluginDetailDialog({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#111735]/32 p-4 backdrop-blur-[2px]">
-      <section className="grid max-h-[88vh] w-full max-w-[820px] grid-rows-[auto_minmax(0,1fr)_auto] rounded-[8px] border border-[#e4e7f1] bg-white shadow-[0_28px_80px_-42px_rgba(18,24,50,0.62)]">
-        <header className="flex items-start justify-between border-b border-[#edf0f6] px-6 py-5">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[color:color-mix(in_oklab,var(--text-1)_28%,transparent)] p-4 backdrop-blur-[2px]">
+      <section className="grid max-h-[88vh] w-full max-w-[820px] grid-rows-[auto_minmax(0,1fr)_auto] rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_24px_72px_-40px_hsl(var(--lume-shadow-panel)/0.5)]">
+        <header className="flex items-start justify-between border-b border-[var(--border)] px-6 py-5">
           <div className="min-w-0">
-            <h2 className="truncate text-[19px] font-semibold leading-7 text-[#121832]">
+            <h2 className="truncate text-[19px] font-semibold leading-7 text-[var(--text-1)]">
               {item?.displayName ?? item?.name ?? '插件详情'}
             </h2>
-            <p className="mt-1 text-[13px] leading-5 text-[#687196]">
+            <p className="mt-1 text-[13px] leading-5 text-[var(--text-2)]">
               安装前检查插件能力、权限摘要与来源状态。
             </p>
           </div>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             title="关闭"
             onClick={() => onOpenChange(false)}
             className="flex size-8 items-center justify-center rounded-[6px] text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             <X size={18} />
-          </button>
+          </Button>
         </header>
 
         <div className="min-h-0 overflow-y-auto px-6 py-5">
           {loading ? (
-            <div className="flex h-[220px] items-center justify-center gap-2 text-[13px] text-[#687196]">
+            <div className="flex h-[220px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
               <Loader2 size={16} className="animate-spin" />
               正在检查插件...
             </div>
           ) : error && !item ? (
-            <div className="rounded-[8px] border border-[#ffd2d2] bg-[#fff8f8] p-5 text-[13px] leading-6 text-[#ba3636]">
+            <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-5 text-[13px] leading-6 text-[var(--lume-danger)]">
               {error}
             </div>
           ) : item ? (
             <div className="space-y-5">
               {error && (
-                <div className="rounded-[8px] border border-[#ffe5b8] bg-[#fffaf0] p-4 text-[13px] leading-6 text-[#9a6418]">
+                <div className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4 text-[13px] leading-6 text-[var(--lume-warning)]">
                   {error}
                 </div>
               )}
 
-              <section className="rounded-[8px] border border-[#e4e7f1] bg-[#fbfcff] p-4">
+              <section className="lume-subpanel p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass('插件'))}>插件</span>
                   <span className={cn('rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(PLUGIN_SOURCE_LABELS[item.sourceType]))}>
                     {PLUGIN_SOURCE_LABELS[item.sourceType]}
                   </span>
-                  <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
+                  <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--text-2)]">
                     {formatPluginInstallState(item.installState)}
                   </span>
-                  <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
+                  <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--text-2)]">
                     {formatPluginEnableState(item.enableState)}
                   </span>
-                  <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">v{item.version}</span>
+                  <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-medium text-[var(--text-2)]">v{item.version}</span>
                 </div>
-                <p className="mt-3 text-[13px] leading-6 text-[#60698d]">
+                <p className="mt-3 text-[13px] leading-6 text-[var(--text-2)]">
                   {item.description ?? '暂无描述。'}
                 </p>
               </section>
@@ -1281,39 +1298,39 @@ function PluginDetailDialog({
                 <PluginMetric label="Hook 事件" value={item.capabilities.hookEvents.length} />
               </section>
 
-              <section className="rounded-[8px] border border-[#e4e7f1] bg-white p-4">
-                <div className="flex items-center gap-2 text-[14px] font-semibold text-[#121832]">
-                  <ShieldCheck size={18} className="text-[#20c579]" />
+              <section className="lume-subpanel p-4">
+                <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
+                  <ShieldCheck size={18} className="text-[var(--lume-success)]" />
                   权限审核
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {item.permissions.riskLabels.length > 0 ? item.permissions.riskLabels.map((risk) => (
-                    <span key={risk} className="rounded-[5px] bg-[#fff4e5] px-2 py-1 text-[12px] font-semibold text-[#a45f00]">
+                    <span key={risk} className="rounded-[5px] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] px-2 py-1 text-[12px] font-semibold text-[var(--lume-warning)]">
                       {formatRiskLabel(risk)}
                     </span>
                   )) : (
-                    <span className="rounded-[5px] bg-[#eaf8f0] px-2 py-1 text-[12px] font-semibold text-[#168653]">低风险</span>
+                    <span className="rounded-[5px] bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] px-2 py-1 text-[12px] font-semibold text-[var(--lume-success)]">低风险</span>
                   )}
                 </div>
                 <div className="mt-4 space-y-3">
                   {permissionRows.map((row) => (
-                    <div key={row.label} className="grid gap-2 rounded-[8px] bg-[#fbfcff] px-3 py-2 text-[12px] leading-5 md:grid-cols-[120px_minmax(0,1fr)]">
-                      <span className="font-semibold text-[#121832]">{row.label}</span>
-                      <span className="break-all text-[#687196]">{row.value}</span>
+                    <div key={row.label} className="grid gap-2 rounded-[8px] bg-[var(--surface-1)] px-3 py-2 text-[12px] leading-5 md:grid-cols-[120px_minmax(0,1fr)]">
+                      <span className="font-semibold text-[var(--text-1)]">{row.label}</span>
+                      <span className="break-all text-[var(--text-2)]">{row.value}</span>
                     </div>
                   ))}
                 </div>
                 {inspected && (
-                  <div className="mt-4 rounded-[8px] border border-[#edf0f6] bg-[#fbfcff] px-3 py-2 text-[12px] leading-5 text-[#687196]">
+                  <div className="mt-4 rounded-[8px] bg-[var(--surface-1)] px-3 py-2 text-[12px] leading-5 text-[var(--text-2)]">
                     权限 hash：<span className="font-mono">{inspected.permissionsHash}</span>
                   </div>
                 )}
               </section>
 
               {item.diagnostics && item.diagnostics.length > 0 && (
-                <section className="rounded-[8px] border border-[#ffe5b8] bg-[#fffaf0] p-4">
-                  <div className="text-[13px] font-semibold text-[#9a6418]">诊断信息</div>
-                  <ul className="mt-2 space-y-1 text-[12px] leading-5 text-[#9a6418]">
+                <section className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4">
+                  <div className="text-[13px] font-semibold text-[var(--lume-warning)]">诊断信息</div>
+                  <ul className="mt-2 space-y-1 text-[12px] leading-5 text-[var(--lume-warning)]">
                     {item.diagnostics.map((diagnostic, index) => (
                       <li key={`${diagnostic.code}-${index}`}>{diagnostic.message}</li>
                     ))}
@@ -1322,15 +1339,16 @@ function PluginDetailDialog({
               )}
             </div>
           ) : (
-            <div className="rounded-[8px] border border-dashed border-[#d8ddec] p-8 text-center text-[13px] text-[#687196]">
+            <div className="rounded-[8px] border border-dashed border-[var(--border)] p-8 text-center text-[13px] text-[var(--text-3)]">
               暂无插件详情。
             </div>
           )}
         </div>
 
-        <footer className="flex items-center justify-end gap-3 border-t border-[#edf0f6] px-6 py-4">
+        <footer className="flex items-center justify-end gap-3 border-t border-[var(--border)] px-6 py-4">
           {item?.installState === 'installed' && (
-            <button
+            <Button
+                variant="ghost"
               type="button"
               disabled={busy}
               onClick={onUninstall}
@@ -1338,10 +1356,11 @@ function PluginDetailDialog({
             >
               <Trash2 size={16} />
               卸载
-            </button>
+            </Button>
           )}
           {item?.installState !== 'installed' && (
-            <button
+            <Button
+                variant="ghost"
               type="button"
               disabled={!canInstall || busy}
               onClick={onInstall}
@@ -1349,7 +1368,7 @@ function PluginDetailDialog({
             >
               {busy ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />}
               {item?.installState === 'update-available' ? '确认权限并更新' : '确认权限并安装'}
-            </button>
+            </Button>
           )}
         </footer>
       </section>
@@ -1359,9 +1378,9 @@ function PluginDetailDialog({
 
 function PluginMetric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-[8px] border border-[#e4e7f1] bg-white p-3">
-      <div className="text-[12px] font-semibold text-[#687196]">{label}</div>
-      <div className="mt-1 text-[20px] font-semibold leading-7 text-[#121832]">{value}</div>
+    <div className="lume-subpanel p-3">
+      <div className="text-[12px] font-semibold text-[var(--text-3)]">{label}</div>
+      <div className="mt-1 text-[20px] font-semibold leading-7 text-[var(--text-1)]">{value}</div>
     </div>
   )
 }
@@ -1384,18 +1403,19 @@ function SkillFileContentPreview({ file }: { file: SkillFileTreeNode | null }) {
   }, [content])
 
   return (
-    <section className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-[8px] border border-[#e4e7f1] bg-white">
-      <div className="flex min-h-16 items-center justify-between gap-3 border-b border-[#edf0f6] bg-white px-4">
+    <section className="lume-subpanel grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+      <div className="flex min-h-16 items-center justify-between gap-3 border-b border-[var(--border)] px-4">
         <div className="min-w-0">
-          <h3 className="text-[14px] font-semibold text-[#121832]">当前文件内容</h3>
-          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-[12px] text-[#687196]">
+          <h3 className="text-[14px] font-semibold text-[var(--text-1)]">当前文件内容</h3>
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-[12px] text-[var(--text-3)]">
             <span className="max-w-[520px] truncate">{file?.path ?? '未选择文件'}</span>
-            {language && <span className="rounded-[5px] bg-[#f4f6fb] px-2 py-0.5 font-medium text-[#687196]">{language}</span>}
+            {language && <span className="rounded-[5px] bg-[var(--surface-1)] px-2 py-0.5 font-medium text-[var(--text-2)]">{language}</span>}
             {file && <span>{formatFileSize(content.length)}</span>}
             {file && <span>{lines.length || 1} 行</span>}
           </div>
         </div>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           title="复制文件内容"
           disabled={!content}
@@ -1404,20 +1424,20 @@ function SkillFileContentPreview({ file }: { file: SkillFileTreeNode | null }) {
         >
           {copied ? <Check size={15} /> : <Copy size={15} />}
           {copied ? '已复制' : '复制'}
-        </button>
+        </Button>
       </div>
 
       {file && content ? (
-        <div className="min-h-0 overflow-auto bg-[#fbfcff]">
+        <div className="min-h-0 overflow-auto bg-[var(--surface-1)]">
           <div className="grid min-w-full grid-cols-[auto_minmax(0,1fr)] font-mono text-[12px] leading-6">
-            <div className="select-none border-r border-[#edf0f6] bg-[#f5f7fc] px-3 py-4 text-right text-[#9aa2bd]">
+            <div className="select-none border-r border-[var(--border)] bg-[var(--surface-2)] px-3 py-4 text-right text-[var(--text-3)]">
               {lines.map((_, index) => (
                 <div key={index} className="h-6 tabular-nums">
                   {index + 1}
                 </div>
               ))}
             </div>
-            <pre className="min-w-0 whitespace-pre-wrap break-words px-4 py-4 text-[#26304f]">
+            <pre className="min-w-0 whitespace-pre-wrap break-words px-4 py-4 text-[var(--text-1)]">
               {lines.map((line, index) => (
                 <span key={index} className="block min-h-6">
                   {line || ' '}
@@ -1427,7 +1447,7 @@ function SkillFileContentPreview({ file }: { file: SkillFileTreeNode | null }) {
           </div>
         </div>
       ) : (
-        <div className="flex min-h-[320px] items-center justify-center bg-[#fbfcff] px-6 text-center text-[13px] leading-6 text-[#687196]">
+        <div className="flex min-h-[320px] items-center justify-center bg-[var(--surface-1)] px-6 text-center text-[13px] leading-6 text-[var(--text-3)]">
           {file ? '暂无可预览内容。' : '从左侧文件树选择一个文件查看内容。'}
         </div>
       )}
@@ -1449,25 +1469,26 @@ function SkillFileTree({
       {nodes.map((node) => (
         <li key={node.path}>
           {node.type === 'file' ? (
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => onSelect(node.path)}
               className={cn(
-                'flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[12px] text-[#46527a] hover:bg-white',
-                selectedPath === node.path && 'bg-white font-semibold text-[var(--brand)] shadow-[0_1px_6px_rgba(18,24,50,0.08)]',
+                'flex h-7 w-full items-center gap-2 rounded-[6px] px-2 text-left text-[12px] text-[var(--text-2)] hover:bg-[var(--surface-2)]',
+                selectedPath === node.path && 'bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] font-semibold text-[var(--brand)]',
               )}
             >
-              <span className="w-4 text-center text-[#8a93ad]">·</span>
+              <span className="w-4 text-center text-[var(--text-3)]">·</span>
               <span className="min-w-0 flex-1 truncate">{node.name}</span>
-            </button>
+            </Button>
           ) : (
-            <div className="flex h-7 items-center gap-2 px-2 text-[12px] text-[#46527a]">
-              <span className="w-4 text-center text-[#8a93ad]">▸</span>
-              <span className="min-w-0 flex-1 truncate font-semibold text-[#121832]">{node.name}</span>
+            <div className="flex h-7 items-center gap-2 px-2 text-[12px] text-[var(--text-2)]">
+              <span className="w-4 text-center text-[var(--text-3)]">▸</span>
+              <span className="min-w-0 flex-1 truncate font-semibold text-[var(--text-1)]">{node.name}</span>
             </div>
           )}
           {node.children && node.children.length > 0 && (
-            <div className="ml-4 border-l border-[#e4e7f1] pl-2">
+            <div className="ml-4 border-l border-[var(--border)] pl-2">
               <SkillFileTree nodes={node.children} selectedPath={selectedPath} onSelect={onSelect} />
             </div>
           )}
@@ -1555,7 +1576,7 @@ function buildMarketSourceViews(skills: SkillCatalogItem[], plugins: PluginMarke
       detail: `已发现 ${localCount} 个技能`,
       enabled: localCount > 0,
       icon: FolderSync,
-      tone: 'orange',
+      tone: 'mint',
     },
     {
       id: 'github',
@@ -1563,7 +1584,7 @@ function buildMarketSourceViews(skills: SkillCatalogItem[], plugins: PluginMarke
       detail: `已安装 ${githubCount} 个技能`,
       enabled: githubCount > 0,
       icon: Globe2,
-      tone: 'blue',
+      tone: 'mint',
     },
   ]
 }
@@ -1714,29 +1735,29 @@ function inferPluginTone(item: PluginMarketItem): SkillVisualTone {
 function iconToneClass(tone: SkillVisualTone): string {
   switch (tone) {
     case 'violet':
-      return 'bg-gradient-to-br from-[#a787ff] to-[#6755f6] text-white'
+      return 'bg-[color:color-mix(in_oklab,var(--brand)_12%,var(--surface-1))] text-[var(--brand)]'
     case 'mint':
-      return 'bg-gradient-to-br from-[#c9f6df] to-[#55d08f] text-[#06724b]'
+      return 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
     case 'figma':
-      return 'bg-white text-[#5f54ff]'
+      return 'bg-[var(--surface-2)] text-[var(--brand)]'
     case 'green':
-      return 'bg-gradient-to-br from-[#38d894] to-[#16b968] text-white'
+      return 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
     case 'blue':
-      return 'bg-gradient-to-br from-[#639cff] to-[#3c76e8] text-white'
+      return 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
     case 'orange':
-      return 'bg-gradient-to-br from-[#ffb04d] to-[#ff8a1f] text-white'
+      return 'bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] text-[var(--lume-warning)]'
   }
 }
 
 function badgeToneClass(category: string): string {
   switch (category) {
     case '插件':
-      return 'bg-[#eaf8f0] text-[#168653]'
+      return 'bg-[color:color-mix(in_oklab,var(--brand)_8%,var(--surface-1))] text-[var(--brand)]'
     case '内置':
-      return 'bg-[#f0edff] text-[#635bff]'
+      return 'bg-[color:color-mix(in_oklab,var(--brand)_8%,var(--surface-1))] text-[var(--brand)]'
     case '本地发现':
-      return 'bg-[#ddf7e8] text-[#168653]'
+      return 'bg-[var(--surface-2)] text-[var(--text-2)]'
     default:
-      return 'bg-[#eaf2ff] text-[#3375d6]'
+      return 'bg-[var(--surface-2)] text-[var(--text-2)]'
   }
 }

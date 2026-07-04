@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
@@ -178,7 +179,8 @@ export function SkillAddSourceDialog({
 
     if (item.installState === "installed") {
       return (
-        <button
+        <Button
+                variant="ghost"
           type="button"
           disabled={isRemoving || isInstalling}
           onClick={() => void handleRemove(item)}
@@ -186,13 +188,14 @@ export function SkillAddSourceDialog({
         >
           {isRemoving && <Loader2 size={13} className="animate-spin" />}
           移除
-        </button>
+        </Button>
       )
     }
 
     if (item.installState === "update-available") {
       return (
-        <button
+        <Button
+                variant="ghost"
           type="button"
           disabled={isInstalling}
           onClick={() => void handleInstall(item)}
@@ -200,12 +203,13 @@ export function SkillAddSourceDialog({
         >
           {isInstalling && <Loader2 size={13} className="animate-spin" />}
           更新
-        </button>
+        </Button>
       )
     }
 
     return (
-      <button
+      <Button
+                variant="ghost"
         type="button"
         disabled={isInstalling}
         onClick={() => void handleInstall(item)}
@@ -213,7 +217,7 @@ export function SkillAddSourceDialog({
       >
         {isInstalling && <Loader2 size={13} className="animate-spin" />}
         安装
-      </button>
+      </Button>
     )
   }
 
@@ -221,72 +225,75 @@ export function SkillAddSourceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[560px]" showCloseButton>
         <DialogHeader>
-          <DialogTitle className="text-[16px] font-semibold text-[#20232d]">
+          <DialogTitle className="text-[16px] font-semibold text-[var(--text-1)]">
             添加技能
           </DialogTitle>
         </DialogHeader>
 
         {/* Tab 切换 */}
-        <div className="flex gap-1 rounded-[8px] border border-[#e4e7f1] bg-[#f7f8fb] p-1">
+        <div className="lume-segmented flex gap-1">
           {TABS.map((tab) => (
-            <button
+            <Button
+                variant="ghost"
               key={tab.key}
               type="button"
               onClick={() => handleTabChange(tab.key)}
               className={cn(
-                "flex-1 rounded-[6px] px-3 py-2 text-[13px] font-semibold transition-colors",
+                "lume-segmented-item flex-1 font-semibold",
                 activeTab === tab.key
-                  ? "bg-white text-[#20232d] shadow-[0_8px_18px_-16px_rgba(43,52,103,0.54)]"
-                  : "text-[#687196] hover:text-[#20232d]",
+                  ? "lume-segmented-item-active"
+                  : "",
               )}
             >
               {tab.label}
-            </button>
+            </Button>
           ))}
         </div>
 
         {/* 描述 */}
-        <p className="text-[13px] leading-5 text-[#687196]">
+        <p className="text-[13px] leading-5 text-[var(--text-2)]">
           {TABS.find((t) => t.key === activeTab)?.description}
         </p>
 
         {/* 内容区 */}
-        <div className="max-h-[360px] min-h-[120px] overflow-y-auto rounded-[8px] border border-[#e4e7f1]">
+        <div className="lume-subpanel max-h-[360px] min-h-[120px] overflow-y-auto">
           {activeTab === "create" ? (
             <div className="flex flex-col items-center justify-center gap-3 p-8">
-              <div className="flex size-12 items-center justify-center rounded-full bg-[#f0f0f0]">
-                <Plus size={22} className="text-[#687196]" />
+              <div className="flex size-12 items-center justify-center rounded-full bg-[var(--surface-1)]">
+                <Plus size={22} className="text-[var(--text-2)]" />
               </div>
-              <p className="text-[13px] text-[#687196]">
+              <p className="text-[13px] text-[var(--text-2)]">
                 从空白编辑器开始编写自定义技能
               </p>
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={handleManualCreate}
                 className="flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-semibold text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
               >
                 <Plus size={15} />
                 创建空白技能
-              </button>
+              </Button>
             </div>
           ) : loading ? (
-            <div className="flex items-center justify-center gap-2 p-8 text-[13px] text-[#626b8f]">
+            <div className="flex items-center justify-center gap-2 p-8 text-[13px] text-[var(--text-2)]">
               <Loader2 size={16} className="animate-spin" />
               正在加载...
             </div>
           ) : items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 p-8 text-[13px] text-[#687196]">
+            <div className="flex flex-col items-center justify-center gap-2 p-8 text-[13px] text-[var(--text-2)]">
               {activeTab === "market"
                 ? "当前没有已订阅的市场源，请先在市场页面添加市场源。"
                 : "没有可用的内置技能。"}
               {activeTab === "market" && (
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   onClick={handleOpenMarket}
                   className="text-[13px] font-semibold text-[var(--brand)] hover:text-[var(--brand-2)]"
                 >
                   前往市场添加源
-                </button>
+                </Button>
               )}
             </div>
           ) : (
@@ -294,14 +301,14 @@ export function SkillAddSourceDialog({
               {items.map((item) => (
                 <div
                   key={item.slug}
-                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[#f7f8fb]"
+                  className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[var(--surface-1)]"
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-semibold text-[#20232d]">
+                    <div className="text-[13px] font-semibold text-[var(--text-1)]">
                       {item.name}
                     </div>
                     {item.description && (
-                      <p className="mt-0.5 line-clamp-1 text-[12px] text-[#687196]">
+                      <p className="mt-0.5 line-clamp-1 text-[12px] text-[var(--text-2)]">
                         {item.description}
                       </p>
                     )}
@@ -315,10 +322,10 @@ export function SkillAddSourceDialog({
 
         {/* 通知/错误 */}
         {installNotice && (
-          <p className="text-[13px] leading-5 text-[#4c7a41]">{installNotice}</p>
+          <p className="text-[13px] leading-5 text-[var(--lume-success)]">{installNotice}</p>
         )}
         {installError && (
-          <p className="text-[13px] leading-5 text-[#ba3636]">{installError}</p>
+          <p className="text-[13px] leading-5 text-[var(--lume-danger)]">{installError}</p>
         )}
       </DialogContent>
     </Dialog>

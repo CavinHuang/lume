@@ -1,6 +1,6 @@
 import { useAtomValue } from 'jotai'
 import { cn } from '@/lib/utils'
-import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily } from '@/atoms'
+import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily, agentStreamingStatesFamily } from '@/atoms'
 import { ThreadMoreActions } from './ThreadMoreActions'
 import type { AgentRuntimePhase } from '@lume/shared'
 
@@ -24,8 +24,17 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
   const thread = threads.find((t) => t.id === threadId)
   const runtimeStatus = useAtomValue(agentRuntimeStatusFamily(threadId))
   const runtimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId))?.events ?? []
+  // 回退：RUNTIME_STATUS_CHANGED 通道不稳时，用 RUNTIME_EVENT 流的 streamingState 保证徽章可见
+  const isStreamingFallback = useAtomValue(agentStreamingStatesFamily(threadId)) === 'streaming'
 
-  const phase = runtimeStatus?.phase
+  const runtimePhase = runtimeStatus?.phase
+  // runtime 有有效（非 idle）phase 时优先；否则 streaming 回退；其余隐藏
+  const phase: AgentRuntimePhase | undefined =
+    runtimePhase && runtimePhase !== 'idle'
+      ? runtimePhase
+      : isStreamingFallback
+        ? 'streaming'
+        : runtimePhase
   const phaseStyle = phase && phase !== 'idle' ? PHASE_STYLE[phase] : null
 
   const toolStepCount = runtimeEvents.filter((event) => event.type === 'tool.started').length

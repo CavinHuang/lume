@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * HighlightedCode - 工具结果渲染器用的代码高亮组件
  *
@@ -113,14 +114,15 @@ export function HighlightedCode({
     <div className={cn('rounded-lg overflow-hidden border border-border/40 group/code', className)}>
       {/* 头部：复制按钮 */}
       <div className="flex items-center justify-end h-[28px] px-2 bg-muted/40">
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={handleCopy}
           className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-muted-foreground hover:text-foreground hover:bg-foreground/10 transition-colors"
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
           <span>{copied ? '已复制' : '复制'}</span>
-        </button>
+        </Button>
       </div>
 
       {/* 代码区域 */}
@@ -149,12 +151,13 @@ export function HighlightedCode({
 
       {/* 折叠提示 */}
       {needsTruncation && (
-        <button
+        <Button
+                variant="ghost"
           onClick={() => setExpanded(true)}
           className="w-full py-1.5 text-[11px] text-muted-foreground hover:text-foreground bg-muted/40 hover:bg-muted/60 transition-colors text-center"
         >
           显示剩余 {rawLines.length - maxLines!} 行
-        </button>
+        </Button>
       )}
     </div>
   )

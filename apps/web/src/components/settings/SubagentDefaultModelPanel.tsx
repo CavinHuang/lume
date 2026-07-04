@@ -170,7 +170,8 @@ export function SubagentDefaultModelPanel() {
       <div className="space-y-2">
         <Label className="text-[13px] font-medium">默认模型</Label>
         <div ref={menuRef} className="relative">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setMenuOpen((value) => !value)}
             className={cn(
@@ -186,12 +187,13 @@ export function SubagentDefaultModelPanel() {
             <span className="text-[11px] text-muted-foreground">
               {draft.hasExplicitDefaultModel ? (activeDefaultModel?.channelLabel ?? '未设置') : '自动'}
             </span>
-          </button>
+          </Button>
 
           {menuOpen && (
             <div className="absolute left-0 top-full z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-border/60 bg-popover shadow-lg">
               <div className="border-b border-border/40 p-1">
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   onClick={() => {
                     setMenuOpen(false)
@@ -203,7 +205,7 @@ export function SubagentDefaultModelPanel() {
                   {!draft.hasExplicitDefaultModel && (
                     <span className="text-[11px] text-primary">当前</span>
                   )}
-                </button>
+                </Button>
               </div>
               <ModelOptionList groups={defaultModelGroups} onSelect={handleModelSelect} />
             </div>

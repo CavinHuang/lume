@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * GuanlanSearch 工具结果渲染器
  *
@@ -97,7 +98,8 @@ export function GuanlanSearchResult({ input, result }: GuanlanSearchResultProps)
       ) : (
         <div className="space-y-1.5">
           {items.map((item, i) => (
-            <button
+            <Button
+                variant="ghost"
               key={i}
               onClick={() => item.url && openExternal(item.url)}
               className="w-full text-left px-3 py-2 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors group"
@@ -120,7 +122,7 @@ export function GuanlanSearchResult({ input, result }: GuanlanSearchResultProps)
                 </div>
                 <ExternalLink size={11} className="text-muted-foreground/40 mt-0.5 shrink-0 group-hover:text-primary/60" />
               </div>
-            </button>
+            </Button>
           ))}
         </div>
       )}

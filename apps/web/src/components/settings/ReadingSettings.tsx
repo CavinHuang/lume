@@ -16,6 +16,10 @@ import {
   updateReadingSettings,
 } from '@/lib/desktop-api/reading'
 
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 type WereadTestStatus = 'idle' | 'testing' | 'ok' | 'fail'
 
 interface WereadConnectionDetail {
@@ -130,7 +134,7 @@ export function ReadingSettings() {
 
   if (!draft) {
     return (
-      <div className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-8 text-[13px] text-[var(--text-3)]">
+      <div className="lume-panel p-8 text-[13px] text-[var(--text-3)]">
         正在加载读书设置
       </div>
     )
@@ -141,24 +145,24 @@ export function ReadingSettings() {
 
   return (
     <div className="space-y-4">
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+      <section className="lume-panel p-5">
         <h3 className="text-[20px] font-semibold text-[var(--text-1)]">微信读书</h3>
         <p className="mt-2 text-[15px] leading-6 text-[var(--text-3)]">
           连接微信读书官方 Skill API，让 Lume 了解你的阅读世界——书架、划线、想法、阅读统计。
         </p>
 
-        <div className="mt-5 rounded-[10px] bg-[var(--surface-2)] p-5">
+        <div className="lume-subpanel mt-5 p-5">
           <div className="flex items-center gap-2">
-            <BookOpen size={18} className="text-green-500" />
+            <BookOpen size={18} className="text-[var(--lume-success)]" />
             <div className="text-[17px] font-semibold text-[var(--text-1)]">API Key</div>
             {(connected || testStatus === 'ok') && (
-              <span className="inline-flex h-6 items-center gap-1 rounded-full bg-green-50 px-2 text-[12px] text-green-600">
+              <span className="inline-flex h-6 items-center gap-1 rounded-full bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] px-2 text-[12px] text-[var(--lume-success)]">
                 <Check size={12} />
                 已连接
               </span>
             )}
             {testStatus === 'fail' && (
-              <span className="inline-flex h-6 items-center rounded-full bg-red-50 px-2 text-[12px] text-red-600">
+              <span className="inline-flex h-6 items-center rounded-full bg-[color:color-mix(in_oklab,var(--lume-danger)_10%,var(--surface-1))] px-2 text-[12px] text-[var(--lume-danger)]">
                 连接失败
               </span>
             )}
@@ -166,7 +170,8 @@ export function ReadingSettings() {
 
           {!hasApiKey && !connected ? (
             <>
-              <button
+              <Button
+                variant="ghost"
                 type="button"
                 onClick={() => void openWereadKeyPage()}
                 disabled={keyFlowBusy}
@@ -174,7 +179,7 @@ export function ReadingSettings() {
               >
                 {keyFlowBusy ? <RefreshCw size={18} className="animate-spin" /> : <LogIn size={18} />}
                 {keyFlowBusy ? '等待扫码登录...' : '微信扫码登录并获取'}
-              </button>
+              </Button>
               <p className="mt-4 text-center text-[13px] leading-6 text-[var(--text-2)]">
                 点击后弹出微信读书页面，请关闭快捷登录弹窗，用扫码方式登录
               </p>
@@ -182,7 +187,7 @@ export function ReadingSettings() {
           ) : (
             <div className="mt-5 space-y-3">
               <div className="flex gap-2">
-                <input
+                <Input
                   value={apiKey}
                   onChange={(event) => {
                     setApiKey(event.target.value)
@@ -192,7 +197,8 @@ export function ReadingSettings() {
                   placeholder="wrk-xxxxxxxx"
                   className="h-11 min-w-0 flex-1 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[15px] outline-none focus:border-[var(--brand)]"
                 />
-                <button
+                <Button
+                variant="ghost"
                   type="button"
                   onClick={() => void openWereadKeyPage()}
                   disabled={keyFlowBusy}
@@ -200,8 +206,9 @@ export function ReadingSettings() {
                   className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] disabled:cursor-wait disabled:opacity-60"
                 >
                   <RefreshCw size={18} className={keyFlowBusy ? 'animate-spin' : undefined} />
-                </button>
-                <button
+                </Button>
+                <Button
+                variant="ghost"
                   type="button"
                   onClick={testCurrentApiKey}
                   disabled={!hasApiKey || testStatus === 'testing'}
@@ -209,16 +216,16 @@ export function ReadingSettings() {
                 >
                   <TestTube2 size={16} />
                   {testStatus === 'testing' ? '测试中' : keyChanged ? '保存并测试' : '测试'}
-                </button>
+                </Button>
               </div>
 
               {testStatus === 'ok' && (
-                <div className="rounded-[8px] border border-green-200 bg-green-50 px-4 py-3 text-[14px] text-green-700">
+                <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-success)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-success)_8%,var(--surface-1))] px-4 py-3 text-[14px] text-[var(--lume-success)]">
                   {formatWereadConnectionDetail(connectionDetail)}
                 </div>
               )}
               {testStatus === 'fail' && (
-                <div className="rounded-[8px] border border-red-200 bg-red-50 px-4 py-3 text-[14px] text-red-600">
+                <div className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_34%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))] px-4 py-3 text-[14px] text-[var(--lume-danger)]">
                   {connectionDetail?.error ?? '连接失败，请检查 API KEY'}
                 </div>
               )}
@@ -226,11 +233,11 @@ export function ReadingSettings() {
           )}
         </div>
 
-        <div className="mt-5 rounded-[10px] bg-[var(--surface-2)] p-5">
+        <div className="lume-subpanel mt-5 p-5">
           <h4 className="text-[16px] font-semibold text-[var(--text-1)]">连接后 Lume 可以做什么</h4>
           <div className="mt-4 grid gap-x-8 gap-y-5 md:grid-cols-2">
             {WEREAD_FEATURES.map(([title, description]) => (
-              <div key={title} className="flex items-start justify-between gap-4">
+              <div key={title} className="flex items-start justify-between gap-4 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_64%,transparent)] bg-[var(--surface-1)] px-4 py-3">
                 <div>
                   <div className="text-[14px] font-semibold text-[var(--text-1)]">{title}</div>
                   <div className="mt-1 text-[13px] leading-5 text-[var(--text-3)]">{description}</div>
@@ -243,24 +250,28 @@ export function ReadingSettings() {
         </div>
       </section>
 
-      <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+      <section className="lume-panel p-5">
         <h3 className="text-[15px] font-semibold text-[var(--text-1)]">阅读节奏</h3>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <label className="text-[13px] text-[var(--text-2)]">
             <span className="mb-2 block">频率</span>
-            <select
+            <Select
               value={draft.cadence}
-              onChange={(event) => setDraft((current) => current ? { ...current, cadence: event.target.value as ReadingSettingsDraft['cadence'] } : current)}
-              className="h-9 w-full rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 outline-none"
+              onValueChange={(value) => setDraft((current) => current && value ? { ...current, cadence: value as ReadingSettingsDraft['cadence'] } : current)}
             >
+              <SelectTrigger className="h-9 w-full border-[var(--border)] bg-[var(--surface-2)] px-3 shadow-none focus-visible:ring-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
               {READING_CADENCE_OPTIONS.map((item) => (
-                <option key={item.id} value={item.id}>{item.label}</option>
+                <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>
               ))}
-            </select>
+              </SelectContent>
+            </Select>
           </label>
           <label className="text-[13px] text-[var(--text-2)]">
             <span className="mb-2 block">每周深度笔记上限</span>
-            <input
+            <Input
               type="number"
               min={1}
               max={4}
@@ -271,24 +282,24 @@ export function ReadingSettings() {
           </label>
         </div>
         <label className="mt-4 flex items-center gap-2 text-[13px] text-[var(--text-2)]">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={draft.quiet}
-            onChange={(event) => setDraft((current) => current ? { ...current, quiet: event.target.checked } : current)}
+            onCheckedChange={(checked) => setDraft((current) => current ? { ...current, quiet: Boolean(checked) } : current)}
           />
           安静运行
         </label>
       </section>
 
       <div className="flex justify-end">
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={save}
           className="inline-flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-medium text-[var(--brand-foreground)]"
         >
           <Save size={15} />
           保存
-        </button>
+        </Button>
       </div>
     </div>
   )

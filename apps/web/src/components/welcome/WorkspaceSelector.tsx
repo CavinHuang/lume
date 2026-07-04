@@ -3,6 +3,8 @@ import { Box, ChevronDown, FolderOpen, Plus, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { AgentWorkspace } from '@lume/shared'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface WorkspaceSelectorProps {
   workspaces: AgentWorkspace[]
   selectedId: string | null
@@ -37,7 +39,8 @@ export function WorkspaceSelector({
 
   return (
     <div className="relative" ref={menuRef}>
-      <button
+      <Button
+                variant="ghost"
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
@@ -52,25 +55,26 @@ export function WorkspaceSelector({
         <span className="shrink-0 text-[var(--text-2)]">工作区：</span>
         <span className="min-w-0 flex-1 truncate font-semibold text-[var(--text-1)]">{selected?.name ?? '当前工作区'}</span>
         <ChevronDown size={13} className="shrink-0 text-[var(--text-3)]" />
-      </button>
+      </Button>
 
       {open && (
         <div className="absolute left-0 top-full z-50 mt-3 w-72 overflow-hidden rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_74%,transparent)] bg-[var(--surface-1)] shadow-[0_28px_52px_-34px_hsl(var(--shadow-panel)/0.48)]">
           <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] p-3">
             <div className="flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-2">
               <Search size={13} className="text-[var(--text-3)]" />
-              <input
+              <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索工作区..."
-                className="flex-1 bg-transparent text-[12px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
+                className="flex-1 border-0 bg-transparent px-0 text-[12px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
                 autoFocus
               />
             </div>
           </div>
           <div className="max-h-[220px] overflow-y-auto p-2">
             {filtered.map((ws) => (
-              <button
+              <Button
+                variant="ghost"
                 key={ws.id}
                 type="button"
                 onClick={() => {
@@ -87,14 +91,15 @@ export function WorkspaceSelector({
               >
                 <FolderOpen size={13} className="shrink-0 text-[var(--text-3)]" />
                 <span className="truncate flex-1">{ws.name}</span>
-              </button>
+              </Button>
             ))}
             {filtered.length === 0 && (
               <div className="px-3 py-6 text-center text-[12px] text-[var(--text-3)]">无匹配工作区</div>
             )}
           </div>
           <div className="border-t border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] p-2">
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={() => {
                 setOpen(false)
@@ -105,7 +110,7 @@ export function WorkspaceSelector({
             >
               <Plus size={13} className="text-[var(--text-3)]" />
               新建工作区
-            </button>
+            </Button>
           </div>
         </div>
       )}

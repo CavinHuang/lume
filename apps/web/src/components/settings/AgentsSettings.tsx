@@ -48,7 +48,7 @@ export function AgentsSettings() {
 
   return (
     <div className="space-y-3">
-      <section className="overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+      <section className="lume-panel overflow-hidden">
         <div className="grid min-h-[154px] grid-cols-[minmax(0,1fr)_260px]">
           <div className="p-5">
             <div className="flex items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--brand)]">
@@ -61,7 +61,7 @@ export function AgentsSettings() {
             </p>
             <div className="mt-4 grid grid-cols-4 gap-2">
               {metrics.map((metric) => (
-                <div key={metric.label} className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2">
+                <div key={metric.label} className="lume-subpanel px-3 py-2">
                   <div className="text-[11px] font-medium text-[var(--text-3)]">{metric.label}</div>
                   <div className="mt-1 text-[18px] font-semibold leading-5 text-[var(--text-1)]">{metric.value}</div>
                 </div>
@@ -79,7 +79,7 @@ export function AgentsSettings() {
       </section>
 
       <section className="grid min-h-[520px] grid-cols-[minmax(0,1fr)_340px] gap-3">
-        <div className="min-w-0 rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+        <div className="lume-panel min-w-0 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h3 className="text-[16px] font-semibold leading-6 text-[var(--text-1)]">角色目录</h3>
@@ -131,15 +131,16 @@ export function AgentsSettings() {
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {recommendations.length > 0 ? recommendations.slice(0, 5).map((item) => (
-                <button
+                <Button
+                variant="ghost"
                   key={item.role.id}
                   type="button"
                   onClick={() => setSelectedRoleId(item.role.id)}
-                  className="rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2 text-left text-[12px] transition-colors hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--border))]"
+                  className="lume-action-tile h-auto justify-start px-3 py-2 text-left text-[12px] shadow-none"
                 >
                   <span className="font-semibold text-[var(--text-1)]">{item.label}</span>
                   <span className="ml-2 text-[var(--text-3)]">命中 {item.score}</span>
-                </button>
+                </Button>
               )) : (
                 <span className="text-[12px] text-[var(--text-3)]">暂无推荐</span>
               )}
@@ -163,11 +164,12 @@ function AgentRoleCard({
   onSelect: () => void
 }) {
   return (
-    <button
+    <Button
+                variant="ghost"
       type="button"
       onClick={onSelect}
       className={cn(
-        'group overflow-hidden rounded-[9px] border bg-[var(--surface-1)] text-left transition-colors',
+        'group h-auto w-full flex-col items-stretch justify-start gap-0 overflow-hidden rounded-[9px] border bg-[var(--surface-1)] p-0 text-left whitespace-normal transition-colors',
         selected
           ? 'border-[color-mix(in_oklab,var(--brand)_45%,var(--border))] ring-2 ring-[color-mix(in_oklab,var(--brand)_12%,transparent)]'
           : 'border-[var(--border)] hover:border-[color-mix(in_oklab,var(--brand)_35%,var(--border))]'
@@ -191,7 +193,7 @@ function AgentRoleCard({
           {role.defaultBackground && <RoleBadge>后台</RoleBadge>}
         </div>
       </div>
-    </button>
+    </Button>
   )
 }
 
@@ -200,7 +202,7 @@ function AgentRoleDetail({ role }: { role: AgentRoleDefinition }) {
   const conflictRoles = BUILTIN_AGENT_ROLES.filter((item) => item.id !== role.id && !canAgentRolesRunInParallel(role.id, item.id))
 
   return (
-    <aside className="min-w-0 overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <aside className="lume-panel min-w-0 overflow-hidden">
       <div className="aspect-[16/10] overflow-hidden bg-[var(--surface-2)]">
         <img src={AGENT_ROLE_ASSETS.roles[role.id]} alt="" className="h-full w-full object-cover" />
       </div>

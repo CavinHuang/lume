@@ -38,8 +38,6 @@ const PREVIEW_GAP = 8
 const OVERLAY_WIDTH = PREVIEW_CARD_WIDTH + PREVIEW_GAP + MINIMAP_HIT_WIDTH + RAIL_RIGHT_INSET
 /** 横杠高度（px）—— 对齐 Proma 极简刻度的纤细感，恒定不波动 */
 const BAR_HEIGHT = 2
-/** 每行行高（px）；横杠垂直居中其中，形成均匀刻度 */
-const BAR_ROW_HEIGHT = 10
 /**
  * 宽度波纹分档：焦点处最宽，按距离向外递减。高度始终统一，
  * 波纹只体现在横向长度 —— 鼠标移动时宽度从指针位置平滑扩散。

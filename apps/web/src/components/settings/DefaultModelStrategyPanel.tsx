@@ -262,7 +262,8 @@ function FallbackSelectRow(props: {
   return (
     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div ref={menuRef} className="relative">
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={() => setOpen((value) => !value)}
           className={cn(
@@ -272,7 +273,7 @@ function FallbackSelectRow(props: {
         >
           <span className="truncate">{activeOption?.label ?? props.value}</span>
           <span className="text-[11px] text-muted-foreground">{activeOption?.channelLabel ?? '未设置'}</span>
-        </button>
+        </Button>
 
         {open && (
           <div className="absolute left-0 top-full z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-border/60 bg-popover shadow-lg">
@@ -541,7 +542,8 @@ export function DefaultModelStrategyPanel() {
       <div className="space-y-2">
         <Label className="text-[13px] font-medium">默认模型</Label>
         <div ref={defaultModelMenuRef} className="relative">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={() => setDefaultModelOpen((value) => !value)}
             className="flex h-8 w-full items-center justify-between rounded-lg border border-input bg-transparent px-2.5 text-[13px] text-left transition-colors hover:bg-muted/30"
@@ -552,7 +554,7 @@ export function DefaultModelStrategyPanel() {
             <span className="text-[11px] text-muted-foreground">
               {activeDefaultModel?.channelLabel ?? '未设置'}
             </span>
-          </button>
+          </Button>
 
           {defaultModelOpen && (
             <div className="absolute left-0 top-full z-50 mt-1 min-w-full overflow-hidden rounded-lg border border-border/60 bg-popover shadow-lg">

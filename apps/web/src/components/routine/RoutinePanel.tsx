@@ -17,6 +17,7 @@ import { pendingAutomationJobIdAtom } from "../../atoms/automation-atoms"
 import { openAutomationJobDetail } from "../automation/automation-run-replay"
 import { RoutineEntryItem } from "./RoutineEntryItem"
 
+import { Button } from '@/components/ui/button'
 function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
@@ -128,26 +129,28 @@ export function RoutinePanel() {
         <div className="flex items-center gap-3">
           <CalendarDays size={18} className="text-[var(--reading-accent)]" />
           <div className="flex items-center gap-1">
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={handlePrevDay}
               className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)]"
             >
               <ChevronLeft size={16} className="text-[var(--text-3)]" />
-            </button>
+            </Button>
             <div>
               <h2 className="text-[18px] font-semibold text-[var(--text-1)]">
                 {currentDate === today() ? "今日日程" : "日程"}
               </h2>
               <p className="mt-0.5 text-[13px] text-[var(--text-3)]">{formatDateLabel(currentDate)} {formatDayLabel(currentDate)}</p>
             </div>
-            <button
+            <Button
+                variant="ghost"
               type="button"
               onClick={handleNextDay}
               className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)]"
             >
               <ChevronRight size={16} className="text-[var(--text-3)]" />
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -211,14 +214,15 @@ export function RoutinePanel() {
           {routine.generationSource === "llm" ? "AI 生成" : "规则生成"}
           {routine.context.recentNotes !== undefined && ` · 本周 ${routine.context.recentNotes} 篇笔记`}
         </div>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={handleRegenerate}
           className="flex items-center gap-1.5 rounded-[8px] border border-[var(--reading-border)] bg-[var(--reading-card)] px-3 py-1.5 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:border-[var(--reading-accent)]/30 hover:text-[var(--reading-accent)]"
         >
           <RefreshCw size={12} />
           重新生成
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -288,21 +292,23 @@ function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center py-20">
       <div className="mb-6 flex items-center gap-2 text-[13px] text-[var(--text-3)]">
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={onPrev}
           className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)]"
         >
           <ChevronLeft size={16} className="text-[var(--text-3)]" />
-        </button>
+        </Button>
         <span className="tabular-nums">{formatDateLabel(currentDate)} {formatDayLabel(currentDate)}</span>
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={onNext}
           className="flex size-7 items-center justify-center rounded-md transition-colors hover:bg-[var(--reading-soft)]"
         >
           <ChevronRight size={16} className="text-[var(--text-3)]" />
-        </button>
+        </Button>
       </div>
       <div className="flex size-16 items-center justify-center rounded-full bg-[var(--reading-soft)]">
         <CalendarDays size={28} className="text-[var(--reading-accent)]" />
@@ -314,14 +320,15 @@ function EmptyState({
         {isToday ? "点击下方按钮生成今日日程" : "翻到其他日期查看，或返回今日生成"}
       </p>
       {isToday && (
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={onRegenerate}
           className="mt-5 flex items-center gap-2 rounded-[8px] bg-[var(--reading-accent)] px-4 py-2 text-[13px] font-medium text-[var(--reading-accent-foreground)] transition-opacity hover:opacity-90"
         >
           <RefreshCw size={14} />
           生成今日日程
-        </button>
+        </Button>
       )}
     </div>
   )

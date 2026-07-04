@@ -16,5 +16,5 @@ export const sidebarWidthAtom = atomWithStorage('sidebar-width', 260)
  * - expandedThreadIdsAtom：用户手动展开的母会话 id
  * - collapsedThreadIdsAtom：用户手动收起的母会话 id，用于压制"激活子会话自动展开"
  */
-export const expandedThreadIdsAtom = atom<Set<string>>(new Set())
-export const collapsedThreadIdsAtom = atom<Set<string>>(new Set())
+export const expandedThreadIdsAtom = atom<Set<string>>(new Set<string>())
+export const collapsedThreadIdsAtom = atom<Set<string>>(new Set<string>())

@@ -24,9 +24,9 @@ export function AppShell() {
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[var(--lume-bg-app)] text-[var(--lume-text-primary)]">
       <TitleBar />
-      <div className="flex-1 flex min-h-0 gap-1.5 p-2 pt-0">
+      <div className="flex-1 flex min-h-0 gap-1.5 px-2">
         <LeftSidebar />
-        <div className="flex-1 min-w-0 overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]">
+        <div className="flex-1 min-w-0 overflow-hidden rounded-[10px] bg-[var(--lume-bg-panel)]">
           <MainArea />
         </div>
         <RightPanelWorkspace />

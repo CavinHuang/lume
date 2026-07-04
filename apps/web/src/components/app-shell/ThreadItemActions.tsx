@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Pin, PinOff, Archive, MoreHorizontal } from 'lucide-react'
+import { MoreHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -10,11 +9,9 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 
+import { Button } from '@/components/ui/button'
 interface ThreadItemActionsProps {
   updatedAt: number
-  pinned: boolean
-  onTogglePin: () => void
-  onArchive: () => void
   menuItems: (
     MenuItem: typeof DropdownMenuItem,
     MenuSeparator: typeof DropdownMenuSeparator,
@@ -37,30 +34,11 @@ function formatRelativeUpdatedAt(updatedAt: number, now: number): string {
 
 export function ThreadItemActions({
   updatedAt,
-  pinned,
-  onTogglePin,
-  onArchive,
   menuItems,
   onMenuOpenChange,
 }: ThreadItemActionsProps) {
-  const [archiveConfirming, setArchiveConfirming] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const now = Date.now()
-
-  useEffect(() => {
-    if (!archiveConfirming) return
-    const timer = setTimeout(() => setArchiveConfirming(false), 3000)
-    return () => clearTimeout(timer)
-  }, [archiveConfirming])
-
-  const handleArchiveClick = (): void => {
-    if (archiveConfirming) {
-      setArchiveConfirming(false)
-      onArchive()
-      return
-    }
-    setArchiveConfirming(true)
-  }
 
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -86,17 +64,17 @@ export function ThreadItemActions({
     }
   }, [])
 
-  const forceVisible = archiveConfirming || menuOpen
+  const forceVisible = menuOpen
 
   return (
     <div
-      className="flex-shrink-0 flex items-center h-[18px]"
+      className="flex h-[18px] min-w-8 shrink-0 items-center justify-end"
       onClick={(e) => e.stopPropagation()}
     >
       <span
         title={`最后更新：${new Date(updatedAt).toLocaleString('zh-CN')}`}
         className={cn(
-          'min-w-[42px] text-right text-[11px] leading-[18px] tabular-nums text-[var(--lume-text-muted)]',
+          'w-8 text-right text-[11px] leading-[18px] tabular-nums text-[var(--lume-text-muted)]',
           forceVisible ? 'hidden' : 'group-hover:hidden',
         )}
       >
@@ -108,50 +86,16 @@ export function ThreadItemActions({
           forceVisible ? 'flex' : 'hidden group-hover:flex',
         )}
       >
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                className={cn(
-                  'p-0.5 rounded transition-colors',
-                  pinned
-                    ? 'text-[var(--lume-accent)] hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_12%,transparent)] hover:text-[var(--lume-accent)]'
-                    : 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
-                )}
-                onClick={onTogglePin}
-              >
-                {pinned ? <PinOff size={14} /> : <Pin size={14} />}
-              </button>
-            }
-          />
-          <TooltipContent side="top">{pinned ? '取消置顶' : '置顶'}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <button
-                className={cn(
-                  'p-0.5 rounded transition-colors',
-                  archiveConfirming
-                    ? 'text-[var(--lume-danger)] bg-[color:color-mix(in_oklab,var(--lume-danger)_10%,transparent)]'
-                    : 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
-                )}
-                onClick={handleArchiveClick}
-              >
-                <Archive size={14} />
-              </button>
-            }
-          />
-          <TooltipContent side="top">
-            {archiveConfirming ? '再次点击确认归档' : '归档'}
-          </TooltipContent>
-        </Tooltip>
         <DropdownMenu onOpenChange={handleMenuOpenChange}>
           <DropdownMenuTrigger
             render={
-              <button className="p-0.5 rounded text-[var(--lume-text-muted)] transition-colors hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]">
+              <Button
+                variant="ghost"
+                type="button"
+                className="size-6 rounded-md p-0 text-[var(--lume-text-muted)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
+              >
                 <MoreHorizontal size={14} />
-              </button>
+              </Button>
             }
           />
           <DropdownMenuContent>

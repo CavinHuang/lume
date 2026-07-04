@@ -8,6 +8,8 @@ import { removePendingBrowserAuthRequest } from '@/hooks/pending-interactive-sta
 import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame } from './InteractiveOverlayFrame'
 
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface BrowserAuthBannerProps {
   threadId: string
   request: AgentBrowserAuthRequest
@@ -122,7 +124,7 @@ export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps)
               <span className="mb-1 block px-1 text-[12px] font-semibold leading-5 text-[#5c626d]">
                 {field.label}{field.required ? ' *' : ''}
               </span>
-              <input
+              <Input
                 type={field.type === 'password' ? 'password' : 'text'}
                 autoComplete={field.autocomplete}
                 value={values[field.id] ?? ''}
@@ -136,14 +138,15 @@ export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps)
           <p className="text-[11px] leading-4 text-[#8a8f98]">
             不要把密码或验证码粘贴到聊天消息里；如果来源不可信，请取消请求。
           </p>
-          <button
+          <Button
+                variant="ghost"
             type="button"
             disabled={busy}
             onClick={() => void cancel()}
             className="shrink-0 rounded-lg px-2 py-1 text-[12px] font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-60"
           >
             取消请求
-          </button>
+          </Button>
         </div>
         {error && (
           <p className="px-1 pt-1 text-[12px] leading-5 text-destructive">{error}</p>

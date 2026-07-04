@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button'
 /**
  * WebFetch 工具结果渲染器
  *
@@ -32,14 +33,15 @@ export function WebFetchResult({ input, result }: WebFetchResultProps) {
   return (
     <div className="space-y-2">
       {url && (
-        <button
+        <Button
+                variant="ghost"
           onClick={() => openExternal(url)}
           className="flex items-center gap-2 text-[12px] text-muted-foreground hover:text-primary transition-colors group"
         >
           <Globe size={12} />
           <span className="truncate">{url}</span>
           <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </button>
+        </Button>
       )}
 
       <CollapsibleResult

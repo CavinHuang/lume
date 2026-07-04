@@ -6,6 +6,7 @@ import { submitTaskApproval } from '@/lib/desktop-api'
 import { removePendingTaskApproval } from '@/hooks/pending-interactive-state'
 import type { AgentTaskApprovalRequest } from '@lume/shared'
 
+import { Button } from '@/components/ui/button'
 interface TaskApprovalBannerProps {
   threadId: string
   request: AgentTaskApprovalRequest
@@ -56,7 +57,8 @@ export function TaskApprovalBanner({ threadId, request, onOpenPlan }: TaskApprov
 
       <div className="flex items-center gap-2 px-3 pb-3">
         {request.planFilePath && (
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={onOpenPlan}
             className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] text-foreground/60 transition-colors hover:bg-foreground/5 hover:text-foreground"
@@ -64,17 +66,18 @@ export function TaskApprovalBanner({ threadId, request, onOpenPlan }: TaskApprov
           >
             <FileText size={12} />
             查看计划
-          </button>
+          </Button>
         )}
         <div className="flex-1" />
-        <button
+        <Button
+                variant="ghost"
           type="button"
           onClick={() => void approveAndExecute()}
           disabled={busy}
           className="rounded-lg bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
         >
           继续执行
-        </button>
+        </Button>
       </div>
     </div>
   )

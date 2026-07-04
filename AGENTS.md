@@ -7,6 +7,7 @@ Spend time on thinking; you do not need to use the commentary channel to report 
 - Reuse existing utils and patterns before introducing new abstractions.
 - No new dependencies without explicit request.
 - Keep diffs small, reviewable, and reversible.
+- Web UI 新增或改造交互控件时，优先使用 `apps/web/src/components/ui` 的 shadcn/global 原子组件；不要在业务页面手写 button、input、select、textarea、switch、checkbox、radio 的完整视觉样式。缺少对应组件时，先用 shadcn 安装/生成全局组件，再在页面使用。例外仅限无视觉的隐藏文件输入、窗口控制/拖拽区、第三方编辑器内部，以及全局组件自身实现。
 - 仅在改动涉及可测试逻辑时运行相关测试；样式、文案、纯 UI 调整无需运行测试。不要为了"证明完成"而执行全量 lint/typecheck/test，只在改动有风险或涉及公共接口时验证。
 - Final reports must include changed files, simplifications made, and remaining risks.
 

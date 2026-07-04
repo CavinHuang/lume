@@ -2,6 +2,7 @@ import { CornerDownLeft, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ReactNode } from 'react'
 
+import { Button } from '@/components/ui/button'
 /**
  * 交互式覆盖层是否应在按下 Enter 时提交。
  * 焦点位于输入框 / 文本域时返回 false——保留原生输入与换行；
@@ -51,14 +52,16 @@ export function InteractiveOverlayFrame({
         <h3 className="px-1 pb-2.5 text-[16px] font-semibold leading-6 text-[#1f232b]">{title}</h3>
         {children}
         <div className="mt-2 flex items-center justify-end gap-2">
-          <button
+          <Button
+                variant="ghost"
             type="button"
             onClick={onIgnore}
             className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-semibold text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
           >
             忽略 <kbd className="rounded-md bg-[#f0f0f2] px-1.5 py-0.5 font-mono text-[12px] text-[#5c626d]">ESC</kbd>
-          </button>
-          <button
+          </Button>
+          <Button
+                variant="ghost"
             type="button"
             onClick={onSubmit}
             disabled={busy || submitDisabled}
@@ -70,7 +73,7 @@ export function InteractiveOverlayFrame({
             {busy ? <Loader2 size={15} className="animate-spin" /> : null}
             提交
             {!busy && <CornerDownLeft size={15} />}
-          </button>
+          </Button>
         </div>
       </section>
     </div>

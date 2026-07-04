@@ -39,7 +39,6 @@ describe('buildLumeSidebarViewModel', () => {
 
     expect(model.topActions.map((action) => action.id)).toEqual([
       'new-chat',
-      'search',
       'lume',
       'skills',
       'automations',
@@ -75,54 +74,6 @@ describe('buildLumeSidebarViewModel', () => {
         }),
       ]),
     )
-  })
-
-  test('adds an active synthetic new conversation row for the current workspace welcome tab', () => {
-    const model = buildLumeSidebarViewModel({
-      workspaces: [createWorkspace()],
-      threads: [createThread()],
-      currentWorkspaceId: 'workspace-1',
-      activeTabId: '__welcome__',
-      expandedWorkspaceIds: ['workspace-1'],
-    })
-
-    const currentWorkspace = model.workspaces[0]
-
-    expect(currentWorkspace.syntheticRow).toEqual({
-      type: 'synthetic-thread',
-      id: '__welcome__',
-      workspaceId: 'workspace-1',
-      label: '新对话',
-      active: true,
-    })
-  })
-
-  test('adds a new conversation row as the first row for every real workspace', () => {
-    const model = buildLumeSidebarViewModel({
-      workspaces: [
-        createWorkspace(),
-        createWorkspace({ id: 'workspace-2', name: '自动化', slug: 'automation' }),
-      ],
-      threads: [],
-      currentWorkspaceId: 'workspace-1',
-      activeTabId: '__welcome__',
-      expandedWorkspaceIds: ['workspace-1', 'workspace-2'],
-    })
-
-    expect(model.workspaces[0].syntheticRow).toEqual({
-      type: 'synthetic-thread',
-      id: '__welcome__',
-      workspaceId: 'workspace-1',
-      label: '新对话',
-      active: true,
-    })
-    expect(model.workspaces[1].syntheticRow).toEqual({
-      type: 'synthetic-thread',
-      id: '__welcome__',
-      workspaceId: 'workspace-2',
-      label: '新对话',
-      active: false,
-    })
   })
 
   test('produces thread groups from actual workspace threads', () => {

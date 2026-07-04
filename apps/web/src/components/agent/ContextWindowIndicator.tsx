@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { ContextWindowProgress } from './runtime-state-projections'
 
+import { Button } from '@/components/ui/button'
 interface ContextWindowIndicatorProps {
   progress: ContextWindowProgress
   defaultOpen?: boolean
@@ -35,7 +36,8 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
 
   return (
     <div ref={panelRef} className="relative">
-      <button
+      <Button
+                variant="ghost"
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
@@ -46,7 +48,7 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
         title="上下文窗口"
       >
         <ContextWindowRing progress={progress} />
-      </button>
+      </Button>
       {open && (
         <div className="absolute bottom-full right-0 z-[80] mb-2 w-[320px] overflow-hidden rounded-lg border border-border/60 bg-popover text-popover-foreground shadow-xl">
           <div className="p-3">

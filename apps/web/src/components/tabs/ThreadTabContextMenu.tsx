@@ -1,5 +1,5 @@
+import { type ReactElement } from 'react'
 import {
-  MoreHorizontal,
   Pin,
   PinOff,
   Pencil,
@@ -11,15 +11,15 @@ import {
   GitBranch,
 } from 'lucide-react'
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
-} from '@/components/ui/dropdown-menu'
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubTrigger,
+  ContextMenuSubContent,
+} from '@/components/ui/context-menu'
 import {
   Dialog,
   DialogContent,
@@ -27,17 +27,22 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { useThreadMoreActions } from './use-thread-more-actions'
-
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-interface ThreadMoreActionsProps {
+import { useThreadMoreActions } from '@/components/agent/use-thread-more-actions'
+
+interface ThreadTabContextMenuProps {
   threadId: string
   readOnly?: boolean
+  /** 被右键触发的 tab 元素（通常是 TabBar 的 <Button>）。 */
+  children: ReactElement
 }
 
-/** 会话顶部「更多操作」菜单：工作区切换 / 置顶·重命名·归档 / 复制 / Fork。 */
-export function ThreadMoreActions({ threadId, readOnly = false }: ThreadMoreActionsProps) {
+/**
+ * agent 会话 tab 的右键菜单：与 header「更多」(ThreadMoreActions) 内容一致，
+ * 共享 useThreadMoreActions，保证两处行为完全相同。
+ */
+export function ThreadTabContextMenu({ threadId, readOnly = false, children }: ThreadTabContextMenuProps) {
   const {
     pinned,
     workspaces,
@@ -53,85 +58,74 @@ export function ThreadMoreActions({ threadId, readOnly = false }: ThreadMoreActi
 
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              type="button"
-              aria-label="更多操作"
-              className="flex-shrink-0 p-0.5 rounded text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-2)] transition-colors"
-            >
-              <MoreHorizontal size={16} />
-            </Button>
-          }
-        />
-        <DropdownMenuContent>
-          {/* 切换工作区（全局当前工作区，沿用 WorkspacePicker 语义） */}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
+      <ContextMenu>
+        <ContextMenuTrigger render={children} />
+        <ContextMenuContent>
+          {/* 切换工作区 */}
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
               <FolderTree size={14} />
               切换工作区
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
               {workspaces.map((w) => (
-                <DropdownMenuItem key={w.id} onClick={() => setCurrentId(w.id)}>
+                <ContextMenuItem key={w.id} onClick={() => setCurrentId(w.id)}>
                   <span className="flex-1 truncate">{w.name}</span>
                   {currentId === w.id && <Check size={12} className="text-primary" />}
-                </DropdownMenuItem>
+                </ContextMenuItem>
               ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
 
-          <DropdownMenuSeparator />
+          <ContextMenuSeparator />
 
           {/* 会话管理（readOnly 下禁用） */}
-          <DropdownMenuItem disabled={readOnly} onClick={() => actions.togglePin()}>
+          <ContextMenuItem className="disabled:opacity-45" onClick={() => !readOnly && actions.togglePin()}>
             {pinned ? <PinOff size={14} /> : <Pin size={14} />}
             {pinned ? '取消置顶' : '置顶'}
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled={readOnly} onClick={rename.openRename}>
+          </ContextMenuItem>
+          <ContextMenuItem className="disabled:opacity-45" onClick={() => !readOnly && rename.openRename()}>
             <Pencil size={14} />
             重命名
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled={readOnly} onClick={() => actions.archive()}>
+          </ContextMenuItem>
+          <ContextMenuItem className="disabled:opacity-45" onClick={() => !readOnly && actions.archive()}>
             <Archive size={14} />
             归档
-          </DropdownMenuItem>
+          </ContextMenuItem>
 
-          <DropdownMenuSeparator />
+          <ContextMenuSeparator />
 
           {/* 复制（readOnly 下仍启用） */}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
               <Copy size={14} />
               复制
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
-              <DropdownMenuItem onClick={copyPath}>
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem onClick={copyPath}>
                 <FolderTree size={14} />
                 复制工作目录
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={copyThreadId}>
+              </ContextMenuItem>
+              <ContextMenuItem onClick={copyThreadId}>
                 <FileText size={14} />
                 复制会话 ID
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={copyMarkdown}>
+              </ContextMenuItem>
+              <ContextMenuItem onClick={copyMarkdown}>
                 <FileText size={14} />
                 复制为 Markdown
-              </DropdownMenuItem>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
 
-          <DropdownMenuSeparator />
+          <ContextMenuSeparator />
 
           {/* Fork（readOnly 下禁用） */}
-          <DropdownMenuItem disabled={readOnly} onClick={fork}>
+          <ContextMenuItem className="disabled:opacity-45" onClick={() => !readOnly && fork()}>
             <GitBranch size={14} />
             Fork 分支
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {/* 重命名弹窗：与菜单外置，避免 base-ui 焦点冲突 */}
       <Dialog open={rename.open} onOpenChange={rename.setOpen}>

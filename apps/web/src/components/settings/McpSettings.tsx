@@ -324,7 +324,7 @@ export function McpSettings() {
                 type="button"
                 variant="outline"
                 onClick={() => setImportOpen((open) => !open)}
-                className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
+                className="lume-action-tile h-8 gap-2 px-3 text-[12px] shadow-none"
               >
                 <Upload size={14} />
                 导入 JSON
@@ -333,7 +333,7 @@ export function McpSettings() {
                 type="button"
                 variant="outline"
                 onClick={() => void openLumeConfigSourceFile()}
-                className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
+                className="lume-action-tile h-8 gap-2 px-3 text-[12px] shadow-none"
               >
                 <ExternalLink size={14} />
                 打开配置文件
@@ -345,7 +345,7 @@ export function McpSettings() {
             当前工作区的 MCP 服务由工作区配置文件管理。
           </p>
 
-          <div className="mt-4 grid h-[86px] grid-cols-[1fr_1fr_1fr] items-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)]">
+          <div className="lume-subpanel mt-4 grid h-[86px] grid-cols-[1fr_1fr_1fr] items-center">
             <DiscoveryItem
               icon={FileCode2}
               title="发现方式"
@@ -372,7 +372,7 @@ export function McpSettings() {
           </div>
 
           {importOpen && (
-            <div className="mt-4 rounded-[8px] border border-[var(--border)] bg-[var(--background)] p-3">
+            <div className="lume-subpanel mt-4 p-3">
               <Textarea
                 value={importText}
                 onChange={(event) => setImportText(event.target.value)}
@@ -414,7 +414,7 @@ export function McpSettings() {
                 variant="outline"
                 onClick={() => void refreshStatus({ waitForConnections: true })}
                 disabled={statusLoading}
-                className="h-8 gap-2 rounded-[8px] border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)]"
+                className="lume-action-tile h-8 gap-2 px-3 text-[12px] shadow-none"
               >
                 {statusLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 刷新
@@ -467,7 +467,7 @@ function SettingsCard({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel px-5 py-4">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2">
           {marker && (
@@ -769,24 +769,24 @@ function McpOverviewStats({
       label: '已连接',
       value: String(connectedCount),
       icon: CheckCircle2,
-      iconClassName: 'bg-[#eaf9f1] text-[#23b96a]',
+      iconClassName: 'bg-[color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] text-[var(--lume-success)]',
     },
     {
       label: '异常',
       value: String(warningCount),
       icon: CircleAlert,
-      iconClassName: warningCount > 0 ? 'bg-[#fff4e7] text-[#ff9d2e]' : 'bg-[#f5f7fb] text-[#8a94aa]',
+      iconClassName: warningCount > 0 ? 'bg-[color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] text-[var(--lume-warning)]' : 'bg-[var(--surface-2)] text-[var(--text-3)]',
     },
     {
       label: '最近扫描',
       value: lastScan,
       icon: Clock3,
-      iconClassName: 'bg-[#eef5ff] text-[#4f7df3]',
+      iconClassName: 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]',
     },
   ]
 
   return (
-    <section className="grid h-[78px] grid-cols-4 overflow-hidden rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(20,24,40,0.02)]">
+    <section className="lume-panel grid h-[78px] grid-cols-4 overflow-hidden">
       {stats.map((stat, index) => {
         const Icon = stat.icon
 
@@ -884,7 +884,7 @@ function McpServerForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+    <form onSubmit={handleSubmit} className="lume-panel p-5">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-8 w-8" type="button" onClick={onCancel}>
           <ArrowLeft size={16} />

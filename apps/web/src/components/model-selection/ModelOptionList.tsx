@@ -2,6 +2,7 @@ import { Brain, Check, Eye, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { formatContextWindow, formatPricing, type ModelCapabilities, type ModelMeta } from '@lume/shared'
+import { Button } from '@/components/ui/button'
 import { ChannelProviderIcon } from './provider-icon-map'
 import type { ModelOptionGroup, ModelSelectionOption } from './model-selection-state'
 
@@ -67,11 +68,12 @@ export function ModelOptionList({ groups, onSelect, renderBadge }: ModelOptionLi
             const badge = renderBadge?.(option)
 
             return (
-              <button
+              <Button
+                variant="ghost"
                 key={`${option.channelId}-${option.modelId}`}
                 onClick={() => onSelect(option)}
                 className={cn(
-                  'flex items-start gap-2 px-2 py-1.5 text-sm rounded-sm cursor-pointer select-none transition-colors w-full text-left',
+                  'flex h-auto min-h-[46px] w-full cursor-pointer select-none items-start justify-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm whitespace-normal transition-colors',
                   option.active
                     ? 'bg-primary/15 dark:bg-primary/25'
                     : 'hover:bg-muted/50'
@@ -100,7 +102,7 @@ export function ModelOptionList({ groups, onSelect, renderBadge }: ModelOptionLi
                     )}
                   </div>
                 </div>
-              </button>
+              </Button>
             )
           })}
         </div>

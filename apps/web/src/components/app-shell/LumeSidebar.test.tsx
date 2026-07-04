@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test'
 import { act, Children, isValidElement, type ReactNode, type ReactElement } from 'react'
 import type { AgentWorkspace } from '@lume/shared'
 import { LumeSidebar } from './LumeSidebar'
+import { WorkspaceGroupItem } from './WorkspaceGroupItem'
 import { buildLumeSidebarViewModel } from './lume-sidebar-view-model'
 
 function createWorkspace(overrides: Partial<AgentWorkspace> = {}): AgentWorkspace {
@@ -33,7 +34,7 @@ function findButtonByLabel(node: ReactNode, label: string): ReactElement<{ disab
       continue
     }
 
-    if (child.type === 'button' && collectText(child).includes(label)) {
+    if (child.props.type === 'button' && collectText(child).includes(label)) {
       return child as ReactElement<{ disabled?: boolean; onClick?: () => void }>
     }
 
@@ -46,8 +47,27 @@ function findButtonByLabel(node: ReactNode, label: string): ReactElement<{ disab
   return null
 }
 
+function findElementByType<TProps>(node: ReactNode, type: unknown): ReactElement<TProps> | null {
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) {
+      continue
+    }
+
+    if (child.type === type) {
+      return child as ReactElement<TProps>
+    }
+
+    const match = findElementByType<TProps>(child.props.children, type)
+    if (match) {
+      return match
+    }
+  }
+
+  return null
+}
+
 describe('LumeSidebar', () => {
-  test('disables recycle bin while still dispatching live footer actions', () => {
+  test('keeps recycle bin available while still dispatching live footer actions', () => {
     const onFooterAction = mock()
     const model = buildLumeSidebarViewModel({
       workspaces: [createWorkspace()],
@@ -78,7 +98,7 @@ describe('LumeSidebar', () => {
 
     expect(recycleBinButton).not.toBeNull()
     expect(settingsButton).not.toBeNull()
-    expect(recycleBinButton?.props.disabled).toBe(true)
+    expect(recycleBinButton?.props.disabled).not.toBe(true)
 
     act(() => {
       settingsButton?.props.onClick?.()
@@ -86,5 +106,40 @@ describe('LumeSidebar', () => {
 
     expect(onFooterAction).toHaveBeenCalledWith('settings')
     expect(onFooterAction).toHaveBeenCalledTimes(1)
+  })
+
+  test('workspace rows receive the toggle handler for title clicks', () => {
+    const onToggleWorkspace = mock()
+    const model = buildLumeSidebarViewModel({
+      workspaces: [createWorkspace()],
+      threads: [],
+      currentWorkspaceId: 'workspace-1',
+      activeTabId: null,
+      expandedWorkspaceIds: [],
+    })
+
+    const tree = LumeSidebar({
+      collapsed: false,
+      allExpanded: false,
+      model,
+      onSetCollapsed: () => {},
+      onTopAction: () => {},
+      onFooterAction: () => {},
+      onSelectWorkspace: () => {},
+      onToggleWorkspace,
+      onToggleAllWorkspaces: () => {},
+      onCreateWorkspace: () => {},
+      onOpenThread: () => {},
+      onToggleThreadPin: () => {},
+      onDeleteThread: () => {},
+      onRenameThread: () => {},
+      onToggleWorkspacePin: () => {},
+      onRenameWorkspace: () => {},
+      onDeleteWorkspace: () => {},
+    })
+    const workspaceItem = findElementByType<Record<string, unknown>>(tree, WorkspaceGroupItem)
+
+    expect(workspaceItem).not.toBeNull()
+    expect(workspaceItem?.props.onToggleWorkspace).toBe(onToggleWorkspace)
   })
 })
