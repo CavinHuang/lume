@@ -127,6 +127,12 @@ export function resolveRoutineEntryCompletion(input: {
   if (job.enabled || !job.lastRunAt) {
     return null
   }
+  // skipped 表示「任务仍在运行，已跳过本次触发」——并未真正执行，不能当作完成。
+  // （once 任务卡在 runningJobs 时，曾被 listAutomationRunsForJob 按 startedAt 误判为
+  // latest run，进而被这里标成 completed，导致条目显示「已完成」但 result 是 skip 文案。）
+  if (latestRun?.status === "skipped") {
+    return null
+  }
   if (latestRun?.status === "failed") {
     return {
       status: "failed",

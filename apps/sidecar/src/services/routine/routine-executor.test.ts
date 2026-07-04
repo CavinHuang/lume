@@ -13,6 +13,17 @@ describe("resolveRoutineEntryCompletion", () => {
     ).toBeNull()
   })
 
+  test("run 被跳过（skipped）→ 未真正执行，不判定为完成", () => {
+    // skipped 表示「任务仍在运行，已跳过本次触发」——并非真正执行过，不应误标 completed。
+    // 线上曾出现条目 result 为该 skip 文案、状态却显示 completed。
+    expect(
+      resolveRoutineEntryCompletion({
+        job: doneJob,
+        latestRun: { status: "skipped", message: "任务仍在运行，已跳过本次触发" },
+      })
+    ).toBeNull()
+  })
+
   test("run 失败 → entry 标记 failed，summary 取 run 消息", () => {
     expect(
       resolveRoutineEntryCompletion({
