@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   ExternalLink,
   Loader2,
-  MoreHorizontal,
   Power,
   Puzzle,
   ShieldCheck,
@@ -24,6 +23,8 @@ import {
   formatReadmeMeta,
   formatRiskLabel,
 } from './plugin-detail-state'
+
+type PluginDiagnostic = GetMarketDetailResult['diagnostics'][number]
 
 export interface PluginDetailPageProps {
   detail: GetMarketDetailResult | null
@@ -54,10 +55,14 @@ export function PluginDetailPage({
   const pluginName = item?.displayName ?? item?.name ?? '插件详情'
   const permissionRows = item ? buildPermissionRows(item) : []
   const setupItems = item ? buildPluginSetupItems(item) : []
-  const diagnostics = item ? [...(detail?.diagnostics ?? []), ...(item.diagnostics ?? [])] : []
-  const installed = item?.installState === 'installed'
-  const enabled = item?.enableState === 'global-enabled' || item?.enableState === 'workspace-enabled'
-  const canInstall = Boolean(item && inspected && !installed)
+  const diagnostics = item ? dedupeDiagnostics(detail?.diagnostics, item.diagnostics) : []
+  const installState = inspected?.installState ?? item?.installState ?? 'not-installed'
+  const enableState = inspected?.enableState ?? item?.enableState ?? 'not-installed'
+  const installedLike = installState === 'installed' || installState === 'update-available'
+  const updateAvailable = installState === 'update-available'
+  const enabled = enableState === 'global-enabled' || enableState === 'workspace-enabled'
+  const canInstall = Boolean(item && inspected && !installedLike)
+  const canUpdate = Boolean(item && inspected && updateAvailable)
 
   return (
     <div className="h-full min-h-0 overflow-y-auto bg-[var(--background)]">
@@ -77,12 +82,12 @@ export function PluginDetailPage({
         </div>
 
         {loading ? (
-          <div className="flex min-h-[320px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
+          <div role="status" className="flex min-h-[320px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
             <Loader2 size={16} className="animate-spin" />
             正在读取插件详情...
           </div>
         ) : error && !item ? (
-          <section className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_28%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-5 text-[13px] leading-6 text-[var(--lume-danger)]">
+          <section role="alert" className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_28%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-5 text-[13px] leading-6 text-[var(--lume-danger)]">
             {error}
           </section>
         ) : item ? (
@@ -100,34 +105,49 @@ export function PluginDetailPage({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    type="button"
-                    title="更多操作"
-                    className="rounded-[8px] text-[var(--text-3)]"
-                  >
-                    <MoreHorizontal size={18} />
-                  </Button>
-                  {installed ? (
+                  {updateAvailable ? (
+                    <Button
+                      type="button"
+                      disabled={!canUpdate || busy}
+                      onClick={onInstall}
+                      data-plugin-detail-install-action={canUpdate && !busy ? 'enabled' : 'disabled'}
+                      className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
+                    >
+                      {busy ? <Loader2 size={15} className="animate-spin" /> : <Power size={15} />}
+                      确认权限并更新
+                    </Button>
+                  ) : installedLike && enabled ? (
                     <Button
                       type="button"
                       disabled={busy}
                       onClick={onTryInChat}
+                      data-plugin-detail-header-action="try"
                       className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
                     >
                       <ExternalLink size={15} />
                       在对话中试用
+                    </Button>
+                  ) : installedLike ? (
+                    <Button
+                      type="button"
+                      disabled={busy}
+                      onClick={onToggleEnable}
+                      data-plugin-detail-header-action="enable"
+                      className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
+                    >
+                      <Power size={15} />
+                      启用
                     </Button>
                   ) : (
                     <Button
                       type="button"
                       disabled={!canInstall || busy}
                       onClick={onInstall}
+                      data-plugin-detail-install-action={canInstall && !busy ? 'enabled' : 'disabled'}
                       className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
                     >
                       {busy ? <Loader2 size={15} className="animate-spin" /> : <Power size={15} />}
-                      {item.installState === 'update-available' ? '确认权限并更新' : '确认权限并安装'}
+                      确认权限并安装
                     </Button>
                   )}
                 </div>
@@ -135,8 +155,8 @@ export function PluginDetailPage({
 
               <div className="flex flex-wrap items-center gap-2">
                 <Badge>{PLUGIN_SOURCE_LABELS[item.sourceType]}</Badge>
-                <Badge>{formatPluginInstallState(item.installState)}</Badge>
-                <Badge>{formatPluginEnableState(item.enableState)}</Badge>
+                <Badge>{formatPluginInstallState(installState)}</Badge>
+                <Badge>{formatPluginEnableState(enableState)}</Badge>
                 <Badge>v{item.version}</Badge>
               </div>
             </header>
@@ -153,7 +173,11 @@ export function PluginDetailPage({
             )}
 
             <Tabs defaultValue="readme" className="gap-5">
-              <TabsList variant="line" className="w-full justify-start border-b border-[var(--border)]">
+              <TabsList
+                variant="line"
+                data-plugin-detail-tabs="horizontal"
+                className="w-full justify-start border-b border-[var(--border)]"
+              >
                 <TabsTrigger value="readme" className="max-w-none flex-none px-0 text-[14px]">
                   README
                 </TabsTrigger>
@@ -244,7 +268,7 @@ export function PluginDetailPage({
                 </section>
               </TabsContent>
 
-              <TabsContent value="diagnostics">
+              <TabsContent value="diagnostics" keepMounted>
                 {diagnostics.length > 0 ? (
                   <ul className="space-y-2 text-[13px] leading-6 text-[var(--lume-warning)]">
                     {diagnostics.map((diagnostic, index) => (
@@ -262,7 +286,7 @@ export function PluginDetailPage({
               </TabsContent>
             </Tabs>
 
-            {installed && (
+            {installedLike && (
               <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-5">
                 <Button
                   variant="ghost"
@@ -319,4 +343,20 @@ function EmptyPanel({ title, description }: { title: string; description: string
       <div className="mt-2 text-[13px] leading-6 text-[var(--text-3)]">{description}</div>
     </div>
   )
+}
+
+function dedupeDiagnostics(...groups: Array<PluginDiagnostic[] | undefined>): PluginDiagnostic[] {
+  const seen = new Set<string>()
+  const diagnostics: PluginDiagnostic[] = []
+
+  for (const group of groups) {
+    for (const diagnostic of group ?? []) {
+      const key = `${diagnostic.severity}:${diagnostic.code}:${diagnostic.message}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      diagnostics.push(diagnostic)
+    }
+  }
+
+  return diagnostics
 }
