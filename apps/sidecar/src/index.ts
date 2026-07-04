@@ -105,6 +105,14 @@ async function handleRpcLine(line: string): Promise<void> {
 }
 
 async function boot(): Promise<void> {
+  // 单例守卫必须在所有 runner 之前：新实例接管并终止旧 sidecar，根治多进程并发导致
+  // 每个自动化任务同一时间被执行 N 次（runningJobs 是进程内去重，无跨进程互斥）。
+  try {
+    const { acquireSingleInstance } = await import("./services/infra/single-instance");
+    acquireSingleInstance();
+  } catch (error) {
+    console.error(`[sidecar] 单例守卫失败: ${error instanceof Error ? error.message : String(error)}`);
+  }
   console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
   void initProxySettings().catch((error) => {
     console.error(`[代理配置] 初始化失败: ${error instanceof Error ? error.message : String(error)}`);
