@@ -1,0 +1,114 @@
+import type { PluginMarketItem, PluginReadmePreview } from '@lume/shared'
+
+export interface PermissionRow {
+  label: string
+  value: string
+}
+
+export interface PluginSetupItem {
+  title: string
+  description: string
+  status: 'done' | 'attention' | 'idle'
+}
+
+export function formatPluginInstallState(state: PluginMarketItem['installState']): string {
+  switch (state) {
+    case 'installed':
+      return '已安装'
+    case 'update-available':
+      return '有更新'
+    case 'not-installed':
+      return '未安装'
+  }
+}
+
+export function formatPluginEnableState(state: PluginMarketItem['enableState']): string {
+  switch (state) {
+    case 'global-enabled':
+      return '全局启用'
+    case 'workspace-enabled':
+      return '工作区启用'
+    case 'disabled':
+      return '已禁用'
+    case 'needs-review':
+      return '需要审核'
+    case 'not-installed':
+      return '未安装'
+  }
+}
+
+export function formatRiskLabel(risk: PluginMarketItem['permissions']['riskLabels'][number]): string {
+  switch (risk) {
+    case 'shell':
+      return 'Shell'
+    case 'network':
+      return '网络'
+    case 'write':
+      return '写文件'
+    case 'mcp':
+      return '注册 MCP'
+    case 'high-risk-tool':
+      return '高风险工具'
+  }
+}
+
+export function buildPermissionRows(item: PluginMarketItem): PermissionRow[] {
+  const permissions = item.permissions
+  return [
+    { label: '读取文件', value: formatPermissionList(permissions.filesystemRead) },
+    { label: '写入文件', value: formatPermissionList(permissions.filesystemWrite) },
+    { label: '网络访问', value: formatPermissionList(permissions.networkOutbound) },
+    { label: '工具允许', value: formatPermissionList(permissions.toolAllow) },
+    { label: '工具询问', value: formatPermissionList(permissions.toolAsk) },
+    { label: '工具拒绝', value: formatPermissionList(permissions.toolDeny) },
+    { label: 'Hook 事件', value: formatPermissionList(permissions.hookEvents) },
+    { label: 'Shell', value: permissions.shellAllow ? '允许' : '未声明' },
+    { label: 'MCP 注册', value: permissions.mcpRegister ? '允许' : '未声明' },
+  ]
+}
+
+export function buildPluginSetupItems(item: PluginMarketItem): PluginSetupItem[] {
+  const installed = item.installState === 'installed'
+  const enabled = item.enableState === 'global-enabled' || item.enableState === 'workspace-enabled'
+  const needsLocalConnection = item.permissions.networkOutbound.some((entry) =>
+    entry.includes('127.0.0.1') || entry.includes('localhost')
+  )
+  const hasMcp = item.capabilities.mcpServerNames.length > 0 || item.permissions.mcpRegister
+  const items: PluginSetupItem[] = [
+    {
+      title: '确认插件已安装',
+      description: installed ? `当前版本 ${item.version} 已安装。` : '安装后才能启用和配置连接。',
+      status: installed ? 'done' : 'attention',
+    },
+    {
+      title: '启用当前工作区',
+      description: enabled ? formatPluginEnableState(item.enableState) : '安装后可在当前工作区启用。',
+      status: enabled ? 'done' : 'idle',
+    },
+  ]
+  if (needsLocalConnection) {
+    items.push({
+      title: '检查本地连接',
+      description: '该插件声明了本地网络访问，安装后需要确认外部应用或本地服务可用。',
+      status: 'attention',
+    })
+  }
+  if (hasMcp) {
+    items.push({
+      title: '检查 MCP 服务',
+      description: '该插件包含 MCP 服务，安装或更新后需要等待服务注册完成。',
+      status: 'attention',
+    })
+  }
+  return items
+}
+
+export function formatReadmeMeta(readme: PluginReadmePreview | undefined): string {
+  if (!readme) return '未找到 README.md'
+  const base = readme.path ?? 'README.md'
+  return readme.truncated ? `${base} · 已截断` : base
+}
+
+function formatPermissionList(values: string[]): string {
+  return values.length > 0 ? values.join(', ') : '未声明'
+}

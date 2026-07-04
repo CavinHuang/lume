@@ -69,6 +69,12 @@ import {
   type MarketCardKind,
   type MarketCardView,
 } from './plugin-market-ui-state'
+import {
+  buildPermissionRows,
+  formatPluginEnableState,
+  formatPluginInstallState,
+  formatRiskLabel,
+} from './plugin-detail-state'
 
 type SkillVisualTone = 'violet' | 'mint' | 'figma' | 'green' | 'blue' | 'orange'
 
@@ -1256,7 +1262,7 @@ function PluginDetailDialog({
                     {PLUGIN_SOURCE_LABELS[item.sourceType]}
                   </span>
                   <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
-                    {formatInstallState(item.installState)}
+                    {formatPluginInstallState(item.installState)}
                   </span>
                   <span className="rounded-[5px] bg-white px-2 py-1 text-[12px] font-medium text-[#687196]">
                     {formatPluginEnableState(item.enableState)}
@@ -1649,55 +1655,6 @@ function formatInstallState(state: SkillCatalogItem['installState'] | PluginMark
     case 'not-installed':
       return '未安装'
   }
-}
-
-function formatPluginEnableState(state: PluginMarketItem['enableState']): string {
-  switch (state) {
-    case 'global-enabled':
-      return '全局启用'
-    case 'workspace-enabled':
-      return '工作区启用'
-    case 'disabled':
-      return '已禁用'
-    case 'needs-review':
-      return '需要审核'
-    case 'not-installed':
-      return '未安装'
-  }
-}
-
-function formatRiskLabel(risk: PluginMarketItem['permissions']['riskLabels'][number]): string {
-  switch (risk) {
-    case 'shell':
-      return 'Shell'
-    case 'network':
-      return '网络'
-    case 'write':
-      return '写文件'
-    case 'mcp':
-      return '注册 MCP'
-    case 'high-risk-tool':
-      return '高风险工具'
-  }
-}
-
-function buildPermissionRows(item: PluginMarketItem): Array<{ label: string; value: string }> {
-  const permissions = item.permissions
-  return [
-    { label: '读取文件', value: formatPermissionList(permissions.filesystemRead) },
-    { label: '写入文件', value: formatPermissionList(permissions.filesystemWrite) },
-    { label: '网络访问', value: formatPermissionList(permissions.networkOutbound) },
-    { label: '工具允许', value: formatPermissionList(permissions.toolAllow) },
-    { label: '工具询问', value: formatPermissionList(permissions.toolAsk) },
-    { label: '工具拒绝', value: formatPermissionList(permissions.toolDeny) },
-    { label: 'Hook 事件', value: formatPermissionList(permissions.hookEvents) },
-    { label: 'Shell', value: permissions.shellAllow ? '允许' : '未声明' },
-    { label: 'MCP 注册', value: permissions.mcpRegister ? '允许' : '未声明' },
-  ]
-}
-
-function formatPermissionList(values: string[]): string {
-  return values.length > 0 ? values.join(', ') : '未声明'
 }
 
 function formatSyncTime(timestamp: number | null): string {
