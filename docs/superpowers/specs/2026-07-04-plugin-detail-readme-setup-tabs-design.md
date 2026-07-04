@@ -37,6 +37,8 @@ Out of scope:
 
 The plugin detail surface becomes a dedicated page instead of a modal. Market cards and installed-plugin entries navigate to the page, for example `插件 > Browser`.
 
+The low-fidelity layout reference is `docs/superpowers/specs/2026-07-04-plugin-detail-page-wireframe.svg`.
+
 The page uses a centered content column, roughly matching the reference width rather than a full-width dashboard layout. The top area contains:
 
 - Breadcrumb: `插件 > {plugin name}`.
