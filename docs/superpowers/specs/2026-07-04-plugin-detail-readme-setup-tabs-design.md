@@ -1,4 +1,4 @@
-# Plugin Detail README and Setup Tabs Design
+# Plugin Detail Page README and Setup Tabs Design
 
 - Date: 2026-07-04
 - Repo: `D:\workspace\projects\ai-projects\lume`
@@ -6,22 +6,23 @@
 
 ## Goal
 
-Make the plugin detail dialog useful for installation decisions and post-install setup by showing the plugin README and moving setup, permissions, and diagnostics into horizontal content tabs.
+Make the plugin detail page useful for installation decisions and post-install setup by showing the plugin README and moving setup, permissions, and diagnostics into horizontal content tabs.
 
 Chrome and Obsidian plugins both need a clearer user path:
 
 - Chrome needs bridge setup, native host checks, extension status, and runtime `browserAuth` for page credentials.
 - Obsidian needs bridge pairing, token storage, Vault binding, and runtime confirmation for protected writes.
 
-The detail dialog should explain the plugin first, then expose setup and risk details without making users scan a dense permission-only panel.
+The detail page should explain the plugin first, then expose setup and risk details without making users scan a dense permission-only panel.
 
 ## Scope
 
 In scope:
 
 - Add README data to plugin detail results.
-- Render plugin detail content with horizontal tabs in the main content area.
-- Keep install, update, and uninstall actions fixed in the dialog footer.
+- Replace the plugin detail dialog with an independent plugin detail page.
+- Render plugin detail page content with horizontal tabs in the main content area.
+- Keep install, update, uninstall, enable, and "try in chat" actions in the page header.
 - Preserve the existing permission summary and diagnostics content by moving them into tabs.
 - Add a Setup tab as the stable home for install-time connection and authorization flows.
 
@@ -30,19 +31,28 @@ Out of scope:
 - Building the full Chrome or Obsidian setup wizard.
 - Changing plugin install permissions semantics.
 - Adding README content to the marketplace catalog list response.
-- Creating a separate plugin detail page.
 - Rendering arbitrary remote HTML.
 
 ## Design
 
-The plugin detail dialog keeps its current modal shell. The content area gets a horizontal tab row:
+The plugin detail surface becomes a dedicated page instead of a modal. Market cards and installed-plugin entries navigate to the page, for example `插件 > Browser`.
+
+The page uses a centered content column, roughly matching the reference width rather than a full-width dashboard layout. The top area contains:
+
+- Breadcrumb: `插件 > {plugin name}`.
+- Plugin icon, name, short description, and version/source badges.
+- Primary action button: installed/enabled plugins can show `在对话中试用`; not-installed plugins show install/update actions.
+- Secondary menu for less common actions, such as uninstall, disable, copy plugin id, or open source.
+- Optional hero/banner block. If the plugin has no hero asset, use a restrained generated placeholder from plugin metadata rather than requiring new manifest fields.
+
+The content area gets a horizontal tab row:
 
 1. `README`
 2. `Setup`
 3. `权限`
 4. `诊断`
 
-`README` is the default tab. If no README exists or it fails to load, the tab stays selected and shows an empty state with a short explanation. The dialog should not auto-jump to another tab, because silent tab switching makes the detail view feel inconsistent.
+`README` is the default tab. If no README exists or it fails to load, the tab stays selected and shows an empty state with a short explanation. The page should not auto-jump to another tab, because silent tab switching makes the detail view feel inconsistent.
 
 `Setup` explains and later hosts install-time actions that make the plugin usable:
 
@@ -55,13 +65,13 @@ For the first implementation, Setup is an informational checklist backed by avai
 
 `诊断` contains existing plugin diagnostics and future connection/setup errors.
 
-The footer remains outside the tab panel. Install, update, and uninstall controls stay visible regardless of active tab.
+There is no sidebar. The tabs are horizontal and live in the content column. Header actions stay visible above the tab panel and do not depend on the active tab.
 
 ## Data Flow
 
 The marketplace catalog remains lightweight and keeps using manifest/index fields only.
 
-When the user opens a plugin detail dialog:
+When the user opens a plugin detail page:
 
 1. Web calls `GET_MARKET_DETAIL`.
 2. Sidecar resolves and inspects the plugin source.
@@ -79,6 +89,8 @@ For local sources, `path` is the local README path. For GitHub or subscribed-mar
 
 README read failures should not fail the whole detail request. They should become a missing README state or a non-blocking diagnostic.
 
+Navigation should preserve enough state to return to the previous plugin list/filter when possible, but the detail page must also work from a direct route or deep link.
+
 ## Rendering
 
 The Web side should render markdown safely as markdown, not raw HTML. The first implementation can use an existing markdown renderer if one is already present. If there is no existing safe renderer, use a conservative markdown preview that supports common text structure and code fences without adding a new dependency.
@@ -89,7 +101,7 @@ The tab controls should use the existing global UI primitives in `apps/web/src/c
 
 - Missing `README.md`: show an empty README state.
 - README too large: truncate after 256 KiB and show a truncation note.
-- Remote README fetch failure: keep the dialog open, show README empty state, and add a diagnostic if the error is actionable.
+- Remote README fetch failure: keep the page open, show README empty state, and add a diagnostic if the error is actionable.
 - Plugin inspection failure: keep existing detail error behavior.
 
 ## Testing
@@ -98,7 +110,8 @@ Only test the behavior-bearing pieces:
 
 - Sidecar detail API returns README for local plugin sources.
 - Sidecar detail API tolerates missing README.
-- Web state/rendering routes plugin detail tabs without hiding footer actions.
+- Web navigation opens a plugin detail page from a market item.
+- Web state/rendering routes plugin detail tabs without hiding header actions.
 - Existing permission rows still render in the `权限` tab.
 
 Pure styling changes do not need broad test runs.
@@ -108,4 +121,5 @@ Pure styling changes do not need broad test runs.
 - README size limit: 256 KiB.
 - Setup tab source: first version uses inspected plugin metadata, known capability summaries, and diagnostics only.
 - Manifest schema: no new `lume-plugin.json` setup field in this first implementation.
+- Layout: independent detail page, centered content column, no sidebar, horizontal tabs in the content area.
 - Secret storage: out of scope for this change; Obsidian tokens and similar credentials must not be added until a dedicated setup wizard design chooses the storage path.
