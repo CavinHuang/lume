@@ -90,6 +90,8 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('README')
     expect(html).toContain('设置')
     expect(html).not.toContain('Setup')
+    expect(html).toContain('data-plugin-detail-shell="full-width"')
+    expect(html).toContain('flex-1')
     expect(html).toContain('data-plugin-detail-tabs="horizontal"')
     expect(html).toContain('data-x-markdown="true"')
     expect(html).toContain('在对话中试用')

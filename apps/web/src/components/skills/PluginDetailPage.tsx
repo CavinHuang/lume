@@ -66,8 +66,11 @@ export function PluginDetailPage({
   const canUpdate = Boolean(item && inspected && updateAvailable)
 
   return (
-    <div className="h-full min-h-0 overflow-y-auto bg-[var(--background)]">
-      <main className="mx-auto w-full max-w-[920px] px-5 py-6 sm:px-6 lg:px-8">
+    <div
+      data-plugin-detail-shell="full-width"
+      className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--background)]"
+    >
+      <main className="mx-auto w-full max-w-[1230px] px-5 py-6 sm:px-6 lg:px-8">
         <div className="mb-6 flex items-center gap-2 text-[13px] text-[var(--text-3)]">
           <Button
             variant="ghost"
