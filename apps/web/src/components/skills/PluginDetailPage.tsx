@@ -162,38 +162,85 @@ export function PluginDetailPage({
               </div>
             </header>
 
-            <section className="lume-subpanel px-4 py-3 text-[13px] leading-6 text-[var(--text-2)]">
-              <span className="font-semibold text-[var(--text-1)]">{pluginName}</span>
-              <span> 的详情包含 README、Setup 和权限信息。</span>
-            </section>
-
             {error && (
               <section className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4 text-[13px] leading-6 text-[var(--lume-warning)]">
                 {error}
               </section>
             )}
 
-            <Tabs defaultValue="readme" className="gap-5">
+            <Tabs defaultValue="overview" className="gap-5">
               <TabsList
                 variant="line"
                 data-plugin-detail-tabs="horizontal"
                 className="w-full justify-start border-b border-[var(--border)]"
               >
+                <TabsTrigger value="overview" className="max-w-none flex-none px-0 text-[14px]">
+                  概览
+                </TabsTrigger>
                 <TabsTrigger value="readme" className="max-w-none flex-none px-0 text-[14px]">
                   README
                 </TabsTrigger>
                 <TabsTrigger value="setup" className="max-w-none flex-none px-0 text-[14px]">
-                  Setup
-                </TabsTrigger>
-                <TabsTrigger value="permissions" className="max-w-none flex-none px-0 text-[14px]">
-                  权限
-                </TabsTrigger>
-                <TabsTrigger value="diagnostics" className="max-w-none flex-none px-0 text-[14px]">
-                  诊断
+                  设置
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="readme">
+              <TabsContent value="overview" keepMounted>
+                <section className="space-y-5">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <SummaryStat label="安装状态" value={formatPluginInstallState(installState)} />
+                    <SummaryStat label="启用状态" value={formatPluginEnableState(enableState)} />
+                    <SummaryStat label="版本" value={`v${item.version}`} />
+                  </div>
+                  <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
+                    <ShieldCheck size={18} className="text-[var(--lume-success)]" />
+                    权限审核
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {item.permissions.riskLabels.length > 0 ? (
+                      item.permissions.riskLabels.map((risk) => (
+                        <Badge key={risk} tone="warning">
+                          {formatRiskLabel(risk)}
+                        </Badge>
+                      ))
+                    ) : (
+                      <Badge tone="success">低风险</Badge>
+                    )}
+                  </div>
+                  <div className="space-y-3">
+                    {permissionRows.map((row) => (
+                      <div
+                        key={row.label}
+                        className="grid gap-2 rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 md:grid-cols-[120px_minmax(0,1fr)]"
+                      >
+                        <span className="font-semibold text-[var(--text-1)]">{row.label}</span>
+                        <span className="break-all text-[var(--text-2)]">{row.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {inspected && (
+                    <div className="rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 text-[var(--text-2)]">
+                      权限 hash：<span className="font-mono">{inspected.permissionsHash}</span>
+                    </div>
+                  )}
+                  {diagnostics.length > 0 ? (
+                    <ul className="space-y-2 text-[13px] leading-6 text-[var(--lume-warning)]">
+                      {diagnostics.map((diagnostic, index) => (
+                        <li
+                          key={`${diagnostic.code}-${index}`}
+                          className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-3"
+                        >
+                          {diagnostic.message}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <EmptyPanel title="暂无诊断信息" description="当前插件未返回需要处理的问题。" />
+                  )}
+                </section>
+              </TabsContent>
+
+              <TabsContent value="readme" keepMounted>
                 {readme ? (
                   <section className="space-y-3">
                     <div className="text-[12px] text-[var(--text-3)]">{formatReadmeMeta(readme)}</div>
@@ -231,59 +278,6 @@ export function PluginDetailPage({
                     </div>
                   ))}
                 </div>
-              </TabsContent>
-
-              <TabsContent value="permissions">
-                <section className="space-y-4">
-                  <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
-                    <ShieldCheck size={18} className="text-[var(--lume-success)]" />
-                    权限审核
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {item.permissions.riskLabels.length > 0 ? (
-                      item.permissions.riskLabels.map((risk) => (
-                        <Badge key={risk} tone="warning">
-                          {formatRiskLabel(risk)}
-                        </Badge>
-                      ))
-                    ) : (
-                      <Badge tone="success">低风险</Badge>
-                    )}
-                  </div>
-                  <div className="space-y-3">
-                    {permissionRows.map((row) => (
-                      <div
-                        key={row.label}
-                        className="grid gap-2 rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 md:grid-cols-[120px_minmax(0,1fr)]"
-                      >
-                        <span className="font-semibold text-[var(--text-1)]">{row.label}</span>
-                        <span className="break-all text-[var(--text-2)]">{row.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {inspected && (
-                    <div className="rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 text-[var(--text-2)]">
-                      权限 hash：<span className="font-mono">{inspected.permissionsHash}</span>
-                    </div>
-                  )}
-                </section>
-              </TabsContent>
-
-              <TabsContent value="diagnostics" keepMounted>
-                {diagnostics.length > 0 ? (
-                  <ul className="space-y-2 text-[13px] leading-6 text-[var(--lume-warning)]">
-                    {diagnostics.map((diagnostic, index) => (
-                      <li
-                        key={`${diagnostic.code}-${index}`}
-                        className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-3"
-                      >
-                        {diagnostic.message}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <EmptyPanel title="暂无诊断信息" description="当前插件未返回需要处理的问题。" />
-                )}
               </TabsContent>
             </Tabs>
 
@@ -334,6 +328,15 @@ function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'de
     >
       {children}
     </span>
+  )
+}
+
+function SummaryStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[8px] bg-[var(--surface-2)] px-3 py-2">
+      <div className="text-[12px] leading-5 text-[var(--text-3)]">{label}</div>
+      <div className="mt-1 truncate text-[13px] font-semibold leading-5 text-[var(--text-1)]">{value}</div>
+    </div>
   )
 }
 

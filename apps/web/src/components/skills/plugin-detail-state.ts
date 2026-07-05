@@ -75,6 +75,10 @@ export function buildPluginSetupItems(item: PluginMarketItem): PluginSetupItem[]
     entry.includes('127.0.0.1') || entry.includes('localhost')
   )
   const hasMcp = item.capabilities.mcpServerNames.length > 0 || item.permissions.mcpRegister
+  const usesBrowserBridge = item.permissions.toolAllow.some((entry) => entry === 'mcp__node_repl__js')
+    || item.name.toLowerCase().includes('chrome')
+    || item.pluginId.toLowerCase().includes('chrome')
+  const needsLocalBridgePairing = needsLocalConnection && hasMcp
   let installDescription = '安装后才能启用和配置连接。'
   if (currentVersionInstalled) {
     installDescription = `当前版本 ${item.version} 已安装。`
@@ -95,12 +99,21 @@ export function buildPluginSetupItems(item: PluginMarketItem): PluginSetupItem[]
   ]
   if (needsLocalConnection) {
     items.push({
-      title: '检查本地连接',
-      description: '该插件声明了本地网络访问，安装后需要确认外部应用或本地服务可用。',
+      title: needsLocalBridgePairing ? '完成本地桥接配对' : '检查本地连接',
+      description: needsLocalBridgePairing
+        ? '打开外部应用的 Lume 桥接插件，并在授权弹窗中填入验证码或确认配对。'
+        : '该插件声明了本地网络访问，安装后需要确认外部应用或本地服务可用。',
       status: 'attention',
     })
   }
-  if (hasMcp) {
+  if (usesBrowserBridge) {
+    items.push({
+      title: '完成浏览器授权',
+      description: '安装或更新后在 Lume 授权弹窗中确认浏览器控制请求，再回到对话中试用。',
+      status: 'attention',
+    })
+  }
+  if (hasMcp && !needsLocalBridgePairing) {
     items.push({
       title: '检查 MCP 服务',
       description: '该插件包含 MCP 服务，安装或更新后需要等待服务注册完成。',

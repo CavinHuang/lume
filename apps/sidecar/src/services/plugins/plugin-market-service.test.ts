@@ -352,6 +352,19 @@ describe("PluginMarketService", () => {
     const state = await new FilePluginStateStore(join(root, "plugins-state.json")).read();
     expect(state.plugins["indexed-install"]?.activeVersion).toBe("1.0.0");
     expect(getEffectivePluginRuntimeConfig("default").enabled).toEqual(["indexed-install"]);
+
+    const installedDetail = await service.getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: detailItemId
+    });
+    const installedItem = installedDetail.item.kind === "plugin" ? installedDetail.item.plugin : null;
+    const installedInspect = installedDetail.inspect?.kind === "plugin" ? installedDetail.inspect : null;
+    expect(installedItem?.installState).toBe("installed");
+    expect(installedItem?.enableState).toBe("workspace-enabled");
+    expect(installedInspect?.installState).toBe("installed");
+    expect(installedInspect?.enableState).toBe("workspace-enabled");
+    expect(installedItem?.enableState).toBe(installedInspect?.enableState);
   });
 
   test("plugin detail returns README content for local plugin sources", async () => {
@@ -427,6 +440,42 @@ describe("PluginMarketService", () => {
 
     expect(detail.item.kind).toBe("plugin");
     expect(detail.readme).toBeUndefined();
+  });
+
+  test("plugin detail reads local readme filenames case-insensitively", async () => {
+    const pluginRoot = join(root, "source", "lowercase-readme-plugin");
+    const indexPath = join(root, "market.json");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "lowercase-readme-plugin",
+      version: "1.0.0"
+    });
+    await writeFile(join(pluginRoot, "readme.md"), "# lowercase readme", "utf-8");
+    await writeJson(indexPath, {
+      items: [
+        {
+          kind: "plugin",
+          id: "lowercase-readme-plugin",
+          name: "Lowercase README Plugin",
+          source: { type: "local", path: pluginRoot }
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+
+    const detail = await makeService(root).getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:lowercase-readme-plugin"
+    });
+
+    expect(detail.readme?.markdown).toBe("# lowercase readme");
+    expect(detail.readme?.path).toEndWith("readme.md");
   });
 
   test("github inspect uses mocked GitHub tree and raw files", async () => {

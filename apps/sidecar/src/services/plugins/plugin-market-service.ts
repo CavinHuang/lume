@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, posix, resolve } from "node:path";
@@ -221,7 +221,7 @@ export class PluginMarketService {
 
     const source = await this.resolveInspectSource(parseMarketItemId(input.itemId));
     const inspected = await this.inspectPluginSource(input.workspaceSlug, source);
-    const item = this.toMarketItem(inspected.normalized, input.workspaceSlug, source.type);
+    const item = this.toMarketItem(inspected.normalized, input.workspaceSlug, source.type, inspected.installState);
     const readme = await this.readPluginReadme(source);
     item.id = input.itemId;
     return {
@@ -489,8 +489,10 @@ export class PluginMarketService {
   }
 
   private readLocalReadme(pluginRoot: string): PluginReadmePreview | undefined {
-    const readmePath = join(resolve(pluginRoot), "README.md");
-    if (!existsSync(readmePath)) return undefined;
+    const root = resolve(pluginRoot);
+    const readmeName = readdirSync(root).find((entry) => entry.toLowerCase() === "readme.md");
+    if (!readmeName) return undefined;
+    const readmePath = join(root, readmeName);
     return truncateReadme(readFileSync(readmePath, "utf-8"), readmePath);
   }
 

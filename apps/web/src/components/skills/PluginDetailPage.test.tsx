@@ -86,10 +86,10 @@ describe('PluginDetailPage', () => {
 
     expect(html).toContain('插件')
     expect(html).toContain('Browser')
+    expect(html).toContain('概览')
     expect(html).toContain('README')
-    expect(html).toContain('Setup')
-    expect(html).toContain('权限')
-    expect(html).toContain('诊断')
+    expect(html).toContain('设置')
+    expect(html).not.toContain('Setup')
     expect(html).toContain('data-plugin-detail-tabs="horizontal"')
     expect(html).toContain('data-x-markdown="true"')
     expect(html).toContain('在对话中试用')

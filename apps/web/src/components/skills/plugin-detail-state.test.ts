@@ -61,10 +61,64 @@ describe('plugin-detail-state', () => {
     expect(items.map((item) => item.title)).toEqual([
       '确认插件已安装',
       '启用当前工作区',
-      '检查本地连接',
-      '检查 MCP 服务',
+      '完成本地桥接配对',
     ])
     expect(items.some((item) => item.status === 'attention')).toBe(true)
+  })
+
+  test('builds setup guidance for Chrome authorization and Obsidian pairing', () => {
+    const chromeByToolItems = buildPluginSetupItems(plugin({
+      name: 'browser-bridge',
+      pluginId: 'browser-bridge',
+      capabilities: {
+        skillCount: 1,
+        hookEvents: [],
+        mcpServerNames: [],
+        commandToolNames: [],
+      },
+      permissions: {
+        ...plugin().permissions,
+        networkOutbound: [],
+        mcpRegister: false,
+        toolAllow: ['mcp__node_repl__js'],
+      },
+    }))
+    const chromeByNameItems = buildPluginSetupItems(plugin({
+      name: 'lume-chrome',
+      pluginId: 'lume-chrome',
+      capabilities: {
+        skillCount: 1,
+        hookEvents: [],
+        mcpServerNames: [],
+        commandToolNames: [],
+      },
+      permissions: {
+        ...plugin().permissions,
+        networkOutbound: [],
+        mcpRegister: false,
+        toolAllow: [],
+      },
+    }))
+    const obsidianItems = buildPluginSetupItems(plugin({
+      name: 'obsidian-bridge',
+      pluginId: 'obsidian-bridge',
+      capabilities: {
+        skillCount: 1,
+        hookEvents: [],
+        mcpServerNames: ['obsidian'],
+        commandToolNames: [],
+      },
+      permissions: {
+        ...plugin().permissions,
+        networkOutbound: ['127.0.0.1:43112'],
+        mcpRegister: false,
+        toolAllow: [],
+      },
+    }))
+
+    expect(chromeByToolItems.find((item) => item.title === '完成浏览器授权')?.description).toContain('授权弹窗')
+    expect(chromeByNameItems.find((item) => item.title === '完成浏览器授权')?.description).toContain('授权弹窗')
+    expect(obsidianItems.find((item) => item.title === '完成本地桥接配对')?.description).toContain('验证码')
   })
 
   test('formats setup install item for installed, updateable, and missing plugins', () => {
