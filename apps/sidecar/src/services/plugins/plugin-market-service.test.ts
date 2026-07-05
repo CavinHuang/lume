@@ -147,6 +147,50 @@ describe("PluginMarketService", () => {
     expect(catalog.plugins.find((plugin) => plugin.pluginId === "reviewed")?.installState).toBe("installed");
   });
 
+  test("plugin install records sensitive approval for declared MCP servers", async () => {
+    const pluginRoot = join(root, "source", "obsidian-bridge");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "obsidian-bridge",
+      version: "0.1.0",
+      mcpServers: "./mcp.json",
+      permissions: {
+        mcpServers: { register: true }
+      }
+    });
+    await writeJson(join(pluginRoot, "mcp.json"), {
+      mcpServers: {
+        "obsidian-bridge": {
+          command: "node",
+          args: ["server.js"]
+        }
+      }
+    });
+    const service = makeService(root);
+    const inspected = await service.inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "local", path: pluginRoot }
+    });
+
+    await service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      source: { type: "local", path: pluginRoot },
+      acceptedPermissionsHash: inspected.permissionsHash,
+      enableScope: "workspace"
+    });
+
+    const state = await new FilePluginStateStore(join(root, "plugins-state.json")).read();
+    const approvals = state.plugins["obsidian-bridge"]?.versions["0.1.0"]?.sensitiveApprovals ?? [];
+    expect(approvals).toContainEqual(expect.objectContaining({
+      key: "mcpServer:obsidian-bridge:obsidian-bridge",
+      scope: "workspace",
+      workspaceSlug: "default",
+      decision: "allow",
+      permissionsHash: inspected.permissionsHash
+    }));
+  });
+
   test("blocks uninstall of enabled plugin unless forced", async () => {
     const pluginRoot = join(root, "source", "enabled-plugin");
     await writeJson(join(pluginRoot, "lume-plugin.json"), {

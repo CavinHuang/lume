@@ -396,6 +396,30 @@ describe("agent-prompt-builder", () => {
     expect(dynamic).toContain("- global-planner (Global Planner):");
   });
 
+  test("buildDynamicContext 应包含启用插件摘要与插件 skill", () => {
+    const dynamic = buildDynamicContext({
+      sessionId: "agent-session-plugin-context",
+      workspaceSlug: "plugin-workspace",
+      availableTools: ["Skill", "read"],
+      userMessage: "检查 Obsidian 连接",
+      enabledPlugins: [{
+        pluginId: "obsidian-bridge",
+        displayName: "Obsidian Bridge",
+        description: "Connect a local Obsidian vault.",
+        skills: [{ name: "obsidian-bridge:vault-doctor", description: "Vault diagnostics" }],
+        commandTools: [],
+        mcpServers: ["obsidian-bridge:obsidian-bridge"],
+        diagnostics: [],
+      }]
+    });
+
+    expect(dynamic).toContain("Enabled Plugins:");
+    expect(dynamic).toContain("obsidian-bridge (Obsidian Bridge)");
+    expect(dynamic).toContain("obsidian-bridge:vault-doctor");
+    expect(dynamic).toContain("mcp:obsidian-bridge:obsidian-bridge");
+    expect(dynamic).toContain("$pluginId");
+  });
+
   test("workspace context 应过滤空模板并默认跳过 heartbeat", () => {
     const workspaceSlug = `prompt-sanitized-workspace-${Date.now()}`;
     const workspacePath = getAgentWorkspacePath(workspaceSlug);

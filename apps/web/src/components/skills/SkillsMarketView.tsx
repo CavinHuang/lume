@@ -23,7 +23,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import {
   deleteWorkspaceSkill,
   getEffectiveLumeConfig,
@@ -66,6 +66,7 @@ import {
   type MarketCardView,
 } from './plugin-market-ui-state'
 import { formatRiskLabel } from './plugin-detail-state'
+import { buildPluginTryPrompt } from './plugin-try-prompt-state'
 
 import { upsertWelcomeTab } from '@/components/app-shell/LeftSidebar'
 import { Button } from '@/components/ui/button'
@@ -102,6 +103,7 @@ export function SkillsMarketView() {
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setTabs = useSetAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSlug = workspace?.slug ?? null
   const [activeKind, setActiveKind] = useState<MarketCardKind>('plugin')
@@ -292,7 +294,10 @@ export function SkillsMarketView() {
   }
 
   const handleTryPluginInChat = () => {
+    const marketItem = pluginDetail?.item.kind === 'plugin' ? pluginDetail.item.plugin : selectedPlugin
+    if (!marketItem) return
     const workspaceId = workspace?.id ?? null
+    setWelcomePromptSeed(buildPluginTryPrompt(marketItem.pluginId))
     setTabs((previous) => upsertWelcomeTab(previous, workspaceId))
     setActiveTabId('__welcome__')
   }

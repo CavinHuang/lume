@@ -415,6 +415,17 @@ export interface DynamicContext {
   agentCwd?: string;
   availableTools?: string[];
   userMessage?: string;
+  enabledPlugins?: EnabledPluginContextItem[];
+}
+
+export interface EnabledPluginContextItem {
+  pluginId: string;
+  displayName?: string;
+  description?: string;
+  skills: Array<{ name: string; description?: string }>;
+  commandTools: string[];
+  mcpServers: string[];
+  diagnostics: string[];
 }
 
 export function buildDynamicContext(ctx: DynamicContext): string {
@@ -494,6 +505,11 @@ export function buildDynamicContext(ctx: DynamicContext): string {
       }
     }
 
+    const pluginLines = renderEnabledPluginLines(ctx.enabledPlugins ?? []);
+    if (pluginLines.length > 0) {
+      lines.push(...pluginLines);
+    }
+
     if (lines.length > 0) {
       sections.push(`<workspace_state>\n${lines.join("\n")}\n</workspace_state>`);
     }
@@ -504,4 +520,40 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   }
 
   return sections.join("\n\n");
+}
+
+function compactPromptText(text?: string, maxLength = 120): string {
+  const normalized = (text ?? "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3).trim()}...` : normalized;
+}
+
+function renderEnabledPluginLines(plugins: EnabledPluginContextItem[]): string[] {
+  if (plugins.length === 0) return [];
+  const lines = [
+    "Enabled Plugins:",
+  ];
+
+  for (const plugin of plugins) {
+    const label = plugin.displayName && plugin.displayName !== plugin.pluginId
+      ? `${plugin.pluginId} (${plugin.displayName})`
+      : plugin.pluginId;
+    lines.push(`- ${label}: ${compactPromptText(plugin.description) || "enabled plugin"}`);
+    if (plugin.skills.length > 0) {
+      lines.push(`  skills: ${plugin.skills.map((skill) => skill.name).join(", ")}`);
+    }
+    if (plugin.commandTools.length > 0 || plugin.mcpServers.length > 0) {
+      const runtimeEntries = [
+        ...plugin.commandTools,
+        ...plugin.mcpServers.map((serverId) => `mcp:${serverId}`),
+      ];
+      lines.push(`  runtime: ${runtimeEntries.join(", ")}`);
+    }
+    if (plugin.diagnostics.length > 0) {
+      lines.push(`  diagnostics: ${plugin.diagnostics.map((item) => compactPromptText(item, 100)).join("; ")}`);
+    }
+  }
+
+  lines.push("- To activate plugin instructions explicitly, prefix a message with $pluginId.");
+  return lines;
 }

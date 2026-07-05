@@ -1,7 +1,7 @@
 import type { AgentSendInput } from "@lume/shared";
 import { getAgentThreadMeta } from "./agent-thread-manager";
 import { getRuntimeSkills } from "./agent-workspace-manager";
-import type { DynamicContext } from "./agent-prompt-builder";
+import type { DynamicContext, EnabledPluginContextItem } from "./agent-prompt-builder";
 import { inferCapabilityLanes, resolvePreferredCapabilityRoute, type CapabilityLane } from "./capability-routing";
 
 interface ResolveAgentDynamicContextInput {
@@ -15,6 +15,7 @@ interface ResolveAgentDynamicContextInput {
   chatType?: AgentSendInput["chatType"];
   fallbackModelRef?: string;
   fallbackModelId?: string;
+  enabledPlugins?: EnabledPluginContextItem[];
 }
 
 export interface AgentRuntimeRoutingTrace {
@@ -41,7 +42,8 @@ export function resolveAgentDynamicContextInput(
     workspaceSlug: input.workspaceSlug,
     agentCwd: input.agentCwd,
     availableTools: input.availableTools,
-    userMessage: input.userMessage
+    userMessage: input.userMessage,
+    enabledPlugins: input.enabledPlugins
   };
 }
 

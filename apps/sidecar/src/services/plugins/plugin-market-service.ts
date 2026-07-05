@@ -8,7 +8,8 @@ import {
   computePermissionsHash,
   normalizePluginManifests,
   type NormalizedPlugin,
-  type PluginPermissions
+  type PluginPermissions,
+  type SensitiveApprovalRecord
 } from "@lume/agent-sdk";
 import type {
   AgentPluginDiagnostic,
@@ -39,6 +40,7 @@ import type {
   UpdatePluginInput,
   UpdatePluginResult,
 } from "@lume/shared";
+import { parseMcpImportPayload } from "@lume/shared";
 import { getGitHubSkillReview, installGitHubSkillToWorkspace } from "../skills/github-skill-install-service";
 import { getSkillMarketCatalog, getSkillMarketDetail, importLocalSkillDirectoryToWorkspace, installSkillMarketItemToWorkspace } from "../skills/skills-market-service";
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, updateLumeConfigSection } from "../system/lume-config-service";
@@ -289,6 +291,8 @@ export class PluginMarketService {
         source,
         installedRoot,
         permissionsHash: inspected.permissionsHash,
+        workspaceSlug: input.workspaceSlug,
+        enableScope: input.enableScope,
       });
       if (input.enableScope && input.enableScope !== "none") {
         await this.setPluginEnablement({
@@ -748,11 +752,21 @@ export class PluginMarketService {
     source: PluginSourceRef;
     installedRoot: string;
     permissionsHash: string;
+    workspaceSlug: string;
+    enableScope?: InstallMarketItemInput["enableScope"];
   }): Promise<void> {
     const stateStore = this.stateStore();
     const state = await stateStore.read();
     const record = state.plugins[input.plugin.pluginId] ?? createInstallRecord(input.plugin.pluginId);
     const now = new Date().toISOString();
+    const sensitiveApprovals = buildMcpServerSensitiveApprovals({
+      plugin: input.plugin,
+      installedRoot: input.installedRoot,
+      permissionsHash: input.permissionsHash,
+      workspaceSlug: input.workspaceSlug,
+      enableScope: input.enableScope,
+      createdAt: now,
+    });
     record.activeVersion = input.plugin.version;
     record.versions[input.plugin.version] = {
       pluginId: input.plugin.pluginId,
@@ -763,7 +777,7 @@ export class PluginMarketService {
       trustedAt: now,
       permissionsAcceptedAt: now,
       permissionsHash: input.permissionsHash,
-      sensitiveApprovals: [],
+      sensitiveApprovals,
     };
     record.approvalsByHash[input.permissionsHash] ??= {
       permissionsHash: input.permissionsHash,
@@ -945,6 +959,36 @@ function createInstallRecord(pluginId: string): PluginInstallRecord {
     versions: {},
     approvalsByHash: {},
   };
+}
+
+function buildMcpServerSensitiveApprovals(input: {
+  plugin: NormalizedPlugin;
+  installedRoot: string;
+  permissionsHash: string;
+  workspaceSlug: string;
+  enableScope?: InstallMarketItemInput["enableScope"];
+  createdAt: string;
+}): SensitiveApprovalRecord[] {
+  const configPath = input.plugin.capabilities.mcpServersConfigPath;
+  if (!configPath || input.plugin.permissions.mcpServers?.register !== true) return [];
+
+  try {
+    const raw = JSON.parse(readFileSync(join(input.installedRoot, configPath), "utf-8"));
+    const config = parseMcpImportPayload(raw);
+    const scope: SensitiveApprovalRecord["scope"] = input.enableScope === "workspace" ? "workspace" : "global";
+    return Object.keys(config.servers)
+      .sort()
+      .map((serverId) => ({
+        key: `mcpServer:${input.plugin.pluginId}:${serverId}`,
+        scope,
+        ...(scope === "workspace" ? { workspaceSlug: input.workspaceSlug } : {}),
+        decision: "allow",
+        createdAt: input.createdAt,
+        permissionsHash: input.permissionsHash,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function summarizeCapabilities(plugin: NormalizedPlugin): PluginCapabilitySummary {

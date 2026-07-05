@@ -565,6 +565,62 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
+  test("system prompt includes enabled plugin context", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-plugin-skill-context-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-plugin-skill-context-cwd-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    const pluginDir = join(cwd, ".lume", "plugins", "obsidian-bridge");
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, "plugin.json"),
+      JSON.stringify({
+        name: "obsidian-bridge",
+        tools: [{
+          name: "obsidian_status",
+          description: "Report Obsidian bridge status",
+          command: "node",
+          args: ["-e", "process.stdout.write('ok')"],
+          metadata: {
+            source: "plugin",
+            category: "read",
+            capability: "skill",
+            riskLevel: "low",
+            sideEffects: "external",
+            allowedInPlanMode: true,
+            isReadOnly: true,
+            isConcurrencySafe: true,
+            requiresApprovalByDefault: false
+          }
+        }]
+      }),
+      "utf-8"
+    );
+    updateLumeConfigSection({
+      source: "system",
+      path: "plugins.enabled",
+      value: ["obsidian-bridge"]
+    });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "plugin-skill-context-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      workspaceSlug: "default",
+      permissionMode: "plan"
+    });
+
+    expect(result.session.agent.state.systemPrompt).toContain("Enabled Plugins:");
+    expect(result.session.agent.state.systemPrompt).toContain("obsidian-bridge");
+    expect(result.session.agent.state.systemPrompt).toContain("obsidian_status");
+
+    result.session.dispose();
+  });
+
   test("应为同一个 Lume session 使用稳定 transcript 目录", () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-stable-dir-"));
     const agentDir = join(cwd, ".runtime-core-test");

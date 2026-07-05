@@ -2,7 +2,8 @@ import type { AgentMessageAttachmentInput, AgentSendInput } from "@lume/shared";
 import { estimateTokens } from "@lume/agent-sdk";
 import {
   buildDynamicContext,
-  buildSystemPromptAppend
+  buildSystemPromptAppend,
+  type EnabledPluginContextItem
 } from "../../agent/agent-prompt-builder";
 import {
   resolveAgentDynamicContextInput,
@@ -37,6 +38,7 @@ export interface ContextAssemblyInput {
   messageAttachments?: AgentMessageAttachmentInput[];
   attachedDirectories?: string[];
   availableTools: string[];
+  enabledPlugins?: EnabledPluginContextItem[];
   tokenBudget: number;
   workflowContext?: {
     appendContext: CollectedAppendContextEffect[];
@@ -136,6 +138,7 @@ export class ContextAssembler {
         workspaceSlug: input.workspaceSlug,
         agentCwd: input.cwd ?? process.cwd(),
         availableTools: input.availableTools,
+        enabledPlugins: input.enabledPlugins,
         threadType: input.threadType,
         chatType: input.chatType,
         fallbackModelRef: input.modelRef,
