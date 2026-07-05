@@ -61,7 +61,6 @@ import {
   filterMarketCards,
   MARKET_CATEGORY_OPTIONS,
   MARKET_SOURCE_OPTIONS,
-  PLUGIN_SOURCE_LABELS,
   SKILL_SOURCE_LABELS,
   type MarketCardKind,
   type MarketCardView,
