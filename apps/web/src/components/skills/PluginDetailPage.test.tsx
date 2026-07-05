@@ -166,6 +166,32 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('卸载')
   })
 
+  test('uses inspected update state for setup copy when market item is stale', () => {
+    const staleDetail = detail(plugin({ installState: 'not-installed', enableState: 'not-installed' }))
+    if (staleDetail.inspect?.kind === 'plugin') {
+      staleDetail.inspect.installState = 'update-available'
+      staleDetail.inspect.enableState = 'workspace-enabled'
+    }
+    const html = renderToStaticMarkup(
+      <PluginDetailPage
+        detail={staleDetail}
+        loading={false}
+        error={null}
+        busy={false}
+        onBack={() => {}}
+        onInstall={() => {}}
+        onUninstall={() => {}}
+        onToggleEnable={() => {}}
+        onTryInChat={() => {}}
+      />,
+    )
+
+    expect(html).toContain('当前已安装，发现可更新版本')
+    expect(html).not.toContain('安装后才能启用和配置连接。')
+    expect(html).toContain('确认权限并更新')
+    expect(html).toContain('卸载')
+  })
+
   test('shows enable action instead of try-in-chat for installed disabled plugins', () => {
     const html = renderToStaticMarkup(
       <PluginDetailPage

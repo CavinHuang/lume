@@ -54,10 +54,11 @@ export function PluginDetailPage({
   const readme = detail?.readme
   const pluginName = item?.displayName ?? item?.name ?? '插件详情'
   const permissionRows = item ? buildPermissionRows(item) : []
-  const setupItems = item ? buildPluginSetupItems(item) : []
   const diagnostics = item ? dedupeDiagnostics(detail?.diagnostics, item.diagnostics) : []
   const installState = inspected?.installState ?? item?.installState ?? 'not-installed'
   const enableState = inspected?.enableState ?? item?.enableState ?? 'not-installed'
+  const effectiveItem = item ? { ...item, installState, enableState } : null
+  const setupItems = effectiveItem ? buildPluginSetupItems(effectiveItem) : []
   const installedLike = installState === 'installed' || installState === 'update-available'
   const updateAvailable = installState === 'update-available'
   const enabled = enableState === 'global-enabled' || enableState === 'workspace-enabled'
@@ -205,7 +206,7 @@ export function PluginDetailPage({
                 )}
               </TabsContent>
 
-              <TabsContent value="setup">
+              <TabsContent value="setup" keepMounted>
                 <div className="space-y-3">
                   {setupItems.map((setup) => (
                     <div

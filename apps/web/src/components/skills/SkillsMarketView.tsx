@@ -15,7 +15,6 @@ import {
   MoreVertical,
   PenTool,
   Plus,
-  Power,
   Puzzle,
   RefreshCw,
   Search,
@@ -244,7 +243,7 @@ export function SkillsMarketView() {
     setPluginDetailError(null)
     setError(null)
     try {
-      await uninstallPlugin({ pluginId: marketItem.pluginId, version: marketItem.version, force: true })
+      await uninstallPlugin({ pluginId: marketItem.pluginId, force: true })
       setSelectedPlugin(null)
       setPluginDetail(null)
       await loadCatalog()
