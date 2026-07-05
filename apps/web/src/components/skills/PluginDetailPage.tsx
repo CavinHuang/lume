@@ -10,7 +10,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import type { GetMarketDetailResult } from '@lume/shared'
+import type { GetMarketDetailResult, PluginMarketplaceAsset } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
@@ -59,6 +59,9 @@ export function PluginDetailPage({
   const enableState = inspected?.enableState ?? item?.enableState ?? 'not-installed'
   const effectiveItem = item ? { ...item, installState, enableState } : null
   const setupItems = effectiveItem ? buildPluginSetupItems(effectiveItem) : []
+  const marketplace = item?.marketplace
+  const marketplaceMedia = marketplace?.hero ?? marketplace?.thumbnail
+  const marketplaceWebsite = safeExternalUrl(marketplace?.website)
   const installedLike = installState === 'installed' || installState === 'update-available'
   const updateAvailable = installState === 'update-available'
   const enabled = enableState === 'global-enabled' || enableState === 'workspace-enabled'
@@ -99,8 +102,17 @@ export function PluginDetailPage({
             <header className="space-y-4">
               <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
                 <div className="min-w-0">
-                  <div className="mb-4 flex size-12 items-center justify-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-1)]">
-                    <Puzzle size={24} />
+                  <div className="mb-4 flex size-12 items-center justify-center overflow-hidden rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-1)]">
+                    {marketplace?.icon?.url ? (
+                      <img
+                        src={marketplace.icon.url}
+                        alt=""
+                        data-plugin-marketplace-icon="true"
+                        className="size-full object-cover"
+                      />
+                    ) : (
+                      <Puzzle size={24} />
+                    )}
                   </div>
                   <h1 className="truncate text-[26px] font-semibold leading-8 text-[var(--text-1)]">{pluginName}</h1>
                   <p className="mt-2 max-w-[680px] text-[14px] leading-6 text-[var(--text-2)]">
@@ -163,6 +175,27 @@ export function PluginDetailPage({
                 <Badge>{formatPluginEnableState(enableState)}</Badge>
                 <Badge>v{item.version}</Badge>
               </div>
+
+              {(marketplaceWebsite || marketplace?.docs) && (
+                <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-3)]">
+                  {marketplaceWebsite && (
+                    <a
+                      href={marketplaceWebsite}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 rounded-[6px] border border-[var(--border)] px-2 py-1 text-[var(--text-2)] hover:text-[var(--text-1)]"
+                    >
+                      网站
+                      <ExternalLink size={12} />
+                    </a>
+                  )}
+                  {marketplace?.docs && (
+                    <span className="rounded-[6px] border border-[var(--border)] px-2 py-1">
+                      文档 {marketplace.docs}
+                    </span>
+                  )}
+                </div>
+              )}
             </header>
 
             {error && (
@@ -190,6 +223,7 @@ export function PluginDetailPage({
 
               <TabsContent value="overview" keepMounted>
                 <section className="space-y-5">
+                  {marketplaceMedia && <MarketplaceMedia media={marketplaceMedia} pluginName={pluginName} />}
                   <div className="grid gap-3 sm:grid-cols-3">
                     <SummaryStat label="安装状态" value={formatPluginInstallState(installState)} />
                     <SummaryStat label="启用状态" value={formatPluginEnableState(enableState)} />
@@ -317,6 +351,27 @@ export function PluginDetailPage({
   )
 }
 
+function MarketplaceMedia({ media, pluginName }: { media: PluginMarketplaceAsset; pluginName: string }) {
+  return (
+    <div
+      data-plugin-marketplace-media="true"
+      className="overflow-hidden rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)]"
+    >
+      {media.url ? (
+        <img
+          src={media.url}
+          alt={`${pluginName} thumbnail`}
+          className="h-auto max-h-[260px] w-full object-cover"
+        />
+      ) : (
+        <div className="px-4 py-8 text-center text-[12px] text-[var(--text-3)]">
+          {media.path}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'warning' | 'success' }) {
   return (
     <span
@@ -350,6 +405,16 @@ function EmptyPanel({ title, description }: { title: string; description: string
       <div className="mt-2 text-[13px] leading-6 text-[var(--text-3)]">{description}</div>
     </div>
   )
+}
+
+function safeExternalUrl(value: string | undefined): string | null {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null
+  } catch {
+    return null
+  }
 }
 
 function dedupeDiagnostics(...groups: Array<PluginDiagnostic[] | undefined>): PluginDiagnostic[] {

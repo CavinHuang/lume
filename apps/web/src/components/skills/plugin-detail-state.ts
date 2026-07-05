@@ -1,4 +1,4 @@
-import type { PluginMarketItem, PluginReadmePreview } from '@lume/shared'
+import type { PluginMarketItem, PluginMarketplaceSetupKind, PluginReadmePreview } from '@lume/shared'
 
 export interface PermissionRow {
   label: string
@@ -71,6 +71,8 @@ export function buildPluginSetupItems(item: PluginMarketItem): PluginSetupItem[]
   const currentVersionInstalled = item.installState === 'installed'
   const updateAvailable = item.installState === 'update-available'
   const enabled = item.enableState === 'global-enabled' || item.enableState === 'workspace-enabled'
+  const explicitSetupItems = buildExplicitSetupItems(item, currentVersionInstalled, enabled)
+  if (explicitSetupItems.length > 0) return explicitSetupItems
   const needsLocalConnection = item.permissions.networkOutbound.some((entry) =>
     entry.includes('127.0.0.1') || entry.includes('localhost')
   )
@@ -121,6 +123,39 @@ export function buildPluginSetupItems(item: PluginMarketItem): PluginSetupItem[]
     })
   }
   return items
+}
+
+function buildExplicitSetupItems(
+  item: PluginMarketItem,
+  currentVersionInstalled: boolean,
+  enabled: boolean,
+): PluginSetupItem[] {
+  const setup = item.marketplace?.setup ?? []
+  return setup.map((step) => ({
+    title: step.title,
+    description: step.description,
+    status: setupStepStatus(step.kind, currentVersionInstalled, enabled),
+  }))
+}
+
+function setupStepStatus(
+  kind: PluginMarketplaceSetupKind | undefined,
+  currentVersionInstalled: boolean,
+  enabled: boolean,
+): PluginSetupItem['status'] {
+  switch (kind) {
+    case 'install':
+      return currentVersionInstalled ? 'done' : 'attention'
+    case 'enable':
+      return enabled ? 'done' : 'idle'
+    case 'browser-auth':
+    case 'pairing-code':
+    case 'local-service':
+    case 'mcp':
+    case 'custom':
+    default:
+      return 'attention'
+  }
 }
 
 export function formatReadmeMeta(readme: PluginReadmePreview | undefined): string {

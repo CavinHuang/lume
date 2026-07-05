@@ -139,6 +139,56 @@ describe('plugin-detail-state', () => {
     })
   })
 
+  test('prefers explicit marketplace setup steps', () => {
+    const items = buildPluginSetupItems(plugin({
+      marketplace: {
+        setup: [
+          {
+            id: 'install',
+            title: '安装扩展',
+            description: '先安装浏览器扩展。',
+            kind: 'install',
+          },
+          {
+            id: 'auth',
+            title: '确认浏览器授权',
+            description: '在授权弹窗确认。',
+            kind: 'browser-auth',
+          },
+        ],
+      },
+    }))
+
+    expect(items).toEqual([
+      {
+        title: '安装扩展',
+        description: '先安装浏览器扩展。',
+        status: 'done',
+      },
+      {
+        title: '确认浏览器授权',
+        description: '在授权弹窗确认。',
+        status: 'attention',
+      },
+    ])
+  })
+
+  test('marks explicit enable setup as done only when enabled', () => {
+    const setup = {
+      setup: [
+        {
+          id: 'enable',
+          title: '启用插件',
+          description: '在当前工作区启用。',
+          kind: 'enable' as const,
+        },
+      ],
+    }
+
+    expect(buildPluginSetupItems(plugin({ marketplace: setup }))[0]?.status).toBe('done')
+    expect(buildPluginSetupItems(plugin({ enableState: 'disabled', marketplace: setup }))[0]?.status).toBe('idle')
+  })
+
   test('formats README metadata', () => {
     expect(formatReadmeMeta({ markdown: '# Demo', path: 'README.md', truncated: false })).toBe('README.md')
     expect(formatReadmeMeta({ markdown: '# Demo', path: 'README.md', truncated: true })).toBe('README.md · 已截断')

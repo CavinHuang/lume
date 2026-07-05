@@ -50,6 +50,31 @@ export interface PluginPermissions {
   };
 }
 
+export type PluginMarketplaceSetupKind =
+  | "install"
+  | "enable"
+  | "browser-auth"
+  | "pairing-code"
+  | "local-service"
+  | "mcp"
+  | "custom";
+
+export interface PluginMarketplaceSetupStep {
+  id: string;
+  title: string;
+  description: string;
+  kind?: PluginMarketplaceSetupKind;
+}
+
+export interface PluginMarketplaceManifest {
+  icon?: string;
+  thumbnail?: string;
+  hero?: string;
+  website?: string;
+  docs?: string;
+  setup?: PluginMarketplaceSetupStep[];
+}
+
 export interface LumePluginManifest {
   schema: "lume-plugin/v1";
   name: string;
@@ -63,6 +88,7 @@ export interface LumePluginManifest {
   mcpServers?: string;
   commandTools?: Array<Record<string, unknown>>;
   permissions?: PluginPermissions;
+  marketplace?: PluginMarketplaceManifest;
   lume?: {
     hooksOnly?: boolean;
     exclusivePermissions?: boolean;
@@ -75,6 +101,16 @@ const DEFAULT_PERMISSIONS: PluginPermissions = {
   mcpServers: { register: false },
   shell: { allow: false },
 };
+
+const MARKETPLACE_SETUP_KINDS = new Set<PluginMarketplaceSetupKind>([
+  "install",
+  "enable",
+  "browser-auth",
+  "pairing-code",
+  "local-service",
+  "mcp",
+  "custom",
+]);
 
 export function parseManifest(raw: Record<string, unknown>): LumePluginManifest {
   if (raw.schema !== "lume-plugin/v1") {
@@ -104,6 +140,8 @@ export function parseManifest(raw: Record<string, unknown>): LumePluginManifest 
     validatePluginPath(raw.mcpServers, "mcpServers");
   }
 
+  const marketplace = normalizeMarketplace(raw.marketplace);
+
   const result: LumePluginManifest = {
     schema: "lume-plugin/v1",
     name,
@@ -125,6 +163,7 @@ export function parseManifest(raw: Record<string, unknown>): LumePluginManifest 
             Boolean(tool) && typeof tool === "object" && !Array.isArray(tool),
         )
       : undefined,
+    marketplace,
   };
 
   if (raw.permissions && typeof raw.permissions === "object") {
@@ -140,6 +179,50 @@ export function parseManifest(raw: Record<string, unknown>): LumePluginManifest 
   }
 
   return result;
+}
+
+function normalizeMarketplace(raw: unknown): PluginMarketplaceManifest | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  const result: PluginMarketplaceManifest = {};
+
+  for (const field of ["icon", "thumbnail", "hero", "docs"] as const) {
+    const path = value[field];
+    if (typeof path !== "string") continue;
+    validatePluginPath(path, `marketplace.${field}`);
+    result[field] = path;
+  }
+
+  if (typeof value.website === "string") {
+    result.website = value.website;
+  }
+
+  if (Array.isArray(value.setup)) {
+    const setup = value.setup.flatMap((entry): PluginMarketplaceSetupStep[] => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+      const step = entry as Record<string, unknown>;
+      if (
+        typeof step.id !== "string"
+        || typeof step.title !== "string"
+        || typeof step.description !== "string"
+      ) {
+        return [];
+      }
+      return [{
+        id: step.id,
+        title: step.title,
+        description: step.description,
+        ...(typeof step.kind === "string" && MARKETPLACE_SETUP_KINDS.has(step.kind as PluginMarketplaceSetupKind)
+          ? { kind: step.kind as PluginMarketplaceSetupKind }
+          : {}),
+      }];
+    });
+    if (setup.length > 0) {
+      result.setup = setup;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 export function inferDefaults(manifest: LumePluginManifest): LumePluginManifest {

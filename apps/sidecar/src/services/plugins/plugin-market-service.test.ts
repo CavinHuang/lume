@@ -407,6 +407,63 @@ describe("PluginMarketService", () => {
     expect(detail.readme?.path).toEndWith("README.md");
   });
 
+  test("plugin detail returns marketplace metadata and local thumbnail data URLs", async () => {
+    const pluginRoot = join(root, "source", "marketplace-plugin");
+    const indexPath = join(root, "market.json");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "marketplace-plugin",
+      version: "1.0.0",
+      marketplace: {
+        thumbnail: "./assets/thumbnail.svg",
+        docs: "./README.md",
+        setup: [
+          {
+            id: "pair",
+            title: "Enter pairing code",
+            description: "Use the code from the companion app.",
+            kind: "pairing-code"
+          }
+        ]
+      }
+    });
+    await mkdir(join(pluginRoot, "assets"), { recursive: true });
+    await writeFile(join(pluginRoot, "assets", "thumbnail.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 8 8\"><rect width=\"8\" height=\"8\"/></svg>", "utf-8");
+    await writeJson(indexPath, {
+      items: [
+        {
+          kind: "plugin",
+          id: "marketplace-plugin",
+          name: "Marketplace Plugin",
+          source: { type: "local", path: pluginRoot }
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+
+    const detail = await makeService(root).getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:marketplace-plugin"
+    });
+    const item = detail.item.kind === "plugin" ? detail.item.plugin : null;
+
+    expect(item?.marketplace?.thumbnail).toMatchObject({
+      path: "./assets/thumbnail.svg"
+    });
+    expect(item?.marketplace?.thumbnail?.url?.startsWith("data:image/svg+xml;base64,")).toBe(true);
+    expect(item?.marketplace?.docs).toBe("./README.md");
+    expect(item?.marketplace?.setup?.[0]).toMatchObject({
+      id: "pair",
+      kind: "pairing-code"
+    });
+  });
+
   test("plugin detail tolerates missing README", async () => {
     const pluginRoot = join(root, "source", "missing-readme-plugin");
     const indexPath = join(root, "market.json");

@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { cp, mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, posix, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   computePermissionsHash,
@@ -25,6 +25,8 @@ import type {
   PluginCapabilitySummary,
   PluginEnableState,
   PluginMarketItem,
+  PluginMarketplaceAsset,
+  PluginMarketplaceMetadata,
   PluginPermissionSummary,
   PluginReadmePreview,
   PluginSourceRef,
@@ -45,6 +47,15 @@ import { PluginRegistry } from "../agent-runtime/plugins/plugin-registry";
 
 const execFileAsync = promisify(execFile);
 const README_MAX_BYTES = 256 * 1024;
+const MARKETPLACE_ASSET_MAX_BYTES = 512 * 1024;
+const MARKETPLACE_IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".gif": "image/gif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
 
 export class PluginMarketError extends Error {
   constructor(
@@ -837,6 +848,7 @@ export class PluginMarketService {
       enableState: this.resolveEnableState(plugin.pluginId, workspaceSlug),
       capabilities: summarizeCapabilities(plugin),
       permissions: summarizePermissions(plugin.permissions),
+      ...(plugin.marketplace ? { marketplace: summarizeMarketplace(plugin.root, plugin.marketplace) } : {}),
       diagnostics: plugin.diagnostics as AgentPluginDiagnostic[],
     };
   }
@@ -881,6 +893,50 @@ function truncateReadme(markdown: string, path: string): PluginReadmePreview {
     path,
     truncated: true,
   };
+}
+
+function summarizeMarketplace(
+  pluginRoot: string,
+  marketplace: NonNullable<NormalizedPlugin["marketplace"]>,
+): PluginMarketplaceMetadata {
+  return {
+    ...(marketplace.icon ? { icon: toMarketplaceAsset(pluginRoot, marketplace.icon) } : {}),
+    ...(marketplace.thumbnail ? { thumbnail: toMarketplaceAsset(pluginRoot, marketplace.thumbnail) } : {}),
+    ...(marketplace.hero ? { hero: toMarketplaceAsset(pluginRoot, marketplace.hero) } : {}),
+    ...(marketplace.website ? { website: marketplace.website } : {}),
+    ...(marketplace.docs ? { docs: marketplace.docs } : {}),
+    ...(marketplace.setup && marketplace.setup.length > 0 ? { setup: marketplace.setup } : {}),
+  };
+}
+
+function toMarketplaceAsset(pluginRoot: string, packagePath: string): PluginMarketplaceAsset {
+  const asset: PluginMarketplaceAsset = { path: packagePath };
+  const resolved = resolveLocalPackagePath(pluginRoot, packagePath);
+  if (!resolved) return asset;
+  const url = readMarketplaceAssetDataUrl(resolved);
+  return url ? { ...asset, url } : asset;
+}
+
+function resolveLocalPackagePath(pluginRoot: string, packagePath: string): string | undefined {
+  if (!packagePath.startsWith("./")) return undefined;
+  const root = resolve(pluginRoot);
+  if (!existsSync(root)) return undefined;
+  const resolved = resolve(root, packagePath.slice(2));
+  const relativePath = relative(root, resolved);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) return undefined;
+  return resolved;
+}
+
+function readMarketplaceAssetDataUrl(path: string): string | undefined {
+  const mime = MARKETPLACE_IMAGE_MIME_BY_EXT[extname(path).toLowerCase()];
+  if (!mime) return undefined;
+  try {
+    const stats = statSync(path);
+    if (!stats.isFile() || stats.size > MARKETPLACE_ASSET_MAX_BYTES) return undefined;
+    return `data:${mime};base64,${readFileSync(path).toString("base64")}`;
+  } catch {
+    return undefined;
+  }
 }
 
 function createInstallRecord(pluginId: string): PluginInstallRecord {

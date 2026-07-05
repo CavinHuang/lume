@@ -115,4 +115,63 @@ describe("LumePluginManifest", () => {
 
     expect(manifest.commandTools).toEqual([{ name: "echo", command: "echo" }]);
   });
+
+  test("parses marketplace metadata", () => {
+    const manifest = parseManifest({
+      schema: "lume-plugin/v1",
+      name: "market-plugin",
+      version: "1.0.0",
+      marketplace: {
+        icon: "./assets/icon.svg",
+        thumbnail: "./assets/thumbnail.svg",
+        hero: "./assets/hero.png",
+        docs: "./README.md",
+        website: "https://example.com/plugin",
+        setup: [
+          {
+            id: "install",
+            title: "Install",
+            description: "Install the companion app.",
+            kind: "install",
+          },
+          {
+            id: "ignored",
+            title: "Ignored",
+            description: "Unknown setup kind falls back to custom.",
+            kind: "unknown",
+          },
+        ],
+      },
+    });
+
+    expect(manifest.marketplace).toEqual({
+      icon: "./assets/icon.svg",
+      thumbnail: "./assets/thumbnail.svg",
+      hero: "./assets/hero.png",
+      docs: "./README.md",
+      website: "https://example.com/plugin",
+      setup: [
+        {
+          id: "install",
+          title: "Install",
+          description: "Install the companion app.",
+          kind: "install",
+        },
+        {
+          id: "ignored",
+          title: "Ignored",
+          description: "Unknown setup kind falls back to custom.",
+        },
+      ],
+    });
+  });
+
+  test("rejects marketplace asset paths outside the plugin package", () => {
+    expect(() => parseManifest({
+      schema: "lume-plugin/v1",
+      name: "bad-market-plugin",
+      version: "1.0.0",
+      marketplace: { thumbnail: "../outside.png" },
+    })).toThrow("marketplace.thumbnail");
+  });
 });

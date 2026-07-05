@@ -3,6 +3,7 @@ import {
   inferDefaults,
   parseManifest,
   validatePluginPath,
+  type PluginMarketplaceManifest,
   type PluginPermissions,
 } from "./manifest.js";
 
@@ -64,6 +65,7 @@ export interface NormalizedPlugin {
   description?: string;
   capabilities: PluginManifestCapabilities;
   permissions: PluginPermissions;
+  marketplace?: PluginMarketplaceManifest;
   diagnostics: PluginDiagnostic[];
   /** Carries Lume-specific flags consumed by the capability resolver (spec §16.3). */
   lume?: { hooksOnly?: boolean };
@@ -152,6 +154,7 @@ function normalizeLumeManifest(
       commandTools,
     },
     permissions: manifest.permissions ?? {},
+    ...(manifest.marketplace ? { marketplace: manifest.marketplace } : {}),
     diagnostics,
     ...(manifest.lume?.hooksOnly ? { lume: { hooksOnly: true } } : {}),
   };

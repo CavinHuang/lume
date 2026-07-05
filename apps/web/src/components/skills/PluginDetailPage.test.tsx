@@ -117,6 +117,44 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('未找到 README.md')
   })
 
+  test('renders marketplace media, links, and explicit setup copy', () => {
+    const html = renderToStaticMarkup(
+      <PluginDetailPage
+        detail={detail(plugin({
+          marketplace: {
+            icon: { path: './assets/icon.svg', url: 'data:image/svg+xml;base64,aWNvbg==' },
+            thumbnail: { path: './assets/thumbnail.svg', url: 'data:image/svg+xml;base64,dGh1bWI=' },
+            docs: './README.md',
+            website: 'https://example.com/browser',
+            setup: [
+              {
+                id: 'auth',
+                title: '确认浏览器授权',
+                description: '在 Lume 授权弹窗里确认 Chrome 请求。',
+                kind: 'browser-auth',
+              },
+            ],
+          },
+        }))}
+        loading={false}
+        error={null}
+        busy={false}
+        onBack={() => {}}
+        onInstall={() => {}}
+        onUninstall={() => {}}
+        onToggleEnable={() => {}}
+        onTryInChat={() => {}}
+      />,
+    )
+
+    expect(html).toContain('data-plugin-marketplace-icon="true"')
+    expect(html).toContain('data-plugin-marketplace-media="true"')
+    expect(html).toContain('https://example.com/browser')
+    expect(html).toContain('./README.md')
+    expect(html).toContain('确认浏览器授权')
+    expect(html).toContain('在 Lume 授权弹窗里确认 Chrome 请求。')
+  })
+
   test('marks loading and error-only states for assistive tech', () => {
     const loadingHtml = renderToStaticMarkup(
       <PluginDetailPage

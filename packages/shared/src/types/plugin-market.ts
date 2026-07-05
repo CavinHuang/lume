@@ -74,6 +74,36 @@ export interface PluginPermissionSummary {
   riskLabels: Array<"shell" | "network" | "write" | "mcp" | "high-risk-tool">
 }
 
+export type PluginMarketplaceSetupKind =
+  | "install"
+  | "enable"
+  | "browser-auth"
+  | "pairing-code"
+  | "local-service"
+  | "mcp"
+  | "custom"
+
+export interface PluginMarketplaceAsset {
+  path: string
+  url?: string
+}
+
+export interface PluginMarketplaceSetupStep {
+  id: string
+  title: string
+  description: string
+  kind?: PluginMarketplaceSetupKind
+}
+
+export interface PluginMarketplaceMetadata {
+  icon?: PluginMarketplaceAsset
+  thumbnail?: PluginMarketplaceAsset
+  hero?: PluginMarketplaceAsset
+  website?: string
+  docs?: string
+  setup?: PluginMarketplaceSetupStep[]
+}
+
 export interface PluginMarketItem {
   id: string
   pluginId: string
@@ -87,6 +117,7 @@ export interface PluginMarketItem {
   enableState: PluginEnableState
   capabilities: PluginCapabilitySummary
   permissions: PluginPermissionSummary
+  marketplace?: PluginMarketplaceMetadata
   diagnostics?: AgentPluginDiagnostic[]
 }
 

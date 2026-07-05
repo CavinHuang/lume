@@ -178,6 +178,42 @@ describe("normalizePluginManifests", () => {
     expect(result.lume).toEqual({ hooksOnly: true });
   });
 
+  test("carries marketplace metadata onto NormalizedPlugin", () => {
+    const result = normalizePluginManifests({
+      pluginRoot: "/plugins/market",
+      lumeManifest: {
+        schema: "lume-plugin/v1",
+        name: "market",
+        version: "1.0.0",
+        marketplace: {
+          thumbnail: "./assets/thumbnail.svg",
+          docs: "./README.md",
+          setup: [
+            {
+              id: "pair",
+              title: "Pair",
+              description: "Enter the pairing code.",
+              kind: "pairing-code",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.marketplace).toEqual({
+      thumbnail: "./assets/thumbnail.svg",
+      docs: "./README.md",
+      setup: [
+        {
+          id: "pair",
+          title: "Pair",
+          description: "Enter the pairing code.",
+          kind: "pairing-code",
+        },
+      ],
+    });
+  });
+
   test("omits lume when hooksOnly is not set", () => {
     const result = normalizePluginManifests({
       pluginRoot: "/plugins/acme",
