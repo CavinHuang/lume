@@ -12,9 +12,11 @@ import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardText } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
+import { resolveAbsolutePath } from '@/components/agent/file-link-actions'
+import { lumeFileUrl } from '@/components/right-panel/file-preview-utils'
 import { useThreadFileEnv } from './thread-file-env'
 import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
-import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentMessage, type AgentMessageAttachmentInput, type AgentThreadFileDataResult, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
@@ -491,6 +493,7 @@ export function parseAgentRoleInstructionMessage(text: string): AgentRoleInstruc
 function useThreadImageAttachmentSrcs(
   threadId: string,
   attachments: AgentMessageAttachmentInput[] | undefined,
+  workspaceSlug?: string,
 ): Record<string, string | undefined> {
   const [srcById, setSrcById] = useState<Record<string, string | undefined>>({})
 
@@ -505,11 +508,14 @@ function useThreadImageAttachmentSrcs(
     setSrcById({})
     void Promise.all(imageAttachments.map(async (attachment) => {
       try {
-        const result = await sidecarCall<AgentThreadFileDataResult>(AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA, {
+        // 解析 thread 文件绝对路径，再编码为 lume-file:// 协议 URL（main 流式读取，不 base64）
+        const abs = await resolveAbsolutePath({
+          source: 'thread',
+          relPath: attachment.threadPath,
           threadId,
-          path: attachment.threadPath,
+          ...(workspaceSlug ? { workspaceSlug } : {}),
         })
-        return [attachment.id, `data:${attachment.mediaType};base64,${result.data}`] as const
+        return [attachment.id, lumeFileUrl(abs)] as const
       } catch (error) {
         console.error('[RuntimeEventContentBlock] 加载附件图片失败:', error)
         return [attachment.id, undefined] as const
@@ -522,7 +528,7 @@ function useThreadImageAttachmentSrcs(
     return () => {
       cancelled = true
     }
-  }, [attachments, threadId])
+  }, [attachments, threadId, workspaceSlug])
 
   return srcById
 }
