@@ -58,6 +58,7 @@ import {
   createWindowOpenAction,
   isAllowedMainFrameNavigation,
   resolveAppProtocolFilePath,
+  resolveFileProtocolPath,
   validateIpcSender,
   validateRendererInvokeCommand,
 } from './electron-security'
@@ -73,6 +74,7 @@ const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
 const DESKTOP_APP_ID = 'com.lume.desktop'
 const APP_PROTOCOL = 'lume'
+export const FILE_PROTOCOL = 'lume-file'
 const APP_PROTOCOL_HOST = 'app'
 const APP_PROTOCOL_ORIGIN = `${APP_PROTOCOL}://${APP_PROTOCOL_HOST}`
 const HEALTHCHECK_TIMEOUT_MS = 45_000
@@ -118,6 +120,15 @@ logDesktopStartup('main module loaded')
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+  {
+    scheme: FILE_PROTOCOL,
     privileges: {
       standard: true,
       secure: true,
@@ -213,6 +224,20 @@ function registerAppProtocol() {
       return new Response('Not found', { status: 404 })
     }
     return net.fetch(pathToFileURL(filePath).toString())
+  })
+}
+
+function registerFileProtocol() {
+  protocol.handle(FILE_PROTOCOL, async (request) => {
+    const workspacesRoot = join(resolveConfigDir(), 'agent-workspaces')
+    const resolved = resolveFileProtocolPath(request.url, workspacesRoot)
+    if (resolved.kind === 'forbidden') return new Response('Forbidden', { status: 403 })
+    if (resolved.kind === 'notfound') return new Response('Not Found', { status: 404 })
+    try {
+      return net.fetch(pathToFileURL(resolved.absPath))
+    } catch {
+      return new Response('Internal Error', { status: 500 })
+    }
   })
 }
 
@@ -874,6 +899,7 @@ app.whenReady().then(async () => {
   logDesktopStartup('app ready')
   app.setAppUserModelId(DESKTOP_APP_ID)
   registerAppProtocol()
+  registerFileProtocol()
   const configDir = applyLauncherConfig()
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   createTray()
