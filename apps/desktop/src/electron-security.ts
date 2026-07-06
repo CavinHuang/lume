@@ -1,4 +1,4 @@
-import { existsSync, realpathSync, statSync } from 'node:fs'
+import { realpathSync, statSync } from 'node:fs'
 import {
   isAbsolute,
   normalize,
@@ -154,10 +154,11 @@ export function resolveFileProtocolPath(
   workspacesRoot: string,
 ): FileProtocolResolution {
   try {
-    // 1) URL 编码层面的攻击（%00 / %2e / %2f）。
-    //    不拦 %5c：在 Windows 上 encodeURIComponent('\\') === '%5C' 是合法编码，
-    //    拦了会让所有 Windows 绝对路径被误拦；真正的穿越由第 2 层白名单 + 第 4 层 realpath 兜底。
-    if (/%(?:00|2e|2f)/i.test(url)) return { kind: 'forbidden' }
+    // 1) URL 编码层面的攻击（%00 NUL / %2e 编码的点防 .. 穿越）。
+    //    不拦 %2f %5c：分隔符 `/` `\` 的合法编码（POSIX 上 encodeURIComponent('/')==='%2F'，
+    //    Windows 上 encodeURIComponent('\\')==='%5C'），拦了会误伤所有合法绝对路径（跨平台失效）；
+    //    真正的穿越由第 2 层白名单 + 第 4 层 realpath 兜底。
+    if (/%(?:00|2e)/i.test(url)) return { kind: 'forbidden' }
 
     const parsed = new URL(url)
     const raw = `${parsed.hostname}${parsed.pathname}`.replace(/^\/+/, '')
@@ -170,7 +171,8 @@ export function resolveFileProtocolPath(
     const root = resolve(workspacesRoot)
     if (!norm.startsWith(root + sep)) return { kind: 'forbidden' }
 
-    // 3) 禁 UNC（Windows）
+    // 3) 禁 UNC（Windows）—— 冗余 defense-in-depth：合法 workspacesRoot 非 UNC，
+    //    UNC 路径会被第 2 层 startsWith(root + sep) 白名单先拦，本层实际不可达，保留作兜底。
     if (sep === '\\' && norm.startsWith('\\\\')) return { kind: 'forbidden' }
 
     // 4) realpath 校验（防 symlink 逃逸）
@@ -183,7 +185,7 @@ export function resolveFileProtocolPath(
     if (!real.startsWith(root + sep)) return { kind: 'forbidden' }
 
     // 5) 必须是文件
-    if (!existsSync(real) || !statSync(real).isFile()) return { kind: 'notfound' }
+    if (!statSync(real).isFile()) return { kind: 'notfound' }
 
     return { kind: 'ok', absPath: real }
   } catch {

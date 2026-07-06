@@ -226,8 +226,8 @@ test("resolveFileProtocolPath: 正斜杠路径变体返回 ok（跨平台正向�
   const result = resolveFileProtocolPath(url, ROOT);
   assert.equal(result.kind, "ok");
   if (result.kind === "ok") {
-    // realpath 在 Windows 下返回反斜杠形式；归一化后应等于 IMG 的绝对路径
-    assert.equal(result.absPath.split("/").join(sep), resolve(IMG));
+    // realpath 后应等于 IMG 的绝对路径
+    assert.equal(result.absPath, resolve(IMG));
   }
 });
 
