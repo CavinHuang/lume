@@ -52,7 +52,6 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const activeThreadIdRef = useRef(threadId)
   const prevThreadIdRef = useRef(threadId)
   const previousMessageIdsRef = useRef<{ threadId: string; ids: Set<string> }>({ threadId, ids: new Set() })
-  const previousScrollTopRef = useRef(0)
   const programmaticScrollUntilRef = useRef(0)
   const programmaticScrollReleaseTimeoutRef = useRef<number | null>(null)
   const scheduledBottomScrollFrameRef = useRef(0)
@@ -154,7 +153,6 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     } else {
       container.scrollTop = container.scrollHeight
     }
-    previousScrollTopRef.current = container.scrollTop
     setScrollButtonVisible(false)
   }, [markProgrammaticScroll, setScrollButtonVisible])
   const scheduleBottomScroll = useCallback(() => {
@@ -261,19 +259,15 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     const container = scrollContainerRef.current
     if (!container) return
 
-    const currentScrollTop = container.scrollTop
     const nearBottom = isNearScrollBottom(container)
     const programmatic = isProgrammaticScrollActive()
     if (programmatic && nearBottom) {
       releaseProgrammaticScroll()
     }
     shouldAutoScrollRef.current = shouldAutoScrollAfterUserScroll({
-      currentScrollTop,
-      previousScrollTop: previousScrollTopRef.current,
       nearBottom,
       programmatic,
     })
-    previousScrollTopRef.current = currentScrollTop
     if (programmatic && shouldAutoScrollRef.current) {
       if (nearBottom) setScrollButtonVisible(false)
       return

@@ -61,8 +61,6 @@ describe('agent message scroll helpers', () => {
 
   test('disables auto scroll when the user scrolls upward away from the bottom', () => {
     expect(shouldAutoScrollAfterUserScroll({
-      currentScrollTop: 400,
-      previousScrollTop: 460,
       nearBottom: false,
     })).toBe(false)
   })
@@ -72,37 +70,27 @@ describe('agent message scroll helpers', () => {
     // clamp 到新的 max。此刻 distToBottom=0、仍在最底部，不应被误判为“用户向上滚”
     // 而关闭粘底（数值取自真实复现日志）。
     expect(shouldAutoScrollAfterUserScroll({
-      currentScrollTop: 5312,
-      previousScrollTop: 5753,
       nearBottom: true,
     })).toBe(true)
   })
 
   test('keeps auto scroll during sub-pixel jitter at the bottom', () => {
     expect(shouldAutoScrollAfterUserScroll({
-      currentScrollTop: 6653,
-      previousScrollTop: 6654,
       nearBottom: true,
     })).toBe(true)
   })
 
   test('keeps auto scroll only while scrolling downward near the bottom', () => {
     expect(shouldAutoScrollAfterUserScroll({
-      currentScrollTop: 460,
-      previousScrollTop: 400,
       nearBottom: true,
     })).toBe(true)
     expect(shouldAutoScrollAfterUserScroll({
-      currentScrollTop: 460,
-      previousScrollTop: 400,
       nearBottom: false,
     })).toBe(false)
   })
 
   test('keeps auto scroll enabled during programmatic scroll adjustments', () => {
     expect(shouldAutoScrollAfterUserScroll({
-      currentScrollTop: 400,
-      previousScrollTop: 460,
       nearBottom: false,
       programmatic: true,
     })).toBe(true)
