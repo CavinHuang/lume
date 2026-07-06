@@ -13,6 +13,7 @@ function createFakeSdkManager(): WorkspaceSdkMcpManager & {
   disposeCalls: number;
   callToolCalls: Array<{ serverId: string; originalToolName: string; args: Record<string, unknown> }>;
   listResourcesFailures: Set<string>;
+  listResourcesUnsupported: Set<string>;
   readResourceFailures: Set<string>;
   callToolFailure?: Error;
   status: ReturnType<WorkspaceSdkMcpManager["getStatus"]>;
@@ -25,6 +26,7 @@ function createFakeSdkManager(): WorkspaceSdkMcpManager & {
     disposeCalls: 0,
     callToolCalls: [] as Array<{ serverId: string; originalToolName: string; args: Record<string, unknown> }>,
     listResourcesFailures: new Set<string>(),
+    listResourcesUnsupported: new Set<string>(),
     readResourceFailures: new Set<string>(),
     callToolFailure: undefined as Error | undefined,
     status: {} as ReturnType<WorkspaceSdkMcpManager["getStatus"]>,
@@ -50,6 +52,9 @@ function createFakeSdkManager(): WorkspaceSdkMcpManager & {
       return [];
     },
     async listResources(serverId?: string) {
+      if (serverId && fake.listResourcesUnsupported.has(serverId)) {
+        throw new Error("MCP error -32601: Method not found");
+      }
       if (serverId && fake.listResourcesFailures.has(serverId)) {
         throw Object.assign(new Error("connection failed: secret-token"), { code: "transport_error" });
       }
@@ -190,6 +195,22 @@ describe("WorkspaceMcpManager", () => {
     expect(result.resources.map((item) => item.serverId)).toEqual(["ok"]);
     expect(result.errors?.[0]).toMatchObject({ serverId: "broken", code: "connection_failed" });
     expect(result.errors?.[0]?.message).not.toContain("secret-token");
+  });
+
+  test("listResources treats servers without resource support as empty", async () => {
+    const fake = createFakeSdkManager();
+    fake.listResourcesUnsupported.add("tools-only");
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        "tools-only": { enabled: true, transport: "stdio", command: "node" }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    await manager.syncWorkspace("demo");
+    const result = await manager.listResources({ workspaceSlug: "demo", serverId: "tools-only" });
+
+    expect(result).toEqual({ resources: [] });
   });
 
   test("readResource forwards to the selected server and maps errors", async () => {

@@ -159,6 +159,10 @@ function mapPublicError(error: unknown, entry?: McpServerEntry): { code: string;
   return { code: sdkCode ?? "mcp_error", message };
 }
 
+function isUnsupportedResourceListError(error: unknown): boolean {
+  return /method not found|-32601/i.test(errorMessageFromUnknown(error));
+}
+
 function toNormalizedConfigs(config: WorkspaceMcpConfig): Record<string, NormalizedMcpServerConfig> {
   const configs: Record<string, NormalizedMcpServerConfig> = {};
   for (const [serverId, entry] of Object.entries(config.servers ?? {})) {
@@ -387,6 +391,9 @@ export class WorkspaceMcpManager {
         const result = await state.sdk.listResources(serverId);
         resources.push(...(result.resources ?? []).map((resource) => mapResource(serverId, entry, resource)));
       } catch (error) {
+        if (isUnsupportedResourceListError(error)) {
+          continue;
+        }
         errors.push({ serverId, ...mapPublicError(error, entry) });
       }
     }
