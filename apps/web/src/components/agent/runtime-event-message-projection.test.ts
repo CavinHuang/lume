@@ -928,4 +928,42 @@ describe('todo_update block 稳定性', () => {
     // 内容仍为最新一次 todo 状态
     expect((todoBlocks[0] as any).data.currentActiveForm).toBe('doing step2')
   })
+
+  test('assistant text/thinking block ids stay stable across a fallback re-projection', () => {
+    // D4 验证：text/thinking block id 基于 blocks.length。若全量回退（hydrate/version turn）
+    // 重投影后 id 漂移，简洁模式 process 段 key（process:段首block.id）会变 → MinimalProcessGroup remount。
+    const events: LumeRuntimeEvent[] = [
+      event({ type: 'run.started' }),
+      event({ type: 'message.user.submitted', text: 'hi', messageId: 'user-1' }),
+      event({ type: 'assistant.thinking_delta', delta: 'thinking...' }),
+      event({ type: 'assistant.delta', delta: 'hello ' }),
+      event({ type: 'tool.started', toolCallId: 'tool-1', toolName: 'Bash', inputPreview: { command: 'pwd' } }),
+      event({ type: 'tool.completed', toolCallId: 'tool-1', toolName: 'Bash', resultPreview: 'ok' }),
+      event({ type: 'assistant.delta', delta: 'world' }),
+      event({ type: 'assistant.final', blocks: [{ type: 'thinking', text: 'thinking...' }, { type: 'text', text: 'hello world' }] }),
+      event({ type: 'run.completed' }),
+    ]
+
+    const assistantBlockIds = (messages: RuntimeMessageView[]): string[] => {
+      const a = messages.find((m) => m.type === 'assistant')
+      return a?.type === 'assistant' ? a.blocks.map((b) => b.id) : []
+    }
+
+    // 增量累积 apply（模拟流式逐帧）
+    let ref: ProjectionRef | null = null
+    let messages: RuntimeMessageView[] = []
+    for (let i = 1; i <= events.length; i++) {
+      const result = applyRuntimeEventsIncremental(events.slice(0, i), ref)
+      ref = result.ref
+      messages = result.messages
+    }
+    const idsBeforeFallback = assistantBlockIds(messages)
+
+    // 模拟 hydrate：相同内容、全新引用的事件数组 → canApplyIncrementally 因引用变化返回 false → 全量 fallback
+    const eventsCopy: LumeRuntimeEvent[] = JSON.parse(JSON.stringify(events))
+    const fallbackResult = applyRuntimeEventsIncremental(eventsCopy, ref)
+    const idsAfterFallback = assistantBlockIds(fallbackResult.messages)
+
+    expect(idsAfterFallback).toEqual(idsBeforeFallback)
+  })
 })
