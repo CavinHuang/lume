@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { imageDataUrl, isImageFile, imageMimeType } from "./file-preview-utils"
+import { isImageFile, lumeFileUrl } from "./file-preview-utils"
 
 describe("isImageFile", () => {
   test.each(["a.png", "photo.JPG", "x.jpeg", "g.gif", "w.webp", "b.bmp", "s.svg"])(
@@ -20,22 +20,14 @@ describe("isImageFile", () => {
   })
 })
 
-describe("imageMimeType", () => {
-  test("maps common extensions (case-insensitive)", () => {
-    expect(imageMimeType("a.png")).toBe("image/png")
-    expect(imageMimeType("a.jpg")).toBe("image/jpeg")
-    expect(imageMimeType("a.JPEG")).toBe("image/jpeg")
-    expect(imageMimeType("a.svg")).toBe("image/svg+xml")
-    expect(imageMimeType("a.webp")).toBe("image/webp")
+describe("lumeFileUrl", () => {
+  test("编码绝对路径为 lume-file URL", () => {
+    expect(lumeFileUrl("/data/threads/t1/a.png")).toBe(
+      "lume-file://file/" + encodeURIComponent("/data/threads/t1/a.png"),
+    )
   })
-  test("falls back to image/png for unknown extension", () => {
-    expect(imageMimeType("a.bin")).toBe("image/png")
-  })
-})
-
-describe("imageDataUrl", () => {
-  test("builds data url with inferred mime", () => {
-    expect(imageDataUrl("a.png", "abc")).toBe("data:image/png;base64,abc")
-    expect(imageDataUrl("photo.jpeg", "xyz")).toBe("data:image/jpeg;base64,xyz")
+  test("Windows 绝对路径也被正确编码", () => {
+    const p = "C:\\data\\threads\\t1\\a.png"
+    expect(lumeFileUrl(p)).toBe("lume-file://file/" + encodeURIComponent(p))
   })
 })

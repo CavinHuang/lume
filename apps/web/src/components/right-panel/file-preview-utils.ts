@@ -1,13 +1,5 @@
-/** 预览支持的内联图片扩展名 → MIME 映射 */
-const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  bmp: 'image/bmp',
-  svg: 'image/svg+xml',
-}
+/** 预览支持的内联图片扩展名集合（用于判断是否走图片渲染分支） */
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'])
 
 function imageExt(filePath: string): string | undefined {
   return /\.([a-z0-9]+)$/i.exec(filePath)?.[1]?.toLowerCase()
@@ -16,16 +8,13 @@ function imageExt(filePath: string): string | undefined {
 /** 是否为可内联预览的图片文件（按扩展名判断） */
 export function isImageFile(filePath: string): boolean {
   const ext = imageExt(filePath)
-  return ext !== undefined && ext in IMAGE_MIME_BY_EXT
+  return ext !== undefined && IMAGE_EXTENSIONS.has(ext)
 }
 
-/** 由扩展名推断图片 MIME；未知扩展名回退 image/png */
-export function imageMimeType(filePath: string): string {
-  const ext = imageExt(filePath)
-  return (ext && IMAGE_MIME_BY_EXT[ext]) || 'image/png'
-}
-
-/** 构造 base64 data URL（用于 <img src>） */
-export function imageDataUrl(filePath: string, base64: string): string {
-  return `data:${imageMimeType(filePath)};base64,${base64}`
+/**
+ * 构造 lume-file:// 协议 URL，交由 Electron main 流式读取并交 Chromium 解码。
+ * 仅适用于 .lume/agent-workspaces 可信根内的文件（thread/workspace）。
+ */
+export function lumeFileUrl(absPath: string): string {
+  return `lume-file://file/${encodeURIComponent(absPath)}`
 }
