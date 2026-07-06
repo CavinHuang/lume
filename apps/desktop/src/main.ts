@@ -5,10 +5,12 @@ import {
   Tray,
   clipboard,
   dialog,
+  globalShortcut,
   ipcMain,
   net,
   nativeImage,
   protocol,
+  screen,
   shell,
   utilityProcess,
 } from 'electron'
@@ -25,7 +27,9 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
+  computeQuickInputBounds,
   computeStorageStats,
+  computeToggleAction,
   copyDirRecursive,
   createFileMetadata,
   createOpenFileDialogOptions,
@@ -40,6 +44,7 @@ import {
   ensureExistingPath,
   ensureFile,
   exportZip,
+  getQuickInputUrl,
   parseJsonFile,
   readWindowBehaviorFromConfigDir,
   resolveExistingPath,
@@ -401,6 +406,78 @@ async function createMainWindow() {
   return win
 }
 
+async function createQuickInputWindow() {
+  const win = new BrowserWindow({
+    title: 'Lume Quick Input',
+    icon: createWindowIcon(),
+    ...computeQuickInputBounds(screen.getPrimaryDisplay().workAreaSize),
+    minWidth: 520,
+    minHeight: 400,
+    backgroundColor: '#111827',
+    show: false,
+    frame: false,
+    resizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: false,
+    webPreferences: createSecureWebPreferences({
+      preload: resolve(DESKTOP_ROOT, 'dist', 'preload', 'preload.cjs'),
+    }),
+  })
+  // 关键：先注册到信任集合，再加载渲染层（加载即可能调 IPC）
+  quickInputWindow = win
+
+  attachWebContentsSecurity(win, {
+    allowNavigation: (url) => isAllowedMainFrameNavigation(url, {
+      appIsPackaged: app.isPackaged,
+      appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+      devServerUrl: getDevServerUrl(),
+      webEntryPath: getWebEntryPath(),
+    }),
+  })
+
+  // 隐藏而非关闭：复用 isQuitting 模式，应用退出时才真关闭
+  win.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      win.hide()
+    }
+  })
+  win.on('closed', () => {
+    if (quickInputWindow === win) quickInputWindow = null
+  })
+
+  await win.loadURL(getQuickInputUrl({
+    appIsPackaged: app.isPackaged,
+    appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+    devServerUrl: getDevServerUrl(),
+  }))
+
+  win.once('ready-to-show', () => {
+    win.show()
+    win.focus()
+  })
+  return win
+}
+
+async function toggleQuickInput() {
+  const exists = Boolean(quickInputWindow) && !quickInputWindow.isDestroyed()
+  const action = computeToggleAction({
+    exists,
+    visible: exists && quickInputWindow.isVisible(),
+    destroyed: exists ? quickInputWindow.isDestroyed() : undefined,
+  })
+  if (action === 'create') {
+    await createQuickInputWindow()
+    return
+  }
+  if (action === 'hide') {
+    quickInputWindow.hide()
+    return
+  }
+  quickInputWindow.show()
+  quickInputWindow.focus()
+}
+
 async function dispatchCommand(command, payload: Record<string, any> = {}) {
   switch (command) {
     case 'healthcheck': {
@@ -417,6 +494,11 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
       return sidecarHost.call(payload.method, payload.params ?? null)
     case 'desktop_sync_window_behavior':
       windowBehavior = payload.windowBehavior ?? windowBehavior
+      return null
+    case 'quick_input_hide':
+      if (quickInputWindow && !quickInputWindow.isDestroyed()) {
+        quickInputWindow.hide()
+      }
       return null
     case 'open_file_dialog': {
       const result = await dialog.showOpenDialog(mainWindow, createOpenFileDialogOptions())
@@ -919,6 +1001,26 @@ app.whenReady().then(async () => {
   logDesktopStartup('sidecar ready')
   await createMainWindow()
   logDesktopStartup('main window ready')
+  // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
+  const quickInputShortcutRegistered = globalShortcut.register('Alt+L', () => {
+    toggleQuickInput().catch((error) => {
+      console.error(`[desktop] quick input toggle failed: ${error.message}`)
+    })
+  })
+  if (!quickInputShortcutRegistered) {
+    const message = '[desktop] globalShortcut Alt+L 注册失败（可能被其他程序占用）'
+    console.error(message)
+    try {
+      writeDesktopLogRecord(resolveConfigDir(), {
+        level: 'error',
+        source: 'main',
+        context: 'quick-input-shortcut',
+        message,
+      })
+    } catch {
+      // 日志写入失败不能阻断启动流程
+    }
+  }
 }).catch((error) => {
   logDesktopStartup(`startup failed: ${error.stack ?? error}`)
   app.exit(1)
@@ -944,4 +1046,5 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', async () => {
   await sidecarHost.stop()
+  globalShortcut.unregisterAll()
 })

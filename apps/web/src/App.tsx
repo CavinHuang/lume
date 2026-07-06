@@ -1,5 +1,6 @@
 import { AppShell } from '@/components/app-shell/AppShell'
 import { LumeBootScreen } from '@/components/boot'
+import { QuickInputShell } from '@/components/quick-input/QuickInputShell'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
 import { useReadingListeners } from '@/hooks/useReadingListeners'
 import { useSkillListeners } from '@/hooks/useSkillListeners'
@@ -33,6 +34,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 const BOOT_LOGO_URL = new URL('./assets/imgs/logo.png', import.meta.url).href
 
 export function App() {
+  // 快速输入子窗口：URL 带 ?view=quick-input 时走精简 Shell，跳过 healthcheck/boot。
+  // sidecar 由主进程单例启动，子窗口加载时后端已就绪；sidecar_call 失败由 toast 兜底。
+  const isQuickInput =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('view') === 'quick-input'
+  if (isQuickInput) {
+    return <QuickInputShell />
+  }
+
   const [ready, setReady] = useState(false)
   const [bootDone, setBootDone] = useState(false)
   const [error, setError] = useState<string | null>(null)

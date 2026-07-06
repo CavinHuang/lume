@@ -227,6 +227,26 @@ test("main process pushes window-state events on maximize and unmaximize", () =>
   assert.match(mainSource, /emitRendererEvent\('window-state',\s*\{\s*maximized:\s*false\s*\}\)/);
 });
 
+test("main process registers Alt+L global shortcut after app ready", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.match(mainSource, /globalShortcut\.register\(['"]Alt\+L['"]/);
+  assert.match(mainSource, /globalShortcut\.unregisterAll\(\)/);
+});
+
+test("quick input window is registered before its renderer loads", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const registerIndex = mainSource.indexOf("quickInputWindow = win");
+  const loadIndex = mainSource.indexOf("getQuickInputUrl(");
+  assert.notEqual(registerIndex, -1, "quick input window is never assigned");
+  assert.notEqual(loadIndex, -1, "quick input window never loads its url");
+  assert.equal(registerIndex < loadIndex, true, "quick input window must register before load");
+});
+
+test("dispatchCommand handles quick_input_hide", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.match(mainSource, /case 'quick_input_hide'/);
+});
+
 function extractStringSet(source, name) {
   const match = source.match(new RegExp(`const\\s+${name}\\s*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`));
   if (!match) throw new Error(`missing preload set: ${name}`);
