@@ -66,7 +66,7 @@ handler 伪码：
 ```js
 handler(request):
   // 1) URL 编码层面攻击（复用 resolveAppProtocolFilePath 的反穿越模式）
-  if (/%(?:00|2e|2f|5c)/i.test(request.url)) return 403
+  if (/%(?:00|2e)/i.test(request.url)) return 403  // 只拦 %00(NUL)/%2e(编码的点防..穿越)；不拦 %2f/%5c（分隔符合法编码，穿越由白名单兜底）——跨平台
 
   raw = pathname after "lume-file://file/" from request.url
   abs = decodeURIComponent(raw)

@@ -108,7 +108,7 @@ test("resolveFileProtocolPath: 不存在返回 notfound", () => {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd apps/desktop && rtk proxy node --test --import tsx scripts/electron-security.test.mjs`
+Run: `cd apps/desktop && rtk bun test scripts/electron-security.test.mjs`
 Expected: FAIL（`resolveFileProtocolPath is not a function` 或 import 失败）
 
 - [ ] **Step 3: 实现 `resolveFileProtocolPath`（electron-security.ts，`resolveAppProtocolFilePath` 之后）**
@@ -129,8 +129,8 @@ export type FileProtocolResolution =
  */
 export function resolveFileProtocolPath(url: string, workspacesRoot: string): FileProtocolResolution {
   try {
-    // 1) URL 编码层面的攻击（%00 / %2e / %2f / %5c）
-    if (/%(?:00|2e|2f|5c)/i.test(url)) return { kind: 'forbidden' }
+    // 1) URL 编码层面的攻击（%00 NUL / %2e 编码的点防 .. 穿越）；不拦 %2f %5c（分隔符合法编码，穿越由白名单 + resolve 兜底）
+    if (/%(?:00|2e)/i.test(url)) return { kind: 'forbidden' }
 
     const parsed = new URL(url)
     const raw = `${parsed.hostname}${parsed.pathname}`.replace(/^\/+/, '')
@@ -167,7 +167,7 @@ export function resolveFileProtocolPath(url: string, workspacesRoot: string): Fi
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `cd apps/desktop && rtk proxy node --test --import tsx scripts/electron-security.test.mjs`
+Run: `cd apps/desktop && rtk bun test scripts/electron-security.test.mjs`
 Expected: PASS（含新增 8 个用例）
 
 - [ ] **Step 5: Commit（逻辑断点）**
@@ -544,7 +544,7 @@ Expected: TypeScript: No errors found
 Run:
 ```
 cd apps/web && rtk bun test src/components/right-panel/file-preview-utils.test.ts src/components/agent/file-link-actions.test.ts
-cd apps/desktop && rtk proxy node --test --import tsx scripts/electron-security.test.mjs
+cd apps/desktop && rtk bun test scripts/electron-security.test.mjs
 ```
 Expected: 全部 PASS
 
