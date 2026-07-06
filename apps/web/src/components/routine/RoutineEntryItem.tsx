@@ -3,6 +3,7 @@ import type { RoutineEntry, PredefinedRoutineActivity, RoutineEntryStatus } from
 import {
   BookOpen,
   BookMarked,
+  Compass,
   Brain,
   RefreshCw,
   Sun,
@@ -24,6 +25,7 @@ import { Button } from '@/components/ui/button'
 const ACTIVITY_CONFIG: Record<PredefinedRoutineActivity, { label: string; icon: typeof BookOpen; color: string; tooltip: string }> = {
   reading_note: { label: "读书笔记", icon: BookMarked, color: "#9a7444", tooltip: "为在读的书籍自动生成读书笔记，基于已读内容总结要点和感悟" },
   reading_progress: { label: "读书进度", icon: BookOpen, color: "#7c6c3f", tooltip: "自动推进在读书籍的阅读进度，读完后自动标记为已读完" },
+  book_discover: { label: "发现新书", icon: Compass, color: "#0ea5e9", tooltip: "书库无在读/待读书时，根据阅读历史推荐下一本书并加入书架" },
   memory_organize: { label: "记忆整理", icon: Brain, color: "#6b5ce7", tooltip: "回顾近期对话，提取关键事实和偏好，去重后写入长期记忆" },
   data_sync: { label: "数据同步", icon: RefreshCw, color: "#3b82f6", tooltip: "同步微信读书书架、更新阅读进度、刷新划线和书签数据" },
   daily_summary: { label: "每日总结", icon: Sun, color: "#f59e0b", tooltip: "汇总今日所有活动结果，生成简短的每日回顾" },

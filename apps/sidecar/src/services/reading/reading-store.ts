@@ -42,6 +42,7 @@ import {
 } from "@lume/shared";
 import {
   getReadingCoversDir,
+  getReadingDir,
   getReadingLibraryPath,
   getReadingNotesDir,
   getReadingRunsDir,
@@ -116,10 +117,23 @@ export function getReadingSnapshot(): ReadingLibrarySnapshot {
   };
 }
 
+function getBootstrapMarkerPath(): string {
+  return join(getReadingDir(), ".bootstrapped");
+}
+
 export function ensureReadingBootstrapBook(): ReadingBook | null {
   initReadingStorage();
+  // 用独立标记文件保证 bootstrap 一生只发生一次。旧实现仅以 `library.books.length === 0`
+  // 为播种条件，而 readLibrary 在解析失败时回退空库、且本函数被 LIST_BOOKS RPC 频繁触发，
+  // 一旦库「瞬时为空」（跨进程/读失败）就会重新种入《人间词话》，历史累积出多本重复种子书。
+  // 标记存在后即便库被清空也不再种，根治重复。
+  if (existsSync(getBootstrapMarkerPath())) return null;
   const library = readLibrary();
-  if (library.books.length > 0) return null;
+  // 已有书（无论是否 starter）：标记为已 bootstrap，不再强塞 starter。
+  if (library.books.length > 0) {
+    writeFileSync(getBootstrapMarkerPath(), String(Date.now()), "utf-8");
+    return null;
+  }
   const now = Date.now();
   const book = normalizeReadingBook({
     id: randomUUID(),
@@ -131,6 +145,7 @@ export function ensureReadingBootstrapBook(): ReadingBook | null {
     ...library,
     books: [book]
   });
+  writeFileSync(getBootstrapMarkerPath(), String(Date.now()), "utf-8");
   return book;
 }
 
@@ -330,7 +345,9 @@ export function autoAdvanceProgress(): { bookId: string; title: string; oldProgr
 export function autoPickNextBook(): ReadingBook | null {
   initReadingStorage();
   const library = readLibrary();
-  const activeBooks = library.books.filter((b) => b.status !== "finished");
+  // active 只计「在读/暂停」：queued 是候选而非在读，若计入会导致只要有 queued 书就提前
+  // return null，queued 永远无法被晋升为 reading。
+  const activeBooks = library.books.filter((b) => b.status === "reading" || b.status === "paused");
 
   if (activeBooks.length > 0) return null;
 

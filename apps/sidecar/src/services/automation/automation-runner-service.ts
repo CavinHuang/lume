@@ -226,6 +226,11 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
 function scheduleJob(job: AutomationJob): void {
   if (!job.enabled) return;
   if (job.schedule.type === "once") {
+    // 已在执行中的 once 任务不重排：卡在 runningJobs 时，其它任务完成触发的 refresh
+    // 会以 delay=0（runAt 已过期）反复 arm → 立即触发 → skip，形成「跨 job」skip 风暴
+    // （线上整点单 job 数百条 skip、单日数千条）。once 至多触发一次，在飞期间的重排
+    // 毫无意义——其完成后的 disable / .then 自会处理后续。
+    if (runningJobs.has(job.id)) return;
     const delay = Math.max(0, (job.schedule.runAt ?? 0) - Date.now());
     const timer = setTimeout(() => {
       const latest = listAutomationJobs().find((item) => item.id === job.id);

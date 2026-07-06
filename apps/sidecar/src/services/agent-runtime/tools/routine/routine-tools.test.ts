@@ -70,7 +70,7 @@ describe("routine tools", () => {
             status: "pending",
           },
         ],
-        context: { activeBooks: 0, unfinishedTodos: 0, dayOfWeek: 1, recentNotes: 0, pendingMemories: 0 },
+        context: { activeBooks: 0, queuedBooks: 0, unfinishedTodos: 0, dayOfWeek: 1, recentNotes: 0, pendingMemories: 0 },
       };
       writeRoutine(mockRoutine);
 
@@ -93,7 +93,7 @@ describe("routine tools", () => {
         generatedAt: Date.now(),
         status: "planned",
         entries: [],
-        context: { activeBooks: 0, unfinishedTodos: 0, dayOfWeek: 1, recentNotes: 0, pendingMemories: 0 },
+        context: { activeBooks: 0, queuedBooks: 0, unfinishedTodos: 0, dayOfWeek: 1, recentNotes: 0, pendingMemories: 0 },
       };
       writeRoutine(mockRoutine);
 
@@ -140,7 +140,7 @@ describe("routine tools", () => {
             description: "旧描述",
           },
         ],
-        context: { activeBooks: 0, unfinishedTodos: 0, dayOfWeek: 1, recentNotes: 0, pendingMemories: 0 },
+        context: { activeBooks: 0, queuedBooks: 0, unfinishedTodos: 0, dayOfWeek: 1, recentNotes: 0, pendingMemories: 0 },
       };
       writeRoutine(mockRoutine);
 
@@ -179,7 +179,7 @@ describe("routine tools", () => {
             status: "completed",
           },
         ],
-        context: { activeBooks: 0, unfinishedTodos: 0, dayOfWeek: 1, recentNotes: 0, pendingMemories: 0 },
+        context: { activeBooks: 0, queuedBooks: 0, unfinishedTodos: 0, dayOfWeek: 1, recentNotes: 0, pendingMemories: 0 },
       };
       writeRoutine(mockRoutine);
 

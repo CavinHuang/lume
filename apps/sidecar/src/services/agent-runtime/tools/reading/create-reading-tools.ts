@@ -78,13 +78,14 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
     }),
     createSdkJsonResultTool({
       name: "lume_add_book",
-      description: "向 Lume Reading 书架添加一本书。用于记录 Lume 正在读、共同阅读或用户推荐的书。",
+      description: "向 Lume Reading 书架添加一本书。用于记录 Lume 正在读、共同阅读或用户推荐的书。status 省略时默认 reading；推荐待读可设为 queued，再由 lume_reading_pick_next 晋升。",
       inputSchema: {
         type: "object",
         properties: {
           title: { type: "string", minLength: 1 },
           author: { type: "string" },
           track: { type: "string", enum: ["lume", "co_read", "recommended"] },
+          status: { type: "string", enum: ["queued", "reading", "finished", "paused"] },
           sourceKind: { type: "string", enum: ["weread", "gutenberg", "poetry", "manual", "generated"] },
           sourceId: { type: "string" },
           sourceUrl: { type: "string" },
@@ -99,6 +100,10 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
           title: requiredString(args.title, "title"),
           author: optionalString(args.author),
           track: args.track === "co_read" || args.track === "recommended" ? args.track : "lume",
+          status:
+            args.status === "queued" || args.status === "reading" || args.status === "finished" || args.status === "paused"
+              ? args.status
+              : undefined,
           source: {
             kind: readingSourceKind(args.sourceKind),
             externalId: optionalString(args.sourceId),

@@ -1078,6 +1078,7 @@ function AutomationJobDetail({
                             : 'bg-amber-500'
                       }`} />
                       <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">{run.jobName}</span>
+                      <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatShortTime(run.startedAt)}</span>
                       <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatDuration(run.startedAt, run.finishedAt)}</span>
                     </div>
                   )
