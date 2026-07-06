@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
 const DESKTOP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -13,6 +14,7 @@ import {
   createWindowOpenAction,
   isAllowedMainFrameNavigation,
   resolveAppProtocolFilePath,
+  resolveFileProtocolPath,
   validateIpcSender,
   validateRendererEventChannel,
   validateRendererInvokeCommand,
@@ -203,3 +205,77 @@ function extractStringSet(source, name) {
   if (!match) throw new Error(`missing preload set: ${name}`);
   return [...match[1].matchAll(/['"]([^'"]+)['"]/g)].map((entry) => entry[1]);
 }
+
+const ROOT = mkdtempSync(join(tmpdir(), "lume-file-"));
+const IMG = resolve(ROOT, "a.png");
+writeFileSync(IMG, "x");
+// 跨平台分隔符的白名单前缀（确保 startsWith + sep 生效）
+const ROOT_PREFIX = ROOT.endsWith(sep) ? ROOT : ROOT + sep;
+
+test("resolveFileProtocolPath: 合法绝对路径返回 ok", () => {
+  const url = `lume-file://file/${encodeURIComponent(IMG)}`;
+  assert.deepEqual(resolveFileProtocolPath(url, ROOT), { kind: "ok", absPath: IMG });
+});
+
+test("resolveFileProtocolPath: 正斜杠路径变体返回 ok（跨平台正向用例）", () => {
+  // 构造一个不含 `\` 的合法路径 URL：encodeURIComponent(ROOT) 在 Windows 上
+  // 把 `\` 编码为 %5C（删除 %5c 校验后能通过第一层），末尾的字面 `/a.png` 保留
+  // 正斜杠（不被 encodeURIComponent 包裹，因此不产生 %2F）。这条用例确保
+  // 第二层白名单 + realpath 校验在 Windows 上被真正测到，不依赖 %5c 校验存在与否。
+  const url = `lume-file://file/${encodeURIComponent(ROOT)}/a.png`;
+  const result = resolveFileProtocolPath(url, ROOT);
+  assert.equal(result.kind, "ok");
+  if (result.kind === "ok") {
+    // realpath 在 Windows 下返回反斜杠形式；归一化后应等于 IMG 的绝对路径
+    assert.equal(result.absPath.split("/").join(sep), resolve(IMG));
+  }
+});
+
+test("resolveFileProtocolPath: 白名单根外返回 forbidden", () => {
+  const outside = resolve(ROOT, "..", "secret.png");
+  const url = `lume-file://file/${encodeURIComponent(outside)}`;
+  assert.equal(resolveFileProtocolPath(url, ROOT).kind, "forbidden");
+});
+
+test("resolveFileProtocolPath: %2e%2e 编码攻击返回 forbidden", () => {
+  const url = `lume-file://file/${ROOT_PREFIX}%2e%2e%2fsecret`;
+  assert.equal(resolveFileProtocolPath(url, ROOT).kind, "forbidden");
+});
+
+test("resolveFileProtocolPath: %5c..%5c 返回 forbidden", () => {
+  const url = `lume-file://file/${encodeURIComponent(ROOT)}%5c..%5csecret`;
+  assert.equal(resolveFileProtocolPath(url, ROOT).kind, "forbidden");
+});
+
+test("resolveFileProtocolPath: %00 返回 forbidden", () => {
+  const url = `lume-file://file/${encodeURIComponent(IMG)}%00`;
+  assert.equal(resolveFileProtocolPath(url, ROOT).kind, "forbidden");
+});
+
+test("resolveFileProtocolPath: UNC 路径返回 forbidden", () => {
+  const url = `lume-file://file/${encodeURIComponent("\\\\server\\share\\x.png")}`;
+  assert.equal(resolveFileProtocolPath(url, ROOT).kind, "forbidden");
+});
+
+test("resolveFileProtocolPath: symlink 越界返回 forbidden", (t) => {
+  const linkDir = mkdtempSync(join(tmpdir(), "lume-out-"));
+  const target = resolve(linkDir, "secret.png");
+  writeFileSync(target, "x");
+  const link = resolve(ROOT, "link.png");
+  try {
+    symlinkSync(target, link);
+  } catch (error) {
+    // 显式 skip：无权限创建 symlink 的环境（如 Windows 非管理员无 Developer Mode）
+    // 不能让本用例"伪 pass"——用 node:test 的 skip 机制明确标注。
+    const reason = error instanceof Error ? error.message : String(error);
+    t.skip(`symlink creation unavailable on this platform (${reason})`);
+    return;
+  }
+  const url = `lume-file://file/${encodeURIComponent(link)}`;
+  assert.equal(resolveFileProtocolPath(url, ROOT).kind, "forbidden");
+});
+
+test("resolveFileProtocolPath: 不存在返回 notfound", () => {
+  const url = `lume-file://file/${encodeURIComponent(resolve(ROOT, "nope.png"))}`;
+  assert.equal(resolveFileProtocolPath(url, ROOT).kind, "notfound");
+});
