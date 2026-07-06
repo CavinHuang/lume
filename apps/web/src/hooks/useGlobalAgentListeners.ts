@@ -14,6 +14,7 @@ import {
   agentSidePanelViewAtom,
   tabsAtom,
 } from '@/atoms'
+import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
 import {
   AGENT_IPC_CHANNELS,
   type AgentMessageAppendedEvent,
@@ -173,6 +174,8 @@ export function useGlobalAgentListeners() {
             .catch((error) => {
               console.error(`[useGlobalAgentListeners] 刷新运行事件失败: ${event.threadId}`, error)
             })
+          // 失效持久化消息缓存：sidecar 落盘了新消息，切回该会话时需重拉避免 stale
+          threadMessagesCache.invalidate(event.threadId)
           break
         }
         case AGENT_IPC_CHANNELS.ASK_USER_QUESTION: {
