@@ -71,6 +71,13 @@ export function FilesRightPanelTab({
       return
     }
 
+    if (isImageFile(selectedPath)) {
+      setContent('')
+      setTruncated(false)
+      setError(null)
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
