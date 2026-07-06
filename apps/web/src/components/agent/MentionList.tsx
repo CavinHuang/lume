@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { Blocks, Bot, Box, File, Hash, TerminalSquare, ArrowLeft, Loader2 } from 'lucide-react'
+import { Blocks, Bot, Box, File, Hash, TerminalSquare, ArrowLeft, Loader2, Puzzle } from 'lucide-react'
 import { normalizeSlashSuggestionItems, type MentionItem } from './slash-command-state'
 import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
 import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 interface MentionListProps {
   items: MentionItem[]
   command: (item: { id: string; label: string }) => void
-  trigger?: '@' | '/' | '#' | '$'
+  trigger?: '@' | '/' | '#' | '$' | '%'
   getWorkspaceSlug?: () => string | null
   /** 选中即执行命令（executeOnSelect）时触发，替代插入 mention 文本 */
   onCommandExecute?: (id: string) => void
@@ -185,9 +185,10 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       skill: <Box size={16} className="text-[var(--text-2)]" />,
       mcp: <Hash size={13} className="text-purple-500" />,
       command: <TerminalSquare size={16} className="text-[var(--text-2)]" />,
+      plugin: <Puzzle size={13} className="text-[var(--brand)]" />,
     }
 
-    if (trigger === '/' || trigger === '$') {
+    if (trigger === '/' || trigger === '$' || trigger === '%') {
       let previousSection: MentionItem['section'] | undefined
 
       return (
@@ -277,7 +278,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                 <Button
                 variant="ghost"
                   className={cn(
-                    'group w-full rounded-[1rem] border px-3 py-2.5 text-left transition-all',
+                    'group w-full justify-start rounded-[1rem] border px-3 py-2.5 text-left transition-all',
                     index === selectedIndex
                       ? 'border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border-strong))] bg-[linear-gradient(135deg,color-mix(in_oklab,var(--brand)_9%,var(--surface-2)),color-mix(in_oklab,var(--surface-1)_96%,transparent))] shadow-[0_18px_36px_-32px_color-mix(in_oklab,var(--brand)_62%,transparent)]'
                       : 'border-transparent text-foreground/80 hover:border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-3)_74%,transparent)]'
@@ -332,6 +333,7 @@ function getMentionSectionLabel(section: MentionItem['section']): string {
   if (section === 'capability') return '常用能力'
   if (section === 'agent') return 'Agents'
   if (section === 'file') return 'Files'
+  if (section === 'plugin') return 'Plugins'
   return 'Workspace Skills'
 }
 

@@ -196,7 +196,7 @@ async function resolveMcpServers(
     return Object.entries(config.servers).map(([serverId, entry]) => ({
       pluginId: plugin.pluginId,
       serverId,
-      entry,
+      entry: expandPluginMcpEntry(entry, plugin.root),
     }));
   } catch (error) {
     diagnostics.push({
@@ -209,6 +209,25 @@ async function resolveMcpServers(
     });
     return [];
   }
+}
+
+function expandPluginMcpEntry(entry: McpServerEntry, pluginRoot: string): McpServerEntry {
+  return {
+    ...entry,
+    ...(entry.command ? { command: expandPluginPathToken(entry.command, pluginRoot) } : {}),
+    ...(entry.args ? { args: entry.args.map((arg) => expandPluginPathToken(arg, pluginRoot)) } : {}),
+    ...(entry.env ? { env: expandStringRecord(entry.env, pluginRoot) } : {}),
+  };
+}
+
+function expandStringRecord(record: Record<string, string>, pluginRoot: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [key, expandPluginPathToken(value, pluginRoot)]),
+  );
+}
+
+function expandPluginPathToken(value: string, pluginRoot: string): string {
+  return value.replaceAll("${PLUGIN_DIR}", pluginRoot);
 }
 
 function resolveCommandTools(plugin: RegisteredPlugin): ResolvedCommandTool[] {

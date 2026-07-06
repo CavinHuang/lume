@@ -146,3 +146,26 @@ export function resolveAgentInputConfigWorkspaceSlug(input: {
   const workspaceId = input.threadWorkspaceId ?? input.currentWorkspaceId
   return input.workspaces.find((workspace) => workspace.id === workspaceId)?.slug
 }
+
+interface PlusPanelNavigationInput {
+  current: number
+  direction: number
+  total: number
+}
+
+/**
+ * 计算 ＋ 面板上下方向键移动后的焦点索引。
+ *
+ * 边界策略（交互决策点，留给你定）：
+ *  - 当前实现：夹紧（clamp）—— 到顶/底不动，行为可预期、不会"跳"。
+ *  - 备选：循环（wrap）—— 到底回到顶，适合纯键盘快速浏览，但会失去"边界感"。
+ *
+ * 若想改成循环：把 return 那行换成 `(current + direction + total) % total` 即可。
+ */
+export function resolveNextActiveIndex(input: PlusPanelNavigationInput): number {
+  const { current, direction, total } = input
+  if (total <= 0) return 0
+  // TODO(contributor): 边界行为当前为夹紧；如需循环改为 (current + direction + total) % total
+  const next = current + direction
+  return Math.max(0, Math.min(next, total - 1))
+}

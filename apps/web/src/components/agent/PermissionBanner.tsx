@@ -214,7 +214,7 @@ function PermissionChoice({
       data-enter-submits
       onClick={onClick}
       className={cn(
-        'flex min-h-10 w-full items-center rounded-[12px] px-2.5 text-left text-[14px] transition-colors',
+        'flex min-h-10 w-full items-center justify-start rounded-[12px] px-2.5 text-left text-[14px] transition-colors',
         selected ? 'bg-[#f1f1f3] text-[#1f232b]' : 'text-[#8a8f98] hover:bg-[#f6f6f7]',
       )}
     >

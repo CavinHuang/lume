@@ -7,8 +7,15 @@ function joinPath(dir: string, rel: string): string {
   return `${dir.replace(/\/+$/, "")}/${rel}`
 }
 
+/** 识别绝对路径：Windows 盘符（C:\）或 POSIX 根（/、\）。 */
+function isAbsolutePath(p: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|[\\/])/.test(p)
+}
+
 export async function resolveAbsolutePath(ctx: FileLinkContext): Promise<string> {
   if (ctx.source === "local") return ctx.relPath
+  // 文件树传入的 relPath 可能已是绝对路径（FileEntry.path 为完整路径），直接返回避免重复拼接根目录
+  if (isAbsolutePath(ctx.relPath)) return ctx.relPath
 
   if (ctx.source === "thread") {
     if (!ctx.threadId) throw new Error("thread 文件缺少 threadId")

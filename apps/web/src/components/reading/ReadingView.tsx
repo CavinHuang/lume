@@ -803,7 +803,7 @@ function WereadRailBookButton({
       type="button"
       onClick={onSelect}
       className={cn(
-        'flex min-h-[64px] w-full items-center gap-2.5 rounded-[8px] px-2 py-1.5 text-left transition-colors',
+        'flex min-h-[64px] w-full items-center justify-start gap-2.5 rounded-[8px] px-2 py-1.5 text-left transition-colors',
         selected
           ? 'bg-[var(--reading-active)] text-[var(--text-1)]'
           : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',

@@ -19,6 +19,7 @@ import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBro
 import { sidecarCall, writeClipboardText } from '@/lib/desktop-api'
 import { openMemorySource, readMemory } from '@/lib/desktop-api/memory'
 import { cn } from '@/lib/utils'
+import { imageDataUrl, isImageFile } from './file-preview-utils'
 import { FILE_TREE_DEFAULT_WIDTH, getRightPanelFileTreeDragWidth } from './right-panel-layout'
 import type { FilesTabState } from './right-panel-state'
 
@@ -46,6 +47,7 @@ export function FilesRightPanelTab({
 }: FilesRightPanelTabProps) {
   const [content, setContent] = useState('')
   const [truncated, setTruncated] = useState(false)
+  const [imageData, setImageData] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -56,6 +58,7 @@ export function FilesRightPanelTab({
   const source: FilesSource = state.source === 'workspace' && !workspaceSlug ? 'thread' : state.source
   const canShowTree = source !== 'memory'
   const isMarkdown = /\.(md|mdx|markdown)$/i.test(selectedPath ?? '')
+  const isImage = isImageFile(selectedPath ?? '')
 
   const update = useCallback((patch: Partial<FilesTabState>) => {
     onChange({ ...state, ...patch })
@@ -65,6 +68,7 @@ export function FilesRightPanelTab({
     if (!selectedPath) {
       setContent('')
       setTruncated(false)
+      setImageData(null)
       setError(null)
       return
     }
@@ -72,6 +76,18 @@ export function FilesRightPanelTab({
     setLoading(true)
     setError(null)
     try {
+      if (isImageFile(selectedPath) && source === 'thread') {
+        const result = await sidecarCall<{ data: string; size: number }>(
+          AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA,
+          { ...(workspaceSlug ? { workspaceSlug } : {}), threadId, path: selectedPath },
+        )
+        setImageData(result.data)
+        setContent('')
+        setTruncated(false)
+        return
+      }
+
+      setImageData(null)
       const result = source === 'memory'
         ? await (async () => {
           if (!workspaceSlug) throw new Error('工作区信息缺失')
@@ -95,6 +111,7 @@ export function FilesRightPanelTab({
       console.error('[FilesRightPanelTab] 加载文件内容失败:', nextError)
       setContent('')
       setTruncated(false)
+      setImageData(null)
       setError(nextError instanceof Error ? nextError.message : '加载文件内容失败')
     } finally {
       setLoading(false)
@@ -290,7 +307,13 @@ export function FilesRightPanelTab({
                   文件内容过长，当前仅显示前 512 KB。
                 </div>
               )}
-              {state.enhancedView && isMarkdown ? (
+              {isImage && imageData ? (
+                <img
+                  src={imageDataUrl(selectedPath, imageData)}
+                  alt={basename(selectedPath)}
+                  className="max-h-[72vh] w-auto max-w-full rounded-[8px] border border-border/60 bg-foreground/[0.02] object-contain"
+                />
+              ) : state.enhancedView && isMarkdown ? (
                 <XMarkdown className="x-markdown text-[14px] leading-7 text-foreground">
                   {content}
                 </XMarkdown>
@@ -386,7 +409,7 @@ function MenuButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="flex h-9 w-full items-center gap-2 rounded-[7px] px-2.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
+      className="flex h-9 w-full items-center justify-start gap-2 rounded-[7px] px-2.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
     >
       <span className="text-foreground/58">{icon}</span>
       <span>{children}</span>

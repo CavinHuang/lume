@@ -1125,7 +1125,7 @@ function MenuButton({
                 variant="ghost"
       type="button"
       onClick={onClick}
-      className="flex h-9 w-full items-center gap-2 rounded-[8px] px-2.5 text-left text-[13px] font-medium text-[var(--text-1)] transition-colors hover:bg-[var(--surface-2)]"
+      className="flex h-9 w-full items-center justify-start gap-2 rounded-[8px] px-2.5 text-left text-[13px] font-medium text-[var(--text-1)] transition-colors hover:bg-[var(--surface-2)]"
     >
       <Icon size={16} />
       {label}
@@ -1203,7 +1203,7 @@ function AutomationTemplateCard({
       type="button"
       onClick={onCreate}
       title={template.name}
-      className="flex flex-col rounded-[12px] border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3.5 text-left transition-colors hover:bg-[var(--surface-2)]"
+      className="flex flex-col items-start rounded-[12px] border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3.5 text-left transition-colors hover:bg-[var(--surface-2)]"
     >
       <div className="mb-3 flex h-5 items-center text-[var(--brand)]">
         <Icon size={18} strokeWidth={2} />

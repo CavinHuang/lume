@@ -158,7 +158,7 @@ export function SubagentHeader({
                 variant="ghost"
       onClick={onClick}
       className={cn(
-        'w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left',
+        'w-full flex items-center justify-start gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left',
       )}
     >
       <ChevronDown size={12} className={cn('text-foreground/40 transition-transform flex-shrink-0', expanded && 'rotate-180')} />

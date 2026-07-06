@@ -246,7 +246,7 @@ function MenuButton({
       disabled={disabled}
       onClick={onClick}
       title={title}
-      className="flex h-9 w-full items-center rounded-[7px] px-2.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
+      className="flex h-9 w-full items-center justify-start rounded-[7px] px-2.5 text-left text-[13px] font-medium text-foreground transition-colors hover:bg-foreground/[0.06] disabled:cursor-not-allowed disabled:opacity-35"
     >
       {children}
     </Button>

@@ -220,6 +220,13 @@ function getAssetPath(fileName) {
   return resolve(DESKTOP_ROOT, 'assets', fileName)
 }
 
+function createWindowIcon() {
+  // Windows/Linux 任务栏与 Alt-Tab 图标取自窗口实例；开发模式下进程为 electron.exe，
+  // 若不显式设置会回退到 Electron 默认图标。macOS 图标由 .app bundle 提供，无需设置。
+  if (process.platform === 'darwin') return undefined
+  return nativeImage.createFromPath(getAssetPath(process.platform === 'linux' ? 'icon.png' : 'icon.ico'))
+}
+
 function getDefaultSkillsArchivePath() {
   if (app.isPackaged) {
     return join(process.resourcesPath, 'default-skills.tar')
@@ -308,6 +315,7 @@ function attachWebContentsSecurity(win, { allowNavigation }) {
 async function createMainWindow() {
   const win = new BrowserWindow({
     title: 'Lume',
+    icon: createWindowIcon(),
     width: 1440,
     height: 920,
     minWidth: 1024,
@@ -463,6 +471,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
         return null
       }
       wereadWindow = new BrowserWindow({
+        icon: createWindowIcon(),
         width: 1000,
         height: 720,
         show: false,

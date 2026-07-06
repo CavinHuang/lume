@@ -92,6 +92,10 @@ import {
 } from "../tools/tool-descriptor-session";
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
 import { getNodeReplRuntimeRegistry } from "../tools/node-repl/node-repl-runtime-registry";
+import {
+  createPluginAwareMcpResourceTools,
+  replaceMcpResourceTools,
+} from "./mcp-resource-router.js";
 import type { LumeToolDescriptor } from "../tools/tool-types";
 import type { TaskContractRecord } from "../plan/task-contract-record-types";
 import {
@@ -1282,6 +1286,7 @@ export async function createRuntimeCoreSession(
     permissionRuntime: pluginMcpPermissionRuntime,
     workspaceSlug: input.workspaceSlug,
   });
+  const workspaceMcpManager = getWorkspaceMcpManager();
   const pluginMcpRuntime = await pluginMcpManager
     .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG, {
       includeManagementTools: false,
@@ -1301,7 +1306,7 @@ export async function createRuntimeCoreSession(
     }));
   const enabledPlugins = buildEnabledPluginContext(registeredPlugins, pluginAssembly);
   const workspaceMcpRuntime = input.workspaceSlug
-    ? await getWorkspaceMcpManager().createRuntimeTools(input.workspaceSlug).catch((error) => ({
+    ? await workspaceMcpManager.createRuntimeTools(input.workspaceSlug).catch((error) => ({
       tools: [],
       diagnostics: [{
         pluginName: "MCP",
@@ -1310,6 +1315,14 @@ export async function createRuntimeCoreSession(
       }]
     }))
     : { tools: [], diagnostics: [] };
+  const pluginAwareMcpResourceTools = input.workspaceSlug && pluginAssembly.mcpServers.length > 0
+    ? createPluginAwareMcpResourceTools({
+      workspaceSlug: input.workspaceSlug,
+      pluginServers: pluginAssembly.mcpServers,
+      workspaceMcpManager,
+      pluginMcpManager,
+    })
+    : [];
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     sessionId: input.lumeSessionId,
@@ -1338,7 +1351,7 @@ export async function createRuntimeCoreSession(
     })),
     pluginCommandTools: pluginAssembly.commandToolDefinitions,
     pluginMcpTools: pluginMcpRuntime.tools,
-    mcpTools: workspaceMcpRuntime.tools,
+    mcpTools: replaceMcpResourceTools(workspaceMcpRuntime.tools, pluginAwareMcpResourceTools),
     mcpDiagnostics: [
       ...(workspaceMcpRuntime.diagnostics ?? []),
       ...(pluginMcpRuntime.diagnostics ?? []),

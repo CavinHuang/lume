@@ -956,7 +956,7 @@ function WorkspaceListItem({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex h-[58px] w-full items-center gap-3 rounded-[8px] border px-3 text-left transition-colors',
+        'flex h-[58px] w-full items-center justify-start gap-3 rounded-[8px] border px-3 text-left transition-colors',
         active
           ? 'border-[color-mix(in_oklab,var(--brand)_40%,var(--border-strong))] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] shadow-[0_6px_16px_rgba(98,91,255,0.08)]'
           : 'border-transparent bg-[var(--surface-1)] hover:bg-[var(--surface-2)]'

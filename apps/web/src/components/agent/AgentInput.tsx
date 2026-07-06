@@ -1,11 +1,12 @@
-import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
+import { useEditor, EditorContent, ReactRenderer, ReactNodeViewRenderer } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
+import { cn } from '@/lib/utils'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
 import { Bot, Send, Square, FileText, Image, Plus, Puzzle } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   agentSend,
   getThreadMessages,
@@ -37,6 +38,7 @@ import {
 } from '@lume/shared'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { MentionList } from './MentionList'
+import { PluginMentionNodeView } from './PluginMentionNodeView'
 import { ModelPicker } from './ModelPicker'
 import { PermissionModePicker } from './PermissionModePicker'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
@@ -50,6 +52,7 @@ import { cancelPendingDebouncedAgentInputSend, createDebouncedAgentInputSend } f
 import {
   deriveAgentInputSubmitState,
   resolveAgentInputConfigWorkspaceSlug,
+  resolveNextActiveIndex,
   shouldReleaseAgentInputLocalSendingAfterDispatch,
   shouldSendAgentInputOnEnter,
   syncPermissionModeWithDefaultConfig,
@@ -247,8 +250,8 @@ export function AgentInput({
   const [localSending, setLocalSending] = useState(false)
   const [historyMessages, setHistoryMessages] = useState<AgentMessage[]>([])
   const mentionSuggestionOpenRef = useRef(false)
-  const [attachMenuOpen, setAttachMenuOpen] = useState(false)
-  const [pluginsPopoverOpen, setPluginsPopoverOpen] = useState(false)
+  const [plusPanelOpen, setPlusPanelOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginSummary[]>([])
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
@@ -417,7 +420,7 @@ export function AgentInput({
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ undoRedo: false, bold: false, italic: false, strike: false }),
-      Placeholder.configure({ placeholder: '输入任务... 支持 @Agent/@文件 /命令 $技能' }),
+      Placeholder.configure({ placeholder: '输入任务... 支持 @Agent/@文件 /命令 $技能 %插件' }),
       Mention.configure({
         HTMLAttributes: {
           class: 'mention bg-blue-500/10 text-blue-600 dark:text-blue-400 px-0.5 rounded font-medium text-[13px]',
@@ -435,6 +438,15 @@ export function AgentInput({
           class: 'mention bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-0.5 rounded font-medium text-[13px]',
         },
         suggestion: createSuggestionRenderer('$', threadId, '$', getWorkspaceSlug, setMentionSuggestionOpen),
+      }),
+      Mention.extend({
+        name: 'pluginMention',
+        addNodeView() {
+          return ReactNodeViewRenderer(PluginMentionNodeView)
+        },
+      }).configure({
+        HTMLAttributes: { class: 'plugin-mention' },
+        suggestion: createSuggestionRenderer('%', threadId, '%', getWorkspaceSlug, setMentionSuggestionOpen),
       }),
     ],
     editorProps: {
@@ -906,16 +918,96 @@ export function AgentInput({
     }
   }
 
-  const handleOpenPlugins = async () => {
-    setAttachMenuOpen(false)
+  const handleOpenPlusPanel = async () => {
+    if (plusPanelOpen) {
+      setPlusPanelOpen(false)
+      return
+    }
+    setPlusPanelOpen(true)
+    setActiveIndex(0)
+    // 打开即刷新插件列表；失败仅 toast，不阻塞面板（沿用原 handleOpenPlugins 行为）
     try {
       const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
       setInstalledPlugins(normalizeListPluginsResult(result))
-      setPluginsPopoverOpen(true)
     } catch {
       toast.error('获取插件列表失败')
     }
   }
+
+  // 面板根抢焦点：把焦点从 tiptap 编辑器收到面板根，
+  // 使 ↑/↓/Enter/Esc 由面板捕获，不会冒泡成编辑器光标移动
+  const plusPanelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!plusPanelOpen) return
+    setActiveIndex(0)
+    queueMicrotask(() => plusPanelRef.current?.focus())
+  }, [plusPanelOpen])
+
+  // 插件按名称排序后平铺（不分组）
+  const pluginItems = useMemo(
+    () => [...installedPlugins].sort((a, b) => a.name.localeCompare(b.name)),
+    [installedPlugins],
+  )
+  // 整个面板可选项序列：[文件, 图片, ...插件]，totalPlusItems 驱动 ↑/↓ 导航边界
+  const totalPlusItems = 2 + pluginItems.length
+
+  // 列表变化（插件加载完成）时夹紧 activeIndex，避免悬空指向已不存在的项
+  useEffect(() => {
+    setActiveIndex((i) => Math.min(i, Math.max(0, totalPlusItems - 1)))
+  }, [totalPlusItems])
+
+  // 当前焦点项滚动入可视区
+  useEffect(() => {
+    if (!plusPanelOpen) return
+    plusPanelRef.current
+      ?.querySelector<HTMLDivElement>(`[data-plus-item="${activeIndex}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex, plusPanelOpen])
+
+  const activatePlusItem = useCallback((index: number) => {
+    // 索引 0/1 = 文件 / 图片（沿用原 attachMenu：二者都打开文件选择）
+    if (index === 0 || index === 1) {
+      setPlusPanelOpen(false)
+      void handleAttach()
+      return
+    }
+    const plugin = pluginItems[index - 2]
+    if (!plugin) return
+    setPlusPanelOpen(false)
+    // 插件引用：插入 pluginMention node（label 带 % 前缀，作为输入/发送/气泡三段统一 token）
+    if (editor) {
+      editor.commands.focus('end')
+      editor.commands.insertContent({
+        type: 'pluginMention',
+        attrs: { id: plugin.name, label: `%${plugin.displayName || plugin.name}` },
+      })
+      editor.commands.insertContent(' ')
+    }
+  }, [editor, handleAttach, pluginItems])
+
+  const handlePlusPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setActiveIndex((i) => resolveNextActiveIndex({ current: i, direction: 1, total: totalPlusItems }))
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setActiveIndex((i) => resolveNextActiveIndex({ current: i, direction: -1, total: totalPlusItems }))
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      activatePlusItem(activeIndex)
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      setPlusPanelOpen(false)
+    }
+  }
+
+  const plusItemClass = (active: boolean) =>
+    cn(
+      'flex items-center gap-2.5 px-3 py-2.5 transition-colors',
+      active
+        ? 'bg-[var(--lume-accent-soft)]'
+        : 'hover:bg-[var(--surface-3)]',
+    )
 
   return (
     <div className="px-3 pb-4 pt-2">
@@ -965,78 +1057,76 @@ export function AgentInput({
               <>
                 <div className="relative">
                   <Button
-                variant="ghost"
-                    onClick={() => setAttachMenuOpen((v) => !v)}
+                    variant="ghost"
+                    onClick={handleOpenPlusPanel}
                     className="inline-flex size-8 items-center justify-center rounded-lg border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_72%,transparent)] text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
                     title="添加"
                     type="button"
                   >
                     <Plus size={13} />
                   </Button>
-                  {attachMenuOpen && (
+                  {plusPanelOpen && (
                     <>
-                      <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
-                      <div className="absolute bottom-full left-0 z-50 mb-2 w-[140px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)]">
-                        <Button
-                variant="ghost"
-                          type="button"
-                          onClick={() => { setAttachMenuOpen(false); handleAttach() }}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
-                        >
-                          <FileText size={15} className="text-[var(--text-3)]" />
-                          文件
-                        </Button>
-                        <Button
-                variant="ghost"
-                          type="button"
-                          onClick={() => { setAttachMenuOpen(false); handleAttach() }}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
-                        >
-                          <Image size={15} className="text-[var(--text-3)]" />
-                          图片
-                        </Button>
-                        <Button
-                variant="ghost"
-                          type="button"
-                          onClick={handleOpenPlugins}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
-                        >
-                          <Puzzle size={15} className="text-[var(--text-3)]" />
-                          插件
-                        </Button>
-                      </div>
-                    </>
-                  )}
-                  {pluginsPopoverOpen && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setPluginsPopoverOpen(false)} />
-                      <div className="absolute bottom-full left-0 z-50 mb-2 w-[260px] overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)]">
-                        <div className="px-3 py-2 text-[11px] font-medium text-[var(--text-3)]">
-                          已安装插件
+                      <div className="fixed inset-0 z-40" onClick={() => setPlusPanelOpen(false)} />
+                      <div
+                        ref={plusPanelRef}
+                        tabIndex={-1}
+                        onKeyDown={handlePlusPanelKeyDown}
+                        className="absolute bottom-full left-0 z-50 mb-2 w-[520px] overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)] focus:outline-none"
+                      >
+                        <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
+                          添加到对话
                         </div>
-                        {installedPlugins.length === 0 ? (
-                          <div className="px-3 py-3 text-[13px] text-[var(--text-3)]">
+                        {[
+                          { index: 0, icon: <FileText size={15} />, label: '文件' },
+                          { index: 1, icon: <Image size={15} />, label: '图片' },
+                        ].map((row) => (
+                          <div
+                            key={row.index}
+                            data-plus-item={row.index}
+                            onMouseEnter={() => setActiveIndex(row.index)}
+                            onClick={() => activatePlusItem(row.index)}
+                            className={cn(plusItemClass(activeIndex === row.index), 'text-sm text-[var(--text-1)]')}
+                          >
+                            <span className="text-[var(--text-3)]">{row.icon}</span>
+                            {row.label}
+                          </div>
+                        ))}
+                        <div className="border-t border-[var(--lume-border-subtle)]" />
+                        <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
+                          已安装插件 · {pluginItems.length}
+                        </div>
+                        {pluginItems.length === 0 ? (
+                          <div className="px-3 py-3 text-sm text-[var(--text-3)]">
                             暂无已安装的插件
                           </div>
                         ) : (
-                          <div className="max-h-[200px] overflow-y-auto">
-                            {installedPlugins.map((plugin) => (
-                              <div
-                                key={plugin.name}
-                                className="flex items-center gap-2.5 px-3 py-2.5 transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
-                              >
-                                <Puzzle size={14} className="shrink-0 text-[var(--text-3)]" />
-                                <div className="min-w-0 flex-1">
-                                  <div className="truncate text-[13px] text-[var(--text-1)]">
-                                    {plugin.name}
+                          <div className="max-h-[200px] overflow-y-auto pb-1">
+                            {pluginItems.map((plugin, i) => {
+                              const index = i + 2
+                              return (
+                                <div
+                                  key={plugin.name}
+                                  data-plus-item={index}
+                                  onMouseEnter={() => setActiveIndex(index)}
+                                  onClick={() => activatePlusItem(index)}
+                                  className={plusItemClass(activeIndex === index)}
+                                >
+                                  <Puzzle size={14} className="shrink-0 text-[var(--text-3)]" />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-sm text-[var(--text-1)]">
+                                      {plugin.displayName || plugin.name}
+                                    </div>
+                                    <div className="truncate text-xs text-[var(--text-3)]">
+                                      {plugin.description ? plugin.description : `v${plugin.version}`}
+                                    </div>
                                   </div>
-                                  <div className="truncate text-[11px] text-[var(--text-3)]">
+                                  <div className="shrink-0 text-xs text-[var(--text-3)]">
                                     v{plugin.version}
-                                    {plugin.description ? ` · ${plugin.description}` : ''}
                                   </div>
                                 </div>
-                              </div>
-                            ))}
+                              )
+                            })}
                           </div>
                         )}
                       </div>

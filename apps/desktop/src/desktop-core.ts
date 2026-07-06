@@ -443,7 +443,11 @@ function walkFilesWithState(path, visit, state) {
   }
 }
 
-export function walkFiles(path, visit, options = {}) {
+export function walkFiles(
+  path,
+  visit,
+  options: { skipPaths?: string[]; visitedDirectories?: Set<string>; ignoreErrors?: boolean } = {},
+) {
   walkFilesWithState(path, visit, {
     skipPaths: options.skipPaths ?? [],
     visitedDirectories: options.visitedDirectories ?? new Set(),
@@ -455,7 +459,7 @@ export function computeStorageStats(configDir, categories) {
   const stats = categories.map((category) => {
     const skipPaths = category.skipSubdirs.flatMap((pattern) => expandRelativePattern(configDir, pattern))
     const visitedFiles = new Set()
-    const visitedDirectories = new Set()
+    const visitedDirectories = new Set<string>()
     let bytes = 0
 
     for (const scanPath of category.scanPaths.flatMap((pattern) => expandRelativePattern(configDir, pattern))) {

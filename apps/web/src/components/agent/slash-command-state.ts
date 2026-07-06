@@ -1,7 +1,7 @@
 import type { SkillMeta, SkillStorageScope } from '@lume/shared'
 
-export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent'
-export type MentionSection = 'capability' | 'skill' | 'agent' | 'file'
+export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent' | 'plugin'
+export type MentionSection = 'capability' | 'skill' | 'agent' | 'file' | 'plugin'
 
 export interface MentionItem {
   id: string
@@ -132,4 +132,30 @@ export function normalizeSlashSuggestionItems(items: MentionItem[]): MentionItem
   }
 
   return [...getCommonSlashSuggestionItems(), ...normalizedItems]
+}
+
+export interface PluginMentionSource {
+  name: string
+  displayName?: string
+  description?: string
+}
+
+/**
+ * 构造插件 mention 建议项（% 触发）。
+ * label 带 % 前缀，作为输入框/发送/气泡三段统一的 token（%插件名）。
+ */
+export function buildPluginSuggestionItems(plugins: PluginMentionSource[], query: string): MentionItem[] {
+  const normalizedQuery = query.trim().toLowerCase()
+  return plugins
+    .filter((plugin) => !normalizedQuery
+      || [plugin.name, plugin.displayName, plugin.description].some((value) => value?.toLowerCase().includes(normalizedQuery)))
+    .slice(0, 10)
+    .map((plugin) => ({
+      id: plugin.name,
+      label: `%${plugin.displayName || plugin.name}`,
+      type: 'plugin' as const,
+      title: plugin.displayName || plugin.name,
+      subtitle: plugin.description ?? '插件',
+      section: 'plugin' as const,
+    }))
 }

@@ -249,7 +249,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
                 variant="ghost"
                 onClick={handleRestoreDefault}
                 className={cn(
-                  'w-full rounded-md px-3 py-1.5 text-left text-[12px] transition-colors',
+                  'w-full justify-start rounded-md px-3 py-1.5 text-left text-[12px] transition-colors',
                   'text-foreground/70 hover:bg-muted/50 hover:text-foreground'
                 )}
               >

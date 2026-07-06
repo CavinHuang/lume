@@ -1,11 +1,11 @@
 import { ReactRenderer } from '@tiptap/react'
 import { sidecarCall } from '@/lib/desktop-api'
 import { MentionList } from './MentionList'
-import { buildSlashSuggestionItems, formatSkillSuggestionMeta } from './slash-command-state'
+import { buildSlashSuggestionItems, buildPluginSuggestionItems, formatSkillSuggestionMeta, type PluginMentionSource } from './slash-command-state'
 import type { MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import type { MentionItem } from './slash-command-state'
-import type { EditableSkillMeta, WorkspaceMcpConfig } from '@lume/shared'
+import type { AgentListPluginsResult, EditableSkillMeta, WorkspaceMcpConfig } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 
 export { type MentionItem } from './slash-command-state'
@@ -85,6 +85,14 @@ export async function fetchSuggestions(
           meta: formatSkillSuggestionMeta(skill),
         }))
     }
+
+    if (trigger === '%') {
+      const result = await sidecarCall<AgentListPluginsResult>(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
+      const plugins: PluginMentionSource[] = Array.isArray(result)
+        ? result
+        : (result?.plugins ?? [])
+      return buildPluginSuggestionItems(plugins, query)
+    }
   } catch {
     // 静默
   }
@@ -116,7 +124,7 @@ export function createSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: char as '@' | '/' | '#' | '$', getWorkspaceSlug, onCommandExecute },
+            props: { ...props, trigger: char as '@' | '/' | '#' | '$' | '%', getWorkspaceSlug, onCommandExecute },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
@@ -152,7 +160,7 @@ function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps, char: s
   const rect = props.clientRect?.()
   if (!rect) return
 
-  if (char === '/' || char === '$') {
+  if (char === '/' || char === '$' || char === '%') {
     const editorEl = props.editor.view.dom
     const composer = editorEl.closest('[data-tone]') as HTMLElement | null
     const composerRect = composer?.getBoundingClientRect()

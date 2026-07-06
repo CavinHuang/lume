@@ -165,7 +165,7 @@ function FileTreeItem({
                 variant="ghost"
       onClick={toggle}
       className={cn(
-        'w-full flex h-9 items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-[var(--surface-2)]',
+        'w-full flex h-9 items-center justify-start gap-2 rounded-md px-2 text-left transition-colors hover:bg-[var(--surface-2)]',
         !largeRows && 'h-auto gap-1.5 rounded-lg py-1',
         !entry.isDirectory && selectedPath === entry.path && 'bg-[color:color-mix(in_oklab,var(--brand)_26%,transparent)] text-[var(--brand-2)]',
       )}

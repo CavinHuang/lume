@@ -79,6 +79,30 @@ describe("resolveAbsolutePath", () => {
     })
   })
 
+  test("thread source returns absolute POSIX relPath as-is (file tree entry.path)", async () => {
+    calls.length = 0
+    const absPath = "/data/threads/t1/files/image-gen/x.png"
+    const abs = await resolveAbsolutePath({ source: "thread", relPath: absPath, threadId: "t1", workspaceSlug: "ws-1" })
+    expect(abs).toBe(absPath)
+    expect(sidecarCalls()).toHaveLength(0)
+  })
+
+  test("thread source returns absolute Windows-drive relPath as-is", async () => {
+    calls.length = 0
+    const absPath = "C:\\data\\threads\\t1\\files\\image-gen\\x.png"
+    const abs = await resolveAbsolutePath({ source: "thread", relPath: absPath, threadId: "t1", workspaceSlug: "ws-1" })
+    expect(abs).toBe(absPath)
+    expect(sidecarCalls()).toHaveLength(0)
+  })
+
+  test("workspace source returns absolute relPath as-is", async () => {
+    calls.length = 0
+    const absPath = "/data/ws/resources/shared/notes.md"
+    const abs = await resolveAbsolutePath({ source: "workspace", relPath: absPath, workspaceSlug: "ws-1" })
+    expect(abs).toBe(absPath)
+    expect(sidecarCalls()).toHaveLength(0)
+  })
+
   test("thread without threadId throws", async () => {
     await expect(
       resolveAbsolutePath({ source: "thread", relPath: "a.md", workspaceSlug: "ws-1" }),

@@ -232,6 +232,46 @@ describe("resolvePluginCapabilities — mcp", () => {
     }
   });
 
+  test("expands PLUGIN_DIR placeholders in MCP server config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "acme");
+      await writeJson(join(pluginRoot, "mcp.json"), {
+        mcpServers: {
+          "acme-api": {
+            command: "node",
+            args: ["${PLUGIN_DIR}/dist/mcp.js"],
+            env: {
+              PLUGIN_ROOT: "${PLUGIN_DIR}",
+              CACHE_DIR: "${PLUGIN_DIR}/cache",
+            },
+          },
+        },
+      });
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [],
+          mcpServersConfigPath: "./mcp.json",
+          commandTools: [],
+        },
+        permissions: { mcpServers: { register: true } },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+
+      expect(result.capabilities[0]?.mcpServers[0]?.entry).toMatchObject({
+        command: "node",
+        args: [`${pluginRoot}/dist/mcp.js`],
+        env: {
+          PLUGIN_ROOT: pluginRoot,
+          CACHE_DIR: `${pluginRoot}/cache`,
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("skips MCP entirely when permissions.mcpServers.register is false", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
     try {

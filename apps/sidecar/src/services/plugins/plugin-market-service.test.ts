@@ -828,6 +828,48 @@ describe("PluginMarketService", () => {
     expect(inspected.normalized.manifestFormat).toBe("codex");
   });
 
+  test("remote marketplace still lists plugins when GitHub metadata APIs are rate limited", async () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [
+          DISABLED_OFFICIAL_MARKET_SOURCE,
+          { id: "remote-market", name: "Remote", kind: "remote-index", url: "https://github.com/acme/market", enabled: true }
+        ]
+      }
+    }), "utf-8");
+
+    const fetchImpl = (async (url: string) => {
+      if (url === "https://api.github.com/repos/acme/market" || url.includes("/git/trees/main")) {
+        return new Response("rate limited", { status: 403 });
+      }
+      if (url === "https://raw.githubusercontent.com/acme/market/main/.lume-plugin/marketplace.json") {
+        return new Response(JSON.stringify({
+          plugins: [
+            { name: "remote-plugin", description: "Remote plugin", source: "./plugins/remote-plugin" }
+          ]
+        }), { status: 200 });
+      }
+      if (url === "https://raw.githubusercontent.com/acme/market/main/plugins/remote-plugin/.lume-plugin/plugin.json") {
+        return new Response("missing", { status: 404 });
+      }
+      if (url === "https://raw.githubusercontent.com/acme/market/main/plugins/remote-plugin/lume-plugin.json") {
+        return new Response(JSON.stringify({
+          schema: "lume-plugin/v1",
+          name: "remote-plugin",
+          displayName: "Remote Plugin",
+          version: "1.0.0"
+        }), { status: 200 });
+      }
+      return new Response("unexpected url", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const catalog = await makeService(root, fetchImpl).getMarketCatalog({ workspaceSlug: "default" });
+
+    expect(catalog.plugins.map((plugin) => plugin.pluginId)).toEqual(["remote-plugin"]);
+    expect(catalog.plugins[0]?.installState).toBe("not-installed");
+  });
+
   test("github install reports tarball download failures", async () => {
     const fetchImpl = (async (url: string) => {
       if (url.includes("/git/trees/main")) {

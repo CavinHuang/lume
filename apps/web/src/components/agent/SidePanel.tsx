@@ -261,18 +261,18 @@ export function SidePanel({
                 variant="ghost"
                           type="button"
                           onClick={() => setMenuOpen((value) => !value)}
-                          className="flex size-7 items-center justify-center rounded-md text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+                          className="flex size-7 items-center justify-center rounded-md text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-(--text-1)"
                           title="更多操作"
                         >
                           <MoreHorizontal size={16} />
                         </Button>
                         {menuOpen && (
-                          <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-60 rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[var(--popover)] p-1.5 text-[var(--popover-foreground)] shadow-[0_18px_42px_-28px_hsl(var(--shadow-panel)/0.42)]">
+                          <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-60 rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[var(--popover)] p-1.5 text-[var(--popover-foreground)] shadow-[0_18px_42px_-28px_hsl(var(--shadow-panel)/0.42)] ">
                             <Button
                 variant="ghost"
                               type="button"
                               onClick={() => void handleCopyPath()}
-                              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[14px] transition-colors hover:bg-[var(--surface-2)]"
+                              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[14px] transition-colors hover:bg-[var(--surface-2)] justify-start"
                             >
                               {copied ? <Check size={17} className="text-[var(--text-3)]" /> : <Copy size={17} className="text-[var(--text-3)]" />}
                               {copied ? '已复制路径' : '复制路径'}
@@ -284,7 +284,7 @@ export function SidePanel({
                                 setEnhancedView((value) => !value)
                                 setMenuOpen(false)
                               }}
-                              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[14px] transition-colors hover:bg-[var(--surface-2)]"
+                              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[14px] transition-colors hover:bg-[var(--surface-2)] justify-start "
                             >
                               <span className="text-[16px] text-[var(--text-3)]">{'{}'}</span>
                               {enhancedView ? '禁用增强视图' : '启用增强视图'}

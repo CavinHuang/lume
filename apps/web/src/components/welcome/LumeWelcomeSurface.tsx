@@ -184,7 +184,7 @@ export function LumeWelcomeSurface({
                 variant="ghost"
                             type="button"
                             onClick={() => { setAttachMenuOpen(false); onAttach() }}
-                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                            className="flex w-full items-center justify-start gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
                           >
                             <FileText size={15} className="text-[var(--text-3)]" />
                             文件
@@ -193,7 +193,7 @@ export function LumeWelcomeSurface({
                 variant="ghost"
                             type="button"
                             onClick={() => { setAttachMenuOpen(false); onAttach() }}
-                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                            className="flex w-full items-center justify-start gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
                           >
                             <Image size={15} className="text-[var(--text-3)]" />
                             图片
@@ -202,7 +202,7 @@ export function LumeWelcomeSurface({
                 variant="ghost"
                             type="button"
                             onClick={handleOpenPlugins}
-                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                            className="flex w-full items-center justify-start gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
                           >
                             <Puzzle size={15} className="text-[var(--text-3)]" />
                             插件
@@ -229,7 +229,7 @@ export function LumeWelcomeSurface({
                                   key={plugin.name}
                                   type="button"
                                   onClick={() => handleSelectPlugin(plugin.name)}
-                                  className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
+                                  className="flex w-full items-center justify-start gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
                                 >
                                   <Puzzle size={14} className="shrink-0 text-[var(--text-3)]" />
                                   <div className="min-w-0 flex-1">

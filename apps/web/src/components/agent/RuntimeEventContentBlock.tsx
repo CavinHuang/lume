@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Sparkles, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
+import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Puzzle, Sparkles, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -531,7 +531,7 @@ export function UserAgentRoleInvocationContent({ text }: { text: string }) {
   const invocation = parseAgentRoleInstructionMessage(text)
 
   if (!invocation) {
-    return <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">{text}</div>
+    return <PluginChipText text={text} />
   }
 
   return (
@@ -550,8 +550,38 @@ export function UserAgentRoleInvocationContent({ text }: { text: string }) {
         </span>
       </div>
       {invocation.task && (
-        <div className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[15px] leading-[22px] text-[var(--lume-text-primary)]">{invocation.task}</div>
+        <PluginChipText
+          text={invocation.task}
+          className="text-[15px] leading-[22px] text-[var(--lume-text-primary)]"
+        />
       )}
+    </div>
+  )
+}
+
+/**
+ * 用户消息文本里的插件引用 chip 化：把 %插件名 token 渲染成带 Puzzle 图标的紫色 chip，
+ * 与输入框 PluginMentionNodeView 同款视觉；其余文本段原样输出。
+ */
+function PluginChipText({ text, className }: { text: string; className?: string }) {
+  const segments = text.split(/(%[^\s%]+)/g)
+  return (
+    <div className={cn('whitespace-pre-wrap [overflow-wrap:anywhere]', className)}>
+      {segments.map((segment, index) => {
+        const match = segment.match(/^%([^\s%]+)$/)
+        if (match) {
+          return (
+            <span
+              key={index}
+              className="inline-flex items-center gap-1 rounded bg-[var(--lume-accent-soft)] px-1 py-0.5 align-baseline font-medium text-[var(--brand)]"
+            >
+              <Puzzle size={11} className="shrink-0" />
+              {match[1]}
+            </span>
+          )
+        }
+        return segment ? <span key={index}>{segment}</span> : null
+      })}
     </div>
   )
 }
@@ -1884,7 +1914,7 @@ function DownloadFormatMenuItem({
       type="button"
       role="menuitem"
       onClick={onClick}
-      className="flex w-full items-center rounded-md px-2 py-1.5 text-left text-[12px] font-medium leading-5 text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
+      className="flex w-full items-center justify-start rounded-md px-2 py-1.5 text-left text-[12px] font-medium leading-5 text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
     >
       {children}
     </Button>

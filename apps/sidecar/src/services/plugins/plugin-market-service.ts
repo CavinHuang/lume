@@ -495,19 +495,41 @@ export class PluginMarketService {
   }
 
   private async inspectGitHubPlugin(source: Extract<PluginSourceRef, { type: "github" }>): Promise<NormalizedPlugin> {
-    const tree = await this.fetchGitHubTree(source);
-    const manifest = resolveGitHubManifestPath(tree, source.subdir);
-    const raw = await this.fetchText(rawGitHubUrl(source, manifest.path));
+    const { raw, format } = await this.fetchGitHubManifest(source);
     try {
       return normalizePluginManifests({
         pluginRoot: `github:${source.owner}/${source.repo}/${source.ref}${source.subdir ? `/${source.subdir}` : ""}`,
-        lumeManifest: manifest.format === "lume" ? JSON.parse(raw) as Record<string, unknown> : undefined,
-        codexManifest: manifest.format === "codex" ? JSON.parse(raw) as Record<string, unknown> : undefined,
-        legacyManifest: manifest.format === "legacy" ? JSON.parse(raw) as Record<string, unknown> : undefined,
+        lumeManifest: format === "lume" ? JSON.parse(raw) as Record<string, unknown> : undefined,
+        codexManifest: format === "codex" ? JSON.parse(raw) as Record<string, unknown> : undefined,
+        legacyManifest: format === "legacy" ? JSON.parse(raw) as Record<string, unknown> : undefined,
       });
     } catch (error) {
       throw new PluginMarketError("invalid_manifest", error instanceof Error ? error.message : String(error));
     }
+  }
+
+  private async fetchGitHubManifest(source: Extract<PluginSourceRef, { type: "github" }>): Promise<GitHubManifestMatch & { raw: string }> {
+    try {
+      const tree = await this.fetchGitHubTree(source);
+      const match = resolveGitHubManifestPath(tree, source.subdir);
+      return { ...match, raw: await this.fetchText(rawGitHubUrl(source, match.path)) };
+    } catch {
+      return this.fetchGitHubManifestFromRaw(source);
+    }
+  }
+
+  private async fetchGitHubManifestFromRaw(source: Extract<PluginSourceRef, { type: "github" }>): Promise<GitHubManifestMatch & { raw: string }> {
+    let lastError: unknown;
+    for (const match of githubManifestCandidates(source.subdir)) {
+      try {
+        return { ...match, raw: await this.fetchText(rawGitHubUrl(source, match.path)) };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    const suffix = lastError instanceof Error ? `: ${lastError.message}` : "";
+    throw new PluginMarketError("invalid_manifest", `GitHub 仓库中没有检测到 .lume-plugin/plugin.json 或 .codex-plugin/plugin.json${suffix}`);
   }
 
   private async readPluginReadme(source: PluginSourceRef): Promise<PluginReadmePreview | undefined> {
@@ -719,7 +741,7 @@ export class PluginMarketService {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" },
     });
     if (!response.ok) {
-      throw new PluginMarketError("network_failed", `读取 GitHub 仓库信息失败: ${response.status}`);
+      return { ...parsed, ref: "main" };
     }
     const payload = await response.json() as { default_branch?: string };
     return { ...parsed, ref: payload.default_branch ?? "main" };
@@ -1206,18 +1228,22 @@ function githubTreeUrl(root: GitHubRepoRoot, source: string): string {
 }
 
 function resolveGitHubManifestPath(tree: GitHubTreeEntry[], subdir?: string): GitHubManifestMatch {
+  const match = githubManifestCandidates(subdir)
+    .find((candidate) => tree.some((entry) => entry.type === "blob" && entry.path === candidate.path));
+  if (!match) {
+    throw new PluginMarketError("invalid_manifest", "GitHub 仓库中没有检测到 .lume-plugin/plugin.json 或 .codex-plugin/plugin.json");
+  }
+  return match;
+}
+
+function githubManifestCandidates(subdir?: string): GitHubManifestMatch[] {
   const prefix = subdir ? `${subdir.replace(/\/$/, "")}/` : "";
-  const candidates: GitHubManifestMatch[] = [
+  return [
     { path: `${prefix}.lume-plugin/plugin.json`, format: "lume" },
     { path: `${prefix}lume-plugin.json`, format: "lume" },
     { path: `${prefix}.codex-plugin/plugin.json`, format: "codex" },
     { path: `${prefix}plugin.json`, format: "legacy" },
   ];
-  const match = candidates.find((candidate) => tree.some((entry) => entry.type === "blob" && entry.path === candidate.path));
-  if (!match) {
-    throw new PluginMarketError("invalid_manifest", "GitHub 仓库中没有检测到 .lume-plugin/plugin.json 或 .codex-plugin/plugin.json");
-  }
-  return match;
 }
 
 function rawGitHubUrl(source: Extract<PluginSourceRef, { type: "github" }>, path: string): string {
