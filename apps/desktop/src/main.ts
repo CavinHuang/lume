@@ -94,6 +94,14 @@ let windowBehavior = {
   closeToTray: false,
 }
 
+// 快速输入子窗口（Alt+L）；Task 5 之前始终为 null，此处仅占位以便 IPC 信任集合与事件广播先行就绪。
+let quickInputWindow = null
+
+/** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow 存在时纳入。 */
+function getTrustedWindows() {
+  return [mainWindow, quickInputWindow].filter(Boolean)
+}
+
 function logDesktopStartup(message) {
   console.error(`[desktop] ${message}`)
   try {
@@ -145,8 +153,11 @@ const sidecarHost = createSidecarHost({
 })
 
 function emitRendererEvent(channel, payload) {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send(`lume:event:${channel}`, payload)
+  for (const win of [mainWindow, quickInputWindow]) {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(`lume:event:${channel}`, payload)
+    }
+  }
 }
 
 function getLauncherPath() {
@@ -811,7 +822,7 @@ function createSidecarHost({ onNotification }) {
 }
 
 ipcMain.handle('lume:invoke', async (event, command, payload) => {
-  validateIpcSender(event, mainWindow)
+  validateIpcSender(event, getTrustedWindows())
   return dispatchCommand(validateRendererInvokeCommand(command), payload)
 })
 ipcMain.handle('lume:window-control', async (event, op) => {
@@ -835,7 +846,7 @@ ipcMain.handle('lume:window-control', async (event, op) => {
   }
 })
 ipcMain.handle('lume:relaunch', async (event) => {
-  validateIpcSender(event, mainWindow)
+  validateIpcSender(event, getTrustedWindows())
   setImmediate(() => {
     app.relaunch()
     app.exit(0)
@@ -843,7 +854,7 @@ ipcMain.handle('lume:relaunch', async (event) => {
   return null
 })
 ipcMain.handle('lume:update:check', async (event) => {
-  validateIpcSender(event, mainWindow)
+  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
@@ -851,7 +862,7 @@ ipcMain.handle('lume:update:check', async (event) => {
   return createUpdateInfo(result?.updateInfo, app.getVersion())
 })
 ipcMain.handle('lume:update:download', async (event) => {
-  validateIpcSender(event, mainWindow)
+  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   const sender = event.sender
   const progressState = { previousTransferred: 0, started: false }
@@ -889,7 +900,7 @@ ipcMain.handle('lume:update:download', async (event) => {
   })
 })
 ipcMain.handle('lume:update:install', async (event) => {
-  validateIpcSender(event, mainWindow)
+  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   autoUpdater.quitAndInstall(false, true)
   return null

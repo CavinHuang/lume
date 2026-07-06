@@ -53,19 +53,46 @@ test("renderer event subscriptions are explicitly allowlisted", () => {
   );
 });
 
-test("IPC handlers only accept the main window webContents as sender", () => {
-  const trustedSender = { id: 1, isDestroyed: () => false };
-  const untrustedSender = { id: 2, isDestroyed: () => false };
-  const mainWindow = { isDestroyed: () => false, webContents: trustedSender };
+test("IPC handlers only accept trusted window webContents as sender", () => {
+  const mainSender = { id: 1, isDestroyed: () => false };
+  const quickSender = { id: 2, isDestroyed: () => false };
+  const unknownSender = { id: 3, isDestroyed: () => false };
+  const mainWindow = { isDestroyed: () => false, webContents: mainSender };
+  const quickWindow = { isDestroyed: () => false, webContents: quickSender };
 
-  assert.equal(validateIpcSender({ sender: trustedSender }, mainWindow), true);
+  // 单窗口向后兼容
+  assert.equal(validateIpcSender({ sender: mainSender }, mainWindow), true);
   assert.throws(
-    () => validateIpcSender({ sender: untrustedSender }, mainWindow),
+    () => validateIpcSender({ sender: unknownSender }, mainWindow),
     /untrusted ipc sender/,
   );
   assert.throws(
-    () => validateIpcSender({ sender: trustedSender }, { isDestroyed: () => true }),
-    /main window is not available/,
+    () => validateIpcSender({ sender: mainSender }, { isDestroyed: () => true }),
+    /no trusted window available/,
+  );
+
+  // 窗口数组：main 与 quickInput 都受信任
+  assert.equal(
+    validateIpcSender({ sender: mainSender }, [mainWindow, quickWindow]),
+    true,
+  );
+  assert.equal(
+    validateIpcSender({ sender: quickSender }, [mainWindow, quickWindow]),
+    true,
+  );
+  assert.throws(
+    () => validateIpcSender({ sender: unknownSender }, [mainWindow, quickWindow]),
+    /untrusted ipc sender/,
+  );
+
+  // 空数组或全 null：拒绝
+  assert.throws(
+    () => validateIpcSender({ sender: mainSender }, []),
+    /no trusted window available/,
+  );
+  assert.throws(
+    () => validateIpcSender({ sender: mainSender }, [null, null]),
+    /no trusted window available/,
   );
 });
 

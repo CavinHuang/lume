@@ -29,6 +29,9 @@ import {
   writeWebLogRecord,
   resolveExistingPath,
   writeLauncherConfigAt,
+  computeToggleAction,
+  computeQuickInputBounds,
+  getQuickInputUrl,
 } from '../src/desktop-core.ts'
 
 function makeTempDir(prefix) {
@@ -386,3 +389,42 @@ test('update download events preserve renderer progress contract', () => {
   ])
   assert.deepEqual(createUpdateFinishedEvent(), { event: 'Finished', data: {} })
 })
+
+test("computeToggleAction returns the right quick-input visibility transition", () => {
+  assert.equal(computeToggleAction({ exists: false, visible: false }), "create");
+  assert.equal(computeToggleAction({ exists: true, visible: false }), "show");
+  assert.equal(computeToggleAction({ exists: true, visible: true }), "hide");
+  assert.equal(computeToggleAction({ exists: true, visible: true, destroyed: true }), "create");
+});
+
+test("computeQuickInputBounds centers horizontally and places y near upper third", () => {
+  const bounds = computeQuickInputBounds({ width: 1920, height: 1080 });
+  assert.equal(bounds.width, 760);
+  assert.equal(bounds.height, 600);
+  assert.equal(bounds.x, Math.round((1920 - 760) / 2));
+  // y 落在屏幕上 1/3 附近（允许实现细节，断言区间）
+  assert.equal(bounds.y >= 0 && bounds.y <= 360, true);
+  // 小屏不溢出
+  const small = computeQuickInputBounds({ width: 800, height: 500 });
+  assert.equal(small.x >= 0, true);
+  assert.equal(small.y >= 0, true);
+});
+
+test("getQuickInputUrl builds dev and packaged entry urls with the view flag", () => {
+  assert.equal(
+    getQuickInputUrl({
+      appIsPackaged: false,
+      appProtocolOrigin: "lume://app",
+      devServerUrl: "http://127.0.0.1:3000",
+    }),
+    "http://127.0.0.1:3000/?view=quick-input",
+  );
+  assert.equal(
+    getQuickInputUrl({
+      appIsPackaged: true,
+      appProtocolOrigin: "lume://app",
+      devServerUrl: "http://127.0.0.1:3000",
+    }),
+    "lume://app/index.html?view=quick-input",
+  );
+});

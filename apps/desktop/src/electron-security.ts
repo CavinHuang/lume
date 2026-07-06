@@ -30,6 +30,7 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'open_in_system',
   'reveal_path_in_system',
   'open_weread_key_webview',
+  'quick_input_hide', // Alt+L 快速输入子窗口：隐藏子窗口
   'data_get_storage_stats',
   'data_export_zip',
   'data_migrate_to_dir',
@@ -57,11 +58,18 @@ export function validateRendererEventChannel(channel) {
   return channel
 }
 
-export function validateIpcSender(event, mainWindow) {
-  if (!mainWindow || mainWindow.isDestroyed?.()) {
-    throw new Error('main window is not available')
+export function validateIpcSender(event, trustedWindows) {
+  const windows = Array.isArray(trustedWindows) ? trustedWindows : [trustedWindows]
+  const senders = windows
+    .filter((win) => win && !win.isDestroyed?.())
+    .map((win) => win.webContents)
+  if (senders.length === 0) {
+    throw new Error('no trusted window available')
   }
-  if (!event || event.sender !== mainWindow.webContents || event.sender.isDestroyed?.()) {
+  if (!event || event.sender?.isDestroyed?.()) {
+    throw new Error('untrusted ipc sender')
+  }
+  if (!senders.includes(event.sender)) {
     throw new Error('untrusted ipc sender')
   }
   return true

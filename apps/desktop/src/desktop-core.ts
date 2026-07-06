@@ -557,3 +557,40 @@ export function copyDirRecursive(sourcePath, destinationPath, onProgress) {
 
   return { copiedFiles, copiedBytes }
 }
+
+/** 快速输入窗口 toggle 状态机：根据窗口当前存在性/可见性决定下一步动作。 */
+export function computeToggleAction(state: {
+  exists: boolean
+  visible: boolean
+  destroyed?: boolean
+}): 'create' | 'hide' | 'show' {
+  if (!state.exists || state.destroyed) return 'create'
+  if (state.visible) return 'hide'
+  return 'show'
+}
+
+/** 计算快速输入窗口尺寸与位置：水平居中，垂直落在工作区上 1/3 附近（Spotlight 风格）。 */
+export function computeQuickInputBounds(workArea: { width: number; height: number }): {
+  width: number
+  height: number
+  x: number
+  y: number
+} {
+  const width = 760
+  const height = 600
+  const x = Math.max(0, Math.round((workArea.width - width) / 2))
+  const y = Math.max(0, Math.round(workArea.height / 3 - height / 2))
+  return { width, height, x, y }
+}
+
+/** 构建快速输入窗口加载 URL：dev 走 dev server，packaged 走 app 协议入口，均带 ?view=quick-input。 */
+export function getQuickInputUrl(opts: {
+  appIsPackaged: boolean
+  appProtocolOrigin: string
+  devServerUrl: string
+}): string {
+  if (opts.appIsPackaged) {
+    return `${opts.appProtocolOrigin}/index.html?view=quick-input`
+  }
+  return `${opts.devServerUrl}/?view=quick-input`
+}
