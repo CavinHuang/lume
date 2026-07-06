@@ -317,23 +317,44 @@ export class PluginMarketService {
   }
 
   async updatePlugin(input: UpdatePluginInput): Promise<UpdatePluginResult> {
-    const record = (await this.stateStore().read()).plugins[input.pluginId];
-    const active = record?.activeVersion;
-    const source = input.source ?? record?.versions[active ?? ""]?.source as PluginSourceRef | undefined;
+    const state = await this.stateStore().read();
+    const record = state.plugins[input.pluginId];
+    const previousActiveVersion = record?.activeVersion;
+    const activeInstalled = previousActiveVersion ? record?.versions[previousActiveVersion] : undefined;
+    if (!record || !previousActiveVersion || !activeInstalled) {
+      throw new PluginMarketError("not_installed", "插件未安装");
+    }
+    const source = input.source ?? activeInstalled.source as PluginSourceRef | undefined;
     if (!source) throw new PluginMarketError("source_not_found", "找不到插件来源");
+    const inspected = await this.inspectPluginSource(input.workspaceSlug, source);
+    if (inspected.normalized.pluginId !== input.pluginId) {
+      throw new PluginMarketError("invalid_manifest", "插件来源与已安装插件不匹配", inspected.diagnostics);
+    }
+    if (input.targetVersion && inspected.normalized.version !== input.targetVersion) {
+      throw new PluginMarketError("invalid_manifest", "插件来源版本与目标版本不匹配", inspected.diagnostics);
+    }
+    if (!input.force && compareSemverVersions(inspected.normalized.version, previousActiveVersion) !== 1) {
+      throw new PluginMarketError("already_installed", "目标版本不是更高版本", inspected.diagnostics);
+    }
+    if (activeInstalled.permissionsHash !== inspected.permissionsHash && input.acceptedPermissionsHash !== inspected.permissionsHash) {
+      throw new PluginMarketError("permission_review_required", "插件权限已变化,需要确认后更新", inspected.diagnostics);
+    }
     const installed = await this.installMarketItem({
-      workspaceSlug: "default",
+      workspaceSlug: input.workspaceSlug,
       kind: "plugin",
       source,
-      acceptedPermissionsHash: input.acceptedPermissionsHash,
-      enableScope: input.activate ? "global" : "none",
+      acceptedPermissionsHash: inspected.permissionsHash,
+      enableScope: this.resolveUpdateEnableScope(input.pluginId, input.workspaceSlug),
       overwrite: true,
     });
+    const retainedVersions = await this.prunePluginVersions(input.pluginId, previousActiveVersion);
     return {
       pluginId: input.pluginId,
       installedVersion: installed.version ?? "",
       activeVersion: installed.version ?? "",
-      activated: input.activate === true,
+      previousActiveVersion,
+      retainedVersions,
+      activated: false,
       needsReview: false,
       diagnostics: installed.diagnostics,
     };
@@ -793,7 +814,7 @@ export class PluginMarketService {
     const record = state.plugins[plugin.pluginId];
     if (!record?.activeVersion) return "not-installed";
     if (record.activeVersion === plugin.version) return "installed";
-    return "update-available";
+    return compareSemverVersions(plugin.version, record.activeVersion) === 1 ? "update-available" : "installed";
   }
 
   private resolveEnableState(pluginId: string, workspaceSlug?: string): PluginEnableState {
@@ -843,12 +864,39 @@ export class PluginMarketService {
     return result;
   }
 
+  private resolveUpdateEnableScope(pluginId: string, workspaceSlug: string): InstallMarketItemInput["enableScope"] {
+    const scopes = this.findEnabledScopes(pluginId);
+    if (scopes.some((scope) => scope.scope === "global")) return "global";
+    if (scopes.some((scope) => scope.scope === "workspace" && scope.workspaceSlug === workspaceSlug)) return "workspace";
+    return "none";
+  }
+
+  private async prunePluginVersions(pluginId: string, previousActiveVersion: string): Promise<string[]> {
+    const stateStore = this.stateStore();
+    const state = await stateStore.read();
+    const record = state.plugins[pluginId];
+    if (!record?.activeVersion) return [];
+    const keep = new Set([record.activeVersion, previousActiveVersion]);
+    for (const [version, installed] of Object.entries(record.versions)) {
+      if (keep.has(version)) continue;
+      if (installed.installedRoot) {
+        rmSync(installed.installedRoot, { recursive: true, force: true });
+      }
+      delete record.versions[version];
+    }
+    await stateStore.write(state);
+    return Object.values(record.versions)
+      .sort((left, right) => right.installedAt.localeCompare(left.installedAt))
+      .map((installed) => installed.version);
+  }
+
   private toMarketItem(
     plugin: NormalizedPlugin,
     workspaceSlug: string,
     sourceType: PluginSourceRef["type"],
     installState: PluginMarketItem["installState"] = "not-installed",
   ): PluginMarketItem {
+    const installMetadata = this.readInstallMetadata(plugin.pluginId);
     return {
       id: `${sourceType}:inline:plugin:${plugin.pluginId}`,
       pluginId: plugin.pluginId,
@@ -860,11 +908,31 @@ export class PluginMarketService {
       trustLevel: sourceType === "local" || sourceType === "legacy" ? "trusted" : "review-required",
       installState,
       enableState: this.resolveEnableState(plugin.pluginId, workspaceSlug),
+      ...installMetadata,
       capabilities: summarizeCapabilities(plugin),
       permissions: summarizePermissions(plugin.permissions),
       ...(plugin.marketplace ? { marketplace: summarizeMarketplace(plugin.root, plugin.marketplace) } : {}),
       diagnostics: plugin.diagnostics as AgentPluginDiagnostic[],
     };
+  }
+
+  private readInstallMetadata(pluginId: string): Pick<PluginMarketItem, "installedVersion" | "rollbackVersion" | "installedPermissionsHash"> {
+    try {
+      const raw = JSON.parse(readFileSync(this.config.statePath, "utf-8")) as { plugins?: Record<string, PluginInstallRecord> };
+      const record = raw.plugins?.[pluginId];
+      const active = record?.activeVersion;
+      if (!active) return {};
+      const versions = Object.values(record.versions ?? {})
+        .sort((left, right) => right.installedAt.localeCompare(left.installedAt));
+      const rollback = versions.find((version) => version.version !== active)?.version;
+      return {
+        installedVersion: active,
+        ...(rollback ? { rollbackVersion: rollback } : {}),
+        ...(record.versions?.[active]?.permissionsHash ? { installedPermissionsHash: record.versions[active].permissionsHash } : {}),
+      };
+    } catch {
+      return {};
+    }
   }
 
   private toMarketSkillItem(
@@ -959,6 +1027,30 @@ function createInstallRecord(pluginId: string): PluginInstallRecord {
     versions: {},
     approvalsByHash: {},
   };
+}
+
+function compareSemverVersions(left: string, right: string): -1 | 0 | 1 | undefined {
+  const leftParts = parseSemver(left);
+  const rightParts = parseSemver(right);
+  if (!leftParts || !rightParts) return left === right ? 0 : undefined;
+  const [leftMajor, leftMinor, leftPatch] = leftParts;
+  const [rightMajor, rightMinor, rightPatch] = rightParts;
+  const pairs = [
+    [leftMajor, rightMajor],
+    [leftMinor, rightMinor],
+    [leftPatch, rightPatch],
+  ] as const;
+  for (const [leftPart, rightPart] of pairs) {
+    if (leftPart < rightPart) return -1;
+    if (leftPart > rightPart) return 1;
+  }
+  return 0;
+}
+
+function parseSemver(version: string): [number, number, number] | undefined {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version.trim());
+  if (!match) return undefined;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
 function buildMcpServerSensitiveApprovals(input: {

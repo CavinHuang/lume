@@ -190,7 +190,13 @@ describe('PluginDetailPage', () => {
   test('keeps installed management actions visible for updateable plugins', () => {
     const html = renderToStaticMarkup(
       <PluginDetailPage
-        detail={detail(plugin({ installState: 'update-available', enableState: 'workspace-enabled' }))}
+        detail={detail(plugin({
+          installState: 'update-available',
+          enableState: 'workspace-enabled',
+          installedVersion: '26.623.101651',
+          rollbackVersion: '26.623.101650',
+          installedPermissionsHash: 'hash-1',
+        }))}
         loading={false}
         error={null}
         busy={false}
@@ -199,10 +205,15 @@ describe('PluginDetailPage', () => {
         onUninstall={() => {}}
         onToggleEnable={() => {}}
         onTryInChat={() => {}}
+        onRollback={() => {}}
       />,
     )
 
-    expect(html).toContain('确认权限并更新')
+    expect(html).toContain('更新到 v26.623.101652')
+    expect(html).toContain('当前版本')
+    expect(html).toContain('v26.623.101651')
+    expect(html).toContain('可更新版本')
+    expect(html).toContain('回滚到 v26.623.101650')
     expect(html).toContain('卸载')
   })
 

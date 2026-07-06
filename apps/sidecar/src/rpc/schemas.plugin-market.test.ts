@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   inspectMarketSourceInputSchema,
   installMarketItemInputSchema,
-  setPluginEnablementInputSchema
+  setPluginEnablementInputSchema,
+  updatePluginInputSchema
 } from "./schemas";
 
 describe("Plugin market RPC schemas", () => {
@@ -58,6 +59,22 @@ describe("Plugin market RPC schemas", () => {
         pluginId: "demo",
         scope: "workspace",
         enabled: true
+      }).workspaceSlug
+    ).toBe("default");
+  });
+
+  test("updatePluginInputSchema requires workspace slug", () => {
+    expect(() =>
+      updatePluginInputSchema.parse({
+        pluginId: "demo"
+      })
+    ).toThrow();
+
+    expect(
+      updatePluginInputSchema.parse({
+        workspaceSlug: "default",
+        pluginId: "demo",
+        acceptedPermissionsHash: "abc123"
       }).workspaceSlug
     ).toBe("default");
   });

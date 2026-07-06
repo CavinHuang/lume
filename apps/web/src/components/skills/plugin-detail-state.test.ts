@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { PluginMarketItem } from '@lume/shared'
 import {
   buildPermissionRows,
+  buildPluginUpdateAction,
   buildPluginSetupItems,
   formatPluginEnableState,
   formatPluginInstallState,
@@ -136,6 +137,25 @@ describe('plugin-detail-state', () => {
       title: '确认插件已安装',
       description: '当前已安装，发现可更新版本 1.0.0。',
       status: 'attention',
+    })
+  })
+
+  test('builds plugin update action labels from permission state', () => {
+    expect(buildPluginUpdateAction({
+      updateAvailable: true,
+      permissionChanged: false,
+      version: '1.1.0',
+    })).toEqual({
+      label: '更新到 v1.1.0',
+      requiresPermissionReview: false,
+    })
+    expect(buildPluginUpdateAction({
+      updateAvailable: true,
+      permissionChanged: true,
+      version: '1.1.0',
+    })).toEqual({
+      label: '确认权限并更新',
+      requiresPermissionReview: true,
     })
   })
 

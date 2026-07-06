@@ -986,11 +986,11 @@ export const installMarketItemInputSchema = z.object({
 }).strict();
 
 export const updatePluginInputSchema = z.object({
+  workspaceSlug: idSchema,
   pluginId: idSchema,
   source: pluginSourceRefSchema.optional(),
   targetVersion: z.string().trim().min(1).optional(),
   acceptedPermissionsHash: z.string().trim().min(1).optional(),
-  activate: z.boolean().optional(),
   force: z.boolean().optional()
 }).strict();
 

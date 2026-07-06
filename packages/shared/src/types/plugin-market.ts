@@ -115,6 +115,9 @@ export interface PluginMarketItem {
   trustLevel: MarketTrustLevel
   installState: MarketInstallState
   enableState: PluginEnableState
+  installedVersion?: string
+  rollbackVersion?: string
+  installedPermissionsHash?: string
   capabilities: PluginCapabilitySummary
   permissions: PluginPermissionSummary
   marketplace?: PluginMarketplaceMetadata
@@ -194,11 +197,11 @@ export interface InstallMarketItemResult {
 }
 
 export interface UpdatePluginInput {
+  workspaceSlug: string
   pluginId: string
   source?: PluginSourceRef
   targetVersion?: string
   acceptedPermissionsHash?: string
-  activate?: boolean
   force?: boolean
 }
 
@@ -206,6 +209,8 @@ export interface UpdatePluginResult {
   pluginId: string
   installedVersion: string
   activeVersion: string
+  previousActiveVersion?: string
+  retainedVersions: string[]
   activated: boolean
   needsReview: boolean
   diagnostics?: AgentPluginDiagnostic[]

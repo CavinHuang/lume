@@ -411,6 +411,201 @@ describe("PluginMarketService", () => {
     expect(installedItem?.enableState).toBe(installedInspect?.enableState);
   });
 
+  test("marks plugin update only when market semver is higher than active version", async () => {
+    const pluginRoot = join(root, "source", "semver-plugin");
+    const indexPath = join(root, "market.json");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "semver-plugin",
+      version: "1.2.0"
+    });
+    await writeJson(indexPath, {
+      items: [
+        {
+          kind: "plugin",
+          id: "semver-plugin",
+          name: "Semver Plugin",
+          source: { type: "local", path: pluginRoot }
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+
+    const service = makeService(root);
+    const detail = await service.getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:semver-plugin"
+    });
+    const hash = detail.inspect?.kind === "plugin" ? detail.inspect.permissionsHash : "";
+    await service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:semver-plugin",
+      acceptedPermissionsHash: hash,
+      enableScope: "workspace"
+    });
+
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "semver-plugin",
+      version: "1.3.0"
+    });
+    const newer = await service.getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:semver-plugin"
+    });
+    expect(newer.inspect?.kind === "plugin" ? newer.inspect.installState : "").toBe("update-available");
+
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "semver-plugin",
+      version: "1.1.9"
+    });
+    const lower = await service.getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:semver-plugin"
+    });
+    expect(lower.inspect?.kind === "plugin" ? lower.inspect.installState : "").toBe("installed");
+  });
+
+  test("updates plugin versions while preserving enablement and one rollback version", async () => {
+    const pluginRoot = join(root, "source", "update-plugin");
+    const indexPath = join(root, "market.json");
+    const writePlugin = (version: string) => writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "update-plugin",
+      version,
+      permissions: { filesystem: { read: ["./**"] } }
+    });
+    await writePlugin("1.0.0");
+    await writeJson(indexPath, {
+      items: [
+        {
+          kind: "plugin",
+          id: "update-plugin",
+          name: "Update Plugin",
+          source: { type: "local", path: pluginRoot }
+        }
+      ]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+
+    const service = makeService(root);
+    const initialDetail = await service.getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:update-plugin"
+    });
+    const initialHash = initialDetail.inspect?.kind === "plugin" ? initialDetail.inspect.permissionsHash : "";
+    await service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:update-plugin",
+      acceptedPermissionsHash: initialHash,
+      enableScope: "workspace"
+    });
+
+    await writePlugin("1.1.0");
+    const firstUpdate = await service.updatePlugin({
+      workspaceSlug: "default",
+      pluginId: "update-plugin"
+    });
+    expect(firstUpdate).toMatchObject({
+      pluginId: "update-plugin",
+      installedVersion: "1.1.0",
+      activeVersion: "1.1.0",
+      previousActiveVersion: "1.0.0",
+      retainedVersions: ["1.1.0", "1.0.0"]
+    });
+    expect(getEffectivePluginRuntimeConfig("default").enabled).toEqual(["update-plugin"]);
+
+    await writePlugin("1.2.0");
+    const secondUpdate = await service.updatePlugin({
+      workspaceSlug: "default",
+      pluginId: "update-plugin"
+    });
+    expect(secondUpdate.retainedVersions).toEqual(["1.2.0", "1.1.0"]);
+    const state = await new FilePluginStateStore(join(root, "plugins-state.json")).read();
+    expect(state.plugins["update-plugin"]?.activeVersion).toBe("1.2.0");
+    expect(Object.keys(state.plugins["update-plugin"]?.versions ?? {}).sort()).toEqual(["1.1.0", "1.2.0"]);
+    expect(existsSync(join(root, "installed", "update-plugin", "1.0.0"))).toBe(false);
+    const updatedDetail = await service.getMarketDetail({
+      workspaceSlug: "default",
+      kind: "plugin",
+      itemId: "local-market:update-plugin"
+    });
+    const updatedItem = updatedDetail.item.kind === "plugin" ? updatedDetail.item.plugin : null;
+    expect(updatedItem?.installedVersion).toBe("1.2.0");
+    expect(updatedItem?.rollbackVersion).toBe("1.1.0");
+    expect(updatedItem?.installedPermissionsHash).toBe(state.plugins["update-plugin"]?.versions["1.2.0"]?.permissionsHash);
+
+    const rollback = await service.setPluginActiveVersion({
+      pluginId: "update-plugin",
+      version: "1.1.0"
+    });
+    expect(rollback).toMatchObject({
+      previousActiveVersion: "1.2.0",
+      activeVersion: "1.1.0",
+      needsReview: false
+    });
+  });
+
+  test("requires permission review when updating to changed plugin permissions", async () => {
+    const pluginRoot = join(root, "source", "permission-update-plugin");
+    const writePlugin = (version: string, writePermission = false) => writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "permission-update-plugin",
+      version,
+      permissions: writePermission ? { filesystem: { write: ["./data/**"] } } : {}
+    });
+    await writePlugin("1.0.0");
+
+    const service = makeService(root);
+    const initial = await service.inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "local", path: pluginRoot }
+    });
+    await service.installMarketItem({
+      workspaceSlug: "default",
+      kind: "plugin",
+      source: { type: "local", path: pluginRoot },
+      acceptedPermissionsHash: initial.permissionsHash,
+      enableScope: "workspace"
+    });
+
+    await writePlugin("1.1.0", true);
+    await expect(
+      service.updatePlugin({
+        workspaceSlug: "default",
+        pluginId: "permission-update-plugin"
+      })
+    ).rejects.toMatchObject({ code: "permission_review_required" });
+
+    const changed = await service.inspectMarketSource({
+      workspaceSlug: "default",
+      source: { type: "local", path: pluginRoot }
+    });
+    const updated = await service.updatePlugin({
+      workspaceSlug: "default",
+      pluginId: "permission-update-plugin",
+      acceptedPermissionsHash: changed.permissionsHash
+    });
+    expect(updated.activeVersion).toBe("1.1.0");
+  });
+
   test("plugin detail returns README content for local plugin sources", async () => {
     const pluginRoot = join(root, "source", "readme-plugin");
     const indexPath = join(root, "market.json");

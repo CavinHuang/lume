@@ -37,8 +37,10 @@ import {
   installGitHubSkillToWorkspace,
   installSkillMarketItemToWorkspace,
   openFolderDialog,
+  setPluginActiveVersion,
   setPluginEnablement,
   uninstallPlugin,
+  updatePlugin,
   updatePluginsConfig,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
@@ -218,16 +220,54 @@ export function SkillsMarketView() {
     setError(null)
     try {
       const installState = pluginDetail.inspect.kind === 'plugin' ? pluginDetail.inspect.installState : marketItem.installState
-      await installMarketItem({
-        workspaceSlug,
-        kind: 'plugin',
-        itemId: marketItem.id,
-        acceptedPermissionsHash: pluginDetail.inspect.permissionsHash,
-        enableScope: 'workspace',
-        overwrite: installState === 'update-available',
+      if (installState === 'update-available') {
+        await updatePlugin({
+          workspaceSlug,
+          pluginId: marketItem.pluginId,
+          acceptedPermissionsHash: pluginDetail.inspect.permissionsHash,
+        })
+        const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: marketItem.id })
+        setPluginDetail(refreshed)
+        if (refreshed.item.kind === 'plugin') {
+          setSelectedPlugin(refreshed.item.plugin)
+        }
+      } else {
+        await installMarketItem({
+          workspaceSlug,
+          kind: 'plugin',
+          itemId: marketItem.id,
+          acceptedPermissionsHash: pluginDetail.inspect.permissionsHash,
+          enableScope: 'workspace',
+          overwrite: false,
+        })
+        setSelectedPlugin(null)
+        setPluginDetail(null)
+      }
+      await loadCatalog()
+    } catch (err) {
+      setPluginDetailError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyItemId(null)
+    }
+  }
+
+  const handleRollbackPluginFromDetail = async () => {
+    const marketItem = pluginDetail?.item.kind === 'plugin' ? pluginDetail.item.plugin : selectedPlugin
+    if (!workspaceSlug || !marketItem?.rollbackVersion) return
+
+    setBusyItemId(`plugin:${marketItem.id}`)
+    setPluginDetailError(null)
+    setError(null)
+    try {
+      await setPluginActiveVersion({
+        pluginId: marketItem.pluginId,
+        version: marketItem.rollbackVersion,
       })
-      setSelectedPlugin(null)
-      setPluginDetail(null)
+      const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: marketItem.id })
+      setPluginDetail(refreshed)
+      if (refreshed.item.kind === 'plugin') {
+        setSelectedPlugin(refreshed.item.plugin)
+      }
       await loadCatalog()
     } catch (err) {
       setPluginDetailError(err instanceof Error ? err.message : String(err))
@@ -372,6 +412,7 @@ export function SkillsMarketView() {
         onUninstall={() => void handleUninstallPluginFromDetail()}
         onToggleEnable={() => void handleTogglePluginFromDetail()}
         onTryInChat={handleTryPluginInChat}
+        onRollback={() => void handleRollbackPluginFromDetail()}
       />
     )
   }

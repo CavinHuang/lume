@@ -6,6 +6,7 @@ import {
   Loader2,
   Power,
   Puzzle,
+  RotateCcw,
   ShieldCheck,
   Trash2,
 } from 'lucide-react'
@@ -17,6 +18,7 @@ import { cn } from '@/lib/utils'
 import { PLUGIN_SOURCE_LABELS } from './plugin-market-ui-state'
 import {
   buildPermissionRows,
+  buildPluginUpdateAction,
   buildPluginSetupItems,
   formatPluginEnableState,
   formatPluginInstallState,
@@ -36,6 +38,7 @@ export interface PluginDetailPageProps {
   onUninstall: () => void
   onToggleEnable: () => void
   onTryInChat: () => void
+  onRollback?: () => void
 }
 
 export function PluginDetailPage({
@@ -48,6 +51,7 @@ export function PluginDetailPage({
   onUninstall,
   onToggleEnable,
   onTryInChat,
+  onRollback,
 }: PluginDetailPageProps) {
   const item = detail?.item.kind === 'plugin' ? detail.item.plugin : null
   const inspected = detail?.inspect?.kind === 'plugin' ? detail.inspect : null
@@ -67,6 +71,14 @@ export function PluginDetailPage({
   const enabled = enableState === 'global-enabled' || enableState === 'workspace-enabled'
   const canInstall = Boolean(item && inspected && !installedLike)
   const canUpdate = Boolean(item && inspected && updateAvailable)
+  const permissionChanged = Boolean(updateAvailable && item && (!inspected || item.installedPermissionsHash !== inspected.permissionsHash))
+  const updateAction = item ? buildPluginUpdateAction({
+    updateAvailable,
+    permissionChanged,
+    version: item.version,
+  }) : null
+  const currentVersion = item?.installedVersion ?? item?.version ?? ''
+  const rollbackVersion = item?.rollbackVersion
 
   return (
     <div
@@ -130,7 +142,7 @@ export function PluginDetailPage({
                       className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
                     >
                       {busy ? <Loader2 size={15} className="animate-spin" /> : <Power size={15} />}
-                      确认权限并更新
+                      {updateAction?.label ?? '确认权限并更新'}
                     </Button>
                   ) : installedLike && enabled ? (
                     <Button
@@ -227,7 +239,14 @@ export function PluginDetailPage({
                   <div className="grid gap-3 sm:grid-cols-3">
                     <SummaryStat label="安装状态" value={formatPluginInstallState(installState)} />
                     <SummaryStat label="启用状态" value={formatPluginEnableState(enableState)} />
-                    <SummaryStat label="版本" value={`v${item.version}`} />
+                    {updateAvailable ? (
+                      <>
+                        <SummaryStat label="当前版本" value={`v${currentVersion}`} />
+                        <SummaryStat label="可更新版本" value={`v${item.version}`} />
+                      </>
+                    ) : (
+                      <SummaryStat label="版本" value={`v${item.version}`} />
+                    )}
                   </div>
                   <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
                     <ShieldCheck size={18} className="text-[var(--lume-success)]" />
@@ -319,7 +338,19 @@ export function PluginDetailPage({
             </Tabs>
 
             {installedLike && (
-              <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-5">
+              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--border)] pt-5">
+                {rollbackVersion && onRollback && (
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    disabled={busy}
+                    onClick={onRollback}
+                    className="h-9 gap-2 rounded-[8px] border border-[var(--border)] px-4 text-[13px] font-semibold"
+                  >
+                    <RotateCcw size={15} />
+                    回滚到 v{rollbackVersion}
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   type="button"

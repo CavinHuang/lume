@@ -11,6 +11,11 @@ export interface PluginSetupItem {
   status: 'done' | 'attention' | 'idle'
 }
 
+export interface PluginUpdateAction {
+  label: string
+  requiresPermissionReview: boolean
+}
+
 export function formatPluginInstallState(state: PluginMarketItem['installState']): string {
   switch (state) {
     case 'installed':
@@ -50,6 +55,20 @@ export function formatRiskLabel(risk: PluginMarketItem['permissions']['riskLabel
     case 'high-risk-tool':
       return '高风险工具'
   }
+}
+
+export function buildPluginUpdateAction(input: {
+  updateAvailable: boolean
+  permissionChanged: boolean
+  version: string
+}): PluginUpdateAction {
+  if (!input.updateAvailable) {
+    return { label: '确认权限并安装', requiresPermissionReview: false }
+  }
+  if (input.permissionChanged) {
+    return { label: '确认权限并更新', requiresPermissionReview: true }
+  }
+  return { label: `更新到 v${input.version}`, requiresPermissionReview: false }
 }
 
 export function buildPermissionRows(item: PluginMarketItem): PermissionRow[] {
