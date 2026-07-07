@@ -175,3 +175,71 @@ describe("LumePluginManifest", () => {
     })).toThrow("marketplace.thumbnail");
   });
 });
+
+describe("PluginMarketplaceSetupStep bridge fields", () => {
+  test("解析 artifact/download/build/targetApp/verify 字段", () => {
+    const parsed = parseManifest({
+      schema: "lume-plugin/v1",
+      name: "demo",
+      version: "1.0.0",
+      marketplace: {
+        setup: [
+          {
+            id: "install-ext",
+            title: "安装扩展",
+            description: "加载已解包扩展",
+            kind: "install",
+            artifact: { path: "./ext.zip", kind: "chrome-extension" },
+            download: { url: "https://example.com/asset.zip", filename: "asset.zip" },
+            build: { command: "cargo build --release", cwd: "./host", prerequisites: "需 Rust" },
+            targetApp: { kind: "chrome", installHint: "chrome://extensions" },
+            verify: { method: "chrome-extension", detail: "abcdefg" },
+          },
+        ],
+      },
+    });
+    const step = parsed.marketplace!.setup![0];
+    expect(step.artifact).toEqual({ path: "./ext.zip", kind: "chrome-extension" });
+    expect(step.download).toEqual({ url: "https://example.com/asset.zip", filename: "asset.zip" });
+    expect(step.build).toEqual({ command: "cargo build --release", cwd: "./host", prerequisites: "需 Rust" });
+    expect(step.targetApp).toEqual({ kind: "chrome", installHint: "chrome://extensions" });
+    expect(step.verify).toEqual({ method: "chrome-extension", detail: "abcdefg" });
+  });
+
+  test("拒绝非 https 的 download.url（丢弃 download 字段）", () => {
+    const parsed = parseManifest({
+      schema: "lume-plugin/v1",
+      name: "demo",
+      version: "1.0.0",
+      marketplace: {
+        setup: [{ id: "s1", title: "t", description: "d", download: { url: "http://insecure.com/a.zip" } }],
+      },
+    });
+    expect(parsed.marketplace!.setup![0].download).toBeUndefined();
+  });
+
+  test("拒绝含 .. 的 artifact.path（整步丢弃）", () => {
+    const parsed = parseManifest({
+      schema: "lume-plugin/v1",
+      name: "demo",
+      version: "1.0.0",
+      marketplace: {
+        setup: [{ id: "s1", title: "t", description: "d", artifact: { path: "./../escape.zip", kind: "file" } }],
+      },
+    });
+    // path 非法则该步被丢弃（validatePluginPath 抛错被 flatMap 捕获为空）
+    // 注：该步丢弃后 setup 为空，normalizeMarketplace 整体返回 undefined（marketplace 无其他字段），
+    // 故此处用可选链访问 marketplace（brief 原文为 non-null 断言 `!`，会触发 TypeError）。
+    expect(parsed.marketplace?.setup?.length ?? 0).toBe(0);
+  });
+
+  test("无新字段的旧 setup step 仍正常解析", () => {
+    const parsed = parseManifest({
+      schema: "lume-plugin/v1",
+      name: "demo",
+      version: "1.0.0",
+      marketplace: { setup: [{ id: "s1", title: "t", description: "d", kind: "install" }] },
+    });
+    expect(parsed.marketplace!.setup).toEqual([{ id: "s1", title: "t", description: "d", kind: "install" }]);
+  });
+});

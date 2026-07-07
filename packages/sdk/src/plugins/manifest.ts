@@ -59,11 +59,51 @@ export type PluginMarketplaceSetupKind =
   | "mcp"
   | "custom";
 
+export type PluginSetupArtifactKind =
+  | "chrome-extension"
+  | "obsidian-plugin"
+  | "native-binary"
+  | "node-bundle"
+  | "file";
+
+export interface PluginSetupArtifact {
+  path: string;
+  kind: PluginSetupArtifactKind;
+}
+
+export interface PluginSetupDownload {
+  url: string;
+  filename?: string;
+  sha256?: string;
+}
+
+export interface PluginSetupBuild {
+  command: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  prerequisites?: string;
+}
+
+export interface PluginSetupTargetApp {
+  kind: "chrome" | "obsidian" | "system-path";
+  installHint?: string;
+}
+
+export interface PluginSetupVerify {
+  method: "tcp-port" | "chrome-extension" | "http-get" | "none";
+  detail?: string;
+}
+
 export interface PluginMarketplaceSetupStep {
   id: string;
   title: string;
   description: string;
   kind?: PluginMarketplaceSetupKind;
+  artifact?: PluginSetupArtifact;
+  download?: PluginSetupDownload;
+  build?: PluginSetupBuild;
+  targetApp?: PluginSetupTargetApp;
+  verify?: PluginSetupVerify;
 }
 
 export interface PluginMarketplaceManifest {
@@ -208,6 +248,13 @@ function normalizeMarketplace(raw: unknown): PluginMarketplaceManifest | undefin
       ) {
         return [];
       }
+      const artifact = parseArtifact(step.artifact);
+      const download = parseDownload(step.download);
+      const build = parseBuild(step.build);
+      const targetApp = parseTargetApp(step.targetApp);
+      const verify = parseVerify(step.verify);
+      // artifact.path 非法时整步丢弃（与现有 validatePluginPath 抛错语义一致）
+      if (step.artifact && !artifact) return [];
       return [{
         id: step.id,
         title: step.title,
@@ -215,6 +262,11 @@ function normalizeMarketplace(raw: unknown): PluginMarketplaceManifest | undefin
         ...(typeof step.kind === "string" && MARKETPLACE_SETUP_KINDS.has(step.kind as PluginMarketplaceSetupKind)
           ? { kind: step.kind as PluginMarketplaceSetupKind }
           : {}),
+        ...(artifact ? { artifact } : {}),
+        ...(download ? { download } : {}),
+        ...(build ? { build } : {}),
+        ...(targetApp ? { targetApp } : {}),
+        ...(verify ? { verify } : {}),
       }];
     });
     if (setup.length > 0) {
@@ -223,6 +275,74 @@ function normalizeMarketplace(raw: unknown): PluginMarketplaceManifest | undefin
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+const SETUP_ARTIFACT_KINDS = new Set<PluginSetupArtifactKind>([
+  "chrome-extension", "obsidian-plugin", "native-binary", "node-bundle", "file",
+]);
+const SETUP_TARGET_KINDS = new Set<PluginSetupTargetApp["kind"]>(["chrome", "obsidian", "system-path"]);
+const SETUP_VERIFY_METHODS = new Set<PluginSetupVerify["method"]>(["tcp-port", "chrome-extension", "http-get", "none"]);
+
+function parseArtifact(raw: unknown): PluginSetupArtifact | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const v = raw as Record<string, unknown>;
+  if (typeof v.path !== "string" || typeof v.kind !== "string") return undefined;
+  if (!SETUP_ARTIFACT_KINDS.has(v.kind as PluginSetupArtifactKind)) return undefined;
+  try {
+    validatePluginPath(v.path, "marketplace.setup.artifact.path");
+  } catch {
+    return undefined;
+  }
+  return { path: v.path, kind: v.kind as PluginSetupArtifactKind };
+}
+
+function parseDownload(raw: unknown): PluginSetupDownload | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const v = raw as Record<string, unknown>;
+  if (typeof v.url !== "string") return undefined;
+  // 强制 https
+  if (!v.url.startsWith("https://")) return undefined;
+  return {
+    url: v.url,
+    ...(typeof v.filename === "string" ? { filename: v.filename } : {}),
+    ...(typeof v.sha256 === "string" ? { sha256: v.sha256 } : {}),
+  };
+}
+
+function parseBuild(raw: unknown): PluginSetupBuild | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const v = raw as Record<string, unknown>;
+  if (typeof v.command !== "string") return undefined;
+  if (typeof v.cwd === "string") {
+    try { validatePluginPath(v.cwd, "marketplace.setup.build.cwd"); }
+    catch { return undefined; }
+  }
+  return {
+    command: v.command,
+    ...(typeof v.cwd === "string" ? { cwd: v.cwd } : {}),
+    ...(v.env && typeof v.env === "object" && !Array.isArray(v.env) ? { env: v.env as Record<string, string> } : {}),
+    ...(typeof v.prerequisites === "string" ? { prerequisites: v.prerequisites } : {}),
+  };
+}
+
+function parseTargetApp(raw: unknown): PluginSetupTargetApp | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const v = raw as Record<string, unknown>;
+  if (typeof v.kind !== "string" || !SETUP_TARGET_KINDS.has(v.kind as PluginSetupTargetApp["kind"])) return undefined;
+  return {
+    kind: v.kind as PluginSetupTargetApp["kind"],
+    ...(typeof v.installHint === "string" ? { installHint: v.installHint } : {}),
+  };
+}
+
+function parseVerify(raw: unknown): PluginSetupVerify | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const v = raw as Record<string, unknown>;
+  if (typeof v.method !== "string" || !SETUP_VERIFY_METHODS.has(v.method as PluginSetupVerify["method"])) return undefined;
+  return {
+    method: v.method as PluginSetupVerify["method"],
+    ...(typeof v.detail === "string" ? { detail: v.detail } : {}),
+  };
 }
 
 export function inferDefaults(manifest: LumePluginManifest): LumePluginManifest {
