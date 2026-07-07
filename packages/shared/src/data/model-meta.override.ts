@@ -40,7 +40,11 @@ export const MODEL_OVERRIDES: Record<string, ModelOverride> = {
   // 同上：models.dev 报 1_048_576，保持 1_000_000 与原硬编码 / UI "1M" 显示一致
   'gemini-2.5-flash': { contextWindow: 1_000_000, aliases: ['gemini-2.5-flash-preview-05-20'] },
   'gemini-2.0-flash': { contextWindow: 1_000_000 },
-  'deepseek-chat': { aliases: ['deepseek-v3'] },
+  // models.dev 高估 contextWindow，对齐官方 API 上限
+  'deepseek-chat': { contextWindow: 128_000, aliases: ['deepseek-v3'] },
+  'qwen-plus': { contextWindow: 128_000 },
+  'qwen-turbo': { contextWindow: 128_000 },
+  'qwen-vl-max': { contextWindow: 32_000 },
   'step-3.7-flash': { description: '阶跃星辰旗舰多模态推理模型，支持三档推理强度' },
   'step-3.5-flash-2603': { description: '针对高频 Agent 场景优化，Token 效率提升、推理速度更快' },
   'step-3.5-flash': { description: '196B MoE 架构，高速推理，专为智能体和代码任务优化' },
