@@ -26,6 +26,13 @@ const miniCatalog: Catalog = {
           limit: { context: 128000 },
           // 无 cost 字段
         }),
+        // vision-only：无 attachment，仅靠 modalities.input 含 image 推出 vision
+        'vision-only': mkModel({
+          name: 'Vision Only',
+          tool_call: true,
+          modalities: { input: ['text', 'image'], output: ['text'] },
+          limit: { context: 8000 },
+        }),
       },
     },
     anthropic: {
@@ -77,8 +84,9 @@ describe('buildGeneratedFromCatalog', () => {
   })
 
   test('vision 也可由 modalities.input 含 image 推出', () => {
-    const claude = result.find((m) => m.id === 'claude-sonnet-4-5') as ModelMeta
-    expect(claude.capabilities.vision).toBe(true)
+    // vision-only fixture：attachment 缺失，仅靠 modalities.input 含 image 推出 vision
+    const visionOnly = result.find((m) => m.id === 'vision-only') as ModelMeta
+    expect(visionOnly.capabilities.vision).toBe(true)
   })
 
   test('定价单位不变（USD/1M tokens，禁止换算）', () => {
