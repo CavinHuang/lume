@@ -81,6 +81,7 @@ import {
 } from './agent-input-role-recommendations'
 import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
 import { DesktopContextPlusItem } from './DesktopContextPlusItem'
+import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
 import {
   captureAgentInputDesktopContextTarget,
   createDesktopContextMessageMetadata,
@@ -281,6 +282,7 @@ export function AgentInput({
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
   const availableDesktopContextTarget = desktopContextTarget ?? capturedDesktopContextTarget ?? localDesktopContextTarget
+  const selectedDesktopContextTarget = desktopContextTarget ?? localDesktopContextTarget
   const effectiveMessageMetadata = useMemo(() => {
     const localMetadata = localDesktopContextTarget
       ? createDesktopContextMessageMetadata(localDesktopContextTarget)
@@ -1101,12 +1103,22 @@ export function AgentInput({
               ) : undefined
             }
             supportingContent={
-              roleRecommendations.length > 0 ? (
+              selectedDesktopContextTarget || roleRecommendations.length > 0 ? (
                 <div className="space-y-2 px-3 pb-2">
-                  <AgentRoleRecommendationChips
-                    recommendations={roleRecommendations}
-                    onSelect={applyRoleRecommendation}
-                  />
+                  {selectedDesktopContextTarget ? (
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <DesktopContextSelectionChip
+                        target={selectedDesktopContextTarget}
+                        onClear={desktopContextTarget ? undefined : () => setLocalDesktopContextTarget(undefined)}
+                      />
+                    </div>
+                  ) : null}
+                  {roleRecommendations.length > 0 ? (
+                    <AgentRoleRecommendationChips
+                      recommendations={roleRecommendations}
+                      onSelect={applyRoleRecommendation}
+                    />
+                  ) : null}
                 </div>
               ) : undefined
             }
