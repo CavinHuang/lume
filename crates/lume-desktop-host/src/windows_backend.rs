@@ -3,6 +3,9 @@ use std::{
     time::Duration,
 };
 
+use crate::windows_overlay::{
+    move_visual_cursor, pulse_visual_cursor, settle_visual_cursor, VISUAL_CURSOR_WINDOW_TITLE,
+};
 use crate::DesktopBackend;
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -625,23 +628,29 @@ fn activate(hwnd: HWND) -> Result<()> {
 }
 
 fn move_pointer(params: &Value) -> Result<Value> {
-    if let Some(hwnd) = target_window(params) {
+    let target = target_window(params);
+    if let Some(hwnd) = target {
         activate(hwnd)?;
     }
     let (x, y) = action_point(params)?;
-    animate_pointer(x, y)?;
+    animate_pointer(x, y, target)?;
     Ok(json!({ "status": "ok" }))
 }
 
 fn click(params: &Value, secondary: bool) -> Result<Value> {
-    if let Some(hwnd) = target_window(params) {
+    let target = target_window(params);
+    if let Some(hwnd) = target {
         activate(hwnd)?;
     }
-    if params.get("elementId").is_some() || (params.get("x").is_some() && params.get("y").is_some())
+    let point = if params.get("elementId").is_some()
+        || (params.get("x").is_some() && params.get("y").is_some())
     {
-        let (x, y) = action_point(params)?;
-        animate_pointer(x, y)?;
-    }
+        let point = action_point(params)?;
+        animate_pointer(point.0, point.1, target)?;
+        point
+    } else {
+        current_pointer()?
+    };
     if secondary {
         send_mouse(MOUSEEVENTF_RIGHTDOWN, 0)?;
         send_mouse(MOUSEEVENTF_RIGHTUP, 0)?;
@@ -649,26 +658,38 @@ fn click(params: &Value, secondary: bool) -> Result<Value> {
         send_mouse(MOUSEEVENTF_LEFTDOWN, 0)?;
         send_mouse(MOUSEEVENTF_LEFTUP, 0)?;
     }
+    pulse_visual_cursor(point.0, point.1, target);
     Ok(json!({ "status": "ok" }))
 }
 
 fn scroll(params: &Value) -> Result<Value> {
-    if let Some(hwnd) = target_window(params) {
+    let target = target_window(params);
+    if let Some(hwnd) = target {
         activate(hwnd)?;
     }
+    let point = current_pointer()?;
+    settle_visual_cursor(point.0, point.1, target);
     let delta = params.get("deltaY").and_then(Value::as_i64).unwrap_or(0) as i32;
     send_mouse(MOUSEEVENTF_WHEEL, (-delta).cast_unsigned())?;
     Ok(json!({ "status": "ok" }))
 }
 
 fn drag(params: &Value) -> Result<Value> {
-    if let Some(hwnd) = target_window(params) {
+    let target = target_window(params);
+    if let Some(hwnd) = target {
         activate(hwnd)?;
     }
-    animate_pointer(int_param(params, "fromX")?, int_param(params, "fromY")?)?;
+    animate_pointer(
+        int_param(params, "fromX")?,
+        int_param(params, "fromY")?,
+        target,
+    )?;
     send_mouse(MOUSEEVENTF_LEFTDOWN, 0)?;
-    animate_pointer(int_param(params, "toX")?, int_param(params, "toY")?)?;
+    let to_x = int_param(params, "toX")?;
+    let to_y = int_param(params, "toY")?;
+    animate_pointer(to_x, to_y, target)?;
     send_mouse(MOUSEEVENTF_LEFTUP, 0)?;
+    pulse_visual_cursor(to_x, to_y, target);
     Ok(json!({ "status": "ok" }))
 }
 
@@ -716,14 +737,16 @@ fn type_text(params: &Value) -> Result<Value> {
 }
 
 fn set_value(params: &Value) -> Result<Value> {
-    if let Some(hwnd) = target_window(params) {
+    let target = target_window(params);
+    if let Some(hwnd) = target {
         activate(hwnd)?;
     }
     if params.get("elementId").is_some() {
         let (x, y) = action_point(params)?;
-        animate_pointer(x, y)?;
+        animate_pointer(x, y, target)?;
         send_mouse(MOUSEEVENTF_LEFTDOWN, 0)?;
         send_mouse(MOUSEEVENTF_LEFTUP, 0)?;
+        pulse_visual_cursor(x, y, target);
     }
     let value = params
         .get("value")
@@ -817,6 +840,9 @@ fn window_json(hwnd: HWND) -> Option<Value> {
         GetWindowRect(hwnd, &mut rect).ok()?;
         let mut process_id = 0_u32;
         GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+        if process_id == std::process::id() && title == VISUAL_CURSOR_WINDOW_TITLE {
+            return None;
+        }
         let app_name = process_name(process_id).unwrap_or_else(|| format!("process-{process_id}"));
         let app_id = app_name.to_lowercase();
         let foreground = GetForegroundWindow();
@@ -871,7 +897,8 @@ fn window_id(hwnd: HWND) -> String {
     format!("win:{}", hwnd.0 as usize)
 }
 
-fn animate_pointer(x: i32, y: i32) -> Result<()> {
+fn animate_pointer(x: i32, y: i32, target_window: Option<HWND>) -> Result<()> {
+    move_visual_cursor(x, y, target_window);
     let mut from = POINT::default();
     unsafe {
         GetCursorPos(&mut from)?;
@@ -885,7 +912,16 @@ fn animate_pointer(x: i32, y: i32) -> Result<()> {
         }
         thread::sleep(Duration::from_millis(18));
     }
+    settle_visual_cursor(x, y, target_window);
     Ok(())
+}
+
+fn current_pointer() -> Result<(i32, i32)> {
+    let mut point = POINT::default();
+    unsafe {
+        GetCursorPos(&mut point)?;
+    }
+    Ok((point.x, point.y))
 }
 
 fn send_mouse(

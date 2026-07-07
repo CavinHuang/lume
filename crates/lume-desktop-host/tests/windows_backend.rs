@@ -1,6 +1,12 @@
 #![cfg(windows)]
 
-use lume_desktop_host::{windows_backend::WindowsDesktopBackend, DesktopBackend};
+use std::{thread, time::Duration};
+
+use lume_desktop_host::{
+    windows_backend::WindowsDesktopBackend,
+    windows_overlay::{move_visual_cursor, reset_visual_cursor},
+    DesktopBackend,
+};
 use serde_json::json;
 
 #[test]
@@ -49,4 +55,22 @@ fn get_window_state_can_include_screenshot_pixels_when_requested() {
         .as_str()
         .unwrap_or_default();
     assert!(data_url.starts_with("data:image/bmp;base64,"));
+}
+
+#[test]
+fn excludes_the_visual_cursor_window_from_agent_visible_app_lists() {
+    move_visual_cursor(80, 80, None);
+    thread::sleep(Duration::from_millis(220));
+
+    let backend = WindowsDesktopBackend;
+    let result = backend.invoke("list_windows", &json!({})).unwrap();
+    let titles = result["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|window| window["title"].as_str())
+        .collect::<Vec<_>>();
+    reset_visual_cursor();
+
+    assert!(!titles.contains(&"Lume Visual Cursor"));
 }

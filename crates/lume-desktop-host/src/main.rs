@@ -16,6 +16,8 @@ async fn main() {
 }
 
 async fn run() -> Result<()> {
+    #[cfg(windows)]
+    lume_desktop_host::initialize_windows_runtime().context("enable per-monitor DPI awareness")?;
     let endpoint = parse_endpoint()?;
     let token =
         env::var("LUME_DESKTOP_HOST_TOKEN").context("LUME_DESKTOP_HOST_TOKEN is required")?;

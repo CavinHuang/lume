@@ -3,8 +3,19 @@ use serde_json::{json, Value};
 
 #[cfg(windows)]
 pub mod windows_backend;
+#[cfg(windows)]
+pub mod windows_overlay;
 
 pub const PROTOCOL_VERSION: u64 = 1;
+
+#[cfg(windows)]
+pub fn initialize_windows_runtime() -> windows::core::Result<()> {
+    use windows::Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+
+    unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) }
+}
 
 pub trait DesktopBackend: Send + Sync {
     fn invoke(&self, method: &str, params: &Value) -> Result<Value>;
