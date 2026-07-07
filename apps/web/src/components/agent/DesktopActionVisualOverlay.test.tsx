@@ -26,4 +26,28 @@ describe('DesktopActionVisualOverlayFrame', () => {
     expect(html).toContain('data-phase="started"')
     expect(html).not.toContain('password=secret')
   })
+
+  test('shows failed action status without leaking typed text', () => {
+    const html = renderToStaticMarkup(
+      <DesktopActionVisualOverlayFrame
+        state={{
+          id: 'visual-failed',
+          threadId: 'thread-1',
+          phase: 'failed',
+          action: 'click',
+          appName: '微信',
+          targetLabel: '发送',
+          point: { x: 320, y: 240 },
+          status: 'stale_target',
+          updatedAt: 100,
+        }}
+      />,
+    )
+
+    expect(html).toContain('操作未完成')
+    expect(html).toContain('微信')
+    expect(html).toContain('发送')
+    expect(html).toContain('stale_target')
+    expect(html).not.toContain('password')
+  })
 })

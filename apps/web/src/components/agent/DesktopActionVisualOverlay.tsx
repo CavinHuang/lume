@@ -31,6 +31,14 @@ export function DesktopActionVisualOverlayFrame({
   const failed = state.phase === 'failed'
   const title = completed ? '操作完成' : failed ? '操作未完成' : 'Lume 正在操作'
   const detail = `${ACTION_LABELS[state.action]}${state.targetLabel ? ` · ${state.targetLabel}` : ''}`
+  const frameClassName = failed
+    ? 'border-red-300/60 bg-[#321515]/95 shadow-[0_18px_55px_rgba(80,7,18,0.34)]'
+    : completed
+      ? 'border-emerald-200/60 bg-[#102a20]/95 shadow-[0_18px_55px_rgba(3,45,25,0.34)]'
+      : 'border-[#9ee9d8]/70 bg-[#102a2a]/95 shadow-[0_18px_55px_rgba(3,34,32,0.38)]'
+  const iconClassName = failed
+    ? 'bg-red-100 text-red-700 shadow-[0_0_24px_rgba(255,127,127,0.26)]'
+    : 'bg-[#caffec] text-[#0d574c] shadow-[0_0_24px_rgba(127,255,218,0.34)]'
 
   return (
     <div
@@ -40,10 +48,10 @@ export function DesktopActionVisualOverlayFrame({
     >
       <div
         data-phase={state.phase}
-        className="relative flex min-w-[300px] max-w-[min(520px,calc(100vw-32px))] items-center gap-3 overflow-hidden rounded-[18px] border border-[#9ee9d8]/70 bg-[#102a2a]/95 px-3.5 py-3 text-white shadow-[0_18px_55px_rgba(3,34,32,0.38)] backdrop-blur-xl"
+        className={`relative flex min-w-[300px] max-w-[min(520px,calc(100vw-32px))] items-center gap-3 overflow-hidden rounded-[18px] border px-3.5 py-3 text-white ${frameClassName} backdrop-blur-xl`}
       >
         <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-[#b8ffe7] to-transparent" />
-        <span className="relative grid size-10 shrink-0 place-items-center rounded-[13px] bg-[#caffec] text-[#0d574c] shadow-[0_0_24px_rgba(127,255,218,0.34)]">
+        <span className={`relative grid size-10 shrink-0 place-items-center rounded-[13px] ${iconClassName}`}>
           {completed ? <Check size={19} strokeWidth={2.5} /> : failed ? <CircleAlert size={19} /> : <Sparkles size={18} className="animate-pulse" />}
         </span>
         <span className="min-w-0 flex-1">
@@ -53,7 +61,14 @@ export function DesktopActionVisualOverlayFrame({
               {state.appName}
             </span>
           </span>
-          <span className="mt-0.5 block truncate text-[12px] text-white/65">{detail}</span>
+          <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[12px] text-white/65">
+            <span className="truncate">{detail}</span>
+            {state.status ? (
+              <span className="shrink-0 rounded-full border border-white/10 bg-black/20 px-1.5 py-0.5 font-mono text-[10px] text-white/70">
+                {state.status}
+              </span>
+            ) : null}
+          </span>
         </span>
         <span className="relative flex shrink-0 items-center gap-1.5 rounded-full border border-[#bfffea]/25 bg-black/20 px-2.5 py-1.5 text-[10px] font-medium text-[#d7fff4]">
           <MousePointer2 size={14} className={state.phase === 'started' ? 'animate-pulse' : ''} />
