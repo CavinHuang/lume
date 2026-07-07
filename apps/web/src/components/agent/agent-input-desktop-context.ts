@@ -5,6 +5,7 @@ import {
 
 type SidecarCall = (method: string, params: Record<string, unknown>) => Promise<unknown>
 const DEFAULT_MAX_PRECAPTURED_CONTEXT_AGE_MS = 60_000
+const LUME_SELF_CONTEXT_MESSAGE = '当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。'
 
 type DesktopContextCaptureResult = {
   status?: string
@@ -27,13 +28,13 @@ export async function captureAgentInputDesktopContextState(
   if (getPrecapturedContext) {
     const precaptured = desktopContextCaptureToTarget(await getPrecapturedContext().catch(() => undefined))
     if (precaptured && isFreshPrecapturedContext(precaptured, options)) {
-      return { status: 'ready', target: precaptured }
+      return desktopContextTargetState(precaptured)
     }
   }
   try {
     const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, { userInitiated: true })
     const target = desktopContextCaptureToTarget(result)
-    if (target) return { status: 'ready', target }
+    if (target) return desktopContextTargetState(target)
     return { status: 'unavailable', message: desktopContextCaptureMessage(result) }
   } catch (error) {
     return {
@@ -93,4 +94,16 @@ function isFreshPrecapturedContext(
   const nowMs = options.nowMs ?? Date.now()
   const maxAgeMs = options.maxPrecapturedAgeMs ?? DEFAULT_MAX_PRECAPTURED_CONTEXT_AGE_MS
   return nowMs - target.capturedAt <= maxAgeMs
+}
+
+function desktopContextTargetState(target: DesktopContextTarget): AgentInputDesktopContextCaptureState {
+  return isLumeShellTarget(target)
+    ? { status: 'unavailable', message: LUME_SELF_CONTEXT_MESSAGE }
+    : { status: 'ready', target }
+}
+
+function isLumeShellTarget(target: DesktopContextTarget): boolean {
+  const appText = `${target.app.id} ${target.app.name}`.toLowerCase()
+  const title = target.window.title.toLowerCase()
+  return appText.includes('lume') || (appText.includes('electron') && title.includes('lume'))
 }

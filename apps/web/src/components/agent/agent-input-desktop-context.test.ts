@@ -112,6 +112,34 @@ describe('agent-input desktop context helpers', () => {
     })
   })
 
+  test('does not attach Lume itself as the current desktop app', async () => {
+    expect(await captureAgentInputDesktopContextState(async () => ({
+      status: 'ok',
+      snapshotId: 'snap-lume',
+      app: { id: 'electron.exe', name: 'electron.exe' },
+      window: { id: 'win:lume', title: 'Lume' },
+      capturedAt: 10_000,
+    }))).toEqual({
+      status: 'unavailable',
+      message: '当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。',
+    })
+
+    expect(await captureAgentInputDesktopContextState(
+      async () => ({ status: 'unavailable', message: 'sidecar should not be used' }),
+      async () => ({
+        status: 'ok',
+        snapshotId: 'snap-lume-quick',
+        app: { id: 'lume.exe', name: 'Lume' },
+        window: { id: 'win:lume-quick', title: 'Lume Quick Input' },
+        capturedAt: 10_000,
+      }),
+      { nowMs: 10_000 },
+    )).toEqual({
+      status: 'unavailable',
+      message: '当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。',
+    })
+  })
+
   test('ignores invalid or unavailable capture results', async () => {
     expect(await captureAgentInputDesktopContextTarget(async () => ({
       status: 'unavailable',
