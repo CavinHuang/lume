@@ -659,9 +659,16 @@ function MarketCard({
         </p>
       </div>
       <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-3 pt-3">
-        <span className={cn('min-w-0 break-all rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(card.category))}>
-          {card.category}
-        </span>
+        <div className="flex min-w-0 items-center gap-2 flex-wrap">
+          <span className={cn('min-w-0 break-all rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(card.category))}>
+            {card.category}
+          </span>
+          {card.needsBridge && (
+            <span className="min-w-0 break-all rounded-[5px] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] px-2 py-1 text-[12px] font-medium text-[var(--lume-warning)]">
+              🔌 需桥接
+            </span>
+          )}
+        </div>
         <Button
                 variant="ghost"
           type="button"

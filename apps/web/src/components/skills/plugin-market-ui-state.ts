@@ -14,6 +14,7 @@ export interface MarketCardView {
   installState: PluginMarketItem['installState'] | SkillCatalogItem['installState']
   enabled: boolean
   item: PluginMarketItem | SkillCatalogItem
+  needsBridge?: boolean
 }
 
 export interface MarketFilterInput {
@@ -67,6 +68,7 @@ export function buildMarketCards(input: MarketCatalogInput): MarketCardView[] {
       installState: plugin.installState,
       enabled: plugin.enableState === 'global-enabled' || plugin.enableState === 'workspace-enabled',
       item: plugin,
+      needsBridge: (plugin.marketplace?.setup?.length ?? 0) > 0,
     })),
     ...input.skills.map((skill): MarketCardView => ({
       kind: 'skill',
