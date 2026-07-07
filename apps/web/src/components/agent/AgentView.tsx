@@ -21,8 +21,7 @@ import { ThreadFileEnvProvider } from './thread-file-env'
 import { Loader2, Upload, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, type AgentMessageAttachmentInput, type AgentThreadFileDataResult } from '@lume/shared'
+import { type AgentMessageAttachmentInput } from '@lume/shared'
 import {
   createPendingAttachmentsFromSourcePaths,
   isFileDragPayload,
@@ -33,6 +32,8 @@ import {
   openFileInRightPanel,
   sanitizeRightPanelWorkspace,
 } from '@/components/right-panel'
+import { resolveAbsolutePath } from '@/components/agent/file-link-actions'
+import { lumeFileUrl } from '@/components/right-panel/file-preview-utils'
 
 import { Button } from '@/components/ui/button'
 interface AgentViewProps {
@@ -125,16 +126,18 @@ export function AgentView({ threadId, readOnly }: AgentViewProps) {
 
   const openThreadImagePreview = useCallback((attachment: AgentMessageAttachmentInput) => {
     setImagePreview({ attachment, loading: true })
-    sidecarCall<AgentThreadFileDataResult>(AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA, {
+    resolveAbsolutePath({
+      source: 'thread',
+      relPath: attachment.threadPath,
       threadId,
-      path: attachment.threadPath,
+      ...(workspaceSlug ? { workspaceSlug } : {}),
     })
-      .then((result) => {
+      .then((abs) => {
         setImagePreview((current) => (
           current?.attachment.id === attachment.id
             ? {
                 attachment,
-                src: `data:${attachment.mediaType};base64,${result.data}`,
+                src: lumeFileUrl(abs),
                 loading: false,
               }
             : current
@@ -152,7 +155,7 @@ export function AgentView({ threadId, readOnly }: AgentViewProps) {
             : current
         ))
       })
-  }, [threadId])
+  }, [threadId, workspaceSlug])
 
   useEffect(() => {
     setImagePreview(null)

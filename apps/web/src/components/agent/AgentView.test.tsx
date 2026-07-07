@@ -36,11 +36,8 @@ const sidecarCallMock = mock(async (channel: string, payload?: Record<string, un
       truncated: false,
     }
   }
-  if (channel === AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA) {
-    return {
-      data: Buffer.from('fake-image').toString('base64'),
-      size: Buffer.byteLength('fake-image'),
-    }
+  if (channel === AGENT_IPC_CHANNELS.GET_THREAD_PATH) {
+    return '/data/threads/thread-1'
   }
   if (channel === AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD) {
     return undefined
@@ -546,10 +543,17 @@ describe('AgentView plan approval tab behavior', () => {
 
       expect(container.textContent).toContain('screen.png')
       expect(sidecarCallMock.mock.calls.some(([channel, payload]) => (
-        channel === AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA &&
-        (payload as Record<string, unknown>).threadId === 'thread-1' &&
-        (payload as Record<string, unknown>).path === 'screen.png'
+        channel === AGENT_IPC_CHANNELS.GET_THREAD_PATH &&
+        (payload as Record<string, unknown>).threadId === 'thread-1'
       ))).toBe(true)
+      // FakeDOM 未实现 innerHTML，遍历 attributes Map 收集所有 src（react-dom setAttribute 写入）
+      const srcAttrs: string[] = []
+      const walkDom = (node: any) => {
+        if (node?.attributes?.has?.('src')) srcAttrs.push(node.attributes.get('src'))
+        for (const child of node?.childNodes ?? []) walkDom(child)
+      }
+      walkDom(container)
+      expect(srcAttrs.some((s) => s.startsWith('lume-file://file/'))).toBe(true)
     } finally {
       await act(async () => {
         root?.unmount()
