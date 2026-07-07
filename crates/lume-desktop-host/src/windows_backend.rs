@@ -3,6 +3,10 @@ use std::{
     time::Duration,
 };
 
+use crate::windows_cursor_motion::{
+    cursor_motion_frame_points, spring_close_enough_time_seconds, CursorBounds, CursorPoint,
+    CursorVector,
+};
 use crate::windows_overlay::{
     move_visual_cursor, pulse_visual_cursor, settle_visual_cursor, VISUAL_CURSOR_WINDOW_TITLE,
 };
@@ -44,9 +48,10 @@ use windows::{
                 VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
-                EnumWindows, GetCursorPos, GetForegroundWindow, GetWindowRect,
+                EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
                 GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-                IsWindowVisible, SetCursorPos, SetForegroundWindow, ShowWindow, SW_RESTORE,
+                IsWindowVisible, SetCursorPos, SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN,
+                SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE,
             },
         },
     },
@@ -940,7 +945,7 @@ fn animate_pointer(x: i32, y: i32, target_window: Option<HWND>) -> Result<()> {
 
 fn animate_visual_pointer(x: i32, y: i32, target_window: Option<HWND>) {
     move_visual_cursor(x, y, target_window);
-    thread::sleep(Duration::from_millis(8 * 18));
+    thread::sleep(Duration::from_secs_f64(spring_close_enough_time_seconds()));
     settle_visual_cursor(x, y, target_window);
 }
 
@@ -949,16 +954,50 @@ fn animate_physical_pointer(x: i32, y: i32) -> Result<()> {
     unsafe {
         GetCursorPos(&mut from)?;
     }
-    const STEPS: i32 = 8;
-    for step in 1..=STEPS {
-        let next_x = from.x + (x - from.x) * step / STEPS;
-        let next_y = from.y + (y - from.y) * step / STEPS;
+    let start = CursorPoint {
+        x: f64::from(from.x),
+        y: f64::from(from.y),
+    };
+    let end = CursorPoint {
+        x: f64::from(x),
+        y: f64::from(y),
+    };
+    let neutral = CursorVector::new(-1.0, -1.0).normalized();
+    for point in cursor_motion_frame_points(
+        start,
+        end,
+        virtual_desktop_bounds(start, end),
+        neutral,
+        neutral,
+        1.0 / 60.0,
+    ) {
         unsafe {
-            SetCursorPos(next_x, next_y)?;
+            SetCursorPos(point.x.round() as i32, point.y.round() as i32)?;
         }
-        thread::sleep(Duration::from_millis(18));
+        thread::sleep(Duration::from_millis(16));
     }
     Ok(())
+}
+
+fn virtual_desktop_bounds(start: CursorPoint, end: CursorPoint) -> CursorBounds {
+    let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+    let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+    if width > 0 && height > 0 {
+        return CursorBounds::new(
+            f64::from(x),
+            f64::from(y),
+            f64::from(width),
+            f64::from(height),
+        );
+    }
+    CursorBounds::new(
+        start.x.min(end.x) - 200.0,
+        start.y.min(end.y) - 200.0,
+        (start.x - end.x).abs() + 400.0,
+        (start.y - end.y).abs() + 400.0,
+    )
 }
 
 fn preferred_pointer_injection(params: &Value, secondary: bool) -> &'static str {

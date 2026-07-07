@@ -79,6 +79,12 @@ test('desktop package includes the optional desktop-host resource', () => {
   assertContainsBefore(pkg.scripts.package, 'build-desktop-host-resources.mjs', 'run-electron-builder.mjs')
 })
 
+test('desktop-host resource build ships the cursor reference license notice', () => {
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+
+  assert.match(script, /LICENSE\.open-codex-computer-use/)
+})
+
 test('node-repl resource build clears generated output before writing resources', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-node-repl-resources.mjs'), 'utf8')
 

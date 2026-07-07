@@ -9,6 +9,7 @@ const CRATE_MANIFEST = resolve(CRATE_DIR, "Cargo.toml");
 const TARGET_ID = resolveTargetId(process.platform, process.arch);
 const BINARY_NAME = process.platform === "win32" ? "lume_desktop_host.exe" : "lume_desktop_host";
 const BUILT_BINARY = resolve(CRATE_DIR, "target", "release", BINARY_NAME);
+const CURSOR_LICENSE = resolve(CRATE_DIR, "assets", "LICENSE.open-codex-computer-use");
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
 const OUT_FILE = resolve(OUT_DIR, BINARY_NAME);
 
@@ -28,6 +29,7 @@ if (!existsSync(BUILT_BINARY)) {
 rmSync(OUT_DIR, { recursive: true, force: true });
 mkdirSync(OUT_DIR, { recursive: true });
 copyFileSync(BUILT_BINARY, OUT_FILE);
+copyFileSync(CURSOR_LICENSE, resolve(OUT_DIR, "LICENSE.open-codex-computer-use"));
 console.error(`[desktop-host] wrote ${OUT_FILE}`);
 
 function resolveTargetId(platform, arch) {

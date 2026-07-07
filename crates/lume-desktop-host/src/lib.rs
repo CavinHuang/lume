@@ -4,6 +4,10 @@ use serde_json::{json, Value};
 #[cfg(windows)]
 pub mod windows_backend;
 #[cfg(windows)]
+pub mod windows_cursor_glyph;
+#[cfg(windows)]
+pub mod windows_cursor_motion;
+#[cfg(windows)]
 pub mod windows_overlay;
 
 pub const PROTOCOL_VERSION: u64 = 1;

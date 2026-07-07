@@ -1,30 +1,38 @@
 use std::{
     ffi::c_void,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        mpsc, OnceLock,
-    },
+    mem::size_of,
+    ptr::copy_nonoverlapping,
+    sync::{mpsc, OnceLock},
     thread,
     time::{Duration, Instant},
 };
 
+use crate::{
+    windows_cursor_glyph::{cursor_physical_size_for_dpi, render_reference_cursor_frame_at_size},
+    windows_cursor_motion::{
+        spring_close_enough_time_seconds, CursorBounds, CursorMotion, CursorPoint, CursorVector,
+    },
+};
 use windows::{
     core::w,
     Win32::{
-        Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
+        Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM},
         Graphics::Gdi::{
-            BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
-            InvalidateRect, Polygon, SelectObject, SetPixelV, UpdateWindow, HDC, HGDIOBJ,
-            PAINTSTRUCT, PS_SOLID,
+            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, SelectObject,
+            AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION,
+            DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
         },
         System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::{
-            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetWindow,
-            GetWindowRect, IsWindow, PeekMessageW, RegisterClassW, SetLayeredWindowAttributes,
-            SetWindowPos, ShowWindow, TranslateMessage, GW_HWNDPREV, HWND_TOP, LWA_COLORKEY, MSG,
-            PM_REMOVE, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
-            WM_PAINT, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-            WS_EX_TRANSPARENT, WS_POPUP,
+        UI::{
+            HiDpi::GetDpiForWindow,
+            WindowsAndMessaging::{
+                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetSystemMetrics,
+                GetWindow, IsWindow, PeekMessageW, RegisterClassW, SetWindowPos, ShowWindow,
+                TranslateMessage, UpdateLayeredWindow, GW_HWNDPREV, HWND_TOP, MSG, PM_REMOVE,
+                SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+                SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WNDCLASSW,
+                WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+            },
         },
     },
 };
@@ -33,65 +41,17 @@ const WINDOW_SIZE: i32 = 126;
 const TIP_X: i32 = 60;
 const TIP_Y: i32 = 70;
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
-const MOVE_DURATION: Duration = Duration::from_millis(144);
 const CLICK_DURATION: Duration = Duration::from_millis(220);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-const TRANSPARENT_KEY: COLORREF = COLORREF(0x00ff_00ff);
+const NEUTRAL_HEADING: f64 = -3.0 * std::f64::consts::PI / 4.0;
 pub(crate) const VISUAL_CURSOR_WINDOW_TITLE: &str = "Lume Visual Cursor";
-static CLICK_PROGRESS_MILLI: AtomicU32 = AtomicU32::new(0);
-static LAST_PAINTED_PROGRESS_MILLI: AtomicU32 = AtomicU32::new(u32::MAX);
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CursorPoint {
-    pub x: f64,
-    pub y: f64,
-}
 
 pub fn cursor_window_metrics() -> ((i32, i32), (i32, i32)) {
     ((WINDOW_SIZE, WINDOW_SIZE), (TIP_X, TIP_Y))
 }
 
-pub fn cursor_motion_point(start: CursorPoint, end: CursorPoint, progress: f64) -> CursorPoint {
-    let t = progress.clamp(0.0, 1.0);
-    if t == 0.0 {
-        return start;
-    }
-    if t == 1.0 {
-        return end;
-    }
-    let dx = end.x - start.x;
-    let dy = end.y - start.y;
-    let control1 = CursorPoint {
-        x: start.x + dx * 0.28,
-        y: start.y + dy * 0.08,
-    };
-    let control2 = CursorPoint {
-        x: start.x + dx * 0.72,
-        y: start.y + dy * 0.92,
-    };
-    cubic_point(start, control1, control2, end, ease_out_cubic(t))
-}
-
-fn cubic_point(
-    start: CursorPoint,
-    control1: CursorPoint,
-    control2: CursorPoint,
-    end: CursorPoint,
-    t: f64,
-) -> CursorPoint {
-    let inverse = 1.0 - t;
-    let a = inverse * inverse * inverse;
-    let b = 3.0 * inverse * inverse * t;
-    let c = 3.0 * inverse * t * t;
-    let d = t * t * t;
-    CursorPoint {
-        x: a * start.x + b * control1.x + c * control2.x + d * end.x,
-        y: a * start.y + b * control1.y + c * control2.y + d * end.y,
-    }
-}
-
-fn ease_out_cubic(value: f64) -> f64 {
-    1.0 - (1.0 - value).powi(3)
+pub fn cursor_reference_metrics() -> (usize, usize, usize) {
+    crate::windows_cursor_glyph::reference_cursor_metrics()
 }
 
 enum OverlayCommand {
@@ -111,8 +71,7 @@ enum OverlayCommand {
 }
 
 struct Motion {
-    start: CursorPoint,
-    end: CursorPoint,
+    path: CursorMotion,
     started_at: Instant,
 }
 
@@ -122,6 +81,9 @@ struct OverlayState {
     target_window: isize,
     pulse_until: Option<Instant>,
     hide_at: Option<Instant>,
+    forward: CursorVector,
+    rotation: f64,
+    idle_started_at: Option<Instant>,
     visible: bool,
 }
 
@@ -133,6 +95,9 @@ impl OverlayState {
             target_window: 0,
             pulse_until: None,
             hide_at: None,
+            forward: resting_forward(),
+            rotation: 0.0,
+            idle_started_at: None,
             visible: false,
         }
     }
@@ -144,17 +109,21 @@ impl OverlayState {
                 target_window,
             } => {
                 self.target_window = target_window;
-                let start = self
-                    .current
-                    .unwrap_or_else(|| initial_point(target_window, point));
+                let start = self.current.unwrap_or_else(default_initial_point);
                 self.current = Some(start);
                 self.motion = Some(Motion {
-                    start,
-                    end: point,
+                    path: CursorMotion::new(
+                        start,
+                        point,
+                        motion_bounds(start, point),
+                        self.forward,
+                        resting_forward(),
+                    ),
                     started_at: now,
                 });
                 self.pulse_until = None;
                 self.hide_at = Some(now + IDLE_TIMEOUT);
+                self.idle_started_at = None;
                 self.visible = true;
             }
             OverlayCommand::Pulse {
@@ -166,6 +135,9 @@ impl OverlayState {
                 self.motion = None;
                 self.pulse_until = Some(now + CLICK_DURATION);
                 self.hide_at = Some(now + IDLE_TIMEOUT);
+                self.forward = resting_forward();
+                self.rotation = 0.0;
+                self.idle_started_at = None;
                 self.visible = true;
             }
             OverlayCommand::Settle {
@@ -177,6 +149,9 @@ impl OverlayState {
                 self.motion = None;
                 self.pulse_until = None;
                 self.hide_at = Some(now + IDLE_TIMEOUT);
+                self.forward = resting_forward();
+                self.rotation = 0.0;
+                self.idle_started_at = Some(now);
                 self.visible = true;
             }
             OverlayCommand::Reset => {
@@ -185,6 +160,9 @@ impl OverlayState {
                 self.target_window = 0;
                 self.pulse_until = None;
                 self.hide_at = None;
+                self.forward = resting_forward();
+                self.rotation = 0.0;
+                self.idle_started_at = None;
                 self.visible = false;
             }
         }
@@ -192,16 +170,25 @@ impl OverlayState {
 
     fn tick(&mut self, now: Instant) {
         if let Some(motion) = &self.motion {
-            let progress =
-                now.duration_since(motion.started_at).as_secs_f64() / MOVE_DURATION.as_secs_f64();
-            self.current = Some(cursor_motion_point(motion.start, motion.end, progress));
-            if progress >= 1.0 {
-                self.current = Some(motion.end);
+            let elapsed = now.duration_since(motion.started_at).as_secs_f64();
+            self.current = Some(motion.path.point_at_elapsed(elapsed));
+            self.forward = motion.path.tangent_at_elapsed(elapsed);
+            self.rotation = normalize_angle(self.forward.y.atan2(self.forward.x) - NEUTRAL_HEADING);
+            if elapsed >= spring_close_enough_time_seconds() {
+                self.current = Some(
+                    motion
+                        .path
+                        .point_at_elapsed(spring_close_enough_time_seconds()),
+                );
                 self.motion = None;
+                self.forward = resting_forward();
+                self.rotation = 0.0;
+                self.idle_started_at = Some(now);
             }
         }
         if self.pulse_until.is_some_and(|deadline| now >= deadline) {
             self.pulse_until = None;
+            self.idle_started_at = Some(now);
         }
         if self.hide_at.is_some_and(|deadline| now >= deadline) {
             self.hide_at = None;
@@ -213,9 +200,18 @@ impl OverlayState {
         self.pulse_until
             .map(|deadline| {
                 let remaining = deadline.saturating_duration_since(now).as_secs_f64();
-                (remaining / CLICK_DURATION.as_secs_f64()).clamp(0.0, 1.0)
+                let elapsed = 1.0 - (remaining / CLICK_DURATION.as_secs_f64()).clamp(0.0, 1.0);
+                (elapsed * std::f64::consts::PI).sin()
             })
             .unwrap_or(0.0)
+    }
+
+    fn render_rotation(&self, now: Instant) -> f64 {
+        let idle_wobble = self
+            .idle_started_at
+            .map(|started_at| (now.duration_since(started_at).as_secs_f64() * 2.4).sin() * 0.09)
+            .unwrap_or(0.0);
+        normalize_angle(self.rotation + idle_wobble)
     }
 }
 
@@ -287,6 +283,12 @@ fn run_overlay(receiver: mpsc::Receiver<OverlayCommand>) {
     let Ok(hwnd) = create_overlay_window() else {
         return;
     };
+    let Ok(mut surface) = LayeredCursorSurface::new(WINDOW_SIZE) else {
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+        return;
+    };
     let mut state = OverlayState::new();
     loop {
         match receiver.recv_timeout(FRAME_INTERVAL) {
@@ -301,7 +303,7 @@ fn run_overlay(receiver: mpsc::Receiver<OverlayCommand>) {
         }
         pump_messages();
         state.tick(Instant::now());
-        render_state(hwnd, &state);
+        render_state(hwnd, &mut surface, &state);
     }
     unsafe {
         let _ = DestroyWindow(hwnd);
@@ -315,16 +317,6 @@ fn create_overlay_window() -> windows::core::Result<HWND> {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        if message == WM_PAINT {
-            let mut paint = PAINTSTRUCT::default();
-            let dc = unsafe { BeginPaint(hwnd, &mut paint) };
-            let click_progress = f64::from(CLICK_PROGRESS_MILLI.load(Ordering::Relaxed)) / 1_000.0;
-            paint_cursor(dc, click_progress);
-            unsafe {
-                let _ = EndPaint(hwnd, &paint);
-            }
-            return LRESULT(0);
-        }
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
     }
 
@@ -338,7 +330,7 @@ fn create_overlay_window() -> windows::core::Result<HWND> {
     };
     unsafe {
         RegisterClassW(&class);
-        let hwnd = CreateWindowExW(
+        CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class.lpszClassName,
             w!("Lume Visual Cursor"),
@@ -351,13 +343,128 @@ fn create_overlay_window() -> windows::core::Result<HWND> {
             None,
             Some(instance),
             None,
-        )?;
-        SetLayeredWindowAttributes(hwnd, TRANSPARENT_KEY, 255, LWA_COLORKEY)?;
-        Ok(hwnd)
+        )
     }
 }
 
-fn render_state(hwnd: HWND, state: &OverlayState) {
+struct LayeredCursorSurface {
+    dc: HDC,
+    bitmap: HBITMAP,
+    previous_object: HGDIOBJ,
+    bits: *mut u8,
+    size: i32,
+}
+
+impl LayeredCursorSurface {
+    fn new(size: i32) -> windows::core::Result<Self> {
+        unsafe {
+            let dc = CreateCompatibleDC(None);
+            if dc.is_invalid() {
+                return Err(windows::core::Error::from_win32());
+            }
+            let mut bitmap_info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: size,
+                    biHeight: -size,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut bits = std::ptr::null_mut();
+            let bitmap = match CreateDIBSection(
+                Some(dc),
+                &raw mut bitmap_info,
+                DIB_RGB_COLORS,
+                &mut bits,
+                None,
+                0,
+            ) {
+                Ok(bitmap) => bitmap,
+                Err(error) => {
+                    let _ = DeleteDC(dc);
+                    return Err(error);
+                }
+            };
+            if bits.is_null() {
+                let _ = DeleteObject(HGDIOBJ::from(bitmap));
+                let _ = DeleteDC(dc);
+                return Err(windows::core::Error::from_win32());
+            }
+            let previous_object = SelectObject(dc, HGDIOBJ::from(bitmap));
+            Ok(Self {
+                dc,
+                bitmap,
+                previous_object,
+                bits: bits.cast(),
+                size,
+            })
+        }
+    }
+
+    fn ensure_size(&mut self, size: i32) -> windows::core::Result<()> {
+        if self.size != size {
+            *self = Self::new(size)?;
+        }
+        Ok(())
+    }
+
+    fn draw(
+        &mut self,
+        hwnd: HWND,
+        point: CursorPoint,
+        rotation: f64,
+        click_progress: f64,
+    ) -> windows::core::Result<()> {
+        let frame =
+            render_reference_cursor_frame_at_size(self.size as usize, rotation, click_progress);
+        unsafe {
+            copy_nonoverlapping(frame.as_ptr(), self.bits, frame.len());
+            let scale = f64::from(self.size) / f64::from(WINDOW_SIZE);
+            let destination = POINT {
+                x: (point.x - f64::from(TIP_X) * scale).round() as i32,
+                y: (point.y - f64::from(TIP_Y) * scale).round() as i32,
+            };
+            let size = SIZE {
+                cx: self.size,
+                cy: self.size,
+            };
+            let source = POINT { x: 0, y: 0 };
+            let blend = BLENDFUNCTION {
+                BlendOp: AC_SRC_OVER as u8,
+                BlendFlags: 0,
+                SourceConstantAlpha: 255,
+                AlphaFormat: AC_SRC_ALPHA as u8,
+            };
+            UpdateLayeredWindow(
+                hwnd,
+                None,
+                Some(&raw const destination),
+                Some(&raw const size),
+                Some(self.dc),
+                Some(&raw const source),
+                COLORREF(0),
+                Some(&raw const blend),
+                ULW_ALPHA,
+            )
+        }
+    }
+}
+
+impl Drop for LayeredCursorSurface {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = SelectObject(self.dc, self.previous_object);
+            let _ = DeleteObject(HGDIOBJ::from(self.bitmap));
+            let _ = DeleteDC(self.dc);
+        }
+    }
+}
+
+fn render_state(hwnd: HWND, surface: &mut LayeredCursorSurface, state: &OverlayState) {
     if !state.visible {
         unsafe {
             let _ = ShowWindow(hwnd, SW_HIDE);
@@ -367,135 +474,43 @@ fn render_state(hwnd: HWND, state: &OverlayState) {
     let Some(point) = state.current else {
         return;
     };
+    let now = Instant::now();
     let target = hwnd_from_value(state.target_window);
+    let valid_target = unsafe { target.filter(|item| IsWindow(Some(*item)).as_bool()) };
+    let dpi = unsafe { GetDpiForWindow(valid_target.unwrap_or(hwnd)) };
+    let cursor_size = cursor_physical_size_for_dpi(dpi) as i32;
+    if surface.ensure_size(cursor_size).is_err() {
+        return;
+    }
+    let scale = f64::from(cursor_size) / f64::from(WINDOW_SIZE);
     unsafe {
-        let valid_target = target.filter(|item| IsWindow(Some(*item)).as_bool());
         let window_above_target = valid_target.and_then(|item| GetWindow(item, GW_HWNDPREV).ok());
         let (insert_after, flags) = if window_above_target == Some(hwnd) {
-            (None, SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW)
+            (None, SWP_NOACTIVATE | SWP_NOZORDER)
         } else {
-            (
-                window_above_target.or(Some(HWND_TOP)),
-                SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            )
+            (window_above_target.or(Some(HWND_TOP)), SWP_NOACTIVATE)
         };
         let _ = SetWindowPos(
             hwnd,
             insert_after,
-            point.x.round() as i32 - TIP_X,
-            point.y.round() as i32 - TIP_Y,
-            WINDOW_SIZE,
-            WINDOW_SIZE,
+            (point.x - f64::from(TIP_X) * scale).round() as i32,
+            (point.y - f64::from(TIP_Y) * scale).round() as i32,
+            cursor_size,
+            cursor_size,
             flags,
         );
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
-    draw_cursor(hwnd, state.click_progress(Instant::now()));
-}
-
-fn draw_cursor(hwnd: HWND, click_progress: f64) {
-    let progress_milli = (click_progress.clamp(0.0, 1.0) * 1_000.0).round() as u32;
-    CLICK_PROGRESS_MILLI.store(progress_milli, Ordering::Relaxed);
-    if LAST_PAINTED_PROGRESS_MILLI.swap(progress_milli, Ordering::Relaxed) == progress_milli {
-        return;
-    }
-    unsafe {
-        let _ = InvalidateRect(Some(hwnd), None, false);
-        let _ = UpdateWindow(hwnd);
-    }
-}
-
-fn paint_cursor(dc: HDC, click_progress: f64) {
-    if dc.is_invalid() {
-        return;
-    }
-    unsafe {
-        let bounds = RECT {
-            left: 0,
-            top: 0,
-            right: WINDOW_SIZE,
-            bottom: WINDOW_SIZE,
-        };
-        let background = CreateSolidBrush(TRANSPARENT_KEY);
-        FillRect(dc, &bounds, background);
-
-        let expansion = (click_progress * 2.0).round() as i32;
-        draw_fog(dc, expansion);
-
-        let squeeze = (click_progress * 2.0).round() as i32;
-        let points = [
-            POINT { x: TIP_X, y: TIP_Y },
-            POINT {
-                x: TIP_X + 1,
-                y: TIP_Y + 23 - squeeze,
-            },
-            POINT {
-                x: TIP_X + 6,
-                y: TIP_Y + 18 - squeeze,
-            },
-            POINT {
-                x: TIP_X + 12,
-                y: TIP_Y + 28 - squeeze,
-            },
-            POINT {
-                x: TIP_X + 17,
-                y: TIP_Y + 25 - squeeze,
-            },
-            POINT {
-                x: TIP_X + 11,
-                y: TIP_Y + 15 - squeeze,
-            },
-            POINT {
-                x: TIP_X + 22,
-                y: TIP_Y + 14 - squeeze,
-            },
-        ];
-        let shadow_points = points.map(|point| POINT {
-            x: point.x + 2,
-            y: point.y + 2,
-        });
-        let shadow_pen = CreatePen(PS_SOLID, 3, COLORREF(0x003d_3b39));
-        let shadow_brush = CreateSolidBrush(COLORREF(0x0051_4e4b));
-        let old_pen = SelectObject(dc, HGDIOBJ::from(shadow_pen));
-        let old_brush = SelectObject(dc, HGDIOBJ::from(shadow_brush));
-        let _ = Polygon(dc, &shadow_points);
-
-        let pointer_pen = CreatePen(PS_SOLID, 2, COLORREF(0x00e6_e6e6));
-        let pointer_brush = CreateSolidBrush(COLORREF(0x0059_5c61));
-        SelectObject(dc, HGDIOBJ::from(pointer_pen));
-        SelectObject(dc, HGDIOBJ::from(pointer_brush));
-        let _ = Polygon(dc, &points);
-
-        SelectObject(dc, old_pen);
-        SelectObject(dc, old_brush);
-        let _ = DeleteObject(HGDIOBJ::from(background));
-        let _ = DeleteObject(HGDIOBJ::from(shadow_pen));
-        let _ = DeleteObject(HGDIOBJ::from(shadow_brush));
-        let _ = DeleteObject(HGDIOBJ::from(pointer_pen));
-        let _ = DeleteObject(HGDIOBJ::from(pointer_brush));
-    }
-}
-
-fn draw_fog(dc: HDC, expansion: i32) {
-    let radius = 33 + expansion;
-    let radius_squared = radius * radius;
-    for y in -radius..=radius {
-        for x in -radius..=radius {
-            let distance_squared = x * x + y * y;
-            if distance_squared > radius_squared {
-                continue;
-            }
-            let falloff = 1.0 - f64::from(distance_squared) / f64::from(radius_squared);
-            let density = (falloff * falloff * 34.0 + 1.0).round() as u32;
-            let hash = ((x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)) as u32) % 100;
-            if hash >= density {
-                continue;
-            }
-            let shade = (112.0 + (1.0 - falloff) * 48.0).round() as u32;
-            let color = COLORREF(shade | (shade << 8) | (shade << 16));
-            unsafe {
-                let _ = SetPixelV(dc, 63 + x, 63 + y, color);
-            }
+    if surface
+        .draw(
+            hwnd,
+            point,
+            state.render_rotation(now),
+            state.click_progress(now),
+        )
+        .is_ok()
+    {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
     }
 }
@@ -510,18 +525,46 @@ fn pump_messages() {
     }
 }
 
-fn initial_point(target_window: isize, fallback: CursorPoint) -> CursorPoint {
-    let Some(hwnd) = hwnd_from_value(target_window) else {
-        return fallback;
-    };
-    let mut rect = RECT::default();
-    if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
-        return fallback;
-    }
+fn default_initial_point() -> CursorPoint {
     CursorPoint {
-        x: f64::from(rect.left + 48),
-        y: f64::from(rect.bottom - 48),
+        x: f64::from(TIP_X),
+        y: f64::from(TIP_Y),
     }
+}
+
+fn motion_bounds(start: CursorPoint, end: CursorPoint) -> CursorBounds {
+    let virtual_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let virtual_y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let virtual_width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+    let virtual_height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+    if virtual_width > 0 && virtual_height > 0 {
+        return CursorBounds::new(
+            f64::from(virtual_x),
+            f64::from(virtual_y),
+            f64::from(virtual_width),
+            f64::from(virtual_height),
+        );
+    }
+    CursorBounds::new(
+        start.x.min(end.x) - 200.0,
+        start.y.min(end.y) - 200.0,
+        (start.x - end.x).abs() + 400.0,
+        (start.y - end.y).abs() + 400.0,
+    )
+}
+
+fn resting_forward() -> CursorVector {
+    CursorVector::new(NEUTRAL_HEADING.cos(), NEUTRAL_HEADING.sin())
+}
+
+fn normalize_angle(mut angle: f64) -> f64 {
+    while angle > std::f64::consts::PI {
+        angle -= 2.0 * std::f64::consts::PI;
+    }
+    while angle < -std::f64::consts::PI {
+        angle += 2.0 * std::f64::consts::PI;
+    }
+    angle
 }
 
 fn hwnd_value(hwnd: Option<HWND>) -> isize {
