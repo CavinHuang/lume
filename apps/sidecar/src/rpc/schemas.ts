@@ -1338,8 +1338,12 @@ export const verifySchema = z.object({
 }).strict();
 
 // 安全加固：防止 pluginId/version/artifactPath 含 ".." 逃逸 installedRoot
-const bridgePluginIdSchema = z.string().trim().min(1).regex(/^[a-z0-9_.-]+$/i, "非法 pluginId");
-const bridgeVersionSchema = z.string().trim().min(1).regex(/^[a-z0-9_.-]+$/i, "非法 version");
+const bridgePluginIdSchema = z.string().trim().min(1)
+  .regex(/^[a-z0-9_.-]+$/i, "非法 pluginId")
+  .refine(v => !v.includes(".."), { message: "pluginId 不得含 .. 序列" });
+const bridgeVersionSchema = z.string().trim().min(1)
+  .regex(/^[a-z0-9_.-]+$/i, "非法 version")
+  .refine(v => !v.includes(".."), { message: "version 不得含 .. 序列" });
 const bridgeArtifactPathSchema = z.string().trim().min(1).refine(
   (p) => !p.includes("..") && !p.includes("\\") && !p.startsWith("/") && !p.includes("\0"),
   { message: "artifactPath 必须是相对路径且不含 .. 或绝对路径" }

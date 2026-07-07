@@ -66,4 +66,24 @@ describe('agent handlers plugin bridge', () => {
     }) as { savedPath: string }
     expect(result.savedPath).toContain('ext.zip')
   })
+
+  test('EXPORT_PLUGIN_ARTIFACT 拒绝 pluginId 含 ..', async () => {
+    setHome(mkdtempSync(join(tmpdir(), 'lume-bridge-rpc-')))
+    const handlers = makeHandlers()
+    await expect(
+      handlers[AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT]!({
+        pluginId: '..', version: '1.0.0', artifactPath: './ext.zip',
+      }),
+    ).rejects.toThrow(/非法 pluginId|\.\. 序列/);
+  });
+
+  test('EXPORT_PLUGIN_ARTIFACT 拒绝 artifactPath 含 ..', async () => {
+    setHome(mkdtempSync(join(tmpdir(), 'lume-bridge-rpc-')))
+    const handlers = makeHandlers()
+    await expect(
+      handlers[AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT]!({
+        pluginId: 'demo', version: '1.0.0', artifactPath: '../../../etc/passwd',
+      }),
+    ).rejects.toThrow(/相对路径|\.\./);
+  });
 })
