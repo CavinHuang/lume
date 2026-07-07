@@ -13,9 +13,9 @@ use windows::{
     Win32::{
         Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::Gdi::{
-            BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, Ellipse, EndPaint, FillRect,
-            InvalidateRect, Polygon, SelectObject, UpdateWindow, HDC, HGDIOBJ, PAINTSTRUCT,
-            PS_SOLID,
+            BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect,
+            InvalidateRect, Polygon, SelectObject, SetPixelV, UpdateWindow, HDC, HGDIOBJ,
+            PAINTSTRUCT, PS_SOLID,
         },
         System::LibraryLoader::GetModuleHandleW,
         UI::WindowsAndMessaging::{
@@ -29,9 +29,9 @@ use windows::{
     },
 };
 
-const WINDOW_SIZE: i32 = 96;
-const TIP_X: i32 = 42;
-const TIP_Y: i32 = 34;
+const WINDOW_SIZE: i32 = 126;
+const TIP_X: i32 = 60;
+const TIP_Y: i32 = 70;
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const MOVE_DURATION: Duration = Duration::from_millis(144);
 const CLICK_DURATION: Duration = Duration::from_millis(220);
@@ -39,11 +39,16 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const TRANSPARENT_KEY: COLORREF = COLORREF(0x00ff_00ff);
 pub(crate) const VISUAL_CURSOR_WINDOW_TITLE: &str = "Lume Visual Cursor";
 static CLICK_PROGRESS_MILLI: AtomicU32 = AtomicU32::new(0);
+static LAST_PAINTED_PROGRESS_MILLI: AtomicU32 = AtomicU32::new(u32::MAX);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CursorPoint {
     pub x: f64,
     pub y: f64,
+}
+
+pub fn cursor_window_metrics() -> ((i32, i32), (i32, i32)) {
+    ((WINDOW_SIZE, WINDOW_SIZE), (TIP_X, TIP_Y))
 }
 
 pub fn cursor_motion_point(start: CursorPoint, end: CursorPoint, progress: f64) -> CursorPoint {
@@ -389,10 +394,11 @@ fn render_state(hwnd: HWND, state: &OverlayState) {
 }
 
 fn draw_cursor(hwnd: HWND, click_progress: f64) {
-    CLICK_PROGRESS_MILLI.store(
-        (click_progress.clamp(0.0, 1.0) * 1_000.0).round() as u32,
-        Ordering::Relaxed,
-    );
+    let progress_milli = (click_progress.clamp(0.0, 1.0) * 1_000.0).round() as u32;
+    CLICK_PROGRESS_MILLI.store(progress_milli, Ordering::Relaxed);
+    if LAST_PAINTED_PROGRESS_MILLI.swap(progress_milli, Ordering::Relaxed) == progress_milli {
+        return;
+    }
     unsafe {
         let _ = InvalidateRect(Some(hwnd), None, false);
         let _ = UpdateWindow(hwnd);
@@ -413,60 +419,84 @@ fn paint_cursor(dc: HDC, click_progress: f64) {
         let background = CreateSolidBrush(TRANSPARENT_KEY);
         FillRect(dc, &bounds, background);
 
-        let ring = CreatePen(PS_SOLID, 3, COLORREF(0x00d8_f3a4));
-        let ring_brush = CreateSolidBrush(TRANSPARENT_KEY);
-        let old_pen = SelectObject(dc, HGDIOBJ::from(ring));
-        let old_brush = SelectObject(dc, HGDIOBJ::from(ring_brush));
-        let expansion = (click_progress * 8.0).round() as i32;
-        let _ = Ellipse(
-            dc,
-            TIP_X - 15 - expansion,
-            TIP_Y - 15 - expansion,
-            TIP_X + 15 + expansion,
-            TIP_Y + 15 + expansion,
-        );
+        let expansion = (click_progress * 2.0).round() as i32;
+        draw_fog(dc, expansion);
 
-        let pointer_pen = CreatePen(PS_SOLID, 2, COLORREF(0x0033_544b));
-        let pointer_brush = CreateSolidBrush(COLORREF(0x00b9_ffdf));
-        SelectObject(dc, HGDIOBJ::from(pointer_pen));
-        SelectObject(dc, HGDIOBJ::from(pointer_brush));
         let squeeze = (click_progress * 2.0).round() as i32;
         let points = [
             POINT { x: TIP_X, y: TIP_Y },
             POINT {
-                x: TIP_X + 2,
-                y: TIP_Y + 29 - squeeze,
+                x: TIP_X + 1,
+                y: TIP_Y + 23 - squeeze,
             },
             POINT {
-                x: TIP_X + 9,
-                y: TIP_Y + 21 - squeeze,
-            },
-            POINT {
-                x: TIP_X + 16,
-                y: TIP_Y + 35 - squeeze,
-            },
-            POINT {
-                x: TIP_X + 23,
-                y: TIP_Y + 31 - squeeze,
-            },
-            POINT {
-                x: TIP_X + 15,
+                x: TIP_X + 6,
                 y: TIP_Y + 18 - squeeze,
             },
             POINT {
-                x: TIP_X + 28,
-                y: TIP_Y + 17 - squeeze,
+                x: TIP_X + 12,
+                y: TIP_Y + 28 - squeeze,
+            },
+            POINT {
+                x: TIP_X + 17,
+                y: TIP_Y + 25 - squeeze,
+            },
+            POINT {
+                x: TIP_X + 11,
+                y: TIP_Y + 15 - squeeze,
+            },
+            POINT {
+                x: TIP_X + 22,
+                y: TIP_Y + 14 - squeeze,
             },
         ];
+        let shadow_points = points.map(|point| POINT {
+            x: point.x + 2,
+            y: point.y + 2,
+        });
+        let shadow_pen = CreatePen(PS_SOLID, 3, COLORREF(0x003d_3b39));
+        let shadow_brush = CreateSolidBrush(COLORREF(0x0051_4e4b));
+        let old_pen = SelectObject(dc, HGDIOBJ::from(shadow_pen));
+        let old_brush = SelectObject(dc, HGDIOBJ::from(shadow_brush));
+        let _ = Polygon(dc, &shadow_points);
+
+        let pointer_pen = CreatePen(PS_SOLID, 2, COLORREF(0x00e6_e6e6));
+        let pointer_brush = CreateSolidBrush(COLORREF(0x0059_5c61));
+        SelectObject(dc, HGDIOBJ::from(pointer_pen));
+        SelectObject(dc, HGDIOBJ::from(pointer_brush));
         let _ = Polygon(dc, &points);
 
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
         let _ = DeleteObject(HGDIOBJ::from(background));
-        let _ = DeleteObject(HGDIOBJ::from(ring));
-        let _ = DeleteObject(HGDIOBJ::from(ring_brush));
+        let _ = DeleteObject(HGDIOBJ::from(shadow_pen));
+        let _ = DeleteObject(HGDIOBJ::from(shadow_brush));
         let _ = DeleteObject(HGDIOBJ::from(pointer_pen));
         let _ = DeleteObject(HGDIOBJ::from(pointer_brush));
+    }
+}
+
+fn draw_fog(dc: HDC, expansion: i32) {
+    let radius = 33 + expansion;
+    let radius_squared = radius * radius;
+    for y in -radius..=radius {
+        for x in -radius..=radius {
+            let distance_squared = x * x + y * y;
+            if distance_squared > radius_squared {
+                continue;
+            }
+            let falloff = 1.0 - f64::from(distance_squared) / f64::from(radius_squared);
+            let density = (falloff * falloff * 34.0 + 1.0).round() as u32;
+            let hash = ((x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)) as u32) % 100;
+            if hash >= density {
+                continue;
+            }
+            let shade = (112.0 + (1.0 - falloff) * 48.0).round() as u32;
+            let color = COLORREF(shade | (shade << 8) | (shade << 16));
+            unsafe {
+                let _ = SetPixelV(dc, 63 + x, 63 + y, color);
+            }
+        }
     }
 }
 

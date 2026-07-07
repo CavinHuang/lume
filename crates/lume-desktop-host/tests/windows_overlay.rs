@@ -1,6 +1,11 @@
 #![cfg(windows)]
 
-use lume_desktop_host::windows_overlay::{cursor_motion_point, CursorPoint};
+use lume_desktop_host::windows_overlay::{cursor_motion_point, cursor_window_metrics, CursorPoint};
+
+#[test]
+fn cursor_window_matches_the_reference_glyph_geometry() {
+    assert_eq!(cursor_window_metrics(), ((126, 126), (60, 70)));
+}
 
 #[test]
 fn cursor_motion_starts_and_ends_at_exact_points() {

@@ -11,7 +11,7 @@ use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use windows::{
-    core::{BOOL, PWSTR},
+    core::{BOOL, BSTR, PWSTR},
     Win32::{
         Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT},
         Graphics::Gdi::{
@@ -28,11 +28,13 @@ use windows::{
         },
         UI::{
             Accessibility::{
-                CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker,
-                UIA_ButtonControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
-                UIA_GroupControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+                CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
+                IUIAutomationTreeWalker, IUIAutomationValuePattern, UIA_ButtonControlTypeId,
+                UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
+                UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
                 UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_TabItemControlTypeId,
-                UIA_TextControlTypeId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
+                UIA_TextControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId,
+                UIA_CONTROLTYPE_ID,
             },
             Input::KeyboardAndMouse::{
                 SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
@@ -639,18 +641,35 @@ fn move_pointer(params: &Value) -> Result<Value> {
 
 fn click(params: &Value, secondary: bool) -> Result<Value> {
     let target = target_window(params);
-    if let Some(hwnd) = target {
-        activate(hwnd)?;
+    let semantic = preferred_pointer_injection(params, secondary) == "uia";
+    if requires_foreground_activation(params, secondary) {
+        if let Some(hwnd) = target {
+            activate(hwnd)?;
+        }
     }
     let point = if params.get("elementId").is_some()
         || (params.get("x").is_some() && params.get("y").is_some())
     {
         let point = action_point(params)?;
-        animate_pointer(point.0, point.1, target)?;
+        if semantic {
+            animate_visual_pointer(point.0, point.1, target);
+        } else {
+            animate_pointer(point.0, point.1, target)?;
+        }
         point
     } else {
         current_pointer()?
     };
+    if semantic && try_invoke_element(params)? {
+        pulse_visual_cursor(point.0, point.1, target);
+        return Ok(json!({ "status": "ok", "inputMode": "uia_invoke" }));
+    }
+    if semantic {
+        if let Some(hwnd) = target {
+            activate(hwnd)?;
+        }
+        animate_physical_pointer(point.0, point.1)?;
+    }
     if secondary {
         send_mouse(MOUSEEVENTF_RIGHTDOWN, 0)?;
         send_mouse(MOUSEEVENTF_RIGHTUP, 0)?;
@@ -659,7 +678,7 @@ fn click(params: &Value, secondary: bool) -> Result<Value> {
         send_mouse(MOUSEEVENTF_LEFTUP, 0)?;
     }
     pulse_visual_cursor(point.0, point.1, target);
-    Ok(json!({ "status": "ok" }))
+    Ok(json!({ "status": "ok", "inputMode": "physical_pointer" }))
 }
 
 fn scroll(params: &Value) -> Result<Value> {
@@ -738,12 +757,27 @@ fn type_text(params: &Value) -> Result<Value> {
 
 fn set_value(params: &Value) -> Result<Value> {
     let target = target_window(params);
-    if let Some(hwnd) = target {
-        activate(hwnd)?;
+    let semantic = preferred_pointer_injection(params, false) == "uia";
+    if !semantic {
+        if let Some(hwnd) = target {
+            activate(hwnd)?;
+        }
     }
     if params.get("elementId").is_some() {
         let (x, y) = action_point(params)?;
-        animate_pointer(x, y, target)?;
+        animate_visual_pointer(x, y, target);
+        let value = params
+            .get("value")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if try_set_element_value(params, value)? {
+            pulse_visual_cursor(x, y, target);
+            return Ok(json!({ "status": "ok", "inputMode": "uia_value" }));
+        }
+        if let Some(hwnd) = target {
+            activate(hwnd)?;
+        }
+        animate_physical_pointer(x, y)?;
         send_mouse(MOUSEEVENTF_LEFTDOWN, 0)?;
         send_mouse(MOUSEEVENTF_LEFTUP, 0)?;
         pulse_visual_cursor(x, y, target);
@@ -757,7 +791,7 @@ fn set_value(params: &Value) -> Result<Value> {
     send_virtual_key(VIRTUAL_KEY(b'A' as u16), true)?;
     send_virtual_key(VK_CONTROL, true)?;
     send_unicode(value)?;
-    Ok(json!({ "status": "ok" }))
+    Ok(json!({ "status": "ok", "inputMode": "keyboard_fallback" }))
 }
 
 fn action_point(params: &Value) -> Result<(i32, i32)> {
@@ -899,6 +933,18 @@ fn window_id(hwnd: HWND) -> String {
 
 fn animate_pointer(x: i32, y: i32, target_window: Option<HWND>) -> Result<()> {
     move_visual_cursor(x, y, target_window);
+    animate_physical_pointer(x, y)?;
+    settle_visual_cursor(x, y, target_window);
+    Ok(())
+}
+
+fn animate_visual_pointer(x: i32, y: i32, target_window: Option<HWND>) {
+    move_visual_cursor(x, y, target_window);
+    thread::sleep(Duration::from_millis(8 * 18));
+    settle_visual_cursor(x, y, target_window);
+}
+
+fn animate_physical_pointer(x: i32, y: i32) -> Result<()> {
     let mut from = POINT::default();
     unsafe {
         GetCursorPos(&mut from)?;
@@ -912,8 +958,52 @@ fn animate_pointer(x: i32, y: i32, target_window: Option<HWND>) -> Result<()> {
         }
         thread::sleep(Duration::from_millis(18));
     }
-    settle_visual_cursor(x, y, target_window);
     Ok(())
+}
+
+fn preferred_pointer_injection(params: &Value, secondary: bool) -> &'static str {
+    if !secondary && params.get("elementId").and_then(Value::as_str).is_some() {
+        "uia"
+    } else {
+        "physical"
+    }
+}
+
+fn requires_foreground_activation(params: &Value, secondary: bool) -> bool {
+    preferred_pointer_injection(params, secondary) == "physical"
+}
+
+fn try_invoke_element(params: &Value) -> Result<bool> {
+    let Some(element) = resolve_element(params)? else {
+        return Ok(false);
+    };
+    let pattern =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) };
+    let Ok(pattern) = pattern else {
+        return Ok(false);
+    };
+    unsafe {
+        pattern.Invoke()?;
+    }
+    Ok(true)
+}
+
+fn try_set_element_value(params: &Value, value: &str) -> Result<bool> {
+    let Some(element) = resolve_element(params)? else {
+        return Ok(false);
+    };
+    let pattern =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) };
+    let Ok(pattern) = pattern else {
+        return Ok(false);
+    };
+    if unsafe { pattern.CurrentIsReadOnly()? }.as_bool() {
+        return Ok(false);
+    }
+    unsafe {
+        pattern.SetValue(&BSTR::from(value))?;
+    }
+    Ok(true)
 }
 
 fn current_pointer() -> Result<(i32, i32)> {
@@ -984,6 +1074,35 @@ fn send_unicode(text: &str) -> Result<()> {
         });
     }
     send_inputs(&inputs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prefers_uia_for_element_scoped_primary_actions() {
+        assert_eq!(
+            preferred_pointer_injection(&json!({ "elementId": "0.1" }), false),
+            "uia"
+        );
+        assert_eq!(
+            preferred_pointer_injection(&json!({ "elementId": "0.1" }), true),
+            "physical"
+        );
+        assert_eq!(
+            preferred_pointer_injection(&json!({ "x": 10, "y": 20 }), false),
+            "physical"
+        );
+        assert!(!requires_foreground_activation(
+            &json!({ "elementId": "0.1" }),
+            false
+        ));
+        assert!(requires_foreground_activation(
+            &json!({ "elementId": "0.1" }),
+            true
+        ));
+    }
 }
 
 fn send_inputs(inputs: &[INPUT]) -> Result<()> {
