@@ -81,6 +81,10 @@ import {
 } from './agent-input-role-recommendations'
 import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
 import { DesktopContextPlusItem } from './DesktopContextPlusItem'
+import {
+  captureAgentInputDesktopContextTarget,
+  createDesktopContextMessageMetadata,
+} from './agent-input-desktop-context'
 
 import { Button } from '@/components/ui/button'
 type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
@@ -263,6 +267,8 @@ export function AgentInput({
   const [plusPanelOpen, setPlusPanelOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginSummary[]>([])
+  const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
+  const [localDesktopContextTarget, setLocalDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
@@ -274,6 +280,17 @@ export function AgentInput({
     workspaces,
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
+  const availableDesktopContextTarget = desktopContextTarget ?? capturedDesktopContextTarget ?? localDesktopContextTarget
+  const effectiveMessageMetadata = useMemo(() => {
+    const localMetadata = localDesktopContextTarget
+      ? createDesktopContextMessageMetadata(localDesktopContextTarget)
+      : undefined
+    const merged = {
+      ...(messageMetadata ?? {}),
+      ...(localMetadata ?? {}),
+    }
+    return Object.keys(merged).length > 0 ? merged : undefined
+  }, [localDesktopContextTarget, messageMetadata])
 
   const saveDraft = useCallback((json: AgentInputDraftJSON | undefined) => {
     setDraftState((prev) =>
@@ -721,7 +738,7 @@ export function AgentInput({
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
-        ...(messageMetadata && Object.keys(messageMetadata).length > 0 ? { messageMetadata } : {}),
+        ...(effectiveMessageMetadata ? { messageMetadata: effectiveMessageMetadata } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
       onMessageMetadataConsumed()
@@ -765,7 +782,7 @@ export function AgentInput({
     onClearPendingAttachments,
     onMessageMetadataConsumed,
     pendingAttachments,
-    messageMetadata,
+    effectiveMessageMetadata,
     permissionMode,
     setRuntimeEvents,
     setStreamingStates,
@@ -939,6 +956,11 @@ export function AgentInput({
     }
     setPlusPanelOpen(true)
     setActiveIndex(0)
+    if (!desktopContextTarget) {
+      captureAgentInputDesktopContextTarget(sidecarCall)
+        .then((target) => setCapturedDesktopContextTarget(target))
+        .catch(() => setCapturedDesktopContextTarget(undefined))
+    }
     // 打开即刷新插件列表；失败仅 toast，不阻塞面板（沿用原 handleOpenPlugins 行为）
     try {
       const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
@@ -962,7 +984,7 @@ export function AgentInput({
     () => [...installedPlugins].sort((a, b) => a.name.localeCompare(b.name)),
     [installedPlugins],
   )
-  const hasDesktopContextTarget = Boolean(desktopContextTarget && onSelectDesktopContextTarget)
+  const hasDesktopContextTarget = Boolean(availableDesktopContextTarget)
   const desktopContextIndex = 2
   const pluginStartIndex = hasDesktopContextTarget ? 3 : 2
   // 整个面板可选项序列：[文件, 图片, 当前应用?, ...插件]，totalPlusItems 驱动 ↑/↓ 导航边界
@@ -988,10 +1010,14 @@ export function AgentInput({
       void handleAttach()
       return
     }
-    if (hasDesktopContextTarget && index === desktopContextIndex && desktopContextTarget && onSelectDesktopContextTarget) {
+    if (hasDesktopContextTarget && index === desktopContextIndex && availableDesktopContextTarget) {
       setPlusPanelOpen(false)
-      onSelectDesktopContextTarget(desktopContextTarget)
-      toast.success(`已将 ${desktopContextTarget.app.name} 附加到对话`)
+      if (onSelectDesktopContextTarget) {
+        onSelectDesktopContextTarget(availableDesktopContextTarget)
+      } else {
+        setLocalDesktopContextTarget(availableDesktopContextTarget)
+      }
+      toast.success(`已将 ${availableDesktopContextTarget.app.name} 附加到对话`)
       return
     }
     const plugin = pluginItems[index - pluginStartIndex]
@@ -1007,7 +1033,7 @@ export function AgentInput({
       editor.commands.insertContent(' ')
     }
   }, [
-    desktopContextTarget,
+    availableDesktopContextTarget,
     editor,
     handleAttach,
     hasDesktopContextTarget,
@@ -1123,14 +1149,14 @@ export function AgentInput({
                             {row.label}
                           </div>
                         ))}
-                        {hasDesktopContextTarget && desktopContextTarget && (
+                        {hasDesktopContextTarget && availableDesktopContextTarget && (
                           <>
                             <div className="border-t border-[var(--lume-border-subtle)]" />
                             <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
                               当前应用
                             </div>
                             <DesktopContextPlusItem
-                              target={desktopContextTarget}
+                              target={availableDesktopContextTarget}
                               active={activeIndex === desktopContextIndex}
                               itemIndex={desktopContextIndex}
                               onHover={() => setActiveIndex(desktopContextIndex)}
