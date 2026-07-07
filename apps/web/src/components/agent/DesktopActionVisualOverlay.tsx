@@ -1,0 +1,66 @@
+import { useAtomValue } from 'jotai'
+import { Check, CircleAlert, MousePointer2, Sparkles } from 'lucide-react'
+import { desktopActionVisualAtom } from '@/atoms'
+import type { DesktopActionKind } from '@lume/shared'
+import type { DesktopActionVisualOverlayState } from '@/hooks/desktop-action-visual-state'
+
+const ACTION_LABELS: Record<DesktopActionKind, string> = {
+  launch_app: '启动应用',
+  activate_window: '切换窗口',
+  move_pointer: '移动鼠标',
+  click: '点击',
+  press_key: '按键',
+  type_text: '输入内容',
+  scroll: '滚动页面',
+  set_value: '填写内容',
+  drag: '拖拽',
+  perform_secondary_action: '执行更多操作',
+}
+
+export function DesktopActionVisualOverlay() {
+  const state = useAtomValue(desktopActionVisualAtom)
+  return state ? <DesktopActionVisualOverlayFrame state={state} /> : null
+}
+
+export function DesktopActionVisualOverlayFrame({
+  state,
+}: {
+  state: DesktopActionVisualOverlayState
+}) {
+  const completed = state.phase === 'completed'
+  const failed = state.phase === 'failed'
+  const title = completed ? '操作完成' : failed ? '操作未完成' : 'Lume 正在操作'
+  const detail = `${ACTION_LABELS[state.action]}${state.targetLabel ? ` · ${state.targetLabel}` : ''}`
+
+  return (
+    <div
+      className="pointer-events-none fixed inset-x-0 top-12 z-[120] flex justify-center px-4"
+      aria-live="polite"
+      aria-label={`${title} ${state.appName}`}
+    >
+      <div
+        data-phase={state.phase}
+        className="relative flex min-w-[300px] max-w-[min(520px,calc(100vw-32px))] items-center gap-3 overflow-hidden rounded-[18px] border border-[#9ee9d8]/70 bg-[#102a2a]/95 px-3.5 py-3 text-white shadow-[0_18px_55px_rgba(3,34,32,0.38)] backdrop-blur-xl"
+      >
+        <div className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-[#b8ffe7] to-transparent" />
+        <span className="relative grid size-10 shrink-0 place-items-center rounded-[13px] bg-[#caffec] text-[#0d574c] shadow-[0_0_24px_rgba(127,255,218,0.34)]">
+          {completed ? <Check size={19} strokeWidth={2.5} /> : failed ? <CircleAlert size={19} /> : <Sparkles size={18} className="animate-pulse" />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2 text-[13px] font-semibold tracking-[0.01em]">
+            {title}
+            <span className="truncate rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-medium text-[#d6fff2]">
+              {state.appName}
+            </span>
+          </span>
+          <span className="mt-0.5 block truncate text-[12px] text-white/65">{detail}</span>
+        </span>
+        <span className="relative flex shrink-0 items-center gap-1.5 rounded-full border border-[#bfffea]/25 bg-black/20 px-2.5 py-1.5 text-[10px] font-medium text-[#d7fff4]">
+          <MousePointer2 size={14} className={state.phase === 'started' ? 'animate-pulse' : ''} />
+          <span>代理鼠标</span>
+          {state.point && <span className="font-mono text-white/45">{Math.round(state.point.x)},{Math.round(state.point.y)}</span>}
+        </span>
+      </div>
+    </div>
+  )
+}

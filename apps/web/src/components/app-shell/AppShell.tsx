@@ -6,6 +6,7 @@ import { CommandPalette } from '@/components/command-palette/CommandPalette'
 import { useSetAtom } from 'jotai'
 import { commandPaletteOpenAtom } from '@/atoms'
 import { useEffect } from 'react'
+import { DesktopActionVisualOverlay } from '@/components/agent/DesktopActionVisualOverlay'
 
 export function AppShell() {
   const setOpen = useSetAtom(commandPaletteOpenAtom)
@@ -32,6 +33,7 @@ export function AppShell() {
         <RightPanelWorkspace />
       </div>
       <CommandPalette />
+      <DesktopActionVisualOverlay />
     </div>
   )
 }

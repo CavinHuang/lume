@@ -1,8 +1,11 @@
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import {
+  isDesktopActionStatus,
   requiresDesktopActionConfirmation,
   type AgentDesktopActionRequest,
   type DesktopActionKind,
+  type DesktopActionStatus,
+  type DesktopActionVisualRuntimeEvent,
 } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import { invokeComputerUse } from "../../../desktop-context/desktop-context-runtime";
@@ -47,7 +50,9 @@ const READ_ONLY_TOOLS = new Set<ComputerUseToolName>([
 export function createComputerUseMcpTools(input: {
   invoke?: ComputerUseInvoke;
   threadId?: string;
+  runId?: string;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
 } = {}): ToolDefinition[] {
   const invoke = input.invoke ?? invokeComputerUse;
   return COMPUTER_USE_TOOL_NAMES.map((name) => {
@@ -77,6 +82,8 @@ export function createComputerUseMcpTools(input: {
         builtin: true,
       },
       async call(rawArgs, context) {
+        let visualStarted = false;
+        let visualArgs: Record<string, unknown> | undefined;
         try {
           const args = asRecord(rawArgs);
           if (!readOnly && requiresDesktopActionConfirmation({
@@ -103,9 +110,38 @@ export function createComputerUseMcpTools(input: {
             }
             Object.assign(args, prepared.args);
           }
+          if (!readOnly) {
+            visualStarted = true;
+            visualArgs = args;
+            emitDesktopActionVisualEvent(input, {
+              phase: "started",
+              toolUseId: context.toolUseId,
+              action: name as DesktopActionKind,
+              args,
+            });
+          }
           const result = await invoke(name, args);
+          if (!readOnly) {
+            const status = resultStatus(result);
+            emitDesktopActionVisualEvent(input, {
+              phase: status && status !== "ok" ? "failed" : "completed",
+              toolUseId: context.toolUseId,
+              action: name as DesktopActionKind,
+              args,
+              status,
+            });
+          }
           return toolResult(context.toolUseId, result);
         } catch (error) {
+          if (visualStarted) {
+            emitDesktopActionVisualEvent(input, {
+              phase: "failed",
+              toolUseId: context.toolUseId,
+              action: name as DesktopActionKind,
+              args: visualArgs ?? {},
+              status: "failed",
+            });
+          }
           return toolResult(context.toolUseId, {
             status: "failed",
             message: error instanceof Error ? error.message : String(error),
@@ -114,6 +150,59 @@ export function createComputerUseMcpTools(input: {
       },
     } satisfies ToolDefinition;
   });
+}
+
+function emitDesktopActionVisualEvent(
+  input: {
+    threadId?: string;
+    runId?: string;
+    emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
+  },
+  event: {
+    phase: DesktopActionVisualRuntimeEvent["phase"];
+    toolUseId?: string;
+    action: DesktopActionKind;
+    args: Record<string, unknown>;
+    status?: DesktopActionStatus;
+  },
+): void {
+  if (!input.emitDesktopActionVisualEvent) return;
+  const threadId = input.threadId ?? "computer-use";
+  const runId = input.runId ?? threadId;
+  const appId = stringValue(event.args.appId) ?? "unknown";
+  const appName = stringValue(event.args.appName) ?? appId;
+  const targetLabel = stringValue(event.args.targetLabel) ?? stringValue(event.args.label);
+  const point = pointFromArgs(event.args);
+  const toolCallId = event.toolUseId ?? `${event.action}:${randomUUID()}`;
+  try {
+    input.emitDesktopActionVisualEvent({
+      id: `${runId}:${toolCallId}:desktop.action_visual:${event.phase}`,
+      type: "desktop.action_visual",
+      threadId,
+      runId,
+      createdAt: new Date().toISOString(),
+      phase: event.phase,
+      toolCallId,
+      action: event.action,
+      app: { id: appId, name: appName },
+      ...(targetLabel ? { targetLabel } : {}),
+      ...(point ? { point } : {}),
+      ...(event.status ? { status: event.status } : {}),
+    });
+  } catch {
+    // Visual feedback is observational and must never block the desktop action.
+  }
+}
+
+function pointFromArgs(args: Record<string, unknown>): { x: number; y: number } | undefined {
+  const x = typeof args.x === "number" ? args.x : typeof args.toX === "number" ? args.toX : undefined;
+  const y = typeof args.y === "number" ? args.y : typeof args.toY === "number" ? args.toY : undefined;
+  return x === undefined || y === undefined ? undefined : { x, y };
+}
+
+function resultStatus(value: unknown): DesktopActionStatus | undefined {
+  const status = asRecord(value).status;
+  return isDesktopActionStatus(status) ? status : undefined;
 }
 
 async function prepareConfirmedActionArgs(

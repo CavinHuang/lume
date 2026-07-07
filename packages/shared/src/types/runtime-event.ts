@@ -1,4 +1,5 @@
 import type { AgentMessageAttachmentInput } from "./agent";
+import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
 
@@ -16,6 +17,7 @@ export type RuntimeEventType =
   | "tool.completed"
   | "tool.failed"
   | "tool.permission_timeout"
+  | "desktop.action_visual"
   | "guidance.delivered"
   | "plan.preview"
   | "todo.state_updated"
@@ -134,6 +136,23 @@ export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
   requestId: string;
   toolName: string;
   message: string;
+}
+
+export interface DesktopActionVisualRuntimeEvent extends RuntimeEventBase {
+  type: "desktop.action_visual";
+  phase: "started" | "completed" | "failed";
+  toolCallId: string;
+  action: DesktopActionKind;
+  app: {
+    id: string;
+    name: string;
+  };
+  targetLabel?: string;
+  point?: {
+    x: number;
+    y: number;
+  };
+  status?: DesktopActionStatus;
 }
 
 export interface GuidanceDeliveredRuntimeEvent extends RuntimeEventBase {
@@ -373,6 +392,7 @@ export type LumeRuntimeEvent =
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent
   | ToolPermissionTimeoutRuntimeEvent
+  | DesktopActionVisualRuntimeEvent
   | GuidanceDeliveredRuntimeEvent
   | ToolPermissionResolvedRuntimeEvent
   | PlanPreviewRuntimeEvent

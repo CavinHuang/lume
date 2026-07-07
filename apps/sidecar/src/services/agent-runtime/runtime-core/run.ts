@@ -37,7 +37,8 @@ import type {
   AgentBrowserAuthRequest,
   AgentDesktopActionRequest,
   AgentSendInput,
-  AgentToolPermissionRequest
+  AgentToolPermissionRequest,
+  LumeRuntimeEvent
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -143,6 +144,7 @@ export interface CreateRuntimeCoreSessionInput {
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -334,6 +336,7 @@ async function runSidecarSubagent(input: {
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
 }): Promise<{
   result: ToolResult;
@@ -446,6 +449,7 @@ async function runSidecarSubagent(input: {
     onAskUserQuestion: input.emitAskUserQuestion ?? (() => undefined),
     onBrowserAuthRequest: input.emitBrowserAuthRequest ?? (() => undefined),
     onDesktopActionRequest: input.emitDesktopActionRequest,
+    onRuntimeEvent: input.emitRuntimeEvent,
     onToolPermissionRequest: input.emitToolPermissionRequest ?? (() => undefined)
   });
 
@@ -634,6 +638,7 @@ function buildRuntimeCoreTools(input: {
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -683,10 +688,12 @@ function buildRuntimeCoreTools(input: {
     memoryToolPolicy: memoryRuntimeConfig.toolPolicy,
     includeCitations,
     automationExecution,
+    runId: input.runId,
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion ?? (() => {}),
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
+    emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {})
   });
 
@@ -779,6 +786,7 @@ function buildRuntimeCoreTools(input: {
         emitAskUserQuestion: input.emitAskUserQuestion,
         emitBrowserAuthRequest: input.emitBrowserAuthRequest,
         emitDesktopActionRequest: input.emitDesktopActionRequest,
+        emitRuntimeEvent: input.emitRuntimeEvent,
         emitToolPermissionRequest: input.emitToolPermissionRequest
       });
       if (runInBackground) {
@@ -931,6 +939,7 @@ function buildRuntimeCoreTools(input: {
         emitAskUserQuestion: input.emitAskUserQuestion,
         emitBrowserAuthRequest: input.emitBrowserAuthRequest,
         emitDesktopActionRequest: input.emitDesktopActionRequest,
+        emitRuntimeEvent: input.emitRuntimeEvent,
         emitToolPermissionRequest: input.emitToolPermissionRequest
       });
       if (runInBackground) {
@@ -1348,6 +1357,7 @@ export async function createRuntimeCoreSession(
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
+    emitRuntimeEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
     emitTodoUpdated: input.emitTodoUpdated,

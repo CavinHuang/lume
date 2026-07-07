@@ -11,6 +11,7 @@ import {
   agentPlanModePhaseAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
+  desktopActionVisualAtom,
   agentSidePanelViewAtom,
   tabsAtom,
 } from '@/atoms'
@@ -43,6 +44,7 @@ import {
   upsertPendingToolPermission,
 } from './pending-interactive-state'
 import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
+import { projectDesktopActionVisualEvent } from './desktop-action-visual-state'
 
 export function useGlobalAgentListeners() {
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
@@ -54,11 +56,13 @@ export function useGlobalAgentListeners() {
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
+  const setDesktopActionVisual = useSetAtom(desktopActionVisualAtom)
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const setTabs = useSetAtom(tabsAtom)
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const runtimeEventsRafRef = useRef<number | null>(null)
+  const desktopActionVisualTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushRuntimeEvents = useCallback(() => {
     runtimeEventsRafRef.current = null
     const batch = pendingRuntimeEventsRef.current
@@ -108,6 +112,19 @@ export function useGlobalAgentListeners() {
           const notification = params as AgentRuntimeEventNotification
           const { threadId, event } = notification
           enqueueRuntimeEvent(event)
+          if (event.type === 'desktop.action_visual') {
+            if (desktopActionVisualTimerRef.current) {
+              clearTimeout(desktopActionVisualTimerRef.current)
+              desktopActionVisualTimerRef.current = null
+            }
+            setDesktopActionVisual(projectDesktopActionVisualEvent(event))
+            if (event.phase !== 'started') {
+              desktopActionVisualTimerRef.current = setTimeout(() => {
+                setDesktopActionVisual(null)
+                desktopActionVisualTimerRef.current = null
+              }, 1_600)
+            }
+          }
           if (event.type === 'plan.preview') {
             setPendingInteractive((prev) => upsertPendingTaskApproval(prev, planPreviewToPendingTaskApproval(event)))
           }
@@ -308,6 +325,10 @@ export function useGlobalAgentListeners() {
         cancelAnimationFrame(runtimeEventsRafRef.current)
         runtimeEventsRafRef.current = null
       }
+      if (desktopActionVisualTimerRef.current) {
+        clearTimeout(desktopActionVisualTimerRef.current)
+        desktopActionVisualTimerRef.current = null
+      }
       // flush 残留事件，避免卸载丢失最后一帧
       const batch = pendingRuntimeEventsRef.current
       if (batch.length > 0) {
@@ -315,5 +336,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, enqueueRuntimeEvent])
 }

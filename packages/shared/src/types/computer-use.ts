@@ -189,6 +189,7 @@ export const DESKTOP_CONTEXT_IPC_CHANNELS = {
 } as const;
 
 export type DesktopActionKind =
+  | "launch_app"
   | "activate_window"
   | "move_pointer"
   | "click"

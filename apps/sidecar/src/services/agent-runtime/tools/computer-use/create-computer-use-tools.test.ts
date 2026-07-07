@@ -95,4 +95,86 @@ describe("createComputerUseMcpTools", () => {
       input: { appId: "wechat.exe", appName: "微信", windowId: "window-1", targetLabel: "发送", windowRevision: "fresh-rev" },
     });
   });
+
+  test("emits desktop action visual lifecycle without leaking typed text", async () => {
+    const visualEvents: unknown[] = [];
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-visual",
+      runId: "run-visual",
+      emitDesktopActionVisualEvent: (event) => visualEvents.push(event),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        return { status: "ok" };
+      },
+    });
+    const typeText = tools.find((tool) => tool.name === "mcp__computer_use__type_text")!;
+
+    const result = await typeText.call(
+      { appId: "wechat.exe", appName: "微信", windowId: "win-1", targetLabel: "输入框", text: "password=secret" },
+      { toolUseId: "tool-visual", abortSignal: new AbortController().signal } as never,
+    );
+
+    expect(calls).toEqual([{
+      method: "type_text",
+      input: { appId: "wechat.exe", appName: "微信", windowId: "win-1", targetLabel: "输入框", text: "password=secret" },
+    }]);
+    expect(JSON.parse(result.content as string)).toEqual({ status: "ok" });
+    expect(visualEvents).toHaveLength(2);
+    expect(visualEvents[0]).toMatchObject({
+      type: "desktop.action_visual",
+      phase: "started",
+      threadId: "thread-visual",
+      runId: "run-visual",
+      toolCallId: "tool-visual",
+      action: "type_text",
+      app: { id: "wechat.exe", name: "微信" },
+      targetLabel: "输入框",
+    });
+    expect(visualEvents[1]).toMatchObject({
+      type: "desktop.action_visual",
+      phase: "completed",
+      status: "ok",
+    });
+    expect(JSON.stringify(visualEvents)).not.toContain("password=secret");
+  });
+
+  test("marks non-ok desktop action results as a failed visual phase", async () => {
+    const visualEvents: Array<{ phase: string; status?: string }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-unavailable",
+      emitDesktopActionVisualEvent: (event) => visualEvents.push(event),
+      invoke: async () => ({ status: "unavailable", message: "desktop host is offline" }),
+    });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+
+    await click.call(
+      { appId: "wechat.exe", appName: "微信", targetLabel: "输入框" },
+      { toolUseId: "tool-unavailable" } as never,
+    );
+
+    expect(visualEvents).toEqual([
+      expect.objectContaining({ phase: "started" }),
+      expect.objectContaining({ phase: "failed", status: "unavailable" }),
+    ]);
+  });
+
+  test("does not let visual event listener failures block desktop actions", async () => {
+    let invoked = false;
+    const tools = createComputerUseMcpTools({
+      emitDesktopActionVisualEvent: () => {
+        throw new Error("renderer disconnected");
+      },
+      invoke: async () => {
+        invoked = true;
+        return { status: "ok" };
+      },
+    });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+
+    const result = await click.call({}, { toolUseId: "tool-observer-failure" } as never);
+
+    expect(invoked).toBe(true);
+    expect(JSON.parse(result.content as string)).toEqual({ status: "ok" });
+  });
 });

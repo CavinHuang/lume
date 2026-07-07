@@ -1,5 +1,5 @@
 import type { SDKMessage, ToolDefinition } from "@lume/agent-sdk";
-import type { AgentAskUserQuestionRequest, AgentBrowserAuthRequest, AgentDesktopActionRequest, AgentToolPermissionRequest } from "@lume/shared";
+import type { AgentAskUserQuestionRequest, AgentBrowserAuthRequest, AgentDesktopActionRequest, AgentToolPermissionRequest, DesktopActionVisualRuntimeEvent } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory-v2/policy";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
@@ -25,6 +25,7 @@ const AUTOMATION_TOOL_NAMES = [
 
 export interface CreateLumeRuntimeToolsInput {
   threadId: string;
+  runId?: string;
   cwd?: string;
   workspaceId?: string;
   channelId?: string;
@@ -39,6 +40,7 @@ export interface CreateLumeRuntimeToolsInput {
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
   emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 }
 
@@ -88,7 +90,9 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   });
   const computerUseTools = createComputerUseMcpTools({
     threadId: input.threadId,
+    runId: input.runId,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
+    emitDesktopActionVisualEvent: input.emitDesktopActionVisualEvent,
   });
   const customTools = [
     ...memoryTools,
