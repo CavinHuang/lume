@@ -89,14 +89,19 @@ export function createComputerUseMcpTools(input: {
                 message: "consequential desktop action requires explicit user confirmation",
               });
             }
+            const prepared = await prepareConfirmedActionArgs(invoke, args);
+            if (prepared.status !== "ok") {
+              return toolResult(context.toolUseId, prepared.result);
+            }
             const allowed = await waitForDesktopActionDecision(
-              createActionRequest(input.threadId, context.toolUseId, name as DesktopActionKind, args),
+              createActionRequest(input.threadId, context.toolUseId, name as DesktopActionKind, prepared.args),
               context.abortSignal ?? new AbortController().signal,
               input.emitDesktopActionRequest,
             );
             if (!allowed) {
               return toolResult(context.toolUseId, { status: "cancelled" });
             }
+            Object.assign(args, prepared.args);
           }
           const result = await invoke(name, args);
           return toolResult(context.toolUseId, result);
@@ -109,6 +114,33 @@ export function createComputerUseMcpTools(input: {
       },
     } satisfies ToolDefinition;
   });
+}
+
+async function prepareConfirmedActionArgs(
+  invoke: ComputerUseInvoke,
+  args: Record<string, unknown>,
+): Promise<{ status: "ok"; args: Record<string, unknown> } | { status: "blocked"; result: unknown }> {
+  if (typeof args.windowRevision === "string" && args.windowRevision.trim()) {
+    return { status: "ok", args };
+  }
+  const state = asRecord(await invoke("get_window_state", {
+    ...(typeof args.windowId === "string" ? { windowId: args.windowId } : {}),
+  }));
+  if (state.status !== "ok" || typeof state.revision !== "string") {
+    return {
+      status: "blocked",
+      result: { status: "blocked", message: "unable to verify desktop target before confirmation" },
+    };
+  }
+  const window = asRecord(state.window);
+  return {
+    status: "ok",
+    args: {
+      ...args,
+      ...(typeof args.windowId === "string" ? {} : typeof window.id === "string" ? { windowId: window.id } : {}),
+      windowRevision: state.revision,
+    },
+  };
 }
 
 function createActionRequest(

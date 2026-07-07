@@ -5,11 +5,17 @@ use std::{
 
 use crate::DesktopBackend;
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use windows::{
     core::{BOOL, PWSTR},
     Win32::{
         Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT},
+        Graphics::Gdi::{
+            BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+            GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+            DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
+        },
         System::{
             Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED},
             Threading::{
@@ -197,6 +203,11 @@ fn get_window_state(params: &Value) -> Result<Value> {
     };
     let title = window["title"].as_str().unwrap_or_default();
     let revision = window_revision(&window);
+    let screenshots = screenshot_refs(
+        hwnd,
+        &window,
+        params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
+    );
     let accessibility = accessibility_state(hwnd).unwrap_or_else(|error| {
         json!({
             "tree": [],
@@ -209,7 +220,7 @@ fn get_window_state(params: &Value) -> Result<Value> {
         "window": window,
         "revision": revision,
         "capturedAt": now_millis(),
-        "screenshots": [],
+        "screenshots": screenshots,
         "accessibility": accessibility,
     }))
 }
@@ -284,9 +295,166 @@ fn current_context() -> Result<Value> {
             "capturedAt": now_millis(),
             "eventType": "foreground_changed",
             "visibleText": visible_text,
+            "screenshotId": screenshot_id(&window),
             "untrusted": true,
         }
     }))
+}
+
+fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Value> {
+    let width = window["bounds"]["width"]
+        .as_i64()
+        .unwrap_or_default()
+        .max(0) as i32;
+    let height = window["bounds"]["height"]
+        .as_i64()
+        .unwrap_or_default()
+        .max(0) as i32;
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let mut screenshot = json!({
+        "id": screenshot_id(window),
+        "width": width,
+        "height": height,
+        "origin": {
+            "x": window["bounds"]["x"],
+            "y": window["bounds"]["y"],
+        },
+        "mimeType": "image/bmp",
+    });
+    if include_pixels {
+        match capture_window_bmp_data_url(hwnd, width, height) {
+            Ok(data_url) => {
+                screenshot["dataUrl"] = Value::String(data_url);
+            }
+            Err(error) => {
+                screenshot["error"] = Value::String(error.to_string());
+            }
+        }
+    }
+    vec![screenshot]
+}
+
+fn screenshot_id(window: &Value) -> String {
+    format!(
+        "screenshot:{}:{}",
+        window["id"].as_str().unwrap_or_default(),
+        window_revision(window)
+    )
+}
+
+fn capture_window_bmp_data_url(hwnd: HWND, width: i32, height: i32) -> Result<String> {
+    let mut rect = RECT::default();
+    unsafe {
+        GetWindowRect(hwnd, &mut rect)?;
+    }
+    let screen_dc = unsafe { GetDC(None) };
+    if screen_dc.is_invalid() {
+        return Err(anyhow!("unable to acquire screen device context"));
+    }
+    let memory_dc = unsafe { CreateCompatibleDC(Some(screen_dc)) };
+    if memory_dc.is_invalid() {
+        unsafe {
+            ReleaseDC(None, screen_dc);
+        }
+        return Err(anyhow!("unable to create capture device context"));
+    }
+    let bitmap = unsafe { CreateCompatibleBitmap(screen_dc, width, height) };
+    if bitmap.is_invalid() {
+        unsafe {
+            let _ = DeleteDC(memory_dc);
+            ReleaseDC(None, screen_dc);
+        }
+        return Err(anyhow!("unable to create capture bitmap"));
+    }
+
+    let old_object = unsafe { SelectObject(memory_dc, HGDIOBJ::from(bitmap)) };
+    let capture_result = unsafe {
+        BitBlt(
+            memory_dc,
+            0,
+            0,
+            width,
+            height,
+            Some(screen_dc),
+            rect.left,
+            rect.top,
+            SRCCOPY,
+        )
+    };
+    let result = capture_result
+        .map_err(|error| anyhow!("window capture failed: {error}"))
+        .and_then(|_| bitmap_to_bmp_data_url(memory_dc, bitmap, width, height));
+    unsafe {
+        if !old_object.is_invalid() {
+            SelectObject(memory_dc, old_object);
+        }
+        let _ = DeleteObject(HGDIOBJ::from(bitmap));
+        let _ = DeleteDC(memory_dc);
+        ReleaseDC(None, screen_dc);
+    }
+    result
+}
+
+fn bitmap_to_bmp_data_url(
+    memory_dc: windows::Win32::Graphics::Gdi::HDC,
+    bitmap: windows::Win32::Graphics::Gdi::HBITMAP,
+    width: i32,
+    height: i32,
+) -> Result<String> {
+    let pixel_bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| anyhow!("window capture dimensions are too large"))?;
+    let mut pixels = vec![0_u8; pixel_bytes];
+    let mut info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            biSizeImage: pixel_bytes as u32,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let copied = unsafe {
+        GetDIBits(
+            memory_dc,
+            bitmap,
+            0,
+            height as u32,
+            Some(pixels.as_mut_ptr().cast()),
+            &mut info,
+            DIB_RGB_COLORS,
+        )
+    };
+    if copied == 0 {
+        return Err(anyhow!("unable to read captured bitmap"));
+    }
+    let mut bmp = Vec::with_capacity(14 + size_of::<BITMAPINFOHEADER>() + pixels.len());
+    let file_size = (14 + size_of::<BITMAPINFOHEADER>() + pixels.len()) as u32;
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&file_size.to_le_bytes());
+    bmp.extend_from_slice(&0_u16.to_le_bytes());
+    bmp.extend_from_slice(&0_u16.to_le_bytes());
+    bmp.extend_from_slice(&(14_u32 + size_of::<BITMAPINFOHEADER>() as u32).to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biSize.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biWidth.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biHeight.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biPlanes.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biBitCount.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biCompression.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biSizeImage.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biXPelsPerMeter.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biYPelsPerMeter.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biClrUsed.to_le_bytes());
+    bmp.extend_from_slice(&info.bmiHeader.biClrImportant.to_le_bytes());
+    bmp.extend_from_slice(&pixels);
+    Ok(format!("data:image/bmp;base64,{}", BASE64.encode(bmp)))
 }
 
 fn accessibility_state(hwnd: HWND) -> Result<Value> {

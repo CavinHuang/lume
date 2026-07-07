@@ -1,6 +1,7 @@
 import {
   DESKTOP_CONTEXT_IPC_CHANNELS,
   type DesktopAssistantSettings,
+  type DesktopProactiveProposalStatus,
 } from "@lume/shared";
 import type { RpcHandler } from "./types";
 
@@ -14,6 +15,8 @@ interface DesktopContextRpcService {
   getStatus(): Promise<unknown>;
   clear(): { cleared: boolean };
   listActivity(limit?: number): unknown[];
+  listProposals(): unknown[];
+  updateProposal(id: string, status: DesktopProactiveProposalStatus): unknown;
 }
 
 export function createDesktopContextHandlers(service: DesktopContextRpcService): Record<string, RpcHandler> {
@@ -50,6 +53,13 @@ export function createDesktopContextHandlers(service: DesktopContextRpcService):
       const limit = readRecord(params).limit;
       return service.listActivity(typeof limit === "number" ? limit : undefined);
     },
+    [DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS]: async () => service.listProposals(),
+    [DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL]: async (params) => {
+      const input = readRecord(params);
+      if (typeof input.id !== "string") throw new Error("proposal id is required");
+      if (!isProposalStatus(input.status)) throw new Error("invalid proposal status");
+      return service.updateProposal(input.id, input.status);
+    },
   };
 }
 
@@ -57,4 +67,12 @@ function readRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function isProposalStatus(value: unknown): value is DesktopProactiveProposalStatus {
+  return value === "pending"
+    || value === "opened"
+    || value === "accepted"
+    || value === "dismissed"
+    || value === "expired";
 }

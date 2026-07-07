@@ -6,6 +6,8 @@ import {
   type DesktopAssistantSettings as DesktopAssistantSettingsValue,
   type DesktopAssistantStatus,
   type DesktopContextSnapshot,
+  type DesktopProactiveProposal,
+  type DesktopProactiveProposalStatus,
 } from '@lume/shared'
 import { sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
@@ -16,19 +18,22 @@ export function DesktopAssistantSettings() {
   const [settings, setSettings] = useState<DesktopAssistantSettingsValue | null>(null)
   const [status, setStatus] = useState<DesktopAssistantStatus | null>(null)
   const [activity, setActivity] = useState<DesktopContextSnapshot[]>([])
+  const [proposals, setProposals] = useState<DesktopProactiveProposal[]>([])
   const [appsDraft, setAppsDraft] = useState('')
   const [saving, setSaving] = useState(false)
 
   const refresh = async () => {
-    const [nextSettings, nextStatus, nextActivity] = await Promise.all([
+    const [nextSettings, nextStatus, nextActivity, nextProposals] = await Promise.all([
       sidecarCall<DesktopAssistantSettingsValue>(DESKTOP_CONTEXT_IPC_CHANNELS.GET_SETTINGS),
       sidecarCall<DesktopAssistantStatus>(DESKTOP_CONTEXT_IPC_CHANNELS.GET_STATUS),
       sidecarCall<DesktopContextSnapshot[]>(DESKTOP_CONTEXT_IPC_CHANNELS.LIST_ACTIVITY, { limit: 30 }),
+      sidecarCall<DesktopProactiveProposal[]>(DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS),
     ])
     setSettings(nextSettings)
     setAppsDraft(nextSettings.allowedApps.join(', '))
     setStatus(nextStatus)
     setActivity(nextActivity)
+    setProposals(nextProposals)
   }
 
   useEffect(() => {
@@ -51,6 +56,11 @@ export function DesktopAssistantSettings() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const updateProposal = async (id: string, status: DesktopProactiveProposalStatus) => {
+    await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL, { id, status })
+    await refresh()
   }
 
   if (!settings) {
@@ -101,6 +111,41 @@ export function DesktopAssistantSettings() {
           <Button type="button" variant="outline" onClick={() => void refresh()}>重新诊断</Button>
         </div>
         {status?.host.message && <p className="mt-3 rounded-lg bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">{status.host.message}</p>}
+      </section>
+
+      <section className="lume-panel p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">主动建议收件箱</h3>
+            <p className="mt-1 text-xs text-muted-foreground">只显示建议类型、应用和状态；不显示聊天正文。</p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => void refresh()}>刷新</Button>
+        </div>
+        <div className="mt-3 divide-y divide-border/60">
+          {proposals.length === 0 && <p className="py-6 text-center text-xs text-muted-foreground">暂无主动建议</p>}
+          {proposals.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-4 py-3 text-xs">
+              <div className="min-w-0">
+                <p className="truncate font-medium text-foreground">{item.summary}</p>
+                <p className="mt-1 truncate text-muted-foreground">
+                  {item.kind} · {item.status} · {item.app.name}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                {item.status === 'pending' && (
+                  <Button type="button" variant="secondary" onClick={() => void updateProposal(item.id, 'opened')}>
+                    标记已读
+                  </Button>
+                )}
+                {item.status !== 'dismissed' && (
+                  <Button type="button" variant="ghost" onClick={() => void updateProposal(item.id, 'dismissed')}>
+                    忽略
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="lume-panel p-4">

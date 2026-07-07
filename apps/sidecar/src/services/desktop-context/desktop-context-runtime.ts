@@ -57,6 +57,12 @@ export const desktopContextRpcService = {
   listActivity(limit?: number) {
     return getRuntime().service.listActivity(limit);
   },
+  listProposals() {
+    return getRuntime().service.listProposals();
+  },
+  updateProposal(id: string, status: Parameters<DesktopContextService["updateProposal"]>[1]) {
+    return getRuntime().service.updateProposal(id, status);
+  },
 };
 
 export async function invokeComputerUse(method: string, input: Record<string, unknown>): Promise<unknown> {

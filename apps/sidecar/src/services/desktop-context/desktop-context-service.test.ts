@@ -3,7 +3,7 @@ import type { DesktopContextSnapshot } from "@lume/shared";
 import { DesktopContextService } from "./desktop-context-service";
 import { redactDesktopText } from "./desktop-context-store";
 
-function createService(input: { enabled?: boolean; allowedApps?: string[] } = {}) {
+function createService(input: { enabled?: boolean; allowedApps?: string[]; proactiveEnabled?: boolean } = {}) {
   const snapshots = new Map<string, DesktopContextSnapshot>();
   return new DesktopContextService({
     dbPath: "unused.sqlite",
@@ -12,6 +12,7 @@ function createService(input: { enabled?: boolean; allowedApps?: string[] } = {}
       allowedApps: input.allowedApps ?? ["wechat.exe"],
       retentionHours: 24,
       maxStorageBytes: 2_000_000,
+      proactiveEnabled: input.proactiveEnabled === true,
     },
     createStore: () => ({
       put(snapshot) {
@@ -85,5 +86,30 @@ describe("DesktopContextService", () => {
       status: "unavailable",
       message: "desktop assistant is disabled",
     });
+  });
+
+  test("creates non-sensitive reply proposals from local context only when proactive mode is enabled", async () => {
+    const service = createService({ proactiveEnabled: true });
+    service.unlock(Buffer.alloc(32, 4));
+
+    await service.captureCurrent();
+    const proposals = service.listProposals();
+
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.kind).toBe("reply");
+    expect(proposals[0]?.status).toBe("pending");
+    expect(JSON.stringify(proposals[0])).not.toContain("password=secret");
+    expect(JSON.stringify(proposals[0])).not.toContain("客户问");
+  });
+
+  test("allows dismissing proactive proposals without deleting the encrypted snapshot", async () => {
+    const service = createService({ proactiveEnabled: true });
+    service.unlock(Buffer.alloc(32, 4));
+    await service.captureCurrent();
+    const [proposal] = service.listProposals();
+
+    expect(service.updateProposal(proposal!.id, "dismissed")).toEqual({ updated: true });
+    expect(service.listProposals()[0]?.status).toBe("dismissed");
+    expect(await service.currentContext({ snapshotId: "snap-1" })).toMatchObject({ status: "ok" });
   });
 });

@@ -15,11 +15,18 @@ describe("desktop context RPC handlers", () => {
       getStatus: async () => ({ host: { status: "ok" }, store: { unlocked: true, items: 0, bytes: 0 } }),
       clear: () => ({ cleared: true }),
       listActivity: () => [],
+      listProposals: () => [{ id: "proposal-1", status: "pending" }],
+      updateProposal: (id, status) => ({ id, status }),
     });
 
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.UNLOCK]?.({ key: Buffer.alloc(32, 1).toString("base64") })).toEqual({ ok: true });
     expect(calls).toEqual([{ unlockBytes: 32 }]);
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT]?.({})).toEqual({ status: "ok", snapshotId: "snap-1" });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS]?.({})).toEqual([{ id: "proposal-1", status: "pending" }]);
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL]?.({ id: "proposal-1", status: "dismissed" })).toEqual({
+      id: "proposal-1",
+      status: "dismissed",
+    });
   });
 
   test("rejects malformed encryption keys", async () => {
@@ -33,6 +40,8 @@ describe("desktop context RPC handlers", () => {
       getStatus: async () => ({}),
       clear: () => ({ cleared: true }),
       listActivity: () => [],
+      listProposals: () => [],
+      updateProposal: () => ({ updated: false }),
     });
     expect(() => handlers[DESKTOP_CONTEXT_IPC_CHANNELS.UNLOCK]?.({ key: "bad" })).toThrow("32-byte");
   });

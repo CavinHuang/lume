@@ -96,6 +96,32 @@ export interface DesktopContextEvent {
   occurredAt: number;
 }
 
+export type DesktopProactiveProposalKind =
+  | "reply"
+  | "conflict"
+  | "prompt_rescue"
+  | "daily_wrap"
+  | "follow_up";
+
+export type DesktopProactiveProposalStatus =
+  | "pending"
+  | "opened"
+  | "accepted"
+  | "dismissed"
+  | "expired";
+
+export interface DesktopProactiveProposal {
+  id: string;
+  kind: DesktopProactiveProposalKind;
+  status: DesktopProactiveProposalStatus;
+  snapshotId: string;
+  app: Pick<DesktopAppRef, "id" | "name">;
+  window: Pick<DesktopWindowRef, "id" | "title">;
+  summary: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
 export interface DesktopActionResult {
   status: DesktopActionStatus;
   message?: string;
@@ -149,6 +175,8 @@ export const DESKTOP_CONTEXT_IPC_CHANNELS = {
   GET_STATUS: "desktop-context:get-status",
   CLEAR: "desktop-context:clear",
   LIST_ACTIVITY: "desktop-context:list-activity",
+  LIST_PROPOSALS: "desktop-context:list-proposals",
+  UPDATE_PROPOSAL: "desktop-context:update-proposal",
   ACTION_REQUEST: "agent:desktop-action-request",
   SUBMIT_ACTION: "agent:submit-desktop-action",
 } as const;

@@ -1,4 +1,9 @@
-import type { DesktopAssistantSettings, DesktopContextSnapshot } from "@lume/shared";
+import type {
+  DesktopAssistantSettings,
+  DesktopContextSnapshot,
+  DesktopProactiveProposal,
+  DesktopProactiveProposalStatus,
+} from "@lume/shared";
 import { DesktopContextStore } from "./desktop-context-store";
 
 type HostInvoke = (method: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -22,6 +27,8 @@ export class DesktopContextService {
   #lastFingerprint: string | null = null;
   #lastSnapshotId: string | null = null;
   #collectorCapturePending = false;
+  #proposals = new Map<string, DesktopProactiveProposal>();
+  #proposalFingerprints = new Set<string>();
   #settings: DesktopAssistantSettings;
   readonly #input: {
     dbPath: string;
@@ -84,6 +91,7 @@ export class DesktopContextService {
     store.purge();
     this.#lastFingerprint = fingerprint;
     this.#lastSnapshotId = snapshot.id;
+    this.#maybeCreateProposal(snapshot);
     return { status: "ok", snapshotId: snapshot.id };
   }
 
@@ -128,6 +136,25 @@ export class DesktopContextService {
     return this.#store?.recent(limit) ?? [];
   }
 
+  listProposals(): DesktopProactiveProposal[] {
+    const now = Date.now();
+    for (const [id, proposal] of this.#proposals) {
+      if (proposal.status === "pending" && proposal.expiresAt <= now) {
+        this.#proposals.set(id, { ...proposal, status: "expired" });
+      }
+    }
+    return Array.from(this.#proposals.values())
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((proposal) => structuredClone(proposal));
+  }
+
+  updateProposal(id: string, status: DesktopProactiveProposalStatus): { updated: boolean } {
+    const proposal = this.#proposals.get(id);
+    if (!proposal) return { updated: false };
+    this.#proposals.set(id, { ...proposal, status });
+    return { updated: true };
+  }
+
   close(): void {
     if (this.#collector) clearInterval(this.#collector);
     this.#collector = null;
@@ -164,6 +191,33 @@ export class DesktopContextService {
     this.#store.purge();
     return this.#store;
   }
+
+  #maybeCreateProposal(snapshot: DesktopContextSnapshot): void {
+    if (!this.#settings.proactiveEnabled) return;
+    const visibleText = [snapshot.selectedText, snapshot.visibleText].filter(Boolean).join("\n");
+    if (!looksLikeReplyOpportunity(visibleText)) return;
+    const fingerprint = `${snapshot.app.id}\u0000${snapshot.window.id}\u0000${snapshot.window.title}\u0000${visibleText}`;
+    if (this.#proposalFingerprints.has(fingerprint)) return;
+    this.#proposalFingerprints.add(fingerprint);
+    const createdAt = Date.now();
+    const proposal: DesktopProactiveProposal = {
+      id: `proposal:${snapshot.id}`,
+      kind: "reply",
+      status: "pending",
+      snapshotId: snapshot.id,
+      app: { id: snapshot.app.id, name: snapshot.app.name },
+      window: { id: snapshot.window.id, title: snapshot.window.title },
+      summary: `${snapshot.app.name} 中可能有一条需要回复的消息`,
+      createdAt,
+      expiresAt: createdAt + 30 * 60 * 1_000,
+    };
+    this.#proposals.set(proposal.id, proposal);
+  }
+}
+
+function looksLikeReplyOpportunity(text: string): boolean {
+  if (!text.trim()) return false;
+  return /[?？]|(?:吗|么|如何|怎么|什么时候|能否|是否|回复|请问)/u.test(text);
 }
 
 function snapshotFingerprint(snapshot: DesktopContextSnapshot): string {

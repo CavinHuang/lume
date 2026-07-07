@@ -44,7 +44,7 @@ describe("createComputerUseMcpTools", () => {
     });
     const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
     const resultPromise = click.call(
-      { appId: "wechat.exe", appName: "微信", windowId: "window-1", targetLabel: "发送" },
+      { appId: "wechat.exe", appName: "微信", windowId: "window-1", windowRevision: "rev-1", targetLabel: "发送" },
       { toolUseId: "tool-3", abortSignal: new AbortController().signal } as never,
     );
 
@@ -60,5 +60,39 @@ describe("createComputerUseMcpTools", () => {
 
     expect(calls).toHaveLength(1);
     expect(JSON.parse(result.content as string)).toEqual({ status: "ok" });
+  });
+
+  test("captures a fresh window revision before confirming consequential actions", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const requests: Array<{ threadId: string; requestId: string; expectedRevision?: string }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-2",
+      emitDesktopActionRequest: (request) => requests.push(request),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") return { status: "ok", revision: "fresh-rev" };
+        return { status: "ok" };
+      },
+    });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+    const resultPromise = click.call(
+      { appId: "wechat.exe", appName: "微信", windowId: "window-1", targetLabel: "发送" },
+      { toolUseId: "tool-4", abortSignal: new AbortController().signal } as never,
+    );
+
+    await Bun.sleep(0);
+    expect(calls).toEqual([{ method: "get_window_state", input: { windowId: "window-1" } }]);
+    expect(requests[0]?.expectedRevision).toBe("fresh-rev");
+    submitDesktopActionDecision({
+      threadId: "thread-2",
+      requestId: requests[0]!.requestId,
+      decision: "allow_once",
+    });
+    await resultPromise;
+
+    expect(calls[1]).toEqual({
+      method: "click",
+      input: { appId: "wechat.exe", appName: "微信", windowId: "window-1", targetLabel: "发送", windowRevision: "fresh-rev" },
+    });
   });
 });
