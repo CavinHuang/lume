@@ -11,13 +11,36 @@ type DesktopContextCaptureResult = {
   app?: { id?: unknown; name?: unknown }
   window?: { id?: unknown; title?: unknown }
   capturedAt?: unknown
+  message?: unknown
+}
+
+export type AgentInputDesktopContextCaptureState =
+  | { status: 'ready'; target: DesktopContextTarget }
+  | { status: 'unavailable'; message: string }
+
+export async function captureAgentInputDesktopContextState(
+  sidecarCall: SidecarCall,
+): Promise<AgentInputDesktopContextCaptureState> {
+  try {
+    const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, { userInitiated: true })
+    const target = desktopContextCaptureToTarget(result)
+    if (target) return { status: 'ready', target }
+    return { status: 'unavailable', message: desktopContextCaptureMessage(result) }
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      message: error instanceof Error && error.message.trim()
+        ? error.message
+        : '桌面上下文服务暂不可用',
+    }
+  }
 }
 
 export async function captureAgentInputDesktopContextTarget(
   sidecarCall: SidecarCall,
 ): Promise<DesktopContextTarget | undefined> {
-  const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, { userInitiated: true })
-  return desktopContextCaptureToTarget(result)
+  const state = await captureAgentInputDesktopContextState(sidecarCall)
+  return state.status === 'ready' ? state.target : undefined
 }
 
 export function createDesktopContextMessageMetadata(target: DesktopContextTarget): Record<string, unknown> {
@@ -44,4 +67,11 @@ function desktopContextCaptureToTarget(result: unknown): DesktopContextTarget | 
     window: { id: value.window.id, title: value.window.title },
     ...(typeof value.capturedAt === 'number' ? { capturedAt: value.capturedAt } : {}),
   }
+}
+
+function desktopContextCaptureMessage(result: unknown): string {
+  const value = result as DesktopContextCaptureResult | undefined
+  return typeof value?.message === 'string' && value.message.trim()
+    ? value.message.trim()
+    : '未能读取当前应用窗口'
 }

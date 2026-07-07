@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { DESKTOP_CONTEXT_IPC_CHANNELS } from '@lume/shared'
 import {
+  captureAgentInputDesktopContextState,
   captureAgentInputDesktopContextTarget,
   createDesktopContextMessageMetadata,
 } from './agent-input-desktop-context'
@@ -41,6 +42,32 @@ describe('agent-input desktop context helpers', () => {
       snapshotId: 'snap-missing-window',
       app: { id: 'wechat.exe', name: '微信' },
     }))).toBeUndefined()
+  })
+
+  test('returns a diagnosable capture state when the current app cannot be attached', async () => {
+    expect(await captureAgentInputDesktopContextState(async () => ({
+      status: 'unavailable',
+      message: 'desktop assistant is disabled',
+    }))).toEqual({
+      status: 'unavailable',
+      message: 'desktop assistant is disabled',
+    })
+
+    expect(await captureAgentInputDesktopContextState(async () => ({
+      status: 'ok',
+      snapshotId: 'snap-missing-window',
+      app: { id: 'wechat.exe', name: '微信' },
+    }))).toEqual({
+      status: 'unavailable',
+      message: '未能读取当前应用窗口',
+    })
+
+    expect(await captureAgentInputDesktopContextState(async () => {
+      throw new Error('sidecar disconnected')
+    })).toEqual({
+      status: 'unavailable',
+      message: 'sidecar disconnected',
+    })
   })
 
   test('creates non-sensitive message metadata from the selected app context', () => {

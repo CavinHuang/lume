@@ -3,7 +3,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { cn } from '@/lib/utils'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
-import { Bot, Send, Square, FileText, Image, Plus, Puzzle } from 'lucide-react'
+import { Bot, Send, Square, FileText, Image, Plus, Puzzle, LoaderCircle, MonitorOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
@@ -19,7 +19,7 @@ import {
   sidecarCall,
 } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { activeTabIdAtom, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { debounce } from 'throttle-debounce'
 import {
@@ -83,9 +83,10 @@ import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './Age
 import { DesktopContextPlusItem } from './DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
 import {
-  captureAgentInputDesktopContextTarget,
+  captureAgentInputDesktopContextState,
   createDesktopContextMessageMetadata,
 } from './agent-input-desktop-context'
+import { resolveOpenDesktopAssistantSettingsState } from './agent-input-desktop-settings'
 
 import { Button } from '@/components/ui/button'
 type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
@@ -231,6 +232,9 @@ export function AgentInput({
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const [messageQueues, setMessageQueues] = useAtom(agentMessageQueueAtom)
   const [threadPermissionModes, setThreadPermissionModes] = useAtom(agentThreadPermissionModesAtom)
+  const [tabs, setTabs] = useAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
   const workspaceIdRef = useRef<string | null>(null)
   const workspaceSlugRef = useRef<string | null>(null)
   const defaultPermissionModeRef = useRef<PermissionModeValue>('default')
@@ -269,6 +273,8 @@ export function AgentInput({
   const [activeIndex, setActiveIndex] = useState(0)
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginSummary[]>([])
   const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
+  const [desktopContextCaptureMessage, setDesktopContextCaptureMessage] = useState<string | undefined>()
+  const [desktopContextCaptureLoading, setDesktopContextCaptureLoading] = useState(false)
   const [localDesktopContextTarget, setLocalDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
@@ -951,6 +957,14 @@ export function AgentInput({
     }
   }
 
+  const handleOpenDesktopAssistantSettings = useCallback(() => {
+    const next = resolveOpenDesktopAssistantSettingsState(tabs)
+    setTabs(next.tabs)
+    setSettingsInitialTab(next.settingsInitialTab)
+    setActiveTabId(next.activeTabId)
+    setPlusPanelOpen(false)
+  }, [setActiveTabId, setSettingsInitialTab, setTabs, tabs])
+
   const handleOpenPlusPanel = async () => {
     if (plusPanelOpen) {
       setPlusPanelOpen(false)
@@ -959,9 +973,20 @@ export function AgentInput({
     setPlusPanelOpen(true)
     setActiveIndex(0)
     if (!desktopContextTarget) {
-      captureAgentInputDesktopContextTarget(sidecarCall)
-        .then((target) => setCapturedDesktopContextTarget(target))
-        .catch(() => setCapturedDesktopContextTarget(undefined))
+      setDesktopContextCaptureLoading(true)
+      setDesktopContextCaptureMessage(undefined)
+      setCapturedDesktopContextTarget(undefined)
+      captureAgentInputDesktopContextState(sidecarCall)
+        .then((state) => {
+          if (state.status === 'ready') {
+            setCapturedDesktopContextTarget(state.target)
+            setDesktopContextCaptureMessage(undefined)
+          } else {
+            setCapturedDesktopContextTarget(undefined)
+            setDesktopContextCaptureMessage(state.message)
+          }
+        })
+        .finally(() => setDesktopContextCaptureLoading(false))
     }
     // 打开即刷新插件列表；失败仅 toast，不阻塞面板（沿用原 handleOpenPlugins 行为）
     try {
@@ -987,6 +1012,7 @@ export function AgentInput({
     [installedPlugins],
   )
   const hasDesktopContextTarget = Boolean(availableDesktopContextTarget)
+  const showDesktopContextSection = hasDesktopContextTarget || desktopContextCaptureLoading || Boolean(desktopContextCaptureMessage)
   const desktopContextIndex = 2
   const pluginStartIndex = hasDesktopContextTarget ? 3 : 2
   // 整个面板可选项序列：[文件, 图片, 当前应用?, ...插件]，totalPlusItems 驱动 ↑/↓ 导航边界
@@ -1161,19 +1187,55 @@ export function AgentInput({
                             {row.label}
                           </div>
                         ))}
-                        {hasDesktopContextTarget && availableDesktopContextTarget && (
+                        {showDesktopContextSection && (
                           <>
                             <div className="border-t border-[var(--lume-border-subtle)]" />
                             <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
                               当前应用
                             </div>
-                            <DesktopContextPlusItem
-                              target={availableDesktopContextTarget}
-                              active={activeIndex === desktopContextIndex}
-                              itemIndex={desktopContextIndex}
-                              onHover={() => setActiveIndex(desktopContextIndex)}
-                              onActivate={() => activatePlusItem(desktopContextIndex)}
-                            />
+                            {hasDesktopContextTarget && availableDesktopContextTarget ? (
+                              <DesktopContextPlusItem
+                                target={availableDesktopContextTarget}
+                                active={activeIndex === desktopContextIndex}
+                                itemIndex={desktopContextIndex}
+                                onHover={() => setActiveIndex(desktopContextIndex)}
+                                onActivate={() => activatePlusItem(desktopContextIndex)}
+                              />
+                            ) : (
+                              <div className="px-3 pb-3">
+                                <div className="rounded-xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-3 py-2.5">
+                                  <div className="flex items-start gap-2.5">
+                                    <div className="mt-0.5 text-[var(--text-3)]">
+                                      {desktopContextCaptureLoading ? (
+                                        <LoaderCircle size={15} className="animate-spin" />
+                                      ) : (
+                                        <MonitorOff size={15} />
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-sm font-medium text-[var(--text-1)]">
+                                        {desktopContextCaptureLoading ? '正在检查当前应用' : '当前应用暂不可用'}
+                                      </div>
+                                      <div className="mt-0.5 text-xs leading-5 text-[var(--text-3)]">
+                                        {desktopContextCaptureLoading
+                                          ? 'Lume 正在读取前台窗口，用于附加到这次会话。'
+                                          : desktopContextCaptureMessage ?? '请检查桌面助手权限和应用范围。'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {!desktopContextCaptureLoading ? (
+                                    <Button
+                                      variant="ghost"
+                                      type="button"
+                                      onClick={handleOpenDesktopAssistantSettings}
+                                      className="mt-2 h-7 rounded-lg px-2 text-xs text-[var(--lume-text-secondary)] hover:bg-[var(--surface-3)] hover:text-[var(--lume-text-primary)]"
+                                    >
+                                      打开桌面助手设置
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </div>
+                            )}
                           </>
                         )}
                         <div className="border-t border-[var(--lume-border-subtle)]" />
