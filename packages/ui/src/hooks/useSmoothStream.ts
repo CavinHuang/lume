@@ -71,6 +71,15 @@ export function shouldFlush(input: {
 }
 
 /**
+ * 计算本帧从队列取出的字符数：流式态用更深缓冲（/8）保持丝滑，
+ * 结束态加速排空（/4）消除"停止后还在慢慢蹦字"的拖尾。
+ */
+export function pickChunkCount(queueLength: number, streamDone: boolean): number {
+  const divisor = streamDone ? 4 : 8
+  return Math.max(1, Math.floor(queueLength / divisor))
+}
+
+/**
  * 流式文本平滑渲染 Hook
  *
  * @example
@@ -176,7 +185,7 @@ export function useSmoothStream({
     lastRenderTimeRef.current = currentTime
 
     // 动态计算本帧渲染字符数：队列越长越快（追赶），最少 1 个
-    let count = Math.max(1, Math.floor(queue.length / 5))
+    let count = pickChunkCount(queue.length, streamDoneRef.current)
 
     // 取出字符并更新
     const chars = queue.splice(0, count)

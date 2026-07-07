@@ -21,8 +21,6 @@ export function shouldAutoScrollAfterUserScroll({
   nearBottom,
   programmatic = false,
 }: {
-  currentScrollTop: number
-  previousScrollTop: number
   nearBottom: boolean
   programmatic?: boolean
 }): boolean {

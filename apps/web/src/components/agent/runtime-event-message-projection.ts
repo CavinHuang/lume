@@ -22,6 +22,8 @@ export interface ProjectionState {
 /**
  * 同一 run 内 compaction 后重建的 assistant 用唯一 id：`assistant:${runId}:c${seg}`。
  * 首段（seg=0）保持原 `assistant:${runId}`，向后兼容既有 stabilize cache / 测试快照。
+ * 段切换使 React key 变化 → 该 assistant 消息 remount 是有意为之（commit 4c940848）：
+ * 防 key 撞车优先于保留 DOM 连续性，丝滑重构计划不动此处。
  */
 function assistantIdFor(state: ProjectionState, runId: string): string {
   const segment = state.assistantSegmentByRun.get(runId) ?? 0

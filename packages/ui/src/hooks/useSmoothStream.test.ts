@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { shouldFlush } from './useSmoothStream'
+import { pickChunkCount, shouldFlush } from './useSmoothStream'
 
 describe('shouldFlush', () => {
   const base = { lastFlushTime: 0, flushInterval: 50 }
@@ -18,5 +18,21 @@ describe('shouldFlush', () => {
 
   test('流结束但队列还有内容 → 不立即 flush（让 renderLoop 继续消费）', () => {
     expect(shouldFlush({ ...base, currentTime: 1, queueLength: 3, streamDone: true })).toBe(false)
+  })
+})
+
+describe('pickChunkCount', () => {
+  test('流式态用更深缓冲（/8），结束态加速排空（/4）', () => {
+    expect(pickChunkCount(16, false)).toBe(2)
+    expect(pickChunkCount(16, true)).toBe(4)
+  })
+
+  test('结束态单帧取出数 > 流式态，消除"停止后还在慢慢蹦字"的拖尾', () => {
+    expect(pickChunkCount(40, false)).toBeLessThan(pickChunkCount(40, true))
+  })
+
+  test('每帧至少取 1 个字符', () => {
+    expect(pickChunkCount(0, false)).toBe(1)
+    expect(pickChunkCount(1, true)).toBe(1)
   })
 })

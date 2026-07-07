@@ -20,6 +20,7 @@ import { TodoPanel } from './TodoPanel'
 import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
 import { summarizeMessageForPreview } from '@/components/app-shell/ThreadMiniMapPopover'
 import type { TodoBlockData } from './runtime-message-view'
+import { threadMessagesCache } from './thread-messages-cache'
 import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
 import {
   collectNewRuntimeMessageIds,
@@ -56,7 +57,6 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const activeThreadIdRef = useRef(threadId)
   const prevThreadIdRef = useRef(threadId)
   const previousMessageIdsRef = useRef<{ threadId: string; ids: Set<string> }>({ threadId, ids: new Set() })
-  const previousScrollTopRef = useRef(0)
   const programmaticScrollUntilRef = useRef(0)
   const programmaticScrollReleaseTimeoutRef = useRef<number | null>(null)
   const scheduledBottomScrollFrameRef = useRef(0)
@@ -70,6 +70,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const loadedRuntimeEventThreadsRef = useRef<Set<string>>(new Set())
   const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
   const [showScrollButton, setShowScrollButton] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
   const projectionRef = useRef<ProjectionRef | null>(null)
   const projectedMessages = useMemo(() => {
     if (runtimeEvents.length > 0) {
@@ -171,7 +172,6 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     } else {
       container.scrollTop = container.scrollHeight
     }
-    previousScrollTopRef.current = container.scrollTop
     setScrollButtonVisible(false)
   }, [markProgrammaticScroll, setScrollButtonVisible])
   const scheduleBottomScroll = useCallback(() => {
@@ -244,7 +244,8 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
 
   useLayoutEffect(() => {
     activeThreadIdRef.current = threadId
-    setVisibleThreadMessages([])
+    // 命中缓存立即填充，消除切会话空窗；未命中再由 IPC effect 异步加载
+    setVisibleThreadMessages(threadMessagesCache.get(threadId) ?? [])
   }, [threadId])
 
   useEffect(() => {
@@ -258,6 +259,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           cancelled,
         })) return
         setVisibleThreadMessages(messages)
+        threadMessagesCache.set(requestedThreadId, messages)
       })
       .catch((err) => {
         if (!cancelled) console.error('[AgentMessages] 加载线程消息失败:', err)
@@ -266,6 +268,13 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
       cancelled = true
     }
   }, [threadId, userVersionRefreshKey])
+
+  // 用户不在底部时有新消息到达 → 累加未读计数；滚到底部 / 点回到底部时清零
+  useEffect(() => {
+    if (newMessageIds.size > 0 && !shouldAutoScrollRef.current) {
+      setUnreadCount((count) => count + newMessageIds.size)
+    }
+  }, [newMessageIds])
 
   useEffect(() => {
     previousMessageIdsRef.current = {
@@ -278,19 +287,16 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     const container = scrollContainerRef.current
     if (!container) return
 
-    const currentScrollTop = container.scrollTop
     const nearBottom = isNearScrollBottom(container)
     const programmatic = isProgrammaticScrollActive()
+    if (nearBottom) setUnreadCount(0)
     if (programmatic && nearBottom) {
       releaseProgrammaticScroll()
     }
     shouldAutoScrollRef.current = shouldAutoScrollAfterUserScroll({
-      currentScrollTop,
-      previousScrollTop: previousScrollTopRef.current,
       nearBottom,
       programmatic,
     })
-    previousScrollTopRef.current = currentScrollTop
     if (programmatic && shouldAutoScrollRef.current) {
       if (nearBottom) setScrollButtonVisible(false)
       return
@@ -407,12 +413,17 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         <Button
                 variant="ghost"
           type="button"
-          onClick={() => scrollMessagesToBottom('smooth')}
+          onClick={() => { setUnreadCount(0); scrollMessagesToBottom('smooth') }}
           className="absolute bottom-4 right-14 z-20 inline-flex size-9 items-center justify-center rounded-full border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-secondary)] shadow-[0_12px_30px_-24px_hsl(var(--lume-shadow-panel)/0.72)] transition-colors hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-accent)]"
           aria-label="回到底部"
           title="回到底部"
         >
           <ArrowDown size={17} strokeWidth={2.2} />
+          {unreadCount > 0 && (
+            <span className="absolute -right-1 -top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[var(--lume-accent)] px-1 text-[10px] font-medium leading-none text-white">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </Button>
       )}
     </div>

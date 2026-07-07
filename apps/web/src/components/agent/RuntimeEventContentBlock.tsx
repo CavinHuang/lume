@@ -160,6 +160,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
             blocks={minimalBlocks}
             threadId={threadId}
             isStreamingMessage={streaming === true && message.status === 'streaming'}
+            activeStreamingTextBlockId={activeStreamingTextBlockId}
             onOpenThreadFile={onOpenThreadFile}
             onUserResizeStart={onUserResizeStart}
           />
@@ -986,12 +987,14 @@ function MinimalAssistantContent({
   blocks,
   threadId,
   isStreamingMessage,
+  activeStreamingTextBlockId,
   onOpenThreadFile,
   onUserResizeStart,
 }: {
   blocks: RuntimeAssistantBlock[]
   threadId: string
   isStreamingMessage: boolean
+  activeStreamingTextBlockId: string | null
   onOpenThreadFile?: (path: string) => void
   onUserResizeStart?: () => void
 }) {
@@ -1007,7 +1010,7 @@ function MinimalAssistantContent({
               <SmoothText
                 key={block.id}
                 text={block.text}
-                isStreaming={isStreamingMessage}
+                isStreaming={block.id === activeStreamingTextBlockId}
                 onOpenThreadFile={onOpenThreadFile}
               />
             )
