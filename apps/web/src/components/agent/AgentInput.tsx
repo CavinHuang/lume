@@ -18,6 +18,7 @@ import {
   reorderAgentMessageQueue,
   sidecarCall,
 } from '@/lib/desktop-api'
+import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
 import { activeTabIdAtom, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
@@ -976,7 +977,7 @@ export function AgentInput({
       setDesktopContextCaptureLoading(true)
       setDesktopContextCaptureMessage(undefined)
       setCapturedDesktopContextTarget(undefined)
-      captureAgentInputDesktopContextState(sidecarCall)
+      captureAgentInputDesktopContextState(sidecarCall, () => invoke('quick_input_get_context'))
         .then((state) => {
           if (state.status === 'ready') {
             setCapturedDesktopContextTarget(state.target)

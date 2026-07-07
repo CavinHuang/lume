@@ -32,6 +32,55 @@ describe('agent-input desktop context helpers', () => {
     })
   })
 
+  test('prefers a desktop pre-captured app context before falling back to foreground capture', async () => {
+    const sidecarCalls: unknown[] = []
+    const state = await captureAgentInputDesktopContextState(
+      async (...args) => {
+        sidecarCalls.push(args)
+        return { status: 'ok' }
+      },
+      async () => ({
+        status: 'ok',
+        snapshotId: 'snap-before-lume-focus',
+        app: { id: 'wechat.exe', name: '微信' },
+        window: { id: 'win:wechat', title: '项目群' },
+        capturedAt: 123,
+      }),
+    )
+
+    expect(state).toEqual({
+      status: 'ready',
+      target: {
+        snapshotId: 'snap-before-lume-focus',
+        app: { id: 'wechat.exe', name: '微信' },
+        window: { id: 'win:wechat', title: '项目群' },
+        capturedAt: 123,
+      },
+    })
+    expect(sidecarCalls).toEqual([])
+  })
+
+  test('falls back to sidecar foreground capture when no pre-captured app exists', async () => {
+    const state = await captureAgentInputDesktopContextState(
+      async () => ({
+        status: 'ok',
+        snapshotId: 'snap-sidecar',
+        app: { id: 'word.exe', name: 'Word' },
+        window: { id: 'win:word', title: '周报.docx' },
+      }),
+      async () => ({ status: 'unavailable', message: 'no pre-captured context' }),
+    )
+
+    expect(state).toEqual({
+      status: 'ready',
+      target: {
+        snapshotId: 'snap-sidecar',
+        app: { id: 'word.exe', name: 'Word' },
+        window: { id: 'win:word', title: '周报.docx' },
+      },
+    })
+  })
+
   test('ignores invalid or unavailable capture results', async () => {
     expect(await captureAgentInputDesktopContextTarget(async () => ({
       status: 'unavailable',

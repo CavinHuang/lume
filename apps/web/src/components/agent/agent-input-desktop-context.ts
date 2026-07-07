@@ -20,7 +20,12 @@ export type AgentInputDesktopContextCaptureState =
 
 export async function captureAgentInputDesktopContextState(
   sidecarCall: SidecarCall,
+  getPrecapturedContext?: () => Promise<unknown>,
 ): Promise<AgentInputDesktopContextCaptureState> {
+  if (getPrecapturedContext) {
+    const precaptured = desktopContextCaptureToTarget(await getPrecapturedContext().catch(() => undefined))
+    if (precaptured) return { status: 'ready', target: precaptured }
+  }
   try {
     const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, { userInitiated: true })
     const target = desktopContextCaptureToTarget(result)

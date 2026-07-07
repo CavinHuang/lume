@@ -254,6 +254,20 @@ test("dispatchCommand exposes only prepared quick-input context metadata", () =>
   assert.match(mainSource, /latestQuickInputContext/);
 });
 
+test("showMainWindow pre-captures desktop context before Lume steals focus", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const start = mainSource.indexOf("function showMainWindow()");
+  const end = mainSource.indexOf("function attachWindowBehavior", start);
+  assert.notEqual(start, -1, "showMainWindow is missing");
+  assert.notEqual(end, -1, "attachWindowBehavior marker is missing");
+  const body = mainSource.slice(start, end);
+  const captureIndex = body.indexOf("captureQuickInputContext()");
+  const restoreIndex = body.indexOf("restoreMainWindow(mainWindow)");
+  assert.notEqual(captureIndex, -1, "showMainWindow does not capture desktop context");
+  assert.notEqual(restoreIndex, -1, "showMainWindow does not restore the main window");
+  assert.equal(captureIndex < restoreIndex, true, "desktop context must be captured before Lume receives focus");
+});
+
 function extractStringSet(source, name) {
   const match = source.match(new RegExp(`const\\s+${name}\\s*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`));
   if (!match) throw new Error(`missing preload set: ${name}`);

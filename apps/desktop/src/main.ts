@@ -303,7 +303,11 @@ function createTray() {
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'Show Lume',
-      click: () => showMainWindow(),
+      click: () => {
+        showMainWindow().catch((error) => {
+          console.error(`[desktop] show main window failed: ${error.message}`)
+        })
+      },
     },
     {
       label: 'Quit',
@@ -317,7 +321,11 @@ function createTray() {
   tray = new Tray(icon)
   tray.setToolTip('Lume')
   tray.setContextMenu(contextMenu)
-  tray.on('click', () => showMainWindow())
+  tray.on('click', () => {
+    showMainWindow().catch((error) => {
+      console.error(`[desktop] show main window failed: ${error.message}`)
+    })
+  })
   return tray
 }
 
@@ -330,7 +338,8 @@ function shouldHideToTray(eventType) {
   })
 }
 
-function showMainWindow() {
+async function showMainWindow() {
+  await captureQuickInputContext()
   restoreMainWindow(mainWindow)
 }
 
@@ -1059,7 +1068,7 @@ app.on('activate', async () => {
     await createMainWindow()
     return
   }
-  showMainWindow()
+  await showMainWindow()
 })
 
 app.on('before-quit', () => {
