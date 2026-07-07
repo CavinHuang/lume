@@ -685,6 +685,7 @@ function buildRuntimeCoreTools(input: {
     chatType: input.chatType,
     workspaceSlug: input.workspaceSlug,
     permissionMode,
+    messageMetadata: input.messageMetadata,
     memoryToolPolicy: memoryRuntimeConfig.toolPolicy,
     includeCitations,
     automationExecution,

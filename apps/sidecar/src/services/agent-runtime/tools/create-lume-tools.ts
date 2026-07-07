@@ -33,6 +33,7 @@ export interface CreateLumeRuntimeToolsInput {
   chatType?: AgentSendInput["chatType"];
   workspaceSlug?: string;
   permissionMode?: AgentSendInput["permissionMode"];
+  messageMetadata?: Record<string, unknown>;
   memoryToolPolicy?: MemoryToolPolicy;
   includeCitations: boolean;
   automationExecution?: boolean;
@@ -91,6 +92,9 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const computerUseTools = createComputerUseMcpTools({
     threadId: input.threadId,
     runId: input.runId,
+    ...(typeof input.messageMetadata?.desktopContextSnapshotId === "string"
+      ? { boundDesktopContextSnapshotId: input.messageMetadata.desktopContextSnapshotId }
+      : {}),
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitDesktopActionVisualEvent,
   });

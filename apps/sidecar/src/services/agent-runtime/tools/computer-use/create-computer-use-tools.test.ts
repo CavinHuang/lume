@@ -45,6 +45,26 @@ describe("createComputerUseMcpTools", () => {
     });
   });
 
+  test("defaults current_context to the desktop snapshot bound to the run", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      boundDesktopContextSnapshotId: "snap-bound",
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        return { status: "ok" };
+      },
+    });
+    const currentContext = tools.find((candidate) => candidate.name === "mcp__computer_use__current_context")!;
+
+    await currentContext.call({}, { toolUseId: "tool-current-context" } as never);
+    await currentContext.call({ snapshotId: "snap-explicit" }, { toolUseId: "tool-current-context-2" } as never);
+
+    expect(calls).toEqual([
+      { method: "current_context", input: { snapshotId: "snap-bound" } },
+      { method: "current_context", input: { snapshotId: "snap-explicit" } },
+    ]);
+  });
+
   test("returns an explicit unavailable status when the host is not configured", async () => {
     const [tool] = createComputerUseMcpTools();
     const result = await tool!.call({}, { toolUseId: "tool-2" } as never);

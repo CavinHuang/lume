@@ -51,6 +51,7 @@ export function createComputerUseMcpTools(input: {
   invoke?: ComputerUseInvoke;
   threadId?: string;
   runId?: string;
+  boundDesktopContextSnapshotId?: string;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
 } = {}): ToolDefinition[] {
@@ -86,6 +87,9 @@ export function createComputerUseMcpTools(input: {
         let visualArgs: Record<string, unknown> | undefined;
         try {
           const args = asRecord(rawArgs);
+          if (name === "current_context" && !stringValue(args.snapshotId) && input.boundDesktopContextSnapshotId) {
+            args.snapshotId = input.boundDesktopContextSnapshotId;
+          }
           if (!readOnly) {
             const prepared = await prepareDesktopActionArgsForSafety(invoke, name as DesktopActionKind, args);
             if (prepared.status !== "ok") {
