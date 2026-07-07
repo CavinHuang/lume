@@ -8,6 +8,7 @@ import {
   Bot,
   Keyboard,
   MessageCircle,
+  Monitor,
   Palette,
   Puzzle,
   RefreshCw,
@@ -28,6 +29,7 @@ export type SettingsViewTab =
   | 'memory'
   | 'reading'
   | 'permissions'
+  | 'desktop-assistant'
   | 'shortcuts'
   | 'integrations'
   | 'im-integrations'
@@ -51,6 +53,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'memory', label: '记忆', icon: Database },
   { id: 'reading', label: '读书', icon: BookOpen },
   { id: 'permissions', label: '权限管理', icon: ShieldCheck },
+  { id: 'desktop-assistant', label: '桌面助手', icon: Monitor },
   { id: 'shortcuts', label: '快捷键', icon: Keyboard },
   { id: 'integrations', label: 'MCP', icon: Puzzle },
   { id: 'im-integrations', label: 'IM 集成', icon: MessageCircle },
@@ -71,6 +74,7 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   memory: '记忆',
   reading: '读书',
   permissions: '权限管理',
+  'desktop-assistant': '桌面助手',
   shortcuts: '快捷键',
   integrations: 'MCP',
   'im-integrations': 'IM 集成',
@@ -91,6 +95,7 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   memory: '查看、搜索、蒸馏和确认工作区与全局记忆',
   reading: '管理 Lume 的阅读节奏、微信读书连接和读书模型',
   permissions: '管理权限模式和工具调用规则',
+  'desktop-assistant': '管理跨应用上下文、Computer Use、主动建议和本地活动记录',
   shortcuts: '管理键盘快捷键与常用操作',
   integrations: '管理 MCP 服务发现与连接状态',
   'im-integrations': '管理微信、飞书等 IM 平台链接',

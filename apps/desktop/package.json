@@ -14,8 +14,8 @@
     "dev": "bun ./scripts/dev.ts",
     "build:runtime": "bun ./scripts/build.ts",
     "build:natives": "bun ../../scripts/build-natives-binary.mjs",
-    "build": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-unpacked --dir --publish never --config.directories.output=dist-unpacked",
-    "package": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-release --publish never --config.directories.output=dist-release",
+    "build": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-unpacked --dir --publish never --config.directories.output=dist-unpacked",
+    "package": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-release --publish never --config.directories.output=dist-release",
     "typecheck": "tsc -p tsconfig.json --noEmit && node --check ./scripts/electron-runtime.mjs",
     "test": "bun test ./scripts/desktop-package.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./scripts/electron-runtime.test.mjs ./scripts/electron-security.test.mjs"
   },
@@ -60,6 +60,10 @@
       {
         "from": "resources/node-repl",
         "to": "node-repl"
+      },
+      {
+        "from": "resources/desktop-host",
+        "to": "desktop-host"
       }
     ],
     "mac": {

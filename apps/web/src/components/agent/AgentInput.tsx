@@ -95,6 +95,8 @@ interface AgentInputProps {
   onAddPendingAttachments?: (attachments: PendingMessageAttachment[]) => void
   onRemovePendingAttachment?: (id: string) => void
   onClearPendingAttachments?: () => void
+  messageMetadata?: Record<string, unknown>
+  onMessageMetadataConsumed?: () => void
 }
 
 export interface PendingMessageAttachment {
@@ -205,6 +207,8 @@ export function AgentInput({
   onAddPendingAttachments = () => undefined,
   onRemovePendingAttachment = () => undefined,
   onClearPendingAttachments = () => undefined,
+  messageMetadata,
+  onMessageMetadataConsumed = () => undefined,
 }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -711,8 +715,10 @@ export function AgentInput({
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+        ...(messageMetadata && Object.keys(messageMetadata).length > 0 ? { messageMetadata } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
+      onMessageMetadataConsumed()
       if (shouldReleaseAgentInputLocalSendingAfterDispatch(result.mode)) {
         setLocalSending(false)
       }
@@ -751,7 +757,9 @@ export function AgentInput({
     handleSlashCommandExecute,
     localSending,
     onClearPendingAttachments,
+    onMessageMetadataConsumed,
     pendingAttachments,
+    messageMetadata,
     permissionMode,
     setRuntimeEvents,
     setStreamingStates,

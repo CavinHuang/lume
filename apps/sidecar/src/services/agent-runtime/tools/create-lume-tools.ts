@@ -1,5 +1,5 @@
 import type { SDKMessage, ToolDefinition } from "@lume/agent-sdk";
-import type { AgentAskUserQuestionRequest, AgentBrowserAuthRequest, AgentToolPermissionRequest } from "@lume/shared";
+import type { AgentAskUserQuestionRequest, AgentBrowserAuthRequest, AgentDesktopActionRequest, AgentToolPermissionRequest } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory-v2/policy";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
@@ -14,6 +14,7 @@ import { createSdkOfficeTools } from "./office/create-office-tools";
 import { createRoutineTools } from "./routine/create-routine-tools";
 import { createImageGenTools } from "./image-gen/create-image-gen-tools";
 import { createNodeReplMcpTools } from "./node-repl/create-node-repl-tools";
+import { createComputerUseMcpTools } from "./computer-use/create-computer-use-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -37,6 +38,7 @@ export interface CreateLumeRuntimeToolsInput {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
+  emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 }
 
@@ -84,6 +86,10 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     workspaceSlug: input.workspaceSlug,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
   });
+  const computerUseTools = createComputerUseMcpTools({
+    threadId: input.threadId,
+    emitDesktopActionRequest: input.emitDesktopActionRequest,
+  });
   const customTools = [
     ...memoryTools,
     ...cronTools,
@@ -96,6 +102,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...routineTools,
     ...imageGenTools,
     ...nodeReplTools,
+    ...computerUseTools,
   ];
   const customToolNames = customTools.map((tool) => tool.name);
 

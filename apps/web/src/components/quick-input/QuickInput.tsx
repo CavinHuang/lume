@@ -9,6 +9,7 @@ import { AgentView } from '@/components/agent/AgentView'
 import { QuickInputWorkspaceSelector } from './QuickInputWorkspaceSelector'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { DRAG_REGION, NO_DRAG_REGION } from '@/components/app-shell/app-region'
 import { toast } from 'sonner'
 
@@ -22,6 +23,7 @@ export function QuickInput() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
   const [threadId, setThreadId] = useState<string | null>(null)
+  const [messageMetadata, setMessageMetadata] = useState<Record<string, unknown> | undefined>()
 
   // workspace 就绪后创建首个会话（useWorkspaceBootstrap 首次启动时异步创建默认 workspace）
   useEffect(() => {
@@ -34,6 +36,33 @@ export function QuickInput() {
         toast.error('创建会话失败')
       })
   }, [workspaces.length])
+
+  useEffect(() => {
+    let cancelled = false
+    const refreshContext = () => {
+      invoke<{ status?: string; snapshotId?: string }>('quick_input_get_context')
+        .then((result) => {
+          if (cancelled) return
+          setMessageMetadata(
+            result?.status === 'ok' && result.snapshotId
+              ? { desktopContextSnapshotId: result.snapshotId }
+              : undefined,
+          )
+        })
+        .catch(() => {
+          if (!cancelled) setMessageMetadata(undefined)
+        })
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'hidden') refreshContext()
+    }
+    refreshContext()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
 
   const handleNewThread = () => {
     const seed = currentWorkspaceId ?? workspaces[0]?.id
@@ -73,6 +102,9 @@ export function QuickInput() {
         <div style={NO_DRAG_REGION} className="flex items-center">
           <QuickInputWorkspaceSelector onChange={handleWorkspaceChange} />
         </div>
+        {typeof messageMetadata?.desktopContextSnapshotId === 'string' && (
+          <Badge variant="secondary" className="font-normal">已附加桌面上下文</Badge>
+        )}
         <div className="flex-1" />
         <div style={NO_DRAG_REGION}>
           <Button variant="ghost" onClick={handleNewThread} className="flex items-center gap-1 px-2 py-1 text-[12px] text-foreground/60 hover:bg-foreground/[0.06]">
@@ -83,7 +115,11 @@ export function QuickInput() {
       </header>
       <main className="flex-1 min-h-0">
         {threadId ? (
-          <AgentView threadId={threadId} />
+          <AgentView
+            threadId={threadId}
+            messageMetadata={messageMetadata}
+            onMessageMetadataConsumed={() => setMessageMetadata(undefined)}
+          />
         ) : (
           <div className="h-full grid place-items-center text-[12px] text-muted-foreground">准备会话…</div>
         )}

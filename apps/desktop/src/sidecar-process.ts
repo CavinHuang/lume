@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 export const SIDECAR_BUNDLE_NAME = 'index.mjs'
 export const NATIVE_BINARY_NAME = 'lume-natives.node'
 export const NODE_REPL_BINARY_NAME = 'node_repl'
+export const DESKTOP_HOST_BINARY_NAME = 'lume_desktop_host'
 
 export function getSidecarScriptPath({ appIsPackaged, resourcesPath, desktopRoot }) {
   if (appIsPackaged) {
@@ -49,6 +50,38 @@ export function getNodeReplHostBinaryPath({
 }) {
   const fileName = platform === 'win32' ? `${NODE_REPL_BINARY_NAME}.exe` : NODE_REPL_BINARY_NAME
   return join(getNodeReplRootPath({ appIsPackaged, resourcesPath, desktopRoot }), 'bin', fileName)
+}
+
+export function getDesktopHostBinaryPath({
+  appIsPackaged,
+  resourcesPath,
+  desktopRoot,
+  platform = process.platform,
+  arch = process.arch,
+}) {
+  if (platform !== 'win32' && platform !== 'darwin') {
+    throw new Error(`unsupported desktop host target: ${platform}-${arch}`)
+  }
+  const targetId = getNativeTargetId({ platform, arch })
+  const fileName = platform === 'win32'
+    ? `${DESKTOP_HOST_BINARY_NAME}.exe`
+    : DESKTOP_HOST_BINARY_NAME
+  const root = appIsPackaged
+    ? join(resourcesPath, 'desktop-host')
+    : resolve(desktopRoot, 'resources', 'desktop-host')
+  return join(root, targetId, fileName)
+}
+
+export function createDesktopHostSpawnConfig({ binaryPath, endpoint, sessionToken, env = {} }) {
+  return {
+    command: binaryPath,
+    args: ['--endpoint', endpoint],
+    options: {
+      env: { ...env, LUME_DESKTOP_HOST_TOKEN: sessionToken },
+      stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    },
+  }
 }
 
 export function createUtilityProcessSidecarForkConfig({ sidecarScriptPath, env }) {

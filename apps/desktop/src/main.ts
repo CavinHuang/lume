@@ -10,6 +10,7 @@ import {
   net,
   nativeImage,
   protocol,
+  safeStorage,
   screen,
   shell,
   utilityProcess,
@@ -69,11 +70,14 @@ import {
 } from './electron-security'
 import {
   createUtilityProcessSidecarForkConfig,
+  getDesktopHostBinaryPath,
   getNativeBinaryPath,
   getNodeReplHostBinaryPath,
   getNodeReplRootPath,
   getSidecarScriptPath,
 } from './sidecar-process'
+import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
+import { loadOrCreateDesktopContextKey } from './desktop-context-key'
 
 const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -89,6 +93,8 @@ const TEXT_FILE_LIMIT = 512 * 1024
 const SIDE_CAR_EVENT_CHANNEL = 'sidecar:event'
 const DATA_MIGRATE_PROGRESS_CHANNEL = 'data:migrate-progress'
 const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
+const DESKTOP_CONTEXT_UNLOCK_METHOD = 'desktop-context:unlock'
+const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
 
 let mainWindow = null
 let wereadWindow = null
@@ -101,6 +107,13 @@ let windowBehavior = {
 
 // 快速输入子窗口（Alt+L）；Task 5 之前始终为 null，此处仅占位以便 IPC 信任集合与事件广播先行就绪。
 let quickInputWindow = null
+let latestQuickInputContext: {
+  status: string
+  snapshotId?: string
+  message?: string
+} = { status: 'unavailable', message: 'desktop context has not been captured' }
+let desktopHostSupervisor: ReturnType<typeof createDesktopHostSupervisor> | null = null
+let desktopHostState: DesktopHostState = { available: false, reason: 'desktop host has not started' }
 
 /** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow 存在时纳入。 */
 function getTrustedWindows() {
@@ -467,6 +480,7 @@ async function toggleQuickInput() {
     destroyed: exists ? quickInputWindow.isDestroyed() : undefined,
   })
   if (action === 'create') {
+    await captureQuickInputContext()
     await createQuickInputWindow()
     return
   }
@@ -474,6 +488,7 @@ async function toggleQuickInput() {
     quickInputWindow.hide()
     return
   }
+  await captureQuickInputContext()
   quickInputWindow.show()
   quickInputWindow.focus()
 }
@@ -486,6 +501,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
         ok: true,
         source: 'desktop',
         sidecar: 'ready',
+        desktopHost: sanitizeDesktopHostState(desktopHostState),
       }
     }
     case 'sidecar_healthcheck':
@@ -500,6 +516,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
         quickInputWindow.hide()
       }
       return null
+    case 'quick_input_get_context':
+      return latestQuickInputContext
     case 'open_file_dialog': {
       const result = await dialog.showOpenDialog(mainWindow, createOpenFileDialogOptions())
       return {
@@ -677,6 +695,11 @@ function createSidecarHost({ onNotification }) {
       ...process.env,
       LUME_CONFIG_DIR: configDir,
       LUME_DEFAULT_SKILLS_AUTOSTART: 'true',
+    }
+
+    if (desktopHostState.available) {
+      env.LUME_DESKTOP_HOST_ENDPOINT = desktopHostState.endpoint
+      env.LUME_DESKTOP_HOST_TOKEN = desktopHostState.token
     }
 
     const defaultSkillsArchive = getDefaultSkillsArchivePath()
@@ -997,8 +1020,10 @@ app.whenReady().then(async () => {
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   createTray()
   logDesktopStartup('tray ready')
+  desktopHostState = await startDesktopHost()
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
+  await unlockDesktopContextStore()
   await createMainWindow()
   logDesktopStartup('main window ready')
   // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
@@ -1045,6 +1070,73 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', async () => {
+  desktopHostSupervisor?.stop()
   await sidecarHost.stop()
   globalShortcut.unregisterAll()
 })
+
+async function startDesktopHost(): Promise<DesktopHostState> {
+  if (process.platform !== 'win32' && process.platform !== 'darwin') {
+    return { available: false, reason: `desktop host is unsupported on ${process.platform}` }
+  }
+  try {
+    const binaryPath = getDesktopHostBinaryPath({
+      appIsPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      desktopRoot: DESKTOP_ROOT,
+    })
+    desktopHostSupervisor = createDesktopHostSupervisor({
+      binaryPath,
+      log: logDesktopStartup,
+    })
+    const state = await desktopHostSupervisor.start()
+    logDesktopStartup(state.available ? 'desktop host started' : ('reason' in state ? state.reason : 'desktop host unavailable'))
+    return state
+  } catch (error) {
+    const reason = `desktop host unavailable: ${error instanceof Error ? error.message : String(error)}`
+    logDesktopStartup(reason)
+    return { available: false, reason }
+  }
+}
+
+function sanitizeDesktopHostState(state: DesktopHostState) {
+  return state.available
+    ? { available: true, endpoint: state.endpoint }
+    : { available: false, reason: 'reason' in state ? state.reason : 'desktop host unavailable' }
+}
+
+async function unlockDesktopContextStore() {
+  let key = null
+  try {
+    key = loadOrCreateDesktopContextKey({
+      path: join(resolveConfigDir(), 'desktop-context', 'key.bin'),
+      safeStorage,
+    })
+    await sidecarHost.call(DESKTOP_CONTEXT_UNLOCK_METHOD, { key: key.toString('base64') })
+    logDesktopStartup('desktop context store unlocked')
+  } catch (error) {
+    logDesktopStartup(`desktop context store unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    key?.fill(0)
+  }
+}
+
+async function captureQuickInputContext() {
+  try {
+    const value = await sidecarHost.call(DESKTOP_CONTEXT_CAPTURE_METHOD, {})
+    const result = value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {}
+    latestQuickInputContext = result.status === 'ok' && typeof result.snapshotId === 'string'
+      ? { status: 'ok', snapshotId: result.snapshotId }
+      : {
+          status: typeof result.status === 'string' ? result.status : 'unavailable',
+          message: typeof result.message === 'string' ? result.message : 'desktop context is unavailable',
+        }
+  } catch (error) {
+    latestQuickInputContext = {
+      status: 'unavailable',
+      message: error instanceof Error ? error.message : String(error),
+    }
+  }
+}

@@ -65,6 +65,20 @@ test('desktop package includes node-repl resources', () => {
   assertContainsBefore(pkg.scripts.package, 'build-node-repl-resources.mjs', 'run-electron-builder.mjs')
 })
 
+test('desktop package includes the optional desktop-host resource', () => {
+  assert.deepEqual(
+    pkg.build.extraResources.find((entry) => entry.to === 'desktop-host'),
+    {
+      from: 'resources/desktop-host',
+      to: 'desktop-host',
+    },
+  )
+  assert.match(pkg.scripts.build, /build-desktop-host-resources\.mjs/)
+  assert.match(pkg.scripts.package, /build-desktop-host-resources\.mjs/)
+  assertContainsBefore(pkg.scripts.build, 'build-desktop-host-resources.mjs', 'run-electron-builder.mjs')
+  assertContainsBefore(pkg.scripts.package, 'build-desktop-host-resources.mjs', 'run-electron-builder.mjs')
+})
+
 test('node-repl resource build clears generated output before writing resources', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-node-repl-resources.mjs'), 'utf8')
 
@@ -77,4 +91,11 @@ test('desktop dev builds node-repl resources before launching Electron', () => {
 
   assert.match(script, /build-node-repl-resources\.mjs/)
   assertContainsBefore(script, 'spawnSync("node", [buildNodeReplResourcesScript]', 'spawn(electronBin')
+})
+
+test('desktop dev builds desktop-host resources before launching Electron', () => {
+  const script = readFileSync(resolve(DESKTOP_ROOT, 'scripts/dev.ts'), 'utf8')
+
+  assert.match(script, /build-desktop-host-resources\.mjs/)
+  assertContainsBefore(script, 'spawnSync("node", [buildDesktopHostResourcesScript]', 'spawn(electronBin')
 })

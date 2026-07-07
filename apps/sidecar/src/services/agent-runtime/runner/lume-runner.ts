@@ -310,6 +310,7 @@ export class LumeRunner {
       emitSdkMessage: this.emit.onSdkMessage,
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
+      emitDesktopActionRequest: this.emit.onDesktopActionRequest,
       emitToolPermissionRequest: this.emit.onToolPermissionRequest,
       emitTaskContractUpdated: this.emit.onTaskContractUpdated,
       emitTodoUpdated: this.emit.onTodoUpdated,

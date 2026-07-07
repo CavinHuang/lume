@@ -258,6 +258,18 @@ export function getAutomationRunsPath(): string {
   return join(getAutomationRunsDir(), "all.jsonl");
 }
 
+export function getDesktopContextDir(): string {
+  return ensureDir(join(getConfigDir(), "desktop-context"), "桌面上下文目录");
+}
+
+export function getDesktopContextSettingsPath(): string {
+  return join(getDesktopContextDir(), "settings.json");
+}
+
+export function getDesktopContextDbPath(): string {
+  return join(getDesktopContextDir(), "context.sqlite");
+}
+
 export function getReadingDir(): string {
   return ensureDir(join(getConfigDir(), "reading"), "读书目录");
 }

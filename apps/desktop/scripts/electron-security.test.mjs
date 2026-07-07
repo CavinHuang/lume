@@ -24,6 +24,7 @@ test("renderer IPC commands are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("sidecar_call"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("data_export_zip"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("write_web_log"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("quick_input_get_context"), true);
   assert.equal(validateRendererInvokeCommand("open_external"), "open_external");
   assert.throws(
     () => validateRendererInvokeCommand("shell:run-arbitrary-command"),
@@ -245,6 +246,12 @@ test("quick input window is registered before its renderer loads", () => {
 test("dispatchCommand handles quick_input_hide", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   assert.match(mainSource, /case 'quick_input_hide'/);
+});
+
+test("dispatchCommand exposes only prepared quick-input context metadata", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.match(mainSource, /case 'quick_input_get_context'/);
+  assert.match(mainSource, /latestQuickInputContext/);
 });
 
 function extractStringSet(source, name) {

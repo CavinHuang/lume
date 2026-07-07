@@ -31,6 +31,7 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'reveal_path_in_system',
   'open_weread_key_webview',
   'quick_input_hide', // Alt+L 快速输入子窗口：隐藏子窗口
+  'quick_input_get_context',
   'data_get_storage_stats',
   'data_export_zip',
   'data_migrate_to_dir',

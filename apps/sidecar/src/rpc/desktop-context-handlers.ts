@@ -1,0 +1,60 @@
+import {
+  DESKTOP_CONTEXT_IPC_CHANNELS,
+  type DesktopAssistantSettings,
+} from "@lume/shared";
+import type { RpcHandler } from "./types";
+
+interface DesktopContextRpcService {
+  unlock(key: Buffer): void;
+  captureCurrent(): Promise<unknown>;
+  currentContext(input?: { snapshotId?: string }): Promise<unknown>;
+  searchContext(input: { query?: string; limit?: number }): Promise<unknown>;
+  getSettings(): DesktopAssistantSettings;
+  updateSettings(settings: DesktopAssistantSettings): DesktopAssistantSettings | void;
+  getStatus(): Promise<unknown>;
+  clear(): { cleared: boolean };
+  listActivity(limit?: number): unknown[];
+}
+
+export function createDesktopContextHandlers(service: DesktopContextRpcService): Record<string, RpcHandler> {
+  return {
+    [DESKTOP_CONTEXT_IPC_CHANNELS.UNLOCK]: async (params) => {
+      const keyValue = readRecord(params).key;
+      const key = typeof keyValue === "string" ? Buffer.from(keyValue, "base64") : Buffer.alloc(0);
+      if (key.length !== 32) throw new Error("desktop context key must decode to 32-byte data");
+      service.unlock(key);
+      key.fill(0);
+      return { ok: true };
+    },
+    [DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT]: async () => service.captureCurrent(),
+    [DESKTOP_CONTEXT_IPC_CHANNELS.GET_CURRENT]: async (params) => {
+      const input = readRecord(params);
+      return service.currentContext({
+        ...(typeof input.snapshotId === "string" ? { snapshotId: input.snapshotId } : {}),
+      });
+    },
+    [DESKTOP_CONTEXT_IPC_CHANNELS.SEARCH]: async (params) => {
+      const input = readRecord(params);
+      return service.searchContext({
+        ...(typeof input.query === "string" ? { query: input.query } : {}),
+        ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+      });
+    },
+    [DESKTOP_CONTEXT_IPC_CHANNELS.GET_SETTINGS]: async () => service.getSettings(),
+    [DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_SETTINGS]: async (params) => {
+      return service.updateSettings(readRecord(params) as unknown as DesktopAssistantSettings);
+    },
+    [DESKTOP_CONTEXT_IPC_CHANNELS.GET_STATUS]: async () => service.getStatus(),
+    [DESKTOP_CONTEXT_IPC_CHANNELS.CLEAR]: async () => service.clear(),
+    [DESKTOP_CONTEXT_IPC_CHANNELS.LIST_ACTIVITY]: async (params) => {
+      const limit = readRecord(params).limit;
+      return service.listActivity(typeof limit === "number" ? limit : undefined);
+    },
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
