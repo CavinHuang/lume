@@ -1,4 +1,4 @@
-import type { ModelCapabilities, ModelMeta, ModelPricing } from './model-meta'
+import type { ModelMeta } from './model-meta'
 import type { ModelOverride } from './model-meta.override'
 
 /** 并集去重 aliases，generated 在前；两者皆空返回 undefined。 */

@@ -27,10 +27,14 @@ export const MODEL_OVERRIDES: Record<string, ModelOverride> = {
   'o3-mini': { aliases: ['o3-mini-2025-01-31'] },
   'o4-mini': { aliases: ['o4-mini-2025-04-16'] },
   'gemini-2.5-pro': {
+    // models.dev 报 1_048_576（2^20）；保持原公开值 1_000_000 以维持 UI "1M" 显示与公开 API 行为
+    contextWindow: 1_000_000,
     description: '超长上下文窗口',
     aliases: ['gemini-2.5-pro-preview-05-06'],
   },
-  'gemini-2.5-flash': { aliases: ['gemini-2.5-flash-preview-05-20'] },
+  // 同上：models.dev 报 1_048_576，保持 1_000_000 与原硬编码 / UI "1M" 显示一致
+  'gemini-2.5-flash': { contextWindow: 1_000_000, aliases: ['gemini-2.5-flash-preview-05-20'] },
+  'gemini-2.0-flash': { contextWindow: 1_000_000 },
   'deepseek-chat': { aliases: ['deepseek-v3'] },
   'step-3.7-flash': { description: '阶跃星辰旗舰多模态推理模型，支持三档推理强度' },
   'step-3.5-flash-2603': { description: '针对高频 Agent 场景优化，Token 效率提升、推理速度更快' },
