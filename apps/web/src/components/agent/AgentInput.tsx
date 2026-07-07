@@ -31,6 +31,7 @@ import {
   type AgentPluginListItem,
   type AgentSavedFile,
   type Channel,
+  type DesktopContextTarget,
   type LumeConfigAgentDefaultStrategy,
   type LumeEffectiveConfig,
   type LumeConfigThinkingLevel,
@@ -79,6 +80,7 @@ import {
   type AgentInputRoleRecommendation,
 } from './agent-input-role-recommendations'
 import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
+import { DesktopContextPlusItem } from './DesktopContextPlusItem'
 
 import { Button } from '@/components/ui/button'
 type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
@@ -97,6 +99,8 @@ interface AgentInputProps {
   onClearPendingAttachments?: () => void
   messageMetadata?: Record<string, unknown>
   onMessageMetadataConsumed?: () => void
+  desktopContextTarget?: DesktopContextTarget
+  onSelectDesktopContextTarget?: (target: DesktopContextTarget) => void
 }
 
 export interface PendingMessageAttachment {
@@ -209,6 +213,8 @@ export function AgentInput({
   onClearPendingAttachments = () => undefined,
   messageMetadata,
   onMessageMetadataConsumed = () => undefined,
+  desktopContextTarget,
+  onSelectDesktopContextTarget,
 }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -956,8 +962,11 @@ export function AgentInput({
     () => [...installedPlugins].sort((a, b) => a.name.localeCompare(b.name)),
     [installedPlugins],
   )
-  // 整个面板可选项序列：[文件, 图片, ...插件]，totalPlusItems 驱动 ↑/↓ 导航边界
-  const totalPlusItems = 2 + pluginItems.length
+  const hasDesktopContextTarget = Boolean(desktopContextTarget && onSelectDesktopContextTarget)
+  const desktopContextIndex = 2
+  const pluginStartIndex = hasDesktopContextTarget ? 3 : 2
+  // 整个面板可选项序列：[文件, 图片, 当前应用?, ...插件]，totalPlusItems 驱动 ↑/↓ 导航边界
+  const totalPlusItems = pluginStartIndex + pluginItems.length
 
   // 列表变化（插件加载完成）时夹紧 activeIndex，避免悬空指向已不存在的项
   useEffect(() => {
@@ -979,7 +988,13 @@ export function AgentInput({
       void handleAttach()
       return
     }
-    const plugin = pluginItems[index - 2]
+    if (hasDesktopContextTarget && index === desktopContextIndex && desktopContextTarget && onSelectDesktopContextTarget) {
+      setPlusPanelOpen(false)
+      onSelectDesktopContextTarget(desktopContextTarget)
+      toast.success(`已将 ${desktopContextTarget.app.name} 附加到对话`)
+      return
+    }
+    const plugin = pluginItems[index - pluginStartIndex]
     if (!plugin) return
     setPlusPanelOpen(false)
     // 插件引用：插入 pluginMention node（label 带 % 前缀，作为输入/发送/气泡三段统一 token）
@@ -991,7 +1006,15 @@ export function AgentInput({
       })
       editor.commands.insertContent(' ')
     }
-  }, [editor, handleAttach, pluginItems])
+  }, [
+    desktopContextTarget,
+    editor,
+    handleAttach,
+    hasDesktopContextTarget,
+    onSelectDesktopContextTarget,
+    pluginItems,
+    pluginStartIndex,
+  ])
 
   const handlePlusPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'ArrowDown') {
@@ -1100,6 +1123,21 @@ export function AgentInput({
                             {row.label}
                           </div>
                         ))}
+                        {hasDesktopContextTarget && desktopContextTarget && (
+                          <>
+                            <div className="border-t border-[var(--lume-border-subtle)]" />
+                            <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
+                              当前应用
+                            </div>
+                            <DesktopContextPlusItem
+                              target={desktopContextTarget}
+                              active={activeIndex === desktopContextIndex}
+                              itemIndex={desktopContextIndex}
+                              onHover={() => setActiveIndex(desktopContextIndex)}
+                              onActivate={() => activatePlusItem(desktopContextIndex)}
+                            />
+                          </>
+                        )}
                         <div className="border-t border-[var(--lume-border-subtle)]" />
                         <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
                           已安装插件 · {pluginItems.length}
@@ -1111,7 +1149,7 @@ export function AgentInput({
                         ) : (
                           <div className="max-h-[200px] overflow-y-auto pb-1">
                             {pluginItems.map((plugin, i) => {
-                              const index = i + 2
+                              const index = i + pluginStartIndex
                               return (
                                 <div
                                   key={plugin.name}

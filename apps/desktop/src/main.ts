@@ -110,6 +110,9 @@ let quickInputWindow = null
 let latestQuickInputContext: {
   status: string
   snapshotId?: string
+  app?: { id: string; name: string }
+  window?: { id: string; title: string }
+  capturedAt?: number
   message?: string
 } = { status: 'unavailable', message: 'desktop context has not been captured' }
 let desktopHostSupervisor: ReturnType<typeof createDesktopHostSupervisor> | null = null
@@ -1128,7 +1131,11 @@ async function captureQuickInputContext() {
       ? value as Record<string, unknown>
       : {}
     latestQuickInputContext = result.status === 'ok' && typeof result.snapshotId === 'string'
-      ? { status: 'ok', snapshotId: result.snapshotId }
+      ? {
+          status: 'ok',
+          snapshotId: result.snapshotId,
+          ...sanitizeQuickInputContextTarget(result),
+        }
       : {
           status: typeof result.status === 'string' ? result.status : 'unavailable',
           message: typeof result.message === 'string' ? result.message : 'desktop context is unavailable',
@@ -1138,5 +1145,23 @@ async function captureQuickInputContext() {
       status: 'unavailable',
       message: error instanceof Error ? error.message : String(error),
     }
+  }
+}
+
+function sanitizeQuickInputContextTarget(input: Record<string, unknown>) {
+  const app = input.app && typeof input.app === 'object' && !Array.isArray(input.app)
+    ? input.app as Record<string, unknown>
+    : {}
+  const window = input.window && typeof input.window === 'object' && !Array.isArray(input.window)
+    ? input.window as Record<string, unknown>
+    : {}
+  return {
+    ...(typeof app.id === 'string' && typeof app.name === 'string'
+      ? { app: { id: app.id, name: app.name } }
+      : {}),
+    ...(typeof window.id === 'string' && typeof window.title === 'string'
+      ? { window: { id: window.id, title: window.title } }
+      : {}),
+    ...(typeof input.capturedAt === 'number' ? { capturedAt: input.capturedAt } : {}),
   }
 }

@@ -19,6 +19,8 @@ const invokeMock = mock(async (..._args: unknown[]) => undefined)
 // 捕获 AgentView 拿到的 threadId（验证状态正确传给子组件）
 let latestAgentViewThreadId: string | null = null
 let latestAgentViewMessageMetadata: Record<string, unknown> | undefined
+let latestAgentViewDesktopContextTarget: Record<string, unknown> | undefined
+let latestAgentViewOnMessageMetadataConsumed: (() => void) | undefined
 
 // 捕获 ui/Button 的 onClick + children 文本（fake DOM 无法触发真实 click，
 // 改为 mock Button 后直接调用捕获的 handler，等同 AgentView.test.tsx 直接调 prop handler 的做法）
@@ -43,9 +45,21 @@ await mock.module('@/hooks/useWorkspaceBootstrap', () => ({
   useWorkspaceBootstrap: () => {},
 }))
 await mock.module('@/components/agent/AgentView', () => ({
-  AgentView: ({ threadId, messageMetadata }: { threadId: string; messageMetadata?: Record<string, unknown> }) => {
+  AgentView: ({
+    threadId,
+    messageMetadata,
+    desktopContextTarget,
+    onMessageMetadataConsumed,
+  }: {
+    threadId: string
+    messageMetadata?: Record<string, unknown>
+    desktopContextTarget?: Record<string, unknown>
+    onMessageMetadataConsumed?: () => void
+  }) => {
     latestAgentViewThreadId = threadId
     latestAgentViewMessageMetadata = messageMetadata
+    latestAgentViewDesktopContextTarget = desktopContextTarget
+    latestAgentViewOnMessageMetadataConsumed = onMessageMetadataConsumed
     return React.createElement('div', null, `thread:${threadId}`)
   },
 }))
@@ -285,6 +299,8 @@ describe('QuickInput', () => {
     invokeMock.mockClear()
     latestAgentViewThreadId = null
     latestAgentViewMessageMetadata = undefined
+    latestAgentViewDesktopContextTarget = undefined
+    latestAgentViewOnMessageMetadataConsumed = undefined
     capturedButtons.length = 0
     const env = installFakeDom()
     fakeDoc = env.container.ownerDocument as unknown as FakeDocument
@@ -326,7 +342,13 @@ describe('QuickInput', () => {
   test('将主进程预捕获的桌面上下文绑定到下一条消息', async () => {
     invokeMock.mockImplementation(async (command: string) => (
       command === 'quick_input_get_context'
-        ? { status: 'ok', snapshotId: 'snapshot-before-focus' }
+        ? {
+            status: 'ok',
+            snapshotId: 'snapshot-before-focus',
+            app: { id: 'wechat.exe', name: '微信' },
+            window: { id: 'win:wechat', title: '项目群' },
+            capturedAt: 100,
+          }
         : undefined
     ))
     const store = makeStore()
@@ -345,8 +367,50 @@ describe('QuickInput', () => {
 
     expect(latestAgentViewMessageMetadata).toEqual({
       desktopContextSnapshotId: 'snapshot-before-focus',
+      desktopApp: { id: 'wechat.exe', name: '微信' },
+      desktopWindow: { id: 'win:wechat', title: '项目群' },
     })
-    expect(container.textContent).toContain('已附加桌面上下文')
+    expect(latestAgentViewDesktopContextTarget).toEqual({
+      snapshotId: 'snapshot-before-focus',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '项目群' },
+      capturedAt: 100,
+    })
+    expect(container.textContent).toContain('已附加 微信')
+  })
+
+  test('桌面上下文作为会话绑定，发送后不会被当作一次性附件清掉', async () => {
+    invokeMock.mockImplementation(async (command: string) => (
+      command === 'quick_input_get_context'
+        ? {
+            status: 'ok',
+            snapshotId: 'snapshot-conversation',
+            app: { id: 'wechat.exe', name: '微信' },
+            window: { id: 'win:wechat', title: '项目群' },
+          }
+        : undefined
+    ))
+    const store = makeStore()
+    const container = fakeDoc.createElement('div')
+
+    await act(async () => {
+      const root = createRoot(container as never)
+      rootRef.current = root
+      root.render(
+        <Provider store={store}>
+          <QuickInput />
+        </Provider>,
+      )
+      await flush()
+    })
+
+    await act(async () => {
+      latestAgentViewOnMessageMetadataConsumed?.()
+      await flush()
+    })
+
+    expect(latestAgentViewMessageMetadata?.desktopContextSnapshotId).toBe('snapshot-conversation')
+    expect(container.textContent).toContain('已附加 微信')
   })
 
   test('点击「新建对话」按钮再次创建会话', async () => {

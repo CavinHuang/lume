@@ -1,6 +1,7 @@
 import type {
   DesktopAssistantSettings,
   DesktopContextSnapshot,
+  DesktopContextTarget,
   DesktopProactiveProposal,
   DesktopProactiveProposalStatus,
 } from "@lume/shared";
@@ -92,7 +93,7 @@ export class DesktopContextService {
     this.#lastFingerprint = fingerprint;
     this.#lastSnapshotId = snapshot.id;
     this.#maybeCreateProposal(snapshot);
-    return { status: "ok", snapshotId: snapshot.id };
+    return { status: "ok", ...snapshotToTarget(snapshot) };
   }
 
   async currentContext(input: { snapshotId?: string } = {}): Promise<unknown> {
@@ -218,6 +219,15 @@ export class DesktopContextService {
 function looksLikeReplyOpportunity(text: string): boolean {
   if (!text.trim()) return false;
   return /[?？]|(?:吗|么|如何|怎么|什么时候|能否|是否|回复|请问)/u.test(text);
+}
+
+function snapshotToTarget(snapshot: DesktopContextSnapshot): DesktopContextTarget {
+  return {
+    snapshotId: snapshot.id,
+    app: { id: snapshot.app.id, name: snapshot.app.name },
+    window: { id: snapshot.window.id, title: snapshot.window.title },
+    capturedAt: snapshot.capturedAt,
+  };
 }
 
 function snapshotFingerprint(snapshot: DesktopContextSnapshot): string {

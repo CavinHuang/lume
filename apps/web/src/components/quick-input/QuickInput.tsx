@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { DRAG_REGION, NO_DRAG_REGION } from '@/components/app-shell/app-region'
 import { toast } from 'sonner'
+import type { DesktopContextTarget } from '@lume/shared'
 
 /**
  * 快速输入窗口主体：管理 threadId 与 workspace，装配全局监听器，
@@ -24,6 +25,7 @@ export function QuickInput() {
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
   const [threadId, setThreadId] = useState<string | null>(null)
   const [messageMetadata, setMessageMetadata] = useState<Record<string, unknown> | undefined>()
+  const [desktopContextTarget, setDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
 
   // workspace 就绪后创建首个会话（useWorkspaceBootstrap 首次启动时异步创建默认 workspace）
   useEffect(() => {
@@ -40,17 +42,18 @@ export function QuickInput() {
   useEffect(() => {
     let cancelled = false
     const refreshContext = () => {
-      invoke<{ status?: string; snapshotId?: string }>('quick_input_get_context')
+      invoke<QuickInputContextResult>('quick_input_get_context')
         .then((result) => {
           if (cancelled) return
-          setMessageMetadata(
-            result?.status === 'ok' && result.snapshotId
-              ? { desktopContextSnapshotId: result.snapshotId }
-              : undefined,
-          )
+          const target = quickInputContextToTarget(result)
+          setDesktopContextTarget(target)
+          setMessageMetadata(target ? createDesktopContextMessageMetadata(target) : undefined)
         })
         .catch(() => {
-          if (!cancelled) setMessageMetadata(undefined)
+          if (!cancelled) {
+            setDesktopContextTarget(undefined)
+            setMessageMetadata(undefined)
+          }
         })
     }
     const onVisibilityChange = () => {
@@ -85,6 +88,10 @@ export function QuickInput() {
       })
   }
 
+  const handleSelectDesktopContextTarget = (target: DesktopContextTarget) => {
+    setMessageMetadata(createDesktopContextMessageMetadata(target))
+  }
+
   // Esc 隐藏窗口
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -102,8 +109,10 @@ export function QuickInput() {
         <div style={NO_DRAG_REGION} className="flex items-center">
           <QuickInputWorkspaceSelector onChange={handleWorkspaceChange} />
         </div>
-        {typeof messageMetadata?.desktopContextSnapshotId === 'string' && (
-          <Badge variant="secondary" className="font-normal">已附加桌面上下文</Badge>
+        {desktopContextTarget && typeof messageMetadata?.desktopContextSnapshotId === 'string' && (
+          <Badge variant="secondary" className="max-w-[260px] truncate font-normal">
+            已附加 {desktopContextTarget.app.name}
+          </Badge>
         )}
         <div className="flex-1" />
         <div style={NO_DRAG_REGION}>
@@ -118,7 +127,11 @@ export function QuickInput() {
           <AgentView
             threadId={threadId}
             messageMetadata={messageMetadata}
-            onMessageMetadataConsumed={() => setMessageMetadata(undefined)}
+            onMessageMetadataConsumed={() => {
+              if (!desktopContextTarget) setMessageMetadata(undefined)
+            }}
+            desktopContextTarget={desktopContextTarget}
+            onSelectDesktopContextTarget={handleSelectDesktopContextTarget}
           />
         ) : (
           <div className="h-full grid place-items-center text-[12px] text-muted-foreground">准备会话…</div>
@@ -126,4 +139,37 @@ export function QuickInput() {
       </main>
     </div>
   )
+}
+
+type QuickInputContextResult = {
+  status?: string
+  snapshotId?: string
+  app?: { id?: unknown; name?: unknown }
+  window?: { id?: unknown; title?: unknown }
+  capturedAt?: unknown
+}
+
+function quickInputContextToTarget(result: QuickInputContextResult | undefined): DesktopContextTarget | undefined {
+  if (
+    result?.status !== 'ok'
+    || typeof result.snapshotId !== 'string'
+    || typeof result.app?.id !== 'string'
+    || typeof result.app?.name !== 'string'
+    || typeof result.window?.id !== 'string'
+    || typeof result.window?.title !== 'string'
+  ) return undefined
+  return {
+    snapshotId: result.snapshotId,
+    app: { id: result.app.id, name: result.app.name },
+    window: { id: result.window.id, title: result.window.title },
+    ...(typeof result.capturedAt === 'number' ? { capturedAt: result.capturedAt } : {}),
+  }
+}
+
+function createDesktopContextMessageMetadata(target: DesktopContextTarget): Record<string, unknown> {
+  return {
+    desktopContextSnapshotId: target.snapshotId,
+    desktopApp: target.app,
+    desktopWindow: target.window,
+  }
 }

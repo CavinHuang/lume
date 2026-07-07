@@ -87,6 +87,13 @@ export interface DesktopContextSnapshot {
   untrusted: true;
 }
 
+export interface DesktopContextTarget {
+  snapshotId: string;
+  app: Pick<DesktopAppRef, "id" | "name">;
+  window: Pick<DesktopWindowRef, "id" | "title">;
+  capturedAt?: number;
+}
+
 export interface DesktopContextEvent {
   id: string;
   type: DesktopContextEventType;

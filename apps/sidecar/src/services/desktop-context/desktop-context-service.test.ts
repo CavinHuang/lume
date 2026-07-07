@@ -63,7 +63,13 @@ describe("DesktopContextService", () => {
   test("captures allowed apps and returns only a redacted projection", async () => {
     const service = createService();
     service.unlock(Buffer.alloc(32, 4));
-    expect(await service.captureCurrent()).toEqual({ status: "ok", snapshotId: "snap-1" });
+    expect(await service.captureCurrent()).toEqual({
+      status: "ok",
+      snapshotId: "snap-1",
+      app: { id: "wechat.exe", name: "微信" },
+      window: { id: "win:1", title: "项目群" },
+      capturedAt: 100,
+    });
 
     const current = await service.currentContext({ snapshotId: "snap-1" });
     expect(JSON.stringify(current)).not.toContain("secret");

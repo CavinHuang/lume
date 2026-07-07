@@ -22,7 +22,7 @@ import { ThreadFileEnvProvider } from './thread-file-env'
 import { Loader2, Upload, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { type AgentMessageAttachmentInput } from '@lume/shared'
+import { type AgentMessageAttachmentInput, type DesktopContextTarget } from '@lume/shared'
 import {
   createPendingAttachmentsFromSourcePaths,
   isFileDragPayload,
@@ -42,9 +42,18 @@ interface AgentViewProps {
   readOnly?: boolean
   messageMetadata?: Record<string, unknown>
   onMessageMetadataConsumed?: () => void
+  desktopContextTarget?: DesktopContextTarget
+  onSelectDesktopContextTarget?: (target: DesktopContextTarget) => void
 }
 
-export function AgentView({ threadId, readOnly, messageMetadata, onMessageMetadataConsumed }: AgentViewProps) {
+export function AgentView({
+  threadId,
+  readOnly,
+  messageMetadata,
+  onMessageMetadataConsumed,
+  desktopContextTarget,
+  onSelectDesktopContextTarget,
+}: AgentViewProps) {
   const streamingState = useAtomValue(agentStreamingStatesFamily(threadId)) ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveFamily(threadId))
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
@@ -242,6 +251,8 @@ export function AgentView({ threadId, readOnly, messageMetadata, onMessageMetada
                   onClearPendingAttachments={clearPendingAttachments}
                   messageMetadata={messageMetadata}
                   onMessageMetadataConsumed={onMessageMetadataConsumed}
+                  desktopContextTarget={desktopContextTarget}
+                  onSelectDesktopContextTarget={onSelectDesktopContextTarget}
                 />
               </div>
               {activeTaskApproval && (
