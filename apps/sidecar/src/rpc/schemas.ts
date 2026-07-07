@@ -1331,3 +1331,36 @@ export const getPluginAuditLogInputSchema = z.object({
   workspaceSlug: idSchema.optional(),
   limit: z.number().int().positive().optional()
 });
+
+export const verifySchema = z.object({
+  method: z.enum(["tcp-port", "chrome-extension", "http-get", "none"]),
+  detail: z.string().optional(),
+}).strict();
+
+// 安全加固：防止 pluginId/version/artifactPath 含 ".." 逃逸 installedRoot
+const bridgePluginIdSchema = z.string().trim().min(1).regex(/^[a-z0-9_.-]+$/i, "非法 pluginId");
+const bridgeVersionSchema = z.string().trim().min(1).regex(/^[a-z0-9_.-]+$/i, "非法 version");
+const bridgeArtifactPathSchema = z.string().trim().min(1).refine(
+  (p) => !p.includes("..") && !p.includes("\\") && !p.startsWith("/") && !p.includes("\0"),
+  { message: "artifactPath 必须是相对路径且不含 .. 或绝对路径" }
+);
+
+export const exportPluginArtifactInputSchema = z.object({
+  pluginId: bridgePluginIdSchema,
+  version: bridgeVersionSchema,
+  artifactPath: bridgeArtifactPathSchema,
+  destDir: z.string().optional(),
+}).strict();
+
+export const downloadBridgeAssetInputSchema = z.object({
+  url: z.string().url().startsWith("https://"),
+  filename: z.string().optional(),
+  sha256: z.string().optional(),
+  destDir: z.string().optional(),
+}).strict();
+
+export const checkBridgeStatusInputSchema = z.object({
+  pluginId: bridgePluginIdSchema,
+  version: bridgeVersionSchema,
+  verify: verifySchema,
+}).strict();

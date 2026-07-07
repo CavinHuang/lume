@@ -133,6 +133,7 @@ import { SidecarPluginManager } from "../services/agent-runtime/plugins/plugin-m
 import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin-audit-store.js";
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
 import { createDefaultPluginMarketService } from "../services/plugins/plugin-market-service";
+import { createDefaultPluginBridgeService } from "../services/plugins/plugin-bridge-service";
 import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/config-paths";
 import { createLogger } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
@@ -225,6 +226,9 @@ import {
   skillImprovementAnalysisInputSchema,
   skillVersionInputSchema,
   setPluginActiveVersionInputSchema,
+  exportPluginArtifactInputSchema,
+  downloadBridgeAssetInputSchema,
+  checkBridgeStatusInputSchema,
   setPluginEnablementInputSchema,
   threadRunEventsInputSchema,
   threadPathInputSchema,
@@ -1132,6 +1136,30 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.SET_PLUGIN_ACTIVE_VERSION
       );
       return createDefaultPluginMarketService().setPluginActiveVersion(input);
+    },
+    [AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT]: async (params) => {
+      const input = validateInput(
+        exportPluginArtifactInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT,
+      );
+      return createDefaultPluginBridgeService().exportPluginArtifact(input);
+    },
+    [AGENT_IPC_CHANNELS.DOWNLOAD_BRIDGE_ASSET]: async (params) => {
+      const input = validateInput(
+        downloadBridgeAssetInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.DOWNLOAD_BRIDGE_ASSET,
+      );
+      return createDefaultPluginBridgeService().downloadBridgeAsset(input);
+    },
+    [AGENT_IPC_CHANNELS.CHECK_BRIDGE_STATUS]: async (params) => {
+      const input = validateInput(
+        checkBridgeStatusInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.CHECK_BRIDGE_STATUS,
+      );
+      return createDefaultPluginBridgeService().checkBridgeStatus(input);
     },
     [AGENT_IPC_CHANNELS.GET_GITHUB_SKILL_REVIEW]: async (params) => {
       const input = validateInput(
