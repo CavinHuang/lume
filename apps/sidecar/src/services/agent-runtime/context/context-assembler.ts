@@ -204,7 +204,8 @@ export class ContextAssembler {
     const desktopComputerUsePolicy = input.desktopContext && hasComputerUseTools
       ? [
         "Use the attached desktop_context as the starting app/window for requests about the current desktop app.",
-        "If the loaded snapshot is enough, answer from it. If fresher structure is needed, call mcp__computer_use__get_window_state with the attached window id before acting.",
+        "If the loaded snapshot is enough, answer from it. If you need to reload the retained snapshot, call mcp__computer_use__current_context with desktop_context.snapshot.id.",
+        "If fresher structure is needed, call mcp__computer_use__get_window_state with desktop_context.snapshot.window.id before acting.",
         "For desktop operations, Prefer elementId targets from get_window_state over raw coordinates, then verify the state after each operation.",
         "Consequential actions still require Lume confirmation; do not bypass confirmation or ask the user to paste secrets into chat."
       ].join("\n")
