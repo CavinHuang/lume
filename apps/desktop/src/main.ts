@@ -416,8 +416,6 @@ async function createQuickInputWindow() {
     backgroundColor: '#111827',
     show: false,
     frame: false,
-    resizable: false,
-    skipTaskbar: true,
     alwaysOnTop: false,
     webPreferences: createSecureWebPreferences({
       preload: resolve(DESKTOP_ROOT, 'dist', 'preload', 'preload.cjs'),
@@ -908,21 +906,25 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
   return dispatchCommand(validateRendererInvokeCommand(command), payload)
 })
 ipcMain.handle('lume:window-control', async (event, op) => {
-  validateIpcSender(event, mainWindow)
-  if (!mainWindow) throw new Error('main window is not available')
+  // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。
+  // 子窗口 close 会命中 createQuickInputWindow 的 close 拦截 → hide（除非退出中）。
+  const target = [mainWindow, quickInputWindow].find(
+    (win) => win && !win.isDestroyed() && win.webContents === event.sender,
+  )
+  if (!target) throw new Error('no trusted window for window-control sender')
   switch (op) {
     case 'minimize':
-      mainWindow.minimize()
+      target.minimize()
       return null
     case 'toggleMaximize':
-      if (mainWindow.isMaximized()) mainWindow.unmaximize()
-      else mainWindow.maximize()
+      if (target.isMaximized()) target.unmaximize()
+      else target.maximize()
       return null
     case 'close':
-      mainWindow.close()
+      target.close()
       return null
     case 'isMaximized':
-      return mainWindow.isMaximized()
+      return target.isMaximized()
     default:
       throw new Error(`unsupported window-control op: ${String(op)}`)
   }

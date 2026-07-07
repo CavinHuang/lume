@@ -569,7 +569,7 @@ export function computeToggleAction(state: {
   return 'show'
 }
 
-/** 计算快速输入窗口尺寸与位置：水平居中，垂直落在工作区上 1/3 附近（Spotlight 风格）。 */
+/** 计算快速输入窗口尺寸与位置：高度与主窗口一致（920，小屏取工作区高度），宽度保持窄列，水平+垂直居中。 */
 export function computeQuickInputBounds(workArea: { width: number; height: number }): {
   width: number
   height: number
@@ -577,9 +577,9 @@ export function computeQuickInputBounds(workArea: { width: number; height: numbe
   y: number
 } {
   const width = 760
-  const height = 600
+  const height = Math.min(workArea.height, 920)
   const x = Math.max(0, Math.round((workArea.width - width) / 2))
-  const y = Math.max(0, Math.round(workArea.height / 3 - height / 2))
+  const y = Math.max(0, Math.round((workArea.height - height) / 2))
   return { width, height, x, y }
 }
 

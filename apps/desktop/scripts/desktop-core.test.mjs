@@ -397,17 +397,16 @@ test("computeToggleAction returns the right quick-input visibility transition", 
   assert.equal(computeToggleAction({ exists: true, visible: true, destroyed: true }), "create");
 });
 
-test("computeQuickInputBounds centers horizontally and places y near upper third", () => {
+test("computeQuickInputBounds centers and caps height at main-window height (920)", () => {
   const bounds = computeQuickInputBounds({ width: 1920, height: 1080 });
   assert.equal(bounds.width, 760);
-  assert.equal(bounds.height, 600);
+  assert.equal(bounds.height, 920);
   assert.equal(bounds.x, Math.round((1920 - 760) / 2));
-  // y 落在屏幕上 1/3 附近（允许实现细节，断言区间）
-  assert.equal(bounds.y >= 0 && bounds.y <= 360, true);
-  // 小屏不溢出
+  assert.equal(bounds.y, Math.round((1080 - 920) / 2));
   const small = computeQuickInputBounds({ width: 800, height: 500 });
+  assert.equal(small.height, 500);
   assert.equal(small.x >= 0, true);
-  assert.equal(small.y >= 0, true);
+  assert.equal(small.y, 0);
 });
 
 test("getQuickInputUrl builds dev and packaged entry urls with the view flag", () => {

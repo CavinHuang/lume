@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useAtom, useAtomValue } from 'jotai'
-import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { createThread } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
@@ -10,6 +10,7 @@ import { QuickInputWorkspaceSelector } from './QuickInputWorkspaceSelector'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DRAG_REGION, NO_DRAG_REGION } from '@/components/app-shell/app-region'
+import { WindowButtons } from '@/components/app-shell/WindowButtons'
 import { toast } from 'sonner'
 
 /**
@@ -21,39 +22,42 @@ export function QuickInput() {
   useWorkspaceBootstrap()
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
+  const setAgentThreads = useSetAtom(agentThreadsAtom)
   const [threadId, setThreadId] = useState<string | null>(null)
+
+  // 创建会话并写入 atom + 本地 threadId。写入 agentThreadsAtom 让 AgentView/AgentInput
+  // 的 thread 解析（workspaceSlug、模型/权限/思考默认值）与主窗口一致。
+  const createAndSetThread = (workspaceId?: string) =>
+    createThread(workspaceId)
+      .then((thread: any) => {
+        const tid = thread?.id ?? null
+        if (tid && thread) {
+          setAgentThreads((prev) => (prev.some((t) => t.id === tid) ? prev : [...prev, thread]))
+        }
+        setThreadId(tid)
+      })
+      .catch((err) => {
+        console.error('[QuickInput] createThread failed:', err)
+        toast.error('创建会话失败')
+      })
 
   // workspace 就绪后创建首个会话（useWorkspaceBootstrap 首次启动时异步创建默认 workspace）
   useEffect(() => {
     if (threadId || workspaces.length === 0) return
     const seed = currentWorkspaceId ?? workspaces[0]?.id
-    createThread(seed ?? undefined)
-      .then((thread) => setThreadId((thread as any)?.id ?? null))
-      .catch((err) => {
-        console.error('[QuickInput] createThread failed:', err)
-        toast.error('创建会话失败')
-      })
+    createAndSetThread(seed ?? undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaces.length])
 
   const handleNewThread = () => {
     const seed = currentWorkspaceId ?? workspaces[0]?.id
-    createThread(seed ?? undefined)
-      .then((thread) => setThreadId((thread as any)?.id ?? null))
-      .catch((err) => {
-        console.error('[QuickInput] createThread failed:', err)
-        toast.error('创建会话失败')
-      })
+    createAndSetThread(seed ?? undefined)
   }
 
   const handleWorkspaceChange = (workspaceId: string) => {
     setCurrentWorkspaceId(workspaceId)
     // 切换即新建：让选择器始终反映当前会话的 workspace
-    createThread(workspaceId)
-      .then((thread) => setThreadId((thread as any)?.id ?? null))
-      .catch((err) => {
-        console.error('[QuickInput] createThread failed:', err)
-        toast.error('创建会话失败')
-      })
+    createAndSetThread(workspaceId)
   }
 
   // Esc 隐藏窗口
@@ -80,8 +84,11 @@ export function QuickInput() {
             新建对话
           </Button>
         </div>
+        <div style={NO_DRAG_REGION} className="flex items-center">
+          <WindowButtons showMaximize={false} />
+        </div>
       </header>
-      <main className="flex-1 min-h-0">
+      <main className="flex-1 min-h-0 flex min-w-0">
         {threadId ? (
           <AgentView threadId={threadId} />
         ) : (

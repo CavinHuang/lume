@@ -9,8 +9,8 @@ import { Input } from '@/components/ui/input'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Search } from 'lucide-react'
-import { useAtom } from 'jotai'
-import { agentThreadsAtom } from '@/atoms'
+import { useAtom, useAtomValue } from 'jotai'
+import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
 import { listChannels } from '@/lib/desktop-api/channel'
 import { cn } from '@/lib/utils'
@@ -77,6 +77,14 @@ function isDefaultModelOption(
 export function ModelPicker({ threadId }: ModelPickerProps) {
   const [threads, setThreads] = useAtom(agentThreadsAtom)
   const thread = threads.find((item) => item.id === threadId)
+  const workspaces = useAtomValue(agentWorkspacesAtom)
+  const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  // 与 AgentInput 一致：用线程 workspace（回退到当前 workspace）解析 config slug，
+  // 让默认模型/策略从 workspace effective config 读取，而非全局。
+  const configWorkspaceSlug = useMemo(() => {
+    const wsId = thread?.workspaceId ?? currentWorkspaceId
+    return workspaces.find((w) => w.id === wsId)?.slug
+  }, [thread?.workspaceId, currentWorkspaceId, workspaces])
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelsLoaded, setChannelsLoaded] = useState(false)
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
@@ -90,11 +98,13 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
       .then((items) => setChannels(items))
       .catch(console.error)
       .finally(() => setChannelsLoaded(true))
+  }, [])
 
-    getEffectiveLumeConfig()
+  useEffect(() => {
+    getEffectiveLumeConfig(configWorkspaceSlug)
       .then((config) => setDefaultStrategy(config.models?.agent ?? {}))
       .catch(console.error)
-  }, [])
+  }, [configWorkspaceSlug])
 
   useEffect(() => {
     if (!open) return
@@ -116,19 +126,30 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     }
   }, [open])
 
-  /** 计算有效模型选择：线程覆盖优先，否则回退到全局默认策略 */
-  const effectiveChannelId = thread?.channelId ?? defaultStrategy.defaultChannelId
-  const effectiveModelRef = thread?.modelRef ?? defaultStrategy.defaultModelRef
-
-  const activeChannel = effectiveChannelId
-    ? channels.find(c => c.id === effectiveChannelId)
-    : undefined
+  // 线程覆盖优先 → workspace 默认策略 → 回退到第一个可用模型
+  // （与 WelcomeModelPicker 一致，避免 config 未配 models.agent 时显示"未设置"）
+  const baseChannelId = thread?.channelId ?? defaultStrategy.defaultChannelId
+  const baseModelRef = thread?.modelRef ?? defaultStrategy.defaultModelRef
 
   const groups = useMemo(() => buildModelSelectionGroups({
     channels,
-    activeChannelId: effectiveChannelId,
-    activeModelRef: effectiveModelRef,
-  }), [channels, effectiveChannelId, effectiveModelRef])
+    activeChannelId: baseChannelId,
+    activeModelRef: baseModelRef,
+  }), [channels, baseChannelId, baseModelRef])
+
+  const fallbackOption = !baseChannelId && !baseModelRef && channelsLoaded
+    ? groups[0]?.options?.[0]
+    : undefined
+  const resolvedStrategy: LumeConfigAgentDefaultStrategy = fallbackOption
+    ? { ...defaultStrategy, defaultChannelId: fallbackOption.channelId, defaultModelRef: fallbackOption.modelRef }
+    : defaultStrategy
+
+  const effectiveChannelId = thread?.channelId ?? resolvedStrategy.defaultChannelId
+  const effectiveModelRef = thread?.modelRef ?? resolvedStrategy.defaultModelRef
+
+  const activeChannel = effectiveChannelId
+    ? channels.find((c) => c.id === effectiveChannelId)
+    : undefined
 
   const filteredGroups = useMemo(() => filterGroups(groups, search), [groups, search])
 
@@ -136,8 +157,8 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     channels,
     channelsLoaded,
     thread,
-    defaultStrategy,
-  }), [channels, channelsLoaded, thread, defaultStrategy])
+    defaultStrategy: resolvedStrategy,
+  }), [channels, channelsLoaded, thread, resolvedStrategy])
 
   const canRestoreDefault = thread?.modelSelectionSource === 'thread-override'
 

@@ -16,6 +16,8 @@ import { NO_DRAG_REGION } from './app-region'
 interface WindowButtonGroupProps {
   maximized: boolean
   focused: boolean
+  /** 是否显示最大化/还原按钮（默认 true；resizable:false 的窗口传 false）。 */
+  showMaximize?: boolean
   className?: string
   style?: CSSProperties
 }
@@ -24,6 +26,7 @@ interface WindowButtonGroupProps {
 export function WindowButtonGroup({
   maximized,
   focused,
+  showMaximize = true,
   className,
   style,
 }: WindowButtonGroupProps) {
@@ -45,15 +48,17 @@ export function WindowButtonGroup({
       >
         <Minus size={16} />
       </Button>
-      <Button
-        variant="ghost"
-        type="button"
-        title={maximized ? '还原' : '最大化'}
-        className={buttonClass}
-        onClick={() => getCurrentWindow().toggleMaximize().catch(() => {})}
-      >
-        {maximized ? <Copy size={14} /> : <Square size={14} />}
-      </Button>
+      {showMaximize && (
+        <Button
+          variant="ghost"
+          type="button"
+          title={maximized ? '还原' : '最大化'}
+          className={buttonClass}
+          onClick={() => getCurrentWindow().toggleMaximize().catch(() => {})}
+        >
+          {maximized ? <Copy size={14} /> : <Square size={14} />}
+        </Button>
+      )}
       <Button
                 variant="ghost"
         type="button"
@@ -67,7 +72,7 @@ export function WindowButtonGroup({
   )
 }
 
-export function WindowButtons({ className }: { className?: string }) {
+export function WindowButtons({ className, showMaximize }: { className?: string; showMaximize?: boolean }) {
   const [maximized, setMaximized] = useState(false)
   const [focused, setFocused] = useState(true)
 
@@ -99,5 +104,5 @@ export function WindowButtons({ className }: { className?: string }) {
     }
   }, [])
 
-  return <WindowButtonGroup maximized={maximized} focused={focused} className={className} />
+  return <WindowButtonGroup maximized={maximized} focused={focused} showMaximize={showMaximize} className={className} />
 }
