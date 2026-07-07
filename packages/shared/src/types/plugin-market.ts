@@ -83,6 +83,41 @@ export type PluginMarketplaceSetupKind =
   | "mcp"
   | "custom"
 
+export type PluginSetupArtifactKind =
+  | "chrome-extension"
+  | "obsidian-plugin"
+  | "native-binary"
+  | "node-bundle"
+  | "file"
+
+export interface PluginSetupArtifact {
+  path: string
+  kind: PluginSetupArtifactKind
+}
+
+export interface PluginSetupDownload {
+  url: string
+  filename?: string
+  sha256?: string
+}
+
+export interface PluginSetupBuild {
+  command: string
+  cwd?: string
+  env?: Record<string, string>
+  prerequisites?: string
+}
+
+export interface PluginSetupTargetApp {
+  kind: "chrome" | "obsidian" | "system-path"
+  installHint?: string
+}
+
+export interface PluginSetupVerify {
+  method: "tcp-port" | "chrome-extension" | "http-get" | "none"
+  detail?: string
+}
+
 export interface PluginMarketplaceAsset {
   path: string
   url?: string
@@ -93,6 +128,11 @@ export interface PluginMarketplaceSetupStep {
   title: string
   description: string
   kind?: PluginMarketplaceSetupKind
+  artifact?: PluginSetupArtifact
+  download?: PluginSetupDownload
+  build?: PluginSetupBuild
+  targetApp?: PluginSetupTargetApp
+  verify?: PluginSetupVerify
 }
 
 export interface PluginMarketplaceMetadata {
@@ -275,4 +315,38 @@ export interface GetMarketDetailResult {
   inspect?: InspectMarketSourceResult
   diagnostics: AgentPluginDiagnostic[]
   readme?: PluginReadmePreview
+}
+
+export interface ExportPluginArtifactInput {
+  pluginId: string
+  version: string
+  artifactPath: string
+  destDir?: string
+}
+
+export interface ExportPluginArtifactResult {
+  savedPath: string
+}
+
+export interface DownloadBridgeAssetInput {
+  url: string
+  filename?: string
+  sha256?: string
+  destDir?: string
+}
+
+export interface DownloadBridgeAssetResult {
+  savedPath: string
+  verified: boolean
+}
+
+export interface CheckBridgeStatusInput {
+  pluginId: string
+  version: string
+  verify: PluginSetupVerify
+}
+
+export interface CheckBridgeStatusResult {
+  ok: boolean
+  detail: string
 }
