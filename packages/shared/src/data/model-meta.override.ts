@@ -16,14 +16,6 @@ export interface ModelOverride {
 
 export const MODEL_OVERRIDES: Record<string, ModelOverride> = {
   // ── 1. 人工定制（generated 覆盖，补 description / aliases）──
-  'claude-sonnet-4-20250514': {
-    description: '擅长代码和日常任务',
-    aliases: ['claude-sonnet-4', 'claude-3-5-sonnet', 'claude-3-5-sonnet-20241022', 'claude-3.5-sonnet', 'anthropic/claude-sonnet-4-5'],
-  },
-  'claude-opus-4-20250514': {
-    description: '最强推理能力',
-    aliases: ['claude-opus-4', 'claude-3-opus', 'claude-3-opus-20240229'],
-  },
   'claude-haiku-4-5-20251001': {
     aliases: ['claude-haiku-4-5', 'claude-3-5-haiku', 'claude-3-5-haiku-20241022'],
   },
@@ -39,13 +31,36 @@ export const MODEL_OVERRIDES: Record<string, ModelOverride> = {
     aliases: ['gemini-2.5-pro-preview-05-06'],
   },
   'gemini-2.5-flash': { aliases: ['gemini-2.5-flash-preview-05-20'] },
-  'deepseek-r1': { aliases: ['deepseek-reasoner'] },
   'deepseek-chat': { aliases: ['deepseek-v3'] },
   'step-3.7-flash': { description: '阶跃星辰旗舰多模态推理模型，支持三档推理强度' },
   'step-3.5-flash-2603': { description: '针对高频 Agent 场景优化，Token 效率提升、推理速度更快' },
   'step-3.5-flash': { description: '196B MoE 架构，高速推理，专为智能体和代码任务优化' },
 
   // ── 2. 国产缺口（generated 无，standalone）──
+  // generated 用不同 id（claude-sonnet-4-5 / opus-4-x / deepseek-reasoner），这些 dated/alias id 作 standalone
+  'claude-sonnet-4-20250514': {
+    displayName: 'Claude Sonnet 4',
+    contextWindow: 200_000,
+    capabilities: { vision: true, toolUse: true, reasoning: true },
+    pricing: { input: 3, output: 15 },
+    description: '擅长代码和日常任务',
+    aliases: ['claude-sonnet-4', 'claude-3-5-sonnet', 'claude-3-5-sonnet-20241022', 'claude-3.5-sonnet', 'anthropic/claude-sonnet-4-5'],
+  },
+  'claude-opus-4-20250514': {
+    displayName: 'Claude Opus 4',
+    contextWindow: 200_000,
+    capabilities: { vision: true, toolUse: true, reasoning: true },
+    pricing: { input: 15, output: 75 },
+    description: '最强推理能力',
+    aliases: ['claude-opus-4', 'claude-3-opus', 'claude-3-opus-20240229'],
+  },
+  'deepseek-r1': {
+    displayName: 'DeepSeek R1',
+    contextWindow: 128_000,
+    capabilities: { reasoning: true },
+    pricing: { input: 0.55, output: 2.19 },
+    aliases: ['deepseek-reasoner'],
+  },
   // 豆包 / 字节
   'doubao-pro-32k': { displayName: 'Doubao Pro 32K', contextWindow: 32_000, capabilities: { toolUse: true } },
   'doubao-pro-128k': { displayName: 'Doubao Pro 128K', contextWindow: 128_000, capabilities: { toolUse: true } },
@@ -68,6 +83,11 @@ export const MODEL_OVERRIDES: Record<string, ModelOverride> = {
   'glm-z1-air': { displayName: 'GLM-Z1 Air', contextWindow: 128_000, capabilities: { toolUse: true, reasoning: true } },
   'glm-z1-airx': { displayName: 'GLM-Z1 AirX', contextWindow: 8_000, capabilities: { toolUse: true, reasoning: true } },
   'glm-z1-flash': { displayName: 'GLM-Z1 Flash', contextWindow: 128_000, capabilities: { toolUse: true, reasoning: true } },
+  'glm-5-turbo': {
+    displayName: 'GLM-5 Turbo',
+    contextWindow: 200_000,
+    capabilities: { toolUse: true, reasoning: true },
+  },
   // Qwen 老款（qwen-max/plus/turbo/vl-max 由 generated 覆盖）
   'qwen-long': { displayName: 'Qwen Long', contextWindow: 1_000_000, capabilities: { toolUse: true } },
   'qwq-32b': { displayName: 'QwQ 32B', contextWindow: 128_000, capabilities: { toolUse: true, reasoning: true }, aliases: ['qwq'] },
