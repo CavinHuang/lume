@@ -13,6 +13,7 @@ import { sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { buildDesktopAssistantDiagnostics } from './desktop-assistant-settings-state'
 
 export function DesktopAssistantSettings() {
   const [settings, setSettings] = useState<DesktopAssistantSettingsValue | null>(null)
@@ -66,6 +67,9 @@ export function DesktopAssistantSettings() {
   if (!settings) {
     return <div className="lume-panel flex h-60 items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />加载桌面助手...</div>
   }
+  const diagnostics = status
+    ? buildDesktopAssistantDiagnostics({ settings, status })
+    : null
 
   return (
     <div className="space-y-3">
@@ -110,6 +114,16 @@ export function DesktopAssistantSettings() {
           </div>
           <Button type="button" variant="outline" onClick={() => void refresh()}>重新诊断</Button>
         </div>
+        {diagnostics && (
+          <div className={`mt-3 rounded-xl border px-3 py-2.5 ${diagnosticToneClassName(diagnostics.tone)}`}>
+            <p className="text-sm font-medium">{diagnostics.title}</p>
+            <ul className="mt-1 space-y-1 text-xs leading-5">
+              {diagnostics.details.map((detail) => (
+                <li key={detail}>{detail}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {status?.host.message && <p className="mt-3 rounded-lg bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">{status.host.message}</p>}
       </section>
 
@@ -199,4 +213,14 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function diagnosticToneClassName(tone: 'ok' | 'warning' | 'error'): string {
+  if (tone === 'ok') {
+    return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+  }
+  if (tone === 'warning') {
+    return 'border-amber-500/25 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+  }
+  return 'border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300'
 }
