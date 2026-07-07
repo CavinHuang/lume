@@ -32,6 +32,36 @@ describe("ContextAssembler", () => {
     expect(result.userMessageForModel).toContain("这个我要怎么回复？");
   });
 
+  test("guides the agent to use selected desktop context as the computer-use anchor", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "desktop-action-thread",
+      runId: "desktop-action-run",
+      userMessage: "帮我在当前微信回复一句可以",
+      resolvedModelId: "test-model",
+      availableTools: [
+        "mcp__computer_use__get_window_state",
+        "mcp__computer_use__click",
+        "mcp__computer_use__type_text",
+      ],
+      tokenBudget: 8_000,
+      desktopContext: {
+        snapshot: {
+          id: "snap-2",
+          app: { id: "wechat.exe", name: "微信" },
+          window: { id: "win:wechat", title: "项目群" },
+          visibleText: "客户问今天能不能交付",
+          untrusted: true,
+        },
+      },
+    });
+
+    expect(result.systemPrompt).toContain("Use the attached desktop_context as the starting app/window");
+    expect(result.systemPrompt).toContain("mcp__computer_use__get_window_state");
+    expect(result.systemPrompt).toContain("Prefer elementId targets");
+    expect(result.systemPrompt).toContain("verify the state after each operation");
+    expect(result.systemPrompt).toContain("Consequential actions still require Lume confirmation");
+  });
+
   const originalConfigDir = process.env.LUME_CONFIG_DIR;
 
   test("assembles existing prompt builder output with budget trace", async () => {
