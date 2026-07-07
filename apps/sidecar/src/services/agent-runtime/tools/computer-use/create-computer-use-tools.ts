@@ -86,29 +86,28 @@ export function createComputerUseMcpTools(input: {
         let visualArgs: Record<string, unknown> | undefined;
         try {
           const args = asRecord(rawArgs);
-          if (!readOnly && requiresDesktopActionConfirmation({
-            kind: name as DesktopActionKind,
-            targetLabel: stringValue(args.targetLabel) ?? stringValue(args.label),
-          })) {
+          if (!readOnly) {
+            const prepared = await prepareDesktopActionArgsForSafety(invoke, name as DesktopActionKind, args);
+            if (prepared.status !== "ok") {
+              return toolResult(context.toolUseId, prepared.result);
+            }
+            Object.assign(args, prepared.args);
+          }
+          if (!readOnly && requiresDesktopActionConfirmation(actionIntentFromArgs(name as DesktopActionKind, args))) {
             if (!input.threadId || !input.emitDesktopActionRequest) {
               return toolResult(context.toolUseId, {
                 status: "blocked",
                 message: "consequential desktop action requires explicit user confirmation",
               });
             }
-            const prepared = await prepareConfirmedActionArgs(invoke, args);
-            if (prepared.status !== "ok") {
-              return toolResult(context.toolUseId, prepared.result);
-            }
             const allowed = await waitForDesktopActionDecision(
-              createActionRequest(input.threadId, context.toolUseId, name as DesktopActionKind, prepared.args),
+              createActionRequest(input.threadId, context.toolUseId, name as DesktopActionKind, args),
               context.abortSignal ?? new AbortController().signal,
               input.emitDesktopActionRequest,
             );
             if (!allowed) {
               return toolResult(context.toolUseId, { status: "cancelled" });
             }
-            Object.assign(args, prepared.args);
           }
           if (!readOnly) {
             visualStarted = true;
@@ -205,11 +204,15 @@ function resultStatus(value: unknown): DesktopActionStatus | undefined {
   return isDesktopActionStatus(status) ? status : undefined;
 }
 
-async function prepareConfirmedActionArgs(
+async function prepareDesktopActionArgsForSafety(
   invoke: ComputerUseInvoke,
+  action: DesktopActionKind,
   args: Record<string, unknown>,
 ): Promise<{ status: "ok"; args: Record<string, unknown> } | { status: "blocked"; result: unknown }> {
-  if (typeof args.windowRevision === "string" && args.windowRevision.trim()) {
+  const suppliedLabel = stringValue(args.targetLabel) ?? stringValue(args.label);
+  const needsConfirmation = requiresDesktopActionConfirmation({ kind: action, targetLabel: suppliedLabel });
+  const needsState = shouldInspectTargetState(action, args) || (needsConfirmation && !stringValue(args.windowRevision));
+  if (!needsState) {
     return { status: "ok", args };
   }
   const state = asRecord(await invoke("get_window_state", {
@@ -222,14 +225,72 @@ async function prepareConfirmedActionArgs(
     };
   }
   const window = asRecord(state.window);
+  const derivedLabel = deriveTargetLabel(action, args, state);
   return {
     status: "ok",
     args: {
       ...args,
       ...(typeof args.windowId === "string" ? {} : typeof window.id === "string" ? { windowId: window.id } : {}),
+      ...(typeof window.appId === "string" && !stringValue(args.appId) ? { appId: window.appId } : {}),
+      ...(typeof window.appName === "string" && !stringValue(args.appName) ? { appName: window.appName } : {}),
+      ...(derivedLabel ? { targetLabel: derivedLabel } : {}),
       windowRevision: state.revision,
     },
   };
+}
+
+function actionIntentFromArgs(action: DesktopActionKind, args: Record<string, unknown>) {
+  return {
+    kind: action,
+    targetLabel: stringValue(args.targetLabel) ?? stringValue(args.label),
+    keys: Array.isArray(args.keys)
+      ? args.keys.filter((key): key is string => typeof key === "string")
+      : stringValue(args.key)?.split("+"),
+  };
+}
+
+function shouldInspectTargetState(action: DesktopActionKind, args: Record<string, unknown>): boolean {
+  if ((action === "click" || action === "perform_secondary_action") && stringValue(args.elementId)) {
+    return true;
+  }
+  return action === "press_key" && containsEnterKey(actionIntentFromArgs(action, args).keys);
+}
+
+function containsEnterKey(keys: string[] | undefined): boolean {
+  return keys?.some((key) => /^(?:enter|return)$/i.test(key.trim())) ?? false;
+}
+
+function deriveTargetLabel(
+  action: DesktopActionKind,
+  args: Record<string, unknown>,
+  state: Record<string, unknown>,
+): string | undefined {
+  const accessibility = asRecord(state.accessibility);
+  const elementId = stringValue(args.elementId);
+  if (elementId) {
+    return labelFromElement(findElementById(accessibility.tree, elementId));
+  }
+  if (action === "press_key" && containsEnterKey(actionIntentFromArgs(action, args).keys)) {
+    return labelFromElement(accessibility.focusedElement);
+  }
+  return undefined;
+}
+
+function findElementById(value: unknown, elementId: string): Record<string, unknown> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  for (const item of value) {
+    const element = asRecord(item);
+    if (element.id === elementId) return element;
+    const child = findElementById(element.children, elementId);
+    if (child) return child;
+  }
+  return undefined;
+}
+
+function labelFromElement(value: unknown): string | undefined {
+  const element = asRecord(value);
+  if (element.sensitive === true) return undefined;
+  return stringValue(element.name);
 }
 
 function createActionRequest(

@@ -119,6 +119,115 @@ describe("createComputerUseMcpTools", () => {
     });
   });
 
+  test("derives consequential target labels from element ids before action confirmation", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedRevision?: string }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-derived",
+      emitDesktopActionRequest: (request) => requests.push(request),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "derived-rev",
+            window: { id: "window-1", appId: "wechat.exe", appName: "微信" },
+            accessibility: {
+              tree: [
+                { id: "root.0", role: "edit", name: "输入框" },
+                { id: "root.1", role: "button", name: "发送" },
+              ],
+            },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+    const resultPromise = click.call(
+      { windowId: "window-1", windowRevision: "stale-or-known-rev", elementId: "root.1" },
+      { toolUseId: "tool-derived", abortSignal: new AbortController().signal } as never,
+    );
+
+    await Bun.sleep(0);
+    expect(calls).toEqual([{ method: "get_window_state", input: { windowId: "window-1" } }]);
+    expect(requests[0]).toMatchObject({
+      targetLabel: "发送",
+      expectedRevision: "derived-rev",
+    });
+    submitDesktopActionDecision({
+      threadId: "thread-derived",
+      requestId: requests[0]!.requestId,
+      decision: "allow_once",
+    });
+    const result = await resultPromise;
+
+    expect(calls[1]).toEqual({
+      method: "click",
+      input: {
+        windowId: "window-1",
+        windowRevision: "derived-rev",
+        elementId: "root.1",
+        targetLabel: "发送",
+        appId: "wechat.exe",
+        appName: "微信",
+      },
+    });
+    expect(JSON.parse(result.content as string)).toEqual({ status: "ok" });
+  });
+
+  test("derives consequential focused target labels for keyboard actions", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-focused",
+      emitDesktopActionRequest: (request) => requests.push(request),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "focused-rev",
+            window: { id: "window-2", appId: "pay.exe", appName: "支付应用" },
+            accessibility: {
+              focusedElement: { id: "root.4", role: "button", name: "付款" },
+            },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const pressKey = tools.find((tool) => tool.name === "mcp__computer_use__press_key")!;
+    const resultPromise = pressKey.call(
+      { windowId: "window-2", key: "ENTER" },
+      { toolUseId: "tool-focused", abortSignal: new AbortController().signal } as never,
+    );
+
+    await Bun.sleep(0);
+    expect(requests[0]?.targetLabel).toBe("付款");
+    submitDesktopActionDecision({
+      threadId: "thread-focused",
+      requestId: requests[0]!.requestId,
+      decision: "allow_once",
+    });
+    await resultPromise;
+
+    expect(calls).toEqual([
+      { method: "get_window_state", input: { windowId: "window-2" } },
+      {
+        method: "press_key",
+        input: {
+          windowId: "window-2",
+          key: "ENTER",
+          windowRevision: "focused-rev",
+          targetLabel: "付款",
+          appId: "pay.exe",
+          appName: "支付应用",
+        },
+      },
+    ]);
+  });
+
   test("emits desktop action visual lifecycle without leaking typed text", async () => {
     const visualEvents: unknown[] = [];
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
