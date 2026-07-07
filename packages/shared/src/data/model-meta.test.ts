@@ -58,6 +58,13 @@ describe('findModelMeta', () => {
     expect(meta).toBeDefined()
     expect(meta!.displayName).toBe('Claude Sonnet 4')
   })
+
+  test('claude-sonnet-4-5 contextWindow 匹配官方 spec（200K，非 models.dev 高估值）', () => {
+    const meta = findModelMeta('claude-sonnet-4-5')
+    expect(meta).toBeDefined()
+    expect(meta!.contextWindow).toBe(200_000)
+    expect(meta!.displayName).toBe('Claude Sonnet 4.5')
+  })
 })
 
 describe('formatContextWindow', () => {

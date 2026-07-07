@@ -19,7 +19,12 @@ export const MODEL_OVERRIDES: Record<string, ModelOverride> = {
   'claude-haiku-4-5-20251001': {
     aliases: ['claude-haiku-4-5', 'claude-3-5-haiku', 'claude-3-5-haiku-20241022'],
   },
-  'claude-sonnet-4-5': { aliases: ['claude-3-5-sonnet-20241022'] },
+  'claude-sonnet-4-5': {
+    displayName: 'Claude Sonnet 4.5',
+    contextWindow: 200_000,
+    aliases: ['claude-3-5-sonnet-20241022'],
+  },
+  'claude-opus-4-5': { displayName: 'Claude Opus 4.5' },
   'gpt-4o': { aliases: ['gpt-4o-2024-11-20', 'gpt-4o-2024-08-06'] },
   'gpt-4o-mini': { aliases: ['gpt-4o-mini-2024-07-18'] },
   'gpt-4.1-mini': { aliases: ['openai/gpt-4.1-mini'] },
