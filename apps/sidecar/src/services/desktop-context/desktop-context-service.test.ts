@@ -106,7 +106,10 @@ describe("DesktopContextService", () => {
       capturedAt: 100,
     });
     expect(service.getSettings().enabled).toBe(false);
-    expect(JSON.stringify(await service.currentContext({ snapshotId: "snap-1" }))).not.toContain("secret");
+    const current = await service.currentContext({ snapshotId: "snap-1" });
+    expect(current).toMatchObject({ status: "ok" });
+    expect(JSON.stringify(current)).not.toContain("secret");
+    expect(JSON.stringify(current)).toContain("[REDACTED]");
   });
 
   test("creates non-sensitive reply proposals from local context only when proactive mode is enabled", async () => {

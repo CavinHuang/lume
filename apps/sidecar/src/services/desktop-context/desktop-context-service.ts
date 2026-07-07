@@ -97,8 +97,10 @@ export class DesktopContextService {
   }
 
   async currentContext(input: { snapshotId?: string } = {}): Promise<unknown> {
-    if (!this.#settings.enabled) return { status: "unavailable", message: "desktop assistant is disabled" };
     if (!this.#key) return { status: "unavailable", message: "desktop context store is locked" };
+    if (!this.#settings.enabled && !input.snapshotId) {
+      return { status: "unavailable", message: "desktop assistant is disabled" };
+    }
     const store = this.#ensureStore();
     const snapshot = input.snapshotId
       ? store.getRedacted(input.snapshotId)
