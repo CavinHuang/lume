@@ -16,6 +16,12 @@ import {
   type UninstallPluginResult,
   type UpdatePluginInput,
   type UpdatePluginResult,
+  type ExportPluginArtifactInput,
+  type ExportPluginArtifactResult,
+  type DownloadBridgeAssetInput,
+  type DownloadBridgeAssetResult,
+  type CheckBridgeStatusInput,
+  type CheckBridgeStatusResult,
 } from '@lume/shared'
 import { sidecarCall } from './system'
 
@@ -42,3 +48,12 @@ export const setPluginEnablement = (input: SetPluginEnablementInput) =>
 
 export const setPluginActiveVersion = (input: SetPluginActiveVersionInput) =>
   sidecarCall<SetPluginActiveVersionResult>(AGENT_IPC_CHANNELS.SET_PLUGIN_ACTIVE_VERSION, input)
+
+export const exportPluginArtifact = (input: ExportPluginArtifactInput) =>
+  sidecarCall<ExportPluginArtifactResult>(AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT, input)
+
+export const downloadBridgeAsset = (input: DownloadBridgeAssetInput) =>
+  sidecarCall<DownloadBridgeAssetResult>(AGENT_IPC_CHANNELS.DOWNLOAD_BRIDGE_ASSET, input)
+
+export const checkBridgeStatus = (input: CheckBridgeStatusInput) =>
+  sidecarCall<CheckBridgeStatusResult>(AGENT_IPC_CHANNELS.CHECK_BRIDGE_STATUS, input)
