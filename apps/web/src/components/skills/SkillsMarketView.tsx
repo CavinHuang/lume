@@ -75,6 +75,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PluginDetailPage } from './PluginDetailPage'
+import { BridgeInstallWizard } from './BridgeInstallWizard'
+import { bridgeWizardOpenAtom, bridgeWizardPluginAtom } from '@/atoms'
 type SkillVisualTone = 'violet' | 'mint' | 'figma' | 'green' | 'blue' | 'orange'
 
 interface MarketDisplayCard extends MarketCardView {
@@ -106,6 +108,8 @@ export function SkillsMarketView() {
   const setTabs = useSetAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
+  const setBridgeWizardOpen = useSetAtom(bridgeWizardOpenAtom)
+  const setBridgeWizardPlugin = useSetAtom(bridgeWizardPluginAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSlug = workspace?.slug ?? null
   const [activeKind, setActiveKind] = useState<MarketCardKind>('plugin')
@@ -186,6 +190,11 @@ export function SkillsMarketView() {
   }
 
   const handlePluginAction = async (item: PluginMarketItem) => {
+    if ((item.marketplace?.setup?.length ?? 0) > 0) {
+      setBridgeWizardPlugin(item)
+      setBridgeWizardOpen(true)
+      return
+    }
     if (!workspaceSlug) return
     if (item.installState !== 'installed') {
       await handleOpenPluginDetail(item)
@@ -512,6 +521,7 @@ export function SkillsMarketView() {
         detail={skillDetail}
         onOpenChange={setDetailOpen}
       />
+      <BridgeInstallWizard workspaceSlug={workspaceSlug} />
     </div>
   )
 }

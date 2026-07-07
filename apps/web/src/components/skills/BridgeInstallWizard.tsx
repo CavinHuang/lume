@@ -8,6 +8,7 @@ import {
   checkBridgeStatus,
   downloadBridgeAsset,
   exportPluginArtifact,
+  writeClipboardText,
 } from '@/lib/desktop-api'
 import type { PluginSetupArtifact, PluginSetupVerify } from '@lume/shared'
 
@@ -119,7 +120,7 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
               <div className="mt-2">
                 <p className="text-[12px] text-[var(--text-2)]">{current.build.prerequisites}</p>
                 <code className="mt-1 block rounded bg-[var(--surface-2)] p-2 text-[12px]">{current.build.command}</code>
-                <Button variant="ghost" className="mt-1" onClick={() => navigator.clipboard?.writeText(current.build!.command)}>
+                <Button variant="ghost" className="mt-1" onClick={() => writeClipboardText(current.build!.command)}>
                   复制命令
                 </Button>
               </div>
