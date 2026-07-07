@@ -1,4 +1,13 @@
-import type { PluginMarketItem, PluginMarketplaceSetupKind, PluginReadmePreview } from '@lume/shared'
+import type {
+  PluginMarketItem,
+  PluginMarketplaceSetupKind,
+  PluginReadmePreview,
+  PluginSetupArtifact,
+  PluginSetupDownload,
+  PluginSetupBuild,
+  PluginSetupTargetApp,
+  PluginSetupVerify,
+} from '@lume/shared'
 
 export interface PermissionRow {
   label: string
@@ -6,9 +15,15 @@ export interface PermissionRow {
 }
 
 export interface PluginSetupItem {
+  id?: string
   title: string
   description: string
   status: 'done' | 'attention' | 'idle'
+  artifact?: PluginSetupArtifact
+  download?: PluginSetupDownload
+  build?: PluginSetupBuild
+  targetApp?: PluginSetupTargetApp
+  verify?: PluginSetupVerify
 }
 
 export interface PluginUpdateAction {
@@ -151,9 +166,15 @@ function buildExplicitSetupItems(
 ): PluginSetupItem[] {
   const setup = item.marketplace?.setup ?? []
   return setup.map((step) => ({
+    id: step.id,
     title: step.title,
     description: step.description,
     status: setupStepStatus(step.kind, currentVersionInstalled, enabled),
+    ...(step.artifact ? { artifact: step.artifact } : {}),
+    ...(step.download ? { download: step.download } : {}),
+    ...(step.build ? { build: step.build } : {}),
+    ...(step.targetApp ? { targetApp: step.targetApp } : {}),
+    ...(step.verify ? { verify: step.verify } : {}),
   }))
 }
 

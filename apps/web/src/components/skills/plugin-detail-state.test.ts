@@ -181,11 +181,13 @@ describe('plugin-detail-state', () => {
 
     expect(items).toEqual([
       {
+        id: 'install',
         title: '安装扩展',
         description: '先安装浏览器扩展。',
         status: 'done',
       },
       {
+        id: 'auth',
         title: '确认浏览器授权',
         description: '在授权弹窗确认。',
         status: 'attention',
@@ -207,6 +209,28 @@ describe('plugin-detail-state', () => {
 
     expect(buildPluginSetupItems(plugin({ marketplace: setup }))[0]?.status).toBe('done')
     expect(buildPluginSetupItems(plugin({ enableState: 'disabled', marketplace: setup }))[0]?.status).toBe('idle')
+  })
+
+  test('explicit setup 步骤携带桥接字段', () => {
+    const items = buildPluginSetupItems(plugin({
+      marketplace: {
+        setup: [{
+          id: 'install-ext',
+          title: '安装扩展',
+          description: '加载已解包扩展',
+          kind: 'install',
+          artifact: { path: './ext.zip', kind: 'chrome-extension' },
+          targetApp: { kind: 'chrome', installHint: 'chrome://extensions' },
+          verify: { method: 'chrome-extension', detail: 'abcdefg' },
+        }],
+      },
+    }))
+    expect(items[0]).toMatchObject({
+      id: 'install-ext',
+      artifact: { path: './ext.zip', kind: 'chrome-extension' },
+      targetApp: { kind: 'chrome' },
+      verify: { method: 'chrome-extension' },
+    })
   })
 
   test('formats README metadata', () => {
