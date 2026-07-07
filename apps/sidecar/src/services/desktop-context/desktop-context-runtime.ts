@@ -30,8 +30,8 @@ export const desktopContextRpcService = {
   unlock(key: Buffer): void {
     getRuntime().service.unlock(key);
   },
-  captureCurrent(): Promise<unknown> {
-    return getRuntime().service.captureCurrent();
+  captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown> {
+    return getRuntime().service.captureCurrent(input);
   },
   currentContext(input?: { snapshotId?: string }): Promise<unknown> {
     return getRuntime().service.currentContext(input);

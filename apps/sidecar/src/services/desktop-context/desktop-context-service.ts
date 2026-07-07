@@ -68,8 +68,8 @@ export class DesktopContextService {
     return structuredClone(this.#settings);
   }
 
-  async captureCurrent(): Promise<unknown> {
-    if (!this.#settings.enabled) {
+  async captureCurrent(input: { userInitiated?: boolean } = {}): Promise<unknown> {
+    if (!this.#settings.enabled && input.userInitiated !== true) {
       return { status: "unavailable", message: "desktop assistant is disabled" };
     }
     if (!this.#key) {
@@ -80,7 +80,7 @@ export class DesktopContextService {
     const snapshot = normalizeSnapshot(response.snapshot);
     if (!snapshot) return { status: "failed", message: "desktop host returned an invalid context snapshot" };
     const allowed = new Set(this.#settings.allowedApps.map((app) => app.trim().toLowerCase()).filter(Boolean));
-    if (!allowed.has(snapshot.app.id.toLowerCase())) {
+    if (input.userInitiated !== true && !allowed.has(snapshot.app.id.toLowerCase())) {
       return { status: "blocked", message: `desktop context is not allowed for ${snapshot.app.id}` };
     }
     const fingerprint = snapshotFingerprint(snapshot);

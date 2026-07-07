@@ -16,7 +16,7 @@ type DesktopContextCaptureResult = {
 export async function captureAgentInputDesktopContextTarget(
   sidecarCall: SidecarCall,
 ): Promise<DesktopContextTarget | undefined> {
-  const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, {})
+  const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, { userInitiated: true })
   return desktopContextCaptureToTarget(result)
 }
 

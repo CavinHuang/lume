@@ -19,7 +19,10 @@ describe('agent-input desktop context helpers', () => {
       }
     })
 
-    expect(calls).toEqual([{ method: DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, params: {} }])
+    expect(calls).toEqual([{
+      method: DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT,
+      params: { userInitiated: true },
+    }])
     expect(target).toEqual({
       snapshotId: 'snap-current',
       app: { id: 'wechat.exe', name: '微信' },

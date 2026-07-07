@@ -266,7 +266,7 @@ function registerFileProtocol() {
     if (resolved.kind === 'forbidden') return new Response('Forbidden', { status: 403 })
     if (resolved.kind === 'notfound') return new Response('Not Found', { status: 404 })
     try {
-      return net.fetch(pathToFileURL(resolved.absPath))
+      return net.fetch(pathToFileURL(resolved.absPath).toString())
     } catch {
       return new Response('Internal Error', { status: 500 })
     }
@@ -1126,7 +1126,7 @@ async function unlockDesktopContextStore() {
 
 async function captureQuickInputContext() {
   try {
-    const value = await sidecarHost.call(DESKTOP_CONTEXT_CAPTURE_METHOD, {})
+    const value = await sidecarHost.call(DESKTOP_CONTEXT_CAPTURE_METHOD, { userInitiated: true })
     const result = value && typeof value === 'object' && !Array.isArray(value)
       ? value as Record<string, unknown>
       : {}

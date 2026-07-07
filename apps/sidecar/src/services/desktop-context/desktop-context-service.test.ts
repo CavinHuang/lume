@@ -94,6 +94,21 @@ describe("DesktopContextService", () => {
     });
   });
 
+  test("allows a user-initiated one-shot capture without enabling background collection", async () => {
+    const service = createService({ enabled: false, allowedApps: ["chrome.exe"] });
+    service.unlock(Buffer.alloc(32, 4));
+
+    expect(await service.captureCurrent({ userInitiated: true })).toEqual({
+      status: "ok",
+      snapshotId: "snap-1",
+      app: { id: "wechat.exe", name: "微信" },
+      window: { id: "win:1", title: "项目群" },
+      capturedAt: 100,
+    });
+    expect(service.getSettings().enabled).toBe(false);
+    expect(JSON.stringify(await service.currentContext({ snapshotId: "snap-1" }))).not.toContain("secret");
+  });
+
   test("creates non-sensitive reply proposals from local context only when proactive mode is enabled", async () => {
     const service = createService({ proactiveEnabled: true });
     service.unlock(Buffer.alloc(32, 4));
