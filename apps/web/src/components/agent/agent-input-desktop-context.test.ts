@@ -46,6 +46,7 @@ describe('agent-input desktop context helpers', () => {
         window: { id: 'win:wechat', title: '项目群' },
         capturedAt: 123,
       }),
+      { nowMs: 123 },
     )
 
     expect(state).toEqual({
@@ -77,6 +78,36 @@ describe('agent-input desktop context helpers', () => {
         snapshotId: 'snap-sidecar',
         app: { id: 'word.exe', name: 'Word' },
         window: { id: 'win:word', title: '周报.docx' },
+      },
+    })
+  })
+
+  test('does not reuse stale pre-captured app context', async () => {
+    const state = await captureAgentInputDesktopContextState(
+      async () => ({
+        status: 'ok',
+        snapshotId: 'snap-sidecar-fresh',
+        app: { id: 'chrome.exe', name: 'Chrome' },
+        window: { id: 'win:chrome', title: 'GLM 搜索' },
+        capturedAt: 10_000,
+      }),
+      async () => ({
+        status: 'ok',
+        snapshotId: 'snap-stale',
+        app: { id: 'wechat.exe', name: '微信' },
+        window: { id: 'win:wechat', title: '旧项目群' },
+        capturedAt: 1_000,
+      }),
+      { nowMs: 10_000, maxPrecapturedAgeMs: 1_000 },
+    )
+
+    expect(state).toEqual({
+      status: 'ready',
+      target: {
+        snapshotId: 'snap-sidecar-fresh',
+        app: { id: 'chrome.exe', name: 'Chrome' },
+        window: { id: 'win:chrome', title: 'GLM 搜索' },
+        capturedAt: 10_000,
       },
     })
   })

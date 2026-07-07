@@ -4,6 +4,7 @@ import {
 } from '@lume/shared'
 
 type SidecarCall = (method: string, params: Record<string, unknown>) => Promise<unknown>
+const DEFAULT_MAX_PRECAPTURED_CONTEXT_AGE_MS = 60_000
 
 type DesktopContextCaptureResult = {
   status?: string
@@ -21,10 +22,13 @@ export type AgentInputDesktopContextCaptureState =
 export async function captureAgentInputDesktopContextState(
   sidecarCall: SidecarCall,
   getPrecapturedContext?: () => Promise<unknown>,
+  options: { nowMs?: number; maxPrecapturedAgeMs?: number } = {},
 ): Promise<AgentInputDesktopContextCaptureState> {
   if (getPrecapturedContext) {
     const precaptured = desktopContextCaptureToTarget(await getPrecapturedContext().catch(() => undefined))
-    if (precaptured) return { status: 'ready', target: precaptured }
+    if (precaptured && isFreshPrecapturedContext(precaptured, options)) {
+      return { status: 'ready', target: precaptured }
+    }
   }
   try {
     const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, { userInitiated: true })
@@ -79,4 +83,14 @@ function desktopContextCaptureMessage(result: unknown): string {
   return typeof value?.message === 'string' && value.message.trim()
     ? value.message.trim()
     : '未能读取当前应用窗口'
+}
+
+function isFreshPrecapturedContext(
+  target: DesktopContextTarget,
+  options: { nowMs?: number; maxPrecapturedAgeMs?: number },
+): boolean {
+  if (typeof target.capturedAt !== 'number') return true
+  const nowMs = options.nowMs ?? Date.now()
+  const maxAgeMs = options.maxPrecapturedAgeMs ?? DEFAULT_MAX_PRECAPTURED_CONTEXT_AGE_MS
+  return nowMs - target.capturedAt <= maxAgeMs
 }
