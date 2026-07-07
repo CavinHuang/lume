@@ -3,6 +3,29 @@ import { createComputerUseMcpTools } from "./create-computer-use-tools";
 import { submitDesktopActionDecision } from "../../interruption/desktop-action-session";
 
 describe("createComputerUseMcpTools", () => {
+  test("publishes concrete schemas for desktop targeting and safe text entry", () => {
+    const tools = createComputerUseMcpTools();
+    const schema = (name: string) => tools.find((tool) => tool.name.endsWith(`__${name}`))!
+      .inputSchema as Record<string, any>;
+    const description = (name: string) => tools.find((tool) => tool.name.endsWith(`__${name}`))!
+      .description;
+
+    expect(schema("get_window").required).toEqual(["windowId"]);
+    expect(schema("click").required).toContain("windowId");
+    expect(schema("click").anyOf).toEqual([
+      { required: ["elementId"] },
+      { required: ["x", "y"] },
+    ]);
+    expect(schema("drag").required).toEqual(["windowId", "fromX", "fromY", "toX", "toY"]);
+    expect(schema("type_text").required).toEqual(["windowId", "text"]);
+    expect(schema("search_context").required).toEqual(["query"]);
+    expect(description("type_text")).toContain("passwords or OTPs");
+    expect(description("click")).toContain("get_window_state");
+    for (const tool of tools) {
+      expect((tool.inputSchema as unknown as Record<string, unknown>).additionalProperties).toBe(false);
+    }
+  });
+
   test("forwards the original method and structured input", async () => {
     const calls: unknown[] = [];
     const tools = createComputerUseMcpTools({
