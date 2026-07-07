@@ -1,0 +1,3311 @@
+[
+  {
+    "id": "MiniMax-M2",
+    "displayName": "MiniMax-M2",
+    "contextWindow": 196608,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Efficient open MiniMax model built for coding agents and tool-heavy workflows",
+    "pricing": {
+      "input": 0.3,
+      "output": 1.2
+    }
+  },
+  {
+    "id": "MiniMax-M2.1",
+    "displayName": "MiniMax-M2.1",
+    "contextWindow": 204800,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Earlier MiniMax agent model for practical coding and productivity tasks",
+    "pricing": {
+      "input": 0.3,
+      "output": 1.2
+    }
+  },
+  {
+    "id": "MiniMax-M2.5",
+    "displayName": "MiniMax-M2.5",
+    "contextWindow": 204800,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Prior MiniMax coding model for agent workflows, office edits, and automation",
+    "pricing": {
+      "input": 0.3,
+      "output": 1.2
+    }
+  },
+  {
+    "id": "MiniMax-M2.5-highspeed",
+    "displayName": "MiniMax-M2.5-highspeed",
+    "contextWindow": 204800,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "High-speed MiniMax model for low-latency coding and agent workflows",
+    "pricing": {
+      "input": 0.6,
+      "output": 2.4
+    }
+  },
+  {
+    "id": "MiniMax-M2.7",
+    "displayName": "MiniMax-M2.7",
+    "contextWindow": 204800,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Open MiniMax flagship for coding agents, office automation, and complex environments",
+    "pricing": {
+      "input": 0.3,
+      "output": 1.2
+    }
+  },
+  {
+    "id": "MiniMax-M2.7-highspeed",
+    "displayName": "MiniMax-M2.7-highspeed",
+    "contextWindow": 204800,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Low-latency M2.7 variant for interactive coding plans and agent loops",
+    "pricing": {
+      "input": 0.6,
+      "output": 2.4
+    }
+  },
+  {
+    "id": "MiniMax-M3",
+    "displayName": "MiniMax-M3",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "MiniMax multimodal model for long-context coding, perception, and agent planning",
+    "pricing": {
+      "input": 0.3,
+      "output": 1.2
+    }
+  },
+  {
+    "id": "c4ai-aya-expanse-32b",
+    "displayName": "Aya Expanse 32B",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Cohere command model for multilingual enterprise agents, tools, and chat"
+  },
+  {
+    "id": "c4ai-aya-expanse-8b",
+    "displayName": "Aya Expanse 8B",
+    "contextWindow": 8000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Cohere command model for multilingual enterprise agents, tools, and chat"
+  },
+  {
+    "id": "c4ai-aya-vision-32b",
+    "displayName": "Aya Vision 32B",
+    "contextWindow": 16000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Cohere command model for multilingual enterprise agents, tools, and chat"
+  },
+  {
+    "id": "c4ai-aya-vision-8b",
+    "displayName": "Aya Vision 8B",
+    "contextWindow": 16000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Cohere command model for multilingual enterprise agents, tools, and chat"
+  },
+  {
+    "id": "claude-fable-5",
+    "displayName": "Claude Fable 5",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Claude model for creative writing, analysis, and controlled agent workflows",
+    "pricing": {
+      "input": 10,
+      "output": 50
+    }
+  },
+  {
+    "id": "claude-haiku-4-5",
+    "displayName": "Claude Haiku 4.5 (latest)",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast Claude lane for lightweight agents, office tasks, and responsive chat",
+    "pricing": {
+      "input": 1,
+      "output": 5
+    }
+  },
+  {
+    "id": "claude-haiku-4-5-20251001",
+    "displayName": "Claude Haiku 4.5",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast Claude model for responsive assistance, classification, and lightweight agents",
+    "pricing": {
+      "input": 1,
+      "output": 5
+    }
+  },
+  {
+    "id": "claude-opus-4-1",
+    "displayName": "Claude Opus 4.1 (latest)",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+    "pricing": {
+      "input": 15,
+      "output": 75
+    }
+  },
+  {
+    "id": "claude-opus-4-1-20250805",
+    "displayName": "Claude Opus 4.1",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+    "pricing": {
+      "input": 15,
+      "output": 75
+    }
+  },
+  {
+    "id": "claude-opus-4-5",
+    "displayName": "Claude Opus 4.5 (latest)",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+    "pricing": {
+      "input": 5,
+      "output": 25
+    }
+  },
+  {
+    "id": "claude-opus-4-5-20251101",
+    "displayName": "Claude Opus 4.5",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Flagship Claude model for deep reasoning, coding, and long-horizon agents",
+    "pricing": {
+      "input": 5,
+      "output": 25
+    }
+  },
+  {
+    "id": "claude-opus-4-6",
+    "displayName": "Claude Opus 4.6",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "High-end Claude for difficult coding, planning, and slower expert reasoning",
+    "pricing": {
+      "input": 5,
+      "output": 25
+    }
+  },
+  {
+    "id": "claude-opus-4-7",
+    "displayName": "Claude Opus 4.7",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Stronger Opus tier for advanced software work and high-stakes reasoning",
+    "pricing": {
+      "input": 5,
+      "output": 25
+    }
+  },
+  {
+    "id": "claude-opus-4-8",
+    "displayName": "Claude Opus 4.8",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Top Claude Opus tier for the hardest reasoning, coding, and long-horizon agents",
+    "pricing": {
+      "input": 5,
+      "output": 25
+    }
+  },
+  {
+    "id": "claude-sonnet-4-5",
+    "displayName": "Claude Sonnet 4.5 (latest)",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Balanced Claude model for coding, analysis, agent workflows, and cost control",
+    "pricing": {
+      "input": 3,
+      "output": 15
+    }
+  },
+  {
+    "id": "claude-sonnet-4-5-20250929",
+    "displayName": "Claude Sonnet 4.5",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Balanced Claude model for coding, analysis, agent workflows, and cost control",
+    "pricing": {
+      "input": 3,
+      "output": 15
+    }
+  },
+  {
+    "id": "claude-sonnet-4-6",
+    "displayName": "Claude Sonnet 4.6",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Claude workhorse for coding agents, careful analysis, and production cost control",
+    "pricing": {
+      "input": 3,
+      "output": 15
+    }
+  },
+  {
+    "id": "claude-sonnet-5",
+    "displayName": "Claude Sonnet 5",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Everyday Claude agent model for coding, planning, browsing, and general work",
+    "pricing": {
+      "input": 2,
+      "output": 10
+    }
+  },
+  {
+    "id": "codestral-latest",
+    "displayName": "Codestral (latest)",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral code model for completions, refactors, and developer IDE workflows",
+    "pricing": {
+      "input": 0.3,
+      "output": 0.9
+    }
+  },
+  {
+    "id": "command-a-03-2025",
+    "displayName": "Command A",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Cohere command model for multilingual enterprise agents, tools, and chat",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "command-a-plus-05-2026",
+    "displayName": "Command A Plus",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Cohere's stronger command model for multilingual agents and enterprise workflows",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "command-a-reasoning-08-2025",
+    "displayName": "Command A Reasoning",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Cohere command model for multilingual enterprise agents, tools, and chat",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "command-a-translate-08-2025",
+    "displayName": "Command A Translate",
+    "contextWindow": 8000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Translation model for multilingual conversion, localization, and cross-language workflows",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "command-a-vision-07-2025",
+    "displayName": "Command A Vision",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Cohere command model for multilingual enterprise agents, tools, and chat",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "command-r-08-2024",
+    "displayName": "Command R",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Cohere retrieval model for long-context chat and enterprise RAG workflows",
+    "pricing": {
+      "input": 0.15,
+      "output": 0.6
+    }
+  },
+  {
+    "id": "command-r-plus-08-2024",
+    "displayName": "Command R+",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Cohere's RAG workhorse for long-context enterprise search and tool use",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "command-r7b-12-2024",
+    "displayName": "Command R7B",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Cohere retrieval model for long-context chat and enterprise RAG workflows",
+    "pricing": {
+      "input": 0.0375,
+      "output": 0.15
+    }
+  },
+  {
+    "id": "command-r7b-arabic-02-2025",
+    "displayName": "Command R7B Arabic",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Cohere retrieval model for long-context chat and enterprise RAG workflows",
+    "pricing": {
+      "input": 0.0375,
+      "output": 0.15
+    }
+  },
+  {
+    "id": "deepseek-chat",
+    "displayName": "DeepSeek Chat",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "DeepSeek chat model for instruction following, coding, and analysis",
+    "pricing": {
+      "input": 0.14,
+      "output": 0.28
+    }
+  },
+  {
+    "id": "deepseek-reasoner",
+    "displayName": "DeepSeek Reasoner",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "DeepSeek reasoning model for multi-step analysis, math, coding, and tools",
+    "pricing": {
+      "input": 0.14,
+      "output": 0.28
+    }
+  },
+  {
+    "id": "deepseek-v4-flash",
+    "displayName": "DeepSeek V4 Flash",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast DeepSeek V4 lane for economical reasoning, coding, and long-context work",
+    "pricing": {
+      "input": 0.14,
+      "output": 0.28
+    }
+  },
+  {
+    "id": "deepseek-v4-pro",
+    "displayName": "DeepSeek V4 Pro",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Open MoE flagship with million-token context for coding and long agent runs",
+    "pricing": {
+      "input": 0.435,
+      "output": 0.87
+    }
+  },
+  {
+    "id": "devstral-2512",
+    "displayName": "Devstral 2",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral's coding-agent model for repository work, terminal tasks, and software fixes",
+    "pricing": {
+      "input": 0.4,
+      "output": 2
+    }
+  },
+  {
+    "id": "devstral-latest",
+    "displayName": "Devstral 2",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0.4,
+      "output": 2
+    }
+  },
+  {
+    "id": "devstral-medium-2507",
+    "displayName": "Devstral Medium",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0.4,
+      "output": 2
+    }
+  },
+  {
+    "id": "devstral-medium-latest",
+    "displayName": "Devstral 2 (latest)",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0.4,
+      "output": 2
+    }
+  },
+  {
+    "id": "devstral-small-2505",
+    "displayName": "Devstral Small 2505",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.3
+    }
+  },
+  {
+    "id": "devstral-small-2507",
+    "displayName": "Devstral Small",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.3
+    }
+  },
+  {
+    "id": "gemini-2.0-flash",
+    "displayName": "Gemini 2.0 Flash",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Earlier Gemini Flash workhorse for responsive multimodal apps and tool use",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.4
+    }
+  },
+  {
+    "id": "gemini-2.0-flash-lite",
+    "displayName": "Gemini 2.0 Flash-Lite",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0.075,
+      "output": 0.3
+    }
+  },
+  {
+    "id": "gemini-2.5-flash",
+    "displayName": "Gemini 2.5 Flash",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast Gemini workhorse for multimodal apps where latency and price matter",
+    "pricing": {
+      "input": 0.3,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "gemini-2.5-flash-image",
+    "displayName": "Nano Banana",
+    "contextWindow": 32768,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": true
+    },
+    "description": "Nano Banana image model for fast generation, edits, and character-consistent assets",
+    "pricing": {
+      "input": 0.3,
+      "output": 30
+    }
+  },
+  {
+    "id": "gemini-2.5-flash-lite",
+    "displayName": "Gemini 2.5 Flash-Lite",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Lean Gemini 2.5 lane for cheap multimodal traffic and quick agents",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.4
+    }
+  },
+  {
+    "id": "gemini-2.5-flash-preview-tts",
+    "displayName": "Gemini 2.5 Flash Preview TTS",
+    "contextWindow": 8192,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Speech generation model for controllable voice, narration, and audio delivery",
+    "pricing": {
+      "input": 0.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "gemini-2.5-pro",
+    "displayName": "Gemini 2.5 Pro",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Google's proven reasoning model for coding, math, and multimodal analysis",
+    "pricing": {
+      "input": 1.25,
+      "output": 10
+    }
+  },
+  {
+    "id": "gemini-2.5-pro-preview-tts",
+    "displayName": "Gemini 2.5 Pro Preview TTS",
+    "contextWindow": 8192,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Speech generation model for controllable voice, narration, and audio delivery",
+    "pricing": {
+      "input": 1,
+      "output": 20
+    }
+  },
+  {
+    "id": "gemini-3-flash-preview",
+    "displayName": "Gemini 3 Flash Preview",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "New Gemini flash lane bringing frontier-style multimodal reasoning to cheaper runs",
+    "pricing": {
+      "input": 0.5,
+      "output": 3
+    }
+  },
+  {
+    "id": "gemini-3-pro-image-preview",
+    "displayName": "Nano Banana Pro",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": true
+    },
+    "description": "Nano Banana Pro for higher-fidelity image generation and design-heavy edits",
+    "pricing": {
+      "input": 2,
+      "output": 120
+    }
+  },
+  {
+    "id": "gemini-3-pro-preview",
+    "displayName": "Gemini 3 Pro Preview",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Preview Gemini flagship for complex reasoning, coding, and rich multimodal prompts",
+    "pricing": {
+      "input": 2,
+      "output": 12
+    }
+  },
+  {
+    "id": "gemini-3.1-flash-image-preview",
+    "displayName": "Nano Banana 2",
+    "contextWindow": 65536,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": true
+    },
+    "description": "Image model for prompt-driven generation, editing, and visual design workflows",
+    "pricing": {
+      "input": 0.5,
+      "output": 60
+    }
+  },
+  {
+    "id": "gemini-3.1-flash-lite",
+    "displayName": "Gemini 3.1 Flash Lite",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Low-latency Gemini model for high-volume multimodal and agent workloads",
+    "pricing": {
+      "input": 0.25,
+      "output": 1.5
+    }
+  },
+  {
+    "id": "gemini-3.1-flash-lite-preview",
+    "displayName": "Gemini 3.1 Flash Lite Preview",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0.25,
+      "output": 1.5
+    }
+  },
+  {
+    "id": "gemini-3.1-pro-preview",
+    "displayName": "Gemini 3.1 Pro Preview",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Reasoning-first Gemini preview for agentic coding and complex problem solving",
+    "pricing": {
+      "input": 2,
+      "output": 12
+    }
+  },
+  {
+    "id": "gemini-3.1-pro-preview-customtools",
+    "displayName": "Gemini 3.1 Pro Preview Custom Tools",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Advanced Gemini model for complex reasoning, coding, and multimodal analysis",
+    "pricing": {
+      "input": 2,
+      "output": 12
+    }
+  },
+  {
+    "id": "gemini-3.5-flash",
+    "displayName": "Gemini 3.5 Flash",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+    "pricing": {
+      "input": 1.5,
+      "output": 9
+    }
+  },
+  {
+    "id": "gemini-embedding-001",
+    "displayName": "Gemini Embedding 001",
+    "contextWindow": 2048,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Embedding model for semantic search, retrieval, clustering, and ranking pipelines",
+    "pricing": {
+      "input": 0.15,
+      "output": 0
+    }
+  },
+  {
+    "id": "gemini-flash-latest",
+    "displayName": "Gemini Flash Latest",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast Gemini model balancing multimodal reasoning, tool use, and cost",
+    "pricing": {
+      "input": 0.3,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "gemini-flash-lite-latest",
+    "displayName": "Gemini Flash-Lite Latest",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Low-latency Gemini model for high-volume multimodal and agent workloads",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.4
+    }
+  },
+  {
+    "id": "gemma-4-26b-a4b-it",
+    "displayName": "Gemma 4 26B A4B IT",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Open Gemma instruction model for efficient chat and self-hosted deployments"
+  },
+  {
+    "id": "gemma-4-31b-it",
+    "displayName": "Gemma 4 31B IT",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Largest Gemma 4 instruction model for open, self-hosted chat and reasoning"
+  },
+  {
+    "id": "glm-4.5",
+    "displayName": "GLM-4.5",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Hybrid-reasoning GLM release that made the 4.5 line broadly useful",
+    "pricing": {
+      "input": 0.6,
+      "output": 2.2
+    }
+  },
+  {
+    "id": "glm-4.5-air",
+    "displayName": "GLM-4.5-Air",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Lighter GLM-4.5 variant for fast coding assistance and cheaper agents",
+    "pricing": {
+      "input": 0.2,
+      "output": 1.1
+    }
+  },
+  {
+    "id": "glm-4.5-flash",
+    "displayName": "GLM-4.5-Flash",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Efficient GLM model for fast reasoning, coding, and agent workflows",
+    "pricing": {
+      "input": 0,
+      "output": 0
+    }
+  },
+  {
+    "id": "glm-4.5v",
+    "displayName": "GLM-4.5V",
+    "contextWindow": 64000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "GLM vision model for visual reasoning, documents, and multimodal agents",
+    "pricing": {
+      "input": 0.6,
+      "output": 1.8
+    }
+  },
+  {
+    "id": "glm-4.6",
+    "displayName": "GLM-4.6",
+    "contextWindow": 204800,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Late GLM-4 workhorse for coding agents, reasoning, and structured tasks",
+    "pricing": {
+      "input": 0.6,
+      "output": 2.2
+    }
+  },
+  {
+    "id": "glm-4.6v",
+    "displayName": "GLM-4.6V",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "GLM vision model for visual reasoning, documents, and multimodal agents",
+    "pricing": {
+      "input": 0.3,
+      "output": 0.9
+    }
+  },
+  {
+    "id": "glm-4.7",
+    "displayName": "GLM-4.7",
+    "contextWindow": 204800,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Mature GLM model for dependable coding, reasoning, and structured agent tasks",
+    "pricing": {
+      "input": 0.6,
+      "output": 2.2
+    }
+  },
+  {
+    "id": "glm-4.7-flash",
+    "displayName": "GLM-4.7-Flash",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Budget GLM lane for fast coding help, routing, and everyday automation",
+    "pricing": {
+      "input": 0,
+      "output": 0
+    }
+  },
+  {
+    "id": "glm-4.7-flashx",
+    "displayName": "GLM-4.7-FlashX",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Efficient GLM model for fast reasoning, coding, and agent workflows",
+    "pricing": {
+      "input": 0.07,
+      "output": 0.4
+    }
+  },
+  {
+    "id": "glm-5",
+    "displayName": "GLM-5",
+    "contextWindow": 204800,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "General GLM flagship for coding, analysis, and tool-heavy engineering workflows",
+    "pricing": {
+      "input": 1,
+      "output": 3.2
+    }
+  },
+  {
+    "id": "glm-5.1",
+    "displayName": "GLM-5.1",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Strong GLM coding model for agentic engineering, terminals, and repository generation",
+    "pricing": {
+      "input": 1.4,
+      "output": 4.4
+    }
+  },
+  {
+    "id": "glm-5.2",
+    "displayName": "GLM-5.2",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Open flagship GLM for long-horizon coding agents and million-token context work",
+    "pricing": {
+      "input": 1.4,
+      "output": 4.4
+    }
+  },
+  {
+    "id": "glm-5v-turbo",
+    "displayName": "GLM-5V-Turbo",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast GLM vision model for screenshots, documents, and multimodal agent tasks",
+    "pricing": {
+      "input": 5,
+      "output": 22
+    }
+  },
+  {
+    "id": "gpt-3.5-turbo",
+    "displayName": "GPT-3.5-turbo",
+    "contextWindow": 16385,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Compact GPT model for low-latency assistance and high-volume workloads",
+    "pricing": {
+      "input": 0.5,
+      "output": 1.5
+    }
+  },
+  {
+    "id": "gpt-4",
+    "displayName": "GPT-4",
+    "contextWindow": 8192,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
+    "pricing": {
+      "input": 30,
+      "output": 60
+    }
+  },
+  {
+    "id": "gpt-4-turbo",
+    "displayName": "GPT-4 Turbo",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Compact GPT model for low-latency assistance and high-volume workloads",
+    "pricing": {
+      "input": 10,
+      "output": 30
+    }
+  },
+  {
+    "id": "gpt-4.1",
+    "displayName": "GPT-4.1",
+    "contextWindow": 1047576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Long-lived GPT workhorse for coding, instruction following, and production apps",
+    "pricing": {
+      "input": 2,
+      "output": 8
+    }
+  },
+  {
+    "id": "gpt-4.1-mini",
+    "displayName": "GPT-4.1 mini",
+    "contextWindow": 1047576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Affordable GPT-4.1 lane for fast coding help and structured extraction",
+    "pricing": {
+      "input": 0.4,
+      "output": 1.6
+    }
+  },
+  {
+    "id": "gpt-4.1-nano",
+    "displayName": "GPT-4.1 nano",
+    "contextWindow": 1047576,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Tiny GPT-4.1 option for classification, routing, and very high-volume tasks",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.4
+    }
+  },
+  {
+    "id": "gpt-4o",
+    "displayName": "GPT-4o",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Omni-era GPT for multimodal chat, practical coding, and general assistants",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-4o-2024-05-13",
+    "displayName": "GPT-4o (2024-05-13)",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
+    "pricing": {
+      "input": 5,
+      "output": 15
+    }
+  },
+  {
+    "id": "gpt-4o-2024-08-06",
+    "displayName": "GPT-4o (2024-08-06)",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-4o-2024-11-20",
+    "displayName": "GPT-4o (2024-11-20)",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "GPT model for general reasoning, writing, coding, and tool-assisted tasks",
+    "pricing": {
+      "input": 2.5,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-4o-mini",
+    "displayName": "GPT-4o mini",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Small omni GPT for cheap multimodal assistance and production-scale traffic",
+    "pricing": {
+      "input": 0.15,
+      "output": 0.6
+    }
+  },
+  {
+    "id": "gpt-5",
+    "displayName": "GPT-5",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Original GPT-5 workhorse for reasoning, coding, writing, and tool workflows",
+    "pricing": {
+      "input": 1.25,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-5-chat-latest",
+    "displayName": "GPT-5 Chat (latest)",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": true
+    },
+    "description": "Chat-tuned GPT model for conversational assistance, writing, and tool workflows",
+    "pricing": {
+      "input": 1.25,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-5-codex",
+    "displayName": "GPT-5-Codex",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Coding-optimized GPT model for repository edits, reviews, and agentic software work",
+    "pricing": {
+      "input": 1.25,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-5-mini",
+    "displayName": "GPT-5 Mini",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Small GPT-5 for responsive agents, coding help, and everyday automation",
+    "pricing": {
+      "input": 0.25,
+      "output": 2
+    }
+  },
+  {
+    "id": "gpt-5-nano",
+    "displayName": "GPT-5 Nano",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Tiny GPT-5 lane for routing, extraction, classification, and bulk jobs",
+    "pricing": {
+      "input": 0.05,
+      "output": 0.4
+    }
+  },
+  {
+    "id": "gpt-5-pro",
+    "displayName": "GPT-5 Pro",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Higher-accuracy GPT-5 tier for tough analysis, coding reviews, and planning",
+    "pricing": {
+      "input": 15,
+      "output": 120
+    }
+  },
+  {
+    "id": "gpt-5.1",
+    "displayName": "GPT-5.1",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Sharper GPT-5 generation for coding, product work, and tool-assisted tasks",
+    "pricing": {
+      "input": 1.25,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-5.1-chat-latest",
+    "displayName": "GPT-5.1 Chat",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Chat-tuned GPT-5.1 for polished assistants, writing, and product conversations",
+    "pricing": {
+      "input": 1.25,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-5.1-codex",
+    "displayName": "GPT-5.1 Codex",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Codex GPT for repository edits, code review, and practical software agents",
+    "pricing": {
+      "input": 1.25,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-5.1-codex-max",
+    "displayName": "GPT-5.1 Codex Max",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Coding-optimized GPT model for repository edits, reviews, and agentic software work",
+    "pricing": {
+      "input": 1.25,
+      "output": 10
+    }
+  },
+  {
+    "id": "gpt-5.1-codex-mini",
+    "displayName": "GPT-5.1 Codex mini",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Coding-optimized GPT model for repository edits, reviews, and agentic software work",
+    "pricing": {
+      "input": 0.25,
+      "output": 2
+    }
+  },
+  {
+    "id": "gpt-5.2",
+    "displayName": "GPT-5.2",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Reliable GPT generation for broad coding, writing, and tool-assisted product work",
+    "pricing": {
+      "input": 1.75,
+      "output": 14
+    }
+  },
+  {
+    "id": "gpt-5.2-chat-latest",
+    "displayName": "GPT-5.2 Chat",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Chat-tuned GPT model for conversational assistance, writing, and tool workflows",
+    "pricing": {
+      "input": 1.75,
+      "output": 14
+    }
+  },
+  {
+    "id": "gpt-5.2-codex",
+    "displayName": "GPT-5.2 Codex",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Code-specialist GPT for repository edits, reviews, and long-running software agents",
+    "pricing": {
+      "input": 1.75,
+      "output": 14
+    }
+  },
+  {
+    "id": "gpt-5.2-pro",
+    "displayName": "GPT-5.2 Pro",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Higher-accuracy GPT-5.2 variant for tougher reasoning and review workflows",
+    "pricing": {
+      "input": 21,
+      "output": 168
+    }
+  },
+  {
+    "id": "gpt-5.3-chat-latest",
+    "displayName": "GPT-5.3 Chat (latest)",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Chat-tuned GPT model for conversational assistance, writing, and tool workflows",
+    "pricing": {
+      "input": 1.75,
+      "output": 14
+    }
+  },
+  {
+    "id": "gpt-5.3-codex",
+    "displayName": "GPT-5.3 Codex",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Coding-optimized GPT model for repository edits, reviews, and agentic software work",
+    "pricing": {
+      "input": 1.75,
+      "output": 14
+    }
+  },
+  {
+    "id": "gpt-5.3-codex-spark",
+    "displayName": "GPT-5.3 Codex Spark",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Coding-optimized GPT model for repository edits, reviews, and agentic software work",
+    "pricing": {
+      "input": 1.75,
+      "output": 14
+    }
+  },
+  {
+    "id": "gpt-5.4",
+    "displayName": "GPT-5.4",
+    "contextWindow": 1050000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Agent-ready GPT for coding and computer-use workflows at a lower cost",
+    "pricing": {
+      "input": 2.5,
+      "output": 15
+    }
+  },
+  {
+    "id": "gpt-5.4-mini",
+    "displayName": "GPT-5.4 mini",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Strong small GPT for coding subagents, quick tool use, and high-volume work",
+    "pricing": {
+      "input": 0.75,
+      "output": 4.5
+    }
+  },
+  {
+    "id": "gpt-5.4-nano",
+    "displayName": "GPT-5.4 nano",
+    "contextWindow": 400000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Cheapest GPT-5.4 lane for simple routing, extraction, and bulk automation",
+    "pricing": {
+      "input": 0.2,
+      "output": 1.25
+    }
+  },
+  {
+    "id": "gpt-5.4-pro",
+    "displayName": "GPT-5.4 Pro",
+    "contextWindow": 1050000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "More exact GPT-5.4 tier for demanding professional reasoning and agent tasks",
+    "pricing": {
+      "input": 30,
+      "output": 180
+    }
+  },
+  {
+    "id": "gpt-5.5",
+    "displayName": "GPT-5.5",
+    "contextWindow": 1050000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Default frontier GPT for coding, computer use, research, and knowledge work",
+    "pricing": {
+      "input": 5,
+      "output": 30
+    }
+  },
+  {
+    "id": "gpt-5.5-pro",
+    "displayName": "GPT-5.5 Pro",
+    "contextWindow": 1050000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Highest-accuracy GPT-5.5 tier for slower, precision-heavy reasoning and coding",
+    "pricing": {
+      "input": 30,
+      "output": 180
+    }
+  },
+  {
+    "id": "grok-4.20-0309-non-reasoning",
+    "displayName": "Grok 4.20 (Non-Reasoning)",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Grok model for agentic tool use, reasoning, coding, and live assistance",
+    "pricing": {
+      "input": 1.25,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "grok-4.20-0309-reasoning",
+    "displayName": "Grok 4.20 (Reasoning)",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Reasoning Grok for document-heavy analysis and long-horizon tool use",
+    "pricing": {
+      "input": 1.25,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "grok-4.20-multi-agent-0309",
+    "displayName": "Grok 4.20 Multi-Agent",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": true
+    },
+    "description": "Grok model for agentic tool use, reasoning, coding, and live assistance",
+    "pricing": {
+      "input": 1.25,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "grok-4.3",
+    "displayName": "Grok 4.3",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "xAI's default Grok for chat, coding, agentic tools, and lower hallucination risk",
+    "pricing": {
+      "input": 1.25,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "grok-build-0.1",
+    "displayName": "Grok Build 0.1",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast Grok coding model tuned for agentic engineering and iterative edits",
+    "pricing": {
+      "input": 1,
+      "output": 2
+    }
+  },
+  {
+    "id": "grok-imagine-image",
+    "displayName": "Grok Imagine Image",
+    "contextWindow": 8000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Image model for prompt-driven generation, editing, and visual design workflows"
+  },
+  {
+    "id": "grok-imagine-image-quality",
+    "displayName": "Grok Imagine Image Quality",
+    "contextWindow": 8000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Image model for prompt-driven generation, editing, and visual design workflows"
+  },
+  {
+    "id": "grok-imagine-video",
+    "displayName": "Grok Imagine Video",
+    "contextWindow": 1024,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Image model for prompt-driven generation, editing, and visual design workflows"
+  },
+  {
+    "id": "kimi-k2-0711-preview",
+    "displayName": "Kimi K2 0711",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Kimi model for long-context chat, coding, and agentic reasoning",
+    "pricing": {
+      "input": 0.6,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "kimi-k2-0905-preview",
+    "displayName": "Kimi K2 0905",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Kimi model for long-context chat, coding, and agentic reasoning",
+    "pricing": {
+      "input": 0.6,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "kimi-k2-thinking",
+    "displayName": "Kimi K2 Thinking",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Thinking Kimi model for slower research passes, planning, and hard technical questions",
+    "pricing": {
+      "input": 0.6,
+      "output": 2.5
+    }
+  },
+  {
+    "id": "kimi-k2-thinking-turbo",
+    "displayName": "Kimi K2 Thinking Turbo",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Kimi reasoning model for long-horizon research, planning, and tool use",
+    "pricing": {
+      "input": 1.15,
+      "output": 8
+    }
+  },
+  {
+    "id": "kimi-k2-turbo-preview",
+    "displayName": "Kimi K2 Turbo",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Fast Kimi model for responsive chat, coding help, and agent loops",
+    "pricing": {
+      "input": 2.4,
+      "output": 10
+    }
+  },
+  {
+    "id": "kimi-k2.5",
+    "displayName": "Kimi K2.5",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Earlier Kimi frontier model for long-context agents, coding, and multimodal work",
+    "pricing": {
+      "input": 0.6,
+      "output": 3
+    }
+  },
+  {
+    "id": "kimi-k2.6",
+    "displayName": "Kimi K2.6",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Multimodal Kimi workhorse for agent loops, coding tasks, and visual context",
+    "pricing": {
+      "input": 0.95,
+      "output": 4
+    }
+  },
+  {
+    "id": "kimi-k2.7-code",
+    "displayName": "Kimi K2.7 Code",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Coding-focused Kimi model, stronger on long-horizon repo work with less overthinking",
+    "pricing": {
+      "input": 0.95,
+      "output": 4
+    }
+  },
+  {
+    "id": "kimi-k2.7-code-highspeed",
+    "displayName": "Kimi K2.7 Code HighSpeed",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Coding-focused Kimi model, stronger on long-horizon repo work with less overthinking",
+    "pricing": {
+      "input": 1.9,
+      "output": 8
+    }
+  },
+  {
+    "id": "labs-devstral-small-2512",
+    "displayName": "Devstral Small 2",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0,
+      "output": 0
+    }
+  },
+  {
+    "id": "magistral-medium-latest",
+    "displayName": "Magistral Medium (latest)",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Mistral reasoning model for transparent analysis, math, and complex decisions",
+    "pricing": {
+      "input": 2,
+      "output": 5
+    }
+  },
+  {
+    "id": "magistral-small",
+    "displayName": "Magistral Small",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Mistral reasoning model for transparent analysis, math, and complex decisions",
+    "pricing": {
+      "input": 0.5,
+      "output": 1.5
+    }
+  },
+  {
+    "id": "ministral-3b-latest",
+    "displayName": "Ministral 3B (latest)",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Compact Mistral model for edge, latency-sensitive, and cost-efficient workloads",
+    "pricing": {
+      "input": 0.04,
+      "output": 0.04
+    }
+  },
+  {
+    "id": "ministral-8b-latest",
+    "displayName": "Ministral 8B (latest)",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Compact Mistral model for edge, latency-sensitive, and cost-efficient workloads",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.1
+    }
+  },
+  {
+    "id": "mistral-embed",
+    "displayName": "Mistral Embed",
+    "contextWindow": 8000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Embedding model for semantic search, retrieval, clustering, and ranking pipelines",
+    "pricing": {
+      "input": 0.1,
+      "output": 0
+    }
+  },
+  {
+    "id": "mistral-large-2411",
+    "displayName": "Mistral Large 2.1",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Flagship Mistral model for advanced reasoning, coding, and multilingual work",
+    "pricing": {
+      "input": 2,
+      "output": 6
+    }
+  },
+  {
+    "id": "mistral-large-2512",
+    "displayName": "Mistral Large 3",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral's largest general model for enterprise agents, coding, and multilingual reasoning",
+    "pricing": {
+      "input": 0.5,
+      "output": 1.5
+    }
+  },
+  {
+    "id": "mistral-large-latest",
+    "displayName": "Mistral Large (latest)",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Flagship Mistral model for advanced reasoning, coding, and multilingual work",
+    "pricing": {
+      "input": 0.5,
+      "output": 1.5
+    }
+  },
+  {
+    "id": "mistral-medium-2505",
+    "displayName": "Mistral Medium 3",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral model for multilingual chat, reasoning, and tool-assisted workflows",
+    "pricing": {
+      "input": 0.4,
+      "output": 2
+    }
+  },
+  {
+    "id": "mistral-medium-2508",
+    "displayName": "Mistral Medium 3.1",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral model for multilingual chat, reasoning, and tool-assisted workflows",
+    "pricing": {
+      "input": 0.4,
+      "output": 2
+    }
+  },
+  {
+    "id": "mistral-medium-2604",
+    "displayName": "Mistral Medium 3.5",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Balanced Mistral model for enterprise assistants, multilingual work, and tools",
+    "pricing": {
+      "input": 1.5,
+      "output": 7.5
+    }
+  },
+  {
+    "id": "mistral-medium-latest",
+    "displayName": "Mistral Medium (latest)",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Balanced Mistral model for enterprise assistants, multilingual work, and tools",
+    "pricing": {
+      "input": 1.5,
+      "output": 7.5
+    }
+  },
+  {
+    "id": "mistral-nemo",
+    "displayName": "Mistral Nemo",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Efficient Mistral-NVIDIA open model for multilingual chat and local deployment",
+    "pricing": {
+      "input": 0.15,
+      "output": 0.15
+    }
+  },
+  {
+    "id": "mistral-small-2506",
+    "displayName": "Mistral Small 3.2",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Efficient Mistral model for fast chat, extraction, and production assistants",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.3
+    }
+  },
+  {
+    "id": "mistral-small-2603",
+    "displayName": "Mistral Small 4",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast Mistral production model for chat, extraction, and cost-sensitive agents",
+    "pricing": {
+      "input": 0.15,
+      "output": 0.6
+    }
+  },
+  {
+    "id": "mistral-small-latest",
+    "displayName": "Mistral Small (latest)",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Efficient Mistral model for fast chat, extraction, and production assistants",
+    "pricing": {
+      "input": 0.15,
+      "output": 0.6
+    }
+  },
+  {
+    "id": "north-mini-code-1-0",
+    "displayName": "North Mini Code",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Cohere coding model for practical software engineering and agentic edits",
+    "pricing": {
+      "input": 0,
+      "output": 0
+    }
+  },
+  {
+    "id": "o1",
+    "displayName": "o1",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "O-series reasoning model for hard analysis, math, coding, and planning",
+    "pricing": {
+      "input": 15,
+      "output": 60
+    }
+  },
+  {
+    "id": "o1-pro",
+    "displayName": "o1-pro",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "O-series reasoning model for hard analysis, math, coding, and planning",
+    "pricing": {
+      "input": 150,
+      "output": 600
+    }
+  },
+  {
+    "id": "o3",
+    "displayName": "o3",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Deliberate o-series reasoner for hard math, coding, and multi-step analysis",
+    "pricing": {
+      "input": 2,
+      "output": 8
+    }
+  },
+  {
+    "id": "o3-deep-research",
+    "displayName": "o3-deep-research",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Research model for long-horizon investigation, synthesis, and analytical reports",
+    "pricing": {
+      "input": 10,
+      "output": 40
+    }
+  },
+  {
+    "id": "o3-mini",
+    "displayName": "o3-mini",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Smaller o-series reasoner for economical coding, math, and planning tasks",
+    "pricing": {
+      "input": 1.1,
+      "output": 4.4
+    }
+  },
+  {
+    "id": "o3-pro",
+    "displayName": "o3-pro",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "High-effort o3 tier for difficult technical reasoning and careful answers",
+    "pricing": {
+      "input": 20,
+      "output": 80
+    }
+  },
+  {
+    "id": "o4-mini",
+    "displayName": "o4-mini",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Fast o-series model for compact reasoning, coding, and tool use",
+    "pricing": {
+      "input": 1.1,
+      "output": 4.4
+    }
+  },
+  {
+    "id": "o4-mini-deep-research",
+    "displayName": "o4-mini-deep-research",
+    "contextWindow": 200000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Research model for long-horizon investigation, synthesis, and analytical reports",
+    "pricing": {
+      "input": 2,
+      "output": 8
+    }
+  },
+  {
+    "id": "open-mistral-7b",
+    "displayName": "Mistral 7B",
+    "contextWindow": 8000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral model for multilingual chat, reasoning, and tool-assisted workflows",
+    "pricing": {
+      "input": 0.25,
+      "output": 0.25
+    }
+  },
+  {
+    "id": "open-mistral-nemo",
+    "displayName": "Open Mistral Nemo",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Legacy model retained for compatibility with older integrations",
+    "pricing": {
+      "input": 0.15,
+      "output": 0.15
+    }
+  },
+  {
+    "id": "open-mixtral-8x22b",
+    "displayName": "Mixtral 8x22B",
+    "contextWindow": 64000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral model for multilingual chat, reasoning, and tool-assisted workflows",
+    "pricing": {
+      "input": 2,
+      "output": 6
+    }
+  },
+  {
+    "id": "open-mixtral-8x7b",
+    "displayName": "Mixtral 8x7B",
+    "contextWindow": 32000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral model for multilingual chat, reasoning, and tool-assisted workflows",
+    "pricing": {
+      "input": 0.7,
+      "output": 0.7
+    }
+  },
+  {
+    "id": "pixtral-12b",
+    "displayName": "Pixtral 12B",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral vision-language model for image understanding and multimodal chat",
+    "pricing": {
+      "input": 0.15,
+      "output": 0.15
+    }
+  },
+  {
+    "id": "pixtral-large-latest",
+    "displayName": "Pixtral Large (latest)",
+    "contextWindow": 128000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Mistral's larger vision model for document-heavy image understanding and chat",
+    "pricing": {
+      "input": 2,
+      "output": 6
+    }
+  },
+  {
+    "id": "qvq-max",
+    "displayName": "QVQ Max",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 1.2,
+      "output": 4.8
+    }
+  },
+  {
+    "id": "qwen-flash",
+    "displayName": "Qwen Flash",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Efficient Qwen model for fast chat, extraction, and high-volume workloads",
+    "pricing": {
+      "input": 0.05,
+      "output": 0.4
+    }
+  },
+  {
+    "id": "qwen-max",
+    "displayName": "Qwen Max",
+    "contextWindow": 32768,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Flagship Qwen model for complex reasoning, coding, and agentic workflows",
+    "pricing": {
+      "input": 1.6,
+      "output": 6.4
+    }
+  },
+  {
+    "id": "qwen-mt-plus",
+    "displayName": "Qwen-MT Plus",
+    "contextWindow": 16384,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Translation model for multilingual conversion, localization, and cross-language workflows",
+    "pricing": {
+      "input": 2.46,
+      "output": 7.37
+    }
+  },
+  {
+    "id": "qwen-mt-turbo",
+    "displayName": "Qwen-MT Turbo",
+    "contextWindow": 16384,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Translation model for multilingual conversion, localization, and cross-language workflows",
+    "pricing": {
+      "input": 0.16,
+      "output": 0.49
+    }
+  },
+  {
+    "id": "qwen-omni-turbo",
+    "displayName": "Qwen-Omni Turbo",
+    "contextWindow": 32768,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen omni model for text, vision, audio, and multimodal agent tasks",
+    "pricing": {
+      "input": 0.07,
+      "output": 0.27
+    }
+  },
+  {
+    "id": "qwen-omni-turbo-realtime",
+    "displayName": "Qwen-Omni Turbo Realtime",
+    "contextWindow": 32768,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen omni model for text, vision, audio, and multimodal agent tasks",
+    "pricing": {
+      "input": 0.27,
+      "output": 1.07
+    }
+  },
+  {
+    "id": "qwen-plus",
+    "displayName": "Qwen Plus",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 0.4,
+      "output": 1.2
+    }
+  },
+  {
+    "id": "qwen-plus-character-ja",
+    "displayName": "Qwen Plus Character (Japanese)",
+    "contextWindow": 8192,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 0.5,
+      "output": 1.4
+    }
+  },
+  {
+    "id": "qwen-turbo",
+    "displayName": "Qwen Turbo",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Efficient Qwen model for fast chat, extraction, and high-volume workloads",
+    "pricing": {
+      "input": 0.05,
+      "output": 0.2
+    }
+  },
+  {
+    "id": "qwen-vl-max",
+    "displayName": "Qwen-VL Max",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.8,
+      "output": 3.2
+    }
+  },
+  {
+    "id": "qwen-vl-ocr",
+    "displayName": "Qwen-VL OCR",
+    "contextWindow": 34096,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "OCR model for extracting structured text from documents and screenshots",
+    "pricing": {
+      "input": 0.72,
+      "output": 0.72
+    }
+  },
+  {
+    "id": "qwen-vl-plus",
+    "displayName": "Qwen-VL Plus",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.21,
+      "output": 0.63
+    }
+  },
+  {
+    "id": "qwen2-5-14b-instruct",
+    "displayName": "Qwen2.5 14B Instruct",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 0.35,
+      "output": 1.4
+    }
+  },
+  {
+    "id": "qwen2-5-32b-instruct",
+    "displayName": "Qwen2.5 32B Instruct",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 0.7,
+      "output": 2.8
+    }
+  },
+  {
+    "id": "qwen2-5-72b-instruct",
+    "displayName": "Qwen2.5 72B Instruct",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 1.4,
+      "output": 5.6
+    }
+  },
+  {
+    "id": "qwen2-5-7b-instruct",
+    "displayName": "Qwen2.5 7B Instruct",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 0.175,
+      "output": 0.7
+    }
+  },
+  {
+    "id": "qwen2-5-omni-7b",
+    "displayName": "Qwen2.5-Omni 7B",
+    "contextWindow": 32768,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen omni model for text, vision, audio, and multimodal agent tasks",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.4
+    }
+  },
+  {
+    "id": "qwen2-5-vl-72b-instruct",
+    "displayName": "Qwen2.5-VL 72B Instruct",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 2.8,
+      "output": 8.4
+    }
+  },
+  {
+    "id": "qwen2-5-vl-7b-instruct",
+    "displayName": "Qwen2.5-VL 7B Instruct",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.35,
+      "output": 1.05
+    }
+  },
+  {
+    "id": "qwen3-14b",
+    "displayName": "Qwen3 14B",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 0.35,
+      "output": 1.4
+    }
+  },
+  {
+    "id": "qwen3-235b-a22b",
+    "displayName": "Qwen3 235B-A22B",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Large open Qwen MoE for multilingual reasoning, coding, and tool use",
+    "pricing": {
+      "input": 0.7,
+      "output": 2.8
+    }
+  },
+  {
+    "id": "qwen3-32b",
+    "displayName": "Qwen3 32B",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Dense open Qwen model for self-hosted chat, reasoning, and coding",
+    "pricing": {
+      "input": 0.7,
+      "output": 2.8
+    }
+  },
+  {
+    "id": "qwen3-8b",
+    "displayName": "Qwen3 8B",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 0.18,
+      "output": 0.7
+    }
+  },
+  {
+    "id": "qwen3-asr-flash",
+    "displayName": "Qwen3-ASR Flash",
+    "contextWindow": 53248,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Speech transcription model for accurate audio-to-text and captioning workflows",
+    "pricing": {
+      "input": 0.035,
+      "output": 0.035
+    }
+  },
+  {
+    "id": "qwen3-coder-30b-a3b-instruct",
+    "displayName": "Qwen3-Coder 30B-A3B Instruct",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Smaller Qwen coder for efficient local agents and repo-level fixes",
+    "pricing": {
+      "input": 0.45,
+      "output": 2.25
+    }
+  },
+  {
+    "id": "qwen3-coder-480b-a35b-instruct",
+    "displayName": "Qwen3-Coder 480B-A35B Instruct",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Open Qwen coding heavyweight for repository reasoning and agentic engineering",
+    "pricing": {
+      "input": 1.5,
+      "output": 7.5
+    }
+  },
+  {
+    "id": "qwen3-coder-flash",
+    "displayName": "Qwen3 Coder Flash",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen coding model for software agents, repository edits, and code reasoning",
+    "pricing": {
+      "input": 0.3,
+      "output": 1.5
+    }
+  },
+  {
+    "id": "qwen3-coder-plus",
+    "displayName": "Qwen3 Coder Plus",
+    "contextWindow": 1048576,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Hosted Qwen coder for software agents, repo edits, and long-context code",
+    "pricing": {
+      "input": 1,
+      "output": 5
+    }
+  },
+  {
+    "id": "qwen3-livetranslate-flash-realtime",
+    "displayName": "Qwen3-LiveTranslate Flash Realtime",
+    "contextWindow": 53248,
+    "capabilities": {
+      "vision": true,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Speech generation model for controllable voice, narration, and audio delivery",
+    "pricing": {
+      "input": 10,
+      "output": 10
+    }
+  },
+  {
+    "id": "qwen3-max",
+    "displayName": "Qwen3 Max",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Flagship Qwen3 model for coding agents, complex reasoning, and tool use",
+    "pricing": {
+      "input": 1.2,
+      "output": 6
+    }
+  },
+  {
+    "id": "qwen3-next-80b-a3b-instruct",
+    "displayName": "Qwen3-Next 80B-A3B Instruct",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen instruction model for multilingual chat, reasoning, and tool use",
+    "pricing": {
+      "input": 0.5,
+      "output": 2
+    }
+  },
+  {
+    "id": "qwen3-next-80b-a3b-thinking",
+    "displayName": "Qwen3-Next 80B-A3B (Thinking)",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Efficient Qwen thinking model for local reasoning, math, and coding agents",
+    "pricing": {
+      "input": 0.5,
+      "output": 6
+    }
+  },
+  {
+    "id": "qwen3-omni-flash",
+    "displayName": "Qwen3-Omni Flash",
+    "contextWindow": 65536,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen omni model for text, vision, audio, and multimodal agent tasks",
+    "pricing": {
+      "input": 0.43,
+      "output": 1.66
+    }
+  },
+  {
+    "id": "qwen3-omni-flash-realtime",
+    "displayName": "Qwen3-Omni Flash Realtime",
+    "contextWindow": 65536,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": false
+    },
+    "description": "Qwen omni model for text, vision, audio, and multimodal agent tasks",
+    "pricing": {
+      "input": 0.52,
+      "output": 1.99
+    }
+  },
+  {
+    "id": "qwen3-vl-235b-a22b",
+    "displayName": "Qwen3-VL 235B-A22B",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.7,
+      "output": 2.8
+    }
+  },
+  {
+    "id": "qwen3-vl-30b-a3b",
+    "displayName": "Qwen3-VL 30B-A3B",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.2,
+      "output": 0.8
+    }
+  },
+  {
+    "id": "qwen3-vl-plus",
+    "displayName": "Qwen3-VL Plus",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.2,
+      "output": 1.6
+    }
+  },
+  {
+    "id": "qwen3.5-122b-a10b",
+    "displayName": "Qwen3.5 122B-A10B",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.4,
+      "output": 3.2
+    }
+  },
+  {
+    "id": "qwen3.5-27b",
+    "displayName": "Qwen3.5 27B",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.3,
+      "output": 2.4
+    }
+  },
+  {
+    "id": "qwen3.5-35b-a3b",
+    "displayName": "Qwen3.5 35B-A3B",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.25,
+      "output": 2
+    }
+  },
+  {
+    "id": "qwen3.5-397b-a17b",
+    "displayName": "Qwen3.5 397B-A17B",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Large open Qwen multimodal MoE for visual agents and long technical tasks",
+    "pricing": {
+      "input": 0.6,
+      "output": 3.6
+    }
+  },
+  {
+    "id": "qwen3.5-plus",
+    "displayName": "Qwen3.5 Plus",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.4,
+      "output": 2.4
+    }
+  },
+  {
+    "id": "qwen3.6-27b",
+    "displayName": "Qwen3.6 27B",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.6,
+      "output": 3.6
+    }
+  },
+  {
+    "id": "qwen3.6-35b-a3b",
+    "displayName": "Qwen3.6 35B-A3B",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Open multimodal Qwen MoE for local agents that need vision, audio, and code",
+    "pricing": {
+      "input": 0.248,
+      "output": 1.485
+    }
+  },
+  {
+    "id": "qwen3.6-flash",
+    "displayName": "Qwen3.6 Flash",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen vision-language model for visual reasoning, documents, and agent tasks",
+    "pricing": {
+      "input": 0.1875,
+      "output": 1.125
+    }
+  },
+  {
+    "id": "qwen3.6-max-preview",
+    "displayName": "Qwen3.6 Max Preview",
+    "contextWindow": 262144,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Flagship Qwen model for complex reasoning, coding, and agentic workflows",
+    "pricing": {
+      "input": 1.3,
+      "output": 7.8
+    }
+  },
+  {
+    "id": "qwen3.6-plus",
+    "displayName": "Qwen3.6 Plus",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Earlier Qwen multimodal workhorse for million-token agent and document tasks",
+    "pricing": {
+      "input": 0.5,
+      "output": 3
+    }
+  },
+  {
+    "id": "qwen3.7-max",
+    "displayName": "Qwen3.7 Max",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen frontier model tuned for agent frameworks, coding assistants, and long tasks",
+    "pricing": {
+      "input": 2.5,
+      "output": 7.5
+    }
+  },
+  {
+    "id": "qwen3.7-plus",
+    "displayName": "Qwen3.7 Plus",
+    "contextWindow": 1000000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Multimodal Qwen workhorse for long-context agents, visual inputs, and coding",
+    "pricing": {
+      "input": 0.5,
+      "output": 3
+    }
+  },
+  {
+    "id": "qwq-plus",
+    "displayName": "QwQ Plus",
+    "contextWindow": 131072,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Qwen reasoning model for deliberate problem solving, math, and coding",
+    "pricing": {
+      "input": 0.8,
+      "output": 2.4
+    }
+  },
+  {
+    "id": "step-1-32k",
+    "displayName": "Step 1 (32K)",
+    "contextWindow": 32768,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "StepFun flash model for efficient multimodal reasoning, coding, and tool use",
+    "pricing": {
+      "input": 2.05,
+      "output": 9.59
+    }
+  },
+  {
+    "id": "step-2-16k",
+    "displayName": "Step 2 (16K)",
+    "contextWindow": 16384,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "StepFun flash model for efficient multimodal reasoning, coding, and tool use",
+    "pricing": {
+      "input": 5.21,
+      "output": 16.44
+    }
+  },
+  {
+    "id": "step-3.5-flash",
+    "displayName": "Step 3.5 Flash",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "StepFun flash lane for quick multimodal reasoning and coding assistance",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.3
+    }
+  },
+  {
+    "id": "step-3.5-flash-2603",
+    "displayName": "Step 3.5 Flash 2603",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": false,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "StepFun flash model for efficient multimodal reasoning, coding, and tool use",
+    "pricing": {
+      "input": 0.1,
+      "output": 0.3
+    }
+  },
+  {
+    "id": "step-3.7-flash",
+    "displayName": "Step 3.7 Flash",
+    "contextWindow": 256000,
+    "capabilities": {
+      "vision": true,
+      "toolUse": true,
+      "reasoning": true
+    },
+    "description": "Newer StepFun flash model for faster agents, coding, and multimodal prompts",
+    "pricing": {
+      "input": 0.2,
+      "output": 1.15
+    }
+  },
+  {
+    "id": "text-embedding-3-large",
+    "displayName": "text-embedding-3-large",
+    "contextWindow": 8191,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Embedding model for semantic search, retrieval, clustering, and ranking pipelines",
+    "pricing": {
+      "input": 0.13,
+      "output": 0
+    }
+  },
+  {
+    "id": "text-embedding-3-small",
+    "displayName": "text-embedding-3-small",
+    "contextWindow": 8191,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Embedding model for semantic search, retrieval, clustering, and ranking pipelines",
+    "pricing": {
+      "input": 0.02,
+      "output": 0
+    }
+  },
+  {
+    "id": "text-embedding-ada-002",
+    "displayName": "text-embedding-ada-002",
+    "contextWindow": 8192,
+    "capabilities": {
+      "vision": false,
+      "toolUse": false,
+      "reasoning": false
+    },
+    "description": "Embedding model for semantic search, retrieval, clustering, and ranking pipelines",
+    "pricing": {
+      "input": 0.1,
+      "output": 0
+    }
+  }
+]
