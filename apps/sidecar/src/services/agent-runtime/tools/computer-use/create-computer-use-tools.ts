@@ -62,7 +62,9 @@ export function createComputerUseMcpTools(input: {
     return {
       name: `${WRAPPER_PREFIX}${name}`,
       description: describeTool(name),
-      inputSchema: toolSchema(name),
+      inputSchema: toolSchema(name, {
+        boundDesktopContext: Boolean(input.boundDesktopContextSnapshotId),
+      }),
       isReadOnly: () => readOnly,
       isConcurrencySafe: () => readOnly,
       isEnabled: () => true,
@@ -90,6 +92,13 @@ export function createComputerUseMcpTools(input: {
           const args = asRecord(rawArgs);
           if (name === "current_context" && input.boundDesktopContextSnapshotId) {
             args.snapshotId = input.boundDesktopContextSnapshotId;
+          }
+          if (name === "get_window_state" && input.boundDesktopContextSnapshotId && !stringValue(args.windowId)) {
+            const boundTarget = await resolveBoundDesktopActionTarget(invoke, input.boundDesktopContextSnapshotId);
+            if (boundTarget.status !== "ok") {
+              return toolResult(context.toolUseId, boundTarget.result);
+            }
+            args.windowId = stringValue(boundTarget.args.windowId);
           }
           if (!readOnly && input.boundDesktopContextSnapshotId && !stringValue(args.windowId)) {
             const boundTarget = await resolveBoundDesktopActionTarget(invoke, input.boundDesktopContextSnapshotId);
@@ -509,7 +518,10 @@ type ComputerUseToolSchema = ToolInputSchema & {
   anyOf?: Array<{ required: string[] }>;
 };
 
-function toolSchema(name: ComputerUseToolName): ComputerUseToolSchema {
+function toolSchema(
+  name: ComputerUseToolName,
+  options: { boundDesktopContext?: boolean } = {},
+): ComputerUseToolSchema {
   const string = (description: string) => ({ type: "string", description });
   const number = (description: string) => ({ type: "number", description });
   const integer = (description: string, extra: Record<string, unknown> = {}) => ({
@@ -556,7 +568,7 @@ function toolSchema(name: ComputerUseToolName): ComputerUseToolSchema {
       return object({
         windowId,
         includeScreenshot: { type: "boolean", description: "Attach the current window screenshot as an image when visual inspection is required." },
-      }, ["windowId"]);
+      }, options.boundDesktopContext ? [] : ["windowId"]);
     case "launch_app":
       return object({
         app: string("Executable or application name available to the current desktop session."),

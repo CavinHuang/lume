@@ -27,6 +27,13 @@ describe("createComputerUseMcpTools", () => {
     }
   });
 
+  test("makes get_window_state windowId optional for a bound desktop conversation", () => {
+    const tools = createComputerUseMcpTools({ boundDesktopContextSnapshotId: "snap-bound" });
+    const getWindowState = tools.find((tool) => tool.name === "mcp__computer_use__get_window_state")!;
+
+    expect((getWindowState.inputSchema as Record<string, any>).required).toBeUndefined();
+  });
+
   test("forwards the original method and structured input", async () => {
     const calls: unknown[] = [];
     const tools = createComputerUseMcpTools({
@@ -157,6 +164,38 @@ describe("createComputerUseMcpTools", () => {
       { method: "current_context", input: { snapshotId: "snap-bound" } },
       { method: "current_context", input: { snapshotId: "snap-bound" } },
       { method: "current_context", input: { snapshotId: "snap-bound", refresh: true } },
+    ]);
+  });
+
+  test("anchors get_window_state to the bound conversation window when windowId is omitted", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      boundDesktopContextSnapshotId: "snap-wechat",
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "current_context") {
+          return {
+            status: "ok",
+            snapshot: {
+              id: "snap-wechat",
+              app: { id: "wechat.exe", name: "微信" },
+              window: { id: "win:wechat", title: "项目群" },
+            },
+          };
+        }
+        return { status: "ok", window: { id: "win:wechat" } };
+      },
+    });
+    const getWindowState = tools.find((candidate) => candidate.name === "mcp__computer_use__get_window_state")!;
+
+    await getWindowState.call(
+      { includeScreenshot: true },
+      { toolUseId: "tool-bound-state" } as never,
+    );
+
+    expect(calls).toEqual([
+      { method: "current_context", input: { snapshotId: "snap-wechat" } },
+      { method: "get_window_state", input: { windowId: "win:wechat", includeScreenshot: true } },
     ]);
   });
 
