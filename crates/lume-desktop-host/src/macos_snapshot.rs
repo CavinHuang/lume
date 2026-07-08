@@ -14,6 +14,8 @@ pub struct MacOSWindowInfo {
     pub layer: i64,
     pub is_onscreen: bool,
     pub is_focused: bool,
+    pub document_text: Option<String>,
+    pub selected_text: Option<String>,
 }
 
 pub fn macos_list_windows_result(windows: &[MacOSWindowInfo], app_filter: Option<&str>) -> Value {
@@ -45,7 +47,7 @@ pub fn macos_current_context_result(window: &MacOSWindowInfo, include_screenshot
     let window_value = window_json(window);
     let visible_text = context_visible_text(window);
     let screenshot = screenshot_ref(window, include_screenshot);
-    json!({
+    let mut snapshot = json!({
         "status": "ok",
         "snapshot": {
             "id": format!("foreground:macos:{}:{}", window.window_id, now_millis()),
@@ -62,7 +64,11 @@ pub fn macos_current_context_result(window: &MacOSWindowInfo, include_screenshot
             "screenshots": [screenshot],
             "untrusted": true,
         }
-    })
+    });
+    if let Some(selected_text) = normalized_optional_text(window.selected_text.as_deref()) {
+        snapshot["snapshot"]["selectedText"] = Value::String(selected_text);
+    }
+    snapshot
 }
 
 pub fn macos_get_window_state_result(window: &MacOSWindowInfo, include_screenshot: bool) -> Value {
@@ -76,7 +82,7 @@ pub fn macos_get_window_state_result(window: &MacOSWindowInfo, include_screensho
         "accessibility": {
             "tree": [],
             "focusedElement": Value::Null,
-            "selectedText": "",
+            "selectedText": normalized_optional_text(window.selected_text.as_deref()).unwrap_or_default(),
             "documentText": visible_text,
             "visibleText": visible_text,
             "truncated": false,
@@ -142,11 +148,19 @@ fn screenshot_ref(window: &MacOSWindowInfo, _include_pixels: bool) -> Value {
 }
 
 fn context_visible_text(window: &MacOSWindowInfo) -> String {
+    if let Some(text) = normalized_optional_text(window.document_text.as_deref()) {
+        return text;
+    }
     if window.title.trim().is_empty() {
         window.owner_name.trim().to_owned()
     } else {
         window.title.trim().to_owned()
     }
+}
+
+fn normalized_optional_text(value: Option<&str>) -> Option<String> {
+    let text = value?.trim();
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 fn app_id(window: &MacOSWindowInfo) -> String {

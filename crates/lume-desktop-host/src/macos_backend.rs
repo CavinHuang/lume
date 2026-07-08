@@ -11,7 +11,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::{
     ffi::{CStr, CString},
-    os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_void},
+    os::raw::{c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void},
     ptr,
 };
 
@@ -42,9 +42,10 @@ impl DesktopBackend for MacOSDesktopBackend {
             )),
             "list_apps" => Ok(macos_list_apps_result(&windows)),
             "current_context" => {
-                let Some(window) = first_visible_user_window(&windows) else {
+                let Some(mut window) = first_visible_user_window(&windows) else {
                     return Ok(stale_target());
                 };
+                enrich_accessibility_text(&mut window);
                 Ok(macos_current_context_result(
                     &window,
                     params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
@@ -58,6 +59,8 @@ impl DesktopBackend for MacOSDesktopBackend {
                 let Some(window) = window else {
                     return Ok(stale_target());
                 };
+                let mut window = window;
+                enrich_accessibility_text(&mut window);
                 Ok(macos_get_window_state_result(
                     &window,
                     params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
@@ -97,6 +100,139 @@ fn cg_preflight_screen_capture_access() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
 }
 
+fn enrich_accessibility_text(window: &mut MacOSWindowInfo) {
+    unsafe {
+        let app = AXUIElementCreateApplication(window.owner_pid as c_int);
+        if app.is_null() {
+            return;
+        }
+        let root = copy_ax_attribute(app, "AXFocusedWindow").or_else(|| first_ax_window(app));
+        if let Some(root) = root {
+            let text = collect_ax_text(root);
+            if !text.document_text.is_empty() {
+                window.document_text = Some(text.document_text);
+            }
+            if let Some(selected_text) = text.selected_text {
+                window.selected_text = Some(selected_text);
+            }
+            CFRelease(root as CFTypeRef);
+        }
+        CFRelease(app as CFTypeRef);
+    }
+}
+
+struct AxTextSnapshot {
+    document_text: String,
+    selected_text: Option<String>,
+}
+
+unsafe fn collect_ax_text(root: AXUIElementRef) -> AxTextSnapshot {
+    let mut lines = Vec::<String>::new();
+    let mut selected_text = None;
+    let mut remaining = 500usize;
+    collect_ax_text_into(root, 0, &mut remaining, &mut lines, &mut selected_text);
+    AxTextSnapshot {
+        document_text: lines.join("\n"),
+        selected_text,
+    }
+}
+
+unsafe fn collect_ax_text_into(
+    element: AXUIElementRef,
+    depth: usize,
+    remaining: &mut usize,
+    lines: &mut Vec<String>,
+    selected_text: &mut Option<String>,
+) {
+    if depth >= 12 || *remaining == 0 {
+        return;
+    }
+    *remaining -= 1;
+    if selected_text.is_none() {
+        if let Some(text) = copy_ax_string_attribute(element, "AXSelectedText") {
+            push_text(lines, &text);
+            *selected_text = Some(text);
+        }
+    }
+    for attribute in ["AXValue", "AXTitle", "AXDescription"] {
+        if let Some(text) = copy_ax_string_attribute(element, attribute) {
+            push_text(lines, &text);
+        }
+    }
+    let Some(children) = copy_ax_attribute(element, "AXChildren") else {
+        return;
+    };
+    if cf_type_matches(children as CFTypeRef, CFArrayGetTypeID()) {
+        let count = CFArrayGetCount(children as CFArrayRef);
+        for index in 0..count {
+            let child = CFArrayGetValueAtIndex(children as CFArrayRef, index) as AXUIElementRef;
+            if !child.is_null() {
+                collect_ax_text_into(child, depth + 1, remaining, lines, selected_text);
+            }
+            if *remaining == 0 {
+                break;
+            }
+        }
+    }
+    CFRelease(children as CFTypeRef);
+}
+
+fn push_text(lines: &mut Vec<String>, text: &str) {
+    let normalized = text.trim();
+    if normalized.is_empty() || lines.iter().any(|line| line == normalized) {
+        return;
+    }
+    lines.push(normalized.to_owned());
+}
+
+unsafe fn first_ax_window(app: AXUIElementRef) -> Option<AXUIElementRef> {
+    let windows = copy_ax_attribute(app, "AXWindows")?;
+    if !cf_type_matches(windows as CFTypeRef, CFArrayGetTypeID())
+        || CFArrayGetCount(windows as CFArrayRef) == 0
+    {
+        CFRelease(windows as CFTypeRef);
+        return None;
+    }
+    let first = CFArrayGetValueAtIndex(windows as CFArrayRef, 0);
+    let retained = if first.is_null() {
+        ptr::null()
+    } else {
+        CFRetain(first)
+    };
+    CFRelease(windows as CFTypeRef);
+    (!retained.is_null()).then_some(retained as AXUIElementRef)
+}
+
+unsafe fn copy_ax_string_attribute(element: AXUIElementRef, attribute: &str) -> Option<String> {
+    let value = copy_ax_attribute(element, attribute)?;
+    let text = if cf_type_matches(value, CFStringGetTypeID()) {
+        cf_string_to_string(value as CFStringRef)
+    } else {
+        None
+    };
+    CFRelease(value);
+    text
+}
+
+unsafe fn copy_ax_attribute(element: AXUIElementRef, attribute: &str) -> Option<CFTypeRef> {
+    let Ok(attribute) = CString::new(attribute) else {
+        return None;
+    };
+    let attribute_ref =
+        CFStringCreateWithCString(ptr::null(), attribute.as_ptr(), K_CF_STRING_ENCODING_UTF8);
+    if attribute_ref.is_null() {
+        return None;
+    }
+    let mut value = ptr::null();
+    let error = AXUIElementCopyAttributeValue(element, attribute_ref, &mut value);
+    CFRelease(attribute_ref as CFTypeRef);
+    (error == K_AX_ERROR_SUCCESS && !value.is_null()).then_some(value)
+}
+
+unsafe fn cf_type_matches(value: CFTypeRef, expected: CFTypeID) -> bool {
+    !value.is_null() && CFGetTypeID(value) == expected
+}
+
 fn system_windows() -> Result<Vec<MacOSWindowInfo>> {
     let array = unsafe {
         CGWindowListCopyWindowInfo(
@@ -132,6 +268,8 @@ fn system_windows() -> Result<Vec<MacOSWindowInfo>> {
                 layer: cf_dictionary_i64(dict, "kCGWindowLayer").unwrap_or_default(),
                 is_onscreen: cf_dictionary_bool(dict, "kCGWindowIsOnscreen").unwrap_or(true),
                 is_focused: false,
+                document_text: None,
+                selected_text: None,
             };
             if !focused_assigned && is_focus_candidate(&window) {
                 window.is_focused = true;
@@ -241,16 +379,25 @@ type CFBooleanRef = *const c_void;
 type CFArrayRef = *const c_void;
 type CFDictionaryRef = *const c_void;
 type CFIndex = c_long;
+type CFTypeID = c_ulong;
+type AXUIElementRef = *const c_void;
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 const K_CF_NUMBER_SINT64_TYPE: c_int = 4;
 const K_CF_NUMBER_DOUBLE_TYPE: c_int = 13;
 const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: c_uint = 1;
 const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: c_uint = 16;
+const K_AX_ERROR_SUCCESS: c_int = 0;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> c_uchar;
+    fn AXUIElementCreateApplication(pid: c_int) -> AXUIElementRef;
+    fn AXUIElementCopyAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: *mut CFTypeRef,
+    ) -> c_int;
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -261,7 +408,11 @@ extern "C" {
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
+    fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
     fn CFRelease(cf: CFTypeRef);
+    fn CFGetTypeID(cf: CFTypeRef) -> CFTypeID;
+    fn CFStringGetTypeID() -> CFTypeID;
+    fn CFArrayGetTypeID() -> CFTypeID;
     fn CFArrayGetCount(array: CFArrayRef) -> CFIndex;
     fn CFArrayGetValueAtIndex(array: CFArrayRef, index: CFIndex) -> CFTypeRef;
     fn CFDictionaryGetValueIfPresent(

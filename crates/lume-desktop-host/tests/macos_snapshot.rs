@@ -18,6 +18,8 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             layer: 0,
             is_onscreen: true,
             is_focused: true,
+            document_text: None,
+            selected_text: None,
         },
         MacOSWindowInfo {
             window_id: 77,
@@ -31,6 +33,8 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             layer: 0,
             is_onscreen: true,
             is_focused: false,
+            document_text: None,
+            selected_text: None,
         },
         MacOSWindowInfo {
             window_id: 99,
@@ -44,6 +48,8 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             layer: 25,
             is_onscreen: true,
             is_focused: false,
+            document_text: None,
+            selected_text: None,
         },
     ]
 }
@@ -111,4 +117,28 @@ fn maps_window_state_with_stable_revision_and_accessibility_fallback() {
 fn does_not_resolve_unknown_macos_window_ids() {
     assert_eq!(find_macos_window(&sample_windows(), "macos:404"), None);
     assert_eq!(find_macos_window(&sample_windows(), "win:42"), None);
+}
+
+#[test]
+fn prefers_accessibility_text_for_context_and_window_state() {
+    let mut window = sample_windows()[0].clone();
+    window.document_text = Some("A: 这个 PR 今天能发吗？\nB: 我看完测试后回复".into());
+    window.selected_text = Some("这个 PR 今天能发吗？".into());
+
+    let context = macos_current_context_result(&window, false);
+    let state = macos_get_window_state_result(&window, false);
+
+    assert_eq!(
+        context["snapshot"]["visibleText"],
+        "A: 这个 PR 今天能发吗？\nB: 我看完测试后回复"
+    );
+    assert_eq!(context["snapshot"]["selectedText"], "这个 PR 今天能发吗？");
+    assert_eq!(
+        state["accessibility"]["documentText"],
+        "A: 这个 PR 今天能发吗？\nB: 我看完测试后回复"
+    );
+    assert_eq!(
+        state["accessibility"]["selectedText"],
+        "这个 PR 今天能发吗？"
+    );
 }
