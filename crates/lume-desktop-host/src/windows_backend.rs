@@ -15,7 +15,7 @@ use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use windows::{
-    core::{BOOL, BSTR, Interface, PWSTR},
+    core::{Interface, BOOL, BSTR, PWSTR},
     Win32::{
         Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT},
         Graphics::{
@@ -35,19 +35,19 @@ use windows::{
                 COINIT_MULTITHREADED, STREAM_SEEK_CUR,
             },
             Threading::{
-                AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-                PROCESS_QUERY_LIMITED_INFORMATION,
+                AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW,
+                PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
             },
         },
         UI::{
             Accessibility::{
                 CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-                IUIAutomationTextPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern, UIA_ButtonControlTypeId,
-                UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
-                UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-                UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_TabItemControlTypeId,
-                UIA_TextControlTypeId, UIA_TextPatternId, UIA_ValuePatternId, UIA_WindowControlTypeId,
-                UIA_CONTROLTYPE_ID,
+                IUIAutomationTextPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
+                UIA_ButtonControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
+                UIA_GroupControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
+                UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_PaneControlTypeId,
+                UIA_TabItemControlTypeId, UIA_TextControlTypeId, UIA_TextPatternId,
+                UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
             },
             Input::KeyboardAndMouse::{
                 SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
@@ -57,10 +57,11 @@ use windows::{
                 VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
-                BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
-                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-                IsWindowVisible, SetCursorPos, SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN,
-                SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE,
+                BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics,
+                GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+                IsIconic, IsWindow, IsWindowVisible, SetCursorPos, SetForegroundWindow, ShowWindow,
+                SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+                SW_RESTORE,
             },
         },
     },
@@ -227,13 +228,8 @@ fn get_window_state(params: &Value) -> Result<Value> {
         &window,
         params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
     );
-    let accessibility = accessibility_state(hwnd).unwrap_or_else(|error| {
-        json!({
-            "tree": [],
-            "documentText": title,
-            "unavailableReason": error.to_string(),
-        })
-    });
+    let accessibility = accessibility_state(hwnd)
+        .unwrap_or_else(|error| fallback_accessibility_state(title, Some(error.to_string())));
     Ok(json!({
         "status": "ok",
         "window": window,
@@ -295,7 +291,12 @@ fn current_context(params: &Value) -> Result<Value> {
     let Some(window) = window_json(hwnd) else {
         return Ok(stale_target());
     };
-    let accessibility = accessibility_state(hwnd).unwrap_or_else(|_| json!({}));
+    let accessibility = accessibility_state(hwnd).unwrap_or_else(|error| {
+        fallback_accessibility_state(
+            window["title"].as_str().unwrap_or_default(),
+            Some(error.to_string()),
+        )
+    });
     let screenshots = screenshot_refs(
         hwnd,
         &window,
@@ -306,23 +307,31 @@ fn current_context(params: &Value) -> Result<Value> {
         .and_then(Value::as_str)
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| window["title"].as_str().unwrap_or_default());
+    let selected_text = accessibility
+        .get("selectedText")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty());
+    let mut snapshot = json!({
+        "id": format!("foreground:{}", now_millis()),
+        "app": {
+            "id": window["appId"],
+            "name": window["appName"],
+            "processId": window["processId"],
+        },
+        "window": window,
+        "capturedAt": now_millis(),
+        "eventType": "foreground_changed",
+        "visibleText": visible_text,
+        "screenshotId": screenshot_id(&window),
+        "screenshots": screenshots,
+        "untrusted": true,
+    });
+    if let Some(selected_text) = selected_text {
+        snapshot["selectedText"] = Value::String(selected_text.to_owned());
+    }
     Ok(json!({
         "status": "ok",
-        "snapshot": {
-            "id": format!("foreground:{}", now_millis()),
-            "app": {
-                "id": window["appId"],
-                "name": window["appName"],
-                "processId": window["processId"],
-            },
-            "window": window,
-            "capturedAt": now_millis(),
-            "eventType": "foreground_changed",
-            "visibleText": visible_text,
-            "screenshotId": screenshot_id(&window),
-            "screenshots": screenshots,
-            "untrusted": true,
-        }
+        "snapshot": snapshot,
     }))
 }
 
@@ -508,6 +517,7 @@ fn accessibility_state(hwnd: HWND) -> Result<Value> {
         let mut remaining = 500usize;
         let mut text = Vec::<String>::new();
         let mut document_text = None;
+        let mut selected_text = None;
         let tree = collect_accessibility_children(
             &walker,
             &root,
@@ -516,16 +526,33 @@ fn accessibility_state(hwnd: HWND) -> Result<Value> {
             &mut remaining,
             &mut text,
             &mut document_text,
+            &mut selected_text,
         );
         let focused = find_focused_element(&tree);
         Ok(json!({
             "tree": tree,
             "focusedElement": focused,
+            "selectedText": normalize_document_text(selected_text),
             "documentText": normalize_document_text(document_text),
             "visibleText": text.join("\n"),
             "truncated": remaining == 0,
         }))
     }
+}
+
+fn fallback_accessibility_state(document_text: &str, unavailable_reason: Option<String>) -> Value {
+    let mut value = json!({
+        "tree": [],
+        "focusedElement": Value::Null,
+        "selectedText": "",
+        "documentText": document_text,
+        "visibleText": document_text,
+        "truncated": false,
+    });
+    if let Some(reason) = unavailable_reason {
+        value["unavailableReason"] = Value::String(reason);
+    }
+    value
 }
 
 unsafe fn collect_accessibility_children(
@@ -536,6 +563,7 @@ unsafe fn collect_accessibility_children(
     remaining: &mut usize,
     text: &mut Vec<String>,
     document_text: &mut Option<String>,
+    selected_text: &mut Option<String>,
 ) -> Vec<Value> {
     if depth >= 14 || *remaining == 0 {
         return Vec::new();
@@ -577,6 +605,9 @@ unsafe fn collect_accessibility_children(
         if document_text.is_none() && !sensitive && matches!(role, "document" | "edit") {
             *document_text = read_document_text(&element);
         }
+        if selected_text.is_none() && !sensitive && matches!(role, "document" | "edit") {
+            *selected_text = read_selected_text(&element);
+        }
         let children = unsafe {
             collect_accessibility_children(
                 walker,
@@ -586,6 +617,7 @@ unsafe fn collect_accessibility_children(
                 remaining,
                 text,
                 document_text,
+                selected_text,
             )
         };
         result.push(json!({
@@ -609,6 +641,31 @@ unsafe fn collect_accessibility_children(
     result
 }
 
+fn read_selected_text(element: &IUIAutomationElement) -> Option<String> {
+    unsafe {
+        let pattern = element
+            .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            .ok()?;
+        let ranges = pattern.GetSelection().ok()?;
+        let length = ranges.Length().ok()?.clamp(0, 16);
+        let mut chunks = Vec::new();
+        for index in 0..length {
+            let Ok(range) = ranges.GetElement(index) else {
+                continue;
+            };
+            let Ok(text) = range.GetText(100_000) else {
+                continue;
+            };
+            let text = text.to_string();
+            if !text.trim().is_empty() {
+                chunks.push(text);
+            }
+        }
+        let selected = chunks.join("\n");
+        (!selected.trim().is_empty()).then_some(selected)
+    }
+}
+
 fn read_document_text(element: &IUIAutomationElement) -> Option<String> {
     unsafe {
         let pattern = element
@@ -621,7 +678,8 @@ fn read_document_text(element: &IUIAutomationElement) -> Option<String> {
 }
 
 fn normalize_document_text(text: Option<String>) -> String {
-    text.filter(|value| !value.trim().is_empty()).unwrap_or_default()
+    text.filter(|value| !value.trim().is_empty())
+        .unwrap_or_default()
 }
 
 fn find_focused_element(tree: &[Value]) -> Value {
@@ -698,7 +756,8 @@ fn activate(hwnd: HWND) -> Result<()> {
         let current_thread = GetCurrentThreadId();
         let foreground_thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
         let target_thread = GetWindowThreadProcessId(hwnd, None);
-        let attached_threads = activation_thread_ids(current_thread, foreground_thread, target_thread);
+        let attached_threads =
+            activation_thread_ids(current_thread, foreground_thread, target_thread);
         for thread_id in &attached_threads {
             let _ = AttachThreadInput(current_thread, *thread_id, true);
         }
@@ -1238,10 +1297,7 @@ mod tests {
     #[test]
     fn document_text_uses_the_text_pattern_instead_of_control_labels() {
         let source = "  本周完成：桌面上下文绑定。\r\n下周计划：继续验证。  ";
-        assert_eq!(
-            normalize_document_text(Some(source.into())),
-            source
-        );
+        assert_eq!(normalize_document_text(Some(source.into())), source);
         assert_eq!(normalize_document_text(None), "");
         assert_eq!(normalize_document_text(Some("   ".into())), "");
     }

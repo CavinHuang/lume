@@ -2,12 +2,12 @@
 
 use std::{thread, time::Duration};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use lume_desktop_host::{
     windows_backend::WindowsDesktopBackend,
     windows_overlay::{move_visual_cursor, reset_visual_cursor},
     DesktopBackend,
 };
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::json;
 
 #[test]
@@ -45,6 +45,15 @@ fn get_window_state_returns_screenshot_metadata_without_pixels_by_default() {
 }
 
 #[test]
+fn get_window_state_reports_selected_text_field() {
+    let backend = WindowsDesktopBackend;
+    let result = backend.invoke("get_window_state", &json!({})).unwrap();
+
+    assert_eq!(result["status"], "ok");
+    assert!(result["accessibility"]["selectedText"].is_string());
+}
+
+#[test]
 fn get_window_state_can_include_screenshot_pixels_when_requested() {
     let backend = WindowsDesktopBackend;
     let result = backend
@@ -58,7 +67,9 @@ fn get_window_state_can_include_screenshot_pixels_when_requested() {
     let encoded = data_url
         .strip_prefix("data:image/png;base64,")
         .expect("screenshot must be a PNG data URL");
-    let bytes = BASE64.decode(encoded).expect("screenshot PNG must be valid base64");
+    let bytes = BASE64
+        .decode(encoded)
+        .expect("screenshot PNG must be valid base64");
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
 }
 
@@ -71,11 +82,23 @@ fn current_context_includes_screenshot_pixels_only_when_requested() {
         .unwrap();
 
     assert_eq!(without_pixels["status"], "ok");
-    assert!(without_pixels["snapshot"]["screenshots"][0].get("dataUrl").is_none());
+    assert!(without_pixels["snapshot"]["screenshots"][0]
+        .get("dataUrl")
+        .is_none());
     let data_url = with_pixels["snapshot"]["screenshots"][0]["dataUrl"]
         .as_str()
         .unwrap_or_default();
     assert!(data_url.starts_with("data:image/png;base64,"));
+}
+
+#[test]
+fn current_context_omits_empty_selected_text() {
+    let backend = WindowsDesktopBackend;
+    let result = backend.invoke("current_context", &json!({})).unwrap();
+
+    assert_eq!(result["status"], "ok");
+    let selected_text = result["snapshot"].get("selectedText");
+    assert!(selected_text.is_none() || selected_text.is_some_and(|value| value.is_string()));
 }
 
 #[test]
