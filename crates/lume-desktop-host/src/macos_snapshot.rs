@@ -168,6 +168,14 @@ pub fn macos_text_target_is_sensitive(window: &MacOSWindowInfo, params: &Value) 
     focused_sensitive_element(&window.elements)
 }
 
+pub fn macos_preferred_click_actions(secondary: bool) -> &'static [&'static str] {
+    if secondary {
+        &["AXShowMenu"]
+    } else {
+        &["AXPress", "AXConfirm", "AXOpen"]
+    }
+}
+
 pub fn macos_key_chord(keys: &[&str]) -> Option<(u16, u64)> {
     let mut flags = 0_u64;
     let mut primary = None;

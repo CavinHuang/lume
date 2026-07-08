@@ -3,9 +3,9 @@ use crate::{
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
         macos_get_window_result, macos_get_window_state_result, macos_key_chord,
-        macos_list_apps_result, macos_list_windows_result, macos_resolve_action_point,
-        macos_text_target_is_sensitive, macos_wait_for_state_result, MacOSElementInfo,
-        MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND,
+        macos_list_apps_result, macos_list_windows_result, macos_preferred_click_actions,
+        macos_resolve_action_point, macos_text_target_is_sensitive, macos_wait_for_state_result,
+        MacOSElementInfo, MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND,
     },
     DesktopBackend,
 };
@@ -145,6 +145,12 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
         return Ok(stale_target());
     };
     enrich_accessibility_text(&mut window);
+    if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
+        activate_macos_window(&window)?;
+        if let Some(input_mode) = perform_element_click_action(&window, element_id, secondary)? {
+            return Ok(json!({ "status": "ok", "inputMode": input_mode }));
+        }
+    }
     let (x, y) = match macos_resolve_action_point(&window, params) {
         Ok(point) => point,
         Err(result) => return Ok(result),
@@ -153,6 +159,39 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
     move_mouse(x, y);
     click_mouse(x, y, secondary);
     Ok(json!({ "status": "ok", "inputMode": "physical_pointer" }))
+}
+
+fn perform_element_click_action(
+    window: &MacOSWindowInfo,
+    element_id: &str,
+    secondary: bool,
+) -> Result<Option<&'static str>> {
+    unsafe {
+        let app = AXUIElementCreateApplication(window.owner_pid as c_int);
+        if app.is_null() {
+            return Ok(None);
+        }
+        let root = matching_ax_window(app, window.window_id).or_else(|| first_ax_window(app));
+        let Some(root) = root else {
+            CFRelease(app as CFTypeRef);
+            return Ok(None);
+        };
+        let element = matching_ax_element_by_id(root, element_id);
+        let handled = element.is_some_and(|element| {
+            let handled = macos_preferred_click_actions(secondary)
+                .iter()
+                .any(|action| perform_ax_action(element, action));
+            CFRelease(element as CFTypeRef);
+            handled
+        });
+        CFRelease(root as CFTypeRef);
+        CFRelease(app as CFTypeRef);
+        Ok(handled.then_some(if secondary {
+            "accessibility_menu"
+        } else {
+            "accessibility_action"
+        }))
+    }
 }
 
 fn scroll(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
@@ -676,6 +715,52 @@ unsafe fn matching_ax_window(app: AXUIElementRef, window_id: u64) -> Option<AXUI
     None
 }
 
+unsafe fn matching_ax_element_by_id(
+    root: AXUIElementRef,
+    element_id: &str,
+) -> Option<AXUIElementRef> {
+    let path = element_id.strip_prefix("root.")?;
+    let retained_root = CFRetain(root as CFTypeRef);
+    if retained_root.is_null() {
+        return None;
+    }
+    let mut current = retained_root as AXUIElementRef;
+    for part in path.split('.') {
+        let Ok(index) = part.parse::<usize>() else {
+            CFRelease(current as CFTypeRef);
+            return None;
+        };
+        let child = copy_ax_child_by_index(current, index);
+        CFRelease(current as CFTypeRef);
+        let Some(child) = child else {
+            return None;
+        };
+        current = child;
+    }
+    Some(current)
+}
+
+unsafe fn copy_ax_child_by_index(parent: AXUIElementRef, index: usize) -> Option<AXUIElementRef> {
+    let children = copy_ax_attribute(parent, "AXChildren")?;
+    if !cf_type_matches(children as CFTypeRef, CFArrayGetTypeID()) {
+        CFRelease(children as CFTypeRef);
+        return None;
+    }
+    let count = CFArrayGetCount(children as CFArrayRef);
+    if index >= count as usize {
+        CFRelease(children as CFTypeRef);
+        return None;
+    }
+    let child = CFArrayGetValueAtIndex(children as CFArrayRef, index as CFIndex);
+    let retained = if child.is_null() {
+        ptr::null()
+    } else {
+        CFRetain(child)
+    };
+    CFRelease(children as CFTypeRef);
+    (!retained.is_null()).then_some(retained as AXUIElementRef)
+}
+
 unsafe fn perform_ax_action(element: AXUIElementRef, action: &str) -> bool {
     let Ok(action) = CString::new(action) else {
         return false;
@@ -925,6 +1010,10 @@ fn stale_target() -> Value {
     json!({ "status": "stale_target", "message": "target window is unavailable" })
 }
 
+fn failed_action(message: &str) -> Value {
+    json!({ "status": "failed", "message": message })
+}
+
 type CFTypeRef = *const c_void;
 type CFStringRef = *const c_void;
 type CFNumberRef = *const c_void;
@@ -939,12 +1028,14 @@ type CGEventRef = *const c_void;
 type CGEventSourceRef = *const c_void;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct CGPoint {
     x: c_double,
     y: c_double,
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct CGSize {
     width: c_double,
     height: c_double,

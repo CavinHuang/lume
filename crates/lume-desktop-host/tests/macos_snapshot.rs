@@ -1,8 +1,8 @@
 use lume_desktop_host::macos_snapshot::{
     find_macos_window, macos_current_context_result, macos_get_window_result,
     macos_get_window_state_result, macos_key_chord, macos_list_apps_result,
-    macos_list_windows_result, macos_resolve_action_point, macos_text_target_is_sensitive,
-    macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
+    macos_list_windows_result, macos_preferred_click_actions, macos_resolve_action_point,
+    macos_text_target_is_sensitive, macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
 };
 use serde_json::json;
 
@@ -357,6 +357,15 @@ fn detects_sensitive_macos_text_targets_before_typing() {
         &sample_windows()[0],
         &json!({ "elementId": "root.0" })
     ));
+}
+
+#[test]
+fn prefers_accessibility_actions_for_macos_element_clicks() {
+    assert_eq!(
+        macos_preferred_click_actions(false),
+        &["AXPress", "AXConfirm", "AXOpen"]
+    );
+    assert_eq!(macos_preferred_click_actions(true), &["AXShowMenu"]);
 }
 
 #[test]
