@@ -25,6 +25,8 @@ pub struct MacOSWindowInfo {
     pub is_focused: bool,
     pub document_text: Option<String>,
     pub selected_text: Option<String>,
+    pub screenshot_data_url: Option<String>,
+    pub screenshot_error: Option<String>,
     pub elements: Vec<MacOSElementInfo>,
 }
 
@@ -254,8 +256,8 @@ fn window_json(window: &MacOSWindowInfo) -> Value {
     })
 }
 
-fn screenshot_ref(window: &MacOSWindowInfo, _include_pixels: bool) -> Value {
-    json!({
+fn screenshot_ref(window: &MacOSWindowInfo, include_pixels: bool) -> Value {
+    let mut screenshot = json!({
         "id": screenshot_id(window),
         "width": rounded(window.width).max(0),
         "height": rounded(window.height).max(0),
@@ -264,7 +266,15 @@ fn screenshot_ref(window: &MacOSWindowInfo, _include_pixels: bool) -> Value {
             "y": rounded(window.y),
         },
         "mimeType": "image/png",
-    })
+    });
+    if include_pixels {
+        if let Some(data_url) = normalized_optional_text(window.screenshot_data_url.as_deref()) {
+            screenshot["dataUrl"] = Value::String(data_url);
+        } else if let Some(error) = normalized_optional_text(window.screenshot_error.as_deref()) {
+            screenshot["error"] = Value::String(error);
+        }
+    }
+    screenshot
 }
 
 fn context_visible_text(window: &MacOSWindowInfo) -> String {

@@ -13,13 +13,14 @@ use crate::{
     DesktopBackend,
 };
 use anyhow::{anyhow, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use std::{
     env,
     ffi::{CStr, CString},
     os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
     process::Command,
-    ptr, thread,
+    ptr, slice, thread,
     time::{Duration, Instant},
 };
 
@@ -70,10 +71,10 @@ impl DesktopBackend for MacOSDesktopBackend {
                     return Ok(stale_target());
                 };
                 enrich_accessibility_text(&mut window);
-                Ok(macos_current_context_result(
-                    &window,
-                    params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
-                ))
+                let include_screenshot =
+                    params.get("includeScreenshot").and_then(Value::as_bool) == Some(true);
+                capture_screenshot_if_requested(&mut window, include_screenshot);
+                Ok(macos_current_context_result(&window, include_screenshot))
             }
             "get_window_state" => {
                 let window = match params.get("windowId").and_then(Value::as_str) {
@@ -85,10 +86,10 @@ impl DesktopBackend for MacOSDesktopBackend {
                 };
                 let mut window = window;
                 enrich_accessibility_text(&mut window);
-                Ok(macos_get_window_state_result(
-                    &window,
-                    params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
-                ))
+                let include_screenshot =
+                    params.get("includeScreenshot").and_then(Value::as_bool) == Some(true);
+                capture_screenshot_if_requested(&mut window, include_screenshot);
+                Ok(macos_get_window_state_result(&window, include_screenshot))
             }
             "activate_window" => activate_window(params, &windows),
             "move_pointer" => move_pointer(params, &windows),
@@ -348,6 +349,9 @@ fn wait_for_state(params: &Value) -> Result<Value> {
             return Ok(stale_target());
         };
         enrich_accessibility_text(&mut window);
+        let include_screenshot =
+            params.get("includeScreenshot").and_then(Value::as_bool) == Some(true);
+        capture_screenshot_if_requested(&mut window, include_screenshot);
         let state = macos_wait_for_state_result(Some(window), params);
         if state.get("status").and_then(Value::as_str) != Some("timeout") {
             return Ok(state);
@@ -544,6 +548,93 @@ fn global_pointer_fallback_enabled() -> bool {
         lume_value.as_deref(),
         open_computer_use_value.as_deref(),
     )
+}
+
+fn capture_screenshot_if_requested(window: &mut MacOSWindowInfo, include_screenshot: bool) {
+    if !include_screenshot {
+        return;
+    }
+    match capture_window_png_data_url(window) {
+        Ok(data_url) => window.screenshot_data_url = Some(data_url),
+        Err(error) => window.screenshot_error = Some(error.to_string()),
+    }
+}
+
+fn capture_window_png_data_url(window: &MacOSWindowInfo) -> Result<String> {
+    if window.window_id > c_uint::MAX as u64 {
+        return Err(anyhow!("window id is too large for CoreGraphics capture"));
+    }
+    if window.width <= 0.0 || window.height <= 0.0 {
+        return Err(anyhow!("window capture dimensions are empty"));
+    }
+
+    unsafe {
+        let bounds = CGRect {
+            origin: CGPoint {
+                x: window.x,
+                y: window.y,
+            },
+            size: CGSize {
+                width: window.width,
+                height: window.height,
+            },
+        };
+        let image = CGWindowListCreateImage(
+            bounds,
+            K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW,
+            window.window_id as c_uint,
+            K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING | K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION,
+        );
+        if image.is_null() {
+            return Err(anyhow!("window capture returned null"));
+        }
+        let result = cg_image_to_png_data_url(image);
+        CFRelease(image as CFTypeRef);
+        result
+    }
+}
+
+unsafe fn cg_image_to_png_data_url(image: CGImageRef) -> Result<String> {
+    let data = CFDataCreateMutable(ptr::null(), 0);
+    if data.is_null() {
+        return Err(anyhow!("unable to create PNG buffer"));
+    }
+    let result = (|| {
+        let png_type = cf_string("public.png")?;
+        let destination = CGImageDestinationCreateWithData(data, png_type, 1, ptr::null());
+        CFRelease(png_type as CFTypeRef);
+        if destination.is_null() {
+            return Err(anyhow!("unable to create PNG encoder"));
+        }
+        CGImageDestinationAddImage(destination, image, ptr::null());
+        let finalized = CGImageDestinationFinalize(destination);
+        CFRelease(destination as CFTypeRef);
+        if !finalized {
+            return Err(anyhow!("unable to finalize PNG screenshot"));
+        }
+        let length = CFDataGetLength(data);
+        if length <= 0 {
+            return Err(anyhow!("PNG screenshot is empty"));
+        }
+        let bytes = CFDataGetBytePtr(data);
+        if bytes.is_null() {
+            return Err(anyhow!("PNG screenshot buffer is unavailable"));
+        }
+        let png = slice::from_raw_parts(bytes, length as usize);
+        Ok(format!("data:image/png;base64,{}", BASE64.encode(png)))
+    })();
+    CFRelease(data as CFTypeRef);
+    result
+}
+
+unsafe fn cf_string(value: &str) -> Result<CFStringRef> {
+    let c_string = CString::new(value)?;
+    let string_ref =
+        CFStringCreateWithCString(ptr::null(), c_string.as_ptr(), K_CF_STRING_ENCODING_UTF8);
+    if string_ref.is_null() {
+        return Err(anyhow!("unable to create CoreFoundation string"));
+    }
+    Ok(string_ref)
 }
 
 fn cg_point(x: i64, y: i64) -> CGPoint {
@@ -1000,6 +1091,8 @@ fn system_windows() -> Result<Vec<MacOSWindowInfo>> {
                 is_focused: false,
                 document_text: None,
                 selected_text: None,
+                screenshot_data_url: None,
+                screenshot_error: None,
                 elements: vec![],
             };
             if !focused_assigned && is_focus_candidate(&window) {
@@ -1113,10 +1206,14 @@ type CFNumberRef = *const c_void;
 type CFBooleanRef = *const c_void;
 type CFArrayRef = *const c_void;
 type CFDictionaryRef = *const c_void;
+type CFMutableDataRef = *const c_void;
+type CFDataRef = *const c_void;
 type CFIndex = c_long;
 type CFTypeID = c_ulong;
 type AXUIElementRef = *const c_void;
 type AXValueRef = *const c_void;
+type CGImageRef = *const c_void;
+type CGImageDestinationRef = *const c_void;
 type CGEventRef = *const c_void;
 type CGEventSourceRef = *const c_void;
 
@@ -1134,11 +1231,21 @@ struct CGSize {
     height: c_double,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CGRect {
+    origin: CGPoint,
+    size: CGSize,
+}
+
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 const K_CF_NUMBER_SINT64_TYPE: c_int = 4;
 const K_CF_NUMBER_DOUBLE_TYPE: c_int = 13;
 const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: c_uint = 1;
+const K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW: c_uint = 8;
 const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: c_uint = 16;
+const K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING: c_uint = 1;
+const K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION: c_uint = 16;
 const K_CG_HID_EVENT_TAP: c_uint = 0;
 const K_CG_EVENT_LEFT_MOUSE_DOWN: c_uint = 1;
 const K_CG_EVENT_LEFT_MOUSE_UP: c_uint = 2;
@@ -1172,6 +1279,12 @@ extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
     fn CGRequestScreenCaptureAccess() -> bool;
     fn CGWindowListCopyWindowInfo(option: c_uint, relative_to_window: c_uint) -> CFArrayRef;
+    fn CGWindowListCreateImage(
+        screen_bounds: CGRect,
+        list_option: c_uint,
+        window_id: c_uint,
+        image_option: c_uint,
+    ) -> CGImageRef;
     fn CGWarpMouseCursorPosition(new_cursor_position: CGPoint) -> c_int;
     fn CGEventCreateMouseEvent(
         source: CGEventSourceRef,
@@ -1201,6 +1314,22 @@ extern "C" {
     fn CGEventPostToPid(pid: c_int, event: CGEventRef);
 }
 
+#[link(name = "ImageIO", kind = "framework")]
+extern "C" {
+    fn CGImageDestinationCreateWithData(
+        data: CFMutableDataRef,
+        type_identifier: CFStringRef,
+        count: c_ulong,
+        options: CFDictionaryRef,
+    ) -> CGImageDestinationRef;
+    fn CGImageDestinationAddImage(
+        destination: CGImageDestinationRef,
+        image: CGImageRef,
+        properties: CFDictionaryRef,
+    );
+    fn CGImageDestinationFinalize(destination: CGImageDestinationRef) -> bool;
+}
+
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
@@ -1225,6 +1354,9 @@ extern "C" {
         key_callbacks: *const c_void,
         value_callbacks: *const c_void,
     ) -> CFDictionaryRef;
+    fn CFDataCreateMutable(allocator: CFTypeRef, capacity: CFIndex) -> CFMutableDataRef;
+    fn CFDataGetLength(data: CFDataRef) -> CFIndex;
+    fn CFDataGetBytePtr(data: CFDataRef) -> *const u8;
     fn CFStringCreateWithCString(
         alloc: CFTypeRef,
         c_str: *const c_char,

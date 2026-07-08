@@ -23,6 +23,8 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             is_focused: true,
             document_text: None,
             selected_text: None,
+            screenshot_data_url: None,
+            screenshot_error: None,
             elements: vec![],
         },
         MacOSWindowInfo {
@@ -39,6 +41,8 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             is_focused: false,
             document_text: None,
             selected_text: None,
+            screenshot_data_url: None,
+            screenshot_error: None,
             elements: vec![],
         },
         MacOSWindowInfo {
@@ -55,6 +59,8 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             is_focused: false,
             document_text: None,
             selected_text: None,
+            screenshot_data_url: None,
+            screenshot_error: None,
             elements: vec![],
         },
     ]
@@ -140,6 +146,41 @@ fn maps_window_state_with_stable_revision_and_accessibility_fallback() {
     assert_eq!(result["accessibility"]["documentText"], "周报.rtf");
     assert_eq!(result["screenshots"][0]["mimeType"], "image/png");
     assert!(result["screenshots"][0].get("dataUrl").is_none());
+}
+
+#[test]
+fn includes_macos_screenshot_pixels_only_when_requested() {
+    let mut window = sample_windows()[0].clone();
+    window.screenshot_data_url = Some("data:image/png;base64,iVBORw0KGgo=".into());
+
+    let without_pixels = macos_get_window_state_result(&window, false);
+    let with_pixels = macos_get_window_state_result(&window, true);
+    let context = macos_current_context_result(&window, true);
+
+    assert!(without_pixels["screenshots"][0].get("dataUrl").is_none());
+    assert_eq!(
+        with_pixels["screenshots"][0]["dataUrl"],
+        "data:image/png;base64,iVBORw0KGgo="
+    );
+    assert_eq!(
+        context["snapshot"]["screenshots"][0]["dataUrl"],
+        "data:image/png;base64,iVBORw0KGgo="
+    );
+}
+
+#[test]
+fn includes_macos_screenshot_error_only_when_pixels_are_requested() {
+    let mut window = sample_windows()[0].clone();
+    window.screenshot_error = Some("window capture returned null".into());
+
+    let without_pixels = macos_get_window_state_result(&window, false);
+    let with_pixels = macos_get_window_state_result(&window, true);
+
+    assert!(without_pixels["screenshots"][0].get("error").is_none());
+    assert_eq!(
+        with_pixels["screenshots"][0]["error"],
+        "window capture returned null"
+    );
 }
 
 #[test]
