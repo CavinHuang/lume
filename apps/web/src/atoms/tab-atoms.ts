@@ -28,3 +28,11 @@ export const sidebarCollapsedAtom = atomWithStorage('sidebar-collapsed', false)
 export const welcomePromptSeedAtom = atom<string | null>(null)
 export const settingsInitialTabAtom = atom<string | null>(null)
 export const archiveInitialViewAtom = atom<'archive' | 'trash' | null>(null)
+
+export function setTabDesktopContextTarget(tabs: Tab[], tabId: string, target: DesktopContextTarget): Tab[] {
+  return tabs.map((tab) => (
+    tab.id === tabId
+      ? { ...tab, desktopContextTarget: target }
+      : tab
+  ))
+}

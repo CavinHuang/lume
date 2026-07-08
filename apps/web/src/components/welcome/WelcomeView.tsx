@@ -278,7 +278,14 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
       setTabs((prev) => {
         const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
         return [
-          { id: meta.id, type: 'agent' as const, title: meta.title, threadId: meta.id, workspaceId: meta.workspaceId },
+          {
+            id: meta.id,
+            type: 'agent' as const,
+            title: meta.title,
+            threadId: meta.id,
+            workspaceId: meta.workspaceId,
+            ...(selectedDesktopContextTarget ? { desktopContextTarget: selectedDesktopContextTarget } : {}),
+          },
           ...withoutWelcome,
         ]
       })

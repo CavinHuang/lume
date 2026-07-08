@@ -5,6 +5,7 @@ import {
   captureAgentInputDesktopContextTarget,
   createDesktopContextMessageMetadata,
   resolveAgentInputDesktopContextView,
+  resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
 
 describe('agent-input desktop context helpers', () => {
@@ -185,6 +186,42 @@ describe('agent-input desktop context helpers', () => {
       desktopContextSnapshotId: 'snap-current',
       desktopApp: { id: 'wechat.exe', name: '微信' },
       desktopWindow: { id: 'win:1', title: '项目群' },
+    })
+  })
+
+  test('uses a parent desktop context target as persistent message metadata', () => {
+    expect(resolveAgentInputDesktopMessageMetadata({
+      propTarget: {
+        snapshotId: 'snap-pinned',
+        app: { id: 'word.exe', name: 'Word' },
+        window: { id: 'win:word', title: '周报.docx' },
+      },
+      localTarget: undefined,
+      messageMetadata: { source: 'manual' },
+    })).toEqual({
+      source: 'manual',
+      desktopContextSnapshotId: 'snap-pinned',
+      desktopApp: { id: 'word.exe', name: 'Word' },
+      desktopWindow: { id: 'win:word', title: '周报.docx' },
+    })
+  })
+
+  test('prefers the latest locally selected desktop context over the parent target', () => {
+    expect(resolveAgentInputDesktopMessageMetadata({
+      propTarget: {
+        snapshotId: 'snap-old',
+        app: { id: 'wechat.exe', name: '微信' },
+        window: { id: 'win:wechat', title: '项目群' },
+      },
+      localTarget: {
+        snapshotId: 'snap-new',
+        app: { id: 'word.exe', name: 'Word' },
+        window: { id: 'win:word', title: '周报.docx' },
+      },
+    })).toEqual({
+      desktopContextSnapshotId: 'snap-new',
+      desktopApp: { id: 'word.exe', name: 'Word' },
+      desktopWindow: { id: 'win:word', title: '周报.docx' },
     })
   })
 

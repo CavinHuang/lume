@@ -558,6 +558,12 @@ describe('WelcomeView', () => {
           desktopWindow: { id: 'window:notepad', title: '周报.txt - Notepad' },
         },
       }))
+      expect(store.get(tabsAtom).find((tab) => tab.id === 'created-thread')?.desktopContextTarget).toEqual({
+        snapshotId: 'snapshot:notepad',
+        app: { id: 'notepad.exe', name: 'Notepad' },
+        window: { id: 'window:notepad', title: '周报.txt - Notepad' },
+        capturedAt: expect.any(Number),
+      })
     } finally {
       if (root) {
         await act(async () => {

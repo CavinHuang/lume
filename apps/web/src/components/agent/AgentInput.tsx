@@ -85,8 +85,8 @@ import { DesktopContextPlusItem } from './DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
 import {
   captureAgentInputDesktopContextState,
-  createDesktopContextMessageMetadata,
   resolveAgentInputDesktopContextView,
+  resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
 import { resolveOpenDesktopAssistantSettingsState } from './agent-input-desktop-settings'
 
@@ -298,16 +298,11 @@ export function AgentInput({
   })
   const availableDesktopContextTarget = desktopContextView.plusPanelTarget
   const selectedDesktopContextTarget = desktopContextView.selectedTarget
-  const effectiveMessageMetadata = useMemo(() => {
-    const localMetadata = localDesktopContextTarget
-      ? createDesktopContextMessageMetadata(localDesktopContextTarget)
-      : undefined
-    const merged = {
-      ...(messageMetadata ?? {}),
-      ...(localMetadata ?? {}),
-    }
-    return Object.keys(merged).length > 0 ? merged : undefined
-  }, [localDesktopContextTarget, messageMetadata])
+  const effectiveMessageMetadata = useMemo(() => resolveAgentInputDesktopMessageMetadata({
+    propTarget: desktopContextTarget,
+    localTarget: localDesktopContextTarget,
+    messageMetadata,
+  }), [desktopContextTarget, localDesktopContextTarget, messageMetadata])
 
   const saveDraft = useCallback((json: AgentInputDraftJSON | undefined) => {
     setDraftState((prev) =>

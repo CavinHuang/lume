@@ -59,6 +59,20 @@ export function createDesktopContextMessageMetadata(target: DesktopContextTarget
   }
 }
 
+export function resolveAgentInputDesktopMessageMetadata(input: {
+  propTarget?: DesktopContextTarget
+  localTarget?: DesktopContextTarget
+  messageMetadata?: Record<string, unknown>
+}): Record<string, unknown> | undefined {
+  const target = input.localTarget ?? input.propTarget
+  const targetMetadata = target ? createDesktopContextMessageMetadata(target) : undefined
+  const merged = {
+    ...(input.messageMetadata ?? {}),
+    ...(targetMetadata ?? {}),
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined
+}
+
 export function resolveAgentInputDesktopContextView(input: {
   propTarget?: DesktopContextTarget
   capturedTarget?: DesktopContextTarget
