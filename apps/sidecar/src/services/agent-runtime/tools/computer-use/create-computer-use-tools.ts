@@ -372,7 +372,10 @@ function pathFromArgs(args: Record<string, unknown>): Array<{ x: number; y: numb
   const fromY = typeof args.fromY === "number" ? args.fromY : undefined;
   const toX = typeof args.toX === "number" ? args.toX : undefined;
   const toY = typeof args.toY === "number" ? args.toY : undefined;
-  if (fromX === undefined || fromY === undefined || toX === undefined || toY === undefined) return undefined;
+  if (fromX === undefined || fromY === undefined || toX === undefined || toY === undefined) {
+    const point = pointFromArgs(args);
+    return point ? [{ x: point.x - 72, y: point.y - 48 }, point] : undefined;
+  }
   return [
     { x: fromX, y: fromY },
     { x: toX, y: toY },

@@ -648,8 +648,8 @@ describe("createComputerUseMcpTools", () => {
     expect(JSON.stringify(visualEvents)).not.toContain("password=secret");
   });
 
-  test("derives visual cursor points from element bounds before element actions", async () => {
-    const visualEvents: Array<{ phase: string; point?: { x: number; y: number } }> = [];
+  test("derives visual cursor points and paths from element bounds before element actions", async () => {
+    const visualEvents: Array<{ phase: string; point?: { x: number; y: number }; path?: Array<{ x: number; y: number }> }> = [];
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const tools = createComputerUseMcpTools({
       threadId: "thread-element-visual",
@@ -701,10 +701,18 @@ describe("createComputerUseMcpTools", () => {
     expect(visualEvents[0]).toMatchObject({
       phase: "started",
       point: { x: 130, y: 220 },
+      path: [
+        { x: 58, y: 172 },
+        { x: 130, y: 220 },
+      ],
     });
     expect(visualEvents[1]).toMatchObject({
       phase: "completed",
       point: { x: 130, y: 220 },
+      path: [
+        { x: 58, y: 172 },
+        { x: 130, y: 220 },
+      ],
     });
   });
 
