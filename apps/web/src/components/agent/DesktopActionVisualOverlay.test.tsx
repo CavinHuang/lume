@@ -29,6 +29,8 @@ describe('DesktopActionVisualOverlayFrame', () => {
     expect(html).toContain('代理鼠标')
     expect(html).toContain('data-desktop-action-trail="true"')
     expect(html).toContain('data-desktop-action-cursor="true"')
+    expect(html).toContain('data-desktop-action-cursor-artwork="open-codex-computer-use"')
+    expect(html).toContain('official-software-cursor-window-252.png')
     expect(html).toContain('data-phase="started"')
     expect(html).not.toContain('password=secret')
   })

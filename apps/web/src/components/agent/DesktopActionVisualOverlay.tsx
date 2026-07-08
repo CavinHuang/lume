@@ -4,6 +4,11 @@ import { desktopActionVisualAtom } from '@/atoms'
 import type { DesktopActionKind } from '@lume/shared'
 import type { DesktopActionVisualOverlayState } from '@/hooks/desktop-action-visual-state'
 
+const OFFICIAL_CURSOR_ARTWORK_URL = new URL(
+  '../../../../../crates/lume-desktop-host/assets/official-software-cursor-window-252.png',
+  import.meta.url,
+).href
+
 const ACTION_LABELS: Record<DesktopActionKind, string> = {
   launch_app: '启动应用',
   activate_window: '切换窗口',
@@ -81,10 +86,13 @@ export function DesktopActionVisualOverlayFrame({
               <path d={trail.pathD} fill="none" stroke="rgba(190,255,234,0.35)" strokeWidth="5" strokeLinecap="round" />
               <path d={trail.pathD} fill="none" stroke="#baffed" strokeWidth="2" strokeLinecap="round" strokeDasharray="4 5" />
             </svg>
-            <MousePointer2
+            <img
               data-desktop-action-cursor="true"
-              size={17}
-              className="absolute text-[#d7fff4] drop-shadow-[0_0_10px_rgba(186,255,237,0.75)]"
+              data-desktop-action-cursor-artwork="open-codex-computer-use"
+              src={OFFICIAL_CURSOR_ARTWORK_URL}
+              alt=""
+              draggable={false}
+              className="absolute size-7 select-none drop-shadow-[0_0_10px_rgba(186,255,237,0.75)]"
               style={{ left: `${trail.cursor.x}px`, top: `${trail.cursor.y}px` }}
             />
           </span>
