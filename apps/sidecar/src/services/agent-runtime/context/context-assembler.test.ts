@@ -56,6 +56,7 @@ describe("ContextAssembler", () => {
     });
 
     expect(result.systemPrompt).toContain("Use the attached desktop_context as the starting app/window");
+    expect(result.systemPrompt).toContain("If desktop_context.snapshot.selectedText is present");
     expect(result.systemPrompt).toContain("mcp__computer_use__current_context with desktop_context.snapshot.id");
     expect(result.systemPrompt).toContain("refresh true");
     expect(result.systemPrompt).toContain("mcp__computer_use__get_window_state");
