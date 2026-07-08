@@ -219,12 +219,26 @@ export function GeneralSettings() {
         <SettingsCard title="窗口行为">
           <div className="divide-y divide-[color:color-mix(in_oklab,var(--border)_64%,transparent)]">
             <SettingsRow
+              label="显示托盘"
+              desc="在系统菜单栏/任务栏显示 Lume 图标（关闭后重启应用生效）"
+            >
+              <LumeSwitch
+                checked={settings.windowBehavior.showTray}
+                disabled={saving}
+                onCheckedChange={(checked) => void persistSettings({
+                  windowBehavior: {
+                    showTray: checked,
+                  },
+                }, '窗口行为已保存')}
+              />
+            </SettingsRow>
+            <SettingsRow
               label="最小化到托盘"
               desc="点击最小化时保留后台运行"
             >
               <LumeSwitch
                 checked={settings.windowBehavior.minimizeToTray}
-                disabled={saving}
+                disabled={saving || !settings.windowBehavior.showTray}
                 onCheckedChange={(checked) => void persistSettings({
                   windowBehavior: {
                     minimizeToTray: checked,
@@ -238,7 +252,7 @@ export function GeneralSettings() {
             >
               <LumeSwitch
                 checked={settings.windowBehavior.closeToTray}
-                disabled={saving}
+                disabled={saving || !settings.windowBehavior.showTray}
                 onCheckedChange={(checked) => void persistSettings({
                   windowBehavior: {
                     closeToTray: checked,
