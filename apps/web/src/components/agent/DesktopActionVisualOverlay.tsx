@@ -39,6 +39,7 @@ export function DesktopActionVisualOverlayFrame({
   const iconClassName = failed
     ? 'bg-red-100 text-red-700 shadow-[0_0_24px_rgba(255,127,127,0.26)]'
     : 'bg-[#caffec] text-[#0d574c] shadow-[0_0_24px_rgba(127,255,218,0.34)]'
+  const trail = buildTrail(state.path)
 
   return (
     <div
@@ -70,6 +71,24 @@ export function DesktopActionVisualOverlayFrame({
             ) : null}
           </span>
         </span>
+        {trail ? (
+          <span
+            data-desktop-action-trail="true"
+            className="relative h-12 w-20 shrink-0 overflow-hidden rounded-[14px] border border-[#bfffea]/20 bg-black/25"
+            aria-hidden="true"
+          >
+            <svg className="absolute inset-0 size-full" viewBox="0 0 80 48" role="presentation">
+              <path d={trail.pathD} fill="none" stroke="rgba(190,255,234,0.35)" strokeWidth="5" strokeLinecap="round" />
+              <path d={trail.pathD} fill="none" stroke="#baffed" strokeWidth="2" strokeLinecap="round" strokeDasharray="4 5" />
+            </svg>
+            <MousePointer2
+              data-desktop-action-cursor="true"
+              size={17}
+              className="absolute text-[#d7fff4] drop-shadow-[0_0_10px_rgba(186,255,237,0.75)]"
+              style={{ left: `${trail.cursor.x}px`, top: `${trail.cursor.y}px` }}
+            />
+          </span>
+        ) : null}
         <span className="relative flex shrink-0 items-center gap-1.5 rounded-full border border-[#bfffea]/25 bg-black/20 px-2.5 py-1.5 text-[10px] font-medium text-[#d7fff4]">
           <MousePointer2 size={14} className={state.phase === 'started' ? 'animate-pulse' : ''} />
           <span>代理鼠标</span>
@@ -78,4 +97,23 @@ export function DesktopActionVisualOverlayFrame({
       </div>
     </div>
   )
+}
+
+function buildTrail(path: DesktopActionVisualOverlayState['path']): { pathD: string; cursor: { x: number; y: number } } | undefined {
+  if (!path || path.length < 2) return undefined
+  const xs = path.map((point) => point.x)
+  const ys = path.map((point) => point.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const width = Math.max(1, maxX - minX)
+  const height = Math.max(1, maxY - minY)
+  const points = path.map((point) => ({
+    x: 10 + ((point.x - minX) / width) * 56,
+    y: 8 + ((point.y - minY) / height) * 30,
+  }))
+  const pathD = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ')
+  const cursor = points[points.length - 1]
+  return { pathD, cursor: { x: cursor.x - 2, y: cursor.y - 2 } }
 }

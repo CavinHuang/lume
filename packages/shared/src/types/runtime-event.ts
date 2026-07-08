@@ -152,6 +152,10 @@ export interface DesktopActionVisualRuntimeEvent extends RuntimeEventBase {
     x: number;
     y: number;
   };
+  path?: Array<{
+    x: number;
+    y: number;
+  }>;
   status?: DesktopActionStatus;
 }
 

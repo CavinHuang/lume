@@ -338,6 +338,7 @@ function emitDesktopActionVisualEvent(
   const appName = stringValue(event.args.appName) ?? appId;
   const targetLabel = stringValue(event.args.targetLabel) ?? stringValue(event.args.label);
   const point = pointFromArgs(event.args);
+  const path = pathFromArgs(event.args);
   const toolCallId = event.toolUseId ?? `${event.action}:${randomUUID()}`;
   try {
     input.emitDesktopActionVisualEvent({
@@ -352,6 +353,7 @@ function emitDesktopActionVisualEvent(
       app: { id: appId, name: appName },
       ...(targetLabel ? { targetLabel } : {}),
       ...(point ? { point } : {}),
+      ...(path ? { path } : {}),
       ...(event.status ? { status: event.status } : {}),
     });
   } catch {
@@ -363,6 +365,18 @@ function pointFromArgs(args: Record<string, unknown>): { x: number; y: number } 
   const x = typeof args.x === "number" ? args.x : typeof args.toX === "number" ? args.toX : undefined;
   const y = typeof args.y === "number" ? args.y : typeof args.toY === "number" ? args.toY : undefined;
   return x === undefined || y === undefined ? undefined : { x, y };
+}
+
+function pathFromArgs(args: Record<string, unknown>): Array<{ x: number; y: number }> | undefined {
+  const fromX = typeof args.fromX === "number" ? args.fromX : undefined;
+  const fromY = typeof args.fromY === "number" ? args.fromY : undefined;
+  const toX = typeof args.toX === "number" ? args.toX : undefined;
+  const toY = typeof args.toY === "number" ? args.toY : undefined;
+  if (fromX === undefined || fromY === undefined || toX === undefined || toY === undefined) return undefined;
+  return [
+    { x: fromX, y: fromY },
+    { x: toX, y: toY },
+  ];
 }
 
 function resultStatus(value: unknown): DesktopActionStatus | undefined {

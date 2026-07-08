@@ -15,6 +15,11 @@ describe('projectDesktopActionVisualEvent', () => {
       app: { id: 'wechat.exe', name: '微信' },
       targetLabel: '输入框',
       point: { x: 420, y: 360 },
+      path: [
+        { x: 120, y: 160 },
+        { x: 420, y: 360 },
+        { x: Number.NaN, y: 999 },
+      ],
       text: 'password=secret',
     } as never)
 
@@ -26,6 +31,10 @@ describe('projectDesktopActionVisualEvent', () => {
       appName: '微信',
       targetLabel: '输入框',
       point: { x: 420, y: 360 },
+      path: [
+        { x: 120, y: 160 },
+        { x: 420, y: 360 },
+      ],
       updatedAt: Date.parse('2026-07-07T10:00:00.000Z'),
     })
     expect(JSON.stringify(state)).not.toContain('password=secret')

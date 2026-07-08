@@ -708,6 +708,38 @@ describe("createComputerUseMcpTools", () => {
     });
   });
 
+  test("emits visual cursor paths for pointer movement actions", async () => {
+    const visualEvents: Array<{ phase: string; point?: { x: number; y: number }; path?: Array<{ x: number; y: number }> }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-path-visual",
+      runId: "run-path-visual",
+      emitDesktopActionVisualEvent: (event) => visualEvents.push(event),
+      invoke: async () => ({ status: "ok" }),
+    });
+    const drag = tools.find((tool) => tool.name === "mcp__computer_use__drag")!;
+
+    await drag.call(
+      { appId: "wechat.exe", appName: "微信", windowId: "win-1", fromX: 100, fromY: 120, toX: 420, toY: 360 },
+      { toolUseId: "tool-path-visual" } as never,
+    );
+
+    expect(visualEvents[0]).toMatchObject({
+      phase: "started",
+      point: { x: 420, y: 360 },
+      path: [
+        { x: 100, y: 120 },
+        { x: 420, y: 360 },
+      ],
+    });
+    expect(visualEvents[1]).toMatchObject({
+      phase: "completed",
+      path: [
+        { x: 100, y: 120 },
+        { x: 420, y: 360 },
+      ],
+    });
+  });
+
   test("adds a lightweight post-action verification for successful window-scoped actions", async () => {
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const tools = createComputerUseMcpTools({

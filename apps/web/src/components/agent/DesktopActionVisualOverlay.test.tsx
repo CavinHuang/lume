@@ -14,6 +14,10 @@ describe('DesktopActionVisualOverlayFrame', () => {
           appName: '微信',
           targetLabel: '输入框',
           point: { x: 420, y: 360 },
+          path: [
+            { x: 120, y: 160 },
+            { x: 420, y: 360 },
+          ],
           updatedAt: 1,
         }}
       />,
@@ -23,6 +27,8 @@ describe('DesktopActionVisualOverlayFrame', () => {
     expect(html).toContain('微信')
     expect(html).toContain('输入框')
     expect(html).toContain('代理鼠标')
+    expect(html).toContain('data-desktop-action-trail="true"')
+    expect(html).toContain('data-desktop-action-cursor="true"')
     expect(html).toContain('data-phase="started"')
     expect(html).not.toContain('password=secret')
   })
