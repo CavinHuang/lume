@@ -4,6 +4,7 @@ export const SIDECAR_BUNDLE_NAME = 'index.mjs'
 export const NATIVE_BINARY_NAME = 'lume-natives.node'
 export const NODE_REPL_BINARY_NAME = 'node_repl'
 export const DESKTOP_HOST_BINARY_NAME = 'lume_desktop_host'
+export const DESKTOP_HOST_MAC_APP_NAME = 'Lume Computer Use.app'
 
 export function getSidecarScriptPath({ appIsPackaged, resourcesPath, desktopRoot }) {
   if (appIsPackaged) {
@@ -69,10 +70,32 @@ export function getDesktopHostBinaryPath({
   const root = appIsPackaged
     ? join(resourcesPath, 'desktop-host')
     : resolve(desktopRoot, 'resources', 'desktop-host')
+  if (platform === 'darwin') {
+    return join(root, targetId, DESKTOP_HOST_MAC_APP_NAME, 'Contents', 'MacOS', fileName)
+  }
   return join(root, targetId, fileName)
 }
 
-export function createDesktopHostSpawnConfig({ binaryPath, endpoint, sessionToken, env = {} }) {
+export function createDesktopHostSpawnConfig({ binaryPath, endpoint, sessionToken, env = {}, platform = process.platform }) {
+  if (platform === 'darwin') {
+    return {
+      command: '/usr/bin/open',
+      args: [
+        '-n',
+        '-W',
+        '-g',
+        desktopHostMacAppPathFromExecutable(binaryPath),
+        '--args',
+        '--endpoint',
+        endpoint,
+      ],
+      options: {
+        env: { ...env, LUME_DESKTOP_HOST_TOKEN: sessionToken },
+        stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    }
+  }
   return {
     command: binaryPath,
     args: ['--endpoint', endpoint],
@@ -82,6 +105,10 @@ export function createDesktopHostSpawnConfig({ binaryPath, endpoint, sessionToke
       windowsHide: true,
     },
   }
+}
+
+function desktopHostMacAppPathFromExecutable(binaryPath: string): string {
+  return dirname(dirname(dirname(binaryPath)))
 }
 
 export function createUtilityProcessSidecarForkConfig({ sidecarScriptPath, env }) {

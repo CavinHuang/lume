@@ -107,6 +107,7 @@ export function createDesktopHostSupervisor({
         endpoint,
         sessionToken,
         env: baseEnv,
+        platform,
       })
       activeConnection = { available: true, endpoint, token: sessionToken }
       spawnHost()

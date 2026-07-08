@@ -131,7 +131,7 @@ test('getDesktopHostBinaryPath resolves target-specific packaged and dev binarie
       platform: 'darwin',
       arch: 'arm64',
     }),
-    resolve('D:/repo/apps/desktop', 'resources', 'desktop-host', 'darwin-arm64', 'lume_desktop_host'),
+    resolve('D:/repo/apps/desktop', 'resources', 'desktop-host', 'darwin-arm64', 'Lume Computer Use.app', 'Contents', 'MacOS', 'lume_desktop_host'),
   )
 })
 
@@ -145,6 +145,34 @@ test('createDesktopHostSpawnConfig passes endpoint and session token without she
     {
       command: 'C:/Lume/lume_desktop_host.exe',
       args: ['--endpoint', '\\\\.\\pipe\\lume-desktop-123'],
+      options: {
+        env: { LUME_DESKTOP_HOST_TOKEN: 'secret-token' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    },
+  )
+})
+
+test('createDesktopHostSpawnConfig launches macOS desktop host through its app bundle', () => {
+  assert.deepEqual(
+    createDesktopHostSpawnConfig({
+      binaryPath: '/Applications/Lume.app/Contents/Resources/desktop-host/darwin-arm64/Lume Computer Use.app/Contents/MacOS/lume_desktop_host',
+      endpoint: '/tmp/lume-desktop.sock',
+      sessionToken: 'secret-token',
+      platform: 'darwin',
+    }),
+    {
+      command: '/usr/bin/open',
+      args: [
+        '-n',
+        '-W',
+        '-g',
+        '/Applications/Lume.app/Contents/Resources/desktop-host/darwin-arm64/Lume Computer Use.app',
+        '--args',
+        '--endpoint',
+        '/tmp/lume-desktop.sock',
+      ],
       options: {
         env: { LUME_DESKTOP_HOST_TOKEN: 'secret-token' },
         stdio: ['ignore', 'pipe', 'pipe'],

@@ -85,6 +85,16 @@ test('desktop-host resource build ships the cursor reference license notice', ()
   assert.match(script, /LICENSE\.open-codex-computer-use/)
 })
 
+test('desktop-host resource build packages macOS as a separate computer-use app bundle', () => {
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+
+  assert.match(script, /Lume Computer Use\.app/)
+  assert.match(script, /com\.lume\.computer-use/)
+  assert.match(script, /LSUIElement/)
+  assert.match(script, /CFBundleExecutable/)
+  assert.match(script, /codesign/)
+})
+
 test('node-repl resource build clears generated output before writing resources', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-node-repl-resources.mjs'), 'utf8')
 
