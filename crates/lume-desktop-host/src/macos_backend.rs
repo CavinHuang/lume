@@ -3,7 +3,7 @@ use crate::{
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
         macos_get_window_result, macos_get_window_state_result, macos_list_apps_result,
-        macos_list_windows_result, MacOSElementInfo, MacOSWindowInfo,
+        macos_list_windows_result, macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
     },
     DesktopBackend,
 };
@@ -13,7 +13,8 @@ use std::{
     ffi::{CStr, CString},
     os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_void},
     process::Command,
-    ptr,
+    ptr, thread,
+    time::{Duration, Instant},
 };
 
 pub struct MacOSDesktopBackend;
@@ -37,6 +38,9 @@ impl DesktopBackend for MacOSDesktopBackend {
                 Some(permissions.screen_recording),
                 Some("macOS desktop control requires Accessibility and Screen Recording permissions for Lume Computer Use.app".to_owned()),
             ));
+        }
+        if method == "wait_for_state" {
+            return wait_for_state(params);
         }
         let windows = system_windows()?;
         match method {
@@ -82,6 +86,34 @@ impl DesktopBackend for MacOSDesktopBackend {
                 "message": format!("desktop method is not implemented on macOS yet: {method}")
             })),
         }
+    }
+}
+
+fn wait_for_state(params: &Value) -> Result<Value> {
+    let timeout_ms = params
+        .get("timeoutMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(5_000)
+        .min(30_000);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        let windows = system_windows()?;
+        let window = match params.get("windowId").and_then(Value::as_str) {
+            Some(window_id) => find_macos_window(&windows, window_id),
+            None => first_visible_user_window(&windows),
+        };
+        let Some(mut window) = window else {
+            return Ok(stale_target());
+        };
+        enrich_accessibility_text(&mut window);
+        let state = macos_wait_for_state_result(Some(window), params);
+        if state.get("status").and_then(Value::as_str) != Some("timeout") {
+            return Ok(state);
+        }
+        if Instant::now() >= deadline {
+            return Ok(state);
+        }
+        thread::sleep(Duration::from_millis(100));
     }
 }
 

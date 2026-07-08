@@ -115,6 +115,23 @@ pub fn macos_get_window_state_result(window: &MacOSWindowInfo, include_screensho
     })
 }
 
+pub fn macos_wait_for_state_result(window: Option<MacOSWindowInfo>, params: &Value) -> Value {
+    let Some(window) = window else {
+        return stale_target();
+    };
+    let state = macos_get_window_state_result(
+        &window,
+        params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
+    );
+    if macos_state_matches(&state, params) {
+        return state;
+    }
+    json!({
+        "status": "timeout",
+        "message": "desktop window state did not match before timeout"
+    })
+}
+
 pub fn first_visible_user_window(windows: &[MacOSWindowInfo]) -> Option<MacOSWindowInfo> {
     visible_user_windows(windows).into_iter().next().cloned()
 }
@@ -238,6 +255,32 @@ fn focused_element(elements: &[Value]) -> Option<Value> {
         }
     }
     None
+}
+
+fn macos_state_matches(state: &Value, params: &Value) -> bool {
+    if state.get("status").and_then(Value::as_str) != Some("ok") {
+        return false;
+    }
+    if let Some(title) = params.get("titleContains").and_then(Value::as_str) {
+        if !state["window"]["title"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(title)
+        {
+            return false;
+        }
+    }
+    if let Some(previous) = params.get("revisionNot").and_then(Value::as_str) {
+        if state.get("revision").and_then(Value::as_str) == Some(previous) {
+            return false;
+        }
+    }
+    if let Some(focused) = params.get("focused").and_then(Value::as_bool) {
+        if state["window"]["focused"].as_bool() != Some(focused) {
+            return false;
+        }
+    }
+    true
 }
 
 fn element_document_text(elements: &[MacOSElementInfo]) -> String {

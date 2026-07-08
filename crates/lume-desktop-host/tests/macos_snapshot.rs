@@ -1,7 +1,7 @@
 use lume_desktop_host::macos_snapshot::{
     find_macos_window, macos_current_context_result, macos_get_window_result,
     macos_get_window_state_result, macos_list_apps_result, macos_list_windows_result,
-    MacOSElementInfo, MacOSWindowInfo,
+    macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
 };
 use serde_json::json;
 
@@ -220,4 +220,55 @@ fn maps_accessibility_elements_to_stable_tree_nodes() {
     assert!(document_text.contains("聊天记录"));
     assert!(document_text.contains("A: 这个 PR 今天能发吗？"));
     assert!(!document_text.contains("secret-token"));
+}
+
+#[test]
+fn waits_for_matching_macos_window_state_predicates() {
+    let mut window = sample_windows()[0].clone();
+    window.document_text = Some("项目群\nA: 今天可以发版吗？".into());
+
+    let result = macos_wait_for_state_result(
+        Some(window),
+        &json!({
+            "titleContains": "发版",
+            "focused": true,
+            "revisionNot": "macos:42:old:10:20:900:700",
+            "includeScreenshot": false,
+        }),
+    );
+
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["window"]["id"], "macos:42");
+    assert_eq!(result["window"]["focused"], true);
+    assert_eq!(
+        result["accessibility"]["documentText"],
+        "项目群\nA: 今天可以发版吗？"
+    );
+    assert_ne!(result["revision"], "macos:42:old:10:20:900:700");
+}
+
+#[test]
+fn returns_timeout_when_macos_window_state_predicates_do_not_match() {
+    let result = macos_wait_for_state_result(
+        Some(sample_windows()[1].clone()),
+        &json!({
+            "titleContains": "项目群",
+            "focused": true,
+            "revisionNot": "macos:77:周报.rtf:200:80:640:480",
+        }),
+    );
+
+    assert_eq!(result["status"], "timeout");
+    assert_eq!(
+        result["message"],
+        "desktop window state did not match before timeout"
+    );
+}
+
+#[test]
+fn returns_stale_target_when_waiting_for_missing_macos_window() {
+    let result = macos_wait_for_state_result(None, &json!({ "titleContains": "项目群" }));
+
+    assert_eq!(result["status"], "stale_target");
+    assert_eq!(result["message"], "target window is unavailable");
 }
