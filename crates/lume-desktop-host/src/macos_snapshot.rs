@@ -16,6 +16,22 @@ pub struct MacOSWindowInfo {
     pub is_focused: bool,
     pub document_text: Option<String>,
     pub selected_text: Option<String>,
+    pub elements: Vec<MacOSElementInfo>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MacOSElementInfo {
+    pub role: String,
+    pub title: String,
+    pub value: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub enabled: bool,
+    pub focused: bool,
+    pub sensitive: bool,
+    pub children: Vec<MacOSElementInfo>,
 }
 
 pub fn macos_list_windows_result(windows: &[MacOSWindowInfo], app_filter: Option<&str>) -> Value {
@@ -72,6 +88,8 @@ pub fn macos_current_context_result(window: &MacOSWindowInfo, include_screenshot
 }
 
 pub fn macos_get_window_state_result(window: &MacOSWindowInfo, include_screenshot: bool) -> Value {
+    let tree = element_tree_json(&window.elements);
+    let focused = focused_element(&tree).unwrap_or(Value::Null);
     let visible_text = context_visible_text(window);
     json!({
         "status": "ok",
@@ -80,8 +98,8 @@ pub fn macos_get_window_state_result(window: &MacOSWindowInfo, include_screensho
         "capturedAt": now_millis(),
         "screenshots": [screenshot_ref(window, include_screenshot)],
         "accessibility": {
-            "tree": [],
-            "focusedElement": Value::Null,
+            "tree": tree,
+            "focusedElement": focused,
             "selectedText": normalized_optional_text(window.selected_text.as_deref()).unwrap_or_default(),
             "documentText": visible_text,
             "visibleText": visible_text,
@@ -151,10 +169,116 @@ fn context_visible_text(window: &MacOSWindowInfo) -> String {
     if let Some(text) = normalized_optional_text(window.document_text.as_deref()) {
         return text;
     }
+    let element_text = element_document_text(&window.elements);
+    if !element_text.is_empty() {
+        return element_text;
+    }
     if window.title.trim().is_empty() {
         window.owner_name.trim().to_owned()
     } else {
         window.title.trim().to_owned()
+    }
+}
+
+fn element_tree_json(elements: &[MacOSElementInfo]) -> Vec<Value> {
+    elements
+        .iter()
+        .enumerate()
+        .map(|(index, element)| element_json(element, &format!("root.{index}")))
+        .collect()
+}
+
+fn element_json(element: &MacOSElementInfo, id: &str) -> Value {
+    let mut value = json!({
+        "id": id,
+        "role": normalize_role(&element.role),
+        "name": element_name(element),
+        "bounds": {
+            "x": rounded(element.x),
+            "y": rounded(element.y),
+            "width": rounded(element.width),
+            "height": rounded(element.height),
+        },
+        "enabled": element.enabled,
+        "focused": element.focused,
+    });
+    if element.sensitive {
+        value["sensitive"] = Value::Bool(true);
+    } else if let Some(text) = normalized_optional_text(Some(&element.value)) {
+        value["value"] = Value::String(text);
+    }
+    let children = element
+        .children
+        .iter()
+        .enumerate()
+        .map(|(index, child)| element_json(child, &format!("{id}.{index}")))
+        .collect::<Vec<_>>();
+    if !children.is_empty() {
+        value["children"] = Value::Array(children);
+    }
+    value
+}
+
+fn focused_element(elements: &[Value]) -> Option<Value> {
+    for element in elements {
+        if element.get("focused").and_then(Value::as_bool) == Some(true) {
+            return Some(element.clone());
+        }
+        if let Some(children) = element.get("children").and_then(Value::as_array) {
+            if let Some(focused) = focused_element(children) {
+                return Some(focused);
+            }
+        }
+    }
+    None
+}
+
+fn element_document_text(elements: &[MacOSElementInfo]) -> String {
+    let mut lines = Vec::<String>::new();
+    collect_element_text(elements, &mut lines);
+    lines.join("\n")
+}
+
+fn collect_element_text(elements: &[MacOSElementInfo], lines: &mut Vec<String>) {
+    for element in elements {
+        if !element.sensitive {
+            for value in [element.title.as_str(), element.value.as_str()] {
+                if let Some(text) = normalized_optional_text(Some(value)) {
+                    if !lines.iter().any(|line| line == &text) {
+                        lines.push(text);
+                    }
+                }
+            }
+        }
+        collect_element_text(&element.children, lines);
+    }
+}
+
+fn element_name(element: &MacOSElementInfo) -> String {
+    normalized_optional_text(Some(&element.title))
+        .or_else(|| {
+            (!element.sensitive)
+                .then(|| normalized_optional_text(Some(&element.value)))
+                .flatten()
+        })
+        .unwrap_or_else(|| normalize_role(&element.role))
+}
+
+fn normalize_role(role: &str) -> String {
+    let raw = role
+        .trim()
+        .strip_prefix("AX")
+        .unwrap_or_else(|| role.trim())
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "textarea" => "text_area".to_owned(),
+        "textfield" => "text_field".to_owned(),
+        "checkbox" => "checkbox".to_owned(),
+        "radiobutton" => "radio_button".to_owned(),
+        "popbutton" => "pop_button".to_owned(),
+        "statictext" => "static_text".to_owned(),
+        "scrollarea" => "scroll_area".to_owned(),
+        _ => raw,
     }
 }
 

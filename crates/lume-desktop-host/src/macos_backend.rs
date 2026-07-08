@@ -3,7 +3,7 @@ use crate::{
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
         macos_get_window_state_result, macos_list_apps_result, macos_list_windows_result,
-        MacOSWindowInfo,
+        MacOSElementInfo, MacOSWindowInfo,
     },
     DesktopBackend,
 };
@@ -11,7 +11,7 @@ use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::{
     ffi::{CStr, CString},
-    os::raw::{c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void},
+    os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_void},
     ptr,
 };
 
@@ -115,6 +115,7 @@ fn enrich_accessibility_text(window: &mut MacOSWindowInfo) {
             if let Some(selected_text) = text.selected_text {
                 window.selected_text = Some(selected_text);
             }
+            window.elements = text.elements;
             CFRelease(root as CFTypeRef);
         }
         CFRelease(app as CFTypeRef);
@@ -124,50 +125,43 @@ fn enrich_accessibility_text(window: &mut MacOSWindowInfo) {
 struct AxTextSnapshot {
     document_text: String,
     selected_text: Option<String>,
+    elements: Vec<MacOSElementInfo>,
 }
 
 unsafe fn collect_ax_text(root: AXUIElementRef) -> AxTextSnapshot {
     let mut lines = Vec::<String>::new();
     let mut selected_text = None;
     let mut remaining = 500usize;
-    collect_ax_text_into(root, 0, &mut remaining, &mut lines, &mut selected_text);
+    let elements = collect_ax_children(root, 0, &mut remaining, &mut lines, &mut selected_text);
     AxTextSnapshot {
         document_text: lines.join("\n"),
         selected_text,
+        elements,
     }
 }
 
-unsafe fn collect_ax_text_into(
-    element: AXUIElementRef,
+unsafe fn collect_ax_children(
+    parent: AXUIElementRef,
     depth: usize,
     remaining: &mut usize,
     lines: &mut Vec<String>,
     selected_text: &mut Option<String>,
-) {
-    if depth >= 12 || *remaining == 0 {
-        return;
-    }
-    *remaining -= 1;
-    if selected_text.is_none() {
-        if let Some(text) = copy_ax_string_attribute(element, "AXSelectedText") {
-            push_text(lines, &text);
-            *selected_text = Some(text);
-        }
-    }
-    for attribute in ["AXValue", "AXTitle", "AXDescription"] {
-        if let Some(text) = copy_ax_string_attribute(element, attribute) {
-            push_text(lines, &text);
-        }
-    }
-    let Some(children) = copy_ax_attribute(element, "AXChildren") else {
-        return;
+) -> Vec<MacOSElementInfo> {
+    let Some(children) = copy_ax_attribute(parent, "AXChildren") else {
+        return Vec::new();
     };
+    let mut output = Vec::new();
     if cf_type_matches(children as CFTypeRef, CFArrayGetTypeID()) {
         let count = CFArrayGetCount(children as CFArrayRef);
         for index in 0..count {
             let child = CFArrayGetValueAtIndex(children as CFArrayRef, index) as AXUIElementRef;
-            if !child.is_null() {
-                collect_ax_text_into(child, depth + 1, remaining, lines, selected_text);
+            if child.is_null() {
+                continue;
+            }
+            if let Some(element) =
+                collect_ax_element(child, depth + 1, remaining, lines, selected_text)
+            {
+                output.push(element);
             }
             if *remaining == 0 {
                 break;
@@ -175,6 +169,56 @@ unsafe fn collect_ax_text_into(
         }
     }
     CFRelease(children as CFTypeRef);
+    output
+}
+
+unsafe fn collect_ax_element(
+    element: AXUIElementRef,
+    depth: usize,
+    remaining: &mut usize,
+    lines: &mut Vec<String>,
+    selected_text: &mut Option<String>,
+) -> Option<MacOSElementInfo> {
+    if depth >= 12 || *remaining == 0 {
+        return None;
+    }
+    let role =
+        copy_ax_string_attribute(element, "AXRole").unwrap_or_else(|| "AXUnknown".to_owned());
+    let title = copy_ax_string_attribute(element, "AXTitle")
+        .or_else(|| copy_ax_string_attribute(element, "AXDescription"))
+        .unwrap_or_default();
+    let value = copy_ax_string_attribute(element, "AXValue").unwrap_or_default();
+    let sensitive = role == "AXSecureTextField"
+        || copy_ax_bool_attribute(element, "AXProtectedContent") == Some(true);
+    if selected_text.is_none() {
+        if let Some(text) = copy_ax_string_attribute(element, "AXSelectedText") {
+            if !sensitive {
+                push_text(lines, &text);
+            }
+            *selected_text = Some(text);
+        }
+    }
+    if !sensitive {
+        push_text(lines, &title);
+        push_text(lines, &value);
+    }
+    *remaining -= 1;
+    let (x, y) = copy_ax_point_attribute(element, "AXPosition").unwrap_or((0.0, 0.0));
+    let (width, height) = copy_ax_size_attribute(element, "AXSize").unwrap_or((0.0, 0.0));
+    let children = collect_ax_children(element, depth, remaining, lines, selected_text);
+    Some(MacOSElementInfo {
+        role,
+        title,
+        value,
+        x,
+        y,
+        width,
+        height,
+        enabled: copy_ax_bool_attribute(element, "AXEnabled").unwrap_or(true),
+        focused: copy_ax_bool_attribute(element, "AXFocused").unwrap_or(false),
+        sensitive,
+        children,
+    })
 }
 
 fn push_text(lines: &mut Vec<String>, text: &str) {
@@ -212,6 +256,54 @@ unsafe fn copy_ax_string_attribute(element: AXUIElementRef, attribute: &str) -> 
     };
     CFRelease(value);
     text
+}
+
+unsafe fn copy_ax_bool_attribute(element: AXUIElementRef, attribute: &str) -> Option<bool> {
+    let value = copy_ax_attribute(element, attribute)?;
+    let output = if cf_type_matches(value, CFBooleanGetTypeID()) {
+        Some(CFBooleanGetValue(value as CFBooleanRef) != 0)
+    } else {
+        None
+    };
+    CFRelease(value);
+    output
+}
+
+unsafe fn copy_ax_point_attribute(element: AXUIElementRef, attribute: &str) -> Option<(f64, f64)> {
+    let value = copy_ax_attribute(element, attribute)?;
+    let mut point = CGPoint { x: 0.0, y: 0.0 };
+    let output = if AXValueGetValue(
+        value as AXValueRef,
+        K_AX_VALUE_CGPOINT_TYPE,
+        (&mut point as *mut CGPoint).cast(),
+    ) != 0
+    {
+        Some((point.x, point.y))
+    } else {
+        None
+    };
+    CFRelease(value);
+    output
+}
+
+unsafe fn copy_ax_size_attribute(element: AXUIElementRef, attribute: &str) -> Option<(f64, f64)> {
+    let value = copy_ax_attribute(element, attribute)?;
+    let mut size = CGSize {
+        width: 0.0,
+        height: 0.0,
+    };
+    let output = if AXValueGetValue(
+        value as AXValueRef,
+        K_AX_VALUE_CGSIZE_TYPE,
+        (&mut size as *mut CGSize).cast(),
+    ) != 0
+    {
+        Some((size.width, size.height))
+    } else {
+        None
+    };
+    CFRelease(value);
+    output
 }
 
 unsafe fn copy_ax_attribute(element: AXUIElementRef, attribute: &str) -> Option<CFTypeRef> {
@@ -270,6 +362,7 @@ fn system_windows() -> Result<Vec<MacOSWindowInfo>> {
                 is_focused: false,
                 document_text: None,
                 selected_text: None,
+                elements: vec![],
             };
             if !focused_assigned && is_focus_candidate(&window) {
                 window.is_focused = true;
@@ -381,6 +474,19 @@ type CFDictionaryRef = *const c_void;
 type CFIndex = c_long;
 type CFTypeID = c_ulong;
 type AXUIElementRef = *const c_void;
+type AXValueRef = *const c_void;
+
+#[repr(C)]
+struct CGPoint {
+    x: c_double,
+    y: c_double,
+}
+
+#[repr(C)]
+struct CGSize {
+    width: c_double,
+    height: c_double,
+}
 
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 const K_CF_NUMBER_SINT64_TYPE: c_int = 4;
@@ -388,6 +494,8 @@ const K_CF_NUMBER_DOUBLE_TYPE: c_int = 13;
 const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: c_uint = 1;
 const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: c_uint = 16;
 const K_AX_ERROR_SUCCESS: c_int = 0;
+const K_AX_VALUE_CGPOINT_TYPE: c_int = 1;
+const K_AX_VALUE_CGSIZE_TYPE: c_int = 2;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -398,6 +506,7 @@ extern "C" {
         attribute: CFStringRef,
         value: *mut CFTypeRef,
     ) -> c_int;
+    fn AXValueGetValue(value: AXValueRef, value_type: c_int, output: *mut c_void) -> c_uchar;
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -412,6 +521,7 @@ extern "C" {
     fn CFRelease(cf: CFTypeRef);
     fn CFGetTypeID(cf: CFTypeRef) -> CFTypeID;
     fn CFStringGetTypeID() -> CFTypeID;
+    fn CFBooleanGetTypeID() -> CFTypeID;
     fn CFArrayGetTypeID() -> CFTypeID;
     fn CFArrayGetCount(array: CFArrayRef) -> CFIndex;
     fn CFArrayGetValueAtIndex(array: CFArrayRef, index: CFIndex) -> CFTypeRef;

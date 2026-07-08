@@ -1,6 +1,6 @@
 use lume_desktop_host::macos_snapshot::{
     find_macos_window, macos_current_context_result, macos_get_window_state_result,
-    macos_list_apps_result, macos_list_windows_result, MacOSWindowInfo,
+    macos_list_apps_result, macos_list_windows_result, MacOSElementInfo, MacOSWindowInfo,
 };
 use serde_json::json;
 
@@ -20,6 +20,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             is_focused: true,
             document_text: None,
             selected_text: None,
+            elements: vec![],
         },
         MacOSWindowInfo {
             window_id: 77,
@@ -35,6 +36,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             is_focused: false,
             document_text: None,
             selected_text: None,
+            elements: vec![],
         },
         MacOSWindowInfo {
             window_id: 99,
@@ -50,6 +52,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             is_focused: false,
             document_text: None,
             selected_text: None,
+            elements: vec![],
         },
     ]
 }
@@ -141,4 +144,56 @@ fn prefers_accessibility_text_for_context_and_window_state() {
         state["accessibility"]["selectedText"],
         "这个 PR 今天能发吗？"
     );
+}
+
+#[test]
+fn maps_accessibility_elements_to_stable_tree_nodes() {
+    let mut window = sample_windows()[0].clone();
+    window.elements = vec![
+        MacOSElementInfo {
+            role: "AXTextArea".into(),
+            title: "聊天记录".into(),
+            value: "A: 这个 PR 今天能发吗？".into(),
+            x: 30.0,
+            y: 80.0,
+            width: 500.0,
+            height: 300.0,
+            enabled: true,
+            focused: false,
+            sensitive: false,
+            children: vec![],
+        },
+        MacOSElementInfo {
+            role: "AXTextField".into(),
+            title: "密码".into(),
+            value: "secret-token".into(),
+            x: 30.0,
+            y: 420.0,
+            width: 500.0,
+            height: 44.0,
+            enabled: true,
+            focused: true,
+            sensitive: true,
+            children: vec![],
+        },
+    ];
+
+    let state = macos_get_window_state_result(&window, false);
+
+    assert_eq!(state["accessibility"]["tree"][0]["id"], "root.0");
+    assert_eq!(state["accessibility"]["tree"][0]["role"], "text_area");
+    assert_eq!(state["accessibility"]["tree"][0]["name"], "聊天记录");
+    assert_eq!(
+        state["accessibility"]["tree"][0]["value"],
+        "A: 这个 PR 今天能发吗？"
+    );
+    assert_eq!(state["accessibility"]["tree"][1]["id"], "root.1");
+    assert_eq!(state["accessibility"]["tree"][1]["role"], "text_field");
+    assert_eq!(state["accessibility"]["tree"][1]["sensitive"], true);
+    assert!(state["accessibility"]["tree"][1].get("value").is_none());
+    assert_eq!(state["accessibility"]["focusedElement"]["id"], "root.1");
+    let document_text = state["accessibility"]["documentText"].as_str().unwrap();
+    assert!(document_text.contains("聊天记录"));
+    assert!(document_text.contains("A: 这个 PR 今天能发吗？"));
+    assert!(!document_text.contains("secret-token"));
 }
