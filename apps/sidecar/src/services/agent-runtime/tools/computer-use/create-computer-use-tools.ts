@@ -123,7 +123,8 @@ export function createComputerUseMcpTools(input: {
               args,
             });
           }
-          const result = await invoke(name, args);
+          const rawResult = await invoke(name, args);
+          const result = await attachPostActionVerification(invoke, name, args, rawResult);
           if (!readOnly) {
             const status = resultStatus(result);
             emitDesktopActionVisualEvent(input, {
@@ -153,6 +154,67 @@ export function createComputerUseMcpTools(input: {
       },
     } satisfies ToolDefinition;
   });
+}
+
+async function attachPostActionVerification(
+  invoke: ComputerUseInvoke,
+  action: ComputerUseToolName,
+  args: Record<string, unknown>,
+  result: unknown,
+): Promise<unknown> {
+  if (READ_ONLY_TOOLS.has(action)) return result;
+  if (resultStatus(result) !== "ok") return result;
+  const windowId = stringValue(args.windowId);
+  if (!windowId) return result;
+  try {
+    return addPostActionVerification(result, summarizePostActionState(await invoke("get_window_state", { windowId })));
+  } catch (error) {
+    return addPostActionVerification(result, {
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function addPostActionVerification(result: unknown, verification: Record<string, unknown>): unknown {
+  const value = asRecord(result);
+  return Object.keys(value).length > 0
+    ? { ...value, verification }
+    : { status: "ok", value: result, verification };
+}
+
+function summarizePostActionState(value: unknown): Record<string, unknown> {
+  const state = asRecord(value);
+  const status = isDesktopActionStatus(state.status) ? state.status : "failed";
+  const window = asRecord(state.window);
+  const accessibility = asRecord(state.accessibility);
+  const focusedElement = summarizeDesktopElement(accessibility.focusedElement);
+  return {
+    status,
+    ...(typeof state.message === "string" ? { message: state.message } : {}),
+    ...(typeof state.revision === "string" ? { revision: state.revision } : {}),
+    ...(Object.keys(window).length > 0 ? {
+      window: {
+        ...(typeof window.id === "string" ? { id: window.id } : {}),
+        ...(typeof window.title === "string" ? { title: window.title } : {}),
+        ...(typeof window.focused === "boolean" ? { focused: window.focused } : {}),
+      },
+    } : {}),
+    ...(focusedElement ? { focusedElement } : {}),
+  };
+}
+
+function summarizeDesktopElement(value: unknown): Record<string, unknown> | undefined {
+  const element = asRecord(value);
+  if (!Object.keys(element).length) return undefined;
+  return {
+    ...(typeof element.id === "string" ? { id: element.id } : {}),
+    ...(typeof element.role === "string" ? { role: element.role } : {}),
+    ...(element.sensitive === true ? { sensitive: true } : {}),
+    ...(element.sensitive === true || typeof element.name !== "string" ? {} : { name: element.name }),
+    ...(typeof element.enabled === "boolean" ? { enabled: element.enabled } : {}),
+    ...(typeof element.focused === "boolean" ? { focused: element.focused } : {}),
+  };
 }
 
 function emitDesktopActionVisualEvent(

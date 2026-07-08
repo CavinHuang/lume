@@ -193,8 +193,9 @@ describe("createComputerUseMcpTools", () => {
     });
     const result = await resultPromise;
 
-    expect(calls).toHaveLength(1);
-    expect(JSON.parse(result.content as string)).toEqual({ status: "ok" });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({ method: "get_window_state", input: { windowId: "window-1" } });
+    expect(JSON.parse(result.content as string)).toEqual({ status: "ok", verification: { status: "ok" } });
   });
 
   test("captures a fresh window revision before confirming consequential actions", async () => {
@@ -285,7 +286,15 @@ describe("createComputerUseMcpTools", () => {
         appName: "微信",
       },
     });
-    expect(JSON.parse(result.content as string)).toEqual({ status: "ok" });
+    expect(calls[2]).toEqual({ method: "get_window_state", input: { windowId: "window-1" } });
+    expect(JSON.parse(result.content as string)).toEqual({
+      status: "ok",
+      verification: {
+        status: "ok",
+        revision: "derived-rev",
+        window: { id: "window-1" },
+      },
+    });
   });
 
   test("derives consequential focused target labels for keyboard actions", async () => {
@@ -337,6 +346,7 @@ describe("createComputerUseMcpTools", () => {
           appName: "支付应用",
         },
       },
+      { method: "get_window_state", input: { windowId: "window-2" } },
     ]);
   });
 
@@ -359,11 +369,14 @@ describe("createComputerUseMcpTools", () => {
       { toolUseId: "tool-visual", abortSignal: new AbortController().signal } as never,
     );
 
-    expect(calls).toEqual([{
-      method: "type_text",
-      input: { appId: "wechat.exe", appName: "微信", windowId: "win-1", targetLabel: "输入框", text: "password=secret" },
-    }]);
-    expect(JSON.parse(result.content as string)).toEqual({ status: "ok" });
+    expect(calls).toEqual([
+      {
+        method: "type_text",
+        input: { appId: "wechat.exe", appName: "微信", windowId: "win-1", targetLabel: "输入框", text: "password=secret" },
+      },
+      { method: "get_window_state", input: { windowId: "win-1" } },
+    ]);
+    expect(JSON.parse(result.content as string)).toEqual({ status: "ok", verification: { status: "ok" } });
     expect(visualEvents).toHaveLength(2);
     expect(visualEvents[0]).toMatchObject({
       type: "desktop.action_visual",
@@ -381,6 +394,51 @@ describe("createComputerUseMcpTools", () => {
       status: "ok",
     });
     expect(JSON.stringify(visualEvents)).not.toContain("password=secret");
+  });
+
+  test("adds a lightweight post-action verification for successful window-scoped actions", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "rev-after",
+            window: { id: "win-1", title: "项目群", focused: true },
+            accessibility: {
+              focusedElement: { id: "root.1", role: "edit", name: "输入框", value: "typed text" },
+            },
+          };
+        }
+        return { status: "ok", inputMode: "uia_value" };
+      },
+    });
+    const setValue = tools.find((tool) => tool.name === "mcp__computer_use__set_value")!;
+
+    const result = await setValue.call(
+      { appId: "wechat.exe", appName: "微信", windowId: "win-1", targetLabel: "输入框", value: "typed text" },
+      { toolUseId: "tool-verify" } as never,
+    );
+
+    expect(calls).toEqual([
+      {
+        method: "set_value",
+        input: { appId: "wechat.exe", appName: "微信", windowId: "win-1", targetLabel: "输入框", value: "typed text" },
+      },
+      { method: "get_window_state", input: { windowId: "win-1" } },
+    ]);
+    expect(JSON.parse(result.content as string)).toEqual({
+      status: "ok",
+      inputMode: "uia_value",
+      verification: {
+        status: "ok",
+        revision: "rev-after",
+        window: { id: "win-1", title: "项目群", focused: true },
+        focusedElement: { id: "root.1", role: "edit", name: "输入框" },
+      },
+    });
+    expect(result.content as string).not.toContain("typed text");
   });
 
   test("marks non-ok desktop action results as a failed visual phase", async () => {
