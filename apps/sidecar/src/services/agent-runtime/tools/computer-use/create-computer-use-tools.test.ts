@@ -396,6 +396,66 @@ describe("createComputerUseMcpTools", () => {
     expect(JSON.stringify(visualEvents)).not.toContain("password=secret");
   });
 
+  test("derives visual cursor points from element bounds before element actions", async () => {
+    const visualEvents: Array<{ phase: string; point?: { x: number; y: number } }> = [];
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-element-visual",
+      runId: "run-element-visual",
+      emitDesktopActionVisualEvent: (event) => visualEvents.push(event),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "bounds-rev",
+            window: { id: "win-1", appId: "wechat.exe", appName: "微信" },
+            accessibility: {
+              tree: [
+                {
+                  id: "root.1",
+                  role: "button",
+                  name: "打开",
+                  bounds: { x: 100, y: 200, width: 60, height: 40 },
+                },
+              ],
+            },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+
+    await click.call(
+      { appId: "wechat.exe", appName: "微信", windowId: "win-1", elementId: "root.1" },
+      { toolUseId: "tool-element-visual" } as never,
+    );
+
+    expect(calls[0]).toEqual({ method: "get_window_state", input: { windowId: "win-1" } });
+    expect(calls[1]).toEqual({
+      method: "click",
+      input: {
+        appId: "wechat.exe",
+        appName: "微信",
+        windowId: "win-1",
+        elementId: "root.1",
+        targetLabel: "打开",
+        windowRevision: "bounds-rev",
+        x: 130,
+        y: 220,
+      },
+    });
+    expect(visualEvents[0]).toMatchObject({
+      phase: "started",
+      point: { x: 130, y: 220 },
+    });
+    expect(visualEvents[1]).toMatchObject({
+      phase: "completed",
+      point: { x: 130, y: 220 },
+    });
+  });
+
   test("adds a lightweight post-action verification for successful window-scoped actions", async () => {
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const tools = createComputerUseMcpTools({

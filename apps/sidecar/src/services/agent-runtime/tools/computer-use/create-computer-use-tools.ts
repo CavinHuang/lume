@@ -292,6 +292,7 @@ async function prepareDesktopActionArgsForSafety(
   }
   const window = asRecord(state.window);
   const derivedLabel = deriveTargetLabel(action, args, state);
+  const derivedPoint = deriveTargetPoint(action, args, state);
   return {
     status: "ok",
     args: {
@@ -300,6 +301,7 @@ async function prepareDesktopActionArgsForSafety(
       ...(typeof window.appId === "string" && !stringValue(args.appId) ? { appId: window.appId } : {}),
       ...(typeof window.appName === "string" && !stringValue(args.appName) ? { appName: window.appName } : {}),
       ...(derivedLabel ? { targetLabel: derivedLabel } : {}),
+      ...(derivedPoint && !hasPoint(args) ? derivedPoint : {}),
       windowRevision: state.revision,
     },
   };
@@ -316,7 +318,15 @@ function actionIntentFromArgs(action: DesktopActionKind, args: Record<string, un
 }
 
 function shouldInspectTargetState(action: DesktopActionKind, args: Record<string, unknown>): boolean {
-  if ((action === "click" || action === "perform_secondary_action") && stringValue(args.elementId)) {
+  if (
+    stringValue(args.elementId) && (
+      action === "move_pointer"
+      || action === "click"
+      || action === "perform_secondary_action"
+      || action === "type_text"
+      || action === "set_value"
+    )
+  ) {
     return true;
   }
   return action === "press_key" && containsEnterKey(actionIntentFromArgs(action, args).keys);
@@ -342,6 +352,22 @@ function deriveTargetLabel(
   return undefined;
 }
 
+function deriveTargetPoint(
+  _action: DesktopActionKind,
+  args: Record<string, unknown>,
+  state: Record<string, unknown>,
+): { x: number; y: number } | undefined {
+  const elementId = stringValue(args.elementId);
+  if (!elementId) return undefined;
+  const accessibility = asRecord(state.accessibility);
+  const bounds = boundsFromElement(findElementById(accessibility.tree, elementId));
+  if (!bounds) return undefined;
+  return {
+    x: bounds.x + bounds.width / 2,
+    y: bounds.y + bounds.height / 2,
+  };
+}
+
 function findElementById(value: unknown, elementId: string): Record<string, unknown> | undefined {
   if (!Array.isArray(value)) return undefined;
   for (const item of value) {
@@ -353,10 +379,25 @@ function findElementById(value: unknown, elementId: string): Record<string, unkn
   return undefined;
 }
 
+function boundsFromElement(value: unknown): { x: number; y: number; width: number; height: number } | undefined {
+  const bounds = asRecord(asRecord(value).bounds);
+  const x = typeof bounds.x === "number" ? bounds.x : undefined;
+  const y = typeof bounds.y === "number" ? bounds.y : undefined;
+  const width = typeof bounds.width === "number" ? bounds.width : undefined;
+  const height = typeof bounds.height === "number" ? bounds.height : undefined;
+  if (x === undefined || y === undefined || width === undefined || height === undefined) return undefined;
+  if (width <= 0 || height <= 0) return undefined;
+  return { x, y, width, height };
+}
+
 function labelFromElement(value: unknown): string | undefined {
   const element = asRecord(value);
   if (element.sensitive === true) return undefined;
   return stringValue(element.name);
+}
+
+function hasPoint(args: Record<string, unknown>): boolean {
+  return typeof args.x === "number" && typeof args.y === "number";
 }
 
 function createActionRequest(
