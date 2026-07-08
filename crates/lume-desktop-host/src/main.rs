@@ -1,4 +1,4 @@
-use std::{env, io::ErrorKind};
+use std::{env, fs, io::ErrorKind};
 
 use anyhow::{bail, Context, Result};
 use lume_desktop_host::{DesktopBackend, DesktopSession, UnsupportedBackend};
@@ -18,20 +18,49 @@ async fn main() {
 async fn run() -> Result<()> {
     #[cfg(windows)]
     lume_desktop_host::initialize_windows_runtime().context("enable per-monitor DPI awareness")?;
-    let endpoint = parse_endpoint()?;
-    let token =
-        env::var("LUME_DESKTOP_HOST_TOKEN").context("LUME_DESKTOP_HOST_TOKEN is required")?;
-    serve(&endpoint, token).await
+    let args = parse_host_args()?;
+    let token = read_session_token(&args)?;
+    serve(&args.endpoint, token).await
 }
 
-fn parse_endpoint() -> Result<String> {
-    let mut args = env::args().skip(1);
+struct HostArgs {
+    endpoint: String,
+    token_file: Option<String>,
+}
+
+fn parse_host_args() -> Result<HostArgs> {
+    parse_host_args_from(env::args().skip(1))
+}
+
+fn parse_host_args_from(args: impl IntoIterator<Item = String>) -> Result<HostArgs> {
+    let mut args = args.into_iter();
+    let mut endpoint = None;
+    let mut token_file = None;
     while let Some(arg) = args.next() {
-        if arg == "--endpoint" {
-            return args.next().context("--endpoint requires a value");
+        match arg.as_str() {
+            "--endpoint" => {
+                endpoint = Some(args.next().context("--endpoint requires a value")?);
+            }
+            "--token-file" => {
+                token_file = Some(args.next().context("--token-file requires a value")?);
+            }
+            _ => {}
         }
     }
-    bail!("--endpoint is required")
+    Ok(HostArgs {
+        endpoint: endpoint.context("--endpoint is required")?,
+        token_file,
+    })
+}
+
+fn read_session_token(args: &HostArgs) -> Result<String> {
+    if let Some(path) = &args.token_file {
+        let token = fs::read_to_string(path)
+            .with_context(|| format!("read desktop host token file {path}"))?;
+        fs::remove_file(path).with_context(|| format!("remove desktop host token file {path}"))?;
+        return Ok(token);
+    }
+    env::var("LUME_DESKTOP_HOST_TOKEN").context("LUME_DESKTOP_HOST_TOKEN is required")
 }
 
 fn create_backend() -> Box<dyn DesktopBackend> {
@@ -101,5 +130,53 @@ async fn serve(endpoint: &str, token: String) -> Result<()> {
         if let Err(error) = handle_stream(stream, token.clone()).await {
             eprintln!("desktop host client disconnected: {error:#}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn parse_host_args_accepts_endpoint_and_token_file() {
+        let args = parse_host_args_from([
+            "--endpoint".to_owned(),
+            "/tmp/lume.sock".to_owned(),
+            "--token-file".to_owned(),
+            "/tmp/lume.sock.token".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(args.endpoint, "/tmp/lume.sock");
+        assert_eq!(args.token_file.as_deref(), Some("/tmp/lume.sock.token"));
+    }
+
+    #[test]
+    fn reads_session_token_from_token_file_and_removes_it() {
+        let path = unique_token_path();
+        fs::write(&path, "secret-token").unwrap();
+        let args = HostArgs {
+            endpoint: "/tmp/lume.sock".to_owned(),
+            token_file: Some(path.to_string_lossy().into_owned()),
+        };
+
+        assert_eq!(read_session_token(&args).unwrap(), "secret-token");
+        assert!(!path.exists());
+    }
+
+    fn unique_token_path() -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "lume-desktop-host-token-{}-{stamp}",
+            std::process::id()
+        ))
     }
 }

@@ -63,6 +63,50 @@ test('starts the host with an isolated endpoint and exports connection metadata'
   assert.equal(spawnInput.options.windowsHide, true)
 })
 
+test('starts macOS host through the app bundle with a private token file', async () => {
+  const child = new EventEmitter()
+  child.kill = () => true
+  let spawnInput
+  let tokenWrite
+  const supervisor = createDesktopHostSupervisor({
+    binaryPath: '/Applications/Lume.app/Contents/Resources/desktop-host/darwin-arm64/Lume Computer Use.app/Contents/MacOS/lume_desktop_host',
+    exists: () => true,
+    spawn: (command, args, options) => {
+      spawnInput = { command, args, options }
+      return child
+    },
+    writeTokenFile: (path, token) => { tokenWrite = { path, token } },
+    id: () => 'mac-id',
+    token: () => 'mac-token',
+    tempDir: '/tmp',
+    platform: 'darwin',
+  })
+
+  const result = await supervisor.start()
+  assert.deepEqual(result, {
+    available: true,
+    endpoint: '/tmp/lume-desktop-mac-id.sock',
+    token: 'mac-token',
+  })
+  assert.deepEqual(tokenWrite, {
+    path: '/tmp/lume-desktop-mac-id.sock.token',
+    token: 'mac-token',
+  })
+  assert.equal(spawnInput.command, '/usr/bin/open')
+  assert.deepEqual(spawnInput.args, [
+    '-n',
+    '-W',
+    '-g',
+    '/Applications/Lume.app/Contents/Resources/desktop-host/darwin-arm64/Lume Computer Use.app',
+    '--args',
+    '--endpoint',
+    '/tmp/lume-desktop-mac-id.sock',
+    '--token-file',
+    '/tmp/lume-desktop-mac-id.sock.token',
+  ])
+  assert.equal(spawnInput.options.env.LUME_DESKTOP_HOST_TOKEN, undefined)
+})
+
 test('restarts a crashed host with backoff on the same endpoint', async () => {
   const children = []
   const scheduled = []

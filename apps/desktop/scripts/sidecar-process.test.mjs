@@ -160,6 +160,7 @@ test('createDesktopHostSpawnConfig launches macOS desktop host through its app b
       binaryPath: '/Applications/Lume.app/Contents/Resources/desktop-host/darwin-arm64/Lume Computer Use.app/Contents/MacOS/lume_desktop_host',
       endpoint: '/tmp/lume-desktop.sock',
       sessionToken: 'secret-token',
+      tokenFilePath: '/tmp/lume-desktop.sock.token',
       platform: 'darwin',
     }),
     {
@@ -172,9 +173,11 @@ test('createDesktopHostSpawnConfig launches macOS desktop host through its app b
         '--args',
         '--endpoint',
         '/tmp/lume-desktop.sock',
+        '--token-file',
+        '/tmp/lume-desktop.sock.token',
       ],
       options: {
-        env: { LUME_DESKTOP_HOST_TOKEN: 'secret-token' },
+        env: {},
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       },

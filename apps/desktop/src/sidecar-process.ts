@@ -76,8 +76,22 @@ export function getDesktopHostBinaryPath({
   return join(root, targetId, fileName)
 }
 
-export function createDesktopHostSpawnConfig({ binaryPath, endpoint, sessionToken, env = {}, platform = process.platform }) {
+export function createDesktopHostTokenFilePath(endpoint: string): string {
+  return `${endpoint}.token`
+}
+
+export function createDesktopHostSpawnConfig({
+  binaryPath,
+  endpoint,
+  sessionToken,
+  tokenFilePath,
+  env = {},
+  platform = process.platform,
+}) {
   if (platform === 'darwin') {
+    if (!tokenFilePath) {
+      throw new Error('tokenFilePath is required for macOS desktop host launch')
+    }
     return {
       command: '/usr/bin/open',
       args: [
@@ -88,9 +102,11 @@ export function createDesktopHostSpawnConfig({ binaryPath, endpoint, sessionToke
         '--args',
         '--endpoint',
         endpoint,
+        '--token-file',
+        tokenFilePath,
       ],
       options: {
-        env: { ...env, LUME_DESKTOP_HOST_TOKEN: sessionToken },
+        env: { ...env },
         stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       },

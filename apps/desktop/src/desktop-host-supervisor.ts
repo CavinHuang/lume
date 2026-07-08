@@ -1,9 +1,9 @@
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 import { spawn as spawnProcess } from 'node:child_process'
-import { createDesktopHostSpawnConfig } from './sidecar-process'
+import { createDesktopHostSpawnConfig, createDesktopHostTokenFilePath } from './sidecar-process'
 
 export type DesktopHostState =
   | { available: true; endpoint: string; token: string }
@@ -16,8 +16,11 @@ interface DesktopHostSupervisorOptions {
   spawn?: typeof spawnProcess
   id?: () => string
   token?: () => string
+  tempDir?: string
   baseEnv?: NodeJS.ProcessEnv
   log?: (message: string) => void
+  writeTokenFile?: (path: string, token: string) => void
+  removeTokenFile?: (path: string) => void
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void
 }
@@ -51,8 +54,11 @@ export function createDesktopHostSupervisor({
   spawn = spawnProcess,
   id = randomUUID,
   token = () => randomBytes(32).toString('base64url'),
+  tempDir = tmpdir(),
   baseEnv = process.env,
   log = (_message: string) => undefined,
+  writeTokenFile = (path, token) => writeFileSync(path, token, { encoding: 'utf8', mode: 0o600 }),
+  removeTokenFile = (path) => rmSync(path, { force: true }),
   schedule = setTimeout,
   cancelSchedule = clearTimeout,
 }: DesktopHostSupervisorOptions): DesktopHostSupervisor {
@@ -63,10 +69,14 @@ export function createDesktopHostSupervisor({
   let restartAttempt = 0
   let activeConfig: ReturnType<typeof createDesktopHostSpawnConfig> | null = null
   let activeConnection: Extract<DesktopHostState, { available: true }> | null = null
+  let activeTokenFilePath: string | null = null
 
   const spawnHost = () => {
     if (stopped || !activeConfig) return
     const config = activeConfig
+    if (activeTokenFilePath && activeConnection) {
+      writeTokenFile(activeTokenFilePath, activeConnection.token)
+    }
     child = spawn(config.command, config.args, config.options)
     if (activeConnection) state = activeConnection
     child.stdout?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
@@ -99,17 +109,20 @@ export function createDesktopHostSupervisor({
         return state
       }
 
-      const endpoint = createDesktopHostEndpoint({ platform, id: id() })
+      const endpoint = createDesktopHostEndpoint({ platform, id: id(), tempDir })
       const sessionToken = token()
+      const tokenFilePath = platform === 'darwin' ? createDesktopHostTokenFilePath(endpoint) : undefined
       stopped = false
       activeConfig = createDesktopHostSpawnConfig({
         binaryPath,
         endpoint,
         sessionToken,
+        tokenFilePath,
         env: baseEnv,
         platform,
       })
       activeConnection = { available: true, endpoint, token: sessionToken }
+      activeTokenFilePath = tokenFilePath ?? null
       spawnHost()
       state = activeConnection
       return state
@@ -121,8 +134,10 @@ export function createDesktopHostSupervisor({
       restartTimer = null
       child?.kill?.()
       child = null
+      if (activeTokenFilePath) removeTokenFile(activeTokenFilePath)
       activeConfig = null
       activeConnection = null
+      activeTokenFilePath = null
       state = null
     },
 
