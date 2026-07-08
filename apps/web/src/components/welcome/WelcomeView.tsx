@@ -17,7 +17,7 @@ import {
   agentPlanModePhaseAtom,
   welcomePromptSeedAtom,
 } from '@/atoms'
-import { sidecarCall, agentSend, openFileDialog, openFolderDialog, onSidecarEvent } from '@/lib/desktop-api'
+import { sidecarCall, agentSend, getQuickInputContext, openFileDialog, openFolderDialog, onSidecarEvent } from '@/lib/desktop-api'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
@@ -31,6 +31,7 @@ import {
   type AgentThreadMeta,
   type AgentWelcomeSuggestion,
   type AgentWelcomeSuggestionsResult,
+  type DesktopContextTarget,
   type LumeConfigThinkingLevel,
 } from '@lume/shared'
 import { LUME_CONFIG_IPC_CHANNELS } from '@lume/shared'
@@ -40,6 +41,10 @@ import { buildWelcomeSurfaceViewModel, DEFAULT_WELCOME_SUGGESTIONS } from './wel
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { createSuggestionRenderer } from '@/components/agent/editor-mention-suggestions'
 import { attachmentDataUrl, isImageAttachment } from '@/components/agent/AgentAttachmentGrid'
+import {
+  captureAgentInputDesktopContextState,
+  createDesktopContextMessageMetadata,
+} from '@/components/agent/agent-input-desktop-context'
 
 import { Button } from '@/components/ui/button'
 interface WelcomeViewProps {
@@ -83,6 +88,10 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [pendingFolders, setPendingFolders] = useState<{ id: string; path: string; name: string }[]>([])
   const [welcomeSuggestions, setWelcomeSuggestions] = useState<AgentWelcomeSuggestion[]>(DEFAULT_WELCOME_SUGGESTIONS)
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
+  const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget>()
+  const [selectedDesktopContextTarget, setSelectedDesktopContextTarget] = useState<DesktopContextTarget>()
+  const [desktopContextCaptureLoading, setDesktopContextCaptureLoading] = useState(false)
+  const [desktopContextCaptureMessage, setDesktopContextCaptureMessage] = useState<string>()
 
   useEffect(() => {
     setSelectedWorkspaceId(initialWorkspaceId ?? currentWorkspaceId ?? null)
@@ -292,6 +301,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+        ...(selectedDesktopContextTarget
+          ? { messageMetadata: createDesktopContextMessageMetadata(selectedDesktopContextTarget) }
+          : {}),
         ...(pendingFolders.length > 0 ? { attachedDirectories: pendingFolders.map((f) => f.path) } : {}),
         ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
       } as any)
@@ -340,6 +352,19 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
     editor.commands.insertContent(`$${pluginName} `)
     editor.commands.focus('end')
   }, [editor])
+
+  const handleAttachMenuOpen = useCallback(async () => {
+    setDesktopContextCaptureLoading(true)
+    setDesktopContextCaptureMessage(undefined)
+    setCapturedDesktopContextTarget(undefined)
+    const state = await captureAgentInputDesktopContextState(sidecarCall, getQuickInputContext)
+    if (state.status === 'ready') {
+      setCapturedDesktopContextTarget(state.target)
+    } else {
+      setDesktopContextCaptureMessage(state.message)
+    }
+    setDesktopContextCaptureLoading(false)
+  }, [])
 
   const handleSelectWorkspace = (wsId: string) => {
     setSelectedWorkspaceId(wsId)
@@ -464,7 +489,14 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
         hasText={Boolean(hasText)}
         onSend={handleSend}
         onAttach={handleAttach}
+        onAttachMenuOpen={handleAttachMenuOpen}
         onPluginSelect={handlePluginSelect}
+        desktopContextTarget={capturedDesktopContextTarget}
+        selectedDesktopContextTarget={selectedDesktopContextTarget}
+        desktopContextCaptureLoading={desktopContextCaptureLoading}
+        desktopContextCaptureMessage={desktopContextCaptureMessage}
+        onSelectDesktopContextTarget={setSelectedDesktopContextTarget}
+        onClearDesktopContextTarget={() => setSelectedDesktopContextTarget(undefined)}
         suggestions={welcomeSuggestions}
         onSuggestionSelect={handleWelcomeSuggestionSelect}
         onRemovePendingFile={(index) =>

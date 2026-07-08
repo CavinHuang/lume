@@ -1036,6 +1036,7 @@ app.whenReady().then(async () => {
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
   await unlockDesktopContextStore()
+  await captureQuickInputContext()
   await createMainWindow()
   logDesktopStartup('main window ready')
   // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
@@ -1065,6 +1066,7 @@ app.whenReady().then(async () => {
 
 app.on('activate', async () => {
   if (!mainWindow || mainWindow.isDestroyed()) {
+    await captureQuickInputContext()
     await createMainWindow()
     return
   }

@@ -87,7 +87,7 @@ export function createComputerUseMcpTools(input: {
         let visualArgs: Record<string, unknown> | undefined;
         try {
           const args = asRecord(rawArgs);
-          if (name === "current_context" && !stringValue(args.snapshotId) && input.boundDesktopContextSnapshotId) {
+          if (name === "current_context" && input.boundDesktopContextSnapshotId) {
             args.snapshotId = input.boundDesktopContextSnapshotId;
           }
           if (!readOnly) {

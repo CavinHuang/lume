@@ -268,6 +268,34 @@ test("showMainWindow pre-captures desktop context before Lume steals focus", () 
   assert.equal(captureIndex < restoreIndex, true, "desktop context must be captured before Lume receives focus");
 });
 
+test("cold start pre-captures desktop context before creating the Lume window", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const start = mainSource.indexOf("app.whenReady().then(async () => {");
+  const end = mainSource.indexOf("}).catch((error) => {", start);
+  assert.notEqual(start, -1, "app ready handler is missing");
+  assert.notEqual(end, -1, "app ready handler end marker is missing");
+  const body = mainSource.slice(start, end);
+  const captureIndex = body.indexOf("captureQuickInputContext()");
+  const createIndex = body.indexOf("createMainWindow()");
+  assert.notEqual(captureIndex, -1, "cold start does not capture desktop context");
+  assert.notEqual(createIndex, -1, "cold start does not create the main window");
+  assert.equal(captureIndex < createIndex, true, "desktop context must be captured before Lume receives focus");
+});
+
+test("app activation pre-captures desktop context before recreating the Lume window", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const start = mainSource.indexOf("app.on('activate', async () => {");
+  const end = mainSource.indexOf("app.on('before-quit'", start);
+  assert.notEqual(start, -1, "app activate handler is missing");
+  assert.notEqual(end, -1, "app activate handler end marker is missing");
+  const body = mainSource.slice(start, end);
+  const captureIndex = body.indexOf("captureQuickInputContext()");
+  const createIndex = body.indexOf("createMainWindow()");
+  assert.notEqual(captureIndex, -1, "app activation does not capture desktop context");
+  assert.notEqual(createIndex, -1, "app activation does not recreate the main window");
+  assert.equal(captureIndex < createIndex, true, "desktop context must be captured before Lume receives focus");
+});
+
 function extractStringSet(source, name) {
   const match = source.match(new RegExp(`const\\s+${name}\\s*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`));
   if (!match) throw new Error(`missing preload set: ${name}`);

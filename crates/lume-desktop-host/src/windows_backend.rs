@@ -26,29 +26,29 @@ use windows::{
         System::{
             Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED},
             Threading::{
-                OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+                AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
                 PROCESS_QUERY_LIMITED_INFORMATION,
             },
         },
         UI::{
             Accessibility::{
                 CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-                IUIAutomationTreeWalker, IUIAutomationValuePattern, UIA_ButtonControlTypeId,
+                IUIAutomationTextPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern, UIA_ButtonControlTypeId,
                 UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
                 UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
                 UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_TabItemControlTypeId,
-                UIA_TextControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId,
+                UIA_TextControlTypeId, UIA_TextPatternId, UIA_ValuePatternId, UIA_WindowControlTypeId,
                 UIA_CONTROLTYPE_ID,
             },
             Input::KeyboardAndMouse::{
                 SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
                 KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
                 MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
-                VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_MENU, VK_RETURN,
-                VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
+                VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME,
+                VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
-                EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
+                BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
                 GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
                 IsWindowVisible, SetCursorPos, SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN,
                 SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE,
@@ -476,13 +476,22 @@ fn accessibility_state(hwnd: HWND) -> Result<Value> {
         let walker = automation.ControlViewWalker()?;
         let mut remaining = 500usize;
         let mut text = Vec::<String>::new();
-        let tree =
-            collect_accessibility_children(&walker, &root, "root", 0, &mut remaining, &mut text);
+        let mut document_text = None;
+        let tree = collect_accessibility_children(
+            &walker,
+            &root,
+            "root",
+            0,
+            &mut remaining,
+            &mut text,
+            &mut document_text,
+        );
         let focused = find_focused_element(&tree);
         Ok(json!({
             "tree": tree,
             "focusedElement": focused,
-            "documentText": text.join("\n"),
+            "documentText": normalize_document_text(document_text),
+            "visibleText": text.join("\n"),
             "truncated": remaining == 0,
         }))
     }
@@ -495,6 +504,7 @@ unsafe fn collect_accessibility_children(
     depth: usize,
     remaining: &mut usize,
     text: &mut Vec<String>,
+    document_text: &mut Option<String>,
 ) -> Vec<Value> {
     if depth >= 14 || *remaining == 0 {
         return Vec::new();
@@ -533,8 +543,19 @@ unsafe fn collect_accessibility_children(
         {
             text.push(name.clone());
         }
+        if document_text.is_none() && !sensitive && matches!(role, "document" | "edit") {
+            *document_text = read_document_text(&element);
+        }
         let children = unsafe {
-            collect_accessibility_children(walker, &element, &path, depth + 1, remaining, text)
+            collect_accessibility_children(
+                walker,
+                &element,
+                &path,
+                depth + 1,
+                remaining,
+                text,
+                document_text,
+            )
         };
         result.push(json!({
             "id": path,
@@ -555,6 +576,21 @@ unsafe fn collect_accessibility_children(
         child = unsafe { walker.GetNextSiblingElement(&element) }.ok();
     }
     result
+}
+
+fn read_document_text(element: &IUIAutomationElement) -> Option<String> {
+    unsafe {
+        let pattern = element
+            .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            .ok()?;
+        let range = pattern.DocumentRange().ok()?;
+        let text = range.GetText(100_000).ok()?.to_string();
+        (!text.trim().is_empty()).then_some(text)
+    }
+}
+
+fn normalize_document_text(text: Option<String>) -> String {
+    text.filter(|value| !value.trim().is_empty()).unwrap_or_default()
 }
 
 fn find_focused_element(tree: &[Value]) -> Value {
@@ -627,11 +663,36 @@ fn activate(hwnd: HWND) -> Result<()> {
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
-        if !SetForegroundWindow(hwnd).as_bool() {
+
+        let current_thread = GetCurrentThreadId();
+        let foreground_thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let target_thread = GetWindowThreadProcessId(hwnd, None);
+        let attached_threads = activation_thread_ids(current_thread, foreground_thread, target_thread);
+        for thread_id in &attached_threads {
+            let _ = AttachThreadInput(current_thread, *thread_id, true);
+        }
+
+        let _ = BringWindowToTop(hwnd);
+        let activated = SetForegroundWindow(hwnd).as_bool() || GetForegroundWindow() == hwnd;
+
+        for thread_id in attached_threads.iter().rev() {
+            let _ = AttachThreadInput(current_thread, *thread_id, false);
+        }
+        if !activated {
             return Err(anyhow!("unable to activate target window"));
         }
     }
     Ok(())
+}
+
+fn activation_thread_ids(current: u32, foreground: u32, target: u32) -> Vec<u32> {
+    let mut thread_ids = Vec::with_capacity(2);
+    for thread_id in [foreground, target] {
+        if thread_id != 0 && thread_id != current && !thread_ids.contains(&thread_id) {
+            thread_ids.push(thread_id);
+        }
+    }
+    thread_ids
 }
 
 fn move_pointer(params: &Value) -> Result<Value> {
@@ -1142,6 +1203,33 @@ mod tests {
             true
         ));
     }
+
+    #[test]
+    fn document_text_uses_the_text_pattern_instead_of_control_labels() {
+        let source = "  本周完成：桌面上下文绑定。\r\n下周计划：继续验证。  ";
+        assert_eq!(
+            normalize_document_text(Some(source.into())),
+            source
+        );
+        assert_eq!(normalize_document_text(None), "");
+        assert_eq!(normalize_document_text(Some("   ".into())), "");
+    }
+
+    #[test]
+    fn activation_attaches_only_distinct_foreground_and_target_threads() {
+        assert_eq!(activation_thread_ids(10, 20, 30), vec![20, 30]);
+        assert_eq!(activation_thread_ids(10, 10, 30), vec![30]);
+        assert_eq!(activation_thread_ids(10, 20, 20), vec![20]);
+    }
+
+    #[test]
+    fn supports_standard_document_navigation_keys() {
+        assert_eq!(virtual_key("HOME").unwrap(), VK_HOME);
+        assert_eq!(virtual_key("END").unwrap(), VK_END);
+        assert_eq!(virtual_key("PAGEUP").unwrap(), VK_PRIOR);
+        assert_eq!(virtual_key("PAGEDOWN").unwrap(), VK_NEXT);
+        assert_eq!(virtual_key("DELETE").unwrap(), VK_DELETE);
+    }
 }
 
 fn send_inputs(inputs: &[INPUT]) -> Result<()> {
@@ -1165,6 +1253,11 @@ fn virtual_key(name: &str) -> Result<VIRTUAL_KEY> {
         "TAB" => VK_TAB,
         "ESC" | "ESCAPE" => VK_ESCAPE,
         "BACKSPACE" => VK_BACK,
+        "DELETE" | "DEL" => VK_DELETE,
+        "HOME" => VK_HOME,
+        "END" => VK_END,
+        "PAGEUP" | "PAGE_UP" | "PGUP" => VK_PRIOR,
+        "PAGEDOWN" | "PAGE_DOWN" | "PGDN" => VK_NEXT,
         "LEFT" => VK_LEFT,
         "RIGHT" => VK_RIGHT,
         "UP" => VK_UP,

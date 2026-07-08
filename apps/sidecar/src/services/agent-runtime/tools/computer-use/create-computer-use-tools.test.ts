@@ -45,7 +45,7 @@ describe("createComputerUseMcpTools", () => {
     });
   });
 
-  test("defaults current_context to the desktop snapshot bound to the run", async () => {
+  test("keeps current_context pinned to the desktop snapshot bound to the run", async () => {
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const tools = createComputerUseMcpTools({
       boundDesktopContextSnapshotId: "snap-bound",
@@ -61,7 +61,7 @@ describe("createComputerUseMcpTools", () => {
 
     expect(calls).toEqual([
       { method: "current_context", input: { snapshotId: "snap-bound" } },
-      { method: "current_context", input: { snapshotId: "snap-explicit" } },
+      { method: "current_context", input: { snapshotId: "snap-bound" } },
     ]);
   });
 

@@ -54,6 +54,7 @@ const sidecarCallMock = mock(async (command: string, payload?: Record<string, un
 })
 
 const agentSendMock = mock(async () => undefined)
+const getQuickInputContextMock = mock(async () => ({ status: 'unavailable' }))
 
 mock.module('@tiptap/react', () => ({
   useEditor: () => mockEditor,
@@ -90,6 +91,13 @@ mock.module('@/lib/desktop-api', () => ({
     ((globalThis as any).__lumeDesktopAgentSend ?? agentSendMock)(...args),
   openFileDialog: () =>
     (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
+  openFolderDialog: async () => ({ path: null }),
+  getQuickInputContext: () => getQuickInputContextMock(),
+  openInSystem: async () => undefined,
+  revealPathInSystem: async () => undefined,
+  saveFilePathDialog: async () => ({ path: null }),
+  copyFile: async () => undefined,
+  writeClipboardText: async () => undefined,
   onSidecarEvent: async () => () => {},
   executeTaskContract: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopExecuteTaskContract?.(...args) ?? Promise.resolve({ ok: true }),
@@ -378,6 +386,8 @@ describe('WelcomeView', () => {
     ;(globalThis as any).__lumeDesktopOpenFileDialog = async () => ({ files: [] })
     sidecarCallMock.mockClear()
     agentSendMock.mockClear()
+    getQuickInputContextMock.mockClear()
+    getQuickInputContextMock.mockImplementation(async () => ({ status: 'unavailable' }))
   })
 
   afterEach(async () => {
@@ -467,6 +477,87 @@ describe('WelcomeView', () => {
         expect.objectContaining({ workspaceId: 'workspace-2' }),
       )
       expect(agentSendMock).toHaveBeenCalledTimes(1)
+    } finally {
+      if (root) {
+        await act(async () => {
+          root!.unmount()
+          await flush()
+        })
+        root = null
+      }
+      cleanup()
+    }
+  })
+
+  test('attaches the pre-captured active app to the first message from the welcome composer', async () => {
+    const store = createStore()
+    store.set(agentWorkspacesAtom, [
+      {
+        id: 'workspace-1',
+        name: '默认工作区',
+        slug: 'default-workspace',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(tabsAtom, [{ id: '__welcome__', type: 'welcome', title: '新会话', workspaceId: 'workspace-1' }])
+    store.set(activeTabIdAtom, '__welcome__')
+    getQuickInputContextMock.mockImplementation(async () => {
+      return {
+        status: 'ok',
+        snapshotId: 'snapshot:notepad',
+        app: { id: 'notepad.exe', name: 'Notepad' },
+        window: { id: 'window:notepad', title: '周报.txt - Notepad' },
+        capturedAt: Date.now(),
+      }
+    })
+
+    const { container, cleanup } = installFakeDom()
+    let root: Root | null = createRoot(container as never)
+
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <WelcomeView workspaceId="workspace-1" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      await act(async () => {
+        await latestSurfaceProps.onAttachMenuOpen()
+        await flush()
+      })
+
+      expect(latestSurfaceProps.desktopContextTarget).toEqual({
+        snapshotId: 'snapshot:notepad',
+        app: { id: 'notepad.exe', name: 'Notepad' },
+        window: { id: 'window:notepad', title: '周报.txt - Notepad' },
+        capturedAt: expect.any(Number),
+      })
+
+      await act(async () => {
+        latestSurfaceProps.onSelectDesktopContextTarget(latestSurfaceProps.desktopContextTarget)
+        await flush()
+      })
+      editorText = '根据当前文档写一份周报'
+
+      await act(async () => {
+        await latestSurfaceProps.onSend()
+        await flush()
+      })
+
+      expect(agentSendMock).toHaveBeenCalledWith(expect.objectContaining({
+        threadId: 'created-thread',
+        userMessage: '根据当前文档写一份周报',
+        messageMetadata: {
+          desktopContextSnapshotId: 'snapshot:notepad',
+          desktopApp: { id: 'notepad.exe', name: 'Notepad' },
+          desktopWindow: { id: 'window:notepad', title: '周报.txt - Notepad' },
+        },
+      }))
     } finally {
       if (root) {
         await act(async () => {

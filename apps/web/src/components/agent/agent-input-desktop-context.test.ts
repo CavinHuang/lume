@@ -46,7 +46,6 @@ describe('agent-input desktop context helpers', () => {
         window: { id: 'win:wechat', title: '项目群' },
         capturedAt: 123,
       }),
-      { nowMs: 123 },
     )
 
     expect(state).toEqual({
@@ -82,34 +81,32 @@ describe('agent-input desktop context helpers', () => {
     })
   })
 
-  test('does not reuse stale pre-captured app context', async () => {
+  test('keeps the pre-captured app while Lume owns foreground focus', async () => {
+    const sidecarCalls: unknown[] = []
     const state = await captureAgentInputDesktopContextState(
+      async (...args) => {
+        sidecarCalls.push(args)
+        return { status: 'unavailable' }
+      },
       async () => ({
         status: 'ok',
-        snapshotId: 'snap-sidecar-fresh',
-        app: { id: 'chrome.exe', name: 'Chrome' },
-        window: { id: 'win:chrome', title: 'GLM 搜索' },
-        capturedAt: 10_000,
-      }),
-      async () => ({
-        status: 'ok',
-        snapshotId: 'snap-stale',
+        snapshotId: 'snap-before-lume-focus',
         app: { id: 'wechat.exe', name: '微信' },
-        window: { id: 'win:wechat', title: '旧项目群' },
+        window: { id: 'win:wechat', title: '项目群' },
         capturedAt: 1_000,
       }),
-      { nowMs: 10_000, maxPrecapturedAgeMs: 1_000 },
     )
 
     expect(state).toEqual({
       status: 'ready',
       target: {
-        snapshotId: 'snap-sidecar-fresh',
-        app: { id: 'chrome.exe', name: 'Chrome' },
-        window: { id: 'win:chrome', title: 'GLM 搜索' },
-        capturedAt: 10_000,
+        snapshotId: 'snap-before-lume-focus',
+        app: { id: 'wechat.exe', name: '微信' },
+        window: { id: 'win:wechat', title: '项目群' },
+        capturedAt: 1_000,
       },
     })
+    expect(sidecarCalls).toEqual([])
   })
 
   test('does not attach Lume itself as the current desktop app', async () => {
@@ -133,7 +130,6 @@ describe('agent-input desktop context helpers', () => {
         window: { id: 'win:lume-quick', title: 'Lume Quick Input' },
         capturedAt: 10_000,
       }),
-      { nowMs: 10_000 },
     )).toEqual({
       status: 'unavailable',
       message: '当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。',
