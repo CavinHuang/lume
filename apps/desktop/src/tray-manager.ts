@@ -1,10 +1,33 @@
-import { Tray, Menu, nativeImage } from 'electron'
-import { buildTrayMenuTemplate, type TrayMenuAction } from './desktop-core'
+import { Tray, Menu, nativeImage, type NativeImage } from 'electron'
+import { buildTrayMenuTemplate, deriveTemplateImageBuffer, type TrayMenuAction } from './desktop-core'
 
 let tray: Tray | null = null
 
 export function isTrayAvailable(): boolean {
   return Boolean(tray)
+}
+
+function buildTrayIcon(iconPath: string): NativeImage {
+  const source = nativeImage.createFromPath(iconPath)
+  if (process.platform !== 'darwin') return source
+  try {
+    const size = source.getSize()
+    const rgba = source.toBitmap()
+    const templateRgba = deriveTemplateImageBuffer(rgba, size)
+    const icon = nativeImage.createFromBuffer(templateRgba, {
+      width: size.width,
+      height: size.height,
+    })
+    // resize 返回新对象；template 标记要打在最终（resize 后）的 image 上
+    const sized = icon.resize({ width: 22, height: 22 })
+    sized.setTemplateImage(true)
+    return sized
+  } catch {
+    // 派生失败回退：全彩图标 resize 到 22（resize 返回新对象，需接住）
+    const fallback = nativeImage.createFromPath(iconPath)
+    const sized = fallback.resize({ width: 22, height: 22 })
+    return sized
+  }
 }
 
 export function createTray(options: {
@@ -13,9 +36,7 @@ export function createTray(options: {
   onAction: (action: TrayMenuAction) => void
 }) {
   if (tray) return tray
-  const source = nativeImage.createFromPath(options.iconPath)
-  // nativeImage.resize 返回新对象（非 mutate），需接住返回值
-  const icon = process.platform === 'darwin' ? source.resize({ width: 22, height: 22 }) : source
+  const icon = buildTrayIcon(options.iconPath)
   tray = new Tray(icon)
   tray.setToolTip('Lume')
   tray.on('click', () => options.onClickToggle())
