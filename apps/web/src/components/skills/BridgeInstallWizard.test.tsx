@@ -3,7 +3,7 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Provider, createStore } from 'jotai'
 import { bridgeWizardOpenAtom, bridgeWizardPluginAtom } from '@/atoms'
-import type { PluginMarketItem } from '@lume/shared'
+import type { GetMarketDetailResult, InstallMarketItemResult, PluginMarketItem } from '@lume/shared'
 
 mock.restore()
 
@@ -12,6 +12,29 @@ mock.module('sonner', () => ({
     error: () => {},
     success: () => {},
   },
+}))
+
+// ============ desktop-api mock ============
+// 组件 import 多个 desktop-api 导出；mock 整模块避免真实 IPC 副作用，
+// 同时把 installMarketItem 暴露成 mock.fn 以便第 0 步安装测试断言调用次数。
+const installMarketItemMock = mock(
+  async (): Promise<InstallMarketItemResult> => ({
+    kind: 'plugin',
+    id: 'local:demo',
+    version: '1.0.0',
+    installed: true,
+    enableState: 'workspace-enabled',
+    diagnostics: [],
+  }),
+)
+
+mock.module('@/lib/desktop-api', () => ({
+  checkBridgeStatus: async () => ({ ok: true, detail: 'ok' }),
+  downloadBridgeAsset: async () => ({ savedPath: '/tmp/x', verified: true }),
+  exportPluginArtifact: async () => ({ savedPath: '/tmp/x' }),
+  writeClipboardText: async () => undefined,
+  getMarketDetail: async (): Promise<GetMarketDetailResult> => mockMarketDetailResult(),
+  installMarketItem: installMarketItemMock,
 }))
 
 // ============ FakeDocument（必须在 import @base-ui/react 之前装好）============
@@ -314,6 +337,30 @@ function bridgePlugin(): PluginMarketItem {
   }
 }
 
+// 安装成功后 mock 返回的 detail：plugin 状态为 installed，inspect 含 permissionsHash。
+function mockMarketDetailResult(): GetMarketDetailResult {
+  return {
+    item: {
+      kind: 'plugin',
+      plugin: { ...bridgePlugin(), installState: 'installed', enableState: 'workspace-enabled' },
+    },
+    inspect: {
+      kind: 'plugin',
+      normalized: { pluginId: 'demo', name: 'Demo', version: '1.0.0' },
+      permissionSummary: {
+        filesystemRead: [], filesystemWrite: [], networkOutbound: [],
+        mcpRegister: false, shellAllow: false,
+        toolAllow: [], toolAsk: [], toolDeny: [], hookEvents: [], riskLabels: [],
+      },
+      permissionsHash: 'hash-demo-1',
+      installState: 'installed',
+      enableState: 'workspace-enabled',
+      diagnostics: [],
+    },
+    diagnostics: [],
+  }
+}
+
 // FakeElement 没有事件派发能力（addEventListener 是 noop），无法用真实 click
 // 触发 React 合成事件。但 react-dom 会把组件 props 写到元素的 `__reactProps$<suffix>`
 // 上，可以直接调用 onClick。
@@ -425,6 +472,47 @@ describe('BridgeInstallWizard', () => {
 
       expect(bodyText()).not.toContain('安装扩展')
       expect(bodyText()).not.toContain('安装向导')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+    }
+  })
+
+  test('第 0 步点击「确认权限并安装」调用 installMarketItem 并推进到下一步', async () => {
+    resetBody()
+    installMarketItemMock.mockClear()
+    const container = fakeDocument.createElement('div')
+    const store = createStore()
+    store.set(bridgeWizardOpenAtom, true)
+    store.set(bridgeWizardPluginAtom, bridgePlugin())
+
+    let root: Root | null = createRoot(container as never)
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <BridgeInstallWizard workspaceSlug="default" />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      const suffix = findReactPropsSuffix(fakeDocument.body)
+      expect(suffix).not.toBeNull()
+      const installBtn = findButtonOnClick(fakeDocument.body, suffix!, '确认权限并安装')
+      expect(installBtn).not.toBeNull()
+
+      await act(async () => {
+        installBtn!({ preventDefault() {}, stopPropagation() {} } as any)
+        await flush()
+      })
+
+      // installMarketItem 被调用一次，且向导推进到第 1 步（桥接扩展安装）
+      expect(installMarketItemMock.mock.calls.length).toBe(1)
+      expect(bodyText()).toContain('安装扩展')
     } finally {
       await act(async () => {
         root?.unmount()
