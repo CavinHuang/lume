@@ -116,6 +116,15 @@ export function LeftSidebar() {
     }
   }
 
+  useEffect(() => {
+    const electronAPI = (window as unknown as { electronAPI?: { listen?: (channel: string, listener: (payload: { action: string }) => void) => (() => void) | undefined } }).electronAPI
+    const off = electronAPI?.listen?.('tray-action', ({ action }) => {
+      if (action === 'open-settings') openSettings()
+      else if (action === 'new-note') handleNewThread()
+    })
+    return () => off?.()
+  }, [])
+
   const openAutomation = () => {
     const automationId = '__automation__'
     setActiveTabId(automationId)
