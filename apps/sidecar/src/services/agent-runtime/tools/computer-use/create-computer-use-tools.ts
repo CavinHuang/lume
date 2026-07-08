@@ -47,6 +47,11 @@ const READ_ONLY_TOOLS = new Set<ComputerUseToolName>([
   "search_context",
   "wait_for_state",
 ]);
+const BOUND_WINDOW_READ_TOOLS = new Set<ComputerUseToolName>([
+  "get_window",
+  "get_window_state",
+  "wait_for_state",
+]);
 
 export function createComputerUseMcpTools(input: {
   invoke?: ComputerUseInvoke;
@@ -93,15 +98,19 @@ export function createComputerUseMcpTools(input: {
           if (name === "current_context" && input.boundDesktopContextSnapshotId) {
             args.snapshotId = input.boundDesktopContextSnapshotId;
           }
-          if (name === "get_window_state" && input.boundDesktopContextSnapshotId && !stringValue(args.windowId)) {
-            const boundTarget = await resolveBoundDesktopActionTarget(invoke, input.boundDesktopContextSnapshotId);
+          if (
+            BOUND_WINDOW_READ_TOOLS.has(name)
+            && input.boundDesktopContextSnapshotId
+            && !stringValue(args.windowId)
+          ) {
+            const boundTarget = await resolveBoundDesktopTarget(invoke, input.boundDesktopContextSnapshotId);
             if (boundTarget.status !== "ok") {
               return toolResult(context.toolUseId, boundTarget.result);
             }
             args.windowId = stringValue(boundTarget.args.windowId);
           }
           if (!readOnly && input.boundDesktopContextSnapshotId && !stringValue(args.windowId)) {
-            const boundTarget = await resolveBoundDesktopActionTarget(invoke, input.boundDesktopContextSnapshotId);
+            const boundTarget = await resolveBoundDesktopTarget(invoke, input.boundDesktopContextSnapshotId);
             if (boundTarget.status !== "ok") {
               return toolResult(context.toolUseId, boundTarget.result);
             }
@@ -173,7 +182,7 @@ export function createComputerUseMcpTools(input: {
   });
 }
 
-async function resolveBoundDesktopActionTarget(
+async function resolveBoundDesktopTarget(
   invoke: ComputerUseInvoke,
   snapshotId: string,
 ): Promise<{ status: "ok"; args: Record<string, unknown> } | { status: "blocked"; result: unknown }> {
@@ -551,9 +560,12 @@ function toolSchema(
     ...(anyOf ? { anyOf } : {}),
     additionalProperties: false,
   });
+  const windowScopedRequired = (required: string[]) => options.boundDesktopContext
+    ? required.filter((field) => field !== "windowId")
+    : required;
   const pointTarget = (extra: Record<string, unknown> = {}) => object(
     { ...actionTarget, ...extra },
-    ["windowId"],
+    windowScopedRequired(["windowId"]),
     [{ required: ["elementId"] }, { required: ["x", "y"] }],
   );
 
@@ -563,19 +575,19 @@ function toolSchema(
     case "list_windows":
       return object({ appId: string("Optional app id returned by list_apps.") });
     case "get_window":
-      return object({ windowId }, ["windowId"]);
+      return object({ windowId }, windowScopedRequired(["windowId"]));
     case "get_window_state":
       return object({
         windowId,
         includeScreenshot: { type: "boolean", description: "Attach the current window screenshot as an image when visual inspection is required." },
-      }, options.boundDesktopContext ? [] : ["windowId"]);
+      }, windowScopedRequired(["windowId"]));
     case "launch_app":
       return object({
         app: string("Executable or application name available to the current desktop session."),
         path: string("Absolute executable path."),
       }, [], [{ required: ["app"] }, { required: ["path"] }]);
     case "activate_window":
-      return object({ windowId, windowRevision: actionTarget.windowRevision }, ["windowId"]);
+      return object({ windowId, windowRevision: actionTarget.windowRevision }, windowScopedRequired(["windowId"]));
     case "move_pointer":
     case "click":
     case "perform_secondary_action":
@@ -584,7 +596,7 @@ function toolSchema(
       return object({
         ...actionTarget,
         deltaY: number("Scroll distance; positive values scroll down and negative values scroll up."),
-      }, ["windowId", "deltaY"]);
+      }, windowScopedRequired(["windowId", "deltaY"]));
     case "drag":
       return object({
         ...actionTarget,
@@ -592,7 +604,7 @@ function toolSchema(
         fromY: number("Absolute desktop y coordinate where the drag starts."),
         toX: number("Absolute desktop x coordinate where the drag ends."),
         toY: number("Absolute desktop y coordinate where the drag ends."),
-      }, ["windowId", "fromX", "fromY", "toX", "toY"]);
+      }, windowScopedRequired(["windowId", "fromX", "fromY", "toX", "toY"]));
     case "press_key":
       return object({
         ...actionTarget,
@@ -603,11 +615,11 @@ function toolSchema(
           minItems: 1,
           description: "Ordered modifier/key names pressed together.",
         },
-      }, ["windowId"], [{ required: ["key"] }, { required: ["keys"] }]);
+      }, windowScopedRequired(["windowId"]), [{ required: ["key"] }, { required: ["keys"] }]);
     case "type_text":
-      return object({ ...actionTarget, text: string("Non-secret text to type.") }, ["windowId", "text"]);
+      return object({ ...actionTarget, text: string("Non-secret text to type.") }, windowScopedRequired(["windowId", "text"]));
     case "set_value":
-      return object({ ...actionTarget, value: string("Non-secret replacement value.") }, ["windowId", "value"]);
+      return object({ ...actionTarget, value: string("Non-secret replacement value.") }, windowScopedRequired(["windowId", "value"]));
     case "current_context":
       return object({
         snapshotId: string("Optional snapshot id bound through message metadata."),
@@ -626,7 +638,7 @@ function toolSchema(
         revisionNot: string("Wait until the window revision differs from this value."),
         focused: { type: "boolean", description: "Required focused state." },
         timeoutMs: integer("Maximum wait in milliseconds.", { minimum: 100, maximum: 30_000 }),
-      }, ["windowId"]);
+      }, windowScopedRequired(["windowId"]));
   }
 }
 

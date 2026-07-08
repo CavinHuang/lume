@@ -27,11 +27,22 @@ describe("createComputerUseMcpTools", () => {
     }
   });
 
-  test("makes get_window_state windowId optional for a bound desktop conversation", () => {
+  test("makes windowId optional for bound desktop conversation tools", () => {
     const tools = createComputerUseMcpTools({ boundDesktopContextSnapshotId: "snap-bound" });
-    const getWindowState = tools.find((tool) => tool.name === "mcp__computer_use__get_window_state")!;
+    const required = (name: string) => (
+      tools.find((tool) => tool.name === `mcp__computer_use__${name}`)!.inputSchema as Record<string, any>
+    ).required;
 
-    expect((getWindowState.inputSchema as Record<string, any>).required).toBeUndefined();
+    expect(required("get_window")).toBeUndefined();
+    expect(required("get_window_state")).toBeUndefined();
+    expect(required("activate_window")).toBeUndefined();
+    expect(required("click")).toBeUndefined();
+    expect(required("scroll")).toEqual(["deltaY"]);
+    expect(required("drag")).toEqual(["fromX", "fromY", "toX", "toY"]);
+    expect(required("press_key")).toBeUndefined();
+    expect(required("type_text")).toEqual(["text"]);
+    expect(required("set_value")).toEqual(["value"]);
+    expect(required("wait_for_state")).toBeUndefined();
   });
 
   test("forwards the original method and structured input", async () => {
@@ -196,6 +207,42 @@ describe("createComputerUseMcpTools", () => {
     expect(calls).toEqual([
       { method: "current_context", input: { snapshotId: "snap-wechat" } },
       { method: "get_window_state", input: { windowId: "win:wechat", includeScreenshot: true } },
+    ]);
+  });
+
+  test("anchors bound window read tools when windowId is omitted", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      boundDesktopContextSnapshotId: "snap-wechat",
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "current_context") {
+          return {
+            status: "ok",
+            snapshot: {
+              id: "snap-wechat",
+              app: { id: "wechat.exe", name: "微信" },
+              window: { id: "win:wechat", title: "项目群" },
+            },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const getWindow = tools.find((candidate) => candidate.name === "mcp__computer_use__get_window")!;
+    const waitForState = tools.find((candidate) => candidate.name === "mcp__computer_use__wait_for_state")!;
+
+    await getWindow.call({}, { toolUseId: "tool-bound-window" } as never);
+    await waitForState.call(
+      { titleContains: "项目", timeoutMs: 500 },
+      { toolUseId: "tool-bound-wait" } as never,
+    );
+
+    expect(calls).toEqual([
+      { method: "current_context", input: { snapshotId: "snap-wechat" } },
+      { method: "get_window", input: { windowId: "win:wechat" } },
+      { method: "current_context", input: { snapshotId: "snap-wechat" } },
+      { method: "wait_for_state", input: { windowId: "win:wechat", titleContains: "项目", timeoutMs: 500 } },
     ]);
   });
 
