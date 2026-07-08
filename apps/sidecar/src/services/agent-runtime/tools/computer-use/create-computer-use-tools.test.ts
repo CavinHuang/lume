@@ -45,6 +45,49 @@ describe("createComputerUseMcpTools", () => {
     });
   });
 
+  test("returns desktop screenshots as image blocks instead of base64 JSON text", async () => {
+    const tools = createComputerUseMcpTools({
+      invoke: async () => ({
+        status: "ok",
+        screenshots: [{
+          id: "screenshot:window-1:rev-1",
+          width: 320,
+          height: 200,
+          origin: { x: 10, y: 20 },
+          mimeType: "image/png",
+          dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+        }],
+      }),
+    });
+    const getWindowState = tools.find((tool) => tool.name === "mcp__computer_use__get_window_state")!;
+
+    const result = await getWindowState.call(
+      { windowId: "window-1", includeScreenshot: true },
+      { toolUseId: "tool-screenshot" } as never,
+    );
+
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          screenshots: [{
+            id: "screenshot:window-1:rev-1",
+            width: 320,
+            height: 200,
+            origin: { x: 10, y: 20 },
+            mimeType: "image/png",
+          }],
+        }),
+      },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+        _meta: { screenshotId: "screenshot:window-1:rev-1" },
+      },
+    ]);
+  });
+
   test("keeps current_context pinned to the desktop snapshot bound to the run", async () => {
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const tools = createComputerUseMcpTools({

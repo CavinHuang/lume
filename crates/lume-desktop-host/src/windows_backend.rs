@@ -15,16 +15,25 @@ use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use windows::{
-    core::{BOOL, BSTR, PWSTR},
+    core::{BOOL, BSTR, Interface, PWSTR},
     Win32::{
         Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT},
-        Graphics::Gdi::{
-            BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-            GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-            DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
+        Graphics::{
+            Gdi::{
+                BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+                GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+                DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
+            },
+            Imaging::{
+                CLSID_WICImagingFactory, GUID_ContainerFormatPng, GUID_WICPixelFormat32bppBGR,
+                IWICBitmapFrameEncode, IWICImagingFactory, WICBitmapEncoderNoCache,
+            },
         },
         System::{
-            Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED},
+            Com::{
+                CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER,
+                COINIT_MULTITHREADED, STREAM_SEEK_CUR,
+            },
             Threading::{
                 AttachThreadInput, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
                 PROCESS_QUERY_LIMITED_INFORMATION,
@@ -331,10 +340,10 @@ fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Valu
             "x": window["bounds"]["x"],
             "y": window["bounds"]["y"],
         },
-        "mimeType": "image/bmp",
+        "mimeType": "image/png",
     });
     if include_pixels {
-        match capture_window_bmp_data_url(hwnd, width, height) {
+        match capture_window_png_data_url(hwnd, width, height) {
             Ok(data_url) => {
                 screenshot["dataUrl"] = Value::String(data_url);
             }
@@ -354,7 +363,7 @@ fn screenshot_id(window: &Value) -> String {
     )
 }
 
-fn capture_window_bmp_data_url(hwnd: HWND, width: i32, height: i32) -> Result<String> {
+fn capture_window_png_data_url(hwnd: HWND, width: i32, height: i32) -> Result<String> {
     let mut rect = RECT::default();
     unsafe {
         GetWindowRect(hwnd, &mut rect)?;
@@ -395,7 +404,7 @@ fn capture_window_bmp_data_url(hwnd: HWND, width: i32, height: i32) -> Result<St
     };
     let result = capture_result
         .map_err(|error| anyhow!("window capture failed: {error}"))
-        .and_then(|_| bitmap_to_bmp_data_url(memory_dc, bitmap, width, height));
+        .and_then(|_| bitmap_to_png_data_url(memory_dc, bitmap, width, height));
     unsafe {
         if !old_object.is_invalid() {
             SelectObject(memory_dc, old_object);
@@ -407,7 +416,7 @@ fn capture_window_bmp_data_url(hwnd: HWND, width: i32, height: i32) -> Result<St
     result
 }
 
-fn bitmap_to_bmp_data_url(
+fn bitmap_to_png_data_url(
     memory_dc: windows::Win32::Graphics::Gdi::HDC,
     bitmap: windows::Win32::Graphics::Gdi::HBITMAP,
     width: i32,
@@ -445,26 +454,42 @@ fn bitmap_to_bmp_data_url(
     if copied == 0 {
         return Err(anyhow!("unable to read captured bitmap"));
     }
-    let mut bmp = Vec::with_capacity(14 + size_of::<BITMAPINFOHEADER>() + pixels.len());
-    let file_size = (14 + size_of::<BITMAPINFOHEADER>() + pixels.len()) as u32;
-    bmp.extend_from_slice(b"BM");
-    bmp.extend_from_slice(&file_size.to_le_bytes());
-    bmp.extend_from_slice(&0_u16.to_le_bytes());
-    bmp.extend_from_slice(&0_u16.to_le_bytes());
-    bmp.extend_from_slice(&(14_u32 + size_of::<BITMAPINFOHEADER>() as u32).to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biSize.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biWidth.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biHeight.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biPlanes.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biBitCount.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biCompression.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biSizeImage.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biXPelsPerMeter.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biYPelsPerMeter.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biClrUsed.to_le_bytes());
-    bmp.extend_from_slice(&info.bmiHeader.biClrImportant.to_le_bytes());
-    bmp.extend_from_slice(&pixels);
-    Ok(format!("data:image/bmp;base64,{}", BASE64.encode(bmp)))
+    let capacity = pixel_bytes
+        .checked_add(height as usize)
+        .and_then(|size| size.checked_add(64 * 1024))
+        .ok_or_else(|| anyhow!("window capture dimensions are too large"))?;
+    let mut png = vec![0_u8; capacity];
+    let written = unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let factory: IWICImagingFactory =
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+        let stream = factory.CreateStream()?;
+        stream.InitializeFromMemory(&png)?;
+        let encoder = factory.CreateEncoder(&GUID_ContainerFormatPng, std::ptr::null())?;
+        encoder.Initialize(&stream, WICBitmapEncoderNoCache)?;
+
+        let mut frame: Option<IWICBitmapFrameEncode> = None;
+        let mut options = None;
+        encoder.CreateNewFrame(&mut frame, &mut options)?;
+        let frame = frame.ok_or_else(|| anyhow!("PNG encoder did not create a frame"))?;
+        frame.Initialize(options.as_ref())?;
+        frame.SetSize(width as u32, height as u32)?;
+        let mut pixel_format = GUID_WICPixelFormat32bppBGR;
+        frame.SetPixelFormat(&mut pixel_format)?;
+        frame.WritePixels(height as u32, width as u32 * 4, &pixels)?;
+        frame.Commit()?;
+        encoder.Commit()?;
+
+        let output: IStream = stream.cast()?;
+        let mut position = 0_u64;
+        output.Seek(0, STREAM_SEEK_CUR, Some(&mut position))?;
+        position as usize
+    };
+    if written == 0 || written > png.len() {
+        return Err(anyhow!("PNG encoder returned an invalid output size"));
+    }
+    png.truncate(written);
+    Ok(format!("data:image/png;base64,{}", BASE64.encode(png)))
 }
 
 fn accessibility_state(hwnd: HWND) -> Result<Value> {

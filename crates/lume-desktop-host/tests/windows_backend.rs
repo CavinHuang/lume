@@ -7,6 +7,7 @@ use lume_desktop_host::{
     windows_overlay::{move_visual_cursor, reset_visual_cursor},
     DesktopBackend,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::json;
 
 #[test]
@@ -37,7 +38,7 @@ fn get_window_state_returns_screenshot_metadata_without_pixels_by_default() {
 
     assert_eq!(result["status"], "ok");
     let screenshot = &result["screenshots"][0];
-    assert_eq!(screenshot["mimeType"], "image/bmp");
+    assert_eq!(screenshot["mimeType"], "image/png");
     assert!(screenshot["width"].as_i64().unwrap_or_default() > 0);
     assert!(screenshot["height"].as_i64().unwrap_or_default() > 0);
     assert!(screenshot.get("dataUrl").is_none());
@@ -54,7 +55,11 @@ fn get_window_state_can_include_screenshot_pixels_when_requested() {
     let data_url = result["screenshots"][0]["dataUrl"]
         .as_str()
         .unwrap_or_default();
-    assert!(data_url.starts_with("data:image/bmp;base64,"));
+    let encoded = data_url
+        .strip_prefix("data:image/png;base64,")
+        .expect("screenshot must be a PNG data URL");
+    let bytes = BASE64.decode(encoded).expect("screenshot PNG must be valid base64");
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
 }
 
 #[test]

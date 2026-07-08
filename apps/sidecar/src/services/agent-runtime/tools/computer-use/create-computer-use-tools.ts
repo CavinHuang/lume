@@ -399,7 +399,7 @@ function toolSchema(name: ComputerUseToolName): ComputerUseToolSchema {
     case "get_window_state":
       return object({
         windowId,
-        includeScreenshot: { type: "boolean", description: "Include screenshot pixels as a data URL when visual inspection is required." },
+        includeScreenshot: { type: "boolean", description: "Attach the current window screenshot as an image when visual inspection is required." },
       }, ["windowId"]);
     case "launch_app":
       return object({
@@ -465,10 +465,69 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function toolResult(toolUseId: string | undefined, value: unknown, isError = false): ToolResult {
+  const screenshotContent = detachScreenshotImages(value);
   return {
     type: "tool_result",
     tool_use_id: toolUseId ?? "",
-    content: JSON.stringify(value),
+    content: screenshotContent.images.length > 0
+      ? [
+          { type: "text", text: JSON.stringify(screenshotContent.value) },
+          ...screenshotContent.images,
+        ]
+      : JSON.stringify(screenshotContent.value),
     ...(isError ? { is_error: true } : {}),
+  };
+}
+
+function detachScreenshotImages(value: unknown): {
+  value: unknown;
+  images: Array<{
+    type: "image";
+    source: { type: "base64"; media_type: string; data: string };
+    _meta: { screenshotId?: string };
+  }>;
+} {
+  const record = asRecord(value);
+  if (!Array.isArray(record.screenshots)) {
+    return { value, images: [] };
+  }
+
+  const images: Array<{
+    type: "image";
+    source: { type: "base64"; media_type: string; data: string };
+    _meta: { screenshotId?: string };
+  }> = [];
+  const screenshots = record.screenshots.map((item) => {
+    const screenshot = asRecord(item);
+    const { dataUrl, ...metadata } = screenshot;
+    const image = parseScreenshotDataUrl(dataUrl);
+    if (image) {
+      images.push({
+        type: "image",
+        source: image,
+        _meta: { screenshotId: stringValue(screenshot.id) },
+      });
+    }
+    return metadata;
+  });
+
+  return {
+    value: { ...record, screenshots },
+    images,
+  };
+}
+
+function parseScreenshotDataUrl(value: unknown): {
+  type: "base64";
+  media_type: string;
+  data: string;
+} | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = /^data:(image\/[^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(value);
+  if (!match) return undefined;
+  return {
+    type: "base64",
+    media_type: match[1]!,
+    data: match[2]!.replace(/\s/g, ""),
   };
 }
