@@ -1532,6 +1532,7 @@ export async function createRuntimeCoreSession(
 
   const userMessageForModel = buildRuntimeUserMessageInput({
     userMessage: contextAssembly.userMessageForModel,
+    contentBlocks: contextAssembly.userMessageContentBlocks,
     attachments: input.messageAttachments,
     provider: input.provider,
     workspaceSlug: input.workspaceSlug,

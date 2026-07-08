@@ -76,18 +76,36 @@ export function normalizeMessagesForAPI(
             : msg.content as any[]
           normalized[normalized.length - 1] = {
             role: 'user',
-            content: [...lastContent, ...newContent],
+            content: sanitizeContentForAPI([...lastContent, ...newContent]),
           }
           continue
         }
       }
     }
 
-    normalized.push({ ...msg })
+    normalized.push({ ...msg, content: sanitizeContentForAPI(msg.content) })
   }
 
   // Ensure tool results are properly paired with tool_use
   return fixToolResultPairing(normalized)
+}
+
+function sanitizeContentForAPI(content: any): any {
+  if (!Array.isArray(content)) return content
+  return content.map(sanitizeContentBlockForAPI)
+}
+
+function sanitizeContentBlockForAPI(block: any): any {
+  if (!block || typeof block !== 'object' || Array.isArray(block)) return block
+
+  const { _meta: _meta, ...sanitized } = block
+  if (Array.isArray(sanitized.content)) {
+    return {
+      ...sanitized,
+      content: sanitized.content.map(sanitizeContentBlockForAPI),
+    }
+  }
+  return sanitized
 }
 
 /**

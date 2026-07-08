@@ -1,5 +1,5 @@
 import type { AgentMessageAttachmentInput, AgentSendInput } from "@lume/shared";
-import { estimateTokens } from "@lume/agent-sdk";
+import { estimateTokens, type ContentBlockParam } from "@lume/agent-sdk";
 import {
   buildDynamicContext,
   buildSystemPromptAppend,
@@ -58,6 +58,7 @@ export interface ContextAssemblyResult {
   memoryUserMessagePrefix: string;
   memoryContextUsedItems: MemoryV2RecallItem[];
   userMessageForModel: string;
+  userMessageContentBlocks?: ContentBlockParam[];
   sessionContext: string;
   planContext?: string;
   budget: ContextBudget;
@@ -227,9 +228,11 @@ export class ContextAssembler {
       .join("\n\n");
     const attachmentBrief = buildMessageAttachmentBrief(input.messageAttachments);
     const directoryBrief = buildAttachedDirectoriesBrief(input.attachedDirectories);
-    const desktopContextBrief = input.desktopContext
-      ? `<desktop_context trust="untrusted">\n${JSON.stringify(input.desktopContext)}\n</desktop_context>`
+    const desktopContextForPrompt = promptDesktopContext(input.desktopContext);
+    const desktopContextBrief = desktopContextForPrompt
+      ? `<desktop_context trust="untrusted">\n${JSON.stringify(desktopContextForPrompt)}\n</desktop_context>`
       : "";
+    const desktopContextImageBlocks = desktopContextImages(input.desktopContext);
     const userMessageForModel = [
       memoryContext.userMessageForModel,
       desktopContextBrief,
@@ -246,6 +249,7 @@ export class ContextAssembler {
       memoryUserMessagePrefix: memoryContext.prefix,
       memoryContextUsedItems: memoryContext.items,
       userMessageForModel,
+      ...(desktopContextImageBlocks.length > 0 ? { userMessageContentBlocks: desktopContextImageBlocks } : {}),
       sessionContext: "",
       budget: {
         ...DEFAULT_CONTEXT_BUDGET,
@@ -258,6 +262,28 @@ export class ContextAssembler {
       }
     };
   }
+}
+
+function promptDesktopContext(value: unknown): unknown {
+  const record = asRecord(value);
+  if (!Object.keys(record).length) return value;
+  const { imageBlocks: _imageBlocks, ...promptValue } = record;
+  return promptValue;
+}
+
+function desktopContextImages(value: unknown): ContentBlockParam[] {
+  const imageBlocks = asRecord(value).imageBlocks;
+  if (!Array.isArray(imageBlocks)) return [];
+  return imageBlocks.filter((block): block is ContentBlockParam => {
+    const record = asRecord(block);
+    return record.type === "image" && !!record.source;
+  });
+}
+
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, any>
+    : {};
 }
 
 function resolvePromptMemorySessionType(input: {

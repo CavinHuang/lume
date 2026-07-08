@@ -88,9 +88,9 @@ export async function resolveDesktopContextProjection(
   const snapshotId = messageMetadata?.desktopContextSnapshotId;
   if (typeof snapshotId !== "string" || !snapshotId.trim()) return undefined;
 
-  const result = asRecord(await service.currentContext({ snapshotId }));
+  const result = asRecord(await service.currentContext({ snapshotId, includeScreenshot: true }));
   return result.status === "ok" && result.snapshot
-    ? { snapshot: result.snapshot }
+    ? splitDesktopContextImages(result.snapshot)
     : undefined;
 }
 
@@ -98,4 +98,50 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function splitDesktopContextImages(snapshot: unknown): { snapshot: unknown; imageBlocks?: unknown[] } {
+  const value = asRecord(snapshot);
+  if (!Object.keys(value).length) return { snapshot };
+  const imageBlocks: unknown[] = [];
+  const sanitized = sanitizeSnapshotImages(value, imageBlocks);
+  return imageBlocks.length > 0
+    ? { snapshot: sanitized, imageBlocks }
+    : { snapshot: sanitized };
+}
+
+function sanitizeSnapshotImages(value: unknown, imageBlocks: unknown[]): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeSnapshotImages(item, imageBlocks));
+  }
+  const record = asRecord(value);
+  if (!Object.keys(record).length) return value;
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (key === "screenshots" && Array.isArray(item)) {
+      output[key] = item.map((candidate) => {
+        const screenshot = asRecord(candidate);
+        const { dataUrl, ...metadata } = screenshot;
+        const image = parseDataUrl(dataUrl);
+        if (image) {
+          imageBlocks.push({
+            type: "image",
+            source: image,
+            _meta: { screenshotId: typeof screenshot.id === "string" ? screenshot.id : undefined, persist: false },
+          });
+        }
+        return metadata;
+      });
+      continue;
+    }
+    output[key] = sanitizeSnapshotImages(item, imageBlocks);
+  }
+  return output;
+}
+
+function parseDataUrl(value: unknown): { type: "base64"; media_type: string; data: string } | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = /^data:(image\/[^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(value);
+  if (!match) return undefined;
+  return { type: "base64", media_type: match[1]!, data: match[2]!.replace(/\s/g, "") };
 }

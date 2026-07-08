@@ -65,6 +65,39 @@ describe("ContextAssembler", () => {
     expect(result.systemPrompt).toContain("Consequential actions still require Lume confirmation");
   });
 
+  test("attaches desktop screenshot image blocks without putting base64 in prompt text", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "desktop-image-thread",
+      runId: "desktop-image-run",
+      userMessage: "这条微信怎么回复？",
+      resolvedModelId: "test-model",
+      availableTools: ["mcp__computer_use__current_context"],
+      tokenBudget: 8_000,
+      desktopContext: {
+        snapshot: {
+          id: "snap-image",
+          app: { id: "wechat.exe", name: "微信" },
+          window: { id: "win:wechat", title: "项目群" },
+          screenshots: [{ id: "shot-1", mimeType: "image/png", width: 320, height: 200 }],
+          untrusted: true,
+        },
+        imageBlocks: [{
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+          _meta: { screenshotId: "shot-1", persist: false },
+        }],
+      },
+    });
+
+    expect(result.userMessageForModel).toContain("snap-image");
+    expect(result.userMessageForModel).not.toContain("iVBORw0KGgo=");
+    expect(result.userMessageContentBlocks).toEqual([{
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+      _meta: { screenshotId: "shot-1", persist: false },
+    }]);
+  });
+
   const originalConfigDir = process.env.LUME_CONFIG_DIR;
 
   test("assembles existing prompt builder output with budget trace", async () => {

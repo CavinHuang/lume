@@ -6,10 +6,12 @@ import { normalizeProviderUsage } from "./utils/usage.js"
 class StaticProvider implements LLMProvider {
   readonly apiType = "anthropic-messages" as const
   private index = 0
+  readonly requests: CreateMessageParams[] = []
 
   constructor(private readonly responses: CreateMessageResponse[]) {}
 
-  async createMessage(_params: CreateMessageParams): Promise<CreateMessageResponse> {
+  async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
+    this.requests.push(params)
     const response = this.responses[this.index]
     this.index += 1
     if (!response) {
@@ -896,5 +898,66 @@ describe("QueryEngine structured tool results", () => {
     const streamedToolResult = events.find((event: any) => event.type === "tool_result") as any;
     expect(streamedToolResult.result.output).not.toContain("ZmFrZQ==");
     expect(streamedToolResult.result.output).toContain("[Image: image/png]");
+  });
+
+  test("strips internal image metadata before provider calls", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+    });
+    (engine as any).messages.push({
+      role: "user",
+      content: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "old" },
+        _meta: { persist: false },
+      }],
+    });
+    (engine as any).messages.push({
+      role: "assistant",
+      content: [{
+        type: "tool_use",
+        id: "desktop-context",
+        name: "current_context",
+        input: {},
+        _meta: { traceId: "tool-use" },
+      }],
+    });
+    (engine as any).messages.push({
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "desktop-context",
+        content: [{
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "nested" },
+          _meta: { persist: false },
+        }],
+        _meta: { traceId: "tool-result" },
+      }],
+    });
+
+    await collectEvents(engine, [
+      { type: "text", text: "look" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" },
+        _meta: { persist: false },
+      },
+    ] as any);
+
+    expect(JSON.stringify((provider as any).requests?.[0]?.messages)).not.toContain("_meta");
   });
 });

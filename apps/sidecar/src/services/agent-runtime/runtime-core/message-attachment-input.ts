@@ -7,13 +7,15 @@ export type RuntimeUserMessageInput = string | ContentBlockParam[];
 
 export function buildRuntimeUserMessageInput(input: {
   userMessage: string;
+  contentBlocks?: ContentBlockParam[];
   attachments?: AgentMessageAttachmentInput[];
   provider: string;
   workspaceSlug?: string;
   threadId: string;
 }): RuntimeUserMessageInput {
+  const extraBlocks = supportsImageContentBlocks(input.provider) ? input.contentBlocks ?? [] : [];
   const imageBlocks = buildImageAttachmentBlocks(input);
-  if (!imageBlocks.length) {
+  if (!extraBlocks.length && !imageBlocks.length) {
     return input.userMessage;
   }
 
@@ -21,6 +23,7 @@ export function buildRuntimeUserMessageInput(input: {
   if (input.userMessage.trim()) {
     content.push({ type: "text", text: input.userMessage });
   }
+  content.push(...extraBlocks);
   content.push(...imageBlocks);
   return content;
 }

@@ -57,6 +57,50 @@ describe("message attachment model input", () => {
     ]);
   });
 
+  test("合并桌面视觉块和普通图片附件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-desktop-image";
+    const threadId = "thread-desktop-image";
+    const sessionDir = getAgentSessionPath(workspaceSlug, threadId);
+    writeFileSync(join(sessionDir, "screen.png"), "fake-image");
+
+    const input = buildRuntimeUserMessageInput({
+      userMessage: "请根据当前微信回复",
+      provider: "openai",
+      workspaceSlug,
+      threadId,
+      contentBlocks: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "desktop-shot" },
+        _meta: { screenshotId: "shot-1", persist: false },
+      }],
+      attachments: [{
+        id: "att-1",
+        filename: "screen.png",
+        mediaType: "image/png",
+        size: 10,
+        threadPath: "screen.png"
+      }]
+    });
+
+    expect(input).toEqual([
+      { type: "text", text: "请根据当前微信回复" },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "desktop-shot" },
+        _meta: { screenshotId: "shot-1", persist: false },
+      },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: Buffer.from("fake-image").toString("base64")
+        }
+      }
+    ]);
+  });
+
   test("非图片或不可读取附件应保留文本输入降级", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-text";
