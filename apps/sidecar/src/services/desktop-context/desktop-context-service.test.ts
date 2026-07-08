@@ -9,6 +9,7 @@ function createService(input: {
   proactiveEnabled?: boolean;
   notificationsEnabled?: boolean;
   emitNotification?: (method: string, params: unknown) => void;
+  snapshot?: DesktopContextSnapshot;
 } = {}) {
   const snapshots = new Map<string, DesktopContextSnapshot>();
   return new DesktopContextService({
@@ -44,7 +45,7 @@ function createService(input: {
     }),
     invokeHost: async () => ({
       status: "ok",
-      snapshot: {
+      snapshot: input.snapshot ?? {
         id: "snap-1",
         app: { id: "wechat.exe", name: "微信" },
         window: {
@@ -159,6 +160,90 @@ describe("DesktopContextService", () => {
     expect(current).toMatchObject({ status: "ok" });
     expect(JSON.stringify(current)).not.toContain("secret");
     expect(JSON.stringify(current)).toContain("[REDACTED]");
+  });
+
+  test("does not retain Lume itself as a selectable desktop context", async () => {
+    const snapshots = new Map<string, DesktopContextSnapshot>();
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: true,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+        proactiveEnabled: true,
+      },
+      createStore: () => ({
+        put(snapshot) {
+          snapshots.set(snapshot.id, snapshot);
+        },
+        get: (id) => snapshots.get(id),
+        getRedacted: (id) => snapshots.get(id),
+        latestRedacted: () => [...snapshots.values()].at(-1),
+        recent: () => [...snapshots.values()],
+        search: () => [...snapshots.values()],
+        purge: () => undefined,
+        stats: () => ({ items: snapshots.size, bytes: 0 }),
+        clear: () => snapshots.clear(),
+        close: () => undefined,
+      }),
+      invokeHost: async () => ({
+        status: "ok",
+        snapshot: {
+          id: "snap-lume",
+          app: { id: "lume.exe", name: "Lume" },
+          window: {
+            id: "win:lume",
+            appId: "lume.exe",
+            title: "Lume Quick Input",
+            bounds: { x: 0, y: 0, width: 800, height: 600 },
+            focused: true,
+          },
+          capturedAt: 123,
+          eventType: "foreground_changed",
+          visibleText: "Lume 输入框",
+          untrusted: true,
+        },
+      }),
+    });
+    service.unlock(Buffer.alloc(32, 7));
+
+    expect(await service.captureCurrent({ userInitiated: true })).toEqual({
+      status: "unavailable",
+      message: "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。",
+    });
+    expect(snapshots.size).toBe(0);
+    expect(service.listProposals()).toEqual([]);
+  });
+
+  test("does not block unrelated apps whose names contain lume", async () => {
+    const service = createService({
+      allowedApps: [],
+      snapshot: {
+        id: "snap-lume-notes",
+        app: { id: "com.example.lume-notes", name: "Lume Notes" },
+        window: {
+          id: "win:lume-notes",
+          appId: "com.example.lume-notes",
+          title: "Weekly Plan",
+          bounds: { x: 0, y: 0, width: 900, height: 640 },
+          focused: true,
+        },
+        capturedAt: 456,
+        eventType: "foreground_changed",
+        visibleText: "本周计划",
+        untrusted: true,
+      },
+    });
+    service.unlock(Buffer.alloc(32, 8));
+
+    expect(await service.captureCurrent({ userInitiated: true })).toEqual({
+      status: "ok",
+      snapshotId: "snap-lume-notes",
+      app: { id: "com.example.lume-notes", name: "Lume Notes" },
+      window: { id: "win:lume-notes", title: "Weekly Plan" },
+      capturedAt: 456,
+    });
   });
 
   test("creates non-sensitive reply proposals from local context only when proactive mode is enabled", async () => {

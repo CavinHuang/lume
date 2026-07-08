@@ -7,6 +7,11 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
+#[cfg_attr(not(unix), allow(dead_code))]
+fn private_unix_socket_mode() -> u32 {
+    0o600
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -120,11 +125,14 @@ async fn serve(endpoint: &str, token: String) -> Result<()> {
 
 #[cfg(unix)]
 async fn serve(endpoint: &str, token: String) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     use tokio::net::UnixListener;
 
     let _ = std::fs::remove_file(endpoint);
     let listener =
         UnixListener::bind(endpoint).with_context(|| format!("bind unix socket {endpoint}"))?;
+    fs::set_permissions(endpoint, fs::Permissions::from_mode(private_unix_socket_mode()))
+        .with_context(|| format!("restrict unix socket permissions {endpoint}"))?;
     loop {
         let (stream, _) = listener.accept().await?;
         if let Err(error) = handle_stream(stream, token.clone()).await {
@@ -167,6 +175,11 @@ mod tests {
 
         assert_eq!(read_session_token(&args).unwrap(), "secret-token");
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn unix_socket_permission_mode_is_current_user_only() {
+        assert_eq!(private_unix_socket_mode(), 0o600);
     }
 
     fn unique_token_path() -> PathBuf {

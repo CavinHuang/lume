@@ -153,7 +153,14 @@ function desktopContextTargetState(target: DesktopContextTarget): AgentInputDesk
 }
 
 function isLumeShellTarget(target: DesktopContextTarget): boolean {
-  const appText = `${target.app.id} ${target.app.name}`.toLowerCase()
-  const title = target.window.title.toLowerCase()
-  return appText.includes('lume') || (appText.includes('electron') && title.includes('lume'))
+  const appId = normalizeSelfContextText(target.app.id)
+  const appName = normalizeSelfContextText(target.app.name)
+  const title = normalizeSelfContextText(target.window.title)
+  const exactLumeApp = appId === 'lume' || appId === 'lume.exe' || appName === 'lume' || appName === 'lume.exe'
+  const electronShell = appId === 'electron' || appId === 'electron.exe' || appName === 'electron' || appName === 'electron.exe'
+  return exactLumeApp || (electronShell && title.includes('lume'))
+}
+
+function normalizeSelfContextText(value: string): string {
+  return value.trim().toLowerCase()
 }

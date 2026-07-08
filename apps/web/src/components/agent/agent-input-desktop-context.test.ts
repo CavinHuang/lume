@@ -139,6 +139,24 @@ describe('agent-input desktop context helpers', () => {
     })
   })
 
+  test('does not reject unrelated apps whose names contain lume', async () => {
+    expect(await captureAgentInputDesktopContextState(async () => ({
+      status: 'ok',
+      snapshotId: 'snap-lume-notes',
+      app: { id: 'com.example.lume-notes', name: 'Lume Notes' },
+      window: { id: 'win:lume-notes', title: 'Weekly Plan' },
+      capturedAt: 456,
+    }))).toEqual({
+      status: 'ready',
+      target: {
+        snapshotId: 'snap-lume-notes',
+        app: { id: 'com.example.lume-notes', name: 'Lume Notes' },
+        window: { id: 'win:lume-notes', title: 'Weekly Plan' },
+        capturedAt: 456,
+      },
+    })
+  })
+
   test('ignores invalid or unavailable capture results', async () => {
     expect(await captureAgentInputDesktopContextTarget(async () => ({
       status: 'unavailable',

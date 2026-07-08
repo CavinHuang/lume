@@ -87,6 +87,9 @@ export class DesktopContextService {
     if (response.status !== "ok") return attachDesktopPermissionCaptureMessage(response);
     const snapshot = normalizeSnapshot(response.snapshot);
     if (!snapshot) return { status: "failed", message: "desktop host returned an invalid context snapshot" };
+    if (isLumeShellSnapshot(snapshot)) {
+      return { status: "unavailable", message: LUME_SELF_CONTEXT_MESSAGE };
+    }
     const allowed = new Set(this.#settings.allowedApps.map((app) => app.trim().toLowerCase()).filter(Boolean));
     if (input.userInitiated !== true && !allowed.has(snapshot.app.id.toLowerCase())) {
       return { status: "blocked", message: `desktop context is not allowed for ${snapshot.app.id}` };
@@ -266,6 +269,8 @@ export class DesktopContextService {
   }
 }
 
+const LUME_SELF_CONTEXT_MESSAGE = "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。";
+
 function looksLikeReplyOpportunity(text: string): boolean {
   if (!text.trim()) return false;
   return /[?？]|(?:吗|么|如何|怎么|什么时候|能否|是否|回复|请问)/u.test(text);
@@ -317,6 +322,19 @@ function normalizeSnapshot(value: unknown): DesktopContextSnapshot | null {
     || typeof window.title !== "string"
   ) return null;
   return value as DesktopContextSnapshot;
+}
+
+function isLumeShellSnapshot(snapshot: DesktopContextSnapshot): boolean {
+  const appId = normalizeSelfContextText(snapshot.app.id);
+  const appName = normalizeSelfContextText(snapshot.app.name);
+  const title = normalizeSelfContextText(snapshot.window.title);
+  const exactLumeApp = appId === "lume" || appId === "lume.exe" || appName === "lume" || appName === "lume.exe";
+  const electronShell = appId === "electron" || appId === "electron.exe" || appName === "electron" || appName === "electron.exe";
+  return exactLumeApp || (electronShell && title.includes("lume"));
+}
+
+function normalizeSelfContextText(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function snapshotFromWindowState(
