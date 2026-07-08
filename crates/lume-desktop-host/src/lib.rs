@@ -116,6 +116,26 @@ pub fn desktop_permission_diagnostics(
         (Some(_), Some(_)) => "permission_denied",
         _ => "unavailable",
     };
+    let permissions = vec![
+        permission_diagnostic(
+            "accessibility",
+            "Accessibility",
+            accessibility,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        ),
+        permission_diagnostic(
+            "screenRecording",
+            "Screen & System Audio Recording",
+            screen_recording,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        ),
+    ];
+    let missing_permissions = permissions
+        .iter()
+        .filter(|permission| permission["status"] == "missing")
+        .cloned()
+        .collect::<Vec<_>>();
+    let next_permission = missing_permissions.first().cloned();
     let mut result = json!({
         "status": status,
         "platform": std::env::consts::OS,
@@ -124,21 +144,12 @@ pub fn desktop_permission_diagnostics(
             "appBundleName": COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME,
             "bundleId": COMPUTER_USE_PERMISSION_BUNDLE_ID,
         },
-        "permissions": [
-            permission_diagnostic(
-                "accessibility",
-                "Accessibility",
-                accessibility,
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-            ),
-            permission_diagnostic(
-                "screenRecording",
-                "Screen & System Audio Recording",
-                screen_recording,
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-            ),
-        ],
+        "permissions": permissions,
+        "missingPermissions": missing_permissions,
     });
+    if let Some(next_permission) = next_permission {
+        result["nextPermission"] = next_permission;
+    }
     if let Some(message) = message {
         result["message"] = Value::String(message);
     }

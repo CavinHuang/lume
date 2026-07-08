@@ -1,4 +1,6 @@
-use lume_desktop_host::{DesktopBackend, DesktopSession, UnsupportedBackend};
+use lume_desktop_host::{
+    desktop_permission_diagnostics, DesktopBackend, DesktopSession, UnsupportedBackend,
+};
 use serde_json::{json, Value};
 
 struct FakeBackend;
@@ -123,4 +125,23 @@ fn request_permissions_reports_the_computer_use_permission_identity() {
         response["result"]["permissionTarget"]["bundleId"],
         "com.lume.computer-use"
     );
+}
+
+#[test]
+fn permission_diagnostics_report_missing_and_next_permission() {
+    let response = desktop_permission_diagnostics(Some(true), Some(false), None);
+
+    assert_eq!(response["status"], "permission_denied");
+    assert_eq!(response["missingPermissions"].as_array().unwrap().len(), 1);
+    assert_eq!(response["missingPermissions"][0]["id"], "screenRecording");
+    assert_eq!(response["nextPermission"]["id"], "screenRecording");
+    assert_eq!(
+        response["nextPermission"]["settingsUrl"],
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+    );
+
+    let granted = desktop_permission_diagnostics(Some(true), Some(true), None);
+    assert_eq!(granted["status"], "ok");
+    assert_eq!(granted["missingPermissions"].as_array().unwrap().len(), 0);
+    assert!(granted.get("nextPermission").is_none());
 }
