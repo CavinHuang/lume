@@ -95,6 +95,7 @@ let isQuitting = false
 let windowBehavior = {
   minimizeToTray: false,
   closeToTray: false,
+  showTray: true,
 }
 
 // 快速输入子窗口（Alt+L）；Task 5 之前始终为 null，此处仅占位以便 IPC 信任集合与事件广播先行就绪。
@@ -486,9 +487,15 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
       return sidecarHost.call('healthcheck', null)
     case 'sidecar_call':
       return sidecarHost.call(payload.method, payload.params ?? null)
-    case 'desktop_sync_window_behavior':
+    case 'desktop_sync_window_behavior': {
+      const previous = windowBehavior
       windowBehavior = payload.windowBehavior ?? windowBehavior
+      if (previous?.showTray !== windowBehavior?.showTray) {
+        if (windowBehavior?.showTray) ensureTray()
+        else trayManager.destroyTray()
+      }
       return null
+    }
     case 'quick_input_hide':
       if (quickInputWindow && !quickInputWindow.isDestroyed()) {
         quickInputWindow.hide()
@@ -993,7 +1000,7 @@ app.whenReady().then(async () => {
   registerFileProtocol()
   const configDir = applyLauncherConfig()
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
-  ensureTray()
+  if (windowBehavior?.showTray !== false) ensureTray()
   logDesktopStartup('tray ready')
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
