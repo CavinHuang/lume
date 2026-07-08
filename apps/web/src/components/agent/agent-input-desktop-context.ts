@@ -81,13 +81,21 @@ export function resolveAgentInputDesktopMessageMetadata(input: {
 
 export function desktopPermissionRequestMessage(result: unknown): string {
   const value = result && typeof result === 'object' && !Array.isArray(result)
-    ? result as { message?: unknown; nextPermission?: { title?: unknown } }
+    ? result as { message?: unknown; nextPermission?: { title?: unknown }; permissionTarget?: { appBundleName?: unknown; appName?: unknown } }
     : undefined
   if (typeof value?.message === 'string' && value.message.trim()) return value.message.trim()
+  const appName = permissionTargetName(value?.permissionTarget)
   if (typeof value?.nextPermission?.title === 'string' && value.nextPermission.title.trim()) {
-    return `已打开授权引导，请在系统设置中允许 Lume Computer Use.app 使用 ${value.nextPermission.title}。`
+    return `已打开授权引导，请在系统设置中允许 ${appName} 使用 ${value.nextPermission.title}。`
   }
-  return '已打开 Lume Computer Use.app 授权引导，请在系统设置中完成授权。'
+  return `已打开 ${appName} 授权引导，请在系统设置中完成授权。`
+}
+
+export function desktopPermissionRequestToastMessage(result: unknown): string {
+  const value = result && typeof result === 'object' && !Array.isArray(result)
+    ? result as { permissionTarget?: { appBundleName?: unknown; appName?: unknown } }
+    : undefined
+  return `已启动 ${permissionTargetName(value?.permissionTarget)} 授权引导`
 }
 
 export function resolveAgentInputDesktopContextView(input: {
@@ -144,6 +152,14 @@ function desktopContextPermissionRequestAvailable(result: unknown): boolean {
     const item = permission as { status?: unknown } | undefined
     return item?.status === 'missing'
   })
+}
+
+function permissionTargetName(value: DesktopContextCaptureResult['permissionTarget']): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Lume Computer Use.app'
+  const target = value as { appBundleName?: unknown; appName?: unknown }
+  if (typeof target.appBundleName === 'string' && target.appBundleName.trim()) return target.appBundleName.trim()
+  if (typeof target.appName === 'string' && target.appName.trim()) return target.appName.trim()
+  return 'Lume Computer Use.app'
 }
 
 function desktopContextTargetState(target: DesktopContextTarget): AgentInputDesktopContextCaptureState {

@@ -5,6 +5,7 @@ import {
   captureAgentInputDesktopContextTarget,
   createDesktopContextMessageMetadata,
   desktopPermissionRequestMessage,
+  desktopPermissionRequestToastMessage,
   resolveAgentInputDesktopContextView,
   resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
@@ -219,8 +220,22 @@ describe('agent-input desktop context helpers', () => {
       nextPermission: { title: 'Accessibility' },
     })).toBe('已打开授权引导，请在系统设置中允许 Lume Computer Use.app 使用 Accessibility。')
     expect(desktopPermissionRequestMessage({
+      permissionTarget: {
+        appBundleName: 'Lume Computer Use (Dev).app',
+      },
+      nextPermission: { title: 'Accessibility' },
+    })).toBe('已打开授权引导，请在系统设置中允许 Lume Computer Use (Dev).app 使用 Accessibility。')
+    expect(desktopPermissionRequestMessage({
       message: 'macOS permission request was started for Lume Computer Use.app',
     })).toBe('macOS permission request was started for Lume Computer Use.app')
+  })
+
+  test('formats desktop permission request toast with the returned app bundle name', () => {
+    expect(desktopPermissionRequestToastMessage({
+      permissionTarget: {
+        appBundleName: 'Lume Computer Use (Dev).app',
+      },
+    })).toBe('已启动 Lume Computer Use (Dev).app 授权引导')
   })
 
   test('creates non-sensitive message metadata from the selected app context', () => {

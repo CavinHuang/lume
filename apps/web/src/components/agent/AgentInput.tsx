@@ -87,6 +87,7 @@ import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
 import {
   captureAgentInputDesktopContextState,
   desktopPermissionRequestMessage,
+  desktopPermissionRequestToastMessage,
   resolveAgentInputDesktopContextView,
   resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
@@ -978,7 +979,7 @@ export function AgentInput({
     try {
       const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS, {})
       setDesktopContextCaptureMessage(desktopPermissionRequestMessage(result))
-      toast.success('已启动 Lume Computer Use.app 授权引导')
+      toast.success(desktopPermissionRequestToastMessage(result))
     } catch (error) {
       const message = error instanceof Error && error.message.trim()
         ? error.message

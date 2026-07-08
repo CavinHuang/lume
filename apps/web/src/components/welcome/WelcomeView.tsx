@@ -46,6 +46,7 @@ import {
   captureAgentInputDesktopContextState,
   createDesktopContextMessageMetadata,
   desktopPermissionRequestMessage,
+  desktopPermissionRequestToastMessage,
 } from '@/components/agent/agent-input-desktop-context'
 
 import { Button } from '@/components/ui/button'
@@ -390,7 +391,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
     try {
       const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS, {})
       setDesktopContextCaptureMessage(desktopPermissionRequestMessage(result))
-      toast.success('已启动 Lume Computer Use.app 授权引导')
+      toast.success(desktopPermissionRequestToastMessage(result))
     } catch (error) {
       const message = error instanceof Error && error.message.trim()
         ? error.message
