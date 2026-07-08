@@ -32,6 +32,15 @@ fn rejects_stale_or_missing_window_targets_without_side_effects() {
 }
 
 #[test]
+fn launch_app_requires_a_path_or_app_name() {
+    let backend = WindowsDesktopBackend;
+    let result = backend.invoke("launch_app", &json!({})).unwrap();
+
+    assert_eq!(result["status"], "failed");
+    assert_eq!(result["message"], "path or app is required");
+}
+
+#[test]
 fn get_window_state_returns_screenshot_metadata_without_pixels_by_default() {
     let backend = WindowsDesktopBackend;
     let result = backend.invoke("get_window_state", &json!({})).unwrap();
