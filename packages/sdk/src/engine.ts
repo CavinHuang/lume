@@ -1169,10 +1169,7 @@ export class QueryEngine {
           result: {
             tool_use_id: result.tool_use_id,
             tool_name: result.tool_name || '',
-            output:
-              typeof result.content === 'string'
-                ? result.content
-                : JSON.stringify(result.content),
+            output: formatToolResultOutput(result.content),
           },
         }
       }
@@ -1782,4 +1779,24 @@ function applySkillAllowedTools(
   } catch {
     // Non-JSON skill output does not alter tool visibility.
   }
+}
+
+function formatToolResultOutput(content: ToolResult['content']): string {
+  if (typeof content === 'string') return content
+  return JSON.stringify(content.map((block) => {
+    if (block.type !== 'image') return block
+    const source = block.source && typeof block.source === 'object'
+      ? block.source as { media_type?: unknown }
+      : {}
+    const mimeType = typeof block.mimeType === 'string'
+      ? block.mimeType
+      : typeof source.media_type === 'string'
+        ? source.media_type
+        : 'image'
+    return {
+      type: 'text',
+      text: `[Image: ${mimeType}]`,
+      ...(block._meta ? { _meta: block._meta } : {}),
+    }
+  }))
 }

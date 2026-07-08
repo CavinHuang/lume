@@ -879,7 +879,7 @@ describe("QueryEngine structured tool results", () => {
       canUseTool: async () => ({ behavior: "allow" }),
     });
 
-    await collectEvents(engine);
+    const events = await collectEvents(engine);
 
     const toolResultMessage = engine.getMessages().find((msg) =>
       msg.role === "user" &&
@@ -893,5 +893,8 @@ describe("QueryEngine structured tool results", () => {
       { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
     ]);
     expect((toolResultMessage!.content as any[])[0]._meta).toEqual({ traceId: "t-1" });
+    const streamedToolResult = events.find((event: any) => event.type === "tool_result") as any;
+    expect(streamedToolResult.result.output).not.toContain("ZmFrZQ==");
+    expect(streamedToolResult.result.output).toContain("[Image: image/png]");
   });
 });
