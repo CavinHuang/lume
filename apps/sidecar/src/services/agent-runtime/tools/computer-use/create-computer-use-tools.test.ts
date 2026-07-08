@@ -45,6 +45,17 @@ describe("createComputerUseMcpTools", () => {
     expect(required("wait_for_state")).toBeUndefined();
   });
 
+  test("explains that bound desktop conversations can omit windowId", () => {
+    const tools = createComputerUseMcpTools({ boundDesktopContextSnapshotId: "snap-bound" });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+    const getWindowState = tools.find((tool) => tool.name === "mcp__computer_use__get_window_state")!;
+    const unboundClick = createComputerUseMcpTools().find((tool) => tool.name === "mcp__computer_use__click")!;
+
+    expect(click.description).toContain("attached desktop app");
+    expect(getWindowState.description).toContain("attached desktop app");
+    expect(unboundClick.description).not.toContain("attached desktop app");
+  });
+
   test("forwards the original method and structured input", async () => {
     const calls: unknown[] = [];
     const tools = createComputerUseMcpTools({
