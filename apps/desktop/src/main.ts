@@ -281,23 +281,45 @@ function getDefaultSkillsDirPath() {
 function handleTrayAction(action) {
   switch (action) {
     case 'toggle-window':
-      showMainWindow()
+      toggleMainWindow()
+      return
+    case 'quick-input':
+      toggleQuickInput().catch((error) => console.error(`[desktop] quick input toggle failed: ${error.message}`))
+      return
+    case 'new-note':
+      showMainWindowThenSend({ action: 'new-note' })
+      return
+    case 'open-settings':
+      showMainWindowThenSend({ action: 'open-settings' })
+      return
+    case 'check-update':
+      checkForUpdateNow()
       return
     case 'quit':
       isQuitting = true
       app.quit()
       return
-    default:
-      // 阶段 3 接入其余 action（quick-input / new-note / open-settings / check-update）
-      return
   }
+}
+
+function showMainWindowThenSend(payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!mainWindow.isVisible()) restoreMainWindow(mainWindow)
+  mainWindow.webContents.send('lume:event:tray-action', payload)
+}
+
+function checkForUpdateNow() {
+  if (!app.isPackaged) return
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = false
+  autoUpdater.checkForUpdates().catch((error) => console.error(`[desktop] update check failed: ${error.message}`))
 }
 
 function ensureTray() {
   if (trayManager.isTrayAvailable()) return
   trayManager.createTray({
     iconPath: getAssetPath(process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
-    onClickToggle: () => showMainWindow(),
+    onClickToggle: () => toggleMainWindow(),
     onAction: handleTrayAction,
   })
 }
@@ -313,6 +335,20 @@ function shouldHideToTray(eventType) {
 
 function showMainWindow() {
   restoreMainWindow(mainWindow)
+  refreshTrayMenu()
+}
+
+function refreshTrayMenu() {
+  const windowVisible = Boolean(mainWindow) && !mainWindow.isDestroyed() && mainWindow.isVisible()
+  trayManager.rebuildMenu({ windowVisible }, handleTrayAction)
+}
+
+function toggleMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const visible = mainWindow.isVisible() && mainWindow.isFocused()
+  if (visible) mainWindow.hide()
+  else restoreMainWindow(mainWindow)
+  refreshTrayMenu()
 }
 
 function attachWindowBehavior(win) {
@@ -320,12 +356,14 @@ function attachWindowBehavior(win) {
     if (!shouldHideToTray('minimize')) return
     event.preventDefault()
     win.hide()
+    refreshTrayMenu()
   })
 
   win.on('close', (event) => {
     if (!shouldHideToTray('close')) return
     event.preventDefault()
     win.hide()
+    refreshTrayMenu()
   })
 }
 
