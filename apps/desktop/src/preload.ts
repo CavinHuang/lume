@@ -34,6 +34,7 @@ const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'data:migrate-progress',
   'update:download',
   'window-state',
+  'tray-action',
 ])
 
 function validateRendererInvokeCommand(command) {
