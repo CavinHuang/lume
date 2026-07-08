@@ -166,6 +166,14 @@ test("main process opens DevTools only for development windows", () => {
   assert.equal(packagedLoadIndex < devToolsIndex, true, "DevTools must not open before packaged load branch");
 });
 
+test("main process routes desktop proposal notifications through a scrubbed helper", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+
+  assert.match(mainSource, /desktop-context:proposal-created/);
+  assert.match(mainSource, /createDesktopProposalNotification/);
+  assert.match(mainSource, /new Notification/);
+});
+
 test("main window is registered before its renderer can invoke IPC", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   const registerIndex = mainSource.indexOf("mainWindow = win");

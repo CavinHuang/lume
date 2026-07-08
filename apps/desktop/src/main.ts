@@ -9,6 +9,7 @@ import {
   ipcMain,
   net,
   nativeImage,
+  Notification,
   protocol,
   safeStorage,
   screen,
@@ -32,6 +33,7 @@ import {
   computeStorageStats,
   computeToggleAction,
   copyDirRecursive,
+  createDesktopProposalNotification,
   createFileMetadata,
   createOpenFileDialogOptions,
   createOpenFolderDialogOptions,
@@ -95,6 +97,7 @@ const DATA_MIGRATE_PROGRESS_CHANNEL = 'data:migrate-progress'
 const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
 const DESKTOP_CONTEXT_UNLOCK_METHOD = 'desktop-context:unlock'
 const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
+const DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD = 'desktop-context:proposal-created'
 
 let mainWindow = null
 let wereadWindow = null
@@ -169,9 +172,23 @@ protocol.registerSchemesAsPrivileged([
 
 const sidecarHost = createSidecarHost({
   onNotification(method, params) {
+    showDesktopProposalNotification(method, params)
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
 })
+
+function showDesktopProposalNotification(method, params) {
+  if (method !== DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD) return
+
+  const notification = createDesktopProposalNotification(params)
+  if (!notification || !Notification.isSupported()) return
+
+  try {
+    new Notification(notification).show()
+  } catch (error) {
+    console.error(`[desktop] desktop proposal notification failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
 
 function emitRendererEvent(channel, payload) {
   for (const win of [mainWindow, quickInputWindow]) {

@@ -11,6 +11,7 @@ import {
 } from "./desktop-context-settings";
 
 let runtime: { settingsPath: string; service: DesktopContextService } | null = null;
+let notificationWriter: ((method: string, params: unknown) => void) | undefined;
 
 function getRuntime(): { settingsPath: string; service: DesktopContextService } {
   if (runtime) return runtime;
@@ -21,9 +22,14 @@ function getRuntime(): { settingsPath: string; service: DesktopContextService } 
       dbPath: getDesktopContextDbPath(),
       settings: loadDesktopAssistantSettings(settingsPath),
       invokeHost: invokeDesktopHost,
+      emitNotification: (method, params) => notificationWriter?.(method, params),
     }),
   };
   return runtime;
+}
+
+export function setDesktopContextNotificationWriter(writer: (method: string, params: unknown) => void): void {
+  notificationWriter = writer;
 }
 
 export const desktopContextRpcService = {

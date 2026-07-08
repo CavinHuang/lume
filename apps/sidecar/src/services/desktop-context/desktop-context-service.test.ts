@@ -3,7 +3,13 @@ import type { DesktopContextSnapshot } from "@lume/shared";
 import { DesktopContextService } from "./desktop-context-service";
 import { redactDesktopText } from "./desktop-context-store";
 
-function createService(input: { enabled?: boolean; allowedApps?: string[]; proactiveEnabled?: boolean } = {}) {
+function createService(input: {
+  enabled?: boolean;
+  allowedApps?: string[];
+  proactiveEnabled?: boolean;
+  notificationsEnabled?: boolean;
+  emitNotification?: (method: string, params: unknown) => void;
+} = {}) {
   const snapshots = new Map<string, DesktopContextSnapshot>();
   return new DesktopContextService({
     dbPath: "unused.sqlite",
@@ -13,7 +19,9 @@ function createService(input: { enabled?: boolean; allowedApps?: string[]; proac
       retentionHours: 24,
       maxStorageBytes: 2_000_000,
       proactiveEnabled: input.proactiveEnabled === true,
+      notificationsEnabled: input.notificationsEnabled,
     },
+    emitNotification: input.emitNotification,
     createStore: () => ({
       put(snapshot) {
         snapshots.set(snapshot.id, {
@@ -128,6 +136,45 @@ describe("DesktopContextService", () => {
     expect(proposals[0]?.status).toBe("pending");
     expect(JSON.stringify(proposals[0])).not.toContain("password=secret");
     expect(JSON.stringify(proposals[0])).not.toContain("客户问");
+  });
+
+  test("emits a non-sensitive proposal notification only when desktop notifications are enabled", async () => {
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    const service = createService({
+      proactiveEnabled: true,
+      notificationsEnabled: true,
+      emitNotification: (method, params) => notifications.push({ method, params }),
+    });
+    service.unlock(Buffer.alloc(32, 4));
+
+    await service.captureCurrent();
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      method: "desktop-context:proposal-created",
+      params: {
+        proposal: {
+          kind: "reply",
+          status: "pending",
+          app: { id: "wechat.exe", name: "微信" },
+        },
+      },
+    });
+    expect(JSON.stringify(notifications)).not.toContain("password=secret");
+    expect(JSON.stringify(notifications)).not.toContain("客户问");
+    expect(JSON.stringify(notifications)).not.toContain("项目群");
+    expect(JSON.stringify(notifications)).not.toContain("可能有一条需要回复");
+
+    const disabledNotifications: Array<{ method: string; params: unknown }> = [];
+    const disabledService = createService({
+      proactiveEnabled: true,
+      notificationsEnabled: false,
+      emitNotification: (method, params) => disabledNotifications.push({ method, params }),
+    });
+    disabledService.unlock(Buffer.alloc(32, 4));
+    await disabledService.captureCurrent();
+
+    expect(disabledNotifications).toEqual([]);
   });
 
   test("allows dismissing proactive proposals without deleting the encrypted snapshot", async () => {

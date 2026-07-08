@@ -130,6 +130,10 @@ export interface DesktopProactiveProposal {
   expiresAt: number;
 }
 
+export interface DesktopProactiveProposalCreatedNotification {
+  proposal: Pick<DesktopProactiveProposal, "id" | "kind" | "status" | "snapshotId" | "app" | "createdAt" | "expiresAt">;
+}
+
 export interface DesktopActionResult {
   status: DesktopActionStatus;
   message?: string;
@@ -185,6 +189,7 @@ export const DESKTOP_CONTEXT_IPC_CHANNELS = {
   LIST_ACTIVITY: "desktop-context:list-activity",
   LIST_PROPOSALS: "desktop-context:list-proposals",
   UPDATE_PROPOSAL: "desktop-context:update-proposal",
+  PROPOSAL_CREATED: "desktop-context:proposal-created",
   ACTION_REQUEST: "agent:desktop-action-request",
   SUBMIT_ACTION: "agent:submit-desktop-action",
 } as const;

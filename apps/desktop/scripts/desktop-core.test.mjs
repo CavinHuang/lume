@@ -8,6 +8,7 @@ import {
   computeStorageStats,
   copyDirRecursive,
   createFileMetadata,
+  createDesktopProposalNotification,
   createOpenFileDialogOptions,
   createOpenFolderDialogOptions,
   createUpdateDownloadProgressEvents,
@@ -100,6 +101,28 @@ test('show main window restores minimized windows before showing and focusing', 
   assert.deepEqual(calls, ['restore', 'show', 'focus'])
   assert.equal(restoreMainWindow(null), false)
   assert.equal(restoreMainWindow({ isDestroyed: () => true }), false)
+})
+
+test('desktop proposal notifications exclude sensitive proposal context', () => {
+  const notification = createDesktopProposalNotification({
+    proposal: {
+      kind: 'reply',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '客户项目群' },
+      summary: '客户问 password=secret 怎么处理',
+    },
+  })
+
+  assert.deepEqual(notification, {
+    title: 'Lume 桌面助手',
+    body: '微信 中有一条可处理的回复建议',
+  })
+
+  const serialized = JSON.stringify(notification)
+  assert.equal(serialized.includes('客户项目群'), false)
+  assert.equal(serialized.includes('password=secret'), false)
+  assert.equal(createDesktopProposalNotification(null), null)
+  assert.equal(createDesktopProposalNotification({ proposal: { kind: 'unknown', app: { name: '微信' } } }), null)
 })
 
 test('file and folder dialog options match desktop selection contracts', () => {

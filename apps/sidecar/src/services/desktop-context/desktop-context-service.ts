@@ -3,8 +3,10 @@ import type {
   DesktopContextSnapshot,
   DesktopContextTarget,
   DesktopProactiveProposal,
+  DesktopProactiveProposalCreatedNotification,
   DesktopProactiveProposalStatus,
 } from "@lume/shared";
+import { DESKTOP_CONTEXT_IPC_CHANNELS } from "@lume/shared";
 import { DesktopContextStore } from "./desktop-context-store";
 
 type HostInvoke = (method: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -36,6 +38,7 @@ export class DesktopContextService {
     dbPath: string;
     settings: DesktopAssistantSettings;
     invokeHost: HostInvoke;
+    emitNotification?: (method: string, params: unknown) => void;
     createStore?: (input: { dbPath: string; key: Buffer; retentionMs: number; maxBytes: number }) => DesktopContextStoreLike;
   };
 
@@ -43,6 +46,7 @@ export class DesktopContextService {
     dbPath: string;
     settings: DesktopAssistantSettings;
     invokeHost: HostInvoke;
+    emitNotification?: (method: string, params: unknown) => void;
     createStore?: (input: { dbPath: string; key: Buffer; retentionMs: number; maxBytes: number }) => DesktopContextStoreLike;
   }) {
     this.#input = input;
@@ -223,12 +227,29 @@ export class DesktopContextService {
       expiresAt: createdAt + 30 * 60 * 1_000,
     };
     this.#proposals.set(proposal.id, proposal);
+    if (this.#settings.notificationsEnabled !== false) {
+      this.#input.emitNotification?.(DESKTOP_CONTEXT_IPC_CHANNELS.PROPOSAL_CREATED, proposalToCreatedNotification(proposal));
+    }
   }
 }
 
 function looksLikeReplyOpportunity(text: string): boolean {
   if (!text.trim()) return false;
   return /[?？]|(?:吗|么|如何|怎么|什么时候|能否|是否|回复|请问)/u.test(text);
+}
+
+function proposalToCreatedNotification(proposal: DesktopProactiveProposal): DesktopProactiveProposalCreatedNotification {
+  return {
+    proposal: {
+      id: proposal.id,
+      kind: proposal.kind,
+      status: proposal.status,
+      snapshotId: proposal.snapshotId,
+      app: proposal.app,
+      createdAt: proposal.createdAt,
+      expiresAt: proposal.expiresAt,
+    },
+  };
 }
 
 function snapshotToTarget(snapshot: DesktopContextSnapshot): DesktopContextTarget {

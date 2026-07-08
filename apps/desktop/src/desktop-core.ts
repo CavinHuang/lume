@@ -97,6 +97,29 @@ export function restoreMainWindow(win) {
   return true
 }
 
+const desktopProposalKindLabels = {
+  reply: '回复',
+  conflict: '冲突',
+  prompt_rescue: '提示修复',
+  daily_wrap: '每日回顾',
+  follow_up: '跟进',
+}
+
+export function createDesktopProposalNotification(value) {
+  const proposal = value?.proposal
+  if (!proposal || typeof proposal !== 'object' || Array.isArray(proposal)) return null
+
+  const kindLabel = desktopProposalKindLabels[proposal.kind]
+  const app = proposal.app
+  const appName = typeof app?.name === 'string' ? app.name.trim() : ''
+  if (!kindLabel || !appName) return null
+
+  return {
+    title: 'Lume 桌面助手',
+    body: `${appName} 中有一条可处理的${kindLabel}建议`,
+  }
+}
+
 export function createOpenFileDialogOptions(): OpenDialogOptions {
   return {
     properties: ['openFile', 'multiSelections'],
