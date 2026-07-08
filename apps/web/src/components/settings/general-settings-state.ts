@@ -69,6 +69,7 @@ export function mergeGeneralSettings(
     windowBehavior: {
       minimizeToTray: updates.windowBehavior?.minimizeToTray ?? base.windowBehavior.minimizeToTray,
       closeToTray: updates.windowBehavior?.closeToTray ?? base.windowBehavior.closeToTray,
+      showTray: updates.windowBehavior?.showTray ?? base.windowBehavior.showTray,
     },
     updateSettings: {
       autoCheckUpdates: updates.updateSettings?.autoCheckUpdates ?? base.updateSettings.autoCheckUpdates,
