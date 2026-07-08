@@ -5,6 +5,10 @@ pub const MACOS_EVENT_FLAG_MASK_SHIFT: u64 = 0x0002_0000;
 pub const MACOS_EVENT_FLAG_MASK_CONTROL: u64 = 0x0004_0000;
 pub const MACOS_EVENT_FLAG_MASK_ALTERNATE: u64 = 0x0008_0000;
 pub const MACOS_EVENT_FLAG_MASK_COMMAND: u64 = 0x0010_0000;
+pub const MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV: &str =
+    "LUME_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS";
+pub const MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV: &str =
+    "OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MacOSWindowInfo {
@@ -176,6 +180,21 @@ pub fn macos_preferred_click_actions(secondary: bool) -> &'static [&'static str]
     }
 }
 
+pub fn macos_global_pointer_fallback_enabled_from(
+    lume_value: Option<&str>,
+    open_computer_use_value: Option<&str>,
+) -> bool {
+    truthy_env_flag(lume_value) || truthy_env_flag(open_computer_use_value)
+}
+
+pub fn macos_pointer_input_mode(global_pointer_fallback: bool) -> &'static str {
+    if global_pointer_fallback {
+        "physical_pointer"
+    } else {
+        "targeted_event"
+    }
+}
+
 pub fn macos_key_chord(keys: &[&str]) -> Option<(u16, u64)> {
     let mut flags = 0_u64;
     let mut primary = None;
@@ -341,6 +360,13 @@ fn numeric_param(params: &Value, name: &str) -> Option<i64> {
     params
         .get(name)
         .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(rounded)))
+}
+
+fn truthy_env_flag(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if matches!(value.as_str(), "1" | "true" | "yes" | "on")
+    )
 }
 
 fn macos_key_code(key: &str) -> Option<u16> {

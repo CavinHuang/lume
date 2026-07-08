@@ -2,16 +2,20 @@ use crate::{
     desktop_permission_diagnostics,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
-        macos_get_window_result, macos_get_window_state_result, macos_key_chord,
-        macos_list_apps_result, macos_list_windows_result, macos_preferred_click_actions,
+        macos_get_window_result, macos_get_window_state_result,
+        macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
+        macos_list_windows_result, macos_pointer_input_mode, macos_preferred_click_actions,
         macos_resolve_action_point, macos_text_target_is_sensitive, macos_wait_for_state_result,
         MacOSElementInfo, MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND,
+        MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
+        MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
     },
     DesktopBackend,
 };
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::{
+    env,
     ffi::{CStr, CString},
     os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
     process::Command,
@@ -136,7 +140,7 @@ fn move_pointer(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         Err(result) => return Ok(result),
     };
     activate_macos_window(&window)?;
-    move_mouse(x, y);
+    move_mouse(x, y, window.owner_pid as c_int, true);
     Ok(json!({ "status": "ok" }))
 }
 
@@ -156,9 +160,19 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
         Err(result) => return Ok(result),
     };
     activate_macos_window(&window)?;
-    move_mouse(x, y);
-    click_mouse(x, y, secondary);
-    Ok(json!({ "status": "ok", "inputMode": "physical_pointer" }))
+    let global_pointer_fallback = global_pointer_fallback_enabled();
+    move_mouse(x, y, window.owner_pid as c_int, global_pointer_fallback);
+    click_mouse(
+        x,
+        y,
+        secondary,
+        window.owner_pid as c_int,
+        global_pointer_fallback,
+    );
+    Ok(json!({
+        "status": "ok",
+        "inputMode": macos_pointer_input_mode(global_pointer_fallback)
+    }))
 }
 
 fn perform_element_click_action(
@@ -200,7 +214,11 @@ fn scroll(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
     };
     let delta = params.get("deltaY").and_then(Value::as_i64).unwrap_or(0) as c_int;
     activate_macos_window(&window)?;
-    scroll_mouse(-delta);
+    scroll_mouse(
+        -delta,
+        window.owner_pid as c_int,
+        global_pointer_fallback_enabled(),
+    );
     Ok(json!({ "status": "ok" }))
 }
 
@@ -221,7 +239,14 @@ fn drag(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         return Ok(failed_action("toY is required"));
     };
     activate_macos_window(&window)?;
-    drag_mouse(from_x, from_y, to_x, to_y);
+    drag_mouse(
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        window.owner_pid as c_int,
+        global_pointer_fallback_enabled(),
+    );
     Ok(json!({ "status": "ok" }))
 }
 
@@ -244,7 +269,7 @@ fn press_key(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         return Ok(failed_action("key or keys is required"));
     };
     activate_macos_window(&window)?;
-    send_key(key_code as c_ushort, flags);
+    send_key(key_code as c_ushort, flags, window.owner_pid as c_int);
     Ok(json!({ "status": "ok" }))
 }
 
@@ -272,7 +297,7 @@ fn type_text(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
         .get("text")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    send_text(text);
+    send_text(text, window.owner_pid as c_int);
     Ok(json!({ "status": "ok" }))
 }
 
@@ -282,20 +307,27 @@ fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
         match macos_resolve_action_point(window, params) {
             Ok((x, y)) => {
                 activate_macos_window(window)?;
-                move_mouse(x, y);
-                click_mouse(x, y, false);
+                let global_pointer_fallback = global_pointer_fallback_enabled();
+                move_mouse(x, y, window.owner_pid as c_int, global_pointer_fallback);
+                click_mouse(
+                    x,
+                    y,
+                    false,
+                    window.owner_pid as c_int,
+                    global_pointer_fallback,
+                );
             }
             Err(result) => return Ok(result),
         }
     } else {
         activate_macos_window(window)?;
     }
-    send_key(0, MACOS_EVENT_FLAG_MASK_COMMAND);
+    send_key(0, MACOS_EVENT_FLAG_MASK_COMMAND, window.owner_pid as c_int);
     let value = params
         .get("value")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    send_text(value);
+    send_text(value, window.owner_pid as c_int);
     Ok(json!({ "status": "ok", "inputMode": "keyboard_fallback" }))
 }
 
@@ -361,15 +393,24 @@ fn activate_macos_window(window: &MacOSWindowInfo) -> Result<()> {
     Ok(())
 }
 
-fn move_mouse(x: i64, y: i64) {
+fn move_mouse(x: i64, y: i64, target_pid: c_int, global_pointer_fallback: bool) {
     unsafe {
         let point = cg_point(x, y);
-        let _ = CGWarpMouseCursorPosition(point);
-        post_mouse_event(K_CG_EVENT_MOUSE_MOVED, point, K_CG_MOUSE_BUTTON_LEFT);
+        if global_pointer_fallback {
+            let _ = CGWarpMouseCursorPosition(point);
+            post_mouse_event(K_CG_EVENT_MOUSE_MOVED, point, K_CG_MOUSE_BUTTON_LEFT, None);
+        } else {
+            post_mouse_event(
+                K_CG_EVENT_MOUSE_MOVED,
+                point,
+                K_CG_MOUSE_BUTTON_LEFT,
+                Some(target_pid),
+            );
+        }
     }
 }
 
-fn click_mouse(x: i64, y: i64, secondary: bool) {
+fn click_mouse(x: i64, y: i64, secondary: bool, target_pid: c_int, global_pointer_fallback: bool) {
     unsafe {
         let point = cg_point(x, y);
         let (down, up, button) = if secondary {
@@ -385,72 +426,124 @@ fn click_mouse(x: i64, y: i64, secondary: bool) {
                 K_CG_MOUSE_BUTTON_LEFT,
             )
         };
-        post_mouse_event(down, point, button);
-        post_mouse_event(up, point, button);
+        let event_target = (!global_pointer_fallback).then_some(target_pid);
+        post_mouse_event(down, point, button, event_target);
+        post_mouse_event(up, point, button, event_target);
     }
 }
 
-fn drag_mouse(from_x: i64, from_y: i64, to_x: i64, to_y: i64) {
+fn drag_mouse(
+    from_x: i64,
+    from_y: i64,
+    to_x: i64,
+    to_y: i64,
+    target_pid: c_int,
+    global_pointer_fallback: bool,
+) {
     unsafe {
         let from = cg_point(from_x, from_y);
         let to = cg_point(to_x, to_y);
-        post_mouse_event(K_CG_EVENT_LEFT_MOUSE_DOWN, from, K_CG_MOUSE_BUTTON_LEFT);
-        post_mouse_event(K_CG_EVENT_LEFT_MOUSE_DRAGGED, to, K_CG_MOUSE_BUTTON_LEFT);
-        post_mouse_event(K_CG_EVENT_LEFT_MOUSE_UP, to, K_CG_MOUSE_BUTTON_LEFT);
+        if global_pointer_fallback {
+            let _ = CGWarpMouseCursorPosition(from);
+        }
+        let event_target = (!global_pointer_fallback).then_some(target_pid);
+        post_mouse_event(
+            K_CG_EVENT_MOUSE_MOVED,
+            from,
+            K_CG_MOUSE_BUTTON_LEFT,
+            event_target,
+        );
+        post_mouse_event(
+            K_CG_EVENT_LEFT_MOUSE_DOWN,
+            from,
+            K_CG_MOUSE_BUTTON_LEFT,
+            event_target,
+        );
+        post_mouse_event(
+            K_CG_EVENT_LEFT_MOUSE_DRAGGED,
+            to,
+            K_CG_MOUSE_BUTTON_LEFT,
+            event_target,
+        );
+        post_mouse_event(
+            K_CG_EVENT_LEFT_MOUSE_UP,
+            to,
+            K_CG_MOUSE_BUTTON_LEFT,
+            event_target,
+        );
     }
 }
 
-fn scroll_mouse(delta_y: c_int) {
+fn scroll_mouse(delta_y: c_int, target_pid: c_int, global_pointer_fallback: bool) {
     unsafe {
         let event =
             CGEventCreateScrollWheelEvent(ptr::null(), K_CG_SCROLL_EVENT_UNIT_PIXEL, 1, delta_y);
-        post_event(event);
+        post_event(event, (!global_pointer_fallback).then_some(target_pid));
     }
 }
 
-fn send_text(text: &str) {
+fn send_text(text: &str, target_pid: c_int) {
     for unit in text.encode_utf16() {
         unsafe {
             let down = CGEventCreateKeyboardEvent(ptr::null(), 0, true);
             if !down.is_null() {
                 CGEventKeyboardSetUnicodeString(down, 1, &unit);
             }
-            post_event(down);
+            post_event(down, Some(target_pid));
             let up = CGEventCreateKeyboardEvent(ptr::null(), 0, false);
             if !up.is_null() {
                 CGEventKeyboardSetUnicodeString(up, 1, &unit);
             }
-            post_event(up);
+            post_event(up, Some(target_pid));
         }
     }
 }
 
-fn send_key(key_code: c_ushort, flags: u64) {
+fn send_key(key_code: c_ushort, flags: u64, target_pid: c_int) {
     unsafe {
         let down = CGEventCreateKeyboardEvent(ptr::null(), key_code, true);
         if !down.is_null() {
             CGEventSetFlags(down, flags);
         }
-        post_event(down);
+        post_event(down, Some(target_pid));
         let up = CGEventCreateKeyboardEvent(ptr::null(), key_code, false);
         if !up.is_null() {
             CGEventSetFlags(up, flags);
         }
-        post_event(up);
+        post_event(up, Some(target_pid));
     }
 }
 
-unsafe fn post_mouse_event(event_type: c_uint, point: CGPoint, button: c_uint) {
+unsafe fn post_mouse_event(
+    event_type: c_uint,
+    point: CGPoint,
+    button: c_uint,
+    target_pid: Option<c_int>,
+) {
     let event = CGEventCreateMouseEvent(ptr::null(), event_type, point, button);
-    post_event(event);
+    post_event(event, target_pid);
 }
 
-unsafe fn post_event(event: CGEventRef) {
+unsafe fn post_event(event: CGEventRef, target_pid: Option<c_int>) {
     if event.is_null() {
         return;
     }
-    CGEventPost(K_CG_HID_EVENT_TAP, event);
+    if let Some(target_pid) = target_pid {
+        CGEventPostToPid(target_pid, event);
+    } else {
+        CGEventPost(K_CG_HID_EVENT_TAP, event);
+    }
     CFRelease(event as CFTypeRef);
+}
+
+fn global_pointer_fallback_enabled() -> bool {
+    let lume_value = env::var(MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV).ok();
+    let open_computer_use_value =
+        env::var(MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV).ok();
+    macos_global_pointer_fallback_enabled_from(
+        lume_value.as_deref(),
+        open_computer_use_value.as_deref(),
+    )
 }
 
 fn cg_point(x: i64, y: i64) -> CGPoint {
@@ -1105,6 +1198,7 @@ extern "C" {
     );
     fn CGEventSetFlags(event: CGEventRef, flags: u64);
     fn CGEventPost(tap: c_uint, event: CGEventRef);
+    fn CGEventPostToPid(pid: c_int, event: CGEventRef);
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]

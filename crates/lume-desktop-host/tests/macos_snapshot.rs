@@ -1,8 +1,9 @@
 use lume_desktop_host::macos_snapshot::{
     find_macos_window, macos_current_context_result, macos_get_window_result,
-    macos_get_window_state_result, macos_key_chord, macos_list_apps_result,
-    macos_list_windows_result, macos_preferred_click_actions, macos_resolve_action_point,
-    macos_text_target_is_sensitive, macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
+    macos_get_window_state_result, macos_global_pointer_fallback_enabled_from, macos_key_chord,
+    macos_list_apps_result, macos_list_windows_result, macos_pointer_input_mode,
+    macos_preferred_click_actions, macos_resolve_action_point, macos_text_target_is_sensitive,
+    macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
 };
 use serde_json::json;
 
@@ -366,6 +367,42 @@ fn prefers_accessibility_actions_for_macos_element_clicks() {
         &["AXPress", "AXConfirm", "AXOpen"]
     );
     assert_eq!(macos_preferred_click_actions(true), &["AXShowMenu"]);
+}
+
+#[test]
+fn defaults_macos_pointer_fallback_to_targeted_events() {
+    assert!(!macos_global_pointer_fallback_enabled_from(None, None));
+    assert_eq!(macos_pointer_input_mode(false), "targeted_event");
+}
+
+#[test]
+fn parses_macos_global_pointer_fallback_opt_in_flags() {
+    for value in ["1", "true", "yes", "on", "TRUE"] {
+        assert!(macos_global_pointer_fallback_enabled_from(
+            Some(value),
+            None
+        ));
+        assert!(macos_global_pointer_fallback_enabled_from(
+            None,
+            Some(value)
+        ));
+    }
+
+    for value in ["", "0", "false", "no", "off", "FALSE", "anything"] {
+        assert!(!macos_global_pointer_fallback_enabled_from(
+            Some(value),
+            None
+        ));
+        assert!(!macos_global_pointer_fallback_enabled_from(
+            None,
+            Some(value)
+        ));
+    }
+}
+
+#[test]
+fn reports_macos_physical_pointer_mode_only_for_explicit_fallback() {
+    assert_eq!(macos_pointer_input_mode(true), "physical_pointer");
 }
 
 #[test]
