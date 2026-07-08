@@ -58,6 +58,7 @@ test('window behavior loads from existing settings without changing ~/.lume layo
         windowBehavior: {
           minimizeToTray: true,
           closeToTray: true,
+          showTray: false,
         },
       },
     }))
@@ -65,6 +66,7 @@ test('window behavior loads from existing settings without changing ~/.lume layo
     assert.deepEqual(readWindowBehaviorFromConfigDir(dir), {
       minimizeToTray: true,
       closeToTray: true,
+      showTray: false,
     })
 
     writeFileSync(join(dir, 'settings.json'), JSON.stringify({
@@ -78,10 +80,12 @@ test('window behavior loads from existing settings without changing ~/.lume layo
     assert.deepEqual(readWindowBehaviorFromConfigDir(dir), {
       minimizeToTray: true,
       closeToTray: false,
+      showTray: true,
     })
     assert.deepEqual(readWindowBehaviorFromConfigDir(join(dir, 'missing')), {
       minimizeToTray: false,
       closeToTray: false,
+      showTray: true,
     })
   } finally {
     rmSync(dir, { recursive: true, force: true })

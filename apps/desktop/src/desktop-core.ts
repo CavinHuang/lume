@@ -86,6 +86,7 @@ export function readWindowBehaviorFromConfigDir(configDir) {
   return {
     minimizeToTray: typeof behavior?.minimizeToTray === 'boolean' ? behavior.minimizeToTray : false,
     closeToTray: typeof behavior?.closeToTray === 'boolean' ? behavior.closeToTray : false,
+    showTray: typeof behavior?.showTray === 'boolean' ? behavior.showTray : true,
   }
 }
 
