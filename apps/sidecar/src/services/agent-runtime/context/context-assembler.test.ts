@@ -59,6 +59,7 @@ describe("ContextAssembler", () => {
     expect(result.systemPrompt).toContain("mcp__computer_use__current_context with desktop_context.snapshot.id");
     expect(result.systemPrompt).toContain("mcp__computer_use__get_window_state");
     expect(result.systemPrompt).toContain("desktop_context.snapshot.window.id");
+    expect(result.systemPrompt).toContain("includeScreenshot true");
     expect(result.systemPrompt).toContain("Prefer elementId targets");
     expect(result.systemPrompt).toContain("verify the state after each operation");
     expect(result.systemPrompt).toContain("Consequential actions still require Lume confirmation");

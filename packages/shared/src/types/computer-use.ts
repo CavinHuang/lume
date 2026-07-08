@@ -84,6 +84,7 @@ export interface DesktopContextSnapshot {
   selectedText?: string;
   visibleText?: string;
   screenshotId?: string;
+  screenshots?: DesktopScreenshotRef[];
   untrusted: true;
 }
 

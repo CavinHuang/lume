@@ -19,8 +19,12 @@ function createService(input: { enabled?: boolean; allowedApps?: string[]; proac
         snapshots.set(snapshot.id, {
           ...snapshot,
           ...(snapshot.visibleText ? { visibleText: redactDesktopText(snapshot.visibleText) } : {}),
+          ...(snapshot.screenshots ? {
+            screenshots: snapshot.screenshots.map(({ dataUrl: _dataUrl, ...screenshot }) => screenshot),
+          } : {}),
         });
       },
+      get: (id) => snapshots.get(id),
       getRedacted: (id) => snapshots.get(id),
       latestRedacted: () => [...snapshots.values()].at(-1),
       recent: () => [...snapshots.values()],
@@ -135,5 +139,80 @@ describe("DesktopContextService", () => {
     expect(service.updateProposal(proposal!.id, "dismissed")).toEqual({ updated: true });
     expect(service.listProposals()[0]?.status).toBe("dismissed");
     expect(await service.currentContext({ snapshotId: "snap-1" })).toMatchObject({ status: "ok" });
+  });
+
+  test("captures screenshot pixels only for user-initiated current app selection", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const rawSnapshots = new Map<string, DesktopContextSnapshot>();
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: true,
+        allowedApps: ["wechat.exe"],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+        proactiveEnabled: false,
+      },
+      createStore: () => ({
+        put(snapshot) {
+          rawSnapshots.set(snapshot.id, snapshot);
+        },
+        get: (id) => rawSnapshots.get(id),
+        getRedacted: (id) => {
+          const snapshot = rawSnapshots.get(id);
+          return snapshot ? {
+            ...snapshot,
+            visibleText: snapshot.visibleText ? redactDesktopText(snapshot.visibleText) : undefined,
+            screenshots: snapshot.screenshots?.map(({ dataUrl: _dataUrl, ...screenshot }) => screenshot),
+          } : undefined;
+        },
+        latestRedacted: () => undefined,
+        recent: () => [],
+        search: () => [],
+        purge: () => undefined,
+        stats: () => ({ items: rawSnapshots.size, bytes: 0 }),
+        clear: () => rawSnapshots.clear(),
+        close: () => undefined,
+      }),
+      invokeHost: async (method, params) => {
+        calls.push({ method, params });
+        return {
+          status: "ok",
+          snapshot: {
+            id: `snap-${calls.length}`,
+            app: { id: "wechat.exe", name: "微信" },
+            window: {
+              id: "win:1",
+              appId: "wechat.exe",
+              title: "项目群",
+              bounds: { x: 0, y: 0, width: 800, height: 600 },
+              focused: true,
+            },
+            capturedAt: 100 + calls.length,
+            eventType: "foreground_changed",
+            visibleText: "客户问 password=secret 怎么处理",
+            screenshots: params.includeScreenshot === true ? [{
+              id: "shot-1",
+              width: 320,
+              height: 200,
+              origin: { x: 10, y: 20 },
+              mimeType: "image/png",
+              dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+            }] : undefined,
+            untrusted: true,
+          },
+        };
+      },
+    });
+    service.unlock(Buffer.alloc(32, 8));
+
+    await service.captureCurrent();
+    const selected = await service.captureCurrent({ userInitiated: true });
+    const current = await service.currentContext({ snapshotId: "snap-2", includeScreenshot: true });
+
+    expect(calls.map((call) => call.params)).toEqual([{}, { includeScreenshot: true }]);
+    expect(selected).toMatchObject({ status: "ok", snapshotId: "snap-2" });
+    expect(JSON.stringify(current)).toContain("iVBORw0KGgo=");
+    expect(JSON.stringify(current)).not.toContain("secret");
   });
 });

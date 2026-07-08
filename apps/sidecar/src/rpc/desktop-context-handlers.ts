@@ -8,7 +8,7 @@ import type { RpcHandler } from "./types";
 interface DesktopContextRpcService {
   unlock(key: Buffer): void;
   captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown>;
-  currentContext(input?: { snapshotId?: string }): Promise<unknown>;
+  currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean }): Promise<unknown>;
   searchContext(input: { query?: string; limit?: number }): Promise<unknown>;
   getSettings(): DesktopAssistantSettings;
   updateSettings(settings: DesktopAssistantSettings): DesktopAssistantSettings | void;

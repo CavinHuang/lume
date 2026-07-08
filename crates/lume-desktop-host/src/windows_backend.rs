@@ -81,7 +81,7 @@ impl DesktopBackend for WindowsDesktopBackend {
             "get_window" => get_window(params),
             "get_window_state" => get_window_state(params),
             "wait_for_state" => wait_for_state(params),
-            "current_context" => current_context(),
+            "current_context" => current_context(params),
             "launch_app" => launch_app(params),
             "activate_window" => with_window(params, |hwnd| activate(hwnd)),
             "move_pointer" => move_pointer(params),
@@ -290,12 +290,17 @@ fn window_revision(window: &Value) -> String {
     )
 }
 
-fn current_context() -> Result<Value> {
+fn current_context(params: &Value) -> Result<Value> {
     let hwnd = unsafe { GetForegroundWindow() };
     let Some(window) = window_json(hwnd) else {
         return Ok(stale_target());
     };
     let accessibility = accessibility_state(hwnd).unwrap_or_else(|_| json!({}));
+    let screenshots = screenshot_refs(
+        hwnd,
+        &window,
+        params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
+    );
     let visible_text = accessibility
         .get("documentText")
         .and_then(Value::as_str)
@@ -315,6 +320,7 @@ fn current_context() -> Result<Value> {
             "eventType": "foreground_changed",
             "visibleText": visible_text,
             "screenshotId": screenshot_id(&window),
+            "screenshots": screenshots,
             "untrusted": true,
         }
     }))

@@ -215,6 +215,9 @@ function redactSnapshot(snapshot: DesktopContextSnapshot): DesktopContextSnapsho
     window: { ...snapshot.window, title: redactDesktopText(snapshot.window.title) },
     ...(snapshot.selectedText !== undefined ? { selectedText: redactDesktopText(snapshot.selectedText) } : {}),
     ...(snapshot.visibleText !== undefined ? { visibleText: redactDesktopText(snapshot.visibleText) } : {}),
+    ...(snapshot.screenshots !== undefined ? {
+      screenshots: snapshot.screenshots.map(({ dataUrl: _dataUrl, ...screenshot }) => screenshot),
+    } : {}),
   };
 }
 

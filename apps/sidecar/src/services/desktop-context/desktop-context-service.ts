@@ -11,6 +11,7 @@ type HostInvoke = (method: string, params: Record<string, unknown>) => Promise<u
 
 interface DesktopContextStoreLike {
   put(snapshot: DesktopContextSnapshot): void;
+  get(id: string): DesktopContextSnapshot | undefined;
   getRedacted(id: string): DesktopContextSnapshot | undefined;
   latestRedacted(): DesktopContextSnapshot | undefined;
   recent(limit?: number): DesktopContextSnapshot[];
@@ -75,7 +76,10 @@ export class DesktopContextService {
     if (!this.#key) {
       return { status: "unavailable", message: "desktop context store is locked" };
     }
-    const response = asRecord(await this.#input.invokeHost("current_context", {}));
+    const response = asRecord(await this.#input.invokeHost(
+      "current_context",
+      input.userInitiated === true ? { includeScreenshot: true } : {},
+    ));
     if (response.status !== "ok") return response;
     const snapshot = normalizeSnapshot(response.snapshot);
     if (!snapshot) return { status: "failed", message: "desktop host returned an invalid context snapshot" };
@@ -84,7 +88,8 @@ export class DesktopContextService {
       return { status: "blocked", message: `desktop context is not allowed for ${snapshot.app.id}` };
     }
     const fingerprint = snapshotFingerprint(snapshot);
-    if (fingerprint === this.#lastFingerprint && this.#lastSnapshotId) {
+    const hasScreenshotPixels = snapshot.screenshots?.some((screenshot) => typeof screenshot.dataUrl === "string") === true;
+    if (!hasScreenshotPixels && fingerprint === this.#lastFingerprint && this.#lastSnapshotId) {
       return { status: "ok", snapshotId: this.#lastSnapshotId, unchanged: true };
     }
     const store = this.#ensureStore();
@@ -96,7 +101,7 @@ export class DesktopContextService {
     return { status: "ok", ...snapshotToTarget(snapshot) };
   }
 
-  async currentContext(input: { snapshotId?: string } = {}): Promise<unknown> {
+  async currentContext(input: { snapshotId?: string; includeScreenshot?: boolean } = {}): Promise<unknown> {
     if (!this.#key) return { status: "unavailable", message: "desktop context store is locked" };
     if (!this.#settings.enabled && !input.snapshotId) {
       return { status: "unavailable", message: "desktop assistant is disabled" };
@@ -105,8 +110,11 @@ export class DesktopContextService {
     const snapshot = input.snapshotId
       ? store.getRedacted(input.snapshotId)
       : store.latestRedacted();
+    const rawSnapshot = input.includeScreenshot === true && input.snapshotId
+      ? store.get(input.snapshotId)
+      : undefined;
     return snapshot
-      ? { status: "ok", snapshot }
+      ? { status: "ok", snapshot: attachScreenshotPixels(snapshot, rawSnapshot) }
       : { status: "unavailable", message: "desktop context snapshot was not found" };
   }
 
@@ -255,6 +263,20 @@ function normalizeSnapshot(value: unknown): DesktopContextSnapshot | null {
     || typeof window.title !== "string"
   ) return null;
   return value as DesktopContextSnapshot;
+}
+
+function attachScreenshotPixels(
+  redacted: DesktopContextSnapshot,
+  raw: DesktopContextSnapshot | undefined,
+): DesktopContextSnapshot {
+  if (!raw?.screenshots?.length) return redacted;
+  return {
+    ...redacted,
+    screenshots: raw.screenshots.map((rawScreenshot) => {
+      const redactedScreenshot = redacted.screenshots?.find((item) => item.id === rawScreenshot.id);
+      return { ...rawScreenshot, ...redactedScreenshot, dataUrl: rawScreenshot.dataUrl };
+    }),
+  };
 }
 
 function asRecord(value: unknown): Record<string, any> {

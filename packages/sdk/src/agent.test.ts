@@ -530,6 +530,55 @@ describe("Agent session persistence", () => {
     await agent.close()
   })
 
+  test("does not persist non-persistent tool result image payloads", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-image-redaction-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `image-redaction-${crypto.randomUUID()}`
+
+    await saveSession(sessionId, [{
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "tool-image",
+        content: [
+          { type: "text", text: "{\"status\":\"ok\"}" },
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+            _meta: { screenshotId: "shot-1", persist: false },
+          },
+        ],
+      }],
+    }], {
+      cwd: tempDir,
+      model: "test-model",
+      sessionMessages: [{
+        uuid: "tool-result-1",
+        role: "user",
+        timestamp: new Date().toISOString(),
+        content: [{
+          type: "tool_result",
+          tool_use_id: "tool-image",
+          content: [
+            { type: "text", text: "{\"status\":\"ok\"}" },
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+              _meta: { screenshotId: "shot-1", persist: false },
+            },
+          ],
+        }],
+      }],
+      checkpoints: {},
+    })
+
+    const persisted = JSON.stringify(await getSessionMessages(sessionId, { dir: tempDir }))
+    expect(persisted).not.toContain("iVBORw0KGgo=")
+    expect(persisted).toContain("shot-1")
+    expect(persisted).toContain("image omitted from persisted transcript")
+  })
+
   test("persists user message before provider request starts", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-preflight-persist-"))
     tempDirs.push(tempDir)

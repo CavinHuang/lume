@@ -441,7 +441,10 @@ function toolSchema(name: ComputerUseToolName): ComputerUseToolSchema {
     case "set_value":
       return object({ ...actionTarget, value: string("Non-secret replacement value.") }, ["windowId", "value"]);
     case "current_context":
-      return object({ snapshotId: string("Optional snapshot id bound through message metadata.") });
+      return object({
+        snapshotId: string("Optional snapshot id bound through message metadata."),
+        includeScreenshot: { type: "boolean", description: "Attach the retained foreground screenshot captured before Lume stole focus." },
+      });
     case "search_context":
       return object({
         query: string("Text query matched against redacted recent desktop context."),
@@ -484,37 +487,58 @@ function detachScreenshotImages(value: unknown): {
   images: Array<{
     type: "image";
     source: { type: "base64"; media_type: string; data: string };
-    _meta: { screenshotId?: string };
+    _meta: { screenshotId?: string; persist: false };
   }>;
 } {
   const record = asRecord(value);
-  if (!Array.isArray(record.screenshots)) {
-    return { value, images: [] };
-  }
+  if (!Object.keys(record).length && (value === null || typeof value !== "object")) return { value, images: [] };
+  return detachScreenshotImagesFromValue(value);
+}
 
-  const images: Array<{
+function detachScreenshotImagesFromValue(value: unknown): {
+  value: unknown;
+  images: Array<{
     type: "image";
     source: { type: "base64"; media_type: string; data: string };
-    _meta: { screenshotId?: string };
-  }> = [];
-  const screenshots = record.screenshots.map((item) => {
-    const screenshot = asRecord(item);
-    const { dataUrl, ...metadata } = screenshot;
-    const image = parseScreenshotDataUrl(dataUrl);
-    if (image) {
-      images.push({
-        type: "image",
-        source: image,
-        _meta: { screenshotId: stringValue(screenshot.id) },
-      });
-    }
-    return metadata;
-  });
+    _meta: { screenshotId?: string; persist: false };
+  }>;
+} {
+  if (Array.isArray(value)) {
+    const images: ReturnType<typeof detachScreenshotImagesFromValue>["images"] = [];
+    const items = value.map((item) => {
+      const detached = detachScreenshotImagesFromValue(item);
+      images.push(...detached.images);
+      return detached.value;
+    });
+    return { value: items, images };
+  }
+  const record = asRecord(value);
+  if (!Object.keys(record).length) return { value, images: [] };
 
-  return {
-    value: { ...record, screenshots },
-    images,
-  };
+  const images: ReturnType<typeof detachScreenshotImagesFromValue>["images"] = [];
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (key === "screenshots" && Array.isArray(item)) {
+      output[key] = item.map((candidate) => {
+        const screenshot = asRecord(candidate);
+        const { dataUrl, ...metadata } = screenshot;
+        const image = parseScreenshotDataUrl(dataUrl);
+        if (image) {
+          images.push({
+            type: "image",
+            source: image,
+            _meta: { screenshotId: stringValue(screenshot.id), persist: false },
+          });
+        }
+        return metadata;
+      });
+      continue;
+    }
+    const detached = detachScreenshotImagesFromValue(item);
+    output[key] = detached.value;
+    images.push(...detached.images);
+  }
+  return { value: output, images };
 }
 
 function parseScreenshotDataUrl(value: unknown): {

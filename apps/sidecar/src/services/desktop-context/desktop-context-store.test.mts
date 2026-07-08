@@ -90,3 +90,28 @@ test("redactDesktopText removes common credential and OTP forms", () => {
     "password: [REDACTED] token=[REDACTED] 验证码 [REDACTED]",
   );
 });
+
+sqliteTest("keeps screenshot pixels encrypted but removes them from redacted projections", () => {
+  const { dbPath, store } = createStore();
+  const input = {
+    ...snapshot("snap-image", 200, "客户问能否今天交付"),
+    screenshots: [{
+      id: "shot-1",
+      width: 320,
+      height: 200,
+      origin: { x: 10, y: 20 },
+      mimeType: "image/png",
+      dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+    }],
+  };
+
+  store.put(input);
+
+  const databaseText = readFileSync(dbPath).toString("utf8");
+  assert.doesNotMatch(databaseText, /iVBORw0KGgo=/);
+  assert.equal(store.get("snap-image")?.screenshots?.[0]?.dataUrl, "data:image/png;base64,iVBORw0KGgo=");
+  const redacted = store.getRedacted("snap-image");
+  assert.equal(redacted?.screenshots?.[0]?.mimeType, "image/png");
+  assert.equal(redacted?.screenshots?.[0]?.dataUrl, undefined);
+  store.close();
+});

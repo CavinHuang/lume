@@ -83,7 +83,56 @@ describe("createComputerUseMcpTools", () => {
       {
         type: "image",
         source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
-        _meta: { screenshotId: "screenshot:window-1:rev-1" },
+        _meta: { screenshotId: "screenshot:window-1:rev-1", persist: false },
+      },
+    ]);
+  });
+
+  test("extracts screenshots nested under retained desktop context snapshots", async () => {
+    const tools = createComputerUseMcpTools({
+      invoke: async () => ({
+        status: "ok",
+        snapshot: {
+          id: "snap-1",
+          screenshots: [{
+            id: "shot-1",
+            width: 320,
+            height: 200,
+            origin: { x: 10, y: 20 },
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+          }],
+        },
+      }),
+    });
+    const currentContext = tools.find((tool) => tool.name === "mcp__computer_use__current_context")!;
+
+    const result = await currentContext.call(
+      { snapshotId: "snap-1", includeScreenshot: true },
+      { toolUseId: "tool-current-image" } as never,
+    );
+
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          snapshot: {
+            id: "snap-1",
+            screenshots: [{
+              id: "shot-1",
+              width: 320,
+              height: 200,
+              origin: { x: 10, y: 20 },
+              mimeType: "image/png",
+            }],
+          },
+        }),
+      },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+        _meta: { screenshotId: "shot-1", persist: false },
       },
     ]);
   });

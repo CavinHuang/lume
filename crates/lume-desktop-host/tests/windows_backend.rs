@@ -63,6 +63,22 @@ fn get_window_state_can_include_screenshot_pixels_when_requested() {
 }
 
 #[test]
+fn current_context_includes_screenshot_pixels_only_when_requested() {
+    let backend = WindowsDesktopBackend;
+    let without_pixels = backend.invoke("current_context", &json!({})).unwrap();
+    let with_pixels = backend
+        .invoke("current_context", &json!({ "includeScreenshot": true }))
+        .unwrap();
+
+    assert_eq!(without_pixels["status"], "ok");
+    assert!(without_pixels["snapshot"]["screenshots"][0].get("dataUrl").is_none());
+    let data_url = with_pixels["snapshot"]["screenshots"][0]["dataUrl"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(data_url.starts_with("data:image/png;base64,"));
+}
+
+#[test]
 fn excludes_the_visual_cursor_window_from_agent_visible_app_lists() {
     move_visual_cursor(80, 80, None);
     thread::sleep(Duration::from_millis(220));
