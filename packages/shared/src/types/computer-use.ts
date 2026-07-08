@@ -149,6 +149,7 @@ export interface AgentDesktopActionRequest {
   app: Pick<DesktopAppRef, "id" | "name">;
   action: DesktopActionKind;
   targetLabel?: string;
+  targetPoint?: { x: number; y: number };
   risk: AgentDesktopActionRisk;
   expiresAt: string;
   expectedWindowId?: string;

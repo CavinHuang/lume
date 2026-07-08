@@ -398,7 +398,7 @@ describe("createComputerUseMcpTools", () => {
 
   test("derives consequential target labels from element ids before action confirmation", async () => {
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
-    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedRevision?: string }> = [];
+    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedRevision?: string; targetPoint?: { x: number; y: number } }> = [];
     const tools = createComputerUseMcpTools({
       threadId: "thread-derived",
       emitDesktopActionRequest: (request) => requests.push(request),
@@ -412,7 +412,7 @@ describe("createComputerUseMcpTools", () => {
             accessibility: {
               tree: [
                 { id: "root.0", role: "edit", name: "输入框" },
-                { id: "root.1", role: "button", name: "发送" },
+                { id: "root.1", role: "button", name: "发送", bounds: { x: 240, y: 600, width: 80, height: 40 } },
               ],
             },
           };
@@ -431,6 +431,7 @@ describe("createComputerUseMcpTools", () => {
     expect(requests[0]).toMatchObject({
       targetLabel: "发送",
       expectedRevision: "derived-rev",
+      targetPoint: { x: 280, y: 620 },
     });
     submitDesktopActionDecision({
       threadId: "thread-derived",
@@ -448,6 +449,8 @@ describe("createComputerUseMcpTools", () => {
         targetLabel: "发送",
         appId: "wechat.exe",
         appName: "微信",
+        x: 280,
+        y: 620,
       },
     });
     expect(calls[2]).toEqual({

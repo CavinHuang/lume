@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { MonitorUp } from 'lucide-react'
+import { Crosshair, MonitorUp, ShieldCheck } from 'lucide-react'
 import type { AgentDesktopActionRequest, AgentDesktopActionResponseInput } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { agentPendingInteractiveAtom } from '@/atoms'
@@ -53,6 +53,22 @@ export function DesktopActionBanner({
             <p className="mt-1 text-xs text-muted-foreground">
               Lume 会在执行前重新验证窗口和目标状态。本次允许不会保存为长期授权。
             </p>
+            {(request.targetPoint || request.expectedRevision) ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {request.targetPoint ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
+                    <Crosshair size={11} />
+                    目标点 {Math.round(request.targetPoint.x)},{Math.round(request.targetPoint.y)}
+                  </span>
+                ) : null}
+                {request.expectedRevision ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
+                    <ShieldCheck size={11} />
+                    执行前复核窗口版本
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
         <div className="flex justify-end gap-2">

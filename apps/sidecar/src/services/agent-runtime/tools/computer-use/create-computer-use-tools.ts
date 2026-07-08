@@ -491,6 +491,7 @@ function createActionRequest(
   args: Record<string, unknown>,
 ): AgentDesktopActionRequest {
   const targetLabel = stringValue(args.targetLabel) ?? stringValue(args.label);
+  const targetPoint = pointFromArgs(args);
   const appId = stringValue(args.appId) ?? "unknown";
   const appName = stringValue(args.appName) ?? appId;
   return {
@@ -500,6 +501,7 @@ function createActionRequest(
     app: { id: appId, name: appName },
     action,
     ...(targetLabel ? { targetLabel } : {}),
+    ...(targetPoint ? { targetPoint } : {}),
     risk: "critical",
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     ...(stringValue(args.windowId) ? { expectedWindowId: stringValue(args.windowId) } : {}),
