@@ -10,6 +10,7 @@ import { getEffectiveLumeConfig, updateAgentModelStrategy } from '@/lib/desktop-
 import { ModelOptionList } from '@/components/model-selection/ModelOptionList'
 import type { ModelOptionGroup } from '@/components/model-selection/model-selection-state'
 import { buildModelSelectionGroups } from '@/components/model-selection/model-selection-state'
+import { useModelMetaVersion } from '@/lib/model-meta-context'
 
 const EMPTY_SELECT_VALUE = '__empty__'
 
@@ -369,13 +370,14 @@ export function DefaultModelStrategyPanel() {
     () => allModelOptions.find((option) => option.modelRef === draft.defaultModelRef),
     [allModelOptions, draft.defaultModelRef]
   )
+  const modelMetaVersion = useModelMetaVersion()
   const defaultModelGroups = React.useMemo(
     () => buildModelSelectionGroups({
       channels: enabledChannels,
       activeChannelId: activeDefaultModel?.channelId,
       activeModelRef: draft.defaultModelRef,
     }),
-    [activeDefaultModel?.channelId, draft.defaultModelRef, enabledChannels]
+    [activeDefaultModel?.channelId, draft.defaultModelRef, enabledChannels, modelMetaVersion]
   )
   const addableFallbackOptions = React.useMemo(
     () => allModelOptions.filter((option) => (

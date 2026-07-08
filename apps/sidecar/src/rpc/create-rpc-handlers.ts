@@ -7,6 +7,7 @@ import { createAutomationHandlers } from "./automation-handlers";
 import { createChannelHandlers } from "./channel-handlers";
 import { createImHandlers } from "./im-handlers";
 import { createMemoryHandlers } from "./memory-handlers";
+import { createModelMetaHandlers } from "./model-meta-handlers";
 import { createReadingHandlers } from "./reading-handlers";
 import { createRoutineHandlers } from "./routine-handlers";
 import { createSystemHandlers } from "./system-handlers";
@@ -45,6 +46,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       getMethodNames: () => Object.keys(handlers).sort()
     }),
     createChannelHandlers(),
+    createModelMetaHandlers(),
     createImHandlers(),
     createMemoryHandlers(),
     createReadingHandlers({

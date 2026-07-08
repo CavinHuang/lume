@@ -6,6 +6,7 @@ import { useReadingListeners } from '@/hooks/useReadingListeners'
 import { useSkillListeners } from '@/hooks/useSkillListeners'
 import { useWorkspaceBootstrap } from '@/hooks/useWorkspaceBootstrap'
 import { healthcheck } from '@/lib/desktop-api'
+import { ModelMetaProvider } from '@/lib/model-meta-context'
 import { Provider } from 'jotai'
 import { useEffect, useState } from 'react'
 import { Toaster } from 'sonner'
@@ -92,10 +93,12 @@ export function App() {
 
   return (
     <Provider>
-      <TooltipProvider>
-        <AppInner />
-        <Toaster position="bottom-right" />
-      </TooltipProvider>
+      <ModelMetaProvider>
+        <TooltipProvider>
+          <AppInner />
+          <Toaster position="bottom-right" />
+        </TooltipProvider>
+      </ModelMetaProvider>
     </Provider>
   )
 }

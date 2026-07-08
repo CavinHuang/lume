@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
+import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { createChannel, decryptChannelKey, listChannels, updateChannel, deleteChannel } from '@/lib/desktop-api/channel'
 import {
   getEffectiveLumeConfig,
@@ -1071,6 +1072,9 @@ function ContextWindowSettings({
   onAdd: () => void
   onRemove: (modelRef: string) => void
 }) {
+  const modelMetaVersion = useModelMetaVersion()
+  // model 元数据 reload 后触发组件重渲染（buildContextWindowRows 读全局 registry，version 变即重算）
+  void modelMetaVersion
   const rows = buildContextWindowRows(chatOptions, contextWindows)
 
   return (

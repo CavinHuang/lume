@@ -38,16 +38,19 @@ export interface ModelMeta {
 
 /**
  * 最终注册表 = generated（models.dev 同步）⊕ override（人工稳定层）。
- * 公开 API 行为与原硬编码 registry 一致。
+ * 公开 API 行为与原硬编码 registry 一致。运行时可经 setModelMeta 替换。
  */
-const MODEL_META_REGISTRY: ModelMeta[] = mergeModelMeta(
+let MODEL_META_REGISTRY: ModelMeta[] = mergeModelMeta(
   generatedJson as unknown as ModelMeta[],
   MODEL_OVERRIDES,
 )
 
-function buildLookupMap(): Map<string, ModelMeta> {
+/** build-time bundled seed（运行时 fallback / 初始值），供测试恢复等场景使用 */
+export const MODEL_META_SEED: ModelMeta[] = generatedJson as unknown as ModelMeta[]
+
+function buildLookupMap(registry: ModelMeta[]): Map<string, ModelMeta> {
   const map = new Map<string, ModelMeta>()
-  for (const meta of MODEL_META_REGISTRY) {
+  for (const meta of registry) {
     map.set(meta.id, meta)
     if (meta.aliases) {
       for (const alias of meta.aliases) {
@@ -58,7 +61,16 @@ function buildLookupMap(): Map<string, ModelMeta> {
   return map
 }
 
-const lookupMap = buildLookupMap()
+let lookupMap = buildLookupMap(MODEL_META_REGISTRY)
+
+/**
+ * 运行时替换 registry：接收未 merge 的原始 generated，内部应用 override 后重建 lookupMap。
+ * 供 web 启动期加载 / reload 时调用。findModelMeta 同步签名不变。
+ */
+export function setModelMeta(generated: ModelMeta[]): void {
+  MODEL_META_REGISTRY = mergeModelMeta(generated, MODEL_OVERRIDES)
+  lookupMap = buildLookupMap(MODEL_META_REGISTRY)
+}
 
 /** Strip provider prefix (e.g., "anthropic/claude-sonnet-4-5" → "claude-sonnet-4-5") */
 function stripProviderPrefix(id: string): string {

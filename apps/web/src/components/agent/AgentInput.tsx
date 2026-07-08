@@ -37,6 +37,7 @@ import {
   type LumeRuntimeEvent,
 } from '@lume/shared'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
+import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { MentionList } from './MentionList'
 import { PluginMentionNodeView } from './PluginMentionNodeView'
 import { ModelPicker } from './ModelPicker'
@@ -532,12 +533,13 @@ export function AgentInput({
     hasText: hasComposerPayload,
     mode: localSending ? 'busy' : streaming && !hasComposerPayload ? 'streaming' : 'idle',
   })
+  const modelMetaVersion = useModelMetaVersion()
   const selectedModelSummary = useMemo(() => getThreadSelectionSummary({
     channels,
     channelsLoaded,
     thread,
     defaultStrategy,
-  }), [channels, channelsLoaded, thread, defaultStrategy])
+  }), [channels, channelsLoaded, thread, defaultStrategy, modelMetaVersion])
   const contextWindowProgress = buildContextWindowProgress(runtimeEvents, {
     contextWindow: selectedModelSummary.meta?.contextWindow,
     messages: historyMessages,

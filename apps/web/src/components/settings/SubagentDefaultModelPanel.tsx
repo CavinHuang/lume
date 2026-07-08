@@ -15,6 +15,7 @@ import {
 } from '@/lib/desktop-api/lume-config'
 import { ModelOptionList } from '@/components/model-selection/ModelOptionList'
 import { buildModelSelectionGroups } from '@/components/model-selection/model-selection-state'
+import { useModelMetaVersion } from '@/lib/model-meta-context'
 import {
   buildModelOptions,
   getEnabledChannels,
@@ -87,13 +88,14 @@ export function SubagentDefaultModelPanel() {
     () => allModelOptions.find((option) => option.modelRef === draft.defaultModelRef),
     [allModelOptions, draft.defaultModelRef]
   )
+  const modelMetaVersion = useModelMetaVersion()
   const defaultModelGroups = React.useMemo(
     () => buildModelSelectionGroups({
       channels: enabledChannels,
       activeChannelId: activeDefaultModel?.channelId,
       activeModelRef: draft.defaultModelRef,
     }),
-    [activeDefaultModel?.channelId, draft.defaultModelRef, enabledChannels]
+    [activeDefaultModel?.channelId, draft.defaultModelRef, enabledChannels, modelMetaVersion]
   )
   const hasChanges = React.useMemo(
     () => hasSubagentDraftChanges({ persistedStrategy, draft }),

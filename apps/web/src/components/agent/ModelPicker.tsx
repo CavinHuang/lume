@@ -28,6 +28,7 @@ import {
 import type { ModelOptionGroup, ModelSelectionOption } from '@/components/model-selection/model-selection-state'
 import { AGENT_IPC_CHANNELS, type AgentThreadMeta, type Channel, type LumeConfigAgentDefaultStrategy } from '@lume/shared'
 import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
+import { useModelMetaVersion } from '@/lib/model-meta-context'
 
 interface ModelPickerProps {
   threadId: string
@@ -131,11 +132,12 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
   const baseChannelId = thread?.channelId ?? defaultStrategy.defaultChannelId
   const baseModelRef = thread?.modelRef ?? defaultStrategy.defaultModelRef
 
+  const modelMetaVersion = useModelMetaVersion()
   const groups = useMemo(() => buildModelSelectionGroups({
     channels,
     activeChannelId: baseChannelId,
     activeModelRef: baseModelRef,
-  }), [channels, baseChannelId, baseModelRef])
+  }), [channels, baseChannelId, baseModelRef, modelMetaVersion])
 
   const fallbackOption = !baseChannelId && !baseModelRef && channelsLoaded
     ? groups[0]?.options?.[0]
@@ -158,7 +160,7 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     channelsLoaded,
     thread,
     defaultStrategy: resolvedStrategy,
-  }), [channels, channelsLoaded, thread, resolvedStrategy])
+  }), [channels, channelsLoaded, thread, resolvedStrategy, modelMetaVersion])
 
   const canRestoreDefault = thread?.modelSelectionSource === 'thread-override'
 

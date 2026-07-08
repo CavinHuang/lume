@@ -7,6 +7,7 @@ import { ModelOptionList } from '@/components/model-selection/ModelOptionList'
 import type { ModelSelectionOption, ModelOptionGroup } from '@/components/model-selection/model-selection-state'
 import type { Channel, LumeConfigAgentDefaultStrategy } from '@lume/shared'
 import { getEffectiveLumeConfig } from '@/lib/desktop-api/lume-config'
+import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { cn } from '@/lib/utils'
 import {
   composerControlChevronClassName,
@@ -90,6 +91,7 @@ export function WelcomeModelPicker({
 
   const activeChannelId = selectedChannelId ?? localChannelId
   const activeModelRef = selectedModelRef ?? localModelRef
+  const modelMetaVersion = useModelMetaVersion()
 
   // 将默认模型传递给父组件
   useEffect(() => {
@@ -123,7 +125,7 @@ export function WelcomeModelPicker({
     setLocalChannelId(option.channelId)
     setLocalModelRef(option.modelRef)
     propagatedInitial.current = true
-  }, [channelsLoaded, channels, defaultStrategy, selectedModelRef])
+  }, [channelsLoaded, channels, defaultStrategy, selectedModelRef, modelMetaVersion])
 
   useEffect(() => {
     if (!open) return
@@ -145,7 +147,7 @@ export function WelcomeModelPicker({
     channels,
     activeChannelId,
     activeModelRef,
-  }), [channels, activeChannelId, activeModelRef])
+  }), [channels, activeChannelId, activeModelRef, modelMetaVersion])
 
   const filteredGroups: ModelOptionGroup[] = useMemo(() => {
     if (!search.trim()) return groups
@@ -173,7 +175,7 @@ export function WelcomeModelPicker({
       ...(activeChannelId ? { defaultChannelId: activeChannelId } : {}),
       ...(activeModelRef ? { defaultModelRef: activeModelRef } : {}),
     },
-  }), [activeChannelId, activeModelRef, channels, channelsLoaded, defaultStrategy])
+  }), [activeChannelId, activeModelRef, channels, channelsLoaded, defaultStrategy, modelMetaVersion])
 
   const handleSelect = (option: ModelSelectionOption) => {
     onModelChange(option.modelRef, option.channelId, option.modelId)

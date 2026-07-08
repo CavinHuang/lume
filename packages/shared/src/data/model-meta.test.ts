@@ -1,5 +1,13 @@
-import { describe, expect, test } from 'bun:test'
-import { findModelMeta, formatContextWindow, formatPricing } from './model-meta'
+import { afterEach, describe, expect, test } from 'bun:test'
+import {
+  findModelMeta,
+  formatContextWindow,
+  formatPricing,
+  setModelMeta,
+  MODEL_META_SEED,
+  type ModelMeta,
+} from './model-meta'
+import generatedJson from './model-meta.generated.json'
 
 describe('findModelMeta', () => {
   test('matches by exact model id', () => {
@@ -88,5 +96,45 @@ describe('formatPricing', () => {
 
   test('formats decimal pricing', () => {
     expect(formatPricing({ input: 0.8, output: 4 })).toBe('$0.8/$4')
+  })
+})
+
+describe('setModelMeta', () => {
+  afterEach(() => {
+    setModelMeta(generatedJson as unknown as ModelMeta[])
+  })
+
+  test('替换 registry 后 findModelMeta 返回新数据', () => {
+    const custom: ModelMeta[] = [
+      {
+        id: 'custom-test-model',
+        displayName: 'Custom',
+        contextWindow: 999,
+        capabilities: { vision: false, toolUse: true, reasoning: false },
+      },
+    ]
+    setModelMeta(custom)
+    const meta = findModelMeta('custom-test-model')
+    expect(meta).toBeDefined()
+    expect(meta!.displayName).toBe('Custom')
+    expect(meta!.contextWindow).toBe(999)
+  })
+
+  test('重建 lookupMap（alias 正确）', () => {
+    const withAlias: ModelMeta[] = [
+      {
+        id: 'm1',
+        aliases: ['alias-1'],
+        displayName: 'M1',
+        contextWindow: 100,
+        capabilities: { vision: false, toolUse: false, reasoning: false },
+      },
+    ]
+    setModelMeta(withAlias)
+    expect(findModelMeta('alias-1')?.id).toBe('m1')
+  })
+
+  test('MODEL_META_SEED 等于 generated 原始数据', () => {
+    expect(MODEL_META_SEED).toEqual(generatedJson)
   })
 })
