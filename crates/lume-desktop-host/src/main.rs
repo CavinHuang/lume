@@ -39,6 +39,10 @@ fn create_backend() -> Box<dyn DesktopBackend> {
     {
         return Box::new(lume_desktop_host::windows_backend::WindowsDesktopBackend);
     }
+    #[cfg(target_os = "macos")]
+    {
+        return Box::new(lume_desktop_host::macos_backend::MacOSDesktopBackend);
+    }
     #[allow(unreachable_code)]
     Box::new(UnsupportedBackend)
 }

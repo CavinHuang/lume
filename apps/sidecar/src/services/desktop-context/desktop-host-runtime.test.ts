@@ -10,6 +10,22 @@ describe("createDesktopHostInvoker", () => {
     });
   });
 
+  test("returns actionable permission diagnostics without a configured host", async () => {
+    const invoke = createDesktopHostInvoker({ env: {} });
+    await expect(invoke("diagnose_permissions", {})).resolves.toMatchObject({
+      status: "unavailable",
+      permissionTarget: {
+        appName: "Lume Computer Use",
+        appBundleName: "Lume Computer Use.app",
+        bundleId: "com.lume.computer-use",
+      },
+      permissions: [
+        { id: "accessibility", status: "unknown" },
+        { id: "screenRecording", status: "unknown" },
+      ],
+    });
+  });
+
   test("reuses one client and forwards host methods", async () => {
     const calls: unknown[] = [];
     let clients = 0;

@@ -20,6 +20,9 @@ export function createDesktopHostInvoker(input: {
 
   return async (method: string, params: Record<string, unknown>): Promise<unknown> => {
     if (!endpoint || !token) {
+      if (method === "diagnose_permissions") {
+        return unavailablePermissionDiagnostics("Lume desktop host is not configured");
+      }
       return { status: "unavailable", message: "Lume desktop host is not configured" };
     }
     try {
@@ -28,12 +31,43 @@ export function createDesktopHostInvoker(input: {
         : new DesktopHostRpcClient({ token, connect: () => connectDesktopHost(endpoint) });
       return await client.call(method, params);
     } catch (error) {
+      const message = `desktop host connection failed: ${error instanceof Error ? error.message : String(error)}`;
+      if (method === "diagnose_permissions") {
+        return unavailablePermissionDiagnostics(message);
+      }
       return {
         status: "unavailable",
-        message: `desktop host connection failed: ${error instanceof Error ? error.message : String(error)}`,
+        message,
       };
     }
   };
 }
 
 export const invokeDesktopHost = createDesktopHostInvoker();
+
+function unavailablePermissionDiagnostics(message: string): Record<string, unknown> {
+  return {
+    status: "unavailable",
+    platform: process.platform,
+    message,
+    permissionTarget: {
+      appName: "Lume Computer Use",
+      appBundleName: "Lume Computer Use.app",
+      bundleId: "com.lume.computer-use",
+    },
+    permissions: [
+      {
+        id: "accessibility",
+        title: "Accessibility",
+        status: "unknown",
+        settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+      },
+      {
+        id: "screenRecording",
+        title: "Screen & System Audio Recording",
+        status: "unknown",
+        settingsUrl: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+      },
+    ],
+  };
+}

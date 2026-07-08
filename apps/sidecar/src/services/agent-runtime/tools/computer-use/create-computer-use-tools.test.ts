@@ -19,9 +19,11 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("drag").required).toEqual(["windowId", "fromX", "fromY", "toX", "toY"]);
     expect(schema("type_text").required).toEqual(["windowId", "text"]);
     expect(schema("search_context").required).toEqual(["query"]);
+    expect(schema("diagnose_permissions").required).toBeUndefined();
     expect(schema("current_context").properties.refresh).toMatchObject({ type: "boolean" });
     expect(description("type_text")).toContain("passwords or OTPs");
     expect(description("click")).toContain("get_window_state");
+    expect(description("diagnose_permissions")).toContain("Lume Computer Use.app");
     for (const tool of tools) {
       expect((tool.inputSchema as unknown as Record<string, unknown>).additionalProperties).toBe(false);
     }
@@ -72,6 +74,44 @@ describe("createComputerUseMcpTools", () => {
     expect(JSON.parse(result.content as string)).toEqual({
       status: "ok",
       apps: [{ id: "wechat", name: "微信" }],
+    });
+  });
+
+  test("publishes a read-only macOS permission diagnostic tool", async () => {
+    const calls: unknown[] = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        return {
+          status: "ok",
+          permissionTarget: {
+            appName: "Lume Computer Use",
+            bundleId: "com.lume.computer-use",
+          },
+          permissions: [
+            { id: "accessibility", status: "missing" },
+            { id: "screenRecording", status: "granted" },
+          ],
+        };
+      },
+    });
+    const tool = tools.find((candidate) => candidate.name === "mcp__computer_use__diagnose_permissions")!;
+
+    expect(tool.isReadOnly?.()).toBe(true);
+    expect(tool.isConcurrencySafe?.()).toBe(true);
+    const result = await tool.call({}, { toolUseId: "tool-permissions" } as never);
+
+    expect(calls).toEqual([{ method: "diagnose_permissions", input: {} }]);
+    expect(JSON.parse(result.content as string)).toEqual({
+      status: "ok",
+      permissionTarget: {
+        appName: "Lume Computer Use",
+        bundleId: "com.lume.computer-use",
+      },
+      permissions: [
+        { id: "accessibility", status: "missing" },
+        { id: "screenRecording", status: "granted" },
+      ],
     });
   });
 
@@ -319,8 +359,9 @@ describe("createComputerUseMcpTools", () => {
   });
 
   test("returns an explicit unavailable status when the host is not configured", async () => {
-    const [tool] = createComputerUseMcpTools();
-    const result = await tool!.call({}, { toolUseId: "tool-2" } as never);
+    const tool = createComputerUseMcpTools()
+      .find((candidate) => candidate.name === "mcp__computer_use__list_apps")!;
+    const result = await tool.call({}, { toolUseId: "tool-2" } as never);
     expect(JSON.parse(result.content as string)).toEqual({
       status: "unavailable",
       message: "Lume desktop host is not configured",

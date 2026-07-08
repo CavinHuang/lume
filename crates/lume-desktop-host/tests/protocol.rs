@@ -1,4 +1,4 @@
-use lume_desktop_host::{DesktopBackend, DesktopSession};
+use lume_desktop_host::{DesktopBackend, DesktopSession, UnsupportedBackend};
 use serde_json::{json, Value};
 
 struct FakeBackend;
@@ -58,5 +58,39 @@ fn reports_invalid_requests_and_backend_errors_as_json_rpc_errors() {
     assert_eq!(
         unsupported["result"]["message"],
         "unsupported method: does_not_exist"
+    );
+}
+
+#[test]
+fn diagnose_permissions_reports_the_computer_use_permission_identity() {
+    let mut session = DesktopSession::new("token", UnsupportedBackend);
+    let _ = session.handle(json!({
+        "id": 1,
+        "method": "system.handshake",
+        "params": { "token": "token" }
+    }));
+
+    let response = session.handle(json!({
+        "id": 2,
+        "method": "diagnose_permissions",
+        "params": {}
+    }));
+
+    assert_eq!(
+        response["result"]["permissionTarget"]["appName"],
+        "Lume Computer Use"
+    );
+    assert_eq!(
+        response["result"]["permissionTarget"]["bundleId"],
+        "com.lume.computer-use"
+    );
+    assert_eq!(response["result"]["permissions"][0]["id"], "accessibility");
+    assert_eq!(
+        response["result"]["permissions"][1]["id"],
+        "screenRecording"
+    );
+    assert_eq!(
+        response["result"]["permissions"][0]["settingsUrl"],
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     );
 }

@@ -1,6 +1,8 @@
 use anyhow::Result;
 use serde_json::{json, Value};
 
+#[cfg(target_os = "macos")]
+pub mod macos_backend;
 #[cfg(windows)]
 pub mod windows_backend;
 #[cfg(windows)]
@@ -11,6 +13,9 @@ pub mod windows_cursor_motion;
 pub mod windows_overlay;
 
 pub const PROTOCOL_VERSION: u64 = 1;
+pub const COMPUTER_USE_PERMISSION_APP_NAME: &str = "Lume Computer Use";
+pub const COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME: &str = "Lume Computer Use.app";
+pub const COMPUTER_USE_PERMISSION_BUNDLE_ID: &str = "com.lume.computer-use";
 
 #[cfg(windows)]
 pub fn initialize_windows_runtime() -> windows::core::Result<()> {
@@ -83,11 +88,78 @@ pub struct UnsupportedBackend;
 
 impl DesktopBackend for UnsupportedBackend {
     fn invoke(&self, method: &str, _params: &Value) -> Result<Value> {
+        if method == "diagnose_permissions" {
+            return Ok(desktop_permission_diagnostics(
+                None,
+                None,
+                Some(format!(
+                    "macOS permission diagnostics are unavailable on {}",
+                    std::env::consts::OS
+                )),
+            ));
+        }
         Ok(json!({
             "status": "unavailable",
             "message": format!("desktop method is unavailable on this platform: {method}")
         }))
     }
+}
+
+pub fn desktop_permission_diagnostics(
+    accessibility: Option<bool>,
+    screen_recording: Option<bool>,
+    message: Option<String>,
+) -> Value {
+    let status = match (accessibility, screen_recording) {
+        (Some(true), Some(true)) => "ok",
+        (Some(_), Some(_)) => "permission_denied",
+        _ => "unavailable",
+    };
+    let mut result = json!({
+        "status": status,
+        "platform": std::env::consts::OS,
+        "permissionTarget": {
+            "appName": COMPUTER_USE_PERMISSION_APP_NAME,
+            "appBundleName": COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME,
+            "bundleId": COMPUTER_USE_PERMISSION_BUNDLE_ID,
+        },
+        "permissions": [
+            permission_diagnostic(
+                "accessibility",
+                "Accessibility",
+                accessibility,
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+            ),
+            permission_diagnostic(
+                "screenRecording",
+                "Screen & System Audio Recording",
+                screen_recording,
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+            ),
+        ],
+    });
+    if let Some(message) = message {
+        result["message"] = Value::String(message);
+    }
+    result
+}
+
+fn permission_diagnostic(
+    id: &str,
+    title: &str,
+    granted: Option<bool>,
+    settings_url: &str,
+) -> Value {
+    json!({
+        "id": id,
+        "title": title,
+        "status": match granted {
+            Some(true) => "granted",
+            Some(false) => "missing",
+            None => "unknown",
+        },
+        "settingsUrl": settings_url,
+    })
 }
 
 fn rpc_result(id: Value, result: Value) -> Value {
