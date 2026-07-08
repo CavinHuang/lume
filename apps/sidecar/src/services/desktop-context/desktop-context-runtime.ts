@@ -39,7 +39,7 @@ export const desktopContextRpcService = {
   captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown> {
     return getRuntime().service.captureCurrent(input);
   },
-  currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean }): Promise<unknown> {
+  currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean }): Promise<unknown> {
     return getRuntime().service.currentContext(input);
   },
   searchContext(input: { query?: string; limit?: number }): Promise<unknown> {
@@ -76,6 +76,7 @@ export async function invokeComputerUse(method: string, input: Record<string, un
     return desktopContextRpcService.currentContext({
       ...(typeof input.snapshotId === "string" ? { snapshotId: input.snapshotId } : {}),
       ...(input.includeScreenshot === true ? { includeScreenshot: true } : {}),
+      ...(input.refresh === true ? { refresh: true } : {}),
     });
   }
   if (method === "search_context") {

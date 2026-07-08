@@ -105,12 +105,15 @@ export class DesktopContextService {
     return { status: "ok", ...snapshotToTarget(snapshot) };
   }
 
-  async currentContext(input: { snapshotId?: string; includeScreenshot?: boolean } = {}): Promise<unknown> {
+  async currentContext(input: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean } = {}): Promise<unknown> {
     if (!this.#key) return { status: "unavailable", message: "desktop context store is locked" };
     if (!this.#settings.enabled && !input.snapshotId) {
       return { status: "unavailable", message: "desktop assistant is disabled" };
     }
     const store = this.#ensureStore();
+    if (input.refresh === true && input.snapshotId) {
+      return this.#refreshSnapshot(store, input.snapshotId, input.includeScreenshot === true);
+    }
     const snapshot = input.snapshotId
       ? store.getRedacted(input.snapshotId)
       : store.latestRedacted();
@@ -231,6 +234,32 @@ export class DesktopContextService {
       this.#input.emitNotification?.(DESKTOP_CONTEXT_IPC_CHANNELS.PROPOSAL_CREATED, proposalToCreatedNotification(proposal));
     }
   }
+
+  async #refreshSnapshot(
+    store: DesktopContextStoreLike,
+    snapshotId: string,
+    includeScreenshot: boolean,
+  ): Promise<unknown> {
+    const anchor = store.getRedacted(snapshotId);
+    if (!anchor) return { status: "unavailable", message: "desktop context snapshot was not found" };
+    const state = asRecord(await this.#input.invokeHost("get_window_state", {
+      windowId: anchor.window.id,
+      ...(includeScreenshot ? { includeScreenshot: true } : {}),
+    }));
+    if (state.status !== "ok") return state;
+    const refreshed = snapshotFromWindowState(anchor, state);
+    if (!refreshed) return { status: "failed", message: "desktop host returned an invalid window state" };
+    if (refreshed.window.id !== anchor.window.id || refreshed.app.id !== anchor.app.id) {
+      return { status: "stale_target", message: "desktop context target changed" };
+    }
+    store.put(refreshed);
+    store.purge();
+    this.#lastFingerprint = snapshotFingerprint(refreshed);
+    this.#lastSnapshotId = refreshed.id;
+    const redacted = store.getRedacted(refreshed.id) ?? refreshed;
+    const raw = includeScreenshot ? store.get(refreshed.id) : undefined;
+    return { status: "ok", snapshot: attachScreenshotPixels(redacted, raw) };
+  }
 }
 
 function looksLikeReplyOpportunity(text: string): boolean {
@@ -284,6 +313,52 @@ function normalizeSnapshot(value: unknown): DesktopContextSnapshot | null {
     || typeof window.title !== "string"
   ) return null;
   return value as DesktopContextSnapshot;
+}
+
+function snapshotFromWindowState(
+  anchor: DesktopContextSnapshot,
+  value: Record<string, unknown>,
+): DesktopContextSnapshot | null {
+  const window = asRecord(value.window);
+  const accessibility = asRecord(value.accessibility);
+  if (
+    typeof value.capturedAt !== "number"
+    || typeof window.id !== "string"
+    || typeof window.appId !== "string"
+    || typeof window.title !== "string"
+  ) return null;
+  const screenshots = Array.isArray(value.screenshots)
+    ? value.screenshots as DesktopContextSnapshot["screenshots"]
+    : undefined;
+  const capturedAt = value.capturedAt;
+  const visibleText = contextVisibleText(accessibility, window);
+  return {
+    id: `refresh:${anchor.id}:${capturedAt}`,
+    app: {
+      id: window.appId,
+      name: typeof window.appName === "string" ? window.appName : anchor.app.name,
+      ...(typeof window.processId === "number" ? { processId: window.processId } : {}),
+    },
+    window: window as DesktopContextSnapshot["window"],
+    capturedAt,
+    eventType: "typing_idle",
+    ...(typeof accessibility.selectedText === "string" && accessibility.selectedText.trim()
+      ? { selectedText: accessibility.selectedText }
+      : {}),
+    ...(visibleText ? { visibleText } : {}),
+    ...(screenshots?.[0]?.id ? { screenshotId: screenshots[0].id } : {}),
+    ...(screenshots ? { screenshots } : {}),
+    untrusted: true,
+  };
+}
+
+function contextVisibleText(accessibility: Record<string, unknown>, window: Record<string, unknown>): string | undefined {
+  const documentText = typeof accessibility.documentText === "string" ? accessibility.documentText.trim() : "";
+  if (documentText) return documentText;
+  const visibleText = typeof accessibility.visibleText === "string" ? accessibility.visibleText.trim() : "";
+  if (visibleText) return visibleText;
+  const title = typeof window.title === "string" ? window.title.trim() : "";
+  return title || undefined;
 }
 
 function attachScreenshotPixels(

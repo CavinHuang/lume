@@ -19,6 +19,7 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("drag").required).toEqual(["windowId", "fromX", "fromY", "toX", "toY"]);
     expect(schema("type_text").required).toEqual(["windowId", "text"]);
     expect(schema("search_context").required).toEqual(["query"]);
+    expect(schema("current_context").properties.refresh).toMatchObject({ type: "boolean" });
     expect(description("type_text")).toContain("passwords or OTPs");
     expect(description("click")).toContain("get_window_state");
     for (const tool of tools) {
@@ -150,10 +151,12 @@ describe("createComputerUseMcpTools", () => {
 
     await currentContext.call({}, { toolUseId: "tool-current-context" } as never);
     await currentContext.call({ snapshotId: "snap-explicit" }, { toolUseId: "tool-current-context-2" } as never);
+    await currentContext.call({ snapshotId: "snap-explicit", refresh: true }, { toolUseId: "tool-current-context-3" } as never);
 
     expect(calls).toEqual([
       { method: "current_context", input: { snapshotId: "snap-bound" } },
       { method: "current_context", input: { snapshotId: "snap-bound" } },
+      { method: "current_context", input: { snapshotId: "snap-bound", refresh: true } },
     ]);
   });
 

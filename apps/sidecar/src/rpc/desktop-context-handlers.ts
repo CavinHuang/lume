@@ -8,7 +8,7 @@ import type { RpcHandler } from "./types";
 interface DesktopContextRpcService {
   unlock(key: Buffer): void;
   captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown>;
-  currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean }): Promise<unknown>;
+  currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean }): Promise<unknown>;
   searchContext(input: { query?: string; limit?: number }): Promise<unknown>;
   getSettings(): DesktopAssistantSettings;
   updateSettings(settings: DesktopAssistantSettings): DesktopAssistantSettings | void;
@@ -39,6 +39,8 @@ export function createDesktopContextHandlers(service: DesktopContextRpcService):
       const input = readRecord(params);
       return service.currentContext({
         ...(typeof input.snapshotId === "string" ? { snapshotId: input.snapshotId } : {}),
+        ...(input.includeScreenshot === true ? { includeScreenshot: true } : {}),
+        ...(input.refresh === true ? { refresh: true } : {}),
       });
     },
     [DESKTOP_CONTEXT_IPC_CHANNELS.SEARCH]: async (params) => {

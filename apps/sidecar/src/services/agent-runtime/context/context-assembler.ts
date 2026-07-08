@@ -205,8 +205,8 @@ export class ContextAssembler {
     const desktopComputerUsePolicy = input.desktopContext && hasComputerUseTools
       ? [
         "Use the attached desktop_context as the starting app/window for requests about the current desktop app.",
-        "If the loaded snapshot is enough, answer from it. If you need to reload the retained snapshot, call mcp__computer_use__current_context with desktop_context.snapshot.id.",
-        "If visible text is missing, too generic, or the app is chat/image-heavy such as WeChat, call mcp__computer_use__current_context with includeScreenshot true and desktop_context.snapshot.id before answering.",
+        "If the loaded snapshot is enough, answer from it. If the user asks about the selected app's current state, call mcp__computer_use__current_context with desktop_context.snapshot.id and refresh true.",
+        "If visible text is missing, too generic, or the app is chat/image-heavy such as WeChat, call mcp__computer_use__current_context with includeScreenshot true, refresh true, and desktop_context.snapshot.id before answering.",
         "If fresher structure is needed, call mcp__computer_use__get_window_state with desktop_context.snapshot.window.id before acting.",
         "For desktop operations, Prefer elementId targets from get_window_state over raw coordinates, then verify the state after each operation.",
         "Consequential actions still require Lume confirmation; do not bypass confirmation or ask the user to paste secrets into chat."
