@@ -306,6 +306,7 @@ function showMainWindowThenSend(payload) {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (!mainWindow.isVisible()) restoreMainWindow(mainWindow)
   mainWindow.webContents.send('lume:event:tray-action', payload)
+  refreshTrayMenu()
 }
 
 function checkForUpdateNow() {
@@ -433,7 +434,10 @@ async function createMainWindow() {
     win.webContents.openDevTools({ mode: 'detach' })
   }
 
-  win.once('ready-to-show', () => win.show())
+  win.once('ready-to-show', () => {
+    win.show()
+    refreshTrayMenu()
+  })
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null
   })

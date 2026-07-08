@@ -104,7 +104,7 @@ Quit                         (isQuitting=true; app.quit())
 `tray-manager.buildTrayIcon()`：
 
 1. `nativeImage.createFromPath('icon.png').toBitmap()` → RGBA Buffer
-2. `deriveTemplateImageBuffer(rgba, { width, height })` → 每 pixel 转 `RGB=(0,0,0)` + `alpha=亮度反相`
+2. `deriveTemplateImageBuffer(rgba, { width, height })` → 每 pixel 转 `RGB=(0,0,0)` + `alpha` 保留原值（黑色剪影 + 原透明度）
 3. `nativeImage.createFromBuffer(processed)` → `setTemplateImage(true)` → `resize({ width:22, height:22 })`
 - 非 macOS：`createFromPath(icon.ico / icon.png)` 原样（系统处理，不走 template）
 - 失败回退：`try/catch` → `createFromPath('icon.png').resize({ 22, 22 })`（即当前行为）
@@ -122,7 +122,7 @@ Quit                         (isQuitting=true; app.quit())
 
 - `buildTrayMenuTemplate`：给定 `state`（窗口显/隐），断言模板结构（label 切换、分隔符位置、项顺序）
 - `resolveCloseBehavior`：矩阵 `platform{darwin,win32,linux} × trayAvailable{0,1} × eventType{minimize,close} × isQuitting{0,1}`
-- `deriveTemplateImageBuffer`：给定已知 RGBA（黑/白/灰像素），断言输出 `RGB=0` 且 `alpha=亮度反相`
+- `deriveTemplateImageBuffer`：给定已知 RGBA（含不同 alpha 像素），断言输出 `RGB=0` 且 `alpha` 保留原值
 - 原有 `shouldHideToTray` 用例迁移到 `resolveCloseBehavior`，回归通过
 
 ## 实施阶段

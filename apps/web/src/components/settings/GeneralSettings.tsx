@@ -220,7 +220,7 @@ export function GeneralSettings() {
           <div className="divide-y divide-[color:color-mix(in_oklab,var(--border)_64%,transparent)]">
             <SettingsRow
               label="显示托盘"
-              desc="在系统菜单栏/任务栏显示 Lume 图标（关闭后重启应用生效）"
+              desc="在系统菜单栏/任务栏显示 Lume 图标（关闭后立即生效）"
             >
               <LumeSwitch
                 checked={settings.windowBehavior.showTray}
