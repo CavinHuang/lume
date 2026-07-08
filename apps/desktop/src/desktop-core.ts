@@ -608,6 +608,12 @@ export function buildTrayMenuTemplate({ windowVisible }: { windowVisible: boolea
   return [
     { label: windowVisible ? 'Hide Lume' : 'Show Lume', action: 'toggle-window' },
     { type: 'separator' },
+    { label: '快速输入', action: 'quick-input' },
+    { label: '新建笔记', action: 'new-note' },
+    { type: 'separator' },
+    { label: '打开设置', action: 'open-settings' },
+    { label: '检查更新', action: 'check-update' },
+    { type: 'separator' },
     { label: 'Quit', action: 'quit' },
   ]
 }

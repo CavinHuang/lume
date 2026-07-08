@@ -436,15 +436,19 @@ test("getQuickInputUrl builds dev and packaged entry urls with the view flag", (
 
 test('tray menu template toggles Show/Hide label by window visibility', () => {
   const hidden = buildTrayMenuTemplate({ windowVisible: false })
-  assert.equal(hidden[0].label, 'Show Lume')
+  assert.deepEqual(hidden.map((i) => i.label ?? i.type), [
+    'Show Lume', 'separator', '快速输入', '新建笔记', 'separator', '打开设置', '检查更新', 'separator', 'Quit',
+  ])
   assert.equal(hidden[0].action, 'toggle-window')
-  assert.equal(hidden[hidden.length - 1].label, 'Quit')
-  assert.equal(hidden[hidden.length - 1].action, 'quit')
+  assert.equal(hidden[2].action, 'quick-input')
+  assert.equal(hidden[3].action, 'new-note')
+  assert.equal(hidden[5].action, 'open-settings')
+  assert.equal(hidden[6].action, 'check-update')
+  assert.equal(hidden[8].action, 'quit')
 
   const visible = buildTrayMenuTemplate({ windowVisible: true })
   assert.equal(visible[0].label, 'Hide Lume')
-  assert.equal(visible[0].action, 'toggle-window')
-});
+})
 
 test('deriveTemplateImageBuffer produces black pixels preserving original alpha', () => {
   // 像素：红不透明白、绿半透明、透明（alpha=0）
