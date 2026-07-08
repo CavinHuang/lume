@@ -49,6 +49,7 @@ import {
 import { Button } from '@/components/ui/button'
 interface WelcomeViewProps {
   workspaceId?: string
+  desktopContextTarget?: DesktopContextTarget
 }
 
 interface WelcomePendingFile {
@@ -61,7 +62,7 @@ interface WelcomePendingFile {
   previewUrl?: string
 }
 
-export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProps) {
+export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTarget: initialDesktopContextTarget }: WelcomeViewProps) {
   const setThreads = useSetAtom(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const setWorkspaces = useSetAtom(agentWorkspacesAtom)
@@ -89,13 +90,17 @@ export function WelcomeView({ workspaceId: initialWorkspaceId }: WelcomeViewProp
   const [welcomeSuggestions, setWelcomeSuggestions] = useState<AgentWelcomeSuggestion[]>(DEFAULT_WELCOME_SUGGESTIONS)
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget>()
-  const [selectedDesktopContextTarget, setSelectedDesktopContextTarget] = useState<DesktopContextTarget>()
+  const [selectedDesktopContextTarget, setSelectedDesktopContextTarget] = useState<DesktopContextTarget | undefined>(initialDesktopContextTarget)
   const [desktopContextCaptureLoading, setDesktopContextCaptureLoading] = useState(false)
   const [desktopContextCaptureMessage, setDesktopContextCaptureMessage] = useState<string>()
 
   useEffect(() => {
     setSelectedWorkspaceId(initialWorkspaceId ?? currentWorkspaceId ?? null)
   }, [currentWorkspaceId, initialWorkspaceId])
+
+  useEffect(() => {
+    setSelectedDesktopContextTarget(initialDesktopContextTarget)
+  }, [initialDesktopContextTarget])
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((ws) => ws.id === selectedWorkspaceId),

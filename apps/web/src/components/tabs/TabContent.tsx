@@ -22,7 +22,7 @@ export function TabContent() {
   }
 
   if (activeTab.type === 'welcome') {
-    return <WelcomeView workspaceId={activeTab.workspaceId} />
+    return <WelcomeView workspaceId={activeTab.workspaceId} desktopContextTarget={activeTab.desktopContextTarget} />
   }
 
   if (activeTab.type === 'agent' && activeTab.threadId) {

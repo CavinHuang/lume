@@ -1,5 +1,6 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
+import type { DesktopContextTarget } from '@lume/shared'
 
 export type TabType = 'agent' | 'settings' | 'welcome' | 'automation' | 'skills' | 'reading' | 'lume' | 'file' | 'browser'
 export type SettingsTab = 'channel' | 'agent' | 'mcp' | 'about'
@@ -18,6 +19,7 @@ export interface Tab {
   workspaceSlug?: string
   sourcePath?: string
   browserUrl?: string
+  desktopContextTarget?: DesktopContextTarget
 }
 
 export const tabsAtom = atom<Tab[]>([])

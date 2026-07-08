@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { Database, Loader2, Monitor, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -9,13 +10,19 @@ import {
   type DesktopProactiveProposal,
   type DesktopProactiveProposalStatus,
 } from '@lume/shared'
+import { activeTabIdAtom, currentWorkspaceIdAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { buildDesktopAssistantDiagnostics } from './desktop-assistant-settings-state'
+import { buildDesktopProposalWelcomeState } from './desktop-assistant-proposals-state'
 
 export function DesktopAssistantSettings() {
+  const [tabs, setTabs] = useAtom(tabsAtom)
+  const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
   const [settings, setSettings] = useState<DesktopAssistantSettingsValue | null>(null)
   const [status, setStatus] = useState<DesktopAssistantStatus | null>(null)
   const [activity, setActivity] = useState<DesktopContextSnapshot[]>([])
@@ -62,6 +69,18 @@ export function DesktopAssistantSettings() {
   const updateProposal = async (id: string, status: DesktopProactiveProposalStatus) => {
     await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL, { id, status })
     await refresh()
+  }
+
+  const openProposal = async (proposal: DesktopProactiveProposal) => {
+    try {
+      await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL, { id: proposal.id, status: 'opened' })
+      const next = buildDesktopProposalWelcomeState({ proposal, tabs, currentWorkspaceId })
+      setTabs(next.tabs)
+      setWelcomePromptSeed(next.promptSeed)
+      setActiveTabId(next.activeTabId)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '打开建议失败')
+    }
   }
 
   if (!settings) {
@@ -146,9 +165,9 @@ export function DesktopAssistantSettings() {
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">
-                {item.status === 'pending' && (
-                  <Button type="button" variant="secondary" onClick={() => void updateProposal(item.id, 'opened')}>
-                    标记已读
+                {(item.status === 'pending' || item.status === 'opened') && (
+                  <Button type="button" variant="secondary" onClick={() => void openProposal(item)}>
+                    开始处理
                   </Button>
                 )}
                 {item.status !== 'dismissed' && (
