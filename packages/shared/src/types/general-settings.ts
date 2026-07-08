@@ -5,6 +5,7 @@ export type AgentMessageDisplayMode = "minimal" | "verbose"
 export interface GeneralSettingsWindowBehavior {
   minimizeToTray: boolean
   closeToTray: boolean
+  showTray: boolean
 }
 
 export interface GeneralSettingsUpdateSettings {
@@ -101,7 +102,8 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   themeMode: "system",
   windowBehavior: {
     minimizeToTray: false,
-    closeToTray: false
+    closeToTray: false,
+    showTray: true
   },
   updateSettings: {
     autoCheckUpdates: true,
