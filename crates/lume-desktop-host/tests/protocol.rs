@@ -1,5 +1,6 @@
 use lume_desktop_host::{
-    desktop_permission_diagnostics, desktop_permission_target_for_app_bundle_name, DesktopBackend,
+    desktop_permission_clients_for_app_bundle_path, desktop_permission_diagnostics,
+    desktop_permission_granted, desktop_permission_target_for_app_bundle_name, DesktopBackend,
     DesktopSession, UnsupportedBackend,
 };
 use serde_json::{json, Value};
@@ -163,4 +164,46 @@ fn permission_target_uses_development_bundle_identity_when_running_from_dev_app(
     assert_eq!(target["appBundleName"], "Lume Computer Use (Dev).app");
     assert_eq!(target["bundleId"], "com.lume.computer-use.dev");
     assert_eq!(target["authorizationSubject"], "appBundle");
+}
+
+#[test]
+fn permission_clients_target_release_computer_use_bundle_and_app_path() {
+    let clients =
+        desktop_permission_clients_for_app_bundle_path(Some("/Applications/Lume Computer Use.app"));
+
+    assert_eq!(clients.len(), 2);
+    assert_eq!(clients[0].identifier, "com.lume.computer-use");
+    assert_eq!(clients[0].client_type, 0);
+    assert_eq!(clients[1].identifier, "/Applications/Lume Computer Use.app");
+    assert_eq!(clients[1].client_type, 1);
+    assert!(!clients
+        .iter()
+        .any(|client| client.identifier == "com.lume.desktop"));
+}
+
+#[test]
+fn permission_clients_target_development_computer_use_bundle_and_app_path() {
+    let clients = desktop_permission_clients_for_app_bundle_path(Some(
+        "/tmp/lume/resources/desktop-host/darwin-arm64/Lume Computer Use (Dev).app",
+    ));
+
+    assert_eq!(clients.len(), 2);
+    assert_eq!(clients[0].identifier, "com.lume.computer-use.dev");
+    assert_eq!(clients[0].client_type, 0);
+    assert_eq!(
+        clients[1].identifier,
+        "/tmp/lume/resources/desktop-host/darwin-arm64/Lume Computer Use (Dev).app"
+    );
+    assert_eq!(clients[1].client_type, 1);
+    assert!(!clients
+        .iter()
+        .any(|client| client.identifier == "com.lume.computer-use"));
+}
+
+#[test]
+fn permission_granted_accepts_persisted_tcc_authorization_when_runtime_is_stale() {
+    assert!(desktop_permission_granted(Some(true), false));
+    assert!(desktop_permission_granted(None, true));
+    assert!(!desktop_permission_granted(Some(false), false));
+    assert!(!desktop_permission_granted(None, false));
 }

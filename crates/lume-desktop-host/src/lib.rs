@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde_json::{json, Value};
+use std::path::Path;
 
 #[cfg(target_os = "macos")]
 pub mod macos_backend;
@@ -18,10 +19,15 @@ pub const COMPUTER_USE_PERMISSION_APP_NAME: &str = "Lume Computer Use";
 pub const COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME: &str = "Lume Computer Use.app";
 pub const COMPUTER_USE_PERMISSION_BUNDLE_ID: &str = "com.lume.computer-use";
 pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_NAME: &str = "Lume Computer Use (Dev)";
-pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_BUNDLE_NAME: &str =
-    "Lume Computer Use (Dev).app";
+pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_BUNDLE_NAME: &str = "Lume Computer Use (Dev).app";
 pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_BUNDLE_ID: &str = "com.lume.computer-use.dev";
 pub const COMPUTER_USE_PERMISSION_AUTHORIZATION_SUBJECT: &str = "appBundle";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DesktopPermissionClientRecord {
+    pub identifier: String,
+    pub client_type: i32,
+}
 
 #[cfg(windows)]
 pub fn initialize_windows_runtime() -> windows::core::Result<()> {
@@ -164,8 +170,53 @@ pub fn current_computer_use_permission_app_bundle_name() -> String {
         .to_owned()
 }
 
+#[cfg(target_os = "macos")]
+pub fn current_computer_use_permission_clients() -> Vec<DesktopPermissionClientRecord> {
+    desktop_permission_clients_for_app_bundle_path(current_app_bundle_path().as_deref())
+}
+
+pub fn desktop_permission_clients_for_app_bundle_path(
+    app_bundle_path: Option<&str>,
+) -> Vec<DesktopPermissionClientRecord> {
+    let target = desktop_permission_target_for_app_bundle_path(app_bundle_path);
+    let mut clients = Vec::new();
+    if let Some(bundle_id) = target["bundleId"].as_str() {
+        push_unique_permission_client(
+            &mut clients,
+            DesktopPermissionClientRecord {
+                identifier: bundle_id.to_owned(),
+                client_type: 0,
+            },
+        );
+    }
+    if let Some(app_bundle_path) = app_bundle_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    {
+        push_unique_permission_client(
+            &mut clients,
+            DesktopPermissionClientRecord {
+                identifier: app_bundle_path.to_owned(),
+                client_type: 1,
+            },
+        );
+    }
+    clients
+}
+
+pub fn desktop_permission_granted(persisted: Option<bool>, runtime: bool) -> bool {
+    persisted == Some(true) || runtime
+}
+
 fn current_desktop_permission_target() -> Value {
     desktop_permission_target_for_app_bundle_name(current_app_bundle_name().as_deref())
+}
+
+fn desktop_permission_target_for_app_bundle_path(app_bundle_path: Option<&str>) -> Value {
+    let app_bundle_name = app_bundle_path
+        .and_then(|path| Path::new(path).file_name())
+        .and_then(|value| value.to_str());
+    desktop_permission_target_for_app_bundle_name(app_bundle_name)
 }
 
 pub fn desktop_permission_target_for_app_bundle_name(app_bundle_name: Option<&str>) -> Value {
@@ -194,13 +245,28 @@ pub fn desktop_permission_target_for_app_bundle_name(app_bundle_name: Option<&st
 }
 
 fn current_app_bundle_name() -> Option<String> {
+    current_app_bundle_path()
+        .as_deref()
+        .and_then(|path| Path::new(path).file_name())
+        .and_then(|value| value.to_str())
+        .map(str::to_owned)
+}
+
+fn current_app_bundle_path() -> Option<String> {
     let executable = std::env::current_exe().ok()?;
     executable
         .ancestors()
         .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
-        .and_then(|path| path.file_name())
-        .and_then(|value| value.to_str())
-        .map(str::to_owned)
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+fn push_unique_permission_client(
+    clients: &mut Vec<DesktopPermissionClientRecord>,
+    record: DesktopPermissionClientRecord,
+) {
+    if !clients.iter().any(|client| client == &record) {
+        clients.push(record);
+    }
 }
 
 fn permission_diagnostic(

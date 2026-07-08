@@ -1,6 +1,6 @@
 use crate::{
-    current_computer_use_permission_app_bundle_name,
-    desktop_permission_diagnostics,
+    current_computer_use_permission_app_bundle_name, current_computer_use_permission_clients,
+    desktop_permission_diagnostics, desktop_permission_granted,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
         macos_get_window_result, macos_get_window_state_result,
@@ -11,7 +11,7 @@ use crate::{
         MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_NON_SETTABLE_SET_VALUE_ERROR, MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
     },
-    DesktopBackend,
+    DesktopBackend, DesktopPermissionClientRecord,
 };
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -701,10 +701,132 @@ impl MacOSPermissionState {
 }
 
 fn permission_state() -> MacOSPermissionState {
+    let persisted = tcc_authorization_store(&current_computer_use_permission_clients());
     MacOSPermissionState {
-        accessibility: ax_is_process_trusted(),
-        screen_recording: cg_preflight_screen_capture_access(),
+        accessibility: desktop_permission_granted(persisted.accessibility, ax_is_process_trusted()),
+        screen_recording: desktop_permission_granted(
+            persisted.screen_recording,
+            cg_preflight_screen_capture_access(),
+        ),
     }
+}
+
+struct TccAuthorizationStore {
+    accessibility: Option<bool>,
+    screen_recording: Option<bool>,
+}
+
+fn tcc_authorization_store(clients: &[DesktopPermissionClientRecord]) -> TccAuthorizationStore {
+    TccAuthorizationStore {
+        accessibility: tcc_authorization_for_service("kTCCServiceAccessibility", clients),
+        screen_recording: tcc_authorization_for_service("kTCCServiceScreenCapture", clients),
+    }
+}
+
+fn tcc_authorization_for_service(
+    service: &str,
+    clients: &[DesktopPermissionClientRecord],
+) -> Option<bool> {
+    if clients.is_empty() {
+        return None;
+    }
+    let mut saw_record = false;
+    let mut granted = false;
+    for database_path in tcc_database_paths() {
+        if let Some(database_granted) =
+            tcc_authorization_for_service_in_database(&database_path, service, clients)
+        {
+            saw_record = true;
+            granted = granted || database_granted;
+        }
+    }
+    saw_record.then_some(granted)
+}
+
+fn tcc_database_paths() -> Vec<String> {
+    let mut paths = vec!["/Library/Application Support/com.apple.TCC/TCC.db".to_owned()];
+    if let Ok(home) = env::var("HOME") {
+        let home_database = format!("{home}/Library/Application Support/com.apple.TCC/TCC.db");
+        if !paths.iter().any(|path| path == &home_database) {
+            paths.push(home_database);
+        }
+    }
+    paths
+}
+
+fn tcc_authorization_for_service_in_database(
+    database_path: &str,
+    service: &str,
+    clients: &[DesktopPermissionClientRecord],
+) -> Option<bool> {
+    unsafe {
+        let database_path = CString::new(database_path).ok()?;
+        let mut database: *mut Sqlite3 = ptr::null_mut();
+        if sqlite3_open_v2(
+            database_path.as_ptr(),
+            &mut database,
+            SQLITE_OPEN_READONLY,
+            ptr::null(),
+        ) != SQLITE_OK
+        {
+            if !database.is_null() {
+                sqlite3_close(database);
+            }
+            return None;
+        }
+        let result = tcc_authorization_for_service_in_open_database(database, service, clients);
+        sqlite3_close(database);
+        result
+    }
+}
+
+unsafe fn tcc_authorization_for_service_in_open_database(
+    database: *mut Sqlite3,
+    service: &str,
+    clients: &[DesktopPermissionClientRecord],
+) -> Option<bool> {
+    let query = CString::new(
+        "SELECT auth_value FROM access WHERE service = ? AND client = ? AND client_type = ? ORDER BY last_modified DESC LIMIT 1;",
+    )
+    .ok()?;
+    let service = CString::new(service).ok()?;
+    let mut auth_values = Vec::new();
+
+    for client in clients {
+        let client_identifier = CString::new(client.identifier.as_str()).ok()?;
+        let mut statement: *mut Sqlite3Stmt = ptr::null_mut();
+        if sqlite3_prepare_v2(
+            database,
+            query.as_ptr(),
+            -1,
+            &mut statement,
+            ptr::null_mut(),
+        ) != SQLITE_OK
+        {
+            if !statement.is_null() {
+                sqlite3_finalize(statement);
+            }
+            return None;
+        }
+
+        sqlite3_bind_text(statement, 1, service.as_ptr(), -1, None);
+        sqlite3_bind_text(statement, 2, client_identifier.as_ptr(), -1, None);
+        sqlite3_bind_int(statement, 3, client.client_type);
+
+        if sqlite3_step(statement) == SQLITE_ROW {
+            auth_values.push(sqlite3_column_int(statement, 0));
+        }
+        sqlite3_finalize(statement);
+    }
+
+    if auth_values.is_empty() {
+        return None;
+    }
+    Some(tcc_authorization_granted(&auth_values))
+}
+
+fn tcc_authorization_granted(auth_values: &[i32]) -> bool {
+    auth_values.contains(&2)
 }
 
 fn request_permissions(permissions: MacOSPermissionState) -> Value {
@@ -1309,6 +1431,8 @@ type CGImageRef = *const c_void;
 type CGImageDestinationRef = *const c_void;
 type CGEventRef = *const c_void;
 type CGEventSourceRef = *const c_void;
+type Sqlite3 = c_void;
+type Sqlite3Stmt = c_void;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1352,6 +1476,9 @@ const K_CG_SCROLL_EVENT_UNIT_PIXEL: c_uint = 0;
 const K_AX_ERROR_SUCCESS: c_int = 0;
 const K_AX_VALUE_CGPOINT_TYPE: c_int = 1;
 const K_AX_VALUE_CGSIZE_TYPE: c_int = 2;
+const SQLITE_OK: c_int = 0;
+const SQLITE_ROW: c_int = 100;
+const SQLITE_OPEN_READONLY: c_int = 1;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
@@ -1474,4 +1601,33 @@ extern "C" {
     fn CFNumberGetValue(number: CFNumberRef, number_type: c_int, value: *mut c_void) -> c_uchar;
     fn CFBooleanGetValue(boolean: CFBooleanRef) -> c_uchar;
     static kCFBooleanTrue: CFBooleanRef;
+}
+
+#[link(name = "sqlite3")]
+extern "C" {
+    fn sqlite3_open_v2(
+        filename: *const c_char,
+        database: *mut *mut Sqlite3,
+        flags: c_int,
+        vfs: *const c_char,
+    ) -> c_int;
+    fn sqlite3_close(database: *mut Sqlite3) -> c_int;
+    fn sqlite3_prepare_v2(
+        database: *mut Sqlite3,
+        query: *const c_char,
+        byte_count: c_int,
+        statement: *mut *mut Sqlite3Stmt,
+        tail: *mut *const c_char,
+    ) -> c_int;
+    fn sqlite3_bind_text(
+        statement: *mut Sqlite3Stmt,
+        index: c_int,
+        value: *const c_char,
+        byte_count: c_int,
+        destructor: Option<unsafe extern "C" fn(*mut c_void)>,
+    ) -> c_int;
+    fn sqlite3_bind_int(statement: *mut Sqlite3Stmt, index: c_int, value: c_int) -> c_int;
+    fn sqlite3_step(statement: *mut Sqlite3Stmt) -> c_int;
+    fn sqlite3_column_int(statement: *mut Sqlite3Stmt, column: c_int) -> c_int;
+    fn sqlite3_finalize(statement: *mut Sqlite3Stmt) -> c_int;
 }
