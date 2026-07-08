@@ -230,6 +230,7 @@ fn maps_accessibility_elements_to_stable_tree_nodes() {
             enabled: true,
             focused: false,
             sensitive: false,
+            settable: true,
             children: vec![],
         },
         MacOSElementInfo {
@@ -243,6 +244,7 @@ fn maps_accessibility_elements_to_stable_tree_nodes() {
             enabled: true,
             focused: true,
             sensitive: true,
+            settable: true,
             children: vec![],
         },
     ];
@@ -256,9 +258,11 @@ fn maps_accessibility_elements_to_stable_tree_nodes() {
         state["accessibility"]["tree"][0]["value"],
         "A: 这个 PR 今天能发吗？"
     );
+    assert_eq!(state["accessibility"]["tree"][0]["settable"], true);
     assert_eq!(state["accessibility"]["tree"][1]["id"], "root.1");
     assert_eq!(state["accessibility"]["tree"][1]["role"], "text_field");
     assert_eq!(state["accessibility"]["tree"][1]["sensitive"], true);
+    assert_eq!(state["accessibility"]["tree"][1]["settable"], true);
     assert!(state["accessibility"]["tree"][1].get("value").is_none());
     assert_eq!(state["accessibility"]["focusedElement"]["id"], "root.1");
     let document_text = state["accessibility"]["documentText"].as_str().unwrap();
@@ -332,6 +336,7 @@ fn resolves_macos_action_points_from_nested_element_ids() {
         enabled: true,
         focused: false,
         sensitive: false,
+        settable: false,
         children: vec![MacOSElementInfo {
             role: "AXButton".into(),
             title: "发送".into(),
@@ -343,6 +348,7 @@ fn resolves_macos_action_points_from_nested_element_ids() {
             enabled: true,
             focused: false,
             sensitive: false,
+            settable: false,
             children: vec![],
         }],
     }];
@@ -389,6 +395,7 @@ fn detects_sensitive_macos_text_targets_before_typing() {
         enabled: true,
         focused: true,
         sensitive: true,
+        settable: true,
         children: vec![],
     }];
 

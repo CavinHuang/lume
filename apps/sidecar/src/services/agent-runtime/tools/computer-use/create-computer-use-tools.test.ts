@@ -759,7 +759,7 @@ describe("createComputerUseMcpTools", () => {
             revision: "rev-after",
             window: { id: "win-1", title: "项目群", focused: true },
             accessibility: {
-              focusedElement: { id: "root.1", role: "edit", name: "输入框", value: "typed text" },
+              focusedElement: { id: "root.1", role: "edit", name: "输入框", value: "typed text", settable: true },
             },
           };
         }
@@ -787,7 +787,7 @@ describe("createComputerUseMcpTools", () => {
         status: "ok",
         revision: "rev-after",
         window: { id: "win-1", title: "项目群", focused: true },
-        focusedElement: { id: "root.1", role: "edit", name: "输入框" },
+        focusedElement: { id: "root.1", role: "edit", name: "输入框", settable: true },
       },
     });
     expect(result.content as string).not.toContain("typed text");

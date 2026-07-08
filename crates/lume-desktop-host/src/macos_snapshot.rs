@@ -44,6 +44,7 @@ pub struct MacOSElementInfo {
     pub enabled: bool,
     pub focused: bool,
     pub sensitive: bool,
+    pub settable: bool,
     pub children: Vec<MacOSElementInfo>,
 }
 
@@ -334,6 +335,9 @@ fn element_json(element: &MacOSElementInfo, id: &str) -> Value {
         value["sensitive"] = Value::Bool(true);
     } else if let Some(text) = normalized_optional_text(Some(&element.value)) {
         value["value"] = Value::String(text);
+    }
+    if element.settable {
+        value["settable"] = Value::Bool(true);
     }
     let children = element
         .children

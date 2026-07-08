@@ -888,6 +888,7 @@ unsafe fn collect_ax_element(
         enabled: copy_ax_bool_attribute(element, "AXEnabled").unwrap_or(true),
         focused: copy_ax_bool_attribute(element, "AXFocused").unwrap_or(false),
         sensitive,
+        settable: ax_attribute_is_settable(element, "AXValue").unwrap_or(false),
         children,
     })
 }

@@ -314,6 +314,7 @@ function summarizeDesktopElement(value: unknown): Record<string, unknown> | unde
     ...(element.sensitive === true || typeof element.name !== "string" ? {} : { name: element.name }),
     ...(typeof element.enabled === "boolean" ? { enabled: element.enabled } : {}),
     ...(typeof element.focused === "boolean" ? { focused: element.focused } : {}),
+    ...(element.settable === true ? { settable: true } : {}),
   };
 }
 
