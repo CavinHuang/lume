@@ -33,6 +33,7 @@ import {
   computeQuickInputBounds,
   getQuickInputUrl,
   buildTrayMenuTemplate,
+  deriveTemplateImageBuffer,
 } from '../src/desktop-core.ts'
 
 function makeTempDir(prefix) {
@@ -440,3 +441,17 @@ test('tray menu template toggles Show/Hide label by window visibility', () => {
   assert.equal(visible[0].label, 'Hide Lume')
   assert.equal(visible[0].action, 'toggle-window')
 });
+
+test('deriveTemplateImageBuffer produces black pixels preserving original alpha', () => {
+  // 像素：红不透明白、绿半透明、透明（alpha=0）
+  const rgba = Buffer.from([
+    255, 0, 0, 255,
+    0, 255, 0, 128,
+    0, 0, 0, 0,
+  ])
+  const out = deriveTemplateImageBuffer(rgba, { width: 3, height: 1 })
+  assert.deepEqual(
+    Array.from(out),
+    [0, 0, 0, 255, 0, 0, 0, 128, 0, 0, 0, 0],
+  )
+})
