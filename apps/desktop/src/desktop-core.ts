@@ -594,3 +594,19 @@ export function getQuickInputUrl(opts: {
   }
   return `${opts.devServerUrl}/?view=quick-input`
 }
+
+export type TrayMenuAction = 'toggle-window' | 'quick-input' | 'new-note' | 'open-settings' | 'check-update' | 'quit'
+
+export interface TrayMenuItem {
+  label?: string
+  action?: TrayMenuAction
+  type?: 'separator'
+}
+
+export function buildTrayMenuTemplate({ windowVisible }: { windowVisible: boolean }): TrayMenuItem[] {
+  return [
+    { label: windowVisible ? 'Hide Lume' : 'Show Lume', action: 'toggle-window' },
+    { type: 'separator' },
+    { label: 'Quit', action: 'quit' },
+  ]
+}

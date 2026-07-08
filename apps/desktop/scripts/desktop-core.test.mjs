@@ -32,6 +32,7 @@ import {
   computeToggleAction,
   computeQuickInputBounds,
   getQuickInputUrl,
+  buildTrayMenuTemplate,
 } from '../src/desktop-core.ts'
 
 function makeTempDir(prefix) {
@@ -426,4 +427,16 @@ test("getQuickInputUrl builds dev and packaged entry urls with the view flag", (
     }),
     "lume://app/index.html?view=quick-input",
   );
+});
+
+test('tray menu template toggles Show/Hide label by window visibility', () => {
+  const hidden = buildTrayMenuTemplate({ windowVisible: false })
+  assert.equal(hidden[0].label, 'Show Lume')
+  assert.equal(hidden[0].action, 'toggle-window')
+  assert.equal(hidden[hidden.length - 1].label, 'Quit')
+  assert.equal(hidden[hidden.length - 1].action, 'quit')
+
+  const visible = buildTrayMenuTemplate({ windowVisible: true })
+  assert.equal(visible[0].label, 'Hide Lume')
+  assert.equal(visible[0].action, 'toggle-window')
 });
