@@ -1,6 +1,7 @@
 use lume_desktop_host::macos_snapshot::{
     find_macos_window, macos_current_context_result, macos_get_window_result,
-    macos_get_window_state_result, macos_list_apps_result, macos_list_windows_result,
+    macos_get_window_state_result, macos_key_chord, macos_list_apps_result,
+    macos_list_windows_result, macos_resolve_action_point, macos_text_target_is_sensitive,
     macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
 };
 use serde_json::json;
@@ -271,4 +272,99 @@ fn returns_stale_target_when_waiting_for_missing_macos_window() {
 
     assert_eq!(result["status"], "stale_target");
     assert_eq!(result["message"], "target window is unavailable");
+}
+
+#[test]
+fn resolves_macos_action_points_from_nested_element_ids() {
+    let mut window = sample_windows()[0].clone();
+    window.elements = vec![MacOSElementInfo {
+        role: "AXGroup".into(),
+        title: "消息区".into(),
+        value: String::new(),
+        x: 20.0,
+        y: 40.0,
+        width: 400.0,
+        height: 300.0,
+        enabled: true,
+        focused: false,
+        sensitive: false,
+        children: vec![MacOSElementInfo {
+            role: "AXButton".into(),
+            title: "发送".into(),
+            value: String::new(),
+            x: 420.0,
+            y: 520.0,
+            width: 80.0,
+            height: 40.0,
+            enabled: true,
+            focused: false,
+            sensitive: false,
+            children: vec![],
+        }],
+    }];
+
+    assert_eq!(
+        macos_resolve_action_point(&window, &json!({ "elementId": "root.0.0" })).unwrap(),
+        (460, 540)
+    );
+    assert_eq!(
+        macos_resolve_action_point(&window, &json!({ "x": 12, "y": 34 })).unwrap(),
+        (12, 34)
+    );
+}
+
+#[test]
+fn reports_stale_target_for_unknown_macos_action_element_ids() {
+    let result =
+        macos_resolve_action_point(&sample_windows()[0], &json!({ "elementId": "root.9" }))
+            .unwrap_err();
+
+    assert_eq!(result["status"], "stale_target");
+    assert_eq!(result["message"], "target element is unavailable");
+}
+
+#[test]
+fn rejects_macos_action_points_without_coordinates_or_element_id() {
+    let result = macos_resolve_action_point(&sample_windows()[0], &json!({})).unwrap_err();
+
+    assert_eq!(result["status"], "failed");
+    assert_eq!(result["message"], "x/y or elementId is required");
+}
+
+#[test]
+fn detects_sensitive_macos_text_targets_before_typing() {
+    let mut window = sample_windows()[0].clone();
+    window.elements = vec![MacOSElementInfo {
+        role: "AXSecureTextField".into(),
+        title: "密码".into(),
+        value: "secret".into(),
+        x: 30.0,
+        y: 420.0,
+        width: 500.0,
+        height: 44.0,
+        enabled: true,
+        focused: true,
+        sensitive: true,
+        children: vec![],
+    }];
+
+    assert!(macos_text_target_is_sensitive(
+        &window,
+        &json!({ "elementId": "root.0" })
+    ));
+    assert!(macos_text_target_is_sensitive(&window, &json!({})));
+    assert!(!macos_text_target_is_sensitive(
+        &sample_windows()[0],
+        &json!({ "elementId": "root.0" })
+    ));
+}
+
+#[test]
+fn parses_macos_key_chords_for_common_agent_shortcuts() {
+    assert_eq!(macos_key_chord(&["COMMAND", "A"]), Some((0, 0x0010_0000)));
+    assert_eq!(
+        macos_key_chord(&["CTRL", "SHIFT", "ENTER"]),
+        Some((36, 0x0006_0000))
+    );
+    assert_eq!(macos_key_chord(&["not-a-key"]), None);
 }

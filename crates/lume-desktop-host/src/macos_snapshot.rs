@@ -1,6 +1,11 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+pub const MACOS_EVENT_FLAG_MASK_SHIFT: u64 = 0x0002_0000;
+pub const MACOS_EVENT_FLAG_MASK_CONTROL: u64 = 0x0004_0000;
+pub const MACOS_EVENT_FLAG_MASK_ALTERNATE: u64 = 0x0008_0000;
+pub const MACOS_EVENT_FLAG_MASK_COMMAND: u64 = 0x0010_0000;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MacOSWindowInfo {
     pub window_id: u64,
@@ -132,6 +137,52 @@ pub fn macos_wait_for_state_result(window: Option<MacOSWindowInfo>, params: &Val
     })
 }
 
+pub fn macos_resolve_action_point(
+    window: &MacOSWindowInfo,
+    params: &Value,
+) -> Result<(i64, i64), Value> {
+    if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
+        let Some(element) = find_element_by_id(&window.elements, element_id) else {
+            return Err(stale_element());
+        };
+        return Ok((
+            rounded(element.x + element.width / 2.0),
+            rounded(element.y + element.height / 2.0),
+        ));
+    }
+    let Some(x) = numeric_param(params, "x") else {
+        return Err(failed_action("x/y or elementId is required"));
+    };
+    let Some(y) = numeric_param(params, "y") else {
+        return Err(failed_action("x/y or elementId is required"));
+    };
+    Ok((x, y))
+}
+
+pub fn macos_text_target_is_sensitive(window: &MacOSWindowInfo, params: &Value) -> bool {
+    if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
+        return find_element_by_id(&window.elements, element_id)
+            .map(|element| element.sensitive)
+            .unwrap_or(false);
+    }
+    focused_sensitive_element(&window.elements)
+}
+
+pub fn macos_key_chord(keys: &[&str]) -> Option<(u16, u64)> {
+    let mut flags = 0_u64;
+    let mut primary = None;
+    for key in keys {
+        match key.trim().to_ascii_uppercase().as_str() {
+            "SHIFT" => flags |= MACOS_EVENT_FLAG_MASK_SHIFT,
+            "CTRL" | "CONTROL" => flags |= MACOS_EVENT_FLAG_MASK_CONTROL,
+            "ALT" | "OPTION" => flags |= MACOS_EVENT_FLAG_MASK_ALTERNATE,
+            "CMD" | "COMMAND" | "META" | "SUPER" => flags |= MACOS_EVENT_FLAG_MASK_COMMAND,
+            value => primary = macos_key_code(value),
+        }
+    }
+    primary.map(|key_code| (key_code, flags))
+}
+
 pub fn first_visible_user_window(windows: &[MacOSWindowInfo]) -> Option<MacOSWindowInfo> {
     visible_user_windows(windows).into_iter().next().cloned()
 }
@@ -257,6 +308,96 @@ fn focused_element(elements: &[Value]) -> Option<Value> {
     None
 }
 
+fn find_element_by_id<'a>(
+    elements: &'a [MacOSElementInfo],
+    element_id: &str,
+) -> Option<&'a MacOSElementInfo> {
+    let path = element_id.strip_prefix("root.")?;
+    let mut current = elements;
+    let mut element = None;
+    for part in path.split('.') {
+        let index = part.parse::<usize>().ok()?;
+        element = current.get(index);
+        current = &element?.children;
+    }
+    element
+}
+
+fn focused_sensitive_element(elements: &[MacOSElementInfo]) -> bool {
+    elements.iter().any(|element| {
+        (element.focused && element.sensitive) || focused_sensitive_element(&element.children)
+    })
+}
+
+fn numeric_param(params: &Value, name: &str) -> Option<i64> {
+    params
+        .get(name)
+        .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(rounded)))
+}
+
+fn macos_key_code(key: &str) -> Option<u16> {
+    let code = match key {
+        "A" => 0,
+        "S" => 1,
+        "D" => 2,
+        "F" => 3,
+        "H" => 4,
+        "G" => 5,
+        "Z" => 6,
+        "X" => 7,
+        "C" => 8,
+        "V" => 9,
+        "B" => 11,
+        "Q" => 12,
+        "W" => 13,
+        "E" => 14,
+        "R" => 15,
+        "Y" => 16,
+        "T" => 17,
+        "1" => 18,
+        "2" => 19,
+        "3" => 20,
+        "4" => 21,
+        "6" => 22,
+        "5" => 23,
+        "=" | "EQUAL" => 24,
+        "9" => 25,
+        "7" => 26,
+        "-" | "MINUS" => 27,
+        "8" => 28,
+        "0" => 29,
+        "]" | "RIGHTBRACKET" => 30,
+        "O" => 31,
+        "U" => 32,
+        "[" | "LEFTBRACKET" => 33,
+        "I" => 34,
+        "P" => 35,
+        "ENTER" | "RETURN" => 36,
+        "L" => 37,
+        "J" => 38,
+        "'" | "QUOTE" => 39,
+        "K" => 40,
+        ";" | "SEMICOLON" => 41,
+        "\\" | "BACKSLASH" => 42,
+        "," | "COMMA" => 43,
+        "/" | "SLASH" => 44,
+        "N" => 45,
+        "M" => 46,
+        "." | "PERIOD" => 47,
+        "TAB" => 48,
+        "SPACE" => 49,
+        "`" | "BACKQUOTE" => 50,
+        "BACKSPACE" | "DELETE" => 51,
+        "ESC" | "ESCAPE" => 53,
+        "LEFT" | "ARROWLEFT" => 123,
+        "RIGHT" | "ARROWRIGHT" => 124,
+        "DOWN" | "ARROWDOWN" => 125,
+        "UP" | "ARROWUP" => 126,
+        _ => return None,
+    };
+    Some(code)
+}
+
 fn macos_state_matches(state: &Value, params: &Value) -> bool {
     if state.get("status").and_then(Value::as_str) != Some("ok") {
         return false;
@@ -378,4 +519,12 @@ fn now_millis() -> u128 {
 
 fn stale_target() -> Value {
     json!({ "status": "stale_target", "message": "target window is unavailable" })
+}
+
+fn stale_element() -> Value {
+    json!({ "status": "stale_target", "message": "target element is unavailable" })
+}
+
+fn failed_action(message: &str) -> Value {
+    json!({ "status": "failed", "message": message })
 }
