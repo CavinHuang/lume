@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use std::{
     ffi::{CStr, CString},
     os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_void},
+    process::Command,
     ptr,
 };
 
@@ -26,6 +27,9 @@ impl DesktopBackend for MacOSDesktopBackend {
                 Some(permissions.screen_recording),
                 None,
             ));
+        }
+        if method == "request_permissions" {
+            return Ok(request_permissions(permissions));
         }
         if !permissions.all_granted() {
             return Ok(desktop_permission_diagnostics(
@@ -92,12 +96,72 @@ fn permission_state() -> MacOSPermissionState {
     }
 }
 
+fn request_permissions(permissions: MacOSPermissionState) -> Value {
+    if !permissions.accessibility {
+        request_accessibility_prompt();
+        open_permission_settings(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        );
+    } else if !permissions.screen_recording {
+        request_screen_capture_access();
+        open_permission_settings(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        );
+    }
+    let updated = permission_state();
+    desktop_permission_diagnostics(
+        Some(updated.accessibility),
+        Some(updated.screen_recording),
+        Some("macOS permission request was started for Lume Computer Use.app".to_owned()),
+    )
+}
+
 fn ax_is_process_trusted() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
 }
 
 fn cg_preflight_screen_capture_access() -> bool {
     unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+fn request_accessibility_prompt() -> bool {
+    unsafe {
+        let Ok(key) = CString::new("AXTrustedCheckOptionPrompt") else {
+            return AXIsProcessTrusted() != 0;
+        };
+        let key_ref =
+            CFStringCreateWithCString(ptr::null(), key.as_ptr(), K_CF_STRING_ENCODING_UTF8);
+        if key_ref.is_null() {
+            return AXIsProcessTrusted() != 0;
+        }
+        let keys = [key_ref as CFTypeRef];
+        let values = [kCFBooleanTrue as CFTypeRef];
+        let options = CFDictionaryCreate(
+            ptr::null(),
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            ptr::null(),
+            ptr::null(),
+        );
+        let trusted = if options.is_null() {
+            AXIsProcessTrusted() != 0
+        } else {
+            let trusted = AXIsProcessTrustedWithOptions(options) != 0;
+            CFRelease(options as CFTypeRef);
+            trusted
+        };
+        CFRelease(key_ref as CFTypeRef);
+        trusted
+    }
+}
+
+fn request_screen_capture_access() -> bool {
+    unsafe { CGRequestScreenCaptureAccess() }
+}
+
+fn open_permission_settings(settings_url: &str) {
+    let _ = Command::new("/usr/bin/open").arg(settings_url).spawn();
 }
 
 fn enrich_accessibility_text(window: &mut MacOSWindowInfo) {
@@ -500,6 +564,7 @@ const K_AX_VALUE_CGSIZE_TYPE: c_int = 2;
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> c_uchar;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> c_uchar;
     fn AXUIElementCreateApplication(pid: c_int) -> AXUIElementRef;
     fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
@@ -512,6 +577,7 @@ extern "C" {
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
     fn CGWindowListCopyWindowInfo(option: c_uint, relative_to_window: c_uint) -> CFArrayRef;
 }
 
@@ -530,6 +596,14 @@ extern "C" {
         key: CFTypeRef,
         value: *mut CFTypeRef,
     ) -> c_uchar;
+    fn CFDictionaryCreate(
+        alloc: CFTypeRef,
+        keys: *const CFTypeRef,
+        values: *const CFTypeRef,
+        num_values: CFIndex,
+        key_callbacks: *const c_void,
+        value_callbacks: *const c_void,
+    ) -> CFDictionaryRef;
     fn CFStringCreateWithCString(
         alloc: CFTypeRef,
         c_str: *const c_char,
@@ -543,4 +617,5 @@ extern "C" {
     ) -> c_uchar;
     fn CFNumberGetValue(number: CFNumberRef, number_type: c_int, value: *mut c_void) -> c_uchar;
     fn CFBooleanGetValue(boolean: CFBooleanRef) -> c_uchar;
+    static kCFBooleanTrue: CFBooleanRef;
 }

@@ -20,10 +20,12 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("type_text").required).toEqual(["windowId", "text"]);
     expect(schema("search_context").required).toEqual(["query"]);
     expect(schema("diagnose_permissions").required).toBeUndefined();
+    expect(schema("request_permissions").required).toBeUndefined();
     expect(schema("current_context").properties.refresh).toMatchObject({ type: "boolean" });
     expect(description("type_text")).toContain("passwords or OTPs");
     expect(description("click")).toContain("get_window_state");
     expect(description("diagnose_permissions")).toContain("Lume Computer Use.app");
+    expect(description("request_permissions")).toContain("Lume Computer Use.app");
     for (const tool of tools) {
       expect((tool.inputSchema as unknown as Record<string, unknown>).additionalProperties).toBe(false);
     }
@@ -112,6 +114,42 @@ describe("createComputerUseMcpTools", () => {
         { id: "accessibility", status: "missing" },
         { id: "screenRecording", status: "granted" },
       ],
+    });
+  });
+
+  test("publishes an app-scoped macOS permission request tool", async () => {
+    const calls: unknown[] = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        return {
+          status: "permission_denied",
+          permissionTarget: {
+            appName: "Lume Computer Use",
+            appBundleName: "Lume Computer Use.app",
+            bundleId: "com.lume.computer-use",
+          },
+          permissions: [
+            { id: "accessibility", status: "missing" },
+            { id: "screenRecording", status: "missing" },
+          ],
+        };
+      },
+    });
+    const tool = tools.find((candidate) => candidate.name === "mcp__computer_use__request_permissions")!;
+
+    expect(tool.isReadOnly?.()).toBe(false);
+    expect(tool.runtimeMetadata?.sideEffects).toBe("desktop");
+    const result = await tool.call({}, { toolUseId: "tool-request-permissions" } as never);
+
+    expect(calls).toEqual([{ method: "request_permissions", input: {} }]);
+    expect(JSON.parse(result.content as string)).toMatchObject({
+      status: "permission_denied",
+      permissionTarget: {
+        appName: "Lume Computer Use",
+        appBundleName: "Lume Computer Use.app",
+        bundleId: "com.lume.computer-use",
+      },
     });
   });
 

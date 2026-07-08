@@ -89,7 +89,7 @@ pub struct UnsupportedBackend;
 
 impl DesktopBackend for UnsupportedBackend {
     fn invoke(&self, method: &str, _params: &Value) -> Result<Value> {
-        if method == "diagnose_permissions" {
+        if method == "diagnose_permissions" || method == "request_permissions" {
             return Ok(desktop_permission_diagnostics(
                 None,
                 None,

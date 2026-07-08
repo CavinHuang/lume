@@ -94,3 +94,33 @@ fn diagnose_permissions_reports_the_computer_use_permission_identity() {
         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     );
 }
+
+#[test]
+fn request_permissions_reports_the_computer_use_permission_identity() {
+    let mut session = DesktopSession::new("token", UnsupportedBackend);
+    let _ = session.handle(json!({
+        "id": 1,
+        "method": "system.handshake",
+        "params": { "token": "token" }
+    }));
+
+    let response = session.handle(json!({
+        "id": 2,
+        "method": "request_permissions",
+        "params": {}
+    }));
+
+    assert_eq!(response["result"]["status"], "unavailable");
+    assert_eq!(
+        response["result"]["permissionTarget"]["appName"],
+        "Lume Computer Use"
+    );
+    assert_eq!(
+        response["result"]["permissionTarget"]["appBundleName"],
+        "Lume Computer Use.app"
+    );
+    assert_eq!(
+        response["result"]["permissionTarget"]["bundleId"],
+        "com.lume.computer-use"
+    );
+}
