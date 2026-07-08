@@ -194,7 +194,10 @@ describe("createComputerUseMcpTools", () => {
     const result = await resultPromise;
 
     expect(calls).toHaveLength(2);
-    expect(calls[1]).toEqual({ method: "get_window_state", input: { windowId: "window-1" } });
+    expect(calls[1]).toEqual({
+      method: "wait_for_state",
+      input: { windowId: "window-1", revisionNot: "rev-1", timeoutMs: 1_500 },
+    });
     expect(JSON.parse(result.content as string)).toEqual({ status: "ok", verification: { status: "ok" } });
   });
 
@@ -240,7 +243,7 @@ describe("createComputerUseMcpTools", () => {
       emitDesktopActionRequest: (request) => requests.push(request),
       invoke: async (method, input) => {
         calls.push({ method, input });
-        if (method === "get_window_state") {
+        if (method === "get_window_state" || method === "wait_for_state") {
           return {
             status: "ok",
             revision: "derived-rev",
@@ -286,7 +289,10 @@ describe("createComputerUseMcpTools", () => {
         appName: "微信",
       },
     });
-    expect(calls[2]).toEqual({ method: "get_window_state", input: { windowId: "window-1" } });
+    expect(calls[2]).toEqual({
+      method: "wait_for_state",
+      input: { windowId: "window-1", revisionNot: "derived-rev", timeoutMs: 1_500 },
+    });
     expect(JSON.parse(result.content as string)).toEqual({
       status: "ok",
       verification: {
@@ -346,7 +352,10 @@ describe("createComputerUseMcpTools", () => {
           appName: "支付应用",
         },
       },
-      { method: "get_window_state", input: { windowId: "window-2" } },
+      {
+        method: "wait_for_state",
+        input: { windowId: "window-2", revisionNot: "focused-rev", timeoutMs: 1_500 },
+      },
     ]);
   });
 
@@ -499,6 +508,124 @@ describe("createComputerUseMcpTools", () => {
       },
     });
     expect(result.content as string).not.toContain("typed text");
+  });
+
+  test("waits for a revision change before verifying actions with a known window revision", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "wait_for_state") {
+          return {
+            status: "ok",
+            revision: "rev-after",
+            window: { id: "win-1", title: "项目群", focused: true },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+
+    const result = await click.call(
+      {
+        appId: "wechat.exe",
+        appName: "微信",
+        windowId: "win-1",
+        windowRevision: "rev-before",
+        targetLabel: "展开详情",
+        x: 130,
+        y: 220,
+      },
+      { toolUseId: "tool-wait-verify" } as never,
+    );
+
+    expect(calls).toEqual([
+      {
+        method: "click",
+        input: {
+          appId: "wechat.exe",
+          appName: "微信",
+          windowId: "win-1",
+          windowRevision: "rev-before",
+          targetLabel: "展开详情",
+          x: 130,
+          y: 220,
+        },
+      },
+      {
+        method: "wait_for_state",
+        input: { windowId: "win-1", revisionNot: "rev-before", timeoutMs: 1_500 },
+      },
+    ]);
+    expect(JSON.parse(result.content as string)).toEqual({
+      status: "ok",
+      verification: {
+        status: "ok",
+        revision: "rev-after",
+        window: { id: "win-1", title: "项目群", focused: true },
+      },
+    });
+  });
+
+  test("falls back to the current window state when post-action revision waiting times out", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "wait_for_state") return { status: "timeout", message: "revision unchanged" };
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "rev-before",
+            window: { id: "win-1", title: "项目群", focused: true },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+
+    const result = await click.call(
+      {
+        appId: "wechat.exe",
+        appName: "微信",
+        windowId: "win-1",
+        windowRevision: "rev-before",
+        targetLabel: "展开详情",
+        x: 130,
+        y: 220,
+      },
+      { toolUseId: "tool-wait-timeout" } as never,
+    );
+
+    expect(calls).toEqual([
+      {
+        method: "click",
+        input: {
+          appId: "wechat.exe",
+          appName: "微信",
+          windowId: "win-1",
+          windowRevision: "rev-before",
+          targetLabel: "展开详情",
+          x: 130,
+          y: 220,
+        },
+      },
+      {
+        method: "wait_for_state",
+        input: { windowId: "win-1", revisionNot: "rev-before", timeoutMs: 1_500 },
+      },
+      { method: "get_window_state", input: { windowId: "win-1" } },
+    ]);
+    expect(JSON.parse(result.content as string)).toEqual({
+      status: "ok",
+      verification: {
+        status: "ok",
+        revision: "rev-before",
+        window: { id: "win-1", title: "项目群", focused: true },
+      },
+    });
   });
 
   test("marks non-ok desktop action results as a failed visual phase", async () => {

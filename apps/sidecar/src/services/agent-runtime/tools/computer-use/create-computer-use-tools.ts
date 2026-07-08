@@ -13,6 +13,7 @@ import { waitForDesktopActionDecision } from "../../interruption/desktop-action-
 
 export const COMPUTER_USE_MCP_SERVER_ID = "computer_use";
 const WRAPPER_PREFIX = `mcp__${COMPUTER_USE_MCP_SERVER_ID}__`;
+const POST_ACTION_REVISION_WAIT_TIMEOUT_MS = 1_500;
 
 export const COMPUTER_USE_TOOL_NAMES = [
   "list_apps",
@@ -167,13 +168,30 @@ async function attachPostActionVerification(
   const windowId = stringValue(args.windowId);
   if (!windowId) return result;
   try {
-    return addPostActionVerification(result, summarizePostActionState(await invoke("get_window_state", { windowId })));
+    const state = await readPostActionState(invoke, windowId, stringValue(args.windowRevision));
+    return addPostActionVerification(result, summarizePostActionState(state));
   } catch (error) {
     return addPostActionVerification(result, {
       status: "failed",
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function readPostActionState(
+  invoke: ComputerUseInvoke,
+  windowId: string,
+  revisionNot?: string,
+): Promise<unknown> {
+  if (revisionNot) {
+    const waited = await invoke("wait_for_state", {
+      windowId,
+      revisionNot,
+      timeoutMs: POST_ACTION_REVISION_WAIT_TIMEOUT_MS,
+    });
+    if (resultStatus(waited) !== "timeout") return waited;
+  }
+  return invoke("get_window_state", { windowId });
 }
 
 function addPostActionVerification(result: unknown, verification: Record<string, unknown>): unknown {
