@@ -32,6 +32,7 @@ import {
   openFolderDialog,
   revealPathInSystem,
   saveFilePathDialog,
+  syncModelMeta,
 } from '@/lib/desktop-api'
 import {
   CLEANUP_OPTIONS,
@@ -40,6 +41,7 @@ import {
   hasSelectedCleanup,
   type CleanupSelection,
 } from './data-management-state'
+import { useModelMetaReload } from '@/lib/model-meta-context'
 
 export function DataManagementSettings() {
   const [stats, setStats] = React.useState<StorageStats | null>(null)
@@ -50,12 +52,14 @@ export function DataManagementSettings() {
   const [confirmEmptyOpen, setConfirmEmptyOpen] = React.useState(false)
   const [includeCreds, setIncludeCreds] = React.useState(false)
   const [exporting, setExporting] = React.useState(false)
+  const [syncing, setSyncing] = React.useState(false)
   const [migrateOpen, setMigrateOpen] = React.useState(false)
   const [migrateDest, setMigrateDest] = React.useState<string | null>(null)
   const [migrating, setMigrating] = React.useState(false)
   const [migrateProgress, setMigrateProgress] = React.useState<{ done: number; total: number } | null>(null)
   const [migrateResult, setMigrateResult] = React.useState<{ destPath: string } | null>(null)
   const [migrateError, setMigrateError] = React.useState<string | null>(null)
+  const reloadModelMeta = useModelMetaReload()
 
   const refreshStats = React.useCallback(async () => {
     setLoadingStats(true)
@@ -87,6 +91,20 @@ export function DataManagementSettings() {
       toast.error('清理失败')
     } finally {
       setClearing(false)
+    }
+  }
+
+  const handleSyncModelMeta = async () => {
+    setSyncing(true)
+    try {
+      const generated = await syncModelMeta()
+      await reloadModelMeta(generated)
+      toast.success(`已更新 ${generated.length} 个模型`)
+    } catch (error) {
+      console.error('[DataManagement] syncModelMeta FAILED:', error)
+      toast.error(`更新失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -279,6 +297,20 @@ export function DataManagementSettings() {
         <p className="mt-2 text-[11px] leading-4 text-[var(--text-3)]">
           所有数据均为本地文件：记忆是 Markdown、会话是 jsonl、向量索引是 JSON 缓存。配置类文件含凭证，导出时默认脱敏。
         </p>
+      </section>
+
+      {/* ⑤ 更新模型数据 */}
+      <section className="lume-panel-padded">
+        <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">更新模型数据</h2>
+        <p className="mb-3 text-[12px] leading-5 text-[var(--text-3)]">
+          从 models.dev 同步最新模型元数据（定价、上下文窗口、能力标记）。更新后立即生效，无需重启。
+        </p>
+        <div className="flex justify-end">
+          <Button onClick={handleSyncModelMeta} disabled={syncing} className="h-9 gap-1.5 rounded-[8px] px-4 text-[13px]">
+            {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {syncing ? '更新中…' : '立即更新'}
+          </Button>
+        </div>
       </section>
 
       {/* 清空回收站（危险，独立折叠） */}

@@ -9,4 +9,8 @@ describe('MODEL_META_IPC_CHANNELS', () => {
   test('从 @lume/shared 根导出可访问', () => {
     expect(typeof MODEL_META_IPC_CHANNELS.GET).toBe('string')
   })
+
+  test('SYNC channel 常量为 model-meta:sync', () => {
+    expect(MODEL_META_IPC_CHANNELS.SYNC).toBe('model-meta:sync')
+  })
 })
