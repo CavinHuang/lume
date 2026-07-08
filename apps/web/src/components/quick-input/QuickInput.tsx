@@ -89,6 +89,7 @@ export function QuickInput() {
   }
 
   const handleSelectDesktopContextTarget = (target: DesktopContextTarget) => {
+    setDesktopContextTarget(target)
     setMessageMetadata(createDesktopContextMessageMetadata(target))
   }
 

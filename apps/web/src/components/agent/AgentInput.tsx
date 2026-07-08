@@ -86,6 +86,7 @@ import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
 import {
   captureAgentInputDesktopContextState,
   createDesktopContextMessageMetadata,
+  resolveAgentInputDesktopContextView,
 } from './agent-input-desktop-context'
 import { resolveOpenDesktopAssistantSettingsState } from './agent-input-desktop-settings'
 
@@ -288,8 +289,15 @@ export function AgentInput({
     workspaces,
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
-  const availableDesktopContextTarget = desktopContextTarget ?? capturedDesktopContextTarget ?? localDesktopContextTarget
-  const selectedDesktopContextTarget = desktopContextTarget ?? localDesktopContextTarget
+  const desktopContextView = resolveAgentInputDesktopContextView({
+    propTarget: desktopContextTarget,
+    capturedTarget: capturedDesktopContextTarget,
+    localTarget: localDesktopContextTarget,
+    captureLoading: desktopContextCaptureLoading,
+    captureMessage: desktopContextCaptureMessage,
+  })
+  const availableDesktopContextTarget = desktopContextView.plusPanelTarget
+  const selectedDesktopContextTarget = desktopContextView.selectedTarget
   const effectiveMessageMetadata = useMemo(() => {
     const localMetadata = localDesktopContextTarget
       ? createDesktopContextMessageMetadata(localDesktopContextTarget)
@@ -973,22 +981,20 @@ export function AgentInput({
     }
     setPlusPanelOpen(true)
     setActiveIndex(0)
-    if (!desktopContextTarget) {
-      setDesktopContextCaptureLoading(true)
-      setDesktopContextCaptureMessage(undefined)
-      setCapturedDesktopContextTarget(undefined)
-      captureAgentInputDesktopContextState(sidecarCall, () => invoke('quick_input_get_context'))
-        .then((state) => {
-          if (state.status === 'ready') {
-            setCapturedDesktopContextTarget(state.target)
-            setDesktopContextCaptureMessage(undefined)
-          } else {
-            setCapturedDesktopContextTarget(undefined)
-            setDesktopContextCaptureMessage(state.message)
-          }
-        })
-        .finally(() => setDesktopContextCaptureLoading(false))
-    }
+    setDesktopContextCaptureLoading(true)
+    setDesktopContextCaptureMessage(undefined)
+    setCapturedDesktopContextTarget(undefined)
+    captureAgentInputDesktopContextState(sidecarCall, () => invoke('quick_input_get_context'))
+      .then((state) => {
+        if (state.status === 'ready') {
+          setCapturedDesktopContextTarget(state.target)
+          setDesktopContextCaptureMessage(undefined)
+        } else {
+          setCapturedDesktopContextTarget(undefined)
+          setDesktopContextCaptureMessage(state.message)
+        }
+      })
+      .finally(() => setDesktopContextCaptureLoading(false))
     // 打开即刷新插件列表；失败仅 toast，不阻塞面板（沿用原 handleOpenPlugins 行为）
     try {
       const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
@@ -1013,7 +1019,7 @@ export function AgentInput({
     [installedPlugins],
   )
   const hasDesktopContextTarget = Boolean(availableDesktopContextTarget)
-  const showDesktopContextSection = hasDesktopContextTarget || desktopContextCaptureLoading || Boolean(desktopContextCaptureMessage)
+  const showDesktopContextSection = desktopContextView.showPlusPanelSection
   const desktopContextIndex = 2
   const pluginStartIndex = hasDesktopContextTarget ? 3 : 2
   // 整个面板可选项序列：[文件, 图片, 当前应用?, ...插件]，totalPlusItems 驱动 ↑/↓ 导航边界

@@ -4,6 +4,7 @@ import {
   captureAgentInputDesktopContextState,
   captureAgentInputDesktopContextTarget,
   createDesktopContextMessageMetadata,
+  resolveAgentInputDesktopContextView,
 } from './agent-input-desktop-context'
 
 describe('agent-input desktop context helpers', () => {
@@ -184,6 +185,51 @@ describe('agent-input desktop context helpers', () => {
       desktopContextSnapshotId: 'snap-current',
       desktopApp: { id: 'wechat.exe', name: '微信' },
       desktopWindow: { id: 'win:1', title: '项目群' },
+    })
+  })
+
+  test('shows freshly captured current app in the plus panel without replacing the selected conversation context', () => {
+    const selected = {
+      snapshotId: 'snap-old',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '项目群' },
+    }
+    const captured = {
+      snapshotId: 'snap-current',
+      app: { id: 'word.exe', name: 'Word' },
+      window: { id: 'win:word', title: '周报.docx' },
+    }
+
+    expect(resolveAgentInputDesktopContextView({
+      propTarget: selected,
+      capturedTarget: captured,
+      localTarget: undefined,
+      captureLoading: false,
+      captureMessage: undefined,
+    })).toEqual({
+      selectedTarget: selected,
+      plusPanelTarget: captured,
+      showPlusPanelSection: true,
+    })
+  })
+
+  test('shows capture diagnostics in the plus panel instead of re-offering a stale selected app', () => {
+    const selected = {
+      snapshotId: 'snap-old',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '项目群' },
+    }
+
+    expect(resolveAgentInputDesktopContextView({
+      propTarget: selected,
+      capturedTarget: undefined,
+      localTarget: undefined,
+      captureLoading: false,
+      captureMessage: '当前前台窗口是 Lume',
+    })).toEqual({
+      selectedTarget: selected,
+      plusPanelTarget: undefined,
+      showPlusPanelSection: true,
     })
   })
 })

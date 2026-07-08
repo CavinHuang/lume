@@ -21,6 +21,7 @@ let latestAgentViewThreadId: string | null = null
 let latestAgentViewMessageMetadata: Record<string, unknown> | undefined
 let latestAgentViewDesktopContextTarget: Record<string, unknown> | undefined
 let latestAgentViewOnMessageMetadataConsumed: (() => void) | undefined
+let latestAgentViewOnSelectDesktopContextTarget: ((target: Record<string, unknown>) => void) | undefined
 
 // 捕获 ui/Button 的 onClick + children 文本（fake DOM 无法触发真实 click，
 // 改为 mock Button 后直接调用捕获的 handler，等同 AgentView.test.tsx 直接调 prop handler 的做法）
@@ -50,16 +51,19 @@ await mock.module('@/components/agent/AgentView', () => ({
     messageMetadata,
     desktopContextTarget,
     onMessageMetadataConsumed,
+    onSelectDesktopContextTarget,
   }: {
     threadId: string
     messageMetadata?: Record<string, unknown>
     desktopContextTarget?: Record<string, unknown>
     onMessageMetadataConsumed?: () => void
+    onSelectDesktopContextTarget?: (target: Record<string, unknown>) => void
   }) => {
     latestAgentViewThreadId = threadId
     latestAgentViewMessageMetadata = messageMetadata
     latestAgentViewDesktopContextTarget = desktopContextTarget
     latestAgentViewOnMessageMetadataConsumed = onMessageMetadataConsumed
+    latestAgentViewOnSelectDesktopContextTarget = onSelectDesktopContextTarget
     return React.createElement('div', null, `thread:${threadId}`)
   },
 }))
@@ -301,6 +305,7 @@ describe('QuickInput', () => {
     latestAgentViewMessageMetadata = undefined
     latestAgentViewDesktopContextTarget = undefined
     latestAgentViewOnMessageMetadataConsumed = undefined
+    latestAgentViewOnSelectDesktopContextTarget = undefined
     capturedButtons.length = 0
     const env = installFakeDom()
     fakeDoc = env.container.ownerDocument as unknown as FakeDocument
@@ -411,6 +416,49 @@ describe('QuickInput', () => {
 
     expect(latestAgentViewMessageMetadata?.desktopContextSnapshotId).toBe('snapshot-conversation')
     expect(container.textContent).toContain('已附加 微信')
+  })
+
+  test('从输入框加号面板切换当前应用上下文时同步更新会话目标', async () => {
+    invokeMock.mockImplementation(async (command: string) => (
+      command === 'quick_input_get_context'
+        ? {
+            status: 'ok',
+            snapshotId: 'snapshot-before-focus',
+            app: { id: 'wechat.exe', name: '微信' },
+            window: { id: 'win:wechat', title: '项目群' },
+          }
+        : undefined
+    ))
+    const store = makeStore()
+    const container = fakeDoc.createElement('div')
+
+    await act(async () => {
+      const root = createRoot(container as never)
+      rootRef.current = root
+      root.render(
+        <Provider store={store}>
+          <QuickInput />
+        </Provider>,
+      )
+      await flush()
+    })
+
+    const wordTarget = {
+      snapshotId: 'snapshot-word',
+      app: { id: 'word.exe', name: 'Word' },
+      window: { id: 'win:word', title: '周报.docx' },
+    }
+    await act(async () => {
+      latestAgentViewOnSelectDesktopContextTarget?.(wordTarget)
+      await flush()
+    })
+
+    expect(latestAgentViewMessageMetadata).toEqual({
+      desktopContextSnapshotId: 'snapshot-word',
+      desktopApp: { id: 'word.exe', name: 'Word' },
+      desktopWindow: { id: 'win:word', title: '周报.docx' },
+    })
+    expect(latestAgentViewDesktopContextTarget).toEqual(wordTarget)
   })
 
   test('点击「新建对话」按钮再次创建会话', async () => {

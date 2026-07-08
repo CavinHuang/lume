@@ -59,6 +59,28 @@ export function createDesktopContextMessageMetadata(target: DesktopContextTarget
   }
 }
 
+export function resolveAgentInputDesktopContextView(input: {
+  propTarget?: DesktopContextTarget
+  capturedTarget?: DesktopContextTarget
+  localTarget?: DesktopContextTarget
+  captureLoading: boolean
+  captureMessage?: string
+}): {
+  selectedTarget?: DesktopContextTarget
+  plusPanelTarget?: DesktopContextTarget
+  showPlusPanelSection: boolean
+} {
+  const selectedTarget = input.propTarget ?? input.localTarget
+  const plusPanelTarget = input.captureLoading || input.captureMessage
+    ? undefined
+    : input.capturedTarget ?? selectedTarget
+  return {
+    selectedTarget,
+    plusPanelTarget,
+    showPlusPanelSection: Boolean(plusPanelTarget) || input.captureLoading || Boolean(input.captureMessage) || Boolean(selectedTarget),
+  }
+}
+
 function desktopContextCaptureToTarget(result: unknown): DesktopContextTarget | undefined {
   const value = result as DesktopContextCaptureResult | undefined
   if (
