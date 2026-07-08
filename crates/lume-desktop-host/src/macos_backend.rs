@@ -5,10 +5,10 @@ use crate::{
         macos_get_window_result, macos_get_window_state_result,
         macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
         macos_list_windows_result, macos_pointer_input_mode, macos_preferred_click_actions,
-        macos_resolve_action_point, macos_text_target_is_sensitive, macos_wait_for_state_result,
-        MacOSElementInfo, MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND,
-        MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
-        MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
+        macos_resolve_action_point, macos_set_value_attribute_is_settable,
+        macos_text_target_is_sensitive, macos_wait_for_state_result, MacOSElementInfo,
+        MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
+        MACOS_NON_SETTABLE_SET_VALUE_ERROR, MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
     },
     DesktopBackend,
 };
@@ -303,8 +303,17 @@ fn type_text(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
 }
 
 fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
-    if params.get("elementId").is_some() || (params.get("x").is_some() && params.get("y").is_some())
-    {
+    let value = params
+        .get("value")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
+        if let Some(result) = set_accessibility_value(window, element_id, value)? {
+            return Ok(result);
+        }
+        return Ok(stale_target());
+    }
+    if params.get("x").is_some() && params.get("y").is_some() {
         match macos_resolve_action_point(window, params) {
             Ok((x, y)) => {
                 activate_macos_window(window)?;
@@ -324,12 +333,44 @@ fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
         activate_macos_window(window)?;
     }
     send_key(0, MACOS_EVENT_FLAG_MASK_COMMAND, window.owner_pid as c_int);
-    let value = params
-        .get("value")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
     send_text(value, window.owner_pid as c_int);
     Ok(json!({ "status": "ok", "inputMode": "keyboard_fallback" }))
+}
+
+fn set_accessibility_value(
+    window: &MacOSWindowInfo,
+    element_id: &str,
+    value: &str,
+) -> Result<Option<Value>> {
+    unsafe {
+        let app = AXUIElementCreateApplication(window.owner_pid as c_int);
+        if app.is_null() {
+            return Ok(None);
+        }
+        let root = matching_ax_window(app, window.window_id).or_else(|| first_ax_window(app));
+        let Some(root) = root else {
+            CFRelease(app as CFTypeRef);
+            return Ok(None);
+        };
+        let element = matching_ax_element_by_id(root, element_id);
+        let Some(element) = element else {
+            CFRelease(root as CFTypeRef);
+            CFRelease(app as CFTypeRef);
+            return Ok(None);
+        };
+        let result = match ax_attribute_is_settable(element, "AXValue") {
+            Ok(true) => match set_ax_string_attribute(element, "AXValue", value) {
+                Ok(()) => json!({ "status": "ok", "inputMode": "accessibility_value" }),
+                Err(message) => failed_action(&message),
+            },
+            Ok(false) => failed_action(MACOS_NON_SETTABLE_SET_VALUE_ERROR),
+            Err(message) => failed_action(&message),
+        };
+        CFRelease(element as CFTypeRef);
+        CFRelease(root as CFTypeRef);
+        CFRelease(app as CFTypeRef);
+        Ok(Some(result))
+    }
 }
 
 fn wait_for_state(params: &Value) -> Result<Value> {
@@ -959,6 +1000,50 @@ unsafe fn perform_ax_action(element: AXUIElementRef, action: &str) -> bool {
     result
 }
 
+unsafe fn ax_attribute_is_settable(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> std::result::Result<bool, String> {
+    let Some(attribute_ref) = create_cf_string(attribute) else {
+        return Err(format!("invalid accessibility attribute: {attribute}"));
+    };
+    let mut settable = 0 as c_uchar;
+    let result = AXUIElementIsAttributeSettable(element, attribute_ref, &mut settable);
+    CFRelease(attribute_ref as CFTypeRef);
+    macos_set_value_attribute_is_settable(result, settable != 0, attribute)
+}
+
+unsafe fn set_ax_string_attribute(
+    element: AXUIElementRef,
+    attribute: &str,
+    value: &str,
+) -> std::result::Result<(), String> {
+    let Some(attribute_ref) = create_cf_string(attribute) else {
+        return Err(format!("invalid accessibility attribute: {attribute}"));
+    };
+    let Some(value_ref) = create_cf_string(value) else {
+        CFRelease(attribute_ref as CFTypeRef);
+        return Err("invalid accessibility string value".to_owned());
+    };
+    let result = AXUIElementSetAttributeValue(element, attribute_ref, value_ref as CFTypeRef);
+    CFRelease(value_ref as CFTypeRef);
+    CFRelease(attribute_ref as CFTypeRef);
+    if result == K_AX_ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(format!("AXUIElementSetAttributeValue failed with {result}"))
+    }
+}
+
+unsafe fn create_cf_string(value: &str) -> Option<CFStringRef> {
+    let Ok(value) = CString::new(value) else {
+        return None;
+    };
+    let value_ref =
+        CFStringCreateWithCString(ptr::null(), value.as_ptr(), K_CF_STRING_ENCODING_UTF8);
+    (!value_ref.is_null()).then_some(value_ref)
+}
+
 unsafe fn copy_ax_string_attribute(element: AXUIElementRef, attribute: &str) -> Option<String> {
     let value = copy_ax_attribute(element, attribute)?;
     let text = if cf_type_matches(value, CFStringGetTypeID()) {
@@ -1269,6 +1354,16 @@ extern "C" {
         element: AXUIElementRef,
         attribute: CFStringRef,
         value: *mut CFTypeRef,
+    ) -> c_int;
+    fn AXUIElementIsAttributeSettable(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        settable: *mut c_uchar,
+    ) -> c_int;
+    fn AXUIElementSetAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: CFTypeRef,
     ) -> c_int;
     fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> c_int;
     fn AXValueGetValue(value: AXValueRef, value_type: c_int, output: *mut c_void) -> c_uchar;

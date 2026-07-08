@@ -131,8 +131,11 @@ async fn serve(endpoint: &str, token: String) -> Result<()> {
     let _ = std::fs::remove_file(endpoint);
     let listener =
         UnixListener::bind(endpoint).with_context(|| format!("bind unix socket {endpoint}"))?;
-    fs::set_permissions(endpoint, fs::Permissions::from_mode(private_unix_socket_mode()))
-        .with_context(|| format!("restrict unix socket permissions {endpoint}"))?;
+    fs::set_permissions(
+        endpoint,
+        fs::Permissions::from_mode(private_unix_socket_mode()),
+    )
+    .with_context(|| format!("restrict unix socket permissions {endpoint}"))?;
     loop {
         let (stream, _) = listener.accept().await?;
         if let Err(error) = handle_stream(stream, token.clone()).await {

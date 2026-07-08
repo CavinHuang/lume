@@ -2,8 +2,10 @@ use lume_desktop_host::macos_snapshot::{
     find_macos_window, macos_current_context_result, macos_get_window_result,
     macos_get_window_state_result, macos_global_pointer_fallback_enabled_from, macos_key_chord,
     macos_list_apps_result, macos_list_windows_result, macos_pointer_input_mode,
-    macos_preferred_click_actions, macos_resolve_action_point, macos_text_target_is_sensitive,
+    macos_preferred_click_actions, macos_resolve_action_point,
+    macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
     macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
+    MACOS_NON_SETTABLE_SET_VALUE_ERROR,
 };
 use serde_json::json;
 
@@ -399,6 +401,20 @@ fn detects_sensitive_macos_text_targets_before_typing() {
         &sample_windows()[0],
         &json!({ "elementId": "root.0" })
     ));
+}
+
+#[test]
+fn aligns_macos_set_value_settable_boundary() {
+    assert!(macos_set_value_attribute_is_settable(0, true, "AXValue").unwrap());
+    assert!(!macos_set_value_attribute_is_settable(0, false, "AXValue").unwrap());
+    assert_eq!(
+        MACOS_NON_SETTABLE_SET_VALUE_ERROR,
+        "Cannot set a value for an element that is not settable"
+    );
+    assert_eq!(
+        macos_set_value_attribute_is_settable(-25205, false, "AXValue").unwrap_err(),
+        "AXUIElementIsAttributeSettable(AXValue) failed with -25205"
+    );
 }
 
 #[test]

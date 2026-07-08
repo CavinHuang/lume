@@ -9,6 +9,8 @@ pub const MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV: &str =
     "LUME_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS";
 pub const MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV: &str =
     "OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS";
+pub const MACOS_NON_SETTABLE_SET_VALUE_ERROR: &str =
+    "Cannot set a value for an element that is not settable";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MacOSWindowInfo {
@@ -179,6 +181,20 @@ pub fn macos_preferred_click_actions(secondary: bool) -> &'static [&'static str]
         &["AXShowMenu"]
     } else {
         &["AXPress", "AXConfirm", "AXOpen"]
+    }
+}
+
+pub fn macos_set_value_attribute_is_settable(
+    result: i32,
+    settable: bool,
+    attribute: &str,
+) -> Result<bool, String> {
+    if result == 0 {
+        Ok(settable)
+    } else {
+        Err(format!(
+            "AXUIElementIsAttributeSettable({attribute}) failed with {result}"
+        ))
     }
 }
 
