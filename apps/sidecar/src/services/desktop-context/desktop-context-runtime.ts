@@ -39,6 +39,9 @@ export const desktopContextRpcService = {
   captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown> {
     return getRuntime().service.captureCurrent(input);
   },
+  requestPermissions(): Promise<unknown> {
+    return getRuntime().service.requestPermissions();
+  },
   currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean }): Promise<unknown> {
     return getRuntime().service.currentContext(input);
   },

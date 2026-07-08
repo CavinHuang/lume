@@ -4,6 +4,7 @@ import {
   captureAgentInputDesktopContextState,
   captureAgentInputDesktopContextTarget,
   createDesktopContextMessageMetadata,
+  desktopPermissionRequestMessage,
   resolveAgentInputDesktopContextView,
   resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
@@ -174,6 +175,34 @@ describe('agent-input desktop context helpers', () => {
       status: 'unavailable',
       message: 'sidecar disconnected',
     })
+  })
+
+  test('marks macOS permission diagnostics as requestable from the plus panel', async () => {
+    expect(await captureAgentInputDesktopContextState(async () => ({
+      status: 'permission_denied',
+      message: '需要在 macOS 系统设置中授权 Lume Computer Use.app',
+      permissionTarget: {
+        appName: 'Lume Computer Use',
+        appBundleName: 'Lume Computer Use.app',
+        bundleId: 'com.lume.computer-use',
+      },
+      missingPermissions: [
+        { id: 'accessibility', status: 'missing' },
+      ],
+    }))).toEqual({
+      status: 'unavailable',
+      message: '需要在 macOS 系统设置中授权 Lume Computer Use.app',
+      permissionRequestAvailable: true,
+    })
+  })
+
+  test('formats desktop permission request results with the next permission title', () => {
+    expect(desktopPermissionRequestMessage({
+      nextPermission: { title: 'Accessibility' },
+    })).toBe('已打开授权引导，请在系统设置中允许 Lume Computer Use.app 使用 Accessibility。')
+    expect(desktopPermissionRequestMessage({
+      message: 'macOS permission request was started for Lume Computer Use.app',
+    })).toBe('macOS permission request was started for Lume Computer Use.app')
   })
 
   test('creates non-sensitive message metadata from the selected app context', () => {

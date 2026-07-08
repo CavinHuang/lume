@@ -26,6 +26,7 @@ import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
 import {
   AGENT_IPC_CHANNELS,
+  DESKTOP_CONTEXT_IPC_CHANNELS,
   type AgentMessageAttachmentInput,
   type AgentSavedFile,
   type AgentThreadMeta,
@@ -44,6 +45,7 @@ import { attachmentDataUrl, isImageAttachment } from '@/components/agent/AgentAt
 import {
   captureAgentInputDesktopContextState,
   createDesktopContextMessageMetadata,
+  desktopPermissionRequestMessage,
 } from '@/components/agent/agent-input-desktop-context'
 
 import { Button } from '@/components/ui/button'
@@ -93,6 +95,8 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const [selectedDesktopContextTarget, setSelectedDesktopContextTarget] = useState<DesktopContextTarget | undefined>(initialDesktopContextTarget)
   const [desktopContextCaptureLoading, setDesktopContextCaptureLoading] = useState(false)
   const [desktopContextCaptureMessage, setDesktopContextCaptureMessage] = useState<string>()
+  const [desktopContextPermissionRequestAvailable, setDesktopContextPermissionRequestAvailable] = useState(false)
+  const [desktopContextPermissionRequestLoading, setDesktopContextPermissionRequestLoading] = useState(false)
 
   useEffect(() => {
     setSelectedWorkspaceId(initialWorkspaceId ?? currentWorkspaceId ?? null)
@@ -368,14 +372,34 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const handleAttachMenuOpen = useCallback(async () => {
     setDesktopContextCaptureLoading(true)
     setDesktopContextCaptureMessage(undefined)
+    setDesktopContextPermissionRequestAvailable(false)
     setCapturedDesktopContextTarget(undefined)
     const state = await captureAgentInputDesktopContextState(sidecarCall, getQuickInputContext)
     if (state.status === 'ready') {
       setCapturedDesktopContextTarget(state.target)
+      setDesktopContextPermissionRequestAvailable(false)
     } else {
       setDesktopContextCaptureMessage(state.message)
+      setDesktopContextPermissionRequestAvailable(state.permissionRequestAvailable === true)
     }
     setDesktopContextCaptureLoading(false)
+  }, [])
+
+  const handleRequestDesktopContextPermissions = useCallback(async () => {
+    setDesktopContextPermissionRequestLoading(true)
+    try {
+      const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS, {})
+      setDesktopContextCaptureMessage(desktopPermissionRequestMessage(result))
+      toast.success('已启动 Lume Computer Use.app 授权引导')
+    } catch (error) {
+      const message = error instanceof Error && error.message.trim()
+        ? error.message
+        : '启动授权引导失败'
+      setDesktopContextCaptureMessage(message)
+      toast.error(message)
+    } finally {
+      setDesktopContextPermissionRequestLoading(false)
+    }
   }, [])
 
   const handleSelectWorkspace = (wsId: string) => {
@@ -507,6 +531,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         selectedDesktopContextTarget={selectedDesktopContextTarget}
         desktopContextCaptureLoading={desktopContextCaptureLoading}
         desktopContextCaptureMessage={desktopContextCaptureMessage}
+        desktopContextPermissionRequestAvailable={desktopContextPermissionRequestAvailable}
+        desktopContextPermissionRequestLoading={desktopContextPermissionRequestLoading}
+        onRequestDesktopContextPermissions={handleRequestDesktopContextPermissions}
         onSelectDesktopContextTarget={setSelectedDesktopContextTarget}
         onClearDesktopContextTarget={() => setSelectedDesktopContextTarget(undefined)}
         suggestions={welcomeSuggestions}

@@ -105,6 +105,10 @@ export class DesktopContextService {
     return { status: "ok", ...snapshotToTarget(snapshot) };
   }
 
+  async requestPermissions(): Promise<unknown> {
+    return this.#input.invokeHost("request_permissions", {});
+  }
+
   async currentContext(input: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean } = {}): Promise<unknown> {
     if (!this.#key) return { status: "unavailable", message: "desktop context store is locked" };
     if (!this.#settings.enabled && !input.snapshotId) {

@@ -13,11 +13,13 @@ type DesktopContextCaptureResult = {
   window?: { id?: unknown; title?: unknown }
   capturedAt?: unknown
   message?: unknown
+  permissionTarget?: unknown
+  missingPermissions?: unknown
 }
 
 export type AgentInputDesktopContextCaptureState =
   | { status: 'ready'; target: DesktopContextTarget }
-  | { status: 'unavailable'; message: string }
+  | { status: 'unavailable'; message: string; permissionRequestAvailable?: boolean }
 
 export async function captureAgentInputDesktopContextState(
   sidecarCall: SidecarCall,
@@ -33,7 +35,11 @@ export async function captureAgentInputDesktopContextState(
     const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT, { userInitiated: true })
     const target = desktopContextCaptureToTarget(result)
     if (target) return desktopContextTargetState(target)
-    return { status: 'unavailable', message: desktopContextCaptureMessage(result) }
+    return {
+      status: 'unavailable',
+      message: desktopContextCaptureMessage(result),
+      ...(desktopContextPermissionRequestAvailable(result) ? { permissionRequestAvailable: true } : {}),
+    }
   } catch (error) {
     return {
       status: 'unavailable',
@@ -71,6 +77,17 @@ export function resolveAgentInputDesktopMessageMetadata(input: {
     ...(targetMetadata ?? {}),
   }
   return Object.keys(merged).length > 0 ? merged : undefined
+}
+
+export function desktopPermissionRequestMessage(result: unknown): string {
+  const value = result && typeof result === 'object' && !Array.isArray(result)
+    ? result as { message?: unknown; nextPermission?: { title?: unknown } }
+    : undefined
+  if (typeof value?.message === 'string' && value.message.trim()) return value.message.trim()
+  if (typeof value?.nextPermission?.title === 'string' && value.nextPermission.title.trim()) {
+    return `已打开授权引导，请在系统设置中允许 Lume Computer Use.app 使用 ${value.nextPermission.title}。`
+  }
+  return '已打开 Lume Computer Use.app 授权引导，请在系统设置中完成授权。'
 }
 
 export function resolveAgentInputDesktopContextView(input: {
@@ -118,6 +135,15 @@ function desktopContextCaptureMessage(result: unknown): string {
   return typeof value?.message === 'string' && value.message.trim()
     ? value.message.trim()
     : '未能读取当前应用窗口'
+}
+
+function desktopContextPermissionRequestAvailable(result: unknown): boolean {
+  const value = result as DesktopContextCaptureResult | undefined
+  if (!value || typeof value.permissionTarget !== 'object' || !Array.isArray(value.missingPermissions)) return false
+  return value.missingPermissions.some((permission) => {
+    const item = permission as { status?: unknown } | undefined
+    return item?.status === 'missing'
+  })
 }
 
 function desktopContextTargetState(target: DesktopContextTarget): AgentInputDesktopContextCaptureState {

@@ -25,6 +25,7 @@ import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInput
 import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
+  DESKTOP_CONTEXT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
   type AgentListPluginsResult,
   type AgentMessage,
@@ -85,6 +86,7 @@ import { DesktopContextPlusItem } from './DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
 import {
   captureAgentInputDesktopContextState,
+  desktopPermissionRequestMessage,
   resolveAgentInputDesktopContextView,
   resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
@@ -277,6 +279,8 @@ export function AgentInput({
   const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const [desktopContextCaptureMessage, setDesktopContextCaptureMessage] = useState<string | undefined>()
   const [desktopContextCaptureLoading, setDesktopContextCaptureLoading] = useState(false)
+  const [desktopContextPermissionRequestAvailable, setDesktopContextPermissionRequestAvailable] = useState(false)
+  const [desktopContextPermissionRequestLoading, setDesktopContextPermissionRequestLoading] = useState(false)
   const [localDesktopContextTarget, setLocalDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const sendNowRef = useRef<() => void>(() => undefined)
   const debouncedSend = useMemo(
@@ -969,6 +973,23 @@ export function AgentInput({
     setPlusPanelOpen(false)
   }, [setActiveTabId, setSettingsInitialTab, setTabs, tabs])
 
+  const handleRequestDesktopContextPermissions = useCallback(async () => {
+    setDesktopContextPermissionRequestLoading(true)
+    try {
+      const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS, {})
+      setDesktopContextCaptureMessage(desktopPermissionRequestMessage(result))
+      toast.success('已启动 Lume Computer Use.app 授权引导')
+    } catch (error) {
+      const message = error instanceof Error && error.message.trim()
+        ? error.message
+        : '启动授权引导失败'
+      setDesktopContextCaptureMessage(message)
+      toast.error(message)
+    } finally {
+      setDesktopContextPermissionRequestLoading(false)
+    }
+  }, [])
+
   const handleOpenPlusPanel = async () => {
     if (plusPanelOpen) {
       setPlusPanelOpen(false)
@@ -978,15 +999,18 @@ export function AgentInput({
     setActiveIndex(0)
     setDesktopContextCaptureLoading(true)
     setDesktopContextCaptureMessage(undefined)
+    setDesktopContextPermissionRequestAvailable(false)
     setCapturedDesktopContextTarget(undefined)
     captureAgentInputDesktopContextState(sidecarCall, () => invoke('quick_input_get_context'))
       .then((state) => {
         if (state.status === 'ready') {
           setCapturedDesktopContextTarget(state.target)
           setDesktopContextCaptureMessage(undefined)
+          setDesktopContextPermissionRequestAvailable(false)
         } else {
           setCapturedDesktopContextTarget(undefined)
           setDesktopContextCaptureMessage(state.message)
+          setDesktopContextPermissionRequestAvailable(state.permissionRequestAvailable === true)
         }
       })
       .finally(() => setDesktopContextCaptureLoading(false))
@@ -1226,14 +1250,27 @@ export function AgentInput({
                                     </div>
                                   </div>
                                   {!desktopContextCaptureLoading ? (
-                                    <Button
-                                      variant="ghost"
-                                      type="button"
-                                      onClick={handleOpenDesktopAssistantSettings}
-                                      className="mt-2 h-7 rounded-lg px-2 text-xs text-[var(--lume-text-secondary)] hover:bg-[var(--surface-3)] hover:text-[var(--lume-text-primary)]"
-                                    >
-                                      打开桌面助手设置
-                                    </Button>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                      {desktopContextPermissionRequestAvailable ? (
+                                        <Button
+                                          variant="secondary"
+                                          type="button"
+                                          disabled={desktopContextPermissionRequestLoading}
+                                          onClick={handleRequestDesktopContextPermissions}
+                                          className="h-7 rounded-lg px-2 text-xs"
+                                        >
+                                          {desktopContextPermissionRequestLoading ? '正在启动授权' : '启动授权引导'}
+                                        </Button>
+                                      ) : null}
+                                      <Button
+                                        variant="ghost"
+                                        type="button"
+                                        onClick={handleOpenDesktopAssistantSettings}
+                                        className="h-7 rounded-lg px-2 text-xs text-[var(--lume-text-secondary)] hover:bg-[var(--surface-3)] hover:text-[var(--lume-text-primary)]"
+                                      >
+                                        打开桌面助手设置
+                                      </Button>
+                                    </div>
                                   ) : null}
                                 </div>
                               </div>

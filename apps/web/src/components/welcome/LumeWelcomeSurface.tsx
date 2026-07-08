@@ -50,7 +50,10 @@ interface LumeWelcomeSurfaceProps {
   selectedDesktopContextTarget?: DesktopContextTarget
   desktopContextCaptureLoading?: boolean
   desktopContextCaptureMessage?: string
+  desktopContextPermissionRequestAvailable?: boolean
+  desktopContextPermissionRequestLoading?: boolean
   onSelectDesktopContextTarget?: (target: DesktopContextTarget) => void
+  onRequestDesktopContextPermissions?: () => void | Promise<void>
   onClearDesktopContextTarget?: () => void
   folderBar?: ReactNode
   suggestions?: AgentWelcomeSuggestion[]
@@ -77,7 +80,10 @@ export function LumeWelcomeSurface({
   selectedDesktopContextTarget,
   desktopContextCaptureLoading = false,
   desktopContextCaptureMessage,
+  desktopContextPermissionRequestAvailable = false,
+  desktopContextPermissionRequestLoading = false,
   onSelectDesktopContextTarget,
+  onRequestDesktopContextPermissions,
   onClearDesktopContextTarget,
   folderBar,
   suggestions,
@@ -254,22 +260,35 @@ export function LumeWelcomeSurface({
                             />
                           ) : (
                             <div className="px-3 pb-3">
-                              <div className="flex items-start gap-2.5 rounded-xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-3 py-2.5">
-                                <div className="mt-0.5 text-[var(--text-3)]">
-                                  {desktopContextCaptureLoading
-                                    ? <LoaderCircle size={15} className="animate-spin" />
-                                    : <MonitorOff size={15} />}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-sm font-medium text-[var(--text-1)]">
-                                    {desktopContextCaptureLoading ? '正在检查当前应用' : '当前应用暂不可用'}
-                                  </div>
-                                  <div className="mt-0.5 text-xs leading-5 text-[var(--text-3)]">
+                              <div className="rounded-xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-3 py-2.5">
+                                <div className="flex items-start gap-2.5">
+                                  <div className="mt-0.5 text-[var(--text-3)]">
                                     {desktopContextCaptureLoading
-                                      ? 'Lume 正在读取启动或唤起前的前台窗口。'
-                                      : desktopContextCaptureMessage ?? '请切回目标应用后重新打开 Lume。'}
+                                      ? <LoaderCircle size={15} className="animate-spin" />
+                                      : <MonitorOff size={15} />}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-[var(--text-1)]">
+                                      {desktopContextCaptureLoading ? '正在检查当前应用' : '当前应用暂不可用'}
+                                    </div>
+                                    <div className="mt-0.5 text-xs leading-5 text-[var(--text-3)]">
+                                      {desktopContextCaptureLoading
+                                        ? 'Lume 正在读取启动或唤起前的前台窗口。'
+                                        : desktopContextCaptureMessage ?? '请切回目标应用后重新打开 Lume。'}
+                                    </div>
                                   </div>
                                 </div>
+                                {!desktopContextCaptureLoading && desktopContextPermissionRequestAvailable && onRequestDesktopContextPermissions ? (
+                                  <Button
+                                    variant="secondary"
+                                    type="button"
+                                    disabled={desktopContextPermissionRequestLoading}
+                                    onClick={() => void onRequestDesktopContextPermissions()}
+                                    className="mt-2 h-7 rounded-lg px-2 text-xs"
+                                  >
+                                    {desktopContextPermissionRequestLoading ? '正在启动授权' : '启动授权引导'}
+                                  </Button>
+                                ) : null}
                               </div>
                             </div>
                           )}
