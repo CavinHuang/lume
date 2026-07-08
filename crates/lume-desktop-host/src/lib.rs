@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 
 #[cfg(target_os = "macos")]
 pub mod macos_backend;
+pub mod macos_snapshot;
 #[cfg(windows)]
 pub mod windows_backend;
 #[cfg(windows)]
