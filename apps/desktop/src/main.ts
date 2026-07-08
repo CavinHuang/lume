@@ -1,8 +1,6 @@
 import {
   app,
   BrowserWindow,
-  Menu,
-  Tray,
   clipboard,
   dialog,
   globalShortcut,
@@ -74,6 +72,7 @@ import {
   getNodeReplRootPath,
   getSidecarScriptPath,
 } from './sidecar-process'
+import * as trayManager from './tray-manager'
 
 const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -92,7 +91,6 @@ const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
 
 let mainWindow = null
 let wereadWindow = null
-let tray = null
 let isQuitting = false
 let windowBehavior = {
   minimizeToTray: false,
@@ -279,36 +277,34 @@ function getDefaultSkillsDirPath() {
   return resolve(REPO_ROOT, 'apps', 'sidecar', 'default-skills')
 }
 
-function createTray() {
-  if (tray) return tray
+function handleTrayAction(action) {
+  switch (action) {
+    case 'toggle-window':
+      showMainWindow()
+      return
+    case 'quit':
+      isQuitting = true
+      app.quit()
+      return
+    default:
+      // 阶段 3 接入其余 action（quick-input / new-note / open-settings / check-update）
+      return
+  }
+}
 
-  const iconPath = getAssetPath(process.platform === 'darwin' ? 'icon.png' : 'icon.ico')
-  const icon = nativeImage.createFromPath(iconPath)
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show Lume',
-      click: () => showMainWindow(),
-    },
-    {
-      label: 'Quit',
-      click: () => {
-        isQuitting = true
-        app.quit()
-      },
-    },
-  ])
-
-  tray = new Tray(icon)
-  tray.setToolTip('Lume')
-  tray.setContextMenu(contextMenu)
-  tray.on('click', () => showMainWindow())
-  return tray
+function ensureTray() {
+  if (trayManager.isTrayAvailable()) return
+  trayManager.createTray({
+    iconPath: getAssetPath(process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
+    onClickToggle: () => showMainWindow(),
+    onAction: handleTrayAction,
+  })
 }
 
 function shouldHideToTray(eventType) {
   return shouldHideToTrayCore({
     eventType,
-    trayAvailable: Boolean(tray),
+    trayAvailable: trayManager.isTrayAvailable(),
     isQuitting,
     windowBehavior,
   })
@@ -997,7 +993,7 @@ app.whenReady().then(async () => {
   registerFileProtocol()
   const configDir = applyLauncherConfig()
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
-  createTray()
+  ensureTray()
   logDesktopStartup('tray ready')
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
@@ -1041,7 +1037,7 @@ app.on('before-quit', () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' && !tray) {
+  if (process.platform !== 'darwin' && !trayManager.isTrayAvailable()) {
     app.quit()
   }
 })
