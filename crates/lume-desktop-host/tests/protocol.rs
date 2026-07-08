@@ -1,5 +1,6 @@
 use lume_desktop_host::{
-    desktop_permission_diagnostics, DesktopBackend, DesktopSession, UnsupportedBackend,
+    desktop_permission_diagnostics, desktop_permission_target_for_app_bundle_name, DesktopBackend,
+    DesktopSession, UnsupportedBackend,
 };
 use serde_json::{json, Value};
 
@@ -86,6 +87,10 @@ fn diagnose_permissions_reports_the_computer_use_permission_identity() {
         response["result"]["permissionTarget"]["bundleId"],
         "com.lume.computer-use"
     );
+    assert_eq!(
+        response["result"]["permissionTarget"]["authorizationSubject"],
+        "appBundle"
+    );
     assert_eq!(response["result"]["permissions"][0]["id"], "accessibility");
     assert_eq!(
         response["result"]["permissions"][1]["id"],
@@ -125,6 +130,10 @@ fn request_permissions_reports_the_computer_use_permission_identity() {
         response["result"]["permissionTarget"]["bundleId"],
         "com.lume.computer-use"
     );
+    assert_eq!(
+        response["result"]["permissionTarget"]["authorizationSubject"],
+        "appBundle"
+    );
 }
 
 #[test]
@@ -144,4 +153,14 @@ fn permission_diagnostics_report_missing_and_next_permission() {
     assert_eq!(granted["status"], "ok");
     assert_eq!(granted["missingPermissions"].as_array().unwrap().len(), 0);
     assert!(granted.get("nextPermission").is_none());
+}
+
+#[test]
+fn permission_target_uses_development_bundle_identity_when_running_from_dev_app() {
+    let target = desktop_permission_target_for_app_bundle_name(Some("Lume Computer Use (Dev).app"));
+
+    assert_eq!(target["appName"], "Lume Computer Use (Dev)");
+    assert_eq!(target["appBundleName"], "Lume Computer Use (Dev).app");
+    assert_eq!(target["bundleId"], "com.lume.computer-use.dev");
+    assert_eq!(target["authorizationSubject"], "appBundle");
 }

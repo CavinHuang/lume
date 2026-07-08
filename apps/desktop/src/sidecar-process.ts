@@ -4,7 +4,9 @@ export const SIDECAR_BUNDLE_NAME = 'index.mjs'
 export const NATIVE_BINARY_NAME = 'lume-natives.node'
 export const NODE_REPL_BINARY_NAME = 'node_repl'
 export const DESKTOP_HOST_BINARY_NAME = 'lume_desktop_host'
-export const DESKTOP_HOST_MAC_APP_NAME = 'Lume Computer Use.app'
+export const DESKTOP_HOST_MAC_RELEASE_APP_NAME = 'Lume Computer Use.app'
+export const DESKTOP_HOST_MAC_DEV_APP_NAME = 'Lume Computer Use (Dev).app'
+export const DESKTOP_HOST_MAC_APP_NAME = DESKTOP_HOST_MAC_RELEASE_APP_NAME
 
 export function getSidecarScriptPath({ appIsPackaged, resourcesPath, desktopRoot }) {
   if (appIsPackaged) {
@@ -71,9 +73,13 @@ export function getDesktopHostBinaryPath({
     ? join(resourcesPath, 'desktop-host')
     : resolve(desktopRoot, 'resources', 'desktop-host')
   if (platform === 'darwin') {
-    return join(root, targetId, DESKTOP_HOST_MAC_APP_NAME, 'Contents', 'MacOS', fileName)
+    return join(root, targetId, getDesktopHostMacAppName({ appIsPackaged }), 'Contents', 'MacOS', fileName)
   }
   return join(root, targetId, fileName)
+}
+
+function getDesktopHostMacAppName({ appIsPackaged }: { appIsPackaged: boolean }): string {
+  return appIsPackaged ? DESKTOP_HOST_MAC_RELEASE_APP_NAME : DESKTOP_HOST_MAC_DEV_APP_NAME
 }
 
 export function createDesktopHostTokenFilePath(endpoint: string): string {

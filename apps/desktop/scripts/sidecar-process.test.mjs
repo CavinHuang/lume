@@ -125,13 +125,23 @@ test('getDesktopHostBinaryPath resolves target-specific packaged and dev binarie
   )
   assert.equal(
     getDesktopHostBinaryPath({
+      appIsPackaged: true,
+      resourcesPath: '/Applications/Lume.app/Contents/Resources',
+      desktopRoot: '/repo/apps/desktop',
+      platform: 'darwin',
+      arch: 'arm64',
+    }),
+    join('/Applications/Lume.app/Contents/Resources', 'desktop-host', 'darwin-arm64', 'Lume Computer Use.app', 'Contents', 'MacOS', 'lume_desktop_host'),
+  )
+  assert.equal(
+    getDesktopHostBinaryPath({
       appIsPackaged: false,
       resourcesPath: 'ignored',
       desktopRoot: 'D:/repo/apps/desktop',
       platform: 'darwin',
       arch: 'arm64',
     }),
-    resolve('D:/repo/apps/desktop', 'resources', 'desktop-host', 'darwin-arm64', 'Lume Computer Use.app', 'Contents', 'MacOS', 'lume_desktop_host'),
+    resolve('D:/repo/apps/desktop', 'resources', 'desktop-host', 'darwin-arm64', 'Lume Computer Use (Dev).app', 'Contents', 'MacOS', 'lume_desktop_host'),
   )
 })
 

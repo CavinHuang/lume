@@ -1,4 +1,5 @@
 use crate::{
+    current_computer_use_permission_app_bundle_name,
     desktop_permission_diagnostics,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
@@ -43,7 +44,10 @@ impl DesktopBackend for MacOSDesktopBackend {
             return Ok(desktop_permission_diagnostics(
                 Some(permissions.accessibility),
                 Some(permissions.screen_recording),
-                Some("macOS desktop control requires Accessibility and Screen Recording permissions for Lume Computer Use.app".to_owned()),
+                Some(format!(
+                    "macOS desktop control requires Accessibility and Screen Recording permissions for {}",
+                    current_computer_use_permission_app_bundle_name()
+                )),
             ));
         }
         if method == "wait_for_state" {
@@ -719,7 +723,10 @@ fn request_permissions(permissions: MacOSPermissionState) -> Value {
     desktop_permission_diagnostics(
         Some(updated.accessibility),
         Some(updated.screen_recording),
-        Some("macOS permission request was started for Lume Computer Use.app".to_owned()),
+        Some(format!(
+            "macOS permission request was started for {}",
+            current_computer_use_permission_app_bundle_name()
+        )),
     )
 }
 

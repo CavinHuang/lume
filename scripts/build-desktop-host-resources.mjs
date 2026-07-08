@@ -11,9 +11,21 @@ const BINARY_NAME = process.platform === "win32" ? "lume_desktop_host.exe" : "lu
 const BUILT_BINARY = resolve(CRATE_DIR, "target", "release", BINARY_NAME);
 const CURSOR_LICENSE = resolve(CRATE_DIR, "assets", "LICENSE.open-codex-computer-use");
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
-const MAC_APP_BUNDLE_NAME = "Lume Computer Use.app";
-const MAC_BUNDLE_IDENTIFIER = "com.lume.computer-use";
-const MAC_BUNDLE_DISPLAY_NAME = "Lume Computer Use";
+const MAC_BUNDLE_VARIANT = process.env.LUME_COMPUTER_USE_BUNDLE_VARIANT === "dev" ? "dev" : "release";
+const MAC_BUNDLE_CONFIG = MAC_BUNDLE_VARIANT === "dev"
+  ? {
+      appBundleName: "Lume Computer Use (Dev).app",
+      bundleIdentifier: "com.lume.computer-use.dev",
+      displayName: "Lume Computer Use (Dev)",
+    }
+  : {
+      appBundleName: "Lume Computer Use.app",
+      bundleIdentifier: "com.lume.computer-use",
+      displayName: "Lume Computer Use",
+    };
+const MAC_APP_BUNDLE_NAME = MAC_BUNDLE_CONFIG.appBundleName;
+const MAC_BUNDLE_IDENTIFIER = MAC_BUNDLE_CONFIG.bundleIdentifier;
+const MAC_BUNDLE_DISPLAY_NAME = MAC_BUNDLE_CONFIG.displayName;
 const OUT_FILE = process.platform === "darwin"
   ? resolve(OUT_DIR, MAC_APP_BUNDLE_NAME, "Contents", "MacOS", BINARY_NAME)
   : resolve(OUT_DIR, BINARY_NAME);
@@ -92,6 +104,8 @@ function macInfoPlist() {
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>LumeComputerUseAppVariant</key>
+  <string>${MAC_BUNDLE_VARIANT}</string>
 </dict>
 </plist>
 `;

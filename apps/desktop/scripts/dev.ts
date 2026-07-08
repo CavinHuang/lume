@@ -101,6 +101,10 @@ if (nodeReplResourcesResult.status !== 0) {
 
 const desktopHostResourcesResult = spawnSync("node", [buildDesktopHostResourcesScript], {
   cwd: resolve(desktopRoot, "..", ".."),
+  env: {
+    ...process.env,
+    LUME_COMPUTER_USE_BUNDLE_VARIANT: "dev",
+  },
   stdio: "inherit",
 });
 if (desktopHostResourcesResult.status !== 0) {

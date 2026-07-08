@@ -54,6 +54,7 @@ function unavailablePermissionDiagnostics(message: string): Record<string, unkno
       appName: "Lume Computer Use",
       appBundleName: "Lume Computer Use.app",
       bundleId: "com.lume.computer-use",
+      authorizationSubject: "appBundle",
     },
     permissions: [
       {

@@ -17,6 +17,11 @@ pub const PROTOCOL_VERSION: u64 = 1;
 pub const COMPUTER_USE_PERMISSION_APP_NAME: &str = "Lume Computer Use";
 pub const COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME: &str = "Lume Computer Use.app";
 pub const COMPUTER_USE_PERMISSION_BUNDLE_ID: &str = "com.lume.computer-use";
+pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_NAME: &str = "Lume Computer Use (Dev)";
+pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_BUNDLE_NAME: &str =
+    "Lume Computer Use (Dev).app";
+pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_BUNDLE_ID: &str = "com.lume.computer-use.dev";
+pub const COMPUTER_USE_PERMISSION_AUTHORIZATION_SUBJECT: &str = "appBundle";
 
 #[cfg(windows)]
 pub fn initialize_windows_runtime() -> windows::core::Result<()> {
@@ -139,11 +144,7 @@ pub fn desktop_permission_diagnostics(
     let mut result = json!({
         "status": status,
         "platform": std::env::consts::OS,
-        "permissionTarget": {
-            "appName": COMPUTER_USE_PERMISSION_APP_NAME,
-            "appBundleName": COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME,
-            "bundleId": COMPUTER_USE_PERMISSION_BUNDLE_ID,
-        },
+        "permissionTarget": current_desktop_permission_target(),
         "permissions": permissions,
         "missingPermissions": missing_permissions,
     });
@@ -154,6 +155,52 @@ pub fn desktop_permission_diagnostics(
         result["message"] = Value::String(message);
     }
     result
+}
+
+pub fn current_computer_use_permission_app_bundle_name() -> String {
+    current_desktop_permission_target()["appBundleName"]
+        .as_str()
+        .unwrap_or(COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME)
+        .to_owned()
+}
+
+fn current_desktop_permission_target() -> Value {
+    desktop_permission_target_for_app_bundle_name(current_app_bundle_name().as_deref())
+}
+
+pub fn desktop_permission_target_for_app_bundle_name(app_bundle_name: Option<&str>) -> Value {
+    let is_development =
+        app_bundle_name == Some(COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_BUNDLE_NAME);
+    let (app_name, app_bundle_name, bundle_id) = if is_development {
+        (
+            COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_NAME,
+            COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_BUNDLE_NAME,
+            COMPUTER_USE_DEVELOPMENT_PERMISSION_BUNDLE_ID,
+        )
+    } else {
+        (
+            COMPUTER_USE_PERMISSION_APP_NAME,
+            COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME,
+            COMPUTER_USE_PERMISSION_BUNDLE_ID,
+        )
+    };
+
+    json!({
+        "appName": app_name,
+        "appBundleName": app_bundle_name,
+        "bundleId": bundle_id,
+        "authorizationSubject": COMPUTER_USE_PERMISSION_AUTHORIZATION_SUBJECT,
+    })
+}
+
+fn current_app_bundle_name() -> Option<String> {
+    let executable = std::env::current_exe().ok()?;
+    executable
+        .ancestors()
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("app"))
+        .and_then(|path| path.file_name())
+        .and_then(|value| value.to_str())
+        .map(str::to_owned)
 }
 
 fn permission_diagnostic(

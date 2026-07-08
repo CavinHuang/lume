@@ -89,10 +89,13 @@ test('desktop-host resource build packages macOS as a separate computer-use app 
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
 
   assert.match(script, /Lume Computer Use\.app/)
+  assert.match(script, /Lume Computer Use \(Dev\)\.app/)
   assert.match(script, /com\.lume\.computer-use/)
+  assert.match(script, /com\.lume\.computer-use\.dev/)
   assert.match(script, /LSUIElement/)
   assert.match(script, /CFBundleExecutable/)
   assert.match(script, /codesign/)
+  assert.match(script, /LumeComputerUseAppVariant/)
 })
 
 test('node-repl resource build clears generated output before writing resources', () => {
@@ -114,4 +117,5 @@ test('desktop dev builds desktop-host resources before launching Electron', () =
 
   assert.match(script, /build-desktop-host-resources\.mjs/)
   assertContainsBefore(script, 'spawnSync("node", [buildDesktopHostResourcesScript]', 'spawn(electronBin')
+  assert.match(script, /LUME_COMPUTER_USE_BUNDLE_VARIANT:\s*["']dev["']/)
 })
