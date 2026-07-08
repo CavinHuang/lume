@@ -32,6 +32,30 @@ export function buildDesktopProposalWelcomeState({
   }
 }
 
+export function buildDesktopProposalOpenRequestState({
+  proposalId,
+  proposals,
+  tabs,
+  currentWorkspaceId,
+}: {
+  proposalId: string
+  proposals: DesktopProactiveProposal[]
+  tabs: Tab[]
+  currentWorkspaceId: string | null
+}): {
+  tabs: Tab[]
+  activeTabId: string
+  promptSeed: string
+  proposal: DesktopProactiveProposal
+} | null {
+  const proposal = proposals.find((item) => item.id === proposalId)
+  if (!proposal) return null
+  return {
+    proposal,
+    ...buildDesktopProposalWelcomeState({ proposal, tabs, currentWorkspaceId }),
+  }
+}
+
 function proposalToDesktopContextTarget(proposal: DesktopProactiveProposal): DesktopContextTarget {
   return {
     snapshotId: proposal.snapshotId,

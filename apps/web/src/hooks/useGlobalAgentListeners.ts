@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
@@ -13,11 +13,16 @@ import {
   agentErrorMessagesAtom,
   desktopActionVisualAtom,
   agentSidePanelViewAtom,
+  activeTabIdAtom,
+  currentWorkspaceIdAtom,
   tabsAtom,
+  welcomePromptSeedAtom,
 } from '@/atoms'
+import { buildDesktopProposalOpenRequestState } from '@/components/settings/desktop-assistant-proposals-state'
 import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
 import {
   AGENT_IPC_CHANNELS,
+  DESKTOP_CONTEXT_IPC_CHANNELS,
   type AgentMessageAppendedEvent,
   type AgentPendingInteractiveState,
   type AgentRuntimeEventNotification,
@@ -32,6 +37,7 @@ import {
   type AgentMessageQueueSnapshot,
   type PlanModePhaseChangedEvent,
   type LumeRuntimeEvent,
+  type DesktopProactiveProposal,
 } from '@lume/shared'
 import {
   planPreviewToPendingTaskApproval,
@@ -59,6 +65,10 @@ export function useGlobalAgentListeners() {
   const setDesktopActionVisual = useSetAtom(desktopActionVisualAtom)
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const setTabs = useSetAtom(tabsAtom)
+  const tabs = useAtomValue(tabsAtom)
+  const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const runtimeEventsRafRef = useRef<number | null>(null)
@@ -194,6 +204,35 @@ export function useGlobalAgentListeners() {
             })
             .catch((error) => {
               console.error('[useGlobalAgentListeners] 刷新线程列表失败 (THREAD_LIST_CHANGED)', error)
+            })
+          break
+        }
+        case DESKTOP_CONTEXT_IPC_CHANNELS.PROPOSAL_OPEN_REQUEST: {
+          const proposalId = typeof (params as { proposalId?: unknown })?.proposalId === 'string'
+            ? (params as { proposalId: string }).proposalId
+            : ''
+          if (!proposalId) break
+          void sidecarCall<DesktopProactiveProposal[]>(DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS)
+            .then((proposals) => {
+              const next = buildDesktopProposalOpenRequestState({
+                proposalId,
+                proposals: Array.isArray(proposals) ? proposals : [],
+                tabs,
+                currentWorkspaceId,
+              })
+              if (!next) return
+              setTabs(next.tabs)
+              setWelcomePromptSeed(next.promptSeed)
+              setActiveTabId(next.activeTabId)
+              void sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL, {
+                id: next.proposal.id,
+                status: 'opened',
+              }).catch((error) => {
+                console.error('[useGlobalAgentListeners] 标记桌面建议已打开失败:', error)
+              })
+            })
+            .catch((error) => {
+              console.error('[useGlobalAgentListeners] 打开桌面建议失败:', error)
             })
           break
         }
@@ -336,5 +375,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, enqueueRuntimeEvent])
 }

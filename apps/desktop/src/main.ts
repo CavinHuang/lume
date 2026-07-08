@@ -34,6 +34,7 @@ import {
   computeToggleAction,
   copyDirRecursive,
   createDesktopProposalNotification,
+  createDesktopProposalOpenRequest,
   createFileMetadata,
   createOpenFileDialogOptions,
   createOpenFolderDialogOptions,
@@ -98,6 +99,7 @@ const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
 const DESKTOP_CONTEXT_UNLOCK_METHOD = 'desktop-context:unlock'
 const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
 const DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD = 'desktop-context:proposal-created'
+const DESKTOP_CONTEXT_PROPOSAL_OPEN_REQUEST_METHOD = 'desktop-context:proposal-open-request'
 
 let mainWindow = null
 let wereadWindow = null
@@ -184,7 +186,19 @@ function showDesktopProposalNotification(method, params) {
   if (!notification || !Notification.isSupported()) return
 
   try {
-    new Notification(notification).show()
+    const desktopNotification = new Notification(notification)
+    desktopNotification.on('click', () => {
+      const openRequest = createDesktopProposalOpenRequest(params)
+      if (!openRequest) return
+      emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, {
+        method: DESKTOP_CONTEXT_PROPOSAL_OPEN_REQUEST_METHOD,
+        params: openRequest,
+      })
+      void showMainWindow().catch((error) => {
+        console.error(`[desktop] show main window failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    })
+    desktopNotification.show()
   } catch (error) {
     console.error(`[desktop] desktop proposal notification failed: ${error instanceof Error ? error.message : String(error)}`)
   }

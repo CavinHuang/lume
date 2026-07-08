@@ -120,6 +120,16 @@ export function createDesktopProposalNotification(value) {
   }
 }
 
+export function createDesktopProposalOpenRequest(value) {
+  const proposal = value?.proposal
+  if (!proposal || typeof proposal !== 'object' || Array.isArray(proposal)) return null
+
+  const proposalId = typeof proposal.id === 'string' ? proposal.id.trim() : ''
+  if (!proposalId) return null
+
+  return { proposalId }
+}
+
 export function createOpenFileDialogOptions(): OpenDialogOptions {
   return {
     properties: ['openFile', 'multiSelections'],

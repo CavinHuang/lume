@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { DesktopProactiveProposal } from '@lume/shared'
 import type { Tab } from '@/atoms/tab-atoms'
-import { buildDesktopProposalWelcomeState } from './desktop-assistant-proposals-state'
+import { buildDesktopProposalOpenRequestState, buildDesktopProposalWelcomeState } from './desktop-assistant-proposals-state'
 
 const proposal: DesktopProactiveProposal = {
   id: 'proposal:snap-1',
@@ -78,5 +78,39 @@ describe('desktop assistant proposal state', () => {
     }])
     expect(result.promptSeed).not.toContain('password=secret')
     expect(result.promptSeed).not.toContain('客户问')
+  })
+
+  test('opens a desktop notification click by proposal id without trusting notification text', () => {
+    const result = buildDesktopProposalOpenRequestState({
+      proposalId: 'proposal:snap-1',
+      proposals: [proposal],
+      tabs: [],
+      currentWorkspaceId: 'workspace-1',
+    })
+
+    expect(result).toEqual({
+      activeTabId: '__welcome__',
+      promptSeed: '请根据微信「项目群」里的当前上下文，帮我建议一条回复。',
+      proposal,
+      tabs: [{
+        id: '__welcome__',
+        type: 'welcome',
+        title: '处理微信建议',
+        workspaceId: 'workspace-1',
+        desktopContextTarget: {
+          snapshotId: 'snap-1',
+          app: { id: 'wechat.exe', name: '微信' },
+          window: { id: 'win:wechat', title: '项目群' },
+          capturedAt: 1,
+        },
+      }],
+    })
+
+    expect(buildDesktopProposalOpenRequestState({
+      proposalId: 'missing',
+      proposals: [proposal],
+      tabs: [],
+      currentWorkspaceId: 'workspace-1',
+    })).toBeNull()
   })
 })

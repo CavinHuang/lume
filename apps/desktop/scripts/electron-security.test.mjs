@@ -170,7 +170,10 @@ test("main process routes desktop proposal notifications through a scrubbed help
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
 
   assert.match(mainSource, /desktop-context:proposal-created/);
+  assert.match(mainSource, /desktop-context:proposal-open-request/);
   assert.match(mainSource, /createDesktopProposalNotification/);
+  assert.match(mainSource, /createDesktopProposalOpenRequest/);
+  assert.match(mainSource, /\.on\('click'/);
   assert.match(mainSource, /new Notification/);
 });
 

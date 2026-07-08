@@ -9,6 +9,7 @@ import {
   copyDirRecursive,
   createFileMetadata,
   createDesktopProposalNotification,
+  createDesktopProposalOpenRequest,
   createOpenFileDialogOptions,
   createOpenFolderDialogOptions,
   createUpdateDownloadProgressEvents,
@@ -123,6 +124,25 @@ test('desktop proposal notifications exclude sensitive proposal context', () => 
   assert.equal(serialized.includes('password=secret'), false)
   assert.equal(createDesktopProposalNotification(null), null)
   assert.equal(createDesktopProposalNotification({ proposal: { kind: 'unknown', app: { name: '微信' } } }), null)
+})
+
+test('desktop proposal notification click events expose only the proposal id', () => {
+  const request = createDesktopProposalOpenRequest({
+    proposal: {
+      id: 'proposal:snap-1',
+      kind: 'reply',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '客户项目群' },
+      summary: '客户问 password=secret 怎么处理',
+    },
+  })
+
+  assert.deepEqual(request, { proposalId: 'proposal:snap-1' })
+  const serialized = JSON.stringify(request)
+  assert.equal(serialized.includes('客户项目群'), false)
+  assert.equal(serialized.includes('password=secret'), false)
+  assert.equal(createDesktopProposalOpenRequest(null), null)
+  assert.equal(createDesktopProposalOpenRequest({ proposal: { id: '' } }), null)
 })
 
 test('file and folder dialog options match desktop selection contracts', () => {

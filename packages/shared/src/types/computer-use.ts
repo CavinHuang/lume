@@ -190,6 +190,7 @@ export const DESKTOP_CONTEXT_IPC_CHANNELS = {
   LIST_PROPOSALS: "desktop-context:list-proposals",
   UPDATE_PROPOSAL: "desktop-context:update-proposal",
   PROPOSAL_CREATED: "desktop-context:proposal-created",
+  PROPOSAL_OPEN_REQUEST: "desktop-context:proposal-open-request",
   ACTION_REQUEST: "agent:desktop-action-request",
   SUBMIT_ACTION: "agent:submit-desktop-action",
 } as const;
