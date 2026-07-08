@@ -2,8 +2,8 @@ use crate::{
     desktop_permission_diagnostics,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
-        macos_get_window_state_result, macos_list_apps_result, macos_list_windows_result,
-        MacOSElementInfo, MacOSWindowInfo,
+        macos_get_window_result, macos_get_window_state_result, macos_list_apps_result,
+        macos_list_windows_result, MacOSElementInfo, MacOSWindowInfo,
     },
     DesktopBackend,
 };
@@ -45,6 +45,13 @@ impl DesktopBackend for MacOSDesktopBackend {
                 params.get("appId").and_then(Value::as_str),
             )),
             "list_apps" => Ok(macos_list_apps_result(&windows)),
+            "get_window" => {
+                let window = match params.get("windowId").and_then(Value::as_str) {
+                    Some(window_id) => find_macos_window(&windows, window_id),
+                    None => first_visible_user_window(&windows),
+                };
+                Ok(macos_get_window_result(window))
+            }
             "current_context" => {
                 let Some(mut window) = first_visible_user_window(&windows) else {
                     return Ok(stale_target());

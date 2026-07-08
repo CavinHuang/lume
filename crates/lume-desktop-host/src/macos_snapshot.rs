@@ -59,6 +59,13 @@ pub fn macos_list_apps_result(windows: &[MacOSWindowInfo]) -> Value {
     json!({ "status": "ok", "apps": apps.into_values().collect::<Vec<_>>() })
 }
 
+pub fn macos_get_window_result(window: Option<MacOSWindowInfo>) -> Value {
+    match window {
+        Some(window) => json!({ "status": "ok", "window": window_json(&window) }),
+        None => stale_target(),
+    }
+}
+
 pub fn macos_current_context_result(window: &MacOSWindowInfo, include_screenshot: bool) -> Value {
     let window_value = window_json(window);
     let visible_text = context_visible_text(window);
@@ -324,4 +331,8 @@ fn now_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+fn stale_target() -> Value {
+    json!({ "status": "stale_target", "message": "target window is unavailable" })
 }

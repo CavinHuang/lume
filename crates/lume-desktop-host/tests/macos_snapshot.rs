@@ -1,6 +1,7 @@
 use lume_desktop_host::macos_snapshot::{
-    find_macos_window, macos_current_context_result, macos_get_window_state_result,
-    macos_list_apps_result, macos_list_windows_result, MacOSElementInfo, MacOSWindowInfo,
+    find_macos_window, macos_current_context_result, macos_get_window_result,
+    macos_get_window_state_result, macos_list_apps_result, macos_list_windows_result,
+    MacOSElementInfo, MacOSWindowInfo,
 };
 use serde_json::json;
 
@@ -83,6 +84,29 @@ fn maps_unique_apps_from_visible_macos_windows() {
     assert_eq!(result["apps"][0]["id"], "pid:1001");
     assert_eq!(result["apps"][0]["name"], "微信");
     assert_eq!(result["apps"][0]["processId"], 1001);
+}
+
+#[test]
+fn maps_single_macos_window_to_window_ref() {
+    let result = macos_get_window_result(find_macos_window(&sample_windows(), "macos:42"));
+
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["window"]["id"], "macos:42");
+    assert_eq!(result["window"]["appId"], "pid:1001");
+    assert_eq!(result["window"]["appName"], "微信");
+    assert_eq!(result["window"]["title"], "项目群");
+    assert_eq!(
+        result["window"]["bounds"],
+        json!({ "x": 10, "y": 20, "width": 900, "height": 700 })
+    );
+}
+
+#[test]
+fn reports_stale_target_for_missing_macos_window_ref() {
+    let result = macos_get_window_result(find_macos_window(&sample_windows(), "macos:404"));
+
+    assert_eq!(result["status"], "stale_target");
+    assert_eq!(result["message"], "target window is unavailable");
 }
 
 #[test]
