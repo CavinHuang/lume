@@ -160,6 +160,67 @@ describe("createComputerUseMcpTools", () => {
     ]);
   });
 
+  test("anchors desktop actions to the bound conversation window when windowId is omitted", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      boundDesktopContextSnapshotId: "snap-wechat",
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "current_context") {
+          return {
+            status: "ok",
+            snapshot: {
+              id: "snap-wechat",
+              app: { id: "wechat.exe", name: "微信" },
+              window: { id: "win:wechat", title: "项目群" },
+            },
+          };
+        }
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "rev-bound",
+            window: { id: "win:wechat", appId: "wechat.exe", appName: "微信" },
+            accessibility: {
+              tree: [{
+                id: "root.input",
+                role: "edit",
+                name: "输入框",
+                bounds: { x: 100, y: 200, width: 300, height: 40 },
+              }],
+            },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const click = tools.find((candidate) => candidate.name === "mcp__computer_use__click")!;
+
+    await click.call(
+      { elementId: "root.input" },
+      { toolUseId: "tool-bound-action" } as never,
+    );
+
+    expect(calls).toEqual([
+      { method: "current_context", input: { snapshotId: "snap-wechat" } },
+      { method: "get_window_state", input: { windowId: "win:wechat" } },
+      {
+        method: "click",
+        input: {
+          elementId: "root.input",
+          windowId: "win:wechat",
+          appId: "wechat.exe",
+          appName: "微信",
+          targetLabel: "输入框",
+          windowRevision: "rev-bound",
+          x: 250,
+          y: 220,
+        },
+      },
+      { method: "wait_for_state", input: { windowId: "win:wechat", revisionNot: "rev-bound", timeoutMs: 1_500 } },
+    ]);
+  });
+
   test("returns an explicit unavailable status when the host is not configured", async () => {
     const [tool] = createComputerUseMcpTools();
     const result = await tool!.call({}, { toolUseId: "tool-2" } as never);

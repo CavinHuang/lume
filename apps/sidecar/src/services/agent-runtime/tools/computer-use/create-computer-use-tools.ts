@@ -91,6 +91,13 @@ export function createComputerUseMcpTools(input: {
           if (name === "current_context" && input.boundDesktopContextSnapshotId) {
             args.snapshotId = input.boundDesktopContextSnapshotId;
           }
+          if (!readOnly && input.boundDesktopContextSnapshotId && !stringValue(args.windowId)) {
+            const boundTarget = await resolveBoundDesktopActionTarget(invoke, input.boundDesktopContextSnapshotId);
+            if (boundTarget.status !== "ok") {
+              return toolResult(context.toolUseId, boundTarget.result);
+            }
+            Object.assign(args, { ...boundTarget.args, ...args });
+          }
           if (!readOnly) {
             const prepared = await prepareDesktopActionArgsForSafety(invoke, name as DesktopActionKind, args);
             if (prepared.status !== "ok") {
@@ -155,6 +162,34 @@ export function createComputerUseMcpTools(input: {
       },
     } satisfies ToolDefinition;
   });
+}
+
+async function resolveBoundDesktopActionTarget(
+  invoke: ComputerUseInvoke,
+  snapshotId: string,
+): Promise<{ status: "ok"; args: Record<string, unknown> } | { status: "blocked"; result: unknown }> {
+  const response = asRecord(await invoke("current_context", { snapshotId }));
+  const snapshot = asRecord(response.snapshot);
+  const window = asRecord(snapshot.window);
+  const app = asRecord(snapshot.app);
+  const windowId = stringValue(window.id);
+  if (response.status !== "ok" || !windowId) {
+    return {
+      status: "blocked",
+      result: {
+        status: "blocked",
+        message: "unable to resolve the desktop context bound to this conversation",
+      },
+    };
+  }
+  return {
+    status: "ok",
+    args: {
+      windowId,
+      ...(stringValue(app.id) ? { appId: stringValue(app.id) } : {}),
+      ...(stringValue(app.name) ? { appName: stringValue(app.name) } : {}),
+    },
+  };
 }
 
 async function attachPostActionVerification(
