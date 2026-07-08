@@ -106,6 +106,43 @@ describe("DesktopContextService", () => {
     });
   });
 
+  test("turns macOS permission diagnostics into an actionable capture message", async () => {
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: true,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+      },
+      createStore: () => {
+        throw new Error("store should not be used for permission diagnostics");
+      },
+      invokeHost: async () => ({
+        status: "permission_denied",
+        permissionTarget: {
+          appName: "Lume Computer Use",
+          appBundleName: "Lume Computer Use.app",
+          bundleId: "com.lume.computer-use",
+        },
+        permissions: [
+          { id: "accessibility", title: "Accessibility", status: "missing" },
+          { id: "screenRecording", title: "Screen & System Audio Recording", status: "missing" },
+        ],
+      }),
+    });
+    service.unlock(Buffer.alloc(32, 5));
+
+    expect(await service.captureCurrent({ userInitiated: true })).toMatchObject({
+      status: "permission_denied",
+      message: "需要在 macOS 系统设置中授权 Lume Computer Use.app：Accessibility、Screen & System Audio Recording。请授权 computer use 包，而不是 Lume 主应用。",
+      permissionTarget: {
+        appBundleName: "Lume Computer Use.app",
+        bundleId: "com.lume.computer-use",
+      },
+    });
+  });
+
   test("allows a user-initiated one-shot capture without enabling background collection", async () => {
     const service = createService({ enabled: false, allowedApps: ["chrome.exe"] });
     service.unlock(Buffer.alloc(32, 4));

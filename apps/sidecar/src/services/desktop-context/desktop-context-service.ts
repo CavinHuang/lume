@@ -84,7 +84,7 @@ export class DesktopContextService {
       "current_context",
       input.userInitiated === true ? { includeScreenshot: true } : {},
     ));
-    if (response.status !== "ok") return response;
+    if (response.status !== "ok") return attachDesktopPermissionCaptureMessage(response);
     const snapshot = normalizeSnapshot(response.snapshot);
     if (!snapshot) return { status: "failed", message: "desktop host returned an invalid context snapshot" };
     const allowed = new Set(this.#settings.allowedApps.map((app) => app.trim().toLowerCase()).filter(Boolean));
@@ -379,4 +379,26 @@ function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, any>
     : {};
+}
+
+function attachDesktopPermissionCaptureMessage(response: Record<string, any>): Record<string, any> {
+  const target = asRecord(response.permissionTarget);
+  const appName = stringValue(target.appBundleName) ?? stringValue(target.appName);
+  if (!appName || !Array.isArray(response.permissions)) return response;
+
+  const missingPermissions = response.permissions
+    .map(asRecord)
+    .filter((permission) => permission.status !== "granted")
+    .map((permission) => stringValue(permission.title) ?? stringValue(permission.id))
+    .filter((permission): permission is string => Boolean(permission));
+  if (missingPermissions.length === 0) return response;
+
+  return {
+    ...response,
+    message: `需要在 macOS 系统设置中授权 ${appName}：${missingPermissions.join("、")}。请授权 computer use 包，而不是 Lume 主应用。`,
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
