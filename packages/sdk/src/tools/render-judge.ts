@@ -17,7 +17,7 @@ export function shouldRender(rawHtml: string, mode: RenderMode): boolean {
 
 export function bodyTextLength(rawHtml: string): number {
   const bodyMatch = rawHtml.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-  const body = bodyMatch ? bodyMatch[1] : rawHtml;
+  const body = bodyMatch?.[1] ?? rawHtml;
   const stripped = body
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
