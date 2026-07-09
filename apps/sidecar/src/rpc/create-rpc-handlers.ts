@@ -15,6 +15,7 @@ import type { NotificationWriter, RpcHandler } from "./types";
 
 export interface CreateRpcHandlersContext {
   writeNotification: NotificationWriter;
+  renderClient?: { handleRenderResult: (params: any) => void };
 }
 
 export function createRpcHandlers(context: CreateRpcHandlersContext): Record<string, RpcHandler> {
@@ -60,5 +61,11 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       notifyPlanModePhaseChange
     })
   );
+  if (context.renderClient) {
+    handlers["render:result"] = async (params: unknown) => {
+      context.renderClient!.handleRenderResult(params as any);
+      return { ok: true };
+    };
+  }
   return handlers;
 }
