@@ -103,6 +103,19 @@ test('desktop-host resource build packages macOS as a separate computer-use app 
   assert.match(script, /apps", "desktop", "assets", "icon\.icns"/)
 })
 
+test('desktop-host resource build packages the macOS software cursor overlay', () => {
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+
+  assert.equal(
+    existsSync(resolve(REPO_ROOT, 'crates/lume-desktop-host/macos/LumeComputerUseCursorOverlay.swift')),
+    true,
+  )
+  assert.match(script, /LumeComputerUseCursorOverlay\.swift/)
+  assert.match(script, /official-software-cursor-window-252\.png/)
+  assert.match(script, /swiftc/)
+  assert.match(script, /LumeComputerUseCursorOverlay/)
+})
+
 test('desktop-host resource build prefers a stable macOS signing identity', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
 

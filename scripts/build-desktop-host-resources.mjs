@@ -10,6 +10,10 @@ const TARGET_ID = resolveTargetId(process.platform, process.arch);
 const BINARY_NAME = process.platform === "win32" ? "lume_desktop_host.exe" : "lume_desktop_host";
 const BUILT_BINARY = resolve(CRATE_DIR, "target", "release", BINARY_NAME);
 const CURSOR_LICENSE = resolve(CRATE_DIR, "assets", "LICENSE.open-codex-computer-use");
+const MAC_CURSOR_OVERLAY_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUseCursorOverlay.swift");
+const MAC_CURSOR_OVERLAY_BINARY_NAME = "LumeComputerUseCursorOverlay";
+const MAC_CURSOR_ASSET_NAME = "official-software-cursor-window-252.png";
+const MAC_CURSOR_ASSET_SOURCE = resolve(CRATE_DIR, "assets", MAC_CURSOR_ASSET_NAME);
 const MAC_BUNDLE_ICON_NAME = "LumeComputerUse.icns";
 const MAC_BUNDLE_ICON_SOURCE = resolve(REPO_ROOT, "apps", "desktop", "assets", "icon.icns");
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
@@ -72,10 +76,28 @@ function writeMacAppBundle() {
   copyFileSync(BUILT_BINARY, OUT_FILE);
   chmodSync(OUT_FILE, 0o755);
   copyFileSync(CURSOR_LICENSE, resolve(resourcesDir, "LICENSE.open-codex-computer-use"));
+  copyFileSync(MAC_CURSOR_ASSET_SOURCE, resolve(resourcesDir, MAC_CURSOR_ASSET_NAME));
   copyFileSync(MAC_BUNDLE_ICON_SOURCE, resolve(resourcesDir, MAC_BUNDLE_ICON_NAME));
   writeFileSync(resolve(contentsDir, "Info.plist"), macInfoPlist());
+  buildMacCursorOverlay(resolve(macosDir, MAC_CURSOR_OVERLAY_BINARY_NAME));
   signMacAppBundle(appRoot);
   console.error(`[desktop-host] wrote ${appRoot}`);
+}
+
+function buildMacCursorOverlay(outputPath) {
+  const result = spawnSync("xcrun", [
+    "swiftc",
+    MAC_CURSOR_OVERLAY_SOURCE,
+    "-o",
+    outputPath,
+    "-framework",
+    "AppKit",
+  ], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+  chmodSync(outputPath, 0o755);
 }
 
 function macInfoPlist() {

@@ -478,7 +478,7 @@ fn defaults_macos_visible_pointer_to_enabled_with_open_computer_use_compatible_d
         assert!(!macos_visible_pointer_enabled_from(None, Some(value)));
     }
     assert!(macos_visible_pointer_enabled_from(Some("1"), None));
-    assert_eq!(macos_visible_pointer_mode(true), "physical_cursor");
+    assert_eq!(macos_visible_pointer_mode(true), "software_cursor");
     assert_eq!(macos_visible_pointer_mode(false), "disabled");
 }
 

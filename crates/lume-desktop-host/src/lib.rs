@@ -4,6 +4,8 @@ use std::path::Path;
 
 #[cfg(target_os = "macos")]
 pub mod macos_backend;
+#[cfg(target_os = "macos")]
+pub mod macos_overlay;
 pub mod macos_snapshot;
 #[cfg(windows)]
 pub mod windows_backend;

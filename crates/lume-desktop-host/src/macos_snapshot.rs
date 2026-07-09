@@ -236,7 +236,7 @@ pub fn macos_visible_pointer_enabled_from(
 
 pub fn macos_visible_pointer_mode(enabled: bool) -> &'static str {
     if enabled {
-        "physical_cursor"
+        "software_cursor"
     } else {
         "disabled"
     }

@@ -1,6 +1,6 @@
 use crate::{
     current_computer_use_permission_app_bundle_name, current_computer_use_permission_clients,
-    desktop_permission_diagnostics, desktop_permission_granted,
+    desktop_permission_diagnostics, desktop_permission_granted, macos_overlay,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
         macos_get_window_result, macos_get_window_state_result,
@@ -25,7 +25,9 @@ use std::{
     ffi::{CStr, CString},
     os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
     process::Command,
-    ptr, slice, thread,
+    ptr, slice,
+    sync::{Mutex, OnceLock},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -149,7 +151,7 @@ fn move_pointer(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         Err(result) => return Ok(result),
     };
     activate_macos_window(&window)?;
-    move_mouse(x, y, window.owner_pid as c_int, true);
+    move_mouse(x, y, window.owner_pid as c_int, false);
     Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
 }
 
@@ -162,6 +164,7 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
         move_visible_pointer_for_params(&window, params);
         activate_macos_window(&window)?;
         if let Some(input_mode) = perform_element_click_action(&window, element_id, secondary)? {
+            pulse_visible_pointer_for_params(&window, params);
             return Ok(json!({
                 "status": "ok",
                 "inputMode": input_mode,
@@ -482,6 +485,12 @@ fn move_visible_pointer_for_params(window: &MacOSWindowInfo, params: &Value) {
     }
 }
 
+fn pulse_visible_pointer_for_params(window: &MacOSWindowInfo, params: &Value) {
+    if let Ok((x, y)) = macos_resolve_action_point(window, params) {
+        pulse_visible_pointer(x, y);
+    }
+}
+
 fn move_visible_pointer_to_window_center(window: &MacOSWindowInfo) {
     move_visible_pointer(
         (window.x + (window.width / 2.0)).round() as i64,
@@ -493,15 +502,52 @@ fn move_visible_pointer(x: i64, y: i64) {
     if !visual_pointer_enabled() {
         return;
     }
-    let Some(start) = current_mouse_location() else {
-        warp_mouse(x, y);
-        return;
-    };
+    let mut position = visual_pointer_position()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let start = position
+        .as_ref()
+        .copied()
+        .or_else(current_mouse_location)
+        .unwrap_or((x, y));
+    let bounds = main_display_bounds();
+    let points = macos_visible_pointer_motion_points(start, (x, y), bounds);
+    for (index, (frame_x, frame_y)) in points.iter().copied().enumerate() {
+        if !macos_overlay::move_cursor(frame_x, frame_y) {
+            for (fallback_x, fallback_y) in points[index..].iter().copied() {
+                warp_mouse(fallback_x, fallback_y);
+                thread::sleep(Duration::from_millis(16));
+            }
+            *position = Some((x, y));
+            return;
+        }
+        thread::sleep(Duration::from_millis(16));
+    }
+    *position = Some((x, y));
+}
+
+fn pulse_visible_pointer(x: i64, y: i64) {
+    if visual_pointer_enabled() {
+        let _ = macos_overlay::pulse_cursor(x, y);
+    }
+}
+
+fn visual_pointer_position() -> &'static Mutex<Option<(i64, i64)>> {
+    static POSITION: OnceLock<Mutex<Option<(i64, i64)>>> = OnceLock::new();
+    POSITION.get_or_init(|| Mutex::new(None))
+}
+
+fn move_physical_pointer(x: i64, y: i64) {
+    macos_overlay::hide_cursor();
+    let start = current_mouse_location().unwrap_or((x, y));
     let bounds = main_display_bounds();
     for (frame_x, frame_y) in macos_visible_pointer_motion_points(start, (x, y), bounds) {
         warp_mouse(frame_x, frame_y);
         thread::sleep(Duration::from_millis(16));
     }
+    *visual_pointer_position()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some((x, y));
 }
 
 fn current_mouse_location() -> Option<(i64, i64)> {
@@ -535,11 +581,14 @@ fn warp_mouse(x: i64, y: i64) {
 }
 
 fn move_mouse(x: i64, y: i64, target_pid: c_int, global_pointer_fallback: bool) {
-    move_visible_pointer(x, y);
+    if global_pointer_fallback {
+        move_physical_pointer(x, y);
+    } else {
+        move_visible_pointer(x, y);
+    }
     unsafe {
         let point = cg_point(x, y);
         if global_pointer_fallback {
-            let _ = CGWarpMouseCursorPosition(point);
             post_mouse_event(K_CG_EVENT_MOUSE_MOVED, point, K_CG_MOUSE_BUTTON_LEFT, None);
         } else {
             post_mouse_event(
@@ -571,6 +620,9 @@ fn click_mouse(x: i64, y: i64, secondary: bool, target_pid: c_int, global_pointe
         let event_target = (!global_pointer_fallback).then_some(target_pid);
         post_mouse_event(down, point, button, event_target);
         post_mouse_event(up, point, button, event_target);
+        if !global_pointer_fallback {
+            pulse_visible_pointer(x, y);
+        }
     }
 }
 
@@ -585,9 +637,10 @@ fn drag_mouse(
     unsafe {
         let from = cg_point(from_x, from_y);
         let to = cg_point(to_x, to_y);
-        move_visible_pointer(from_x, from_y);
         if global_pointer_fallback {
-            let _ = CGWarpMouseCursorPosition(from);
+            move_physical_pointer(from_x, from_y);
+        } else {
+            move_visible_pointer(from_x, from_y);
         }
         let event_target = (!global_pointer_fallback).then_some(target_pid);
         post_mouse_event(
@@ -602,7 +655,11 @@ fn drag_mouse(
             K_CG_MOUSE_BUTTON_LEFT,
             event_target,
         );
-        move_visible_pointer(to_x, to_y);
+        if global_pointer_fallback {
+            move_physical_pointer(to_x, to_y);
+        } else {
+            move_visible_pointer(to_x, to_y);
+        }
         post_mouse_event(
             K_CG_EVENT_LEFT_MOUSE_DRAGGED,
             to,
