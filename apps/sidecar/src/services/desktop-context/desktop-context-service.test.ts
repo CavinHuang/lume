@@ -144,6 +144,84 @@ describe("DesktopContextService", () => {
     });
   });
 
+  test("advances through macOS permissions and waits until the computer-use app is ready", async () => {
+    const calls: string[] = [];
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: true,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+      },
+      invokeHost: async (method) => {
+        calls.push(method);
+        if (calls.length === 1) {
+          return {
+            status: "permission_denied",
+            permissionTarget: { appBundleName: "Lume Computer Use.app" },
+            nextPermission: { id: "accessibility", title: "Accessibility" },
+          };
+        }
+        if (calls.length === 2) {
+          return {
+            status: "permission_denied",
+            permissionTarget: { appBundleName: "Lume Computer Use.app" },
+            nextPermission: { id: "screenRecording", title: "Screen & System Audio Recording" },
+          };
+        }
+        if (calls.length === 3) {
+          return {
+            status: "permission_denied",
+            permissionTarget: { appBundleName: "Lume Computer Use.app" },
+            nextPermission: { id: "screenRecording", title: "Screen & System Audio Recording" },
+          };
+        }
+        return {
+          status: "ok",
+          permissionTarget: { appBundleName: "Lume Computer Use.app" },
+          permissions: [
+            { id: "accessibility", status: "granted" },
+            { id: "screenRecording", status: "granted" },
+          ],
+        };
+      },
+    });
+
+    expect(await service.requestPermissions()).toMatchObject({
+      status: "ok",
+      message: "Lume Computer Use.app 已获得桌面控制权限。",
+    });
+    expect(calls).toEqual([
+      "request_permissions",
+      "diagnose_permissions",
+      "request_permissions",
+      "diagnose_permissions",
+    ]);
+  });
+
+  test("normalizes an already-authorized computer-use app to the completed state", async () => {
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: true,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+      },
+      invokeHost: async () => ({
+        status: "ok",
+        message: "macOS permission request was started",
+        permissionTarget: { appBundleName: "Lume Computer Use (Dev).app" },
+      }),
+    });
+
+    expect(await service.requestPermissions()).toMatchObject({
+      status: "ok",
+      message: "Lume Computer Use (Dev).app 已获得桌面控制权限。",
+    });
+  });
+
   test("allows a user-initiated one-shot capture without enabling background collection", async () => {
     const service = createService({ enabled: false, allowedApps: ["chrome.exe"] });
     service.unlock(Buffer.alloc(32, 4));

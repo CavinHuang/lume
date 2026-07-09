@@ -11,6 +11,9 @@ import { DesktopContextStore } from "./desktop-context-store";
 
 type HostInvoke = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 
+const PERMISSION_POLL_INTERVAL_MS = 250;
+const PERMISSION_POLL_ATTEMPTS = 240;
+
 interface DesktopContextStoreLike {
   put(snapshot: DesktopContextSnapshot): void;
   get(id: string): DesktopContextSnapshot | undefined;
@@ -109,7 +112,32 @@ export class DesktopContextService {
   }
 
   async requestPermissions(): Promise<unknown> {
-    return this.#input.invokeHost("request_permissions", {});
+    let latest = asRecord(await this.#input.invokeHost("request_permissions", {}));
+    if (latest.status === "ok") return completedPermissionDiagnostics(latest);
+    if (latest.status !== "permission_denied") return latest;
+
+    let requestedPermissionId = nextPermissionId(latest);
+    for (let attempt = 0; attempt < PERMISSION_POLL_ATTEMPTS; attempt += 1) {
+      await wait(PERMISSION_POLL_INTERVAL_MS);
+      const diagnostics = asRecord(await this.#input.invokeHost("diagnose_permissions", {}));
+      if (diagnostics.status === "ok") return completedPermissionDiagnostics(diagnostics);
+      if (diagnostics.status !== "permission_denied") return diagnostics;
+
+      const nextId = nextPermissionId(diagnostics);
+      if (nextId && nextId !== requestedPermissionId) {
+        latest = asRecord(await this.#input.invokeHost("request_permissions", {}));
+        requestedPermissionId = nextId;
+        if (latest.status === "ok") return completedPermissionDiagnostics(latest);
+        if (latest.status !== "permission_denied") return latest;
+      } else {
+        latest = diagnostics;
+      }
+    }
+
+    return {
+      ...latest,
+      message: "授权仍在等待系统设置确认。完成后请返回 Lume 重新检查。",
+    };
   }
 
   async currentContext(input: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean } = {}): Promise<unknown> {
@@ -267,6 +295,26 @@ export class DesktopContextService {
     const raw = includeScreenshot ? store.get(refreshed.id) : undefined;
     return { status: "ok", snapshot: attachScreenshotPixels(redacted, raw) };
   }
+}
+
+function nextPermissionId(value: Record<string, unknown>): string | undefined {
+  const next = asRecord(value.nextPermission);
+  return typeof next.id === "string" && next.id.trim() ? next.id.trim() : undefined;
+}
+
+function completedPermissionDiagnostics(value: Record<string, unknown>): Record<string, unknown> {
+  const target = asRecord(value.permissionTarget);
+  const appBundleName = typeof target.appBundleName === "string" && target.appBundleName.trim()
+    ? target.appBundleName.trim()
+    : "Lume Computer Use.app";
+  return {
+    ...value,
+    message: `${appBundleName} 已获得桌面控制权限。`,
+  };
+}
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 const LUME_SELF_CONTEXT_MESSAGE = "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。";

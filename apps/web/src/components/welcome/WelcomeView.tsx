@@ -45,6 +45,7 @@ import { attachmentDataUrl, isImageAttachment } from '@/components/agent/AgentAt
 import {
   captureAgentInputDesktopContextState,
   createDesktopContextMessageMetadata,
+  desktopPermissionRequestCompleted,
   desktopPermissionRequestMessage,
   desktopPermissionRequestToastMessage,
 } from '@/components/agent/agent-input-desktop-context'
@@ -391,6 +392,9 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
     try {
       const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS, {})
       setDesktopContextCaptureMessage(desktopPermissionRequestMessage(result))
+      if (desktopPermissionRequestCompleted(result)) {
+        setDesktopContextPermissionRequestAvailable(false)
+      }
       toast.success(desktopPermissionRequestToastMessage(result))
     } catch (error) {
       const message = error instanceof Error && error.message.trim()

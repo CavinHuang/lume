@@ -86,6 +86,7 @@ import { DesktopContextPlusItem } from './DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
 import {
   captureAgentInputDesktopContextState,
+  desktopPermissionRequestCompleted,
   desktopPermissionRequestMessage,
   desktopPermissionRequestToastMessage,
   resolveAgentInputDesktopContextView,
@@ -979,6 +980,9 @@ export function AgentInput({
     try {
       const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS, {})
       setDesktopContextCaptureMessage(desktopPermissionRequestMessage(result))
+      if (desktopPermissionRequestCompleted(result)) {
+        setDesktopContextPermissionRequestAvailable(false)
+      }
       toast.success(desktopPermissionRequestToastMessage(result))
     } catch (error) {
       const message = error instanceof Error && error.message.trim()
@@ -1260,7 +1264,7 @@ export function AgentInput({
                                           onClick={handleRequestDesktopContextPermissions}
                                           className="h-7 rounded-lg px-2 text-xs"
                                         >
-                                          {desktopContextPermissionRequestLoading ? '正在启动授权' : '启动授权引导'}
+                                          {desktopContextPermissionRequestLoading ? '等待系统授权' : '启动授权引导'}
                                         </Button>
                                       ) : null}
                                       <Button

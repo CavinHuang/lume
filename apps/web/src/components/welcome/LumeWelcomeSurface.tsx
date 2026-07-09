@@ -286,7 +286,7 @@ export function LumeWelcomeSurface({
                                     onClick={() => void onRequestDesktopContextPermissions()}
                                     className="mt-2 h-7 rounded-lg px-2 text-xs"
                                   >
-                                    {desktopContextPermissionRequestLoading ? '正在启动授权' : '启动授权引导'}
+                                    {desktopContextPermissionRequestLoading ? '等待系统授权' : '启动授权引导'}
                                   </Button>
                                 ) : null}
                               </div>

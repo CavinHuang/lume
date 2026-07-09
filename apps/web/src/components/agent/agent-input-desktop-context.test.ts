@@ -4,6 +4,7 @@ import {
   captureAgentInputDesktopContextState,
   captureAgentInputDesktopContextTarget,
   createDesktopContextMessageMetadata,
+  desktopPermissionRequestCompleted,
   desktopPermissionRequestMessage,
   desktopPermissionRequestToastMessage,
   resolveAgentInputDesktopContextView,
@@ -236,6 +237,18 @@ describe('agent-input desktop context helpers', () => {
         appBundleName: 'Lume Computer Use (Dev).app',
       },
     })).toBe('已启动 Lume Computer Use (Dev).app 授权引导')
+    expect(desktopPermissionRequestToastMessage({
+      status: 'ok',
+      permissionTarget: {
+        appBundleName: 'Lume Computer Use.app',
+      },
+    })).toBe('Lume Computer Use.app 授权已完成')
+  })
+
+  test('recognizes only completed permission onboarding results', () => {
+    expect(desktopPermissionRequestCompleted({ status: 'ok' })).toBe(true)
+    expect(desktopPermissionRequestCompleted({ status: 'permission_denied' })).toBe(false)
+    expect(desktopPermissionRequestCompleted(undefined)).toBe(false)
   })
 
   test('creates non-sensitive message metadata from the selected app context', () => {

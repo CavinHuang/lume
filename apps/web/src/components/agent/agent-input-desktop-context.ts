@@ -93,9 +93,17 @@ export function desktopPermissionRequestMessage(result: unknown): string {
 
 export function desktopPermissionRequestToastMessage(result: unknown): string {
   const value = result && typeof result === 'object' && !Array.isArray(result)
-    ? result as { permissionTarget?: { appBundleName?: unknown; appName?: unknown } }
+    ? result as { status?: unknown; permissionTarget?: { appBundleName?: unknown; appName?: unknown } }
     : undefined
-  return `已启动 ${permissionTargetName(value?.permissionTarget)} 授权引导`
+  const appName = permissionTargetName(value?.permissionTarget)
+  return value?.status === 'ok'
+    ? `${appName} 授权已完成`
+    : `已启动 ${appName} 授权引导`
+}
+
+export function desktopPermissionRequestCompleted(result: unknown): boolean {
+  return Boolean(result && typeof result === 'object' && !Array.isArray(result)
+    && (result as { status?: unknown }).status === 'ok')
 }
 
 export function resolveAgentInputDesktopContextView(input: {
