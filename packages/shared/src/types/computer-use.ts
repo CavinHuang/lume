@@ -174,7 +174,22 @@ export interface DesktopAssistantSettings {
 }
 
 export interface DesktopAssistantStatus {
-  host: { status: DesktopActionStatus; message?: string };
+  host: {
+    status: DesktopActionStatus;
+    message?: string;
+    permissionTarget?: {
+      appName?: string;
+      appBundleName?: string;
+      bundleId?: string;
+      authorizationSubject?: string;
+    };
+    permissions?: Array<{
+      id?: string;
+      title?: string;
+      status?: string;
+      settingsUrl?: string;
+    }>;
+  };
   store: { unlocked: boolean; items: number; bytes: number };
 }
 

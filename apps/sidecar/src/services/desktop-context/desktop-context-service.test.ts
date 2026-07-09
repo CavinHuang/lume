@@ -253,6 +253,58 @@ describe("DesktopContextService", () => {
     });
   });
 
+  test("includes the macOS computer-use permission target in status diagnostics", async () => {
+    const calls: string[] = [];
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: true,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+      },
+      invokeHost: async (method) => {
+        calls.push(method);
+        if (method === "diagnose_permissions") {
+          return {
+            status: "permission_denied",
+            message: "missing macOS permissions",
+            permissionTarget: {
+              appName: "Lume Computer Use",
+              appBundleName: "Lume Computer Use.app",
+              bundleId: "com.lume.computer-use",
+              authorizationSubject: "appBundle",
+            },
+            permissions: [
+              { id: "accessibility", title: "Accessibility", status: "missing" },
+              { id: "screenRecording", title: "Screen & System Audio Recording", status: "granted" },
+            ],
+          };
+        }
+        throw new Error(`unexpected host method: ${method}`);
+      },
+    });
+
+    expect(await service.getStatus()).toEqual({
+      host: {
+        status: "permission_denied",
+        message: "missing macOS permissions",
+        permissionTarget: {
+          appName: "Lume Computer Use",
+          appBundleName: "Lume Computer Use.app",
+          bundleId: "com.lume.computer-use",
+          authorizationSubject: "appBundle",
+        },
+        permissions: [
+          { id: "accessibility", title: "Accessibility", status: "missing" },
+          { id: "screenRecording", title: "Screen & System Audio Recording", status: "granted" },
+        ],
+      },
+      store: { unlocked: false, items: 0, bytes: 0 },
+    });
+    expect(calls).toEqual(["diagnose_permissions"]);
+  });
+
   test("advances through macOS permissions and waits until the computer-use app is ready", async () => {
     const calls: string[] = [];
     const service = new DesktopContextService({

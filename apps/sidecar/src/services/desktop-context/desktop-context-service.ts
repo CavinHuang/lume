@@ -6,7 +6,7 @@ import type {
   DesktopProactiveProposalCreatedNotification,
   DesktopProactiveProposalStatus,
 } from "@lume/shared";
-import { DESKTOP_CONTEXT_IPC_CHANNELS } from "@lume/shared";
+import { DESKTOP_CONTEXT_IPC_CHANNELS, isDesktopActionStatus } from "@lume/shared";
 import { DesktopContextStore } from "./desktop-context-store";
 
 type HostInvoke = (method: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -212,13 +212,13 @@ export class DesktopContextService {
   }
 
   async getStatus(): Promise<unknown> {
-    const host = asRecord(await this.#input.invokeHost("list_windows", {}));
+    const diagnostics = asRecord(await this.#input.invokeHost("diagnose_permissions", {}));
+    const host = diagnostics.status === "unavailable"
+      ? asRecord(await this.#input.invokeHost("list_windows", {}).catch(() => diagnostics))
+      : diagnostics;
     const stats = this.#store?.stats() ?? { items: 0, bytes: 0 };
     return {
-      host: {
-        status: typeof host.status === "string" ? host.status : "unavailable",
-        ...(typeof host.message === "string" ? { message: host.message } : {}),
-      },
+      host: desktopAssistantHostStatus(host, diagnostics),
       store: { unlocked: this.#key !== null, ...stats },
     };
   }
@@ -581,4 +581,21 @@ function attachDesktopPermissionCaptureMessage(response: Record<string, any>): R
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function desktopAssistantHostStatus(
+  host: Record<string, any>,
+  diagnostics: Record<string, any>,
+): Record<string, unknown> {
+  const status = isDesktopActionStatus(host.status) ? host.status : "unavailable";
+  const permissionTarget = asRecord(diagnostics.permissionTarget);
+  const permissions = Array.isArray(diagnostics.permissions)
+    ? diagnostics.permissions.map(asRecord)
+    : undefined;
+  return {
+    status,
+    ...(typeof host.message === "string" ? { message: host.message } : {}),
+    ...(Object.keys(permissionTarget).length > 0 ? { permissionTarget } : {}),
+    ...(permissions ? { permissions } : {}),
+  };
 }

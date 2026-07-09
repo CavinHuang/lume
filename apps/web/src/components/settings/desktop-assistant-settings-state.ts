@@ -13,6 +13,23 @@ export function buildDesktopAssistantDiagnostics({
   title: string
   details: string[]
 } {
+  if (status.host.status === 'permission_denied' && status.host.permissionTarget) {
+    const appName = permissionTargetName(status.host.permissionTarget)
+    const missingPermissions = (status.host.permissions ?? [])
+      .filter((permission) => permission.status === 'missing')
+      .map((permission) => permission.title?.trim() || permission.id?.trim())
+      .filter((permission): permission is string => Boolean(permission))
+    return {
+      tone: 'error',
+      title: `需要授权 ${appName}`,
+      details: [
+        `授权对象：${appName}（不是 Lume 主应用）。`,
+        missingPermissions.length > 0
+          ? `缺少权限：${missingPermissions.join('、')}。`
+          : '请在 macOS 系统设置中补齐 Accessibility 和 Screen Recording 权限。',
+      ],
+    }
+  }
   if (status.host.status !== 'ok') {
     return {
       tone: 'error',
@@ -46,4 +63,8 @@ export function buildDesktopAssistantDiagnostics({
     title: '桌面助手运行正常',
     details: ['Host 已连接，本地加密存储可用。'],
   }
+}
+
+function permissionTargetName(target: NonNullable<DesktopAssistantStatus['host']['permissionTarget']>): string {
+  return target.appBundleName?.trim() || target.appName?.trim() || 'Lume Computer Use.app'
 }

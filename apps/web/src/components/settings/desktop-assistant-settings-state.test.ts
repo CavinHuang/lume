@@ -43,6 +43,35 @@ describe('desktop assistant settings state', () => {
     })
   })
 
+  test('shows the macOS computer-use permission target before generic host failures', () => {
+    expect(buildDesktopAssistantDiagnostics({
+      settings: enabledSettings,
+      status: {
+        ...readyStatus,
+        host: {
+          status: 'permission_denied',
+          message: 'missing macOS permissions',
+          permissionTarget: {
+            appBundleName: 'Lume Computer Use.app',
+            bundleId: 'com.lume.computer-use',
+            authorizationSubject: 'appBundle',
+          },
+          permissions: [
+            { id: 'accessibility', title: 'Accessibility', status: 'missing' },
+            { id: 'screenRecording', title: 'Screen & System Audio Recording', status: 'granted' },
+          ],
+        },
+      } as DesktopAssistantStatus,
+    })).toEqual({
+      tone: 'error',
+      title: '需要授权 Lume Computer Use.app',
+      details: [
+        '授权对象：Lume Computer Use.app（不是 Lume 主应用）。',
+        '缺少权限：Accessibility。',
+      ],
+    })
+  })
+
   test('explains disabled collection and empty allowlist before reporting ready', () => {
     expect(buildDesktopAssistantDiagnostics({
       settings: { ...enabledSettings, enabled: false },
