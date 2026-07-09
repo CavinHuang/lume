@@ -58,6 +58,7 @@ mock.module('@/lib/desktop-api', () => ({
     ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
   agentSend: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopAgentSend?.(...args) ?? Promise.resolve(undefined),
+  createThread: () => Promise.resolve({ id: 'thread-1' }),
   clearCache: () => Promise.resolve({ cleared: [], skipped: [] }),
   copyFile: () => Promise.resolve(undefined),
   openFileDialog: () =>

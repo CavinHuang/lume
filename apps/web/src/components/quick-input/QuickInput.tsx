@@ -93,6 +93,11 @@ export function QuickInput() {
     setMessageMetadata(createDesktopContextMessageMetadata(target))
   }
 
+  const handleClearDesktopContextTarget = () => {
+    setDesktopContextTarget(undefined)
+    setMessageMetadata(undefined)
+  }
+
   // Esc 隐藏窗口
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -133,6 +138,7 @@ export function QuickInput() {
             }}
             desktopContextTarget={desktopContextTarget}
             onSelectDesktopContextTarget={handleSelectDesktopContextTarget}
+            onClearDesktopContextTarget={handleClearDesktopContextTarget}
           />
         ) : (
           <div className="h-full grid place-items-center text-[12px] text-muted-foreground">准备会话…</div>
