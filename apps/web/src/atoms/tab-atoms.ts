@@ -36,3 +36,11 @@ export function setTabDesktopContextTarget(tabs: Tab[], tabId: string, target: D
       : tab
   ))
 }
+
+export function clearTabDesktopContextTarget(tabs: Tab[], tabId: string): Tab[] {
+  return tabs.map((tab) => {
+    if (tab.id !== tabId || !tab.desktopContextTarget) return tab
+    const { desktopContextTarget: _desktopContextTarget, ...rest } = tab
+    return rest
+  })
+}

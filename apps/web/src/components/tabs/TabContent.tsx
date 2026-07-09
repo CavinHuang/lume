@@ -1,5 +1,5 @@
 import { useAtomValue, useSetAtom } from 'jotai'
-import { tabsAtom, activeTabIdAtom, setTabDesktopContextTarget } from '@/atoms'
+import { tabsAtom, activeTabIdAtom, clearTabDesktopContextTarget, setTabDesktopContextTarget } from '@/atoms'
 import { AgentView } from '@/components/agent/AgentView'
 import { AutomationManagementView } from '@/components/automation/AutomationManagementView'
 import { LumeView } from '@/components/lume/LumeView'
@@ -34,6 +34,9 @@ export function TabContent() {
         desktopContextTarget={activeTab.desktopContextTarget}
         onSelectDesktopContextTarget={(target) => {
           setTabs((prev) => setTabDesktopContextTarget(prev, activeTab.id, target))
+        }}
+        onClearDesktopContextTarget={() => {
+          setTabs((prev) => clearTabDesktopContextTarget(prev, activeTab.id))
         }}
       />
     )

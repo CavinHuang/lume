@@ -113,6 +113,7 @@ interface AgentInputProps {
   onMessageMetadataConsumed?: () => void
   desktopContextTarget?: DesktopContextTarget
   onSelectDesktopContextTarget?: (target: DesktopContextTarget) => void
+  onClearDesktopContextTarget?: () => void
 }
 
 export interface PendingMessageAttachment {
@@ -227,6 +228,7 @@ export function AgentInput({
   onMessageMetadataConsumed = () => undefined,
   desktopContextTarget,
   onSelectDesktopContextTarget,
+  onClearDesktopContextTarget,
 }: AgentInputProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -1166,7 +1168,7 @@ export function AgentInput({
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <DesktopContextSelectionChip
                         target={selectedDesktopContextTarget}
-                        onClear={desktopContextTarget ? undefined : () => setLocalDesktopContextTarget(undefined)}
+                        onClear={desktopContextTarget ? onClearDesktopContextTarget : () => setLocalDesktopContextTarget(undefined)}
                       />
                     </div>
                   ) : null}

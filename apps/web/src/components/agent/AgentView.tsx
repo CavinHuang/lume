@@ -44,6 +44,7 @@ interface AgentViewProps {
   onMessageMetadataConsumed?: () => void
   desktopContextTarget?: DesktopContextTarget
   onSelectDesktopContextTarget?: (target: DesktopContextTarget) => void
+  onClearDesktopContextTarget?: () => void
 }
 
 export function AgentView({
@@ -53,6 +54,7 @@ export function AgentView({
   onMessageMetadataConsumed,
   desktopContextTarget,
   onSelectDesktopContextTarget,
+  onClearDesktopContextTarget,
 }: AgentViewProps) {
   const streamingState = useAtomValue(agentStreamingStatesFamily(threadId)) ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveFamily(threadId))
@@ -253,6 +255,7 @@ export function AgentView({
                   onMessageMetadataConsumed={onMessageMetadataConsumed}
                   desktopContextTarget={desktopContextTarget}
                   onSelectDesktopContextTarget={onSelectDesktopContextTarget}
+                  onClearDesktopContextTarget={onClearDesktopContextTarget}
                 />
               </div>
               {activeTaskApproval && (
