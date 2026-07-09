@@ -249,7 +249,7 @@ function registerFileProtocol() {
     if (resolved.kind === 'forbidden') return new Response('Forbidden', { status: 403 })
     if (resolved.kind === 'notfound') return new Response('Not Found', { status: 404 })
     try {
-      return net.fetch(pathToFileURL(resolved.absPath))
+      return net.fetch(pathToFileURL(resolved.absPath).toString())
     } catch {
       return new Response('Internal Error', { status: 500 })
     }
