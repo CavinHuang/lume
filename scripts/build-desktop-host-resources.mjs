@@ -10,6 +10,8 @@ const TARGET_ID = resolveTargetId(process.platform, process.arch);
 const BINARY_NAME = process.platform === "win32" ? "lume_desktop_host.exe" : "lume_desktop_host";
 const BUILT_BINARY = resolve(CRATE_DIR, "target", "release", BINARY_NAME);
 const CURSOR_LICENSE = resolve(CRATE_DIR, "assets", "LICENSE.open-codex-computer-use");
+const MAC_BUNDLE_ICON_NAME = "LumeComputerUse.icns";
+const MAC_BUNDLE_ICON_SOURCE = resolve(REPO_ROOT, "apps", "desktop", "assets", "icon.icns");
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
 const MAC_BUNDLE_VARIANT = process.env.LUME_COMPUTER_USE_BUNDLE_VARIANT === "dev" ? "dev" : "release";
 const MAC_BUNDLE_CONFIG = MAC_BUNDLE_VARIANT === "dev"
@@ -70,6 +72,7 @@ function writeMacAppBundle() {
   copyFileSync(BUILT_BINARY, OUT_FILE);
   chmodSync(OUT_FILE, 0o755);
   copyFileSync(CURSOR_LICENSE, resolve(resourcesDir, "LICENSE.open-codex-computer-use"));
+  copyFileSync(MAC_BUNDLE_ICON_SOURCE, resolve(resourcesDir, MAC_BUNDLE_ICON_NAME));
   writeFileSync(resolve(contentsDir, "Info.plist"), macInfoPlist());
   signMacAppBundle(appRoot);
   console.error(`[desktop-host] wrote ${appRoot}`);
@@ -84,6 +87,8 @@ function macInfoPlist() {
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>${BINARY_NAME}</string>
+  <key>CFBundleIconFile</key>
+  <string>${MAC_BUNDLE_ICON_NAME}</string>
   <key>CFBundleIdentifier</key>
   <string>${MAC_BUNDLE_IDENTIFIER}</string>
   <key>CFBundleInfoDictionaryVersion</key>

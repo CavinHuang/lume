@@ -98,6 +98,9 @@ test('desktop-host resource build packages macOS as a separate computer-use app 
   assert.match(script, /LumeComputerUseAppVariant/)
   assert.match(script, /NSPrincipalClass/)
   assert.match(script, /NSApplication/)
+  assert.match(script, /CFBundleIconFile/)
+  assert.match(script, /LumeComputerUse\.icns/)
+  assert.match(script, /apps", "desktop", "assets", "icon\.icns"/)
 })
 
 test('node-repl resource build clears generated output before writing resources', () => {
