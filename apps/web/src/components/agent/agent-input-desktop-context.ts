@@ -57,6 +57,32 @@ export async function captureAgentInputDesktopContextTarget(
   return state.status === 'ready' ? state.target : undefined
 }
 
+export async function refreshAgentInputDesktopContextState(
+  sidecarCall: SidecarCall,
+  target: DesktopContextTarget,
+): Promise<AgentInputDesktopContextCaptureState> {
+  try {
+    const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_WINDOW, {
+      windowId: target.window.id,
+      userInitiated: true,
+    })
+    const refreshed = desktopContextCaptureToTarget(result)
+    if (refreshed) return desktopContextTargetState(refreshed)
+    return {
+      status: 'unavailable',
+      message: desktopContextCaptureMessage(result),
+      ...(desktopContextPermissionRequestAvailable(result) ? { permissionRequestAvailable: true } : {}),
+    }
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      message: error instanceof Error && error.message.trim()
+        ? error.message
+        : '桌面上下文刷新失败',
+    }
+  }
+}
+
 export function createDesktopContextMessageMetadata(target: DesktopContextTarget): Record<string, unknown> {
   return {
     desktopContextSnapshotId: target.snapshotId,

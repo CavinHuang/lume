@@ -89,6 +89,7 @@ import {
   desktopPermissionRequestCompleted,
   desktopPermissionRequestMessage,
   desktopPermissionRequestToastMessage,
+  refreshAgentInputDesktopContextState,
   resolveAgentInputDesktopContextView,
   resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
@@ -716,6 +717,27 @@ export function AgentInput({
 
     setLocalSending(true)
     const text = rawText || '请解读这些附件。'
+    let sendMessageMetadata = effectiveMessageMetadata
+    if (selectedDesktopContextTarget) {
+      const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
+      if (state.status !== 'ready') {
+        setDesktopContextCaptureMessage(state.message)
+        setDesktopContextPermissionRequestAvailable(state.permissionRequestAvailable === true)
+        toast.error(`当前应用上下文刷新失败：${state.message}`)
+        setLocalSending(false)
+        return
+      }
+      sendMessageMetadata = resolveAgentInputDesktopMessageMetadata({
+        localTarget: state.target,
+        messageMetadata,
+      })
+      setCapturedDesktopContextTarget(state.target)
+      if (desktopContextTarget) {
+        onSelectDesktopContextTarget?.(state.target)
+      } else {
+        setLocalDesktopContextTarget(state.target)
+      }
+    }
     let messageAttachments: AgentMessageAttachmentInput[] = []
     try {
       if (pendingAttachments.length > 0) {
@@ -758,7 +780,7 @@ export function AgentInput({
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
-        ...(effectiveMessageMetadata ? { messageMetadata: effectiveMessageMetadata } : {}),
+        ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
       onMessageMetadataConsumed()
@@ -803,6 +825,9 @@ export function AgentInput({
     onMessageMetadataConsumed,
     pendingAttachments,
     effectiveMessageMetadata,
+    messageMetadata,
+    desktopContextTarget,
+    onSelectDesktopContextTarget,
     permissionMode,
     setRuntimeEvents,
     setStreamingStates,
@@ -810,6 +835,7 @@ export function AgentInput({
     streaming,
     thinkingLevel,
     threadId,
+    selectedDesktopContextTarget,
     clearDraftState,
     pushHistoryEntry,
   ])

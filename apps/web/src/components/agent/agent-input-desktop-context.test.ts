@@ -7,6 +7,7 @@ import {
   desktopPermissionRequestCompleted,
   desktopPermissionRequestMessage,
   desktopPermissionRequestToastMessage,
+  refreshAgentInputDesktopContextState,
   resolveAgentInputDesktopContextView,
   resolveAgentInputDesktopMessageMetadata,
 } from './agent-input-desktop-context'
@@ -261,6 +262,53 @@ describe('agent-input desktop context helpers', () => {
       desktopContextSnapshotId: 'snap-current',
       desktopApp: { id: 'wechat.exe', name: '微信' },
       desktopWindow: { id: 'win:1', title: '项目群' },
+    })
+  })
+
+  test('refreshes the selected app context from its exact window before sending', async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = []
+    const state = await refreshAgentInputDesktopContextState(async (method, params) => {
+      calls.push({ method, params })
+      return {
+        status: 'ok',
+        snapshotId: 'snap-fresh',
+        app: { id: 'wechat.exe', name: '微信' },
+        window: { id: 'win:wechat', title: '项目群' },
+        capturedAt: 456,
+      }
+    }, {
+      snapshotId: 'snap-old',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '项目群' },
+      capturedAt: 123,
+    })
+
+    expect(calls).toEqual([{
+      method: DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_WINDOW,
+      params: { windowId: 'win:wechat', userInitiated: true },
+    }])
+    expect(state).toEqual({
+      status: 'ready',
+      target: {
+        snapshotId: 'snap-fresh',
+        app: { id: 'wechat.exe', name: '微信' },
+        window: { id: 'win:wechat', title: '项目群' },
+        capturedAt: 456,
+      },
+    })
+  })
+
+  test('returns diagnostics when the selected app context cannot be refreshed', async () => {
+    expect(await refreshAgentInputDesktopContextState(async () => ({
+      status: 'stale_target',
+      message: 'desktop context target changed',
+    }), {
+      snapshotId: 'snap-old',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '项目群' },
+    })).toEqual({
+      status: 'unavailable',
+      message: 'desktop context target changed',
     })
   })
 
