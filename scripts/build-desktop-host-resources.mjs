@@ -104,6 +104,8 @@ function macInfoPlist() {
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
   <key>LumeComputerUseAppVariant</key>
   <string>${MAC_BUNDLE_VARIANT}</string>
 </dict>

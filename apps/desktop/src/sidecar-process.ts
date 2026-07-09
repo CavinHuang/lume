@@ -1,4 +1,4 @@
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 export const SIDECAR_BUNDLE_NAME = 'index.mjs'
 export const NATIVE_BINARY_NAME = 'lume-natives.node'
@@ -130,7 +130,18 @@ export function createDesktopHostSpawnConfig({
 }
 
 function desktopHostMacAppPathFromExecutable(binaryPath: string): string {
-  return dirname(dirname(dirname(binaryPath)))
+  const macosDir = dirname(binaryPath)
+  const contentsDir = dirname(macosDir)
+  const appRoot = dirname(contentsDir)
+  const appName = basename(appRoot)
+  if (
+    basename(macosDir) !== 'MacOS'
+    || basename(contentsDir) !== 'Contents'
+    || !appName.endsWith('.app')
+  ) {
+    throw new Error('macOS desktop host must be launched from Lume Computer Use.app')
+  }
+  return appRoot
 }
 
 export function createUtilityProcessSidecarForkConfig({ sidecarScriptPath, env }) {
