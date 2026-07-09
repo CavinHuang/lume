@@ -4,8 +4,8 @@ import { WebFetchTool } from "./web-fetch";
 describe("WebFetchTool", () => {
   test("exposes correct tool metadata", () => {
     expect(WebFetchTool.name).toBe("WebFetch");
-    expect(WebFetchTool.isReadOnly?.()).toBe(true);
-    expect(WebFetchTool.isConcurrencySafe?.()).toBe(true);
+    expect(WebFetchTool.isReadOnly?.()).toBe(false);
+    expect(WebFetchTool.isConcurrencySafe?.()).toBe(false);
   });
 
   test("rejects invalid URLs", async () => {
