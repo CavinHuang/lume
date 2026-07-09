@@ -306,7 +306,8 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
   },
   isRuntimeModelFallbackRetryable: isMockRuntimeModelFallbackRetryable,
   resolveRuntimeModelAttemptParams: resolveMockRuntimeModelAttemptParams,
-  stopAgentRuntime: () => undefined
+  stopAgentRuntime: () => undefined,
+  isAgentRuntimeSessionActive: () => false
 }));
 
 // 标题 LLM 调用经由 providers.fetchTitle；用 spy 观测是否被触发
@@ -375,6 +376,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -466,6 +468,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
     await drainServiceRuntimeForTest();
@@ -498,6 +501,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -538,6 +542,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -569,6 +574,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -657,6 +663,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -743,6 +750,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -778,6 +786,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -805,6 +814,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -825,6 +835,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -880,6 +891,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -949,6 +961,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -1011,6 +1024,7 @@ describe("agent-service", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -1052,6 +1066,7 @@ describe("agent-service", () => {
       },
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
