@@ -73,6 +73,7 @@ import {
   getSidecarScriptPath,
 } from './sidecar-process'
 import * as trayManager from './tray-manager'
+import { PageRenderer } from './page-renderer'
 
 const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -91,6 +92,8 @@ const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
 
 let mainWindow = null
 let wereadWindow = null
+// 隐藏渲染窗口复用实例：render:request 拦截后调用其 renderUrl 并经 render:result 回送 sidecar。
+let pageRenderer: PageRenderer | null = null
 let isQuitting = false
 let windowBehavior = {
   minimizeToTray: false,
@@ -152,9 +155,48 @@ protocol.registerSchemesAsPrivileged([
 
 const sidecarHost = createSidecarHost({
   onNotification(method, params) {
+    // render:request 是 reverse-RPC：sidecar 请求 main 渲染 URL。不转发给 renderer，
+    // 而是交给 PageRenderer 处理，完成后经 render:result 把 html|error 回送 sidecar。
+    if (method === 'render:request' && params && typeof params.reqId === 'string') {
+      void handleRenderRequest(params)
+      return
+    }
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
 })
+
+/**
+ * 处理 sidecar 发来的 render:request：调用 PageRenderer 渲染 URL，成功/失败均经
+ * render:result 回送 sidecar（成功带 html+finalUrl+status，失败带 error{code,message}）。
+ * sidecarHost 为模块级 const，render 请求只在 sidecar 启动后才会到达，故闭包引用安全。
+ */
+async function handleRenderRequest(params: {
+  reqId: string
+  url: string
+  options?: { timeoutMs?: number; waitForSelector?: string }
+}) {
+  const { reqId, url, options } = params
+  try {
+    if (!pageRenderer) throw new Error('renderer not ready')
+    const result = await pageRenderer.renderUrl(url, options ?? {})
+    await sidecarHost.call('render:result', {
+      reqId,
+      html: result.html,
+      finalUrl: result.finalUrl,
+      status: result.status,
+    })
+  } catch (err: any) {
+    const code = String(err?.message || '').includes('timeout')
+      ? 'render_timeout'
+      : 'render_failed'
+    await sidecarHost
+      .call('render:result', {
+        reqId,
+        error: { code, message: err?.message ?? 'render error' },
+      })
+      .catch(() => {})
+  }
+}
 
 function emitRendererEvent(channel, payload) {
   for (const win of [mainWindow, quickInputWindow]) {
@@ -1050,6 +1092,7 @@ app.whenReady().then(async () => {
   }
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
+  pageRenderer = new PageRenderer()
   await createMainWindow()
   logDesktopStartup('main window ready')
   // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
