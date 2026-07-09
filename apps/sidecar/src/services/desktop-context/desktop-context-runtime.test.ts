@@ -94,4 +94,66 @@ describe("resolveDesktopContextProjection", () => {
 
     expect(result).toBeUndefined();
   });
+
+  test("refreshes an expired snapshot from the desktop window retained in message metadata", async () => {
+    const hostCalls: unknown[] = [];
+    const result = await resolveDesktopContextProjection(
+      {
+        desktopContextSnapshotId: "expired",
+        desktopApp: { id: "wechat.exe", name: "微信" },
+        desktopWindow: { id: "win:wechat", title: "项目群" },
+      },
+      {
+        currentContext: async () => ({ status: "unavailable" }),
+      },
+      async (method, input) => {
+        hostCalls.push({ method, input });
+        return {
+          status: "ok",
+          capturedAt: 200,
+          window: { id: "win:wechat", appId: "wechat.exe", title: "项目群", focused: true },
+          screenshots: [{
+            id: "shot-fresh",
+            width: 640,
+            height: 480,
+            origin: { x: 0, y: 0 },
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+          }],
+          accessibility: {
+            selectedText: "客户的问题",
+            documentText: "客户问今天能不能交付",
+          },
+        };
+      },
+    );
+
+    expect(hostCalls).toEqual([{
+      method: "get_window_state",
+      input: { windowId: "win:wechat", includeScreenshot: true },
+    }]);
+    expect(result).toEqual({
+      snapshot: {
+        id: "expired",
+        app: { id: "wechat.exe", name: "微信" },
+        window: { id: "win:wechat", appId: "wechat.exe", title: "项目群", focused: true },
+        capturedAt: 200,
+        selectedText: "客户的问题",
+        visibleText: "客户问今天能不能交付",
+        screenshots: [{
+          id: "shot-fresh",
+          width: 640,
+          height: 480,
+          origin: { x: 0, y: 0 },
+          mimeType: "image/png",
+        }],
+        untrusted: true,
+      },
+      imageBlocks: [{
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+        _meta: { screenshotId: "shot-fresh", persist: false },
+      }],
+    });
+  });
 });

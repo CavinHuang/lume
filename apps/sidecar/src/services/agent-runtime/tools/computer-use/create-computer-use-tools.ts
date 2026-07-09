@@ -78,6 +78,11 @@ export function createComputerUseMcpTools(input: {
   threadId?: string;
   runId?: string;
   boundDesktopContextSnapshotId?: string;
+  boundDesktopWindow?: {
+    windowId: string;
+    appId?: string;
+    appName?: string;
+  };
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
 } = {}): ToolDefinition[] {
@@ -122,7 +127,11 @@ export function createComputerUseMcpTools(input: {
             && input.boundDesktopContextSnapshotId
             && !stringValue(args.windowId)
           ) {
-            const boundTarget = await resolveBoundDesktopTarget(invoke, input.boundDesktopContextSnapshotId);
+            const boundTarget = await resolveBoundDesktopTarget(
+              invoke,
+              input.boundDesktopContextSnapshotId,
+              input.boundDesktopWindow,
+            );
             if (boundTarget.status !== "ok") {
               return toolResult(context.toolUseId, boundTarget.result);
             }
@@ -134,7 +143,11 @@ export function createComputerUseMcpTools(input: {
             && input.boundDesktopContextSnapshotId
             && !stringValue(args.windowId)
           ) {
-            const boundTarget = await resolveBoundDesktopTarget(invoke, input.boundDesktopContextSnapshotId);
+            const boundTarget = await resolveBoundDesktopTarget(
+              invoke,
+              input.boundDesktopContextSnapshotId,
+              input.boundDesktopWindow,
+            );
             if (boundTarget.status !== "ok") {
               return toolResult(context.toolUseId, boundTarget.result);
             }
@@ -213,7 +226,18 @@ export function createComputerUseMcpTools(input: {
 async function resolveBoundDesktopTarget(
   invoke: ComputerUseInvoke,
   snapshotId: string,
+  fallback?: { windowId: string; appId?: string; appName?: string },
 ): Promise<{ status: "ok"; args: Record<string, unknown> } | { status: "blocked"; result: unknown }> {
+  if (fallback?.windowId) {
+    return {
+      status: "ok",
+      args: {
+        windowId: fallback.windowId,
+        ...(fallback.appId ? { appId: fallback.appId } : {}),
+        ...(fallback.appName ? { appName: fallback.appName } : {}),
+      },
+    };
+  }
   const response = asRecord(await invoke("current_context", { snapshotId }));
   const snapshot = asRecord(response.snapshot);
   const window = asRecord(snapshot.window);

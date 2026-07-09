@@ -299,6 +299,29 @@ describe("createComputerUseMcpTools", () => {
     ]);
   });
 
+  test("uses retained window metadata when the bound snapshot has expired", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      boundDesktopContextSnapshotId: "expired",
+      boundDesktopWindow: {
+        windowId: "win:wechat",
+        appId: "wechat.exe",
+        appName: "微信",
+      },
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        return { status: "ok", window: { id: "win:wechat" } };
+      },
+    });
+    const getWindowState = tools.find((candidate) => candidate.name === "mcp__computer_use__get_window_state")!;
+
+    await getWindowState.call({ includeScreenshot: true }, { toolUseId: "tool-stale-snapshot" } as never);
+
+    expect(calls).toEqual([
+      { method: "get_window_state", input: { windowId: "win:wechat", includeScreenshot: true } },
+    ]);
+  });
+
   test("anchors bound window read tools when windowId is omitted", async () => {
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const tools = createComputerUseMcpTools({

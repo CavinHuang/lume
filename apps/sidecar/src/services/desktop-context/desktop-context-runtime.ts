@@ -94,20 +94,60 @@ export async function invokeComputerUse(method: string, input: Record<string, un
 export async function resolveDesktopContextProjection(
   messageMetadata: Record<string, unknown> | undefined,
   service: Pick<typeof desktopContextRpcService, "currentContext"> = desktopContextRpcService,
+  invoke: (method: string, input: Record<string, unknown>) => Promise<unknown> = invokeComputerUse,
 ): Promise<unknown | undefined> {
-  const snapshotId = messageMetadata?.desktopContextSnapshotId;
+  if (!messageMetadata) return undefined;
+  const snapshotId = messageMetadata.desktopContextSnapshotId;
   if (typeof snapshotId !== "string" || !snapshotId.trim()) return undefined;
 
   const result = asRecord(await service.currentContext({ snapshotId, includeScreenshot: true }));
-  return result.status === "ok" && result.snapshot
-    ? splitDesktopContextImages(result.snapshot)
-    : undefined;
+  if (result.status === "ok" && result.snapshot) {
+    return splitDesktopContextImages(result.snapshot);
+  }
+
+  const desktopWindow = asRecord(messageMetadata?.desktopWindow);
+  const windowId = stringValue(desktopWindow.id);
+  if (!windowId) return undefined;
+  const state = asRecord(await invoke("get_window_state", { windowId, includeScreenshot: true }));
+  if (state.status !== "ok") return undefined;
+  return splitDesktopContextImages(snapshotFromWindowState(snapshotId, messageMetadata, state));
+}
+
+function snapshotFromWindowState(
+  snapshotId: string,
+  messageMetadata: Record<string, unknown>,
+  state: Record<string, unknown>,
+): Record<string, unknown> {
+  const app = asRecord(messageMetadata.desktopApp);
+  const window = asRecord(state.window);
+  const accessibility = asRecord(state.accessibility);
+  return {
+    id: snapshotId,
+    app: {
+      id: stringValue(app.id) ?? stringValue(window.appId) ?? "unknown",
+      name: stringValue(app.name) ?? stringValue(window.appName) ?? "Unknown app",
+    },
+    window,
+    ...(typeof state.capturedAt === "number" ? { capturedAt: state.capturedAt } : {}),
+    ...(stringValue(accessibility.selectedText)
+      ? { selectedText: stringValue(accessibility.selectedText) }
+      : {}),
+    ...(stringValue(accessibility.documentText)
+      ? { visibleText: stringValue(accessibility.documentText) }
+      : {}),
+    ...(Array.isArray(state.screenshots) ? { screenshots: state.screenshots } : {}),
+    untrusted: true,
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function splitDesktopContextImages(snapshot: unknown): { snapshot: unknown; imageBlocks?: unknown[] } {

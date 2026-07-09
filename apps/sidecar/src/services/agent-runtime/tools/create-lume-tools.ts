@@ -50,6 +50,22 @@ export interface CreateLumeRuntimeToolsOutput {
   availableToolNames: string[];
 }
 
+export function desktopWindowBindingFromMessageMetadata(
+  messageMetadata: Record<string, unknown> | undefined,
+): { windowId: string; appId?: string; appName?: string } | undefined {
+  const window = recordValue(messageMetadata?.desktopWindow);
+  const app = recordValue(messageMetadata?.desktopApp);
+  const windowId = stringValue(window.id);
+  if (!windowId) return undefined;
+  const appId = stringValue(app.id);
+  const appName = stringValue(app.name);
+  return {
+    windowId,
+    ...(appId ? { appId } : {}),
+    ...(appName ? { appName } : {}),
+  };
+}
+
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
   const enabledMemoryToolNames = resolveEnabledMemoryToolNames(input.memoryToolPolicy);
   const enabledMemoryTools = new Set(enabledMemoryToolNames);
@@ -89,12 +105,14 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     workspaceSlug: input.workspaceSlug,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
   });
+  const boundDesktopWindow = desktopWindowBindingFromMessageMetadata(input.messageMetadata);
   const computerUseTools = createComputerUseMcpTools({
     threadId: input.threadId,
     runId: input.runId,
     ...(typeof input.messageMetadata?.desktopContextSnapshotId === "string"
       ? { boundDesktopContextSnapshotId: input.messageMetadata.desktopContextSnapshotId }
       : {}),
+    ...(boundDesktopWindow ? { boundDesktopWindow } : {}),
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitDesktopActionVisualEvent,
   });
@@ -122,4 +140,14 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
       ...customToolNames
     ]
   };
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

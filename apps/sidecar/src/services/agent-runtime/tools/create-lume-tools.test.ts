@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLumeRuntimeTools } from "./create-lume-tools";
+import { createLumeRuntimeTools, desktopWindowBindingFromMessageMetadata } from "./create-lume-tools";
 
 function baseInput() {
   return {
@@ -11,6 +11,20 @@ function baseInput() {
 }
 
 describe("create-lume-tools", () => {
+  test("retains the selected desktop window as a fallback tool target", () => {
+    expect(desktopWindowBindingFromMessageMetadata({
+      desktopApp: { id: "wechat.exe", name: "微信" },
+      desktopWindow: { id: "win:wechat", title: "项目群" },
+    })).toEqual({
+      windowId: "win:wechat",
+      appId: "wechat.exe",
+      appName: "微信",
+    });
+    expect(desktopWindowBindingFromMessageMetadata({
+      desktopWindow: { title: "missing id" },
+    })).toBeUndefined();
+  });
+
   test("includes the IM reply tool for all runtime threads", () => {
     const result = createLumeRuntimeTools(baseInput());
 
