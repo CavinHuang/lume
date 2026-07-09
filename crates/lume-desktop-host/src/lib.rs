@@ -288,6 +288,7 @@ fn permission_diagnostic(
     granted: Option<bool>,
     settings_url: &str,
 ) -> Value {
+    let app_name = current_computer_use_permission_app_bundle_name();
     json!({
         "id": id,
         "title": title,
@@ -297,7 +298,19 @@ fn permission_diagnostic(
             None => "unknown",
         },
         "settingsUrl": settings_url,
+        "instruction": permission_instruction(id, title, &app_name),
     })
+}
+
+fn permission_instruction(id: &str, title: &str, app_name: &str) -> String {
+    match id {
+        "accessibility" => format!(
+            "在 macOS 系统设置的 {title} 中添加并开启 {app_name}，不要授权 Lume 主应用。"
+        ),
+        _ => format!(
+            "在 macOS 系统设置的 {title} 中开启 {app_name}，不要授权 Lume 主应用。"
+        ),
+    }
 }
 
 fn rpc_result(id: Value, result: Value) -> Value {

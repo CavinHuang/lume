@@ -57,7 +57,12 @@ describe('desktop assistant settings state', () => {
             authorizationSubject: 'appBundle',
           },
           permissions: [
-            { id: 'accessibility', title: 'Accessibility', status: 'missing' },
+            {
+              id: 'accessibility',
+              title: 'Accessibility',
+              status: 'missing',
+              instruction: '在 macOS 系统设置的 Accessibility 中添加并开启 Lume Computer Use.app，不要授权 Lume 主应用。',
+            },
             { id: 'screenRecording', title: 'Screen & System Audio Recording', status: 'granted' },
           ],
         },
@@ -68,6 +73,7 @@ describe('desktop assistant settings state', () => {
       details: [
         '授权对象：Lume Computer Use.app（不是 Lume 主应用）。',
         '缺少权限：Accessibility。',
+        '在 macOS 系统设置的 Accessibility 中添加并开启 Lume Computer Use.app，不要授权 Lume 主应用。',
       ],
     })
   })

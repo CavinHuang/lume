@@ -188,6 +188,7 @@ export interface DesktopAssistantStatus {
       title?: string;
       status?: string;
       settingsUrl?: string;
+      instruction?: string;
     }>;
   };
   store: { unlocked: boolean; items: number; bytes: number };

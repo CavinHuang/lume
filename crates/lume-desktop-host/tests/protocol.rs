@@ -101,6 +101,14 @@ fn diagnose_permissions_reports_the_computer_use_permission_identity() {
         response["result"]["permissions"][0]["settingsUrl"],
         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
     );
+    assert_eq!(
+        response["result"]["permissions"][0]["instruction"],
+        "在 macOS 系统设置的 Accessibility 中添加并开启 Lume Computer Use.app，不要授权 Lume 主应用。"
+    );
+    assert_eq!(
+        response["result"]["permissions"][1]["instruction"],
+        "在 macOS 系统设置的 Screen & System Audio Recording 中开启 Lume Computer Use.app，不要授权 Lume 主应用。"
+    );
 }
 
 #[test]

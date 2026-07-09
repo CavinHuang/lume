@@ -107,10 +107,13 @@ export function resolveAgentInputDesktopMessageMetadata(input: {
 
 export function desktopPermissionRequestMessage(result: unknown): string {
   const value = result && typeof result === 'object' && !Array.isArray(result)
-    ? result as { message?: unknown; nextPermission?: { title?: unknown }; permissionTarget?: { appBundleName?: unknown; appName?: unknown } }
+    ? result as { message?: unknown; nextPermission?: { title?: unknown; instruction?: unknown }; permissionTarget?: { appBundleName?: unknown; appName?: unknown } }
     : undefined
   if (typeof value?.message === 'string' && value.message.trim()) return value.message.trim()
   const appName = permissionTargetName(value?.permissionTarget)
+  if (typeof value?.nextPermission?.instruction === 'string' && value.nextPermission.instruction.trim()) {
+    return `已打开授权引导：${value.nextPermission.instruction.trim()}`
+  }
   if (typeof value?.nextPermission?.title === 'string' && value.nextPermission.title.trim()) {
     return `已打开授权引导，请在系统设置中允许 ${appName} 使用 ${value.nextPermission.title}；如果列表里同时看到 Lume，请选择 ${appName}，不要授权 Lume 主应用。`
   }

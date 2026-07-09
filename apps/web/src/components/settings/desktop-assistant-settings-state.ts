@@ -19,6 +19,10 @@ export function buildDesktopAssistantDiagnostics({
       .filter((permission) => permission.status === 'missing')
       .map((permission) => permission.title?.trim() || permission.id?.trim())
       .filter((permission): permission is string => Boolean(permission))
+    const instructions = (status.host.permissions ?? [])
+      .filter((permission) => permission.status === 'missing')
+      .map((permission) => permission.instruction?.trim())
+      .filter((instruction): instruction is string => Boolean(instruction))
     return {
       tone: 'error',
       title: `需要授权 ${appName}`,
@@ -27,6 +31,7 @@ export function buildDesktopAssistantDiagnostics({
         missingPermissions.length > 0
           ? `缺少权限：${missingPermissions.join('、')}。`
           : '请在 macOS 系统设置中补齐 Accessibility 和 Screen Recording 权限。',
+        ...instructions,
       ],
     }
   }

@@ -219,6 +219,15 @@ describe('agent-input desktop context helpers', () => {
 
   test('formats desktop permission request results with the next permission title', () => {
     expect(desktopPermissionRequestMessage({
+      permissionTarget: {
+        appBundleName: 'Lume Computer Use.app',
+      },
+      nextPermission: {
+        title: 'Accessibility',
+        instruction: '在 macOS 系统设置的 Accessibility 中添加并开启 Lume Computer Use.app，不要授权 Lume 主应用。',
+      },
+    })).toBe('已打开授权引导：在 macOS 系统设置的 Accessibility 中添加并开启 Lume Computer Use.app，不要授权 Lume 主应用。')
+    expect(desktopPermissionRequestMessage({
       nextPermission: { title: 'Accessibility' },
     })).toBe('已打开授权引导，请在系统设置中允许 Lume Computer Use.app 使用 Accessibility；如果列表里同时看到 Lume，请选择 Lume Computer Use.app，不要授权 Lume 主应用。')
     expect(desktopPermissionRequestMessage({
