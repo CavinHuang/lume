@@ -137,7 +137,10 @@ function desktopHostMacAppPathFromExecutable(binaryPath: string): string {
   if (
     basename(macosDir) !== 'MacOS'
     || basename(contentsDir) !== 'Contents'
-    || !appName.endsWith('.app')
+    || (
+      appName !== DESKTOP_HOST_MAC_RELEASE_APP_NAME
+      && appName !== DESKTOP_HOST_MAC_DEV_APP_NAME
+    )
   ) {
     throw new Error('macOS desktop host must be launched from Lume Computer Use.app')
   }

@@ -119,15 +119,55 @@ function macInfoPlist() {
 }
 
 function signMacAppBundle(appRoot) {
-  const mode = process.env.LUME_COMPUTER_USE_CODESIGN_MODE ?? "adhoc";
-  if (mode === "none") {
+  const mode = process.env.LUME_COMPUTER_USE_CODESIGN_MODE ?? "auto";
+  if (!["auto", "identity", "adhoc", "none"].includes(mode)) {
+    throw new Error(`unsupported LUME_COMPUTER_USE_CODESIGN_MODE: ${mode}`);
+  }
+  const identity = resolveMacCodesignIdentity(mode);
+  if (!identity) {
     console.error(`[desktop-host] skipped codesign for ${appRoot}`);
     return;
   }
-  const identity = process.env.LUME_COMPUTER_USE_CODESIGN_IDENTITY ?? "-";
-  const result = spawnSync("codesign", ["--force", "--deep", "--sign", identity, appRoot], {
+  const args = ["--force", "--deep", "--sign", identity];
+  if (identity !== "-") {
+    args.push("--options", "runtime");
+  }
+  args.push(appRoot);
+  const result = spawnSync("codesign", args, {
     cwd: REPO_ROOT,
     stdio: "inherit",
   });
   if (result.status !== 0) process.exit(result.status ?? 1);
+  if (identity === "-") {
+    console.error("[desktop-host] signed with ad-hoc identity; macOS TCC may treat rebuilt app bundles as different authorization subjects");
+  }
+}
+
+function resolveMacCodesignIdentity(mode) {
+  const configuredIdentity = process.env.LUME_COMPUTER_USE_CODESIGN_IDENTITY?.trim();
+  if (mode === "none") return undefined;
+  if (mode === "adhoc") return "-";
+  if (mode === "identity") {
+    if (!configuredIdentity) {
+      throw new Error("LUME_COMPUTER_USE_CODESIGN_IDENTITY is required when codesign mode is identity");
+    }
+    return configuredIdentity;
+  }
+  if (configuredIdentity) return configuredIdentity;
+  return findMacCodesignIdentity("Developer ID Application")
+    ?? findMacCodesignIdentity("Apple Development")
+    ?? "-";
+}
+
+function findMacCodesignIdentity(prefix) {
+  const result = spawnSync("security", ["find-identity", "-v", "-p", "codesigning"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) return undefined;
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const match = line.match(/"([^"]+)"/);
+    if (match?.[1]?.startsWith(`${prefix}:`)) return match[1];
+  }
+  return undefined;
 }

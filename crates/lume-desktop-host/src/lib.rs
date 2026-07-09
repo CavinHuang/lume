@@ -177,7 +177,24 @@ pub fn current_computer_use_permission_clients() -> Vec<DesktopPermissionClientR
 pub fn desktop_permission_clients_for_app_bundle_path(
     app_bundle_path: Option<&str>,
 ) -> Vec<DesktopPermissionClientRecord> {
-    let target = desktop_permission_target_for_app_bundle_path(app_bundle_path);
+    let Some(app_bundle_path) = app_bundle_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    else {
+        return Vec::new();
+    };
+    let app_bundle_name = Path::new(app_bundle_path)
+        .file_name()
+        .and_then(|value| value.to_str());
+    if !matches!(
+        app_bundle_name,
+        Some(COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME)
+            | Some(COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_BUNDLE_NAME)
+    ) {
+        return Vec::new();
+    }
+
+    let target = desktop_permission_target_for_app_bundle_path(Some(app_bundle_path));
     let mut clients = Vec::new();
     if let Some(bundle_id) = target["bundleId"].as_str() {
         push_unique_permission_client(
@@ -188,18 +205,13 @@ pub fn desktop_permission_clients_for_app_bundle_path(
             },
         );
     }
-    if let Some(app_bundle_path) = app_bundle_path
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-    {
-        push_unique_permission_client(
-            &mut clients,
-            DesktopPermissionClientRecord {
-                identifier: app_bundle_path.to_owned(),
-                client_type: 1,
-            },
-        );
-    }
+    push_unique_permission_client(
+        &mut clients,
+        DesktopPermissionClientRecord {
+            identifier: app_bundle_path.to_owned(),
+            client_type: 1,
+        },
+    );
     clients
 }
 

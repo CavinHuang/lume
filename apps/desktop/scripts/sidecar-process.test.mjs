@@ -208,6 +208,19 @@ test('createDesktopHostSpawnConfig rejects macOS host paths outside an app bundl
   )
 })
 
+test('createDesktopHostSpawnConfig rejects unrelated macOS app bundles', () => {
+  assert.throws(
+    () => createDesktopHostSpawnConfig({
+      binaryPath: '/Applications/Lume.app/Contents/Resources/desktop-host/darwin-arm64/Other Computer Use.app/Contents/MacOS/lume_desktop_host',
+      endpoint: '/tmp/lume-desktop.sock',
+      sessionToken: 'secret-token',
+      tokenFilePath: '/tmp/lume-desktop.sock.token',
+      platform: 'darwin',
+    }),
+    /macOS desktop host must be launched from Lume Computer Use\.app/,
+  )
+})
+
 test('createUtilityProcessSidecarForkConfig uses Electron utility process options', () => {
   const config = createUtilityProcessSidecarForkConfig({
     sidecarScriptPath: '/Applications/Lume.app/Contents/Resources/sidecar/index.mjs',

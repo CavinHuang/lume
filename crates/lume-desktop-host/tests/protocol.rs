@@ -201,6 +201,18 @@ fn permission_clients_target_development_computer_use_bundle_and_app_path() {
 }
 
 #[test]
+fn permission_clients_are_empty_outside_the_computer_use_app_bundle() {
+    assert!(desktop_permission_clients_for_app_bundle_path(None).is_empty());
+    assert!(
+        desktop_permission_clients_for_app_bundle_path(Some("/Applications/Lume.app")).is_empty()
+    );
+    assert!(desktop_permission_clients_for_app_bundle_path(Some(
+        "/Applications/Other Computer Use.app"
+    ))
+    .is_empty());
+}
+
+#[test]
 fn permission_granted_accepts_persisted_tcc_authorization_when_runtime_is_stale() {
     assert!(desktop_permission_granted(Some(true), false));
     assert!(desktop_permission_granted(None, true));

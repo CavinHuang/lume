@@ -36,8 +36,8 @@ impl DesktopBackend for MacOSDesktopBackend {
         let permissions = permission_state();
         if method == "diagnose_permissions" {
             return Ok(desktop_permission_diagnostics(
-                Some(permissions.accessibility),
-                Some(permissions.screen_recording),
+                permissions.accessibility,
+                permissions.screen_recording,
                 None,
             ));
         }
@@ -46,8 +46,8 @@ impl DesktopBackend for MacOSDesktopBackend {
         }
         if !permissions.all_granted() {
             return Ok(desktop_permission_diagnostics(
-                Some(permissions.accessibility),
-                Some(permissions.screen_recording),
+                permissions.accessibility,
+                permissions.screen_recording,
                 Some(format!(
                     "macOS desktop control requires Accessibility and Screen Recording permissions for {}",
                     current_computer_use_permission_app_bundle_name()
@@ -785,24 +785,38 @@ fn cg_point(x: i64, y: i64) -> CGPoint {
 }
 
 struct MacOSPermissionState {
-    accessibility: bool,
-    screen_recording: bool,
+    accessibility: Option<bool>,
+    screen_recording: Option<bool>,
 }
 
 impl MacOSPermissionState {
     fn all_granted(&self) -> bool {
-        self.accessibility && self.screen_recording
+        self.accessibility == Some(true) && self.screen_recording == Some(true)
+    }
+
+    fn app_bundle_available(&self) -> bool {
+        self.accessibility.is_some() && self.screen_recording.is_some()
     }
 }
 
 fn permission_state() -> MacOSPermissionState {
-    let persisted = tcc_authorization_store(&current_computer_use_permission_clients());
+    let clients = current_computer_use_permission_clients();
+    if clients.is_empty() {
+        return MacOSPermissionState {
+            accessibility: None,
+            screen_recording: None,
+        };
+    }
+    let persisted = tcc_authorization_store(&clients);
     MacOSPermissionState {
-        accessibility: desktop_permission_granted(persisted.accessibility, ax_is_process_trusted()),
-        screen_recording: desktop_permission_granted(
+        accessibility: Some(desktop_permission_granted(
+            persisted.accessibility,
+            ax_is_process_trusted(),
+        )),
+        screen_recording: Some(desktop_permission_granted(
             persisted.screen_recording,
             cg_preflight_screen_capture_access(),
-        ),
+        )),
     }
 }
 
@@ -925,12 +939,22 @@ fn tcc_authorization_granted(auth_values: &[i32]) -> bool {
 }
 
 fn request_permissions(permissions: MacOSPermissionState) -> Value {
-    if !permissions.accessibility {
+    if !permissions.app_bundle_available() {
+        return desktop_permission_diagnostics(
+            None,
+            None,
+            Some(
+                "macOS permissions can only be requested by Lume Computer Use.app; relaunch the dedicated computer-use service"
+                    .to_owned(),
+            ),
+        );
+    }
+    if permissions.accessibility == Some(false) {
         request_accessibility_prompt();
         open_permission_settings(
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
         );
-    } else if !permissions.screen_recording {
+    } else if permissions.screen_recording == Some(false) {
         request_screen_capture_access();
         open_permission_settings(
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
@@ -938,8 +962,8 @@ fn request_permissions(permissions: MacOSPermissionState) -> Value {
     }
     let updated = permission_state();
     desktop_permission_diagnostics(
-        Some(updated.accessibility),
-        Some(updated.screen_recording),
+        updated.accessibility,
+        updated.screen_recording,
         Some(format!(
             "macOS permission request was started for {}",
             current_computer_use_permission_app_bundle_name()
