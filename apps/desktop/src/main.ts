@@ -368,7 +368,7 @@ function attachWindowBehavior(win) {
   })
 }
 
-function attachWebContentsSecurity(win, { allowNavigation }) {
+export function attachWebContentsSecurity(win, { allowNavigation }) {
   win.webContents.on('will-navigate', (event, url) => {
     if (allowNavigation(url)) return
     event.preventDefault()
