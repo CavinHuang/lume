@@ -14,15 +14,19 @@ function buildTrayIcon(iconPath: string): NativeImage {
     const size = source.getSize()
     const rgba = source.toBitmap()
     const templateRgba = deriveTemplateImageBuffer(rgba, size)
-    const icon = nativeImage.createFromBuffer(templateRgba, {
+    // createFromBitmap 与 toBitmap 配对（raw 像素）；createFromBuffer 对 raw 数据解析不可靠，会得到空图像
+    const icon = nativeImage.createFromBitmap(templateRgba, {
       width: size.width,
       height: size.height,
     })
+    if (icon.isEmpty()) throw new Error('template icon empty after createFromBitmap')
     // resize 返回新对象；template 标记要打在最终（resize 后）的 image 上
     const sized = icon.resize({ width: 22, height: 22 })
+    if (sized.isEmpty()) throw new Error('template icon empty after resize')
     sized.setTemplateImage(true)
     return sized
-  } catch {
+  } catch (error) {
+    console.error('[tray] template icon derive failed, fallback to color:', error)
     // 派生失败回退：全彩图标 resize 到 22（resize 返回新对象，需接住）
     const fallback = nativeImage.createFromPath(iconPath)
     const sized = fallback.resize({ width: 22, height: 22 })

@@ -1044,6 +1044,10 @@ app.whenReady().then(async () => {
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()
   logDesktopStartup('tray ready')
+  // dev 模式 macOS Dock 默认显示 Electron 图标；显式设为 Lume（打包后由 bundle 内 icns 接管）
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(nativeImage.createFromPath(getAssetPath('icon.png')))
+  }
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
   await createMainWindow()
