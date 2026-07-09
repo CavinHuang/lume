@@ -112,9 +112,9 @@ export function desktopPermissionRequestMessage(result: unknown): string {
   if (typeof value?.message === 'string' && value.message.trim()) return value.message.trim()
   const appName = permissionTargetName(value?.permissionTarget)
   if (typeof value?.nextPermission?.title === 'string' && value.nextPermission.title.trim()) {
-    return `已打开授权引导，请在系统设置中允许 ${appName} 使用 ${value.nextPermission.title}。`
+    return `已打开授权引导，请在系统设置中允许 ${appName} 使用 ${value.nextPermission.title}；如果列表里同时看到 Lume，请选择 ${appName}，不要授权 Lume 主应用。`
   }
-  return `已打开 ${appName} 授权引导，请在系统设置中完成授权。`
+  return `已打开 ${appName} 授权引导，请在系统设置中选择 ${appName}，不要授权 Lume 主应用。`
 }
 
 export function desktopPermissionRequestToastMessage(result: unknown): string {

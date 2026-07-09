@@ -78,10 +78,20 @@ function writeMacAppBundle() {
   copyFileSync(CURSOR_LICENSE, resolve(resourcesDir, "LICENSE.open-codex-computer-use"));
   copyFileSync(MAC_CURSOR_ASSET_SOURCE, resolve(resourcesDir, MAC_CURSOR_ASSET_NAME));
   copyFileSync(MAC_BUNDLE_ICON_SOURCE, resolve(resourcesDir, MAC_BUNDLE_ICON_NAME));
-  writeFileSync(resolve(contentsDir, "Info.plist"), macInfoPlist());
+  const infoPlistPath = resolve(contentsDir, "Info.plist");
+  writeFileSync(infoPlistPath, macInfoPlist());
+  lintMacInfoPlist(infoPlistPath);
   buildMacCursorOverlay(resolve(macosDir, MAC_CURSOR_OVERLAY_BINARY_NAME));
   signMacAppBundle(appRoot);
   console.error(`[desktop-host] wrote ${appRoot}`);
+}
+
+function lintMacInfoPlist(infoPlistPath) {
+  const result = spawnSync("plutil", ["-lint", infoPlistPath], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
 function buildMacCursorOverlay(outputPath) {

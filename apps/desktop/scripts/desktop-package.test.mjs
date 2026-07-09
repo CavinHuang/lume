@@ -101,6 +101,8 @@ test('desktop-host resource build packages macOS as a separate computer-use app 
   assert.match(script, /CFBundleIconFile/)
   assert.match(script, /LumeComputerUse\.icns/)
   assert.match(script, /apps", "desktop", "assets", "icon\.icns"/)
+  assert.match(script, /plutil/)
+  assert.match(script, /-lint/)
 })
 
 test('desktop-host resource build packages the macOS software cursor overlay', () => {
