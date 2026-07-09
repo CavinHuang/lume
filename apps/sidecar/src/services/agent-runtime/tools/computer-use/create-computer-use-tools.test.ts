@@ -25,7 +25,9 @@ describe("createComputerUseMcpTools", () => {
     expect(description("type_text")).toContain("passwords or OTPs");
     expect(description("click")).toContain("get_window_state");
     expect(description("diagnose_permissions")).toContain("Lume Computer Use.app");
+    expect(description("diagnose_permissions")).toContain("instruction");
     expect(description("request_permissions")).toContain("Lume Computer Use.app");
+    expect(description("request_permissions")).toContain("instruction");
     for (const tool of tools) {
       expect((tool.inputSchema as unknown as Record<string, unknown>).additionalProperties).toBe(false);
     }
