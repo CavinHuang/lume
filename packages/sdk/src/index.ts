@@ -479,6 +479,16 @@ export type { TodoItem, TodoStatus, TodoState } from './tools/todo-tool.js'
 
 export * from './tools/render-client.js'
 
+// WebFetch internals (enhanced WebFetch assembly in sidecar needs these)
+export { runWebFetch, type WebFetchInput, type WebFetchDeps } from './tools/web-fetch.js'
+export {
+  fetchIdFromUrl,
+  lumeFileUrl,
+  downloadAndLocalizeImages,
+  type ImageMode,
+  type LocalizeResult,
+} from './tools/image-pipeline.js'
+
 // --------------------------------------------------------------------------
 // Types
 // --------------------------------------------------------------------------

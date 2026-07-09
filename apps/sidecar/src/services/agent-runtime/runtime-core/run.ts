@@ -24,6 +24,7 @@ import {
   type ContentBlockParam,
   type ToolContext,
   type ToolResult,
+  type RenderClient,
   SkillTool,
   createTodoTool,
   defineTool,
@@ -59,6 +60,7 @@ import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../../system/lume-config-service";
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
+import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
@@ -583,14 +585,18 @@ const ListDirectoryTool = defineTool({
 
 function createBaseSdkAlignedTools(
   permissionMode: AgentSendInput["permissionMode"],
-  options: { includeAskUserQuestion: boolean }
+  options: {
+    includeAskUserQuestion: boolean;
+    workspaceSlug?: string;
+    renderClient?: RenderClient;
+  }
 ): ToolDefinition[] {
   const readOnlyTools: ToolDefinition[] = [
     FileReadTool,
     GlobTool,
     GrepTool,
     ListDirectoryTool,
-    ...createSdkWebTools()
+    ...createSdkWebTools({ workspaceSlug: options.workspaceSlug, renderClient: options.renderClient })
   ];
 
   if (permissionMode === "plan") {
@@ -632,6 +638,7 @@ function buildRuntimeCoreTools(input: {
   emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
   runId?: string;
+  renderClient?: RenderClient;
   pluginDiagnostics?: ToolRuntimeDiagnostic[];
   mcpTools?: ToolDefinition[];
   mcpDiagnostics?: ToolRuntimeDiagnostic[];
@@ -648,7 +655,9 @@ function buildRuntimeCoreTools(input: {
   );
   const automationExecution = isAutomationExecution(input.messageMetadata);
   const baseTools = createBaseSdkAlignedTools(permissionMode, {
-    includeAskUserQuestion: automationExecution !== true
+    includeAskUserQuestion: automationExecution !== true,
+    workspaceSlug: input.workspaceSlug,
+    renderClient: input.renderClient
   });
   const planWriteTool = createTaskContractWriteTool({
     sessionDir: getRuntimeCoreSessionDir(input.sessionId),
@@ -1342,6 +1351,7 @@ export async function createRuntimeCoreSession(
     emitTaskContractUpdated: input.emitTaskContractUpdated,
     emitTodoUpdated: input.emitTodoUpdated,
     runId: input.runId,
+    renderClient: getSidecarRenderClient(),
     pluginDiagnostics: pluginAssembly.diagnostics.map((d) => ({
       pluginName: d.pluginId,
       severity: d.severity,

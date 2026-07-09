@@ -17,6 +17,8 @@ import { formatConsoleArgs } from "./services/infra/log-format";
 import { setLogRecordNotificationWriter, writeLogRecord } from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport } from "./rpc/process-transport";
+import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
+import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 
 const rpcTransport = createProcessRpcTransport();
 
@@ -48,7 +50,12 @@ for (const level of ["log", "info", "warn", "error", "debug"] as const) {
     });
   };
 }
-const handlers = createRpcHandlers({ writeNotification });
+// Process-wide reverse-RPC render client. Bridges WebFetch JS-render requests
+// to the desktop PageRenderer. Fed into BOTH the RPC handlers (so render:result
+// resolves pending renders) and the agent runtime (so WebFetch can invoke it).
+const renderClient = createReverseRpcRenderClient({ sendNotification: writeNotification });
+setSidecarRenderClient(renderClient);
+const handlers = createRpcHandlers({ writeNotification, renderClient });
 
 function envAutostartEnabled(key: string, defaultEnabled: boolean): boolean {
   const value = process.env[key];
