@@ -46,7 +46,8 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: false,
-        closeToTray: false
+        closeToTray: false,
+        showTray: true
       },
       updateSettings: {
         autoCheckUpdates: true,
@@ -73,7 +74,8 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
-        closeToTray: false
+        closeToTray: false,
+        showTray: true
       },
       updateSettings: {
         autoCheckUpdates: true,
@@ -94,7 +96,8 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
-        closeToTray: true
+        closeToTray: true,
+        showTray: true
       },
       updateSettings: {
         autoCheckUpdates: true,
@@ -112,6 +115,7 @@ describe("general-settings-service", () => {
         windowBehavior?: {
           minimizeToTray?: boolean;
           closeToTray?: boolean;
+          showTray?: boolean;
         };
         updateSettings?: {
           autoCheckUpdates?: boolean;
@@ -127,7 +131,8 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
-        closeToTray: true
+        closeToTray: true,
+        showTray: true
       },
       updateSettings: {
         autoCheckUpdates: true,
@@ -189,7 +194,8 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: false,
-        closeToTray: false
+        closeToTray: false,
+        showTray: true
       },
       updateSettings: {
         autoCheckUpdates: true,

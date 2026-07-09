@@ -89,7 +89,11 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
       closeToTray:
         typeof windowBehavior?.closeToTray === "boolean"
           ? windowBehavior.closeToTray
-          : GENERAL_SETTINGS_DEFAULTS.windowBehavior.closeToTray
+          : GENERAL_SETTINGS_DEFAULTS.windowBehavior.closeToTray,
+      showTray:
+        typeof windowBehavior?.showTray === "boolean"
+          ? windowBehavior.showTray
+          : GENERAL_SETTINGS_DEFAULTS.windowBehavior.showTray
     },
     updateSettings: {
       autoCheckUpdates:
@@ -214,7 +218,8 @@ export function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput
     agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
     windowBehavior: {
       minimizeToTray: input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray,
-      closeToTray: input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray
+      closeToTray: input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray,
+      showTray: input.windowBehavior?.showTray ?? current.windowBehavior.showTray
     },
     updateSettings: {
       autoCheckUpdates: input.updateSettings?.autoCheckUpdates ?? current.updateSettings.autoCheckUpdates,
