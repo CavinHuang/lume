@@ -147,7 +147,6 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
     : defaultStrategy
 
   const effectiveChannelId = thread?.channelId ?? resolvedStrategy.defaultChannelId
-  const effectiveModelRef = thread?.modelRef ?? resolvedStrategy.defaultModelRef
 
   const activeChannel = effectiveChannelId
     ? channels.find((c) => c.id === effectiveChannelId)
