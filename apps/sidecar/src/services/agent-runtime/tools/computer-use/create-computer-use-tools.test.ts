@@ -502,7 +502,7 @@ describe("createComputerUseMcpTools", () => {
 
   test("derives consequential target labels from element ids before action confirmation", async () => {
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
-    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedRevision?: string; targetPoint?: { x: number; y: number } }> = [];
+    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedRevision?: string; targetPoint?: { x: number; y: number }; summary?: string }> = [];
     const tools = createComputerUseMcpTools({
       threadId: "thread-derived",
       emitDesktopActionRequest: (request) => requests.push(request),
@@ -536,6 +536,7 @@ describe("createComputerUseMcpTools", () => {
       targetLabel: "发送",
       expectedRevision: "derived-rev",
       targetPoint: { x: 280, y: 620 },
+      summary: "微信：点击「发送」",
     });
     submitDesktopActionDecision({
       threadId: "thread-derived",

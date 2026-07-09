@@ -19,11 +19,13 @@ describe('DesktopActionBanner', () => {
           expiresAt: '2026-07-08T12:00:00.000Z',
           expectedWindowId: 'win:wechat',
           expectedRevision: 'rev-safe',
-          summary: '微信：set_value「输入框」',
+          summary: '微信：填写内容「输入框」',
         }}
       />,
     )
 
+    expect(html).toContain('微信：填写内容')
+    expect(html).not.toContain('set_value')
     expect(html).toContain('目标点')
     expect(html).toContain('280,620')
     expect(html).toContain('执行前复核窗口版本')

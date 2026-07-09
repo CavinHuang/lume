@@ -564,8 +564,24 @@ function createActionRequest(
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     ...(stringValue(args.windowId) ? { expectedWindowId: stringValue(args.windowId) } : {}),
     ...(stringValue(args.windowRevision) ? { expectedRevision: stringValue(args.windowRevision) } : {}),
-    summary: `${appName}：${action}${targetLabel ? `「${targetLabel}」` : ""}`,
+    summary: `${appName}：${desktopActionSummaryLabel(action)}${targetLabel ? `「${targetLabel}」` : ""}`,
   };
+}
+
+function desktopActionSummaryLabel(action: DesktopActionKind): string {
+  const labels: Record<DesktopActionKind, string> = {
+    launch_app: "启动应用",
+    activate_window: "切换窗口",
+    move_pointer: "移动鼠标",
+    click: "点击",
+    press_key: "按键",
+    type_text: "输入内容",
+    scroll: "滚动",
+    set_value: "填写内容",
+    drag: "拖拽",
+    perform_secondary_action: "打开菜单",
+  };
+  return labels[action];
 }
 
 function stringValue(value: unknown): string | undefined {
