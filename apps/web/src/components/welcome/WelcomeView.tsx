@@ -48,6 +48,7 @@ import {
   desktopPermissionRequestCompleted,
   desktopPermissionRequestMessage,
   desktopPermissionRequestToastMessage,
+  refreshAgentInputDesktopContextState,
 } from '@/components/agent/agent-input-desktop-context'
 
 import { Button } from '@/components/ui/button'
@@ -251,6 +252,19 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
 
     setSending(true)
     try {
+      let desktopContextTargetForSend = selectedDesktopContextTarget
+      if (desktopContextTargetForSend) {
+        const state = await refreshAgentInputDesktopContextState(sidecarCall, desktopContextTargetForSend)
+        if (state.status !== 'ready') {
+          setDesktopContextCaptureMessage(state.message)
+          setDesktopContextPermissionRequestAvailable(state.permissionRequestAvailable === true)
+          toast.error(`当前应用上下文刷新失败：${state.message}`)
+          return
+        }
+        desktopContextTargetForSend = state.target
+        setSelectedDesktopContextTarget(state.target)
+      }
+
       const meta = await sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.CREATE_THREAD, {
         workspaceId: selectedWorkspaceId ?? undefined,
         modelRef,
@@ -290,7 +304,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
             title: meta.title,
             threadId: meta.id,
             workspaceId: meta.workspaceId,
-            ...(selectedDesktopContextTarget ? { desktopContextTarget: selectedDesktopContextTarget } : {}),
+            ...(desktopContextTargetForSend ? { desktopContextTarget: desktopContextTargetForSend } : {}),
           },
           ...withoutWelcome,
         ]
@@ -319,8 +333,8 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
-        ...(selectedDesktopContextTarget
-          ? { messageMetadata: createDesktopContextMessageMetadata(selectedDesktopContextTarget) }
+        ...(desktopContextTargetForSend
+          ? { messageMetadata: createDesktopContextMessageMetadata(desktopContextTargetForSend) }
           : {}),
         ...(pendingFolders.length > 0 ? { attachedDirectories: pendingFolders.map((f) => f.path) } : {}),
         ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),

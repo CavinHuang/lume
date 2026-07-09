@@ -13,7 +13,7 @@ import {
   currentWorkspaceIdAtom,
   tabsAtom,
 } from '@/atoms'
-import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, DESKTOP_CONTEXT_IPC_CHANNELS } from '@lume/shared'
 
 mock.restore()
 
@@ -48,6 +48,14 @@ const sidecarCallMock = mock(async (command: string, payload?: Record<string, un
       }
     case AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD:
       return undefined
+    case DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_WINDOW:
+      return {
+        status: 'ok',
+        snapshotId: 'snapshot:notepad:fresh',
+        app: { id: 'notepad.exe', name: 'Notepad' },
+        window: { id: 'window:notepad', title: '周报.txt - Notepad' },
+        capturedAt: 200,
+      }
     default:
       throw new Error(`Unexpected sidecarCall: ${command}`)
   }
@@ -553,16 +561,20 @@ describe('WelcomeView', () => {
         threadId: 'created-thread',
         userMessage: '根据当前文档写一份周报',
         messageMetadata: {
-          desktopContextSnapshotId: 'snapshot:notepad',
+          desktopContextSnapshotId: 'snapshot:notepad:fresh',
           desktopApp: { id: 'notepad.exe', name: 'Notepad' },
           desktopWindow: { id: 'window:notepad', title: '周报.txt - Notepad' },
         },
       }))
+      expect(sidecarCallMock).toHaveBeenCalledWith(DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_WINDOW, {
+        windowId: 'window:notepad',
+        userInitiated: true,
+      })
       expect(store.get(tabsAtom).find((tab) => tab.id === 'created-thread')?.desktopContextTarget).toEqual({
-        snapshotId: 'snapshot:notepad',
+        snapshotId: 'snapshot:notepad:fresh',
         app: { id: 'notepad.exe', name: 'Notepad' },
         window: { id: 'window:notepad', title: '周报.txt - Notepad' },
-        capturedAt: expect.any(Number),
+        capturedAt: 200,
       })
     } finally {
       if (root) {
