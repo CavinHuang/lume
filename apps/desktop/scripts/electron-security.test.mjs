@@ -265,6 +265,17 @@ test("dispatchCommand exposes only prepared quick-input context metadata", () =>
   assert.match(mainSource, /latestQuickInputContext/);
 });
 
+test("main window blur remembers only foreground metadata for a later user-initiated capture", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const start = mainSource.indexOf("function attachWindowBehavior");
+  const end = mainSource.indexOf("function attachWebContentsSecurity", start);
+  const body = mainSource.slice(start, end);
+
+  assert.match(body, /win\.on\('blur'/);
+  assert.match(body, /rememberForegroundDesktopTarget/);
+  assert.doesNotMatch(body, /captureQuickInputContext/);
+});
+
 test("showMainWindow pre-captures desktop context before Lume steals focus", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   const start = mainSource.indexOf("function showMainWindow()");

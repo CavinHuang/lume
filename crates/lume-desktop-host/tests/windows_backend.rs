@@ -23,6 +23,18 @@ fn lists_windows_and_apps_with_stable_status_shapes() {
 }
 
 #[test]
+fn get_window_without_an_id_returns_the_foreground_window_metadata() {
+    let backend = WindowsDesktopBackend;
+    let result = backend.invoke("get_window", &json!({})).unwrap();
+
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["window"]["focused"], true);
+    assert!(result["window"]["id"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("win:")));
+}
+
+#[test]
 fn rejects_stale_or_missing_window_targets_without_side_effects() {
     let backend = WindowsDesktopBackend;
     let result = backend

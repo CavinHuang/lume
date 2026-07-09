@@ -25,6 +25,8 @@ import {
   resolveConfigDirValue,
   restoreMainWindow,
   resolveQuickInputContextCapture,
+  resolveRememberedDesktopTarget,
+  shouldCaptureRememberedDesktopTarget,
   shouldHideToTray,
   validateExternalUrl,
   validateMigrationTarget,
@@ -525,4 +527,48 @@ test("resolveQuickInputContextCapture reports the first unavailable capture when
     ),
     { status: "permission_denied", message: "missing Accessibility" },
   );
+});
+
+test("resolveRememberedDesktopTarget retains only valid non-Lume foreground metadata", () => {
+  const remembered = resolveRememberedDesktopTarget(null, {
+    status: "ok",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win:wechat", title: "项目群" },
+  }, 500);
+
+  assert.deepEqual(remembered, {
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win:wechat", title: "项目群" },
+    rememberedAt: 500,
+  });
+  assert.equal(resolveRememberedDesktopTarget(remembered, {
+    status: "unavailable",
+    message: "当前前台窗口是 Lume",
+  }, 600), remembered);
+});
+
+test("shouldCaptureRememberedDesktopTarget refreshes only a newer or different remembered window", () => {
+  const latest = {
+    status: "ok",
+    snapshotId: "snap-wechat",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win:wechat", title: "项目群" },
+    capturedAt: 700,
+  };
+
+  assert.equal(shouldCaptureRememberedDesktopTarget(latest, {
+    app: latest.app,
+    window: latest.window,
+    rememberedAt: 600,
+  }), false);
+  assert.equal(shouldCaptureRememberedDesktopTarget(latest, {
+    app: latest.app,
+    window: { id: "win:word", title: "周报.docx" },
+    rememberedAt: 600,
+  }), true);
+  assert.equal(shouldCaptureRememberedDesktopTarget(latest, {
+    app: latest.app,
+    window: latest.window,
+    rememberedAt: 800,
+  }), true);
 });

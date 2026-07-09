@@ -39,6 +39,12 @@ export const desktopContextRpcService = {
   captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown> {
     return getRuntime().service.captureCurrent(input);
   },
+  getForegroundTarget(): Promise<unknown> {
+    return getRuntime().service.getForegroundTarget();
+  },
+  captureWindow(input: { windowId?: string; userInitiated?: boolean }): Promise<unknown> {
+    return getRuntime().service.captureWindow(input);
+  },
   requestPermissions(): Promise<unknown> {
     return getRuntime().service.requestPermissions();
   },

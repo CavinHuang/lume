@@ -292,7 +292,13 @@ pub fn macos_key_chord(keys: &[&str]) -> Option<(u16, u64)> {
 }
 
 pub fn first_visible_user_window(windows: &[MacOSWindowInfo]) -> Option<MacOSWindowInfo> {
-    visible_user_windows(windows).into_iter().next().cloned()
+    let visible = visible_user_windows(windows);
+    visible
+        .iter()
+        .find(|window| window.is_focused)
+        .copied()
+        .or_else(|| visible.first().copied())
+        .cloned()
 }
 
 pub fn find_macos_window(windows: &[MacOSWindowInfo], window_id: &str) -> Option<MacOSWindowInfo> {

@@ -181,6 +181,8 @@ export interface DesktopAssistantStatus {
 export const DESKTOP_CONTEXT_IPC_CHANNELS = {
   UNLOCK: "desktop-context:unlock",
   CAPTURE_CURRENT: "desktop-context:capture-current",
+  GET_FOREGROUND_TARGET: "desktop-context:get-foreground-target",
+  CAPTURE_WINDOW: "desktop-context:capture-window",
   REQUEST_PERMISSIONS: "desktop-context:request-permissions",
   GET_CURRENT: "desktop-context:get-current",
   SEARCH: "desktop-context:search",

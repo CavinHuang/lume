@@ -52,9 +52,11 @@ import {
   parseJsonFile,
   readWindowBehaviorFromConfigDir,
   resolveQuickInputContextCapture,
+  resolveRememberedDesktopTarget,
   resolveExistingPath,
   resolveConfigDirValue,
   restoreMainWindow,
+  shouldCaptureRememberedDesktopTarget,
   shouldHideToTray as shouldHideToTrayCore,
   validateExternalUrl,
   validateMigrationTarget,
@@ -99,6 +101,8 @@ const DATA_MIGRATE_PROGRESS_CHANNEL = 'data:migrate-progress'
 const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
 const DESKTOP_CONTEXT_UNLOCK_METHOD = 'desktop-context:unlock'
 const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
+const DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD = 'desktop-context:get-foreground-target'
+const DESKTOP_CONTEXT_CAPTURE_WINDOW_METHOD = 'desktop-context:capture-window'
 const DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD = 'desktop-context:proposal-created'
 const DESKTOP_CONTEXT_PROPOSAL_OPEN_REQUEST_METHOD = 'desktop-context:proposal-open-request'
 
@@ -121,6 +125,11 @@ let latestQuickInputContext: {
   capturedAt?: number
   message?: string
 } = { status: 'unavailable', message: 'desktop context has not been captured' }
+let rememberedQuickInputDesktopTarget: {
+  app: { id: string; name: string }
+  window: { id: string; title: string }
+  rememberedAt: number
+} | null = null
 let desktopHostSupervisor: ReturnType<typeof createDesktopHostSupervisor> | null = null
 let desktopHostState: DesktopHostState = { available: false, reason: 'desktop host has not started' }
 
@@ -387,6 +396,15 @@ function attachWindowBehavior(win) {
     event.preventDefault()
     win.hide()
   })
+
+  win.on('blur', () => {
+    const timer = setTimeout(() => {
+      rememberForegroundDesktopTarget().catch((error) => {
+        console.error(`[desktop] remember foreground desktop target failed: ${error.message}`)
+      })
+    }, 120)
+    timer.unref?.()
+  })
 }
 
 function attachWebContentsSecurity(win, { allowNavigation }) {
@@ -561,7 +579,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
       }
       return null
     case 'quick_input_get_context':
-      return latestQuickInputContext
+      return prepareQuickInputContext()
     case 'open_file_dialog': {
       const result = await dialog.showOpenDialog(mainWindow, createOpenFileDialogOptions())
       return {
@@ -1177,4 +1195,35 @@ async function captureQuickInputContext() {
       message: error instanceof Error ? error.message : String(error),
     })
   }
+}
+
+async function prepareQuickInputContext() {
+  if (!shouldCaptureRememberedDesktopTarget(latestQuickInputContext, rememberedQuickInputDesktopTarget)) {
+    return latestQuickInputContext
+  }
+  const target = rememberedQuickInputDesktopTarget
+  if (!target) return latestQuickInputContext
+  rememberedQuickInputDesktopTarget = null
+  try {
+    const value = await sidecarHost.call(DESKTOP_CONTEXT_CAPTURE_WINDOW_METHOD, {
+      windowId: target.window.id,
+      userInitiated: true,
+    })
+    latestQuickInputContext = resolveQuickInputContextCapture(latestQuickInputContext, value)
+  } catch (error) {
+    latestQuickInputContext = resolveQuickInputContextCapture(latestQuickInputContext, {
+      status: 'unavailable',
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+  return latestQuickInputContext
+}
+
+async function rememberForegroundDesktopTarget() {
+  const value = await sidecarHost.call(DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD, {})
+  rememberedQuickInputDesktopTarget = resolveRememberedDesktopTarget(
+    rememberedQuickInputDesktopTarget,
+    value,
+    Date.now(),
+  )
 }

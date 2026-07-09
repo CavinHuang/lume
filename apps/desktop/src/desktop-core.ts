@@ -634,6 +634,20 @@ export function resolveQuickInputContextCapture(previous, value) {
   return next
 }
 
+export function resolveRememberedDesktopTarget(previous, value, rememberedAt = Date.now()) {
+  const next = normalizeRememberedDesktopTarget(value, rememberedAt)
+  if (next) return next
+  if (isLumeSelfContextCapture(normalizeQuickInputContextCapture(value))) return previous ?? null
+  return null
+}
+
+export function shouldCaptureRememberedDesktopTarget(latest, remembered) {
+  if (!remembered) return false
+  if (latest?.status !== 'ok') return true
+  if (latest.window?.id !== remembered.window.id) return true
+  return typeof latest.capturedAt !== 'number' || remembered.rememberedAt > latest.capturedAt
+}
+
 function normalizeQuickInputContextCapture(value) {
   const result = value && typeof value === 'object' && !Array.isArray(value)
     ? value
@@ -648,6 +662,20 @@ function normalizeQuickInputContextCapture(value) {
   return {
     status: typeof result.status === 'string' ? result.status : 'unavailable',
     message: typeof result.message === 'string' ? result.message : 'desktop context is unavailable',
+  }
+}
+
+function normalizeRememberedDesktopTarget(value, rememberedAt) {
+  const result = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {}
+  if (result.status !== 'ok') return null
+  const target = sanitizeQuickInputContextTarget(result)
+  if (!target.app || !target.window) return null
+  return {
+    app: target.app,
+    window: target.window,
+    rememberedAt,
   }
 }
 

@@ -207,9 +207,7 @@ fn list_apps() -> Result<Value> {
 }
 
 fn get_window(params: &Value) -> Result<Value> {
-    let Some(hwnd) = target_window(params) else {
-        return Ok(stale_target());
-    };
+    let hwnd = target_window(params).unwrap_or_else(|| unsafe { GetForegroundWindow() });
     let Some(window) = window_json(hwnd) else {
         return Ok(stale_target());
     };

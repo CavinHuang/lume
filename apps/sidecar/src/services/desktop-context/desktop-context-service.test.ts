@@ -65,6 +65,115 @@ function createService(input: {
 }
 
 describe("DesktopContextService", () => {
+  test("reads foreground target metadata without unlocking or collecting window content", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: false,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+      },
+      createStore: () => {
+        throw new Error("metadata lookup must not open the context store");
+      },
+      invokeHost: async (method, params) => {
+        calls.push({ method, params });
+        return {
+          status: "ok",
+          window: {
+            id: "win:wechat",
+            appId: "wechat.exe",
+            appName: "微信",
+            title: "项目群",
+            focused: true,
+          },
+        };
+      },
+    });
+
+    expect(await service.getForegroundTarget()).toEqual({
+      status: "ok",
+      app: { id: "wechat.exe", name: "微信" },
+      window: { id: "win:wechat", title: "项目群" },
+    });
+    expect(calls).toEqual([{ method: "get_window", params: {} }]);
+  });
+
+  test("captures a remembered exact window only after a user opens desktop context", async () => {
+    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const snapshots = new Map<string, DesktopContextSnapshot>();
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: false,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+      },
+      createStore: () => ({
+        put: (snapshot) => snapshots.set(snapshot.id, snapshot),
+        get: (id) => snapshots.get(id),
+        getRedacted: (id) => snapshots.get(id),
+        latestRedacted: () => [...snapshots.values()].at(-1),
+        recent: () => [...snapshots.values()],
+        search: () => [...snapshots.values()],
+        purge: () => undefined,
+        stats: () => ({ items: snapshots.size, bytes: 0 }),
+        clear: () => snapshots.clear(),
+        close: () => undefined,
+      }),
+      invokeHost: async (method, params) => {
+        calls.push({ method, params });
+        return {
+          status: "ok",
+          revision: "rev-wechat",
+          capturedAt: 200,
+          window: {
+            id: "win:wechat",
+            appId: "wechat.exe",
+            appName: "微信",
+            title: "项目群",
+            bounds: { x: 0, y: 0, width: 800, height: 600 },
+            focused: false,
+          },
+          accessibility: {
+            documentText: "这个问题怎么回复？",
+          },
+          screenshots: [{
+            id: "shot-wechat",
+            width: 800,
+            height: 600,
+            origin: { x: 0, y: 0 },
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+          }],
+        };
+      },
+    });
+    service.unlock(Buffer.alloc(32, 7));
+
+    expect(await service.captureWindow({
+      windowId: "win:wechat",
+      userInitiated: true,
+    })).toEqual({
+      status: "ok",
+      snapshotId: "window:win:wechat:200",
+      app: { id: "wechat.exe", name: "微信" },
+      window: { id: "win:wechat", title: "项目群" },
+      capturedAt: 200,
+    });
+    expect(calls).toEqual([{
+      method: "get_window_state",
+      params: { windowId: "win:wechat", includeScreenshot: true },
+    }]);
+    expect(snapshots.get("window:win:wechat:200")).toMatchObject({
+      visibleText: "这个问题怎么回复？",
+      untrusted: true,
+    });
+  });
+
   test("requires an encryption key before retaining snapshots", async () => {
     const service = createService();
     expect(await service.captureCurrent()).toEqual({

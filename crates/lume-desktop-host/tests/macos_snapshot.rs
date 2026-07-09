@@ -1,5 +1,5 @@
 use lume_desktop_host::macos_snapshot::{
-    find_macos_window, macos_current_context_result, macos_get_window_result,
+    find_macos_window, first_visible_user_window, macos_current_context_result, macos_get_window_result,
     macos_get_window_state_result, macos_global_pointer_fallback_enabled_from, macos_key_chord,
     macos_list_apps_result, macos_list_windows_result, macos_pointer_input_mode,
     macos_preferred_click_actions, macos_resolve_action_point,
@@ -118,6 +118,17 @@ fn reports_stale_target_for_missing_macos_window_ref() {
 
     assert_eq!(result["status"], "stale_target");
     assert_eq!(result["message"], "target window is unavailable");
+}
+
+#[test]
+fn foreground_window_selection_prefers_the_focused_window() {
+    let mut windows = sample_windows();
+    windows[0].is_focused = false;
+    windows[1].is_focused = true;
+
+    let selected = first_visible_user_window(&windows).expect("foreground window");
+
+    assert_eq!(selected.window_id, 77);
 }
 
 #[test]

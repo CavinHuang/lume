@@ -8,6 +8,8 @@ import type { RpcHandler } from "./types";
 interface DesktopContextRpcService {
   unlock(key: Buffer): void;
   captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown>;
+  getForegroundTarget(): Promise<unknown>;
+  captureWindow(input: { windowId?: string; userInitiated?: boolean }): Promise<unknown>;
   requestPermissions(): Promise<unknown>;
   currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean }): Promise<unknown>;
   searchContext(input: { query?: string; limit?: number }): Promise<unknown>;
@@ -33,6 +35,14 @@ export function createDesktopContextHandlers(service: DesktopContextRpcService):
     [DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT]: async (params) => {
       const input = readRecord(params);
       return service.captureCurrent({
+        ...(input.userInitiated === true ? { userInitiated: true } : {}),
+      });
+    },
+    [DESKTOP_CONTEXT_IPC_CHANNELS.GET_FOREGROUND_TARGET]: async () => service.getForegroundTarget(),
+    [DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_WINDOW]: async (params) => {
+      const input = readRecord(params);
+      return service.captureWindow({
+        ...(typeof input.windowId === "string" ? { windowId: input.windowId } : {}),
         ...(input.userInitiated === true ? { userInitiated: true } : {}),
       });
     },

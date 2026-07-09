@@ -11,6 +11,14 @@ describe("desktop context RPC handlers", () => {
         calls.push({ captureCurrent: input });
         return { status: "ok", snapshotId: "snap-1" };
       },
+      getForegroundTarget: async () => {
+        calls.push({ getForegroundTarget: true });
+        return { status: "ok", window: { id: "win:1" } };
+      },
+      captureWindow: async (input) => {
+        calls.push({ captureWindow: input });
+        return { status: "ok", snapshotId: "snap-window" };
+      },
       requestPermissions: async () => {
         calls.push({ requestPermissions: true });
         return { status: "permission_denied" };
@@ -30,6 +38,18 @@ describe("desktop context RPC handlers", () => {
     expect(calls).toEqual([{ unlockBytes: 32 }]);
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT]?.({ userInitiated: true })).toEqual({ status: "ok", snapshotId: "snap-1" });
     expect(calls.at(-1)).toEqual({ captureCurrent: { userInitiated: true } });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.GET_FOREGROUND_TARGET]?.({})).toEqual({
+      status: "ok",
+      window: { id: "win:1" },
+    });
+    expect(calls.at(-1)).toEqual({ getForegroundTarget: true });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_WINDOW]?.({
+      windowId: "win:1",
+      userInitiated: true,
+    })).toEqual({ status: "ok", snapshotId: "snap-window" });
+    expect(calls.at(-1)).toEqual({
+      captureWindow: { windowId: "win:1", userInitiated: true },
+    });
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS]?.({})).toEqual({ status: "permission_denied" });
     expect(calls.at(-1)).toEqual({ requestPermissions: true });
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.GET_CURRENT]?.({
@@ -51,6 +71,8 @@ describe("desktop context RPC handlers", () => {
     const handlers = createDesktopContextHandlers({
       unlock: () => undefined,
       captureCurrent: async () => ({}),
+      getForegroundTarget: async () => ({}),
+      captureWindow: async () => ({}),
       requestPermissions: async () => ({}),
       currentContext: async () => ({}),
       searchContext: async () => ({}),

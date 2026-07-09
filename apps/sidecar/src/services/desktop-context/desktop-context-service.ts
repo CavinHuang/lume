@@ -10,6 +10,7 @@ import { DESKTOP_CONTEXT_IPC_CHANNELS } from "@lume/shared";
 import { DesktopContextStore } from "./desktop-context-store";
 
 type HostInvoke = (method: string, params: Record<string, unknown>) => Promise<unknown>;
+type DesktopContextTargetMetadata = Pick<DesktopContextTarget, "app" | "window">;
 
 const PERMISSION_POLL_INTERVAL_MS = 250;
 const PERMISSION_POLL_ATTEMPTS = 240;
@@ -106,6 +107,48 @@ export class DesktopContextService {
     store.put(snapshot);
     store.purge();
     this.#lastFingerprint = fingerprint;
+    this.#lastSnapshotId = snapshot.id;
+    this.#maybeCreateProposal(snapshot);
+    return { status: "ok", ...snapshotToTarget(snapshot) };
+  }
+
+  async getForegroundTarget(): Promise<unknown> {
+    const response = asRecord(await this.#input.invokeHost("get_window", {}));
+    if (response.status !== "ok") return attachDesktopPermissionCaptureMessage(response);
+    const target = targetFromWindow(response.window);
+    if (!target) return { status: "failed", message: "desktop host returned an invalid window target" };
+    if (isLumeShellTarget(target)) return { status: "unavailable", message: LUME_SELF_CONTEXT_MESSAGE };
+    return { status: "ok", ...target };
+  }
+
+  async captureWindow(input: { windowId?: string; userInitiated?: boolean } = {}): Promise<unknown> {
+    if (!this.#settings.enabled && input.userInitiated !== true) {
+      return { status: "unavailable", message: "desktop assistant is disabled" };
+    }
+    if (!this.#key) {
+      return { status: "unavailable", message: "desktop context store is locked" };
+    }
+    const windowId = input.windowId?.trim();
+    if (!windowId) return { status: "failed", message: "windowId is required" };
+    const state = asRecord(await this.#input.invokeHost("get_window_state", {
+      windowId,
+      ...(input.userInitiated === true ? { includeScreenshot: true } : {}),
+    }));
+    if (state.status !== "ok") return attachDesktopPermissionCaptureMessage(state);
+    const snapshot = snapshotFromWindowStateTarget(state);
+    if (!snapshot) return { status: "failed", message: "desktop host returned an invalid window state" };
+    if (isLumeShellSnapshot(snapshot)) return { status: "unavailable", message: LUME_SELF_CONTEXT_MESSAGE };
+    if (snapshot.window.id !== windowId) {
+      return { status: "stale_target", message: "desktop context target changed" };
+    }
+    const allowed = new Set(this.#settings.allowedApps.map((app) => app.trim().toLowerCase()).filter(Boolean));
+    if (input.userInitiated !== true && !allowed.has(snapshot.app.id.toLowerCase())) {
+      return { status: "blocked", message: `desktop context is not allowed for ${snapshot.app.id}` };
+    }
+    const store = this.#ensureStore();
+    store.put(snapshot);
+    store.purge();
+    this.#lastFingerprint = snapshotFingerprint(snapshot);
     this.#lastSnapshotId = snapshot.id;
     this.#maybeCreateProposal(snapshot);
     return { status: "ok", ...snapshotToTarget(snapshot) };
@@ -347,6 +390,39 @@ function snapshotToTarget(snapshot: DesktopContextSnapshot): DesktopContextTarge
   };
 }
 
+function targetFromWindow(value: unknown): DesktopContextTargetMetadata | null {
+  const window = asRecord(value);
+  if (
+    typeof window.id !== "string"
+    || typeof window.appId !== "string"
+    || typeof window.title !== "string"
+  ) return null;
+  return {
+    app: {
+      id: window.appId,
+      name: typeof window.appName === "string" ? window.appName : window.appId,
+    },
+    window: { id: window.id, title: window.title },
+  };
+}
+
+function isLumeShellTarget(target: DesktopContextTargetMetadata): boolean {
+  return isLumeShellSnapshot({
+    id: "target",
+    app: target.app,
+    window: {
+      id: target.window.id,
+      appId: target.app.id,
+      title: target.window.title,
+      bounds: { x: 0, y: 0, width: 0, height: 0 },
+      focused: false,
+    },
+    capturedAt: 0,
+    eventType: "foreground_changed",
+    untrusted: true,
+  });
+}
+
 function snapshotFingerprint(snapshot: DesktopContextSnapshot): string {
   return [
     snapshot.app.id,
@@ -370,6 +446,40 @@ function normalizeSnapshot(value: unknown): DesktopContextSnapshot | null {
     || typeof window.title !== "string"
   ) return null;
   return value as DesktopContextSnapshot;
+}
+
+function snapshotFromWindowStateTarget(value: Record<string, unknown>): DesktopContextSnapshot | null {
+  const window = asRecord(value.window);
+  const accessibility = asRecord(value.accessibility);
+  if (
+    typeof value.capturedAt !== "number"
+    || typeof window.id !== "string"
+    || typeof window.appId !== "string"
+    || typeof window.title !== "string"
+  ) return null;
+  const screenshots = Array.isArray(value.screenshots)
+    ? value.screenshots as DesktopContextSnapshot["screenshots"]
+    : undefined;
+  const capturedAt = value.capturedAt;
+  const visibleText = contextVisibleText(accessibility, window);
+  return {
+    id: `window:${window.id}:${capturedAt}`,
+    app: {
+      id: window.appId,
+      name: typeof window.appName === "string" ? window.appName : window.appId,
+      ...(typeof window.processId === "number" ? { processId: window.processId } : {}),
+    },
+    window: window as DesktopContextSnapshot["window"],
+    capturedAt,
+    eventType: "foreground_changed",
+    ...(typeof accessibility.selectedText === "string" && accessibility.selectedText.trim()
+      ? { selectedText: accessibility.selectedText }
+      : {}),
+    ...(visibleText ? { visibleText } : {}),
+    ...(screenshots?.[0]?.id ? { screenshotId: screenshots[0].id } : {}),
+    ...(screenshots ? { screenshots } : {}),
+    untrusted: true,
+  };
 }
 
 function isLumeShellSnapshot(snapshot: DesktopContextSnapshot): boolean {
