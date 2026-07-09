@@ -25,7 +25,7 @@ describe('desktop assistant proposal state', () => {
       currentWorkspaceId: 'workspace-1',
     })).toEqual({
       activeTabId: '__welcome__',
-      promptSeed: '请根据微信「项目群」里的当前上下文，帮我建议一条回复。',
+      promptSeed: '请根据微信「项目群」里的当前上下文，先建议一条回复；如果我要求你直接处理，可以把回复填入草稿，但发送前必须让我确认。',
       tabs: [
         {
           id: '__settings__',
@@ -78,6 +78,8 @@ describe('desktop assistant proposal state', () => {
     }])
     expect(result.promptSeed).not.toContain('password=secret')
     expect(result.promptSeed).not.toContain('客户问')
+    expect(result.promptSeed).toContain('填入草稿')
+    expect(result.promptSeed).toContain('发送前必须让我确认')
   })
 
   test('opens a desktop notification click by proposal id without trusting notification text', () => {
@@ -90,7 +92,7 @@ describe('desktop assistant proposal state', () => {
 
     expect(result).toEqual({
       activeTabId: '__welcome__',
-      promptSeed: '请根据微信「项目群」里的当前上下文，帮我建议一条回复。',
+      promptSeed: '请根据微信「项目群」里的当前上下文，先建议一条回复；如果我要求你直接处理，可以把回复填入草稿，但发送前必须让我确认。',
       proposal,
       tabs: [{
         id: '__welcome__',

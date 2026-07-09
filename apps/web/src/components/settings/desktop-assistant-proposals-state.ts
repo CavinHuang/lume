@@ -67,7 +67,7 @@ function proposalToDesktopContextTarget(proposal: DesktopProactiveProposal): Des
 
 function buildDesktopProposalPrompt(proposal: DesktopProactiveProposal): string {
   if (proposal.kind === 'reply') {
-    return `请根据${proposal.app.name}「${proposal.window.title}」里的当前上下文，帮我建议一条回复。`
+    return `请根据${proposal.app.name}「${proposal.window.title}」里的当前上下文，先建议一条回复；如果我要求你直接处理，可以把回复填入草稿，但发送前必须让我确认。`
   }
   return `请根据${proposal.app.name}「${proposal.window.title}」里的当前上下文，帮我处理这个${proposal.kind}建议。`
 }
