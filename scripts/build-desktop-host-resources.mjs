@@ -12,6 +12,8 @@ const BUILT_BINARY = resolve(CRATE_DIR, "target", "release", BINARY_NAME);
 const CURSOR_LICENSE = resolve(CRATE_DIR, "assets", "LICENSE.open-codex-computer-use");
 const MAC_CURSOR_OVERLAY_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUseCursorOverlay.swift");
 const MAC_CURSOR_OVERLAY_BINARY_NAME = "LumeComputerUseCursorOverlay";
+const MAC_PERMISSION_GUIDE_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUsePermissionGuide.swift");
+const MAC_PERMISSION_GUIDE_BINARY_NAME = "LumeComputerUsePermissionGuide";
 const MAC_CURSOR_ASSET_NAME = "official-software-cursor-window-252.png";
 const MAC_CURSOR_ASSET_SOURCE = resolve(CRATE_DIR, "assets", MAC_CURSOR_ASSET_NAME);
 const MAC_BUNDLE_ICON_NAME = "LumeComputerUse.icns";
@@ -82,6 +84,7 @@ function writeMacAppBundle() {
   writeFileSync(infoPlistPath, macInfoPlist());
   lintMacInfoPlist(infoPlistPath);
   buildMacCursorOverlay(resolve(macosDir, MAC_CURSOR_OVERLAY_BINARY_NAME));
+  buildMacPermissionGuide(resolve(macosDir, MAC_PERMISSION_GUIDE_BINARY_NAME));
   signMacAppBundle(appRoot);
   console.error(`[desktop-host] wrote ${appRoot}`);
 }
@@ -98,6 +101,22 @@ function buildMacCursorOverlay(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
     MAC_CURSOR_OVERLAY_SOURCE,
+    "-o",
+    outputPath,
+    "-framework",
+    "AppKit",
+  ], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+  chmodSync(outputPath, 0o755);
+}
+
+function buildMacPermissionGuide(outputPath) {
+  const result = spawnSync("xcrun", [
+    "swiftc",
+    MAC_PERMISSION_GUIDE_SOURCE,
     "-o",
     outputPath,
     "-framework",

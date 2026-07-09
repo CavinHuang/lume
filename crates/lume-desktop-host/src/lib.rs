@@ -23,11 +23,18 @@ pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_NAME: &str = "Lume Computer Us
 pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_APP_BUNDLE_NAME: &str = "Lume Computer Use (Dev).app";
 pub const COMPUTER_USE_DEVELOPMENT_PERMISSION_BUNDLE_ID: &str = "com.lume.computer-use.dev";
 pub const COMPUTER_USE_PERMISSION_AUTHORIZATION_SUBJECT: &str = "appBundle";
+pub const COMPUTER_USE_PERMISSION_GUIDE_BINARY_NAME: &str = "LumeComputerUsePermissionGuide";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DesktopPermissionClientRecord {
     pub identifier: String,
     pub client_type: i32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DesktopPermissionGuideLaunch {
+    pub executable_path: String,
+    pub args: Vec<String>,
 }
 
 #[cfg(windows)]
@@ -171,6 +178,12 @@ pub fn current_computer_use_permission_app_bundle_name() -> String {
         .to_owned()
 }
 
+pub fn current_computer_use_permission_app_bundle_path() -> Option<String> {
+    current_app_bundle_path().filter(|path| {
+        !desktop_permission_clients_for_app_bundle_path(Some(path.as_str())).is_empty()
+    })
+}
+
 #[cfg(target_os = "macos")]
 pub fn current_computer_use_permission_clients() -> Vec<DesktopPermissionClientRecord> {
     desktop_permission_clients_for_app_bundle_path(current_app_bundle_path().as_deref())
@@ -215,6 +228,40 @@ pub fn desktop_permission_clients_for_app_bundle_path(
         },
     );
     clients
+}
+
+pub fn desktop_permission_guide_launch_for_app_bundle_path(
+    app_bundle_path: Option<&str>,
+    permission_id: &str,
+    settings_url: &str,
+) -> Option<DesktopPermissionGuideLaunch> {
+    let app_bundle_path = app_bundle_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())?
+        .trim_end_matches(['/', '\\']);
+    if desktop_permission_clients_for_app_bundle_path(Some(app_bundle_path)).is_empty() {
+        return None;
+    }
+    let target = desktop_permission_target_for_app_bundle_path(Some(app_bundle_path));
+    let app_name = target["appBundleName"]
+        .as_str()
+        .unwrap_or(COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME);
+
+    Some(DesktopPermissionGuideLaunch {
+        executable_path: format!(
+            "{app_bundle_path}/Contents/MacOS/{COMPUTER_USE_PERMISSION_GUIDE_BINARY_NAME}"
+        ),
+        args: vec![
+            "--app-bundle".to_owned(),
+            app_bundle_path.to_owned(),
+            "--app-name".to_owned(),
+            app_name.to_owned(),
+            "--permission".to_owned(),
+            permission_id.to_owned(),
+            "--settings-url".to_owned(),
+            settings_url.to_owned(),
+        ],
+    })
 }
 
 pub fn desktop_permission_granted(persisted: Option<bool>, runtime: bool) -> bool {
@@ -304,12 +351,10 @@ fn permission_diagnostic(
 
 fn permission_instruction(id: &str, title: &str, app_name: &str) -> String {
     match id {
-        "accessibility" => format!(
-            "在 macOS 系统设置的 {title} 中添加并开启 {app_name}，不要授权 Lume 主应用。"
-        ),
-        _ => format!(
-            "在 macOS 系统设置的 {title} 中开启 {app_name}，不要授权 Lume 主应用。"
-        ),
+        "accessibility" => {
+            format!("在 macOS 系统设置的 {title} 中添加并开启 {app_name}，不要授权 Lume 主应用。")
+        }
+        _ => format!("在 macOS 系统设置的 {title} 中开启 {app_name}，不要授权 Lume 主应用。"),
     }
 }
 

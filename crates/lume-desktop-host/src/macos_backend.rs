@@ -1,6 +1,8 @@
 use crate::{
-    current_computer_use_permission_app_bundle_name, current_computer_use_permission_clients,
-    desktop_permission_diagnostics, desktop_permission_granted, macos_overlay,
+    current_computer_use_permission_app_bundle_name,
+    current_computer_use_permission_app_bundle_path, current_computer_use_permission_clients,
+    desktop_permission_diagnostics, desktop_permission_granted,
+    desktop_permission_guide_launch_for_app_bundle_path, macos_overlay,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_current_context_result,
         macos_get_window_result, macos_get_window_state_result,
@@ -24,6 +26,7 @@ use std::{
     env,
     ffi::{CStr, CString},
     os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
+    path::Path,
     process::Command,
     ptr, slice,
     sync::{Mutex, OnceLock},
@@ -1007,15 +1010,17 @@ fn request_permissions(permissions: MacOSPermissionState) -> Value {
         );
     }
     if permissions.accessibility == Some(false) {
+        const SETTINGS_URL: &str =
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
         request_accessibility_prompt();
-        open_permission_settings(
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-        );
+        open_permission_guide("accessibility", SETTINGS_URL);
+        open_permission_settings(SETTINGS_URL);
     } else if permissions.screen_recording == Some(false) {
+        const SETTINGS_URL: &str =
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
         request_screen_capture_access();
-        open_permission_settings(
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-        );
+        open_permission_guide("screenRecording", SETTINGS_URL);
+        open_permission_settings(SETTINGS_URL);
     }
     let updated = permission_state();
     desktop_permission_diagnostics(
@@ -1074,6 +1079,25 @@ fn request_screen_capture_access() -> bool {
 
 fn open_permission_settings(settings_url: &str) {
     let _ = Command::new("/usr/bin/open").arg(settings_url).spawn();
+}
+
+fn open_permission_guide(permission_id: &str, settings_url: &str) {
+    let Some(app_bundle_path) = current_computer_use_permission_app_bundle_path() else {
+        return;
+    };
+    let Some(guide) = desktop_permission_guide_launch_for_app_bundle_path(
+        Some(app_bundle_path.as_str()),
+        permission_id,
+        settings_url,
+    ) else {
+        return;
+    };
+    if !Path::new(&guide.executable_path).is_file() {
+        return;
+    }
+    let _ = Command::new(&guide.executable_path)
+        .args(&guide.args)
+        .spawn();
 }
 
 fn enrich_accessibility_text(window: &mut MacOSWindowInfo) {

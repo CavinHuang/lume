@@ -1,7 +1,8 @@
 use lume_desktop_host::{
     desktop_permission_clients_for_app_bundle_path, desktop_permission_diagnostics,
-    desktop_permission_granted, desktop_permission_target_for_app_bundle_name, DesktopBackend,
-    DesktopSession, UnsupportedBackend,
+    desktop_permission_granted, desktop_permission_guide_launch_for_app_bundle_path,
+    desktop_permission_target_for_app_bundle_name, DesktopBackend, DesktopSession,
+    UnsupportedBackend,
 };
 use serde_json::{json, Value};
 
@@ -218,6 +219,45 @@ fn permission_clients_are_empty_outside_the_computer_use_app_bundle() {
         "/Applications/Other Computer Use.app"
     ))
     .is_empty());
+}
+
+#[test]
+fn permission_guide_launch_targets_the_computer_use_app_bundle() {
+    let guide = desktop_permission_guide_launch_for_app_bundle_path(
+        Some("/Applications/Lume Computer Use.app"),
+        "accessibility",
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    )
+    .expect("release computer-use app should support permission guide launch");
+
+    assert_eq!(
+        guide.executable_path,
+        "/Applications/Lume Computer Use.app/Contents/MacOS/LumeComputerUsePermissionGuide"
+    );
+    assert_eq!(
+        guide.args,
+        vec![
+            "--app-bundle".to_owned(),
+            "/Applications/Lume Computer Use.app".to_owned(),
+            "--app-name".to_owned(),
+            "Lume Computer Use.app".to_owned(),
+            "--permission".to_owned(),
+            "accessibility".to_owned(),
+            "--settings-url".to_owned(),
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                .to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn permission_guide_launch_rejects_the_lume_main_app_bundle() {
+    assert!(desktop_permission_guide_launch_for_app_bundle_path(
+        Some("/Applications/Lume.app"),
+        "accessibility",
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    )
+    .is_none());
 }
 
 #[test]
