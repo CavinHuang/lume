@@ -27,6 +27,8 @@ describe('DesktopActionVisualOverlayFrame', () => {
     expect(html).toContain('微信')
     expect(html).toContain('输入框')
     expect(html).toContain('代理鼠标')
+    expect(html).toContain('data-desktop-action-stage="true"')
+    expect(html).toContain('data-desktop-action-stage-cursor="true"')
     expect(html).toContain('data-desktop-action-trail="true"')
     expect(html).toContain('data-desktop-action-cursor="true"')
     expect(html).toContain('data-desktop-action-cursor-artwork="open-codex-computer-use"')
