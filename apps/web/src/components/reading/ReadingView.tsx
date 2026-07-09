@@ -439,7 +439,7 @@ export function ReadingView() {
           {viewTab === "reading" && (
           <aside className="hidden h-full min-h-0 w-[212px] shrink-0 overflow-hidden border-r border-[var(--reading-border)] bg-[var(--reading-rail)] px-3 py-4 lg:block">
             <div className="flex h-full min-h-0 flex-col gap-4">
-              <div className="shrink-0 space-y-2">
+              <div className="flex shrink-0 flex-col gap-3">
                 {rail?.items.map((item) => (
                   <Button
                 variant="ghost"
@@ -447,7 +447,7 @@ export function ReadingView() {
                     type="button"
                     onClick={() => selectReadingItem(item.id)}
                     className={cn(
-                      'flex w-full items-center gap-2.5 rounded-[8px] px-2 py-1.5 text-left transition-colors',
+                      'flex h-auto w-full items-center gap-2.5 rounded-[8px] px-2.5 py-2 text-left transition-colors',
                       selectedId === item.id
                         ? 'bg-[var(--reading-active)] text-[var(--text-1)]'
                         : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
@@ -773,7 +773,7 @@ function WereadRailGroup({
         <span>{title}</span>
         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
       </Button>
-      {expanded && <div className="space-y-1.5">
+      {expanded && <div className="flex flex-col gap-1.5">
         {books.map((book) => (
           <WereadRailBookButton
             key={book.id}
