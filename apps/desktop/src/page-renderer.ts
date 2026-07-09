@@ -26,18 +26,39 @@ export class PageRenderer {
   // Serial queue: each render awaits the previous one. The chain is advanced
   // regardless of success/failure so a failing render never drops the queue.
   private chain: Promise<unknown> = Promise.resolve()
+  // Origin of the URL currently being rendered; captured per-render and read by
+  // the allowNavigation callback. Safe to mutate because renders are serialized.
+  private allowedOrigin: string | null = null
 
   private ensureWindow(): BrowserWindow {
     if (this.win && !this.win.isDestroyed()) return this.win
     const win = new BrowserWindow({
       show: false,
-      webPreferences: createSecureWebPreferences(),
+      // Isolate render cookies/storage from the main window session via an
+      // in-memory partition (NOT persist:).
+      webPreferences: { ...createSecureWebPreferences(), partition: 'render' },
     })
-    // The hidden snapshot window follows navigation to its finalUrl; the caller
-    // (render:request interceptor) is responsible for validating the requested
-    // URL before invoking renderUrl. New windows are denied and all permission
-    // requests are rejected by attachWebContentsSecurity.
-    attachWebContentsSecurity(win, { allowNavigation: () => true })
+    // The hidden snapshot window may follow same-origin redirects to reach the
+    // finalUrl; navigation is restricted to the requested URL's origin and
+    // http/https only. New windows are denied and all permission requests are
+    // rejected by attachWebContentsSecurity.
+    attachWebContentsSecurity(win, {
+      allowNavigation: (url: string) => {
+        try {
+          const parsed = new URL(url)
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+          return this.allowedOrigin !== null && parsed.origin === this.allowedOrigin
+        } catch {
+          return false
+        }
+      },
+    })
+    // A crashed hidden renderer must not be reused; destroy + null so the next
+    // render recreates the window.
+    win.webContents.on('render-process-gone', () => {
+      if (!win.isDestroyed()) win.destroy()
+      this.win = null
+    })
     win.on('closed', () => {
       this.win = null
     })
@@ -56,6 +77,8 @@ export class PageRenderer {
   }
 
   private async doRender(url: string, options: RenderUrlOptions): Promise<RenderUrlResult> {
+    // Capture the requested URL's origin for the allowNavigation check.
+    try { this.allowedOrigin = new URL(url).origin } catch { this.allowedOrigin = null }
     const win = this.ensureWindow()
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
 

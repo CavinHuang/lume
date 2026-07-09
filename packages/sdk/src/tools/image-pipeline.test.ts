@@ -84,4 +84,51 @@ describe("downloadAndLocalizeImages", () => {
     expect(out.downloaded).toBe(0);
     expect(out.html).toContain("https://a.com/x.png");
   });
+
+  test("sandbox enabled + non-allowed image host: skipped, no fetch, src stays original URL", async () => {
+    const fetched: string[] = [];
+    const fakeFetch = (async (url: string) => { fetched.push(url); return new Response(Buffer.from("x")); }) as any;
+    const sandbox = { enabled: true, network: { allowedDomains: ["example.com"] } };
+    const html = `<img src="https://evil.com/steal.png">`;
+    const out = await downloadAndLocalizeImages(html, "https://example.com/page", "/tmp/none", "download", fakeFetch, sandbox);
+    expect(fetched.length).toBe(0);
+    expect(out.downloaded).toBe(0);
+    expect(out.failed).toBe(1);
+    expect(out.html).toContain("https://evil.com/steal.png");
+  });
+
+  test("same-origin image still downloads under strict sandbox", async () => {
+    const tmp = await import("node:fs/promises");
+    const dir = await tmp.mkdtemp((await import("node:os")).tmpdir() + "/lume-img-");
+    const png1x1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
+    const fetched: string[] = [];
+    const fakeFetch = (async (url: string) => { fetched.push(url); return new Response(png1x1, { status: 200, headers: { "content-type": "image/png" } }); }) as any;
+    const sandbox = { enabled: true, network: { allowedDomains: ["example.com"] } };
+    const html = `<img src="https://example.com/img/a.png">`;
+    const out = await downloadAndLocalizeImages(html, "https://example.com/page", dir, "download", fakeFetch, sandbox);
+    expect(fetched.length).toBe(1);
+    expect(fetched[0]).toBe("https://example.com/img/a.png");
+    expect(out.downloaded).toBe(1);
+    expect(out.failed).toBe(0);
+    expect(out.html).toContain("lume-file://file/");
+    await tmp.rm(dir, { recursive: true, force: true });
+  });
+
+  test("mmbiz whitelisted host downloads under strict sandbox (CDN whitelist)", async () => {
+    const tmp = await import("node:fs/promises");
+    const dir = await tmp.mkdtemp((await import("node:os")).tmpdir() + "/lume-img-");
+    const png1x1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
+    const fetched: string[] = [];
+    const fakeFetch = (async (url: string) => { fetched.push(url); return new Response(png1x1, { status: 200, headers: { "content-type": "image/png" } }); }) as any;
+    // mmbiz.qpic.cn is NOT in allowedDomains and NOT same-origin as example.com,
+    // but is in the CDN whitelist → must still download.
+    const sandbox = { enabled: true, network: { allowedDomains: ["example.com"] } };
+    const html = `<img src="https://mmbiz.qpic.cn/mmblog/a.png">`;
+    const out = await downloadAndLocalizeImages(html, "https://example.com/page", dir, "download", fakeFetch, sandbox);
+    expect(fetched.length).toBe(1);
+    expect(fetched[0]).toBe("https://mmbiz.qpic.cn/mmblog/a.png");
+    expect(out.downloaded).toBe(1);
+    expect(out.failed).toBe(0);
+    await tmp.rm(dir, { recursive: true, force: true });
+  });
 });

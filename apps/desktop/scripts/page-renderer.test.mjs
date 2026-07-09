@@ -16,6 +16,23 @@ test("render window is created hidden with secure prefs", () => {
   assert.match(src, /createSecureWebPreferences\(\)/);
 });
 
+test("render window uses isolated in-memory partition (not persist:)", () => {
+  assert.match(src, /partition:\s*['"]render['"]/);
+  assert.doesNotMatch(src, /partition:\s*['"]persist:/);
+});
+
+test("render window restricts navigation to same-origin http/https only", () => {
+  assert.match(src, /allowNavigation/);
+  assert.match(src, /allowedOrigin/);
+  assert.match(src, /parsed\.origin\s*===\s*this\.allowedOrigin/);
+  assert.match(src, /protocol !== 'http:' && parsed.protocol !== 'https:'/);
+});
+
+test("render window recovers from render-process-gone crash", () => {
+  assert.match(src, /render-process-gone/);
+  assert.match(src, /win\.destroy\(\)|this\.win = null/);
+});
+
 test("renderUrl uses loadURL + executeJavaScript to serialize DOM", () => {
   assert.match(src, /\.loadURL\(/);
   assert.match(src, /executeJavaScript/);

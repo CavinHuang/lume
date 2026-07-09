@@ -79,7 +79,7 @@ export async function runWebFetch(
     const assetDir = deps.resolveAssetDir?.(url) ?? null;
     const effectiveImageMode: ImageMode = assetDir ? imageMode : imageMode === "download" ? "keep" : imageMode;
     const imagesDir = assetDir ? `${assetDir}/images`.replace(/\\/g, "/") : "/tmp/lume-none";
-    const localized = await downloadAndLocalizeImages(finalHtml, url, imagesDir, effectiveImageMode, fetchImpl);
+    const localized = await downloadAndLocalizeImages(finalHtml, url, imagesDir, effectiveImageMode, fetchImpl, context.sandbox);
 
     const article = await extractReadableArticleMarkdown(localized.html, url);
     const title = article?.title || "";

@@ -3,8 +3,6 @@ export type RenderMode = "auto" | "force" | "off";
 
 export const MIN_BODY_CHARS = 200;
 
-const SPA_ROOT_IDS = new Set(["app", "root", "__next", "__nuxt"]);
-
 export function shouldRender(rawHtml: string, mode: RenderMode): boolean {
   if (mode === "off") return false;
   if (mode === "force") return true;
@@ -36,5 +34,3 @@ export function isErrorShell(rawHtml: string): boolean {
   if (/(403|404|not found|forbidden|access denied)/i.test(title)) return true;
   return false;
 }
-
-void SPA_ROOT_IDS; // reserved for future per-id tuning

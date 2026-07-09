@@ -3,9 +3,17 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, extname } from "node:path";
 import { JSDOM } from "jsdom";
+import { ensureNetworkAllowed } from "../utils/pathing.js";
+import type { SandboxSettings } from "../types.js";
 
 export type ImageMode = "download" | "keep" | "off";
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
+
+/**
+ * CDN hosts always allowed for image downloads regardless of sandbox
+ * (WeChat article image/CDN hosts — anti-hotlink but publicly fetchable).
+ */
+const ALLOWED_IMAGE_HOSTS = new Set(["mmbiz.qpic.cn", "mmbiz.qlogo.cn"]);
 
 /** `lume-file://file/<encoded absolute path>` — matches apps/web lumeFileUrl. */
 export function lumeFileUrl(absPath: string): string {
@@ -55,6 +63,24 @@ function sniffExt(contentType: string, url: string): string {
   return fromUrl && /\.(png|jpe?g|webp|gif|svg)$/.test(fromUrl) ? fromUrl : ".png";
 }
 
+/**
+ * Decide whether an image URL may be fetched under the sandbox. Allowed when:
+ * (a) same origin as the page, (b) host in the CDN whitelist, or
+ * (c) `ensureNetworkAllowed` permits it (null = allowed). Unparseable URLs are
+ * rejected; a missing/disabled sandbox allows all (backward compatible).
+ */
+function isImageFetchAllowed(
+  absUrl: string,
+  pageOrigin: string | undefined,
+  sandbox?: SandboxSettings,
+): boolean {
+  let parsed: URL;
+  try { parsed = new URL(absUrl); } catch { return false; }
+  if (pageOrigin && parsed.origin === pageOrigin) return true;
+  if (ALLOWED_IMAGE_HOSTS.has(parsed.hostname.toLowerCase())) return true;
+  return ensureNetworkAllowed(absUrl, sandbox) === null;
+}
+
 export interface LocalizeResult {
   html: string;
   downloaded: number;
@@ -72,6 +98,7 @@ export async function downloadAndLocalizeImages(
   imagesDir: string,
   mode: ImageMode,
   fetchImpl: FetchImpl,
+  sandbox?: SandboxSettings,
 ): Promise<LocalizeResult> {
   if (mode === "off") return { html, downloaded: 0, failed: 0 };
 
@@ -99,6 +126,15 @@ export async function downloadAndLocalizeImages(
     }
 
     // mode === "download"
+    // Sandbox: only fetch images that are (a) same-origin as the page, (b) on the
+    // whitelisted CDN host set, or (c) explicitly allowed by the network sandbox.
+    // Otherwise skip the download (degrade to the original URL), do NOT throw.
+    if (!isImageFetchAllowed(absUrl, origin, sandbox)) {
+      img.setAttribute("src", absUrl);
+      img.setAttribute("data-fetch-error", "sandbox_blocked");
+      failed++;
+      continue;
+    }
     try {
       const res = await fetchImpl(absUrl, {
         headers: {
