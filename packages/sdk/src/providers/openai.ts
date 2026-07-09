@@ -195,7 +195,7 @@ export class OpenAIProvider implements LLMProvider {
     const data = (await response.json()) as OpenAIChatResponse
 
     // Convert response back to normalized format
-    return this.convertResponse(data)
+    return this.convertResponse(data, params.thinking?.type === 'disabled')
   }
 
   async *createMessageStream(
@@ -281,7 +281,8 @@ export class OpenAIProvider implements LLMProvider {
           : typeof delta?.reasoning === 'string' && delta.reasoning.length > 0
             ? delta.reasoning
             : null
-        if (reasoningDelta) {
+        // Skip reasoning when thinking is disabled; reasoning models still emit reasoning_content
+        if (reasoningDelta && params.thinking?.type !== 'disabled') {
           reasoningParts.push(reasoningDelta)
           events.push({
             type: 'thinking_delta',
@@ -605,7 +606,7 @@ export class OpenAIProvider implements LLMProvider {
   // Response Conversion: OpenAI → Internal
   // --------------------------------------------------------------------------
 
-  private convertResponse(data: OpenAIChatResponse): CreateMessageResponse {
+  private convertResponse(data: OpenAIChatResponse, thinkingDisabled = false): CreateMessageResponse {
     const choice = data.choices[0]
     if (!choice) {
       return {
@@ -621,7 +622,7 @@ export class OpenAIProvider implements LLMProvider {
       : typeof choice.message.reasoning === 'string' && choice.message.reasoning.length > 0
         ? choice.message.reasoning
         : null
-    if (reasoning) {
+    if (reasoning && !thinkingDisabled) {
       content.push({ type: 'thinking', thinking: reasoning })
     }
 
