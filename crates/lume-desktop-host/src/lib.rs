@@ -9,7 +9,6 @@ pub mod macos_snapshot;
 pub mod windows_backend;
 #[cfg(windows)]
 pub mod windows_cursor_glyph;
-#[cfg(windows)]
 pub mod windows_cursor_motion;
 #[cfg(windows)]
 pub mod windows_overlay;

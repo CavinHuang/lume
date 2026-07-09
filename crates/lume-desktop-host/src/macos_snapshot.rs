@@ -1,6 +1,10 @@
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+use crate::windows_cursor_motion::{
+    cursor_motion_frame_points, CursorBounds, CursorPoint, CursorVector,
+};
+
 pub const MACOS_EVENT_FLAG_MASK_SHIFT: u64 = 0x0002_0000;
 pub const MACOS_EVENT_FLAG_MASK_CONTROL: u64 = 0x0004_0000;
 pub const MACOS_EVENT_FLAG_MASK_ALTERNATE: u64 = 0x0008_0000;
@@ -9,8 +13,11 @@ pub const MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV: &str =
     "LUME_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS";
 pub const MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV: &str =
     "OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS";
+pub const MACOS_LUME_VISUAL_POINTER_ENV: &str = "LUME_COMPUTER_USE_VISUAL_CURSOR";
+pub const MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV: &str = "OPEN_COMPUTER_USE_VISUAL_CURSOR";
 pub const MACOS_NON_SETTABLE_SET_VALUE_ERROR: &str =
     "Cannot set a value for an element that is not settable";
+const MACOS_VISIBLE_POINTER_FRAME_INTERVAL_SECONDS: f64 = 1.0 / 60.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MacOSWindowInfo {
@@ -212,6 +219,61 @@ pub fn macos_pointer_input_mode(global_pointer_fallback: bool) -> &'static str {
     } else {
         "targeted_event"
     }
+}
+
+pub fn macos_visible_pointer_enabled_from(
+    lume_value: Option<&str>,
+    open_computer_use_value: Option<&str>,
+) -> bool {
+    let Some(value) = lume_value.or(open_computer_use_value) else {
+        return true;
+    };
+    !matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "no" | "off"
+    )
+}
+
+pub fn macos_visible_pointer_mode(enabled: bool) -> &'static str {
+    if enabled {
+        "physical_cursor"
+    } else {
+        "disabled"
+    }
+}
+
+pub fn macos_visible_pointer_motion_points(
+    start: (i64, i64),
+    end: (i64, i64),
+    bounds: (i64, i64, i64, i64),
+) -> Vec<(i64, i64)> {
+    if (start.0 - end.0).abs() <= 2 && (start.1 - end.1).abs() <= 2 {
+        return vec![end];
+    }
+    let start = CursorPoint {
+        x: start.0 as f64,
+        y: start.1 as f64,
+    };
+    let end = CursorPoint {
+        x: end.0 as f64,
+        y: end.1 as f64,
+    };
+    cursor_motion_frame_points(
+        start,
+        end,
+        CursorBounds::new(
+            bounds.0 as f64,
+            bounds.1 as f64,
+            bounds.2 as f64,
+            bounds.3 as f64,
+        ),
+        CursorVector::new(1.0, 0.0),
+        CursorVector::new(1.0, 0.0),
+        MACOS_VISIBLE_POINTER_FRAME_INTERVAL_SECONDS,
+    )
+    .into_iter()
+    .map(|point| (point.x.round() as i64, point.y.round() as i64))
+    .collect()
 }
 
 pub fn macos_key_chord(keys: &[&str]) -> Option<(u16, u64)> {

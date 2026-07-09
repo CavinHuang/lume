@@ -7,9 +7,13 @@ use crate::{
         macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
         macos_list_windows_result, macos_pointer_input_mode, macos_preferred_click_actions,
         macos_resolve_action_point, macos_set_value_attribute_is_settable,
-        macos_text_target_is_sensitive, macos_wait_for_state_result, MacOSElementInfo,
-        MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
-        MACOS_NON_SETTABLE_SET_VALUE_ERROR, MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
+        macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
+        macos_visible_pointer_mode, macos_visible_pointer_motion_points,
+        macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
+        MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
+        MACOS_LUME_VISUAL_POINTER_ENV, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
+        MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
+        MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
     },
     DesktopBackend, DesktopPermissionClientRecord,
 };
@@ -146,7 +150,7 @@ fn move_pointer(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
     };
     activate_macos_window(&window)?;
     move_mouse(x, y, window.owner_pid as c_int, true);
-    Ok(json!({ "status": "ok" }))
+    Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
 }
 
 fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result<Value> {
@@ -155,9 +159,14 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
     };
     enrich_accessibility_text(&mut window);
     if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
+        move_visible_pointer_for_params(&window, params);
         activate_macos_window(&window)?;
         if let Some(input_mode) = perform_element_click_action(&window, element_id, secondary)? {
-            return Ok(json!({ "status": "ok", "inputMode": input_mode }));
+            return Ok(json!({
+                "status": "ok",
+                "inputMode": input_mode,
+                "visualPointer": visual_pointer_mode()
+            }));
         }
     }
     let (x, y) = match macos_resolve_action_point(&window, params) {
@@ -176,7 +185,8 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
     );
     Ok(json!({
         "status": "ok",
-        "inputMode": macos_pointer_input_mode(global_pointer_fallback)
+        "inputMode": macos_pointer_input_mode(global_pointer_fallback),
+        "visualPointer": visual_pointer_mode()
     }))
 }
 
@@ -219,12 +229,13 @@ fn scroll(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
     };
     let delta = params.get("deltaY").and_then(Value::as_i64).unwrap_or(0) as c_int;
     activate_macos_window(&window)?;
+    move_visible_pointer_to_window_center(&window);
     scroll_mouse(
         -delta,
         window.owner_pid as c_int,
         global_pointer_fallback_enabled(),
     );
-    Ok(json!({ "status": "ok" }))
+    Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
 }
 
 fn drag(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
@@ -252,7 +263,7 @@ fn drag(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         window.owner_pid as c_int,
         global_pointer_fallback_enabled(),
     );
-    Ok(json!({ "status": "ok" }))
+    Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
 }
 
 fn press_key(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
@@ -298,12 +309,13 @@ fn guarded_text_action(
 
 fn type_text(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
     activate_macos_window(window)?;
+    move_visible_pointer_for_params(window, params);
     let text = params
         .get("text")
         .and_then(Value::as_str)
         .unwrap_or_default();
     send_text(text, window.owner_pid as c_int);
-    Ok(json!({ "status": "ok" }))
+    Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
 }
 
 fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
@@ -312,8 +324,9 @@ fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
+        move_visible_pointer_for_params(window, params);
         if let Some(result) = set_accessibility_value(window, element_id, value)? {
-            return Ok(result);
+            return Ok(with_visual_pointer(result));
         }
         return Ok(stale_target());
     }
@@ -338,7 +351,11 @@ fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
     }
     send_key(0, MACOS_EVENT_FLAG_MASK_COMMAND, window.owner_pid as c_int);
     send_text(value, window.owner_pid as c_int);
-    Ok(json!({ "status": "ok", "inputMode": "keyboard_fallback" }))
+    Ok(json!({
+        "status": "ok",
+        "inputMode": "keyboard_fallback",
+        "visualPointer": visual_pointer_mode()
+    }))
 }
 
 fn set_accessibility_value(
@@ -442,7 +459,83 @@ fn activate_macos_window(window: &MacOSWindowInfo) -> Result<()> {
     Ok(())
 }
 
+fn visual_pointer_enabled() -> bool {
+    let lume_value = env::var(MACOS_LUME_VISUAL_POINTER_ENV).ok();
+    let open_computer_use_value = env::var(MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV).ok();
+    macos_visible_pointer_enabled_from(lume_value.as_deref(), open_computer_use_value.as_deref())
+}
+
+fn visual_pointer_mode() -> &'static str {
+    macos_visible_pointer_mode(visual_pointer_enabled())
+}
+
+fn with_visual_pointer(mut result: Value) -> Value {
+    if let Some(object) = result.as_object_mut() {
+        object.insert("visualPointer".to_owned(), json!(visual_pointer_mode()));
+    }
+    result
+}
+
+fn move_visible_pointer_for_params(window: &MacOSWindowInfo, params: &Value) {
+    if let Ok((x, y)) = macos_resolve_action_point(window, params) {
+        move_visible_pointer(x, y);
+    }
+}
+
+fn move_visible_pointer_to_window_center(window: &MacOSWindowInfo) {
+    move_visible_pointer(
+        (window.x + (window.width / 2.0)).round() as i64,
+        (window.y + (window.height / 2.0)).round() as i64,
+    );
+}
+
+fn move_visible_pointer(x: i64, y: i64) {
+    if !visual_pointer_enabled() {
+        return;
+    }
+    let Some(start) = current_mouse_location() else {
+        warp_mouse(x, y);
+        return;
+    };
+    let bounds = main_display_bounds();
+    for (frame_x, frame_y) in macos_visible_pointer_motion_points(start, (x, y), bounds) {
+        warp_mouse(frame_x, frame_y);
+        thread::sleep(Duration::from_millis(16));
+    }
+}
+
+fn current_mouse_location() -> Option<(i64, i64)> {
+    unsafe {
+        let event = CGEventCreate(ptr::null());
+        if event.is_null() {
+            return None;
+        }
+        let point = CGEventGetLocation(event);
+        CFRelease(event as CFTypeRef);
+        Some((point.x.round() as i64, point.y.round() as i64))
+    }
+}
+
+fn main_display_bounds() -> (i64, i64, i64, i64) {
+    unsafe {
+        let bounds = CGDisplayBounds(CGMainDisplayID());
+        (
+            bounds.origin.x.round() as i64,
+            bounds.origin.y.round() as i64,
+            bounds.size.width.round() as i64,
+            bounds.size.height.round() as i64,
+        )
+    }
+}
+
+fn warp_mouse(x: i64, y: i64) {
+    unsafe {
+        let _ = CGWarpMouseCursorPosition(cg_point(x, y));
+    }
+}
+
 fn move_mouse(x: i64, y: i64, target_pid: c_int, global_pointer_fallback: bool) {
+    move_visible_pointer(x, y);
     unsafe {
         let point = cg_point(x, y);
         if global_pointer_fallback {
@@ -492,6 +585,7 @@ fn drag_mouse(
     unsafe {
         let from = cg_point(from_x, from_y);
         let to = cg_point(to_x, to_y);
+        move_visible_pointer(from_x, from_y);
         if global_pointer_fallback {
             let _ = CGWarpMouseCursorPosition(from);
         }
@@ -508,6 +602,7 @@ fn drag_mouse(
             K_CG_MOUSE_BUTTON_LEFT,
             event_target,
         );
+        move_visible_pointer(to_x, to_y);
         post_mouse_event(
             K_CG_EVENT_LEFT_MOUSE_DRAGGED,
             to,
@@ -1508,6 +1603,10 @@ extern "C" {
 extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
     fn CGRequestScreenCaptureAccess() -> bool;
+    fn CGMainDisplayID() -> c_uint;
+    fn CGDisplayBounds(display: c_uint) -> CGRect;
+    fn CGEventCreate(source: CGEventSourceRef) -> CGEventRef;
+    fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
     fn CGWindowListCopyWindowInfo(option: c_uint, relative_to_window: c_uint) -> CFArrayRef;
     fn CGWindowListCreateImage(
         screen_bounds: CGRect,

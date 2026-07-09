@@ -4,8 +4,9 @@ use lume_desktop_host::macos_snapshot::{
     macos_list_apps_result, macos_list_windows_result, macos_pointer_input_mode,
     macos_preferred_click_actions, macos_resolve_action_point,
     macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
-    macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
-    MACOS_NON_SETTABLE_SET_VALUE_ERROR,
+    macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
+    macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
+    MacOSWindowInfo, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
 };
 use serde_json::json;
 
@@ -467,6 +468,34 @@ fn parses_macos_global_pointer_fallback_opt_in_flags() {
 #[test]
 fn reports_macos_physical_pointer_mode_only_for_explicit_fallback() {
     assert_eq!(macos_pointer_input_mode(true), "physical_pointer");
+}
+
+#[test]
+fn defaults_macos_visible_pointer_to_enabled_with_open_computer_use_compatible_disable_flags() {
+    assert!(macos_visible_pointer_enabled_from(None, None));
+    for value in ["0", "false", "no", "off", "FALSE"] {
+        assert!(!macos_visible_pointer_enabled_from(Some(value), None));
+        assert!(!macos_visible_pointer_enabled_from(None, Some(value)));
+    }
+    assert!(macos_visible_pointer_enabled_from(Some("1"), None));
+    assert_eq!(macos_visible_pointer_mode(true), "physical_cursor");
+    assert_eq!(macos_visible_pointer_mode(false), "disabled");
+}
+
+#[test]
+fn builds_macos_visible_pointer_motion_with_intermediate_frames_and_final_target() {
+    let frames = macos_visible_pointer_motion_points((10, 20), (410, 320), (0, 0, 1440, 900));
+
+    assert!(frames.len() > 2);
+    assert_ne!(frames[0], (410, 320));
+    assert_eq!(frames.last(), Some(&(410, 320)));
+}
+
+#[test]
+fn skips_macos_visible_pointer_animation_when_already_at_target() {
+    let frames = macos_visible_pointer_motion_points((100, 100), (101, 102), (0, 0, 1440, 900));
+
+    assert_eq!(frames, vec![(101, 102)]);
 }
 
 #[test]
