@@ -627,3 +627,50 @@ export function getQuickInputUrl(opts: {
   }
   return `${opts.devServerUrl}/?view=quick-input`
 }
+
+export function resolveQuickInputContextCapture(previous, value) {
+  const next = normalizeQuickInputContextCapture(value)
+  if (previous?.status === 'ok' && isLumeSelfContextCapture(next)) return previous
+  return next
+}
+
+function normalizeQuickInputContextCapture(value) {
+  const result = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {}
+  if (result.status === 'ok' && typeof result.snapshotId === 'string') {
+    return {
+      status: 'ok',
+      snapshotId: result.snapshotId,
+      ...sanitizeQuickInputContextTarget(result),
+    }
+  }
+  return {
+    status: typeof result.status === 'string' ? result.status : 'unavailable',
+    message: typeof result.message === 'string' ? result.message : 'desktop context is unavailable',
+  }
+}
+
+function sanitizeQuickInputContextTarget(input) {
+  const app = input.app && typeof input.app === 'object' && !Array.isArray(input.app)
+    ? input.app
+    : {}
+  const window = input.window && typeof input.window === 'object' && !Array.isArray(input.window)
+    ? input.window
+    : {}
+  return {
+    ...(typeof app.id === 'string' && typeof app.name === 'string'
+      ? { app: { id: app.id, name: app.name } }
+      : {}),
+    ...(typeof window.id === 'string' && typeof window.title === 'string'
+      ? { window: { id: window.id, title: window.title } }
+      : {}),
+    ...(typeof input.capturedAt === 'number' ? { capturedAt: input.capturedAt } : {}),
+  }
+}
+
+function isLumeSelfContextCapture(value) {
+  return value?.status !== 'ok'
+    && typeof value?.message === 'string'
+    && value.message.includes('当前前台窗口是 Lume')
+}

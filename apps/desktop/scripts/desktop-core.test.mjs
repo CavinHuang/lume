@@ -24,6 +24,7 @@ import {
   readWindowBehaviorFromConfigDir,
   resolveConfigDirValue,
   restoreMainWindow,
+  resolveQuickInputContextCapture,
   shouldHideToTray,
   validateExternalUrl,
   validateMigrationTarget,
@@ -469,5 +470,59 @@ test("getQuickInputUrl builds dev and packaged entry urls with the view flag", (
       devServerUrl: "http://127.0.0.1:3000",
     }),
     "lume://app/index.html?view=quick-input",
+  );
+});
+
+test("resolveQuickInputContextCapture keeps the last app context when a follow-up capture sees Lume", () => {
+  const previous = {
+    status: "ok",
+    snapshotId: "snap-wechat",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win-wechat", title: "项目群" },
+    capturedAt: 123,
+  };
+
+  assert.deepEqual(
+    resolveQuickInputContextCapture(previous, {
+      status: "unavailable",
+      message: "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。",
+    }),
+    previous,
+  );
+});
+
+test("resolveQuickInputContextCapture replaces stale context with a newer valid app capture", () => {
+  const previous = {
+    status: "ok",
+    snapshotId: "snap-wechat",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win-wechat", title: "项目群" },
+  };
+
+  assert.deepEqual(
+    resolveQuickInputContextCapture(previous, {
+      status: "ok",
+      snapshotId: "snap-doc",
+      app: { id: "word.exe", name: "Word" },
+      window: { id: "win-doc", title: "周报.docx" },
+      capturedAt: 456,
+    }),
+    {
+      status: "ok",
+      snapshotId: "snap-doc",
+      app: { id: "word.exe", name: "Word" },
+      window: { id: "win-doc", title: "周报.docx" },
+      capturedAt: 456,
+    },
+  );
+});
+
+test("resolveQuickInputContextCapture reports the first unavailable capture when no app context exists", () => {
+  assert.deepEqual(
+    resolveQuickInputContextCapture(
+      { status: "unavailable", message: "desktop context has not been captured" },
+      { status: "permission_denied", message: "missing Accessibility" },
+    ),
+    { status: "permission_denied", message: "missing Accessibility" },
   );
 });

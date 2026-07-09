@@ -51,6 +51,7 @@ import {
   getQuickInputUrl,
   parseJsonFile,
   readWindowBehaviorFromConfigDir,
+  resolveQuickInputContextCapture,
   resolveExistingPath,
   resolveConfigDirValue,
   restoreMainWindow,
@@ -1169,41 +1170,11 @@ async function unlockDesktopContextStore() {
 async function captureQuickInputContext() {
   try {
     const value = await sidecarHost.call(DESKTOP_CONTEXT_CAPTURE_METHOD, { userInitiated: true })
-    const result = value && typeof value === 'object' && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : {}
-    latestQuickInputContext = result.status === 'ok' && typeof result.snapshotId === 'string'
-      ? {
-          status: 'ok',
-          snapshotId: result.snapshotId,
-          ...sanitizeQuickInputContextTarget(result),
-        }
-      : {
-          status: typeof result.status === 'string' ? result.status : 'unavailable',
-          message: typeof result.message === 'string' ? result.message : 'desktop context is unavailable',
-        }
+    latestQuickInputContext = resolveQuickInputContextCapture(latestQuickInputContext, value)
   } catch (error) {
-    latestQuickInputContext = {
+    latestQuickInputContext = resolveQuickInputContextCapture(latestQuickInputContext, {
       status: 'unavailable',
       message: error instanceof Error ? error.message : String(error),
-    }
-  }
-}
-
-function sanitizeQuickInputContextTarget(input: Record<string, unknown>) {
-  const app = input.app && typeof input.app === 'object' && !Array.isArray(input.app)
-    ? input.app as Record<string, unknown>
-    : {}
-  const window = input.window && typeof input.window === 'object' && !Array.isArray(input.window)
-    ? input.window as Record<string, unknown>
-    : {}
-  return {
-    ...(typeof app.id === 'string' && typeof app.name === 'string'
-      ? { app: { id: app.id, name: app.name } }
-      : {}),
-    ...(typeof window.id === 'string' && typeof window.title === 'string'
-      ? { window: { id: window.id, title: window.title } }
-      : {}),
-    ...(typeof input.capturedAt === 'number' ? { capturedAt: input.capturedAt } : {}),
+    })
   }
 }
