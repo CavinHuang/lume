@@ -205,6 +205,7 @@ export class ContextAssembler {
     const desktopComputerUsePolicy = input.desktopContext && hasComputerUseTools
       ? [
         "Use the attached desktop_context as the starting app/window for requests about the current desktop app.",
+        "Do not ask the user to copy or paste content from the attached desktop app; use desktop_context first, then current_context or get_window_state when fresher evidence is needed.",
         "If desktop_context.snapshot.selectedText is present, treat it as the user's selected content inside the attached desktop app and prioritize it over broader visibleText.",
         "If the loaded snapshot is enough, answer from it. If the user asks about the selected app's current state, call mcp__computer_use__current_context with desktop_context.snapshot.id and refresh true.",
         "If visible text is missing, too generic, or the app is chat/image-heavy such as WeChat, call mcp__computer_use__current_context with includeScreenshot true, refresh true, and desktop_context.snapshot.id before answering.",

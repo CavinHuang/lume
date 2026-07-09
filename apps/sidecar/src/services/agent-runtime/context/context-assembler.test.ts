@@ -65,6 +65,7 @@ describe("ContextAssembler", () => {
     expect(result.systemPrompt).toContain("Prefer elementId targets");
     expect(result.systemPrompt).toContain("verify the state after each operation");
     expect(result.systemPrompt).toContain("Consequential actions still require Lume confirmation");
+    expect(result.systemPrompt).toContain("Do not ask the user to copy or paste content from the attached desktop app");
   });
 
   test("attaches desktop screenshot image blocks without putting base64 in prompt text", async () => {
