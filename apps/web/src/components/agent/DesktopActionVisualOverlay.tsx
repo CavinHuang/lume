@@ -154,7 +154,7 @@ function buildStageTrail(
   if (!cursor) return undefined
   return {
     ...(points.length >= 2
-      ? { pathD: points.map((item, index) => `${index === 0 ? 'M' : 'L'} ${item.x.toFixed(1)} ${item.y.toFixed(1)}`).join(' ') }
+      ? { pathD: curvedPathD(points) }
       : {}),
     cursor,
   }
@@ -174,7 +174,42 @@ function buildTrail(path: DesktopActionVisualOverlayState['path']): { pathD: str
     x: 10 + ((point.x - minX) / width) * 56,
     y: 8 + ((point.y - minY) / height) * 30,
   }))
-  const pathD = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ')
+  const pathD = curvedPathD(points)
   const cursor = points[points.length - 1]
   return { pathD, cursor: { x: cursor.x - 2, y: cursor.y - 2 } }
+}
+
+function curvedPathD(points: Array<{ x: number; y: number }>): string {
+  const [first, ...rest] = points
+  if (!first) return ''
+  let path = `M ${first.x.toFixed(1)} ${first.y.toFixed(1)}`
+  let previous = first
+  rest.forEach((point, index) => {
+    const curve = curveControls(previous, point, index)
+    path += ` C ${curve.c1.x.toFixed(1)} ${curve.c1.y.toFixed(1)} ${curve.c2.x.toFixed(1)} ${curve.c2.y.toFixed(1)} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`
+    previous = point
+  })
+  return path
+}
+
+function curveControls(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  index: number,
+): { c1: { x: number; y: number }; c2: { x: number; y: number } } {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const distance = Math.hypot(dx, dy) || 1
+  const arc = Math.min(140, Math.max(18, distance * 0.24)) * (index % 2 === 0 ? 1 : -1)
+  const normal = { x: -dy / distance, y: dx / distance }
+  return {
+    c1: {
+      x: from.x + dx * 0.36 + normal.x * arc,
+      y: from.y + dy * 0.36 + normal.y * arc,
+    },
+    c2: {
+      x: from.x + dx * 0.76 + normal.x * arc,
+      y: from.y + dy * 0.76 + normal.y * arc,
+    },
+  }
 }

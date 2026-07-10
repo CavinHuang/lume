@@ -32,6 +32,7 @@ describe('DesktopActionVisualOverlayFrame', () => {
     expect(html).toContain('data-desktop-action-trail="true"')
     expect(html).toContain('data-desktop-action-cursor="true"')
     expect(html).toContain('data-desktop-action-cursor-artwork="open-codex-computer-use"')
+    expect(html).toContain('M 120.0 160.0 C')
     expect(html).toContain('official-software-cursor-window-252.png')
     expect(html).toContain('data-phase="started"')
     expect(html).not.toContain('password=secret')
