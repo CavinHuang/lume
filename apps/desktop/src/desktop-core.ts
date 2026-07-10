@@ -628,9 +628,11 @@ export function getQuickInputUrl(opts: {
   return `${opts.devServerUrl}/?view=quick-input`
 }
 
-export function resolveQuickInputContextCapture(previous, value) {
+const QUICK_INPUT_CONTEXT_FALLBACK_TTL_MS = 60_000
+
+export function resolveQuickInputContextCapture(previous, value, now = Date.now()) {
   const next = normalizeQuickInputContextCapture(value)
-  if (previous?.status === 'ok' && isLumeSelfContextCapture(next)) return previous
+  if (previous?.status === 'ok' && isLumeSelfContextCapture(next) && isFreshQuickInputContext(previous, now)) return previous
   return next
 }
 
@@ -701,4 +703,9 @@ function isLumeSelfContextCapture(value) {
   return value?.status !== 'ok'
     && typeof value?.message === 'string'
     && value.message.includes('当前前台窗口是 Lume')
+}
+
+function isFreshQuickInputContext(value, now) {
+  return typeof value?.capturedAt === 'number'
+    && now - value.capturedAt <= QUICK_INPUT_CONTEXT_FALLBACK_TTL_MS
 }

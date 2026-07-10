@@ -488,8 +488,29 @@ test("resolveQuickInputContextCapture keeps the last app context when a follow-u
     resolveQuickInputContextCapture(previous, {
       status: "unavailable",
       message: "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。",
-    }),
+    }, 1_123),
     previous,
+  );
+});
+
+test("resolveQuickInputContextCapture does not reuse an old app context after Lume regains focus", () => {
+  const previous = {
+    status: "ok",
+    snapshotId: "snap-wechat",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win-wechat", title: "项目群" },
+    capturedAt: 1_000,
+  };
+
+  assert.deepEqual(
+    resolveQuickInputContextCapture(previous, {
+      status: "unavailable",
+      message: "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。",
+    }, 61_001),
+    {
+      status: "unavailable",
+      message: "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。",
+    },
   );
 });
 
