@@ -724,7 +724,8 @@ describe("createComputerUseMcpTools", () => {
     expect(calls).toEqual([{ method: "get_window_state", input: { windowId: "window-enter" } }]);
     expect(requests[0]).toMatchObject({
       threadId: "thread-enter",
-      summary: "微信：按键",
+      targetLabel: "Enter 键",
+      summary: "微信：按键「Enter 键」",
     });
 
     submitDesktopActionDecision({
@@ -746,6 +747,7 @@ describe("createComputerUseMcpTools", () => {
           appId: "wechat.exe",
           appName: "微信",
           windowTitle: "群聊",
+          targetLabel: "Enter 键",
         },
       },
       {

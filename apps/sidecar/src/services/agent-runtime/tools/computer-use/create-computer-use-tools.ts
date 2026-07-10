@@ -516,6 +516,12 @@ function containsEnterKey(keys: string[] | undefined): boolean {
   return keys?.some((key) => /^(?:enter|return)$/i.test(key.trim())) ?? false;
 }
 
+function enterKeyLabel(keys: string[] | undefined): string | undefined {
+  const key = keys?.find((candidate) => /^(?:enter|return)$/i.test(candidate.trim()));
+  if (!key) return undefined;
+  return key.trim().toLowerCase() === "return" ? "Return 键" : "Enter 键";
+}
+
 function deriveTargetLabel(
   action: DesktopActionKind,
   args: Record<string, unknown>,
@@ -527,7 +533,8 @@ function deriveTargetLabel(
     return labelFromElement(findElementById(accessibility.tree, elementId));
   }
   if (action === "press_key" && containsEnterKey(actionIntentFromArgs(action, args).keys)) {
-    return labelFromElement(accessibility.focusedElement);
+    return labelFromElement(accessibility.focusedElement)
+      ?? enterKeyLabel(actionIntentFromArgs(action, args).keys);
   }
   return undefined;
 }
