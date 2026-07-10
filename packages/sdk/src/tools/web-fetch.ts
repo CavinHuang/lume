@@ -12,6 +12,9 @@ import { buildAssetFile } from "./asset-markdown.js";
 import { createNoopRenderClient, type RenderClient } from "./render-client.js";
 
 const MAX_FETCH_CHARS = 100000;
+// raw/rendered HTML 上限：仅在 Readability 前防极端响应 OOM，不切正常文章正文
+// （微信等富文章可达数 MB；正文抽出后再按 MAX_FETCH_CHARS 限制 markdown）。
+const MAX_RAW_HTML_CHARS = 10_000_000;
 
 export interface WebFetchInput {
   url: string;
@@ -56,7 +59,7 @@ export async function runWebFetch(
 
     const contentType = response.headers.get("content-type") || "";
     let rawHtml = await response.text();
-    if (rawHtml.length > MAX_FETCH_CHARS) rawHtml = rawHtml.slice(0, MAX_FETCH_CHARS);
+    if (rawHtml.length > MAX_RAW_HTML_CHARS) rawHtml = rawHtml.slice(0, MAX_RAW_HTML_CHARS);
 
     const isHtml = contentType.includes("text/html") || rawHtml.trimStart().startsWith("<");
     if (!isHtml) return { data: rawHtml || "(empty response)" };
@@ -68,7 +71,7 @@ export async function runWebFetch(
     if (shouldRender(rawHtml, renderMode)) {
       const r = await renderClient.renderUrl(url, { timeoutMs: 45000 });
       if (r.ok) {
-        finalHtml = r.html.length > MAX_FETCH_CHARS ? r.html.slice(0, MAX_FETCH_CHARS) : r.html;
+        finalHtml = r.html.length > MAX_RAW_HTML_CHARS ? r.html.slice(0, MAX_RAW_HTML_CHARS) : r.html;
       } else {
         renderNote = `\n\n[render failed: ${r.error.code}; static fallback]`;
       }
@@ -97,6 +100,10 @@ export async function runWebFetch(
         .trim();
       markdown = stripped || "(empty response)";
     }
+
+    // rawHtml/render html 已用 MAX_RAW_HTML_CHARS 保留完整正文；这里限制返回 agent 与写入
+    // 资产的 markdown 长度，避免超大正文占用上下文。
+    if (markdown.length > MAX_FETCH_CHARS) markdown = markdown.slice(0, MAX_FETCH_CHARS) + "\n\n[content truncated]";
 
     // asset persistence
     if (assetDir) {
