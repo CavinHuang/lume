@@ -180,6 +180,10 @@ export function createComputerUseMcpTools(input: {
             if (!allowed) {
               return toolResult(context.toolUseId, { status: "cancelled" });
             }
+            const revalidated = await revalidateDesktopActionTarget(invoke, args);
+            if (revalidated.status !== "ok") {
+              return toolResult(context.toolUseId, revalidated.result);
+            }
           }
           if (!readOnly && !NON_DESKTOP_ACTION_TOOLS.has(name)) {
             visualStarted = true;
@@ -222,6 +226,35 @@ export function createComputerUseMcpTools(input: {
       },
     } satisfies ToolDefinition;
   });
+}
+
+async function revalidateDesktopActionTarget(
+  invoke: ComputerUseInvoke,
+  args: Record<string, unknown>,
+): Promise<{ status: "ok" } | { status: "blocked"; result: unknown }> {
+  const windowId = stringValue(args.windowId);
+  if (!windowId) {
+    return {
+      status: "blocked",
+      result: { status: "stale_target", message: "desktop target changed after confirmation" },
+    };
+  }
+  const state = asRecord(await invoke("get_window_state", { windowId }));
+  const window = asRecord(state.window);
+  const expectedRevision = stringValue(args.windowRevision);
+  const expectedAppId = stringValue(args.appId);
+  if (
+    state.status !== "ok"
+    || stringValue(window.id) !== windowId
+    || (expectedAppId && stringValue(window.appId) !== expectedAppId)
+    || (expectedRevision && stringValue(state.revision) !== expectedRevision)
+  ) {
+    return {
+      status: "blocked",
+      result: { status: "stale_target", message: "desktop target changed after confirmation" },
+    };
+  }
+  return { status: "ok" };
 }
 
 async function resolveBoundDesktopTarget(

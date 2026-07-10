@@ -467,8 +467,9 @@ describe("createComputerUseMcpTools", () => {
     });
     const result = await resultPromise;
 
-    expect(calls).toHaveLength(3);
-    expect(calls[2]).toEqual({
+    expect(calls).toHaveLength(4);
+    expect(calls[1]).toEqual({ method: "get_window_state", input: { windowId: "window-1" } });
+    expect(calls[3]).toEqual({
       method: "wait_for_state",
       input: { windowId: "window-1", revisionNot: "rev-1", timeoutMs: 1_500 },
     });
@@ -483,7 +484,13 @@ describe("createComputerUseMcpTools", () => {
       emitDesktopActionRequest: (request) => requests.push(request),
       invoke: async (method, input) => {
         calls.push({ method, input });
-        if (method === "get_window_state") return { status: "ok", revision: "fresh-rev" };
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "fresh-rev",
+            window: { id: "window-1", appId: "wechat.exe", appName: "微信" },
+          };
+        }
         return { status: "ok" };
       },
     });
@@ -503,7 +510,8 @@ describe("createComputerUseMcpTools", () => {
     });
     await resultPromise;
 
-    expect(calls[1]).toEqual({
+    expect(calls[1]).toEqual({ method: "get_window_state", input: { windowId: "window-1" } });
+    expect(calls[2]).toEqual({
       method: "click",
       input: { appId: "wechat.exe", appName: "微信", windowId: "window-1", targetLabel: "发送", windowRevision: "fresh-rev" },
     });
@@ -555,7 +563,8 @@ describe("createComputerUseMcpTools", () => {
     });
     const result = await resultPromise;
 
-    expect(calls[1]).toEqual({
+    expect(calls[1]).toEqual({ method: "get_window_state", input: { windowId: "window-1" } });
+    expect(calls[2]).toEqual({
       method: "click",
       input: {
         windowId: "window-1",
@@ -569,7 +578,7 @@ describe("createComputerUseMcpTools", () => {
         y: 620,
       },
     });
-    expect(calls[2]).toEqual({
+    expect(calls[3]).toEqual({
       method: "wait_for_state",
       input: { windowId: "window-1", revisionNot: "derived-rev", timeoutMs: 1_500 },
     });
@@ -580,6 +589,50 @@ describe("createComputerUseMcpTools", () => {
         revision: "derived-rev",
         window: { id: "window-1", title: "项目群" },
       },
+    });
+  });
+
+  test("revalidates consequential action targets after approval and cancels stale revisions", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedRevision?: string }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-stale-after-approval",
+      emitDesktopActionRequest: (request) => requests.push(request),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") {
+          const firstRead = calls.filter((call) => call.method === "get_window_state").length === 1;
+          return {
+            status: "ok",
+            revision: firstRead ? "rev-before-confirm" : "rev-after-confirm",
+            window: { id: "window-1", title: "项目群", appId: "wechat.exe", appName: "微信" },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const click = tools.find((tool) => tool.name === "mcp__computer_use__click")!;
+    const resultPromise = click.call(
+      { appId: "wechat.exe", appName: "微信", windowId: "window-1", targetLabel: "发送" },
+      { toolUseId: "tool-stale-after-approval", abortSignal: new AbortController().signal } as never,
+    );
+
+    await Bun.sleep(0);
+    expect(requests[0]?.expectedRevision).toBe("rev-before-confirm");
+    submitDesktopActionDecision({
+      threadId: "thread-stale-after-approval",
+      requestId: requests[0]!.requestId,
+      decision: "allow_once",
+    });
+    const result = await resultPromise;
+
+    expect(calls).toEqual([
+      { method: "get_window_state", input: { windowId: "window-1" } },
+      { method: "get_window_state", input: { windowId: "window-1" } },
+    ]);
+    expect(JSON.parse(result.content as string)).toEqual({
+      status: "stale_target",
+      message: "desktop target changed after confirmation",
     });
   });
 
@@ -620,6 +673,7 @@ describe("createComputerUseMcpTools", () => {
     await resultPromise;
 
     expect(calls).toEqual([
+      { method: "get_window_state", input: { windowId: "window-2" } },
       { method: "get_window_state", input: { windowId: "window-2" } },
       {
         method: "press_key",
