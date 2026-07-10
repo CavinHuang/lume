@@ -389,6 +389,37 @@ describe('QuickInput', () => {
     expect(container.textContent).toContain('已附加 微信')
   })
 
+  test('快速输入不会把 Lume 自身窗口绑定为当前应用上下文', async () => {
+    invokeMock.mockImplementation(async (command: string) => (
+      command === 'quick_input_get_context'
+        ? {
+            status: 'ok',
+            snapshotId: 'snapshot-lume',
+            app: { id: 'lume.exe', name: 'Lume' },
+            window: { id: 'win:lume', title: 'Lume Quick Input' },
+            capturedAt: 100,
+          }
+        : undefined
+    ))
+    const store = makeStore()
+    const container = fakeDoc.createElement('div')
+
+    await act(async () => {
+      const root = createRoot(container as never)
+      rootRef.current = root
+      root.render(
+        <Provider store={store}>
+          <QuickInput />
+        </Provider>,
+      )
+      await flush()
+    })
+
+    expect(latestAgentViewMessageMetadata).toBeUndefined()
+    expect(latestAgentViewDesktopContextTarget).toBeUndefined()
+    expect(container.textContent).not.toContain('已附加 Lume')
+  })
+
   test('桌面上下文作为会话绑定，发送后不会被当作一次性附件清掉', async () => {
     invokeMock.mockImplementation(async (command: string) => (
       command === 'quick_input_get_context'

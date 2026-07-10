@@ -200,12 +200,12 @@ function permissionTargetName(value: DesktopContextCaptureResult['permissionTarg
 }
 
 function desktopContextTargetState(target: DesktopContextTarget): AgentInputDesktopContextCaptureState {
-  return isLumeShellTarget(target)
+  return isLumeShellDesktopContextTarget(target)
     ? { status: 'unavailable', message: LUME_SELF_CONTEXT_MESSAGE }
     : { status: 'ready', target }
 }
 
-function isLumeShellTarget(target: DesktopContextTarget): boolean {
+export function isLumeShellDesktopContextTarget(target: DesktopContextTarget): boolean {
   const appId = normalizeSelfContextText(target.app.id)
   const appName = normalizeSelfContextText(target.app.name)
   const title = normalizeSelfContextText(target.window.title)

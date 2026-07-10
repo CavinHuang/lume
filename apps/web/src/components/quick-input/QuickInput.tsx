@@ -6,6 +6,10 @@ import { invoke } from '@/lib/desktop-runtime/core'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
 import { useWorkspaceBootstrap } from '@/hooks/useWorkspaceBootstrap'
 import { AgentView } from '@/components/agent/AgentView'
+import {
+  createDesktopContextMessageMetadata,
+  isLumeShellDesktopContextTarget,
+} from '@/components/agent/agent-input-desktop-context'
 import { QuickInputWorkspaceSelector } from './QuickInputWorkspaceSelector'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -165,18 +169,11 @@ function quickInputContextToTarget(result: QuickInputContextResult | undefined):
     || typeof result.window?.id !== 'string'
     || typeof result.window?.title !== 'string'
   ) return undefined
-  return {
+  const target = {
     snapshotId: result.snapshotId,
     app: { id: result.app.id, name: result.app.name },
     window: { id: result.window.id, title: result.window.title },
     ...(typeof result.capturedAt === 'number' ? { capturedAt: result.capturedAt } : {}),
   }
-}
-
-function createDesktopContextMessageMetadata(target: DesktopContextTarget): Record<string, unknown> {
-  return {
-    desktopContextSnapshotId: target.snapshotId,
-    desktopApp: target.app,
-    desktopWindow: target.window,
-  }
+  return isLumeShellDesktopContextTarget(target) ? undefined : target
 }
