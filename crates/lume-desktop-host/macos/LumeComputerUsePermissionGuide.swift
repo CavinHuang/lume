@@ -1,6 +1,4 @@
-import ApplicationServices
 import AppKit
-import CoreGraphics
 import Foundation
 
 struct PermissionGuideConfig {
@@ -123,7 +121,7 @@ final class PermissionGuideDelegate: NSObject, NSApplicationDelegate {
 
     @objc
     func refreshPermissionStatus() {
-        guard permissionGranted(config.permission) else {
+        guard permissionGranted(config) else {
             guideView?.setPermissionGranted(false)
             return
         }
@@ -263,15 +261,102 @@ final class PermissionGuideView: NSView {
     }
 }
 
-func permissionGranted(_ permission: String) -> Bool {
-    switch permission {
-    case "accessibility":
-        return AXIsProcessTrusted()
-    case "screenRecording":
-        return CGPreflightScreenCaptureAccess()
-    default:
+func permissionGranted(_ config: PermissionGuideConfig) -> Bool {
+    guard let service = tccService(for: config.permission) else {
         return false
     }
+
+    return permissionClients(for: config).contains { client in
+        tccAuthorizationGranted(
+            service: service,
+            client: client.identifier,
+            clientType: client.clientType
+        )
+    }
+}
+
+func tccService(for permission: String) -> String? {
+    switch permission {
+    case "accessibility":
+        return "kTCCServiceAccessibility"
+    case "screenRecording":
+        return "kTCCServiceScreenCapture"
+    default:
+        return nil
+    }
+}
+
+struct TccClient: Equatable {
+    let identifier: String
+    let clientType: Int
+}
+
+func permissionClients(for config: PermissionGuideConfig) -> [TccClient] {
+    var clients: [TccClient] = []
+    let bundleURL = URL(fileURLWithPath: config.appBundlePath, isDirectory: true)
+    if let bundleIdentifier = Bundle(url: bundleURL)?.bundleIdentifier,
+       !bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+        appendUniqueClient(&clients, TccClient(identifier: bundleIdentifier, clientType: 0))
+    }
+    appendUniqueClient(&clients, TccClient(identifier: bundleURL.standardizedFileURL.path, clientType: 1))
+    return clients
+}
+
+func appendUniqueClient(_ clients: inout [TccClient], _ client: TccClient) {
+    if !clients.contains(client) {
+        clients.append(client)
+    }
+}
+
+func tccAuthorizationGranted(service: String, client: String, clientType: Int) -> Bool {
+    for databasePath in tccDatabasePaths() {
+        if tccAuthValue(databasePath: databasePath, service: service, client: client, clientType: clientType) == 2 {
+            return true
+        }
+    }
+    return false
+}
+
+func tccDatabasePaths() -> [String] {
+    let paths = [
+        "/Library/Application Support/com.apple.TCC/TCC.db",
+        "\(NSHomeDirectory())/Library/Application Support/com.apple.TCC/TCC.db",
+    ]
+    var unique: [String] = []
+    for path in paths where !unique.contains(path) {
+        unique.append(path)
+    }
+    return unique
+}
+
+func tccAuthValue(databasePath: String, service: String, client: String, clientType: Int) -> Int? {
+    let query = """
+    SELECT auth_value FROM access WHERE service = '\(sqlQuote(service))' AND client = '\(sqlQuote(client))' AND client_type = \(clientType) ORDER BY last_modified DESC LIMIT 1;
+    """
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+    process.arguments = ["-batch", "-noheader", databasePath, query]
+    let stdout = Pipe()
+    process.standardOutput = stdout
+    process.standardError = Pipe()
+
+    do {
+        try process.run()
+        process.waitUntilExit()
+    } catch {
+        return nil
+    }
+    guard process.terminationStatus == 0 else {
+        return nil
+    }
+    let output = stdout.fileHandleForReading.readDataToEndOfFile()
+    let text = String(data: output, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return text.flatMap(Int.init)
+}
+
+func sqlQuote(_ value: String) -> String {
+    value.replacingOccurrences(of: "'", with: "''")
 }
 
 final class DraggableAppTileView: NSView, NSDraggingSource {
