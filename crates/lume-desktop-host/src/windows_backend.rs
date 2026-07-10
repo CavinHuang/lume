@@ -3,10 +3,7 @@ use std::{
     time::Duration,
 };
 
-use crate::windows_cursor_motion::{
-    cursor_motion_frame_points, spring_close_enough_time_seconds, CursorBounds, CursorPoint,
-    CursorVector,
-};
+use crate::windows_cursor_motion::spring_close_enough_time_seconds;
 use crate::windows_overlay::{
     move_visual_cursor, pulse_visual_cursor, settle_visual_cursor, VISUAL_CURSOR_WINDOW_TITLE,
 };
@@ -61,20 +58,16 @@ use windows::{
                 UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
             },
             Input::KeyboardAndMouse::{
-                SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
-                KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-                MOUSEINPUT, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
-                VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT,
-                VK_SHIFT, VK_TAB, VK_UP,
+                VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME,
+                VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
-                BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics,
-                GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-                IsIconic, IsWindow, IsWindowVisible, PostMessageW, SendMessageW, SetCursorPos,
-                SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
-                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
-                WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
+                BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowRect,
+                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
+                IsWindowVisible, PostMessageW, SendMessageW, SetForegroundWindow, ShowWindow,
+                SW_RESTORE, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+                WM_RBUTTONDOWN, WM_RBUTTONUP,
             },
         },
     },
@@ -1258,42 +1251,25 @@ fn text_window_handle_candidate(
 }
 
 fn set_value(params: &Value) -> Result<Value> {
-    let target = target_window(params);
-    let semantic = preferred_pointer_injection(params, DesktopMouseButton::Left) == "uia";
-    if !semantic {
-        if let Some(hwnd) = target {
-            activate(hwnd)?;
-        }
+    let Some(target) = target_window(params) else {
+        return Ok(stale_target());
+    };
+    if params.get("elementId").and_then(Value::as_str).is_none() {
+        return Ok(failed_action("elementId is required"));
     }
-    if params.get("elementId").is_some() {
-        let (x, y) = action_point(params)?;
-        animate_visual_pointer(x, y, target);
-        let value = params
-            .get("value")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if try_set_element_value(params, value)? {
-            pulse_visual_cursor(x, y, target);
-            return Ok(json!({ "status": "ok", "inputMode": "uia_value" }));
-        }
-        if let Some(hwnd) = target {
-            activate(hwnd)?;
-        }
-        animate_physical_pointer(x, y)?;
-        send_mouse(MOUSEEVENTF_LEFTDOWN, 0)?;
-        send_mouse(MOUSEEVENTF_LEFTUP, 0)?;
-        pulse_visual_cursor(x, y, target);
-    }
+    let (x, y) = action_point(params)?;
+    animate_visual_pointer(x, y, Some(target));
     let value = params
         .get("value")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    send_virtual_key(VK_CONTROL, false)?;
-    send_virtual_key(VIRTUAL_KEY(b'A' as u16), false)?;
-    send_virtual_key(VIRTUAL_KEY(b'A' as u16), true)?;
-    send_virtual_key(VK_CONTROL, true)?;
-    send_unicode(value)?;
-    Ok(json!({ "status": "ok", "inputMode": "keyboard_fallback" }))
+    if !try_set_element_value(params, value)? {
+        return Ok(failed_action(
+            "Cannot set a value for an element that is not settable",
+        ));
+    }
+    pulse_visual_cursor(x, y, Some(target));
+    Ok(json!({ "status": "ok", "inputMode": "uia_value" }))
 }
 
 fn action_point(params: &Value) -> Result<(i32, i32)> {
@@ -1437,57 +1413,6 @@ fn animate_visual_pointer(x: i32, y: i32, target_window: Option<HWND>) {
     move_visual_cursor(x, y, target_window);
     thread::sleep(Duration::from_secs_f64(spring_close_enough_time_seconds()));
     settle_visual_cursor(x, y, target_window);
-}
-
-fn animate_physical_pointer(x: i32, y: i32) -> Result<()> {
-    let mut from = POINT::default();
-    unsafe {
-        GetCursorPos(&mut from)?;
-    }
-    let start = CursorPoint {
-        x: f64::from(from.x),
-        y: f64::from(from.y),
-    };
-    let end = CursorPoint {
-        x: f64::from(x),
-        y: f64::from(y),
-    };
-    let neutral = CursorVector::new(-1.0, -1.0).normalized();
-    for point in cursor_motion_frame_points(
-        start,
-        end,
-        virtual_desktop_bounds(start, end),
-        neutral,
-        neutral,
-        1.0 / 60.0,
-    ) {
-        unsafe {
-            SetCursorPos(point.x.round() as i32, point.y.round() as i32)?;
-        }
-        thread::sleep(Duration::from_millis(16));
-    }
-    Ok(())
-}
-
-fn virtual_desktop_bounds(start: CursorPoint, end: CursorPoint) -> CursorBounds {
-    let x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
-    let y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
-    let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
-    let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
-    if width > 0 && height > 0 {
-        return CursorBounds::new(
-            f64::from(x),
-            f64::from(y),
-            f64::from(width),
-            f64::from(height),
-        );
-    }
-    CursorBounds::new(
-        start.x.min(end.x) - 200.0,
-        start.y.min(end.y) - 200.0,
-        (start.x - end.x).abs() + 400.0,
-        (start.y - end.y).abs() + 400.0,
-    )
 }
 
 fn preferred_pointer_injection(params: &Value, button: DesktopMouseButton) -> &'static str {
@@ -1689,68 +1614,6 @@ fn try_set_element_value(params: &Value, value: &str) -> Result<bool> {
     Ok(true)
 }
 
-fn send_mouse(
-    flags: windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
-    data: u32,
-) -> Result<()> {
-    let input = INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                mouseData: data,
-                dwFlags: flags,
-                ..Default::default()
-            },
-        },
-    };
-    send_inputs(&[input])
-}
-
-fn send_virtual_key(key: VIRTUAL_KEY, key_up: bool) -> Result<()> {
-    let input = INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: key,
-                dwFlags: if key_up {
-                    KEYEVENTF_KEYUP
-                } else {
-                    Default::default()
-                },
-                ..Default::default()
-            },
-        },
-    };
-    send_inputs(&[input])
-}
-
-fn send_unicode(text: &str) -> Result<()> {
-    let mut inputs = Vec::new();
-    for unit in text.encode_utf16() {
-        inputs.push(INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wScan: unit,
-                    dwFlags: KEYEVENTF_UNICODE,
-                    ..Default::default()
-                },
-            },
-        });
-        inputs.push(INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wScan: unit,
-                    dwFlags: KEYEVENTF_UNICODE | KEYEVENTF_KEYUP,
-                    ..Default::default()
-                },
-            },
-        });
-    }
-    send_inputs(&inputs)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1926,17 +1789,6 @@ mod tests {
         assert_eq!(virtual_key("PAGEDOWN").unwrap(), VK_NEXT);
         assert_eq!(virtual_key("DELETE").unwrap(), VK_DELETE);
     }
-}
-
-fn send_inputs(inputs: &[INPUT]) -> Result<()> {
-    if inputs.is_empty() {
-        return Ok(());
-    }
-    let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
-    if sent != inputs.len() as u32 {
-        return Err(anyhow!("SendInput accepted {sent}/{} events", inputs.len()));
-    }
-    Ok(())
 }
 
 fn virtual_key(name: &str) -> Result<VIRTUAL_KEY> {

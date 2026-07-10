@@ -15,9 +15,8 @@ use crate::{
         macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
         macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
         macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
-        MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
-        MACOS_LUME_VISUAL_POINTER_ENV, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
-        MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
+        MacOSWindowInfo, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV, MACOS_LUME_VISUAL_POINTER_ENV,
+        MACOS_NON_SETTABLE_SET_VALUE_ERROR, MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
     },
     DesktopBackend, DesktopClickOptions, DesktopMouseButton, DesktopPermissionClientRecord,
@@ -485,46 +484,18 @@ fn type_text(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
 }
 
 fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
+    let Some(element_id) = params.get("elementId").and_then(Value::as_str) else {
+        return Ok(failed_action("elementId is required"));
+    };
     let value = params
         .get("value")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
-        move_visible_pointer_for_params(window, params);
-        if let Some(result) = set_accessibility_value(window, element_id, value)? {
-            return Ok(with_visual_pointer(result));
-        }
-        return Ok(stale_target());
+    move_visible_pointer_for_params(window, params);
+    if let Some(result) = set_accessibility_value(window, element_id, value)? {
+        return Ok(with_visual_pointer(result));
     }
-    if params.get("x").is_some() && params.get("y").is_some() {
-        match macos_resolve_action_point(window, params) {
-            Ok((x, y)) => {
-                activate_macos_window(window)?;
-                let global_pointer_fallback = global_pointer_fallback_enabled();
-                move_mouse(x, y, window.owner_pid as c_int, global_pointer_fallback);
-                click_mouse(
-                    x,
-                    y,
-                    DesktopClickOptions {
-                        count: 1,
-                        button: DesktopMouseButton::Left,
-                    },
-                    window.owner_pid as c_int,
-                    global_pointer_fallback,
-                );
-            }
-            Err(result) => return Ok(result),
-        }
-    } else {
-        activate_macos_window(window)?;
-    }
-    send_key(0, MACOS_EVENT_FLAG_MASK_COMMAND, window.owner_pid as c_int);
-    send_text(value, window.owner_pid as c_int);
-    Ok(json!({
-        "status": "ok",
-        "inputMode": "keyboard_fallback",
-        "visualPointer": visual_pointer_mode()
-    }))
+    Ok(stale_target())
 }
 
 fn set_accessibility_value(

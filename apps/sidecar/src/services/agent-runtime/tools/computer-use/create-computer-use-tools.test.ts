@@ -47,6 +47,9 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("scroll").properties.y).toBeUndefined();
     expect(schema("drag").required).toEqual(["windowId", "fromX", "fromY", "toX", "toY"]);
     expect(schema("type_text").required).toEqual(["windowId", "text"]);
+    expect(schema("set_value").required).toEqual(["windowId", "elementId", "value"]);
+    expect(schema("set_value").properties.x).toBeUndefined();
+    expect(schema("set_value").properties.y).toBeUndefined();
     expect(schema("search_context").required).toEqual(["query"]);
     expect(schema("diagnose_permissions").required).toBeUndefined();
     expect(schema("request_permissions").required).toBeUndefined();
@@ -78,7 +81,7 @@ describe("createComputerUseMcpTools", () => {
     expect(required("drag")).toEqual(["fromX", "fromY", "toX", "toY"]);
     expect(required("press_key")).toBeUndefined();
     expect(required("type_text")).toEqual(["text"]);
-    expect(required("set_value")).toEqual(["value"]);
+    expect(required("set_value")).toEqual(["elementId", "value"]);
     expect(required("wait_for_state")).toBeUndefined();
   });
 
@@ -1051,6 +1054,16 @@ describe("createComputerUseMcpTools", () => {
         if (method === "get_window_state") {
           return {
             status: "ok",
+            revision: "rev-before",
+            window: { id: "win-1", title: "项目群", focused: true },
+            accessibility: {
+              focusedElement: { id: "root.1", role: "edit", name: "输入框", value: "before", settable: true },
+            },
+          };
+        }
+        if (method === "wait_for_state") {
+          return {
+            status: "ok",
             revision: "rev-after",
             window: { id: "win-1", title: "项目群", focused: true },
             accessibility: {
@@ -1064,16 +1077,29 @@ describe("createComputerUseMcpTools", () => {
     const setValue = tools.find((tool) => tool.name === "mcp__computer_use__set_value")!;
 
     const result = await setValue.call(
-      { appId: "wechat.exe", appName: "微信", windowId: "win-1", targetLabel: "输入框", value: "typed text" },
+      { appId: "wechat.exe", appName: "微信", windowId: "win-1", elementId: "root.1", targetLabel: "输入框", value: "typed text" },
       { toolUseId: "tool-verify" } as never,
     );
 
     expect(calls).toEqual([
+      { method: "get_window_state", input: { windowId: "win-1" } },
       {
         method: "set_value",
-        input: { appId: "wechat.exe", appName: "微信", windowId: "win-1", targetLabel: "输入框", value: "typed text" },
+        input: {
+          appId: "wechat.exe",
+          appName: "微信",
+          windowId: "win-1",
+          windowRevision: "rev-before",
+          windowTitle: "项目群",
+          elementId: "root.1",
+          targetLabel: "输入框",
+          value: "typed text",
+        },
       },
-      { method: "get_window_state", input: { windowId: "win-1" } },
+      {
+        method: "wait_for_state",
+        input: { windowId: "win-1", revisionNot: "rev-before", timeoutMs: 1_500 },
+      },
     ]);
     expect(JSON.parse(result.content as string)).toEqual({
       status: "ok",
