@@ -9,13 +9,14 @@ use crate::{
         macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
         macos_global_pointer_fallback_enabled_from, macos_integral_scroll_page_count,
         macos_key_chord, macos_list_apps_result, macos_list_windows_result,
-        macos_matching_secondary_action, macos_pointer_input_mode,
+        macos_matching_secondary_action, macos_png_data_url, macos_pointer_input_mode,
         macos_pointer_requires_activation, macos_preferred_click_actions,
-        macos_resolve_action_point, macos_scroll_action_name, macos_scroll_wheel_deltas,
-        macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
-        macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
-        macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
-        MacOSWindowInfo, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV, MACOS_LUME_VISUAL_POINTER_ENV,
+        macos_resolve_action_point, macos_screen_capture_helper_path, macos_scroll_action_name,
+        macos_scroll_wheel_deltas, macos_set_value_attribute_is_settable,
+        macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
+        macos_visible_pointer_mode, macos_visible_pointer_motion_points,
+        macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
+        MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV, MACOS_LUME_VISUAL_POINTER_ENV,
         MACOS_NON_SETTABLE_SET_VALUE_ERROR, MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
     },
@@ -23,7 +24,6 @@ use crate::{
     DesktopScrollOptions,
 };
 use anyhow::{anyhow, Result};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -32,7 +32,7 @@ use std::{
     os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
     path::Path,
     process::Command,
-    ptr, slice,
+    ptr,
     sync::{Mutex, OnceLock},
     thread,
     time::{Duration, Instant},
@@ -914,79 +914,37 @@ fn capture_screenshot_if_requested(window: &mut MacOSWindowInfo, include_screens
 
 fn capture_window_png_data_url(window: &MacOSWindowInfo) -> Result<String> {
     if window.window_id > c_uint::MAX as u64 {
-        return Err(anyhow!("window id is too large for CoreGraphics capture"));
+        return Err(anyhow!(
+            "window id is too large for ScreenCaptureKit capture"
+        ));
     }
     if window.width <= 0.0 || window.height <= 0.0 {
         return Err(anyhow!("window capture dimensions are empty"));
     }
-
-    unsafe {
-        let bounds = CGRect {
-            origin: CGPoint {
-                x: window.x,
-                y: window.y,
-            },
-            size: CGSize {
-                width: window.width,
-                height: window.height,
-            },
-        };
-        let image = CGWindowListCreateImage(
-            bounds,
-            K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW,
-            window.window_id as c_uint,
-            K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING | K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION,
-        );
-        if image.is_null() {
-            return Err(anyhow!("window capture returned null"));
-        }
-        let result = cg_image_to_png_data_url(image);
-        CFRelease(image as CFTypeRef);
-        result
+    let host_executable = env::current_exe()?;
+    let helper = macos_screen_capture_helper_path(&host_executable)
+        .ok_or_else(|| anyhow!("desktop host executable has no parent directory"))?;
+    if !helper.is_file() {
+        return Err(anyhow!(
+            "ScreenCaptureKit helper is unavailable: {}",
+            helper.display()
+        ));
     }
-}
-
-unsafe fn cg_image_to_png_data_url(image: CGImageRef) -> Result<String> {
-    let data = CFDataCreateMutable(ptr::null(), 0);
-    if data.is_null() {
-        return Err(anyhow!("unable to create PNG buffer"));
+    let output = Command::new(&helper)
+        .arg(window.window_id.to_string())
+        .output()?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(anyhow!(if message.is_empty() {
+            format!(
+                "ScreenCaptureKit helper exited with status {}",
+                output.status
+            )
+        } else {
+            message
+        }));
     }
-    let result = (|| {
-        let png_type = cf_string("public.png")?;
-        let destination = CGImageDestinationCreateWithData(data, png_type, 1, ptr::null());
-        CFRelease(png_type as CFTypeRef);
-        if destination.is_null() {
-            return Err(anyhow!("unable to create PNG encoder"));
-        }
-        CGImageDestinationAddImage(destination, image, ptr::null());
-        let finalized = CGImageDestinationFinalize(destination);
-        CFRelease(destination as CFTypeRef);
-        if !finalized {
-            return Err(anyhow!("unable to finalize PNG screenshot"));
-        }
-        let length = CFDataGetLength(data);
-        if length <= 0 {
-            return Err(anyhow!("PNG screenshot is empty"));
-        }
-        let bytes = CFDataGetBytePtr(data);
-        if bytes.is_null() {
-            return Err(anyhow!("PNG screenshot buffer is unavailable"));
-        }
-        let png = slice::from_raw_parts(bytes, length as usize);
-        Ok(format!("data:image/png;base64,{}", BASE64.encode(png)))
-    })();
-    CFRelease(data as CFTypeRef);
-    result
-}
-
-unsafe fn cf_string(value: &str) -> Result<CFStringRef> {
-    let c_string = CString::new(value)?;
-    let string_ref =
-        CFStringCreateWithCString(ptr::null(), c_string.as_ptr(), K_CF_STRING_ENCODING_UTF8);
-    if string_ref.is_null() {
-        return Err(anyhow!("unable to create CoreFoundation string"));
-    }
-    Ok(string_ref)
+    macos_png_data_url(&output.stdout).map_err(|message| anyhow!(message))
 }
 
 fn cg_point(x: i64, y: i64) -> CGPoint {
@@ -1841,14 +1799,10 @@ type CFNumberRef = *const c_void;
 type CFBooleanRef = *const c_void;
 type CFArrayRef = *const c_void;
 type CFDictionaryRef = *const c_void;
-type CFMutableDataRef = *const c_void;
-type CFDataRef = *const c_void;
 type CFIndex = c_long;
 type CFTypeID = c_ulong;
 type AXUIElementRef = *const c_void;
 type AXValueRef = *const c_void;
-type CGImageRef = *const c_void;
-type CGImageDestinationRef = *const c_void;
 type CGEventRef = *const c_void;
 type CGEventSourceRef = *const c_void;
 type Sqlite3 = c_void;
@@ -1882,10 +1836,7 @@ const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 const K_CF_NUMBER_SINT64_TYPE: c_int = 4;
 const K_CF_NUMBER_DOUBLE_TYPE: c_int = 13;
 const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: c_uint = 1;
-const K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW: c_uint = 8;
 const K_CG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS: c_uint = 16;
-const K_CG_WINDOW_IMAGE_BOUNDS_IGNORE_FRAMING: c_uint = 1;
-const K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION: c_uint = 16;
 const K_CG_HID_EVENT_TAP: c_uint = 0;
 const K_CG_EVENT_LEFT_MOUSE_DOWN: c_uint = 1;
 const K_CG_EVENT_LEFT_MOUSE_UP: c_uint = 2;
@@ -1943,12 +1894,6 @@ extern "C" {
     fn CGEventCreate(source: CGEventSourceRef) -> CGEventRef;
     fn CGEventGetLocation(event: CGEventRef) -> CGPoint;
     fn CGWindowListCopyWindowInfo(option: c_uint, relative_to_window: c_uint) -> CFArrayRef;
-    fn CGWindowListCreateImage(
-        screen_bounds: CGRect,
-        list_option: c_uint,
-        window_id: c_uint,
-        image_option: c_uint,
-    ) -> CGImageRef;
     fn CGWarpMouseCursorPosition(new_cursor_position: CGPoint) -> c_int;
     fn CGEventCreateMouseEvent(
         source: CGEventSourceRef,
@@ -1980,22 +1925,6 @@ extern "C" {
     fn CGEventPostToPid(pid: c_int, event: CGEventRef);
 }
 
-#[link(name = "ImageIO", kind = "framework")]
-extern "C" {
-    fn CGImageDestinationCreateWithData(
-        data: CFMutableDataRef,
-        type_identifier: CFStringRef,
-        count: c_ulong,
-        options: CFDictionaryRef,
-    ) -> CGImageDestinationRef;
-    fn CGImageDestinationAddImage(
-        destination: CGImageDestinationRef,
-        image: CGImageRef,
-        properties: CFDictionaryRef,
-    );
-    fn CGImageDestinationFinalize(destination: CGImageDestinationRef) -> bool;
-}
-
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRetain(cf: CFTypeRef) -> CFTypeRef;
@@ -2020,9 +1949,6 @@ extern "C" {
         key_callbacks: *const c_void,
         value_callbacks: *const c_void,
     ) -> CFDictionaryRef;
-    fn CFDataCreateMutable(allocator: CFTypeRef, capacity: CFIndex) -> CFMutableDataRef;
-    fn CFDataGetLength(data: CFDataRef) -> CFIndex;
-    fn CFDataGetBytePtr(data: CFDataRef) -> *const u8;
     fn CFStringCreateWithCString(
         alloc: CFTypeRef,
         c_str: *const c_char,

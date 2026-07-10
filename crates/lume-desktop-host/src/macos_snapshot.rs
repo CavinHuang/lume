@@ -1,7 +1,11 @@
 #[cfg(any(target_os = "macos", test))]
 use crate::{DesktopMouseButton, DesktopScrollDirection};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use crate::windows_cursor_motion::{
     cursor_motion_frame_points, CursorBounds, CursorPoint, CursorVector,
@@ -19,7 +23,22 @@ pub const MACOS_LUME_VISUAL_POINTER_ENV: &str = "LUME_COMPUTER_USE_VISUAL_CURSOR
 pub const MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV: &str = "OPEN_COMPUTER_USE_VISUAL_CURSOR";
 pub const MACOS_NON_SETTABLE_SET_VALUE_ERROR: &str =
     "Cannot set a value for an element that is not settable";
+pub const MACOS_SCREEN_CAPTURE_HELPER_NAME: &str = "LumeComputerUseScreenCapture";
 const MACOS_VISIBLE_POINTER_FRAME_INTERVAL_SECONDS: f64 = 1.0 / 60.0;
+
+pub fn macos_screen_capture_helper_path(host_executable: &Path) -> Option<PathBuf> {
+    host_executable
+        .parent()
+        .map(|parent| parent.join(MACOS_SCREEN_CAPTURE_HELPER_NAME))
+}
+
+pub fn macos_png_data_url(png: &[u8]) -> Result<String, String> {
+    const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if !png.starts_with(PNG_SIGNATURE) {
+        return Err("ScreenCaptureKit helper returned invalid PNG data".to_owned());
+    }
+    Ok(format!("data:image/png;base64,{}", BASE64.encode(png)))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MacOSWindowInfo {
@@ -779,5 +798,38 @@ mod click_event_tests {
     #[test]
     fn does_not_activate_apps_for_targeted_pointer_moves() {
         assert!(!macos_pointer_requires_activation(false));
+    }
+}
+
+#[cfg(test)]
+mod screen_capture_helper_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn locates_screen_capture_helper_next_to_the_host_binary() {
+        assert_eq!(
+            macos_screen_capture_helper_path(Path::new(
+                "/Applications/Lume Computer Use.app/Contents/MacOS/lume_desktop_host",
+            )),
+            Some(
+                Path::new(
+                    "/Applications/Lume Computer Use.app/Contents/MacOS/LumeComputerUseScreenCapture",
+                )
+                .to_path_buf(),
+            )
+        );
+    }
+
+    #[test]
+    fn accepts_only_png_bytes_from_the_screen_capture_helper() {
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x01];
+        assert!(macos_png_data_url(&png)
+            .unwrap()
+            .starts_with("data:image/png;base64,iVBORw0KGgo"));
+        assert_eq!(
+            macos_png_data_url(b"not png").unwrap_err(),
+            "ScreenCaptureKit helper returned invalid PNG data"
+        );
     }
 }
