@@ -95,6 +95,43 @@ pub(crate) fn desktop_click_options(
     Ok(DesktopClickOptions { count, button })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DesktopScrollDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DesktopScrollOptions {
+    pub direction: DesktopScrollDirection,
+    pub pages: f64,
+}
+
+pub(crate) fn desktop_scroll_options(
+    params: &Value,
+) -> std::result::Result<DesktopScrollOptions, &'static str> {
+    let direction = match params
+        .get("direction")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("up") => DesktopScrollDirection::Up,
+        Some("down") => DesktopScrollDirection::Down,
+        Some("left") => DesktopScrollDirection::Left,
+        Some("right") => DesktopScrollDirection::Right,
+        _ => return Err("direction must be up, down, left, or right"),
+    };
+    let pages = params.get("pages").map_or(Some(1.0), Value::as_f64);
+    let Some(pages) = pages.filter(|pages| pages.is_finite() && *pages > 0.0) else {
+        return Err("pages must be > 0");
+    };
+    Ok(DesktopScrollOptions { direction, pages })
+}
+
 impl<T: DesktopBackend + ?Sized> DesktopBackend for Box<T> {
     fn invoke(&self, method: &str, params: &Value) -> Result<Value> {
         (**self).invoke(method, params)
@@ -460,6 +497,49 @@ mod click_options_tests {
         assert_eq!(
             desktop_click_options(&json!({ "mouseButton": "back" }), false),
             Err("mouseButton must be left, right, or middle")
+        );
+    }
+}
+
+#[cfg(test)]
+mod scroll_options_tests {
+    use super::*;
+
+    #[test]
+    fn parses_direction_and_fractional_pages() {
+        assert_eq!(
+            desktop_scroll_options(&json!({ "direction": "down" })),
+            Ok(DesktopScrollOptions {
+                direction: DesktopScrollDirection::Down,
+                pages: 1.0,
+            })
+        );
+        assert_eq!(
+            desktop_scroll_options(&json!({ "direction": " LEFT ", "pages": 0.5 })),
+            Ok(DesktopScrollOptions {
+                direction: DesktopScrollDirection::Left,
+                pages: 0.5,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_invalid_scroll_options() {
+        assert_eq!(
+            desktop_scroll_options(&json!({})),
+            Err("direction must be up, down, left, or right")
+        );
+        assert_eq!(
+            desktop_scroll_options(&json!({ "direction": "forward" })),
+            Err("direction must be up, down, left, or right")
+        );
+        assert_eq!(
+            desktop_scroll_options(&json!({ "direction": "up", "pages": 0 })),
+            Err("pages must be > 0")
+        );
+        assert_eq!(
+            desktop_scroll_options(&json!({ "direction": "up", "pages": -1 })),
+            Err("pages must be > 0")
         );
     }
 }

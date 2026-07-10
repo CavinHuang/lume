@@ -34,6 +34,17 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("perform_secondary_action").properties.action).toMatchObject({
       type: "string",
     });
+    expect(schema("perform_secondary_action").properties.x).toBeUndefined();
+    expect(schema("perform_secondary_action").properties.y).toBeUndefined();
+    expect(schema("scroll").required).toEqual(["windowId", "elementId", "direction"]);
+    expect(schema("scroll").properties.direction).toMatchObject({
+      type: "string",
+      enum: ["up", "down", "left", "right"],
+    });
+    expect(schema("scroll").properties.pages).toMatchObject({ type: "number" });
+    expect(schema("scroll").properties.deltaY).toBeUndefined();
+    expect(schema("scroll").properties.x).toBeUndefined();
+    expect(schema("scroll").properties.y).toBeUndefined();
     expect(schema("drag").required).toEqual(["windowId", "fromX", "fromY", "toX", "toY"]);
     expect(schema("type_text").required).toEqual(["windowId", "text"]);
     expect(schema("search_context").required).toEqual(["query"]);
@@ -63,7 +74,7 @@ describe("createComputerUseMcpTools", () => {
     expect(required("activate_window")).toBeUndefined();
     expect(required("click")).toBeUndefined();
     expect(required("perform_secondary_action")).toEqual(["elementId", "action"]);
-    expect(required("scroll")).toEqual(["deltaY"]);
+    expect(required("scroll")).toEqual(["elementId", "direction"]);
     expect(required("drag")).toEqual(["fromX", "fromY", "toX", "toY"]);
     expect(required("press_key")).toBeUndefined();
     expect(required("type_text")).toEqual(["text"]);
@@ -947,6 +958,57 @@ describe("createComputerUseMcpTools", () => {
         { x: 130, y: 220 },
       ],
     });
+  });
+
+  test("anchors element scrolling to fresh bounds for visual feedback", async () => {
+    const visualEvents: Array<{ phase: string; point?: { x: number; y: number } }> = [];
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-scroll-visual",
+      runId: "run-scroll-visual",
+      emitDesktopActionVisualEvent: (event) => visualEvents.push(event),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state" || method === "wait_for_state") {
+          return {
+            status: "ok",
+            revision: "scroll-rev",
+            window: { id: "win-doc", title: "周报", appId: "word.exe", appName: "Word" },
+            accessibility: {
+              tree: [{
+                id: "root.document",
+                role: "document",
+                name: "正文",
+                bounds: { x: 40, y: 80, width: 800, height: 600 },
+              }],
+            },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const scroll = tools.find((tool) => tool.name === "mcp__computer_use__scroll")!;
+
+    await scroll.call(
+      { windowId: "win-doc", elementId: "root.document", direction: "down", pages: 0.5 },
+      { toolUseId: "tool-scroll-visual" } as never,
+    );
+
+    expect(calls[0]).toEqual({ method: "get_window_state", input: { windowId: "win-doc" } });
+    expect(calls[1]).toMatchObject({
+      method: "scroll",
+      input: {
+        windowId: "win-doc",
+        elementId: "root.document",
+        direction: "down",
+        pages: 0.5,
+        targetLabel: "正文",
+        windowRevision: "scroll-rev",
+        x: 440,
+        y: 380,
+      },
+    });
+    expect(visualEvents[0]).toMatchObject({ phase: "started", point: { x: 440, y: 380 } });
   });
 
   test("emits visual cursor paths for pointer movement actions", async () => {

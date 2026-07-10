@@ -2,13 +2,14 @@ use crate::{
     current_computer_use_permission_app_bundle_name,
     current_computer_use_permission_app_bundle_path, current_computer_use_permission_clients,
     desktop_click_options, desktop_permission_diagnostics, desktop_permission_granted,
-    desktop_permission_guide_launch_for_app_bundle_path, macos_overlay,
+    desktop_permission_guide_launch_for_app_bundle_path, desktop_scroll_options, macos_overlay,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_click_event_codes,
         macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
-        macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
-        macos_list_windows_result, macos_matching_secondary_action, macos_pointer_input_mode,
-        macos_preferred_click_actions, macos_resolve_action_point,
+        macos_global_pointer_fallback_enabled_from, macos_integral_scroll_page_count,
+        macos_key_chord, macos_list_apps_result, macos_list_windows_result,
+        macos_matching_secondary_action, macos_pointer_input_mode, macos_preferred_click_actions,
+        macos_resolve_action_point, macos_scroll_action_name, macos_scroll_wheel_deltas,
         macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
         macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
         macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
@@ -18,6 +19,7 @@ use crate::{
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
     },
     DesktopBackend, DesktopClickOptions, DesktopMouseButton, DesktopPermissionClientRecord,
+    DesktopScrollOptions,
 };
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -297,18 +299,91 @@ fn perform_element_click_action(
 }
 
 fn scroll(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
+    let options = match desktop_scroll_options(params) {
+        Ok(options) => options,
+        Err(message) => return Ok(failed_action(message)),
+    };
     let Some(window) = required_window(params, windows) else {
         return Ok(stale_target());
     };
-    let delta = params.get("deltaY").and_then(Value::as_i64).unwrap_or(0) as c_int;
-    activate_macos_window(&window)?;
-    move_visible_pointer_to_window_center(&window);
+    let Some(element_id) = params.get("elementId").and_then(Value::as_str) else {
+        return Ok(failed_action("elementId is required"));
+    };
+    let (x, y) = match macos_resolve_action_point(&window, params) {
+        Ok(point) => point,
+        Err(result) => return Ok(result),
+    };
+    if let Some(handled) = perform_element_scroll_action(&window, element_id, options)? {
+        return Ok(if handled {
+            json!({ "status": "ok", "inputMode": "accessibility_scroll" })
+        } else {
+            failed_action("AX scroll action failed")
+        });
+    }
+    let global_pointer_fallback = global_pointer_fallback_enabled();
+    if global_pointer_fallback {
+        activate_macos_window(&window)?;
+    }
+    let (vertical, horizontal) = macos_scroll_wheel_deltas(options.direction, options.pages);
     scroll_mouse(
-        -delta,
+        x,
+        y,
+        vertical,
+        horizontal,
         window.owner_pid as c_int,
-        global_pointer_fallback_enabled(),
+        global_pointer_fallback,
     );
-    Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
+    Ok(json!({
+        "status": "ok",
+        "inputMode": if global_pointer_fallback { "global_scroll_event" } else { "targeted_scroll_event" },
+        "visualPointer": visual_pointer_mode(),
+    }))
+}
+
+fn perform_element_scroll_action(
+    window: &MacOSWindowInfo,
+    element_id: &str,
+    options: DesktopScrollOptions,
+) -> Result<Option<bool>> {
+    let Some(repeat_count) = macos_integral_scroll_page_count(options.pages) else {
+        return Ok(None);
+    };
+    let requested_action = macos_scroll_action_name(options.direction);
+    unsafe {
+        let app = AXUIElementCreateApplication(window.owner_pid as c_int);
+        if app.is_null() {
+            return Ok(Some(false));
+        }
+        let root = matching_ax_window(app, window.window_id).or_else(|| first_ax_window(app));
+        let Some(root) = root else {
+            CFRelease(app as CFTypeRef);
+            return Ok(Some(false));
+        };
+        let element = matching_ax_element_by_id(root, element_id);
+        let Some(element) = element else {
+            CFRelease(root as CFTypeRef);
+            CFRelease(app as CFTypeRef);
+            return Ok(Some(false));
+        };
+        let actions = copy_ax_action_names(element);
+        let Some(action) = macos_matching_secondary_action(&actions, requested_action) else {
+            CFRelease(element as CFTypeRef);
+            CFRelease(root as CFTypeRef);
+            CFRelease(app as CFTypeRef);
+            return Ok(None);
+        };
+        let mut handled = true;
+        for index in 0..repeat_count {
+            handled &= perform_ax_action(element, action);
+            if index + 1 < repeat_count {
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+        CFRelease(element as CFTypeRef);
+        CFRelease(root as CFTypeRef);
+        CFRelease(app as CFTypeRef);
+        Ok(Some(handled))
+    }
 }
 
 fn drag(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
@@ -564,13 +639,6 @@ fn pulse_visible_pointer_for_params(window: &MacOSWindowInfo, params: &Value) {
     }
 }
 
-fn move_visible_pointer_to_window_center(window: &MacOSWindowInfo) {
-    move_visible_pointer(
-        (window.x + (window.width / 2.0)).round() as i64,
-        (window.y + (window.height / 2.0)).round() as i64,
-    );
-}
-
 fn move_visible_pointer(x: i64, y: i64) {
     if !visual_pointer_enabled() {
         return;
@@ -744,10 +812,26 @@ fn drag_mouse(
     }
 }
 
-fn scroll_mouse(delta_y: c_int, target_pid: c_int, global_pointer_fallback: bool) {
+fn scroll_mouse(
+    x: i64,
+    y: i64,
+    vertical: c_int,
+    horizontal: c_int,
+    target_pid: c_int,
+    global_pointer_fallback: bool,
+) {
     unsafe {
-        let event =
-            CGEventCreateScrollWheelEvent(ptr::null(), K_CG_SCROLL_EVENT_UNIT_PIXEL, 1, delta_y);
+        let event = CGEventCreateScrollWheelEvent(
+            ptr::null(),
+            K_CG_SCROLL_EVENT_UNIT_LINE,
+            2,
+            vertical,
+            horizontal,
+            0,
+        );
+        if !event.is_null() {
+            CGEventSetLocation(event, cg_point(x, y));
+        }
         post_event(event, (!global_pointer_fallback).then_some(target_pid));
     }
 }
@@ -1821,7 +1905,7 @@ const K_CG_EVENT_MOUSE_MOVED: c_uint = 5;
 const K_CG_EVENT_LEFT_MOUSE_DRAGGED: c_uint = 6;
 const K_CG_MOUSE_EVENT_CLICK_STATE: c_uint = 1;
 const K_CG_MOUSE_BUTTON_LEFT: c_uint = 0;
-const K_CG_SCROLL_EVENT_UNIT_PIXEL: c_uint = 0;
+const K_CG_SCROLL_EVENT_UNIT_LINE: c_uint = 1;
 const K_AX_ERROR_SUCCESS: c_int = 0;
 const K_AX_VALUE_CGPOINT_TYPE: c_int = 1;
 const K_AX_VALUE_CGSIZE_TYPE: c_int = 2;
@@ -1902,6 +1986,7 @@ extern "C" {
         unicode_string: *const u16,
     );
     fn CGEventSetFlags(event: CGEventRef, flags: u64);
+    fn CGEventSetLocation(event: CGEventRef, location: CGPoint);
     fn CGEventSetIntegerValueField(event: CGEventRef, field: c_uint, value: i64);
     fn CGEventPost(tap: c_uint, event: CGEventRef);
     fn CGEventPostToPid(pid: c_int, event: CGEventRef);

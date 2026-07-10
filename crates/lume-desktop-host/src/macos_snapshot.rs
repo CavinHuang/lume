@@ -1,5 +1,5 @@
 #[cfg(any(target_os = "macos", test))]
-use crate::DesktopMouseButton;
+use crate::{DesktopMouseButton, DesktopScrollDirection};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -213,6 +213,39 @@ pub(crate) fn macos_click_event_codes(button: DesktopMouseButton) -> (u32, u32, 
         DesktopMouseButton::Left => (1, 2, 0),
         DesktopMouseButton::Right => (3, 4, 1),
         DesktopMouseButton::Middle => (25, 26, 2),
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_scroll_action_name(direction: DesktopScrollDirection) -> &'static str {
+    match direction {
+        DesktopScrollDirection::Up => "AXScrollUpByPage",
+        DesktopScrollDirection::Down => "AXScrollDownByPage",
+        DesktopScrollDirection::Left => "AXScrollLeftByPage",
+        DesktopScrollDirection::Right => "AXScrollRightByPage",
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_integral_scroll_page_count(pages: f64) -> Option<u32> {
+    let rounded = pages.round();
+    if (pages - rounded).abs() >= 0.000_001 || rounded > u32::MAX as f64 {
+        return None;
+    }
+    Some((rounded as u32).max(1))
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_scroll_wheel_deltas(
+    direction: DesktopScrollDirection,
+    pages: f64,
+) -> (i32, i32) {
+    let delta = (12.0 * pages).round().clamp(1.0, i32::MAX as f64) as i32;
+    match direction {
+        DesktopScrollDirection::Up => (delta, 0),
+        DesktopScrollDirection::Down => (-delta, 0),
+        DesktopScrollDirection::Left => (0, delta),
+        DesktopScrollDirection::Right => (0, -delta),
     }
 }
 
@@ -692,7 +725,7 @@ fn failed_action(message: &str) -> Value {
 #[cfg(test)]
 mod click_event_tests {
     use super::*;
-    use crate::DesktopMouseButton;
+    use crate::{DesktopMouseButton, DesktopScrollDirection};
 
     #[test]
     fn maps_all_supported_mouse_buttons_to_core_graphics_events() {
@@ -705,5 +738,31 @@ mod click_event_tests {
             macos_click_event_codes(DesktopMouseButton::Middle),
             (25, 26, 2)
         );
+    }
+
+    #[test]
+    fn maps_scroll_directions_to_ax_actions_and_wheel_axes() {
+        assert_eq!(
+            macos_scroll_action_name(DesktopScrollDirection::Up),
+            "AXScrollUpByPage"
+        );
+        assert_eq!(
+            macos_scroll_action_name(DesktopScrollDirection::Right),
+            "AXScrollRightByPage"
+        );
+        assert_eq!(
+            macos_scroll_wheel_deltas(DesktopScrollDirection::Down, 1.5),
+            (-18, 0)
+        );
+        assert_eq!(
+            macos_scroll_wheel_deltas(DesktopScrollDirection::Left, 0.5),
+            (0, 6)
+        );
+    }
+
+    #[test]
+    fn uses_ax_page_actions_only_for_integral_page_counts() {
+        assert_eq!(macos_integral_scroll_page_count(2.0), Some(2));
+        assert_eq!(macos_integral_scroll_page_count(0.5), None);
     }
 }

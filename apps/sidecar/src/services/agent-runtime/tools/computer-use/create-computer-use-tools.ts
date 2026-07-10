@@ -503,6 +503,7 @@ function shouldInspectTargetState(action: DesktopActionKind, args: Record<string
       action === "move_pointer"
       || action === "click"
       || action === "perform_secondary_action"
+      || action === "scroll"
       || action === "type_text"
       || action === "set_value"
     )
@@ -655,7 +656,7 @@ function describeTool(
     move_pointer: "Move the visible agent pointer to an accessibility element or absolute screen coordinate in one window. Coordinates use the desktop screen space represented by screenshot origin metadata.",
     click: "Click an accessibility element or absolute screen coordinate in one window. Supports one or more clicks with the left, right, or middle mouse button. Call get_window_state or wait_for_state afterward to verify the intended state change.",
     perform_secondary_action: "Invoke one named secondary accessibility action exposed by an element, such as AXShowMenu, Toggle, Select, Expand, Collapse, or ScrollIntoView. Use an action listed on the latest get_window_state tree and verify the result afterward.",
-    scroll: "Scroll the active content in one exact windowId by deltaY. Positive deltaY scrolls down. Verify the resulting state afterward.",
+    scroll: "Scroll one accessibility element up, down, left, or right by a positive number of pages. Fractional pages are supported and default to 1. Use an element from the latest get_window_state tree and verify the result afterward.",
     drag: "Drag from one absolute desktop coordinate to another inside one exact windowId, then verify the result with get_window_state.",
     press_key: "Press one key chord or ordered key list in one exact windowId. Use named keys such as CTRL, SHIFT, ENTER, TAB, ESCAPE, or arrow keys.",
     type_text: "Type ordinary non-secret text into the focused control in one exact windowId. Never use this for passwords or OTPs; secure credentials require the dedicated browserAuth flow.",
@@ -687,13 +688,16 @@ function toolSchema(
     ...extra,
   });
   const windowId = string("Exact window id returned by list_windows/get_window_state, for example win:12345.");
-  const actionTarget = {
+  const elementTarget = {
     windowId,
     appId: string("Optional app id for safe visual feedback."),
     appName: string("Optional human-readable app name for safe visual feedback."),
     windowRevision: string("Optional revision returned by the latest get_window_state call."),
     elementId: string("Accessibility element id from the latest get_window_state tree."),
     targetLabel: string("Short non-sensitive label describing the target control."),
+  };
+  const actionTarget = {
+    ...elementTarget,
     x: number("Absolute desktop x coordinate."),
     y: number("Absolute desktop y coordinate."),
   };
@@ -744,7 +748,7 @@ function toolSchema(
       return pointTarget();
     case "perform_secondary_action":
       return object({
-        ...actionTarget,
+        ...elementTarget,
         action: string("Exact secondary accessibility action listed on the target element."),
       }, windowScopedRequired(["windowId", "elementId", "action"]));
     case "click":
@@ -758,9 +762,14 @@ function toolSchema(
       });
     case "scroll":
       return object({
-        ...actionTarget,
-        deltaY: number("Scroll distance; positive values scroll down and negative values scroll up."),
-      }, windowScopedRequired(["windowId", "deltaY"]));
+        ...elementTarget,
+        direction: {
+          type: "string",
+          enum: ["up", "down", "left", "right"],
+          description: "Scroll direction.",
+        },
+        pages: number("Positive number of pages to scroll. Fractional values are supported. Defaults to 1."),
+      }, windowScopedRequired(["windowId", "elementId", "direction"]));
     case "drag":
       return object({
         ...actionTarget,

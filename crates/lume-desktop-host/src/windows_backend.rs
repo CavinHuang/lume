@@ -10,14 +10,17 @@ use crate::windows_cursor_motion::{
 use crate::windows_overlay::{
     move_visual_cursor, pulse_visual_cursor, settle_visual_cursor, VISUAL_CURSOR_WINDOW_TITLE,
 };
-use crate::{desktop_click_options, DesktopBackend, DesktopMouseButton};
+use crate::{
+    desktop_click_options, desktop_scroll_options, DesktopBackend, DesktopMouseButton,
+    DesktopScrollDirection, DesktopScrollOptions,
+};
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use windows::{
     core::{Interface, BOOL, BSTR, PWSTR},
     Win32::{
-        Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT},
+        Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM},
         Graphics::{
             Gdi::{
                 BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
@@ -45,30 +48,32 @@ use windows::{
                 ExpandCollapseState_Expanded, ExpandCollapseState_LeafNode,
                 ExpandCollapseState_PartiallyExpanded, IUIAutomation, IUIAutomationElement,
                 IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
-                IUIAutomationScrollItemPattern, IUIAutomationSelectionItemPattern,
-                IUIAutomationTextPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
-                IUIAutomationValuePattern, UIA_ButtonControlTypeId, UIA_DocumentControlTypeId,
+                IUIAutomationScrollItemPattern, IUIAutomationScrollPattern,
+                IUIAutomationSelectionItemPattern, IUIAutomationTextPattern,
+                IUIAutomationTogglePattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
+                ScrollAmount, ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement,
+                ScrollAmount_NoAmount, UIA_ButtonControlTypeId, UIA_DocumentControlTypeId,
                 UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_GroupControlTypeId,
                 UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
                 UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_ScrollItemPatternId,
-                UIA_SelectionItemPatternId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
-                UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId,
+                UIA_ScrollPatternId, UIA_SelectionItemPatternId, UIA_TabItemControlTypeId,
+                UIA_TextControlTypeId, UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId,
                 UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
             },
             Input::KeyboardAndMouse::{
                 SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
                 KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
                 MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN,
-                MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY, VK_BACK,
-                VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU,
-                VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
+                MOUSEEVENTF_RIGHTUP, MOUSEINPUT, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE,
+                VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR,
+                VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
                 BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics,
                 GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-                IsIconic, IsWindow, IsWindowVisible, SetCursorPos, SetForegroundWindow, ShowWindow,
-                SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-                SW_RESTORE,
+                IsIconic, IsWindow, IsWindowVisible, PostMessageW, SetCursorPos,
+                SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, WM_MOUSEHWHEEL, WM_MOUSEWHEEL,
             },
         },
     },
@@ -883,15 +888,109 @@ fn perform_secondary_action(params: &Value) -> Result<Value> {
 }
 
 fn scroll(params: &Value) -> Result<Value> {
-    let target = target_window(params);
-    if let Some(hwnd) = target {
-        activate(hwnd)?;
+    let options = match desktop_scroll_options(params) {
+        Ok(options) => options,
+        Err(message) => return Ok(failed_action(message)),
+    };
+    let Some(hwnd) = target_window(params) else {
+        return Ok(stale_target());
+    };
+    let Some(element) = resolve_element(params)? else {
+        return Ok(json!({
+            "status": "stale_target",
+            "message": "target element is unavailable",
+        }));
+    };
+    let bounds = unsafe { element.CurrentBoundingRectangle().ok() };
+    if try_scroll_element(&element, options)? {
+        if let Some(bounds) = bounds {
+            settle_visual_cursor(
+                (bounds.left + bounds.right) / 2,
+                (bounds.top + bounds.bottom) / 2,
+                Some(hwnd),
+            );
+        }
+        return Ok(json!({ "status": "ok", "inputMode": "uia_scroll" }));
     }
-    let point = current_pointer()?;
-    settle_visual_cursor(point.0, point.1, target);
-    let delta = params.get("deltaY").and_then(Value::as_i64).unwrap_or(0) as i32;
-    send_mouse(MOUSEEVENTF_WHEEL, (-delta).cast_unsigned())?;
-    Ok(json!({ "status": "ok" }))
+    let Some(bounds) = bounds else {
+        return Ok(failed_action("target element has no scrollable bounds"));
+    };
+    let point = (
+        (bounds.left + bounds.right) / 2,
+        (bounds.top + bounds.bottom) / 2,
+    );
+    settle_visual_cursor(point.0, point.1, Some(hwnd));
+    post_targeted_scroll(hwnd, point, options)?;
+    Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
+}
+
+fn try_scroll_element(
+    element: &IUIAutomationElement,
+    options: DesktopScrollOptions,
+) -> Result<bool> {
+    let pattern =
+        unsafe { element.GetCurrentPatternAs::<IUIAutomationScrollPattern>(UIA_ScrollPatternId) };
+    let Ok(pattern) = pattern else {
+        return Ok(false);
+    };
+    let (horizontal, vertical) = windows_scroll_amounts(options.direction);
+    let repeat_count = windows_scroll_repeat_count(options.pages);
+    for index in 0..repeat_count {
+        unsafe { pattern.Scroll(horizontal, vertical)? };
+        if index + 1 < repeat_count {
+            thread::sleep(Duration::from_millis(40));
+        }
+    }
+    Ok(true)
+}
+
+fn post_targeted_scroll(
+    hwnd: HWND,
+    point: (i32, i32),
+    options: DesktopScrollOptions,
+) -> Result<()> {
+    let (message, delta) = windows_scroll_message_and_delta(options.direction, options.pages);
+    unsafe {
+        PostMessageW(
+            Some(hwnd),
+            message,
+            windows_wheel_wparam(delta),
+            windows_point_lparam(point.0, point.1),
+        )?;
+    }
+    Ok(())
+}
+
+fn windows_scroll_amounts(direction: DesktopScrollDirection) -> (ScrollAmount, ScrollAmount) {
+    match direction {
+        DesktopScrollDirection::Up => (ScrollAmount_NoAmount, ScrollAmount_LargeDecrement),
+        DesktopScrollDirection::Down => (ScrollAmount_NoAmount, ScrollAmount_LargeIncrement),
+        DesktopScrollDirection::Left => (ScrollAmount_LargeDecrement, ScrollAmount_NoAmount),
+        DesktopScrollDirection::Right => (ScrollAmount_LargeIncrement, ScrollAmount_NoAmount),
+    }
+}
+
+fn windows_scroll_repeat_count(pages: f64) -> u32 {
+    pages.ceil().clamp(1.0, u32::MAX as f64) as u32
+}
+
+fn windows_scroll_message_and_delta(direction: DesktopScrollDirection, pages: f64) -> (u32, i32) {
+    let delta = (120.0 * pages).round().clamp(1.0, i32::MAX as f64) as i32;
+    match direction {
+        DesktopScrollDirection::Up => (WM_MOUSEWHEEL, delta),
+        DesktopScrollDirection::Down => (WM_MOUSEWHEEL, -delta),
+        DesktopScrollDirection::Left => (WM_MOUSEHWHEEL, delta),
+        DesktopScrollDirection::Right => (WM_MOUSEHWHEEL, -delta),
+    }
+}
+
+fn windows_wheel_wparam(delta: i32) -> WPARAM {
+    WPARAM(usize::from(delta as i16 as u16) << 16)
+}
+
+fn windows_point_lparam(x: i32, y: i32) -> LPARAM {
+    let packed = u32::from(x as i16 as u16) | (u32::from(y as i16 as u16) << 16);
+    LPARAM(packed as isize)
 }
 
 fn drag(params: &Value) -> Result<Value> {
@@ -1548,6 +1647,45 @@ mod tests {
             &[] as &[&str]
         );
         assert_eq!(expand_collapse_action_names(None), &["Expand", "Collapse"]);
+    }
+
+    #[test]
+    fn maps_scroll_directions_to_uia_amounts() {
+        assert_eq!(
+            windows_scroll_amounts(DesktopScrollDirection::Up),
+            (ScrollAmount_NoAmount, ScrollAmount_LargeDecrement)
+        );
+        assert_eq!(
+            windows_scroll_amounts(DesktopScrollDirection::Down),
+            (ScrollAmount_NoAmount, ScrollAmount_LargeIncrement)
+        );
+        assert_eq!(
+            windows_scroll_amounts(DesktopScrollDirection::Left),
+            (ScrollAmount_LargeDecrement, ScrollAmount_NoAmount)
+        );
+        assert_eq!(
+            windows_scroll_amounts(DesktopScrollDirection::Right),
+            (ScrollAmount_LargeIncrement, ScrollAmount_NoAmount)
+        );
+    }
+
+    #[test]
+    fn maps_fractional_scroll_pages_to_targeted_wheel_messages() {
+        assert_eq!(windows_scroll_repeat_count(0.5), 1);
+        assert_eq!(windows_scroll_repeat_count(1.2), 2);
+        assert_eq!(
+            windows_scroll_message_and_delta(DesktopScrollDirection::Up, 1.0),
+            (WM_MOUSEWHEEL, 120)
+        );
+        assert_eq!(
+            windows_scroll_message_and_delta(DesktopScrollDirection::Right, 0.5),
+            (WM_MOUSEHWHEEL, -60)
+        );
+        assert_eq!(windows_wheel_wparam(-60).0, (u16::MAX as usize - 59) << 16);
+        assert_eq!(
+            windows_point_lparam(-10, 20).0 as u32,
+            (20_u32 << 16) | u32::from((-10_i16) as u16)
+        );
     }
 
     #[test]
