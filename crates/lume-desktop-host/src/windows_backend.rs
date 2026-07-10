@@ -11,8 +11,8 @@ use crate::windows_overlay::{
     move_visual_cursor, pulse_visual_cursor, settle_visual_cursor, VISUAL_CURSOR_WINDOW_TITLE,
 };
 use crate::{
-    desktop_click_options, desktop_scroll_options, DesktopBackend, DesktopMouseButton,
-    DesktopScrollDirection, DesktopScrollOptions,
+    desktop_click_options, desktop_drag_points, desktop_scroll_options, DesktopBackend,
+    DesktopMouseButton, DesktopScrollDirection, DesktopScrollOptions,
 };
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -24,8 +24,8 @@ use windows::{
         Graphics::{
             Gdi::{
                 BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-                GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-                DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
+                GetDIBits, ReleaseDC, ScreenToClient, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
+                BI_RGB, DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
             },
             Imaging::{
                 CLSID_WICImagingFactory, GUID_ContainerFormatPng, GUID_WICPixelFormat32bppBGR,
@@ -73,7 +73,8 @@ use windows::{
                 GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
                 IsIconic, IsWindow, IsWindowVisible, PostMessageW, SetCursorPos,
                 SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, WM_MOUSEHWHEEL, WM_MOUSEWHEEL,
+                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, WM_LBUTTONDOWN, WM_LBUTTONUP,
+                WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
             },
         },
     },
@@ -994,22 +995,80 @@ fn windows_point_lparam(x: i32, y: i32) -> LPARAM {
 }
 
 fn drag(params: &Value) -> Result<Value> {
-    let target = target_window(params);
-    if let Some(hwnd) = target {
-        activate(hwnd)?;
-    }
-    animate_pointer(
-        int_param(params, "fromX")?,
-        int_param(params, "fromY")?,
-        target,
-    )?;
-    send_mouse(MOUSEEVENTF_LEFTDOWN, 0)?;
+    let Some(hwnd) = target_window(params) else {
+        return Ok(stale_target());
+    };
+    let from_x = int_param(params, "fromX")?;
+    let from_y = int_param(params, "fromY")?;
     let to_x = int_param(params, "toX")?;
     let to_y = int_param(params, "toY")?;
-    animate_pointer(to_x, to_y, target)?;
-    send_mouse(MOUSEEVENTF_LEFTUP, 0)?;
-    pulse_visual_cursor(to_x, to_y, target);
-    Ok(json!({ "status": "ok" }))
+    post_targeted_drag(hwnd, (from_x, from_y), (to_x, to_y))?;
+    pulse_visual_cursor(to_x, to_y, Some(hwnd));
+    Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
+}
+
+fn post_targeted_drag(hwnd: HWND, from: (i32, i32), to: (i32, i32)) -> Result<()> {
+    let start = screen_to_client_point(hwnd, from)?;
+    let screen_points = desktop_drag_points(
+        (i64::from(from.0), i64::from(from.1)),
+        (i64::from(to.0), i64::from(to.1)),
+        12,
+    );
+    let client_points = screen_points
+        .iter()
+        .map(|point| screen_to_client_point(hwnd, (point.0 as i32, point.1 as i32)))
+        .collect::<Result<Vec<_>>>()?;
+    move_visual_cursor(from.0, from.1, Some(hwnd));
+    settle_visual_cursor(from.0, from.1, Some(hwnd));
+    unsafe {
+        PostMessageW(
+            Some(hwnd),
+            WM_MOUSEMOVE,
+            WPARAM(0),
+            windows_point_lparam(start.x, start.y),
+        )?;
+        PostMessageW(
+            Some(hwnd),
+            WM_LBUTTONDOWN,
+            WPARAM(1),
+            windows_point_lparam(start.x, start.y),
+        )?;
+    }
+    for (point, client_point) in screen_points.iter().zip(&client_points) {
+        let screen_point = (point.0 as i32, point.1 as i32);
+        unsafe {
+            PostMessageW(
+                Some(hwnd),
+                WM_MOUSEMOVE,
+                WPARAM(1),
+                windows_point_lparam(client_point.x, client_point.y),
+            )?;
+        }
+        move_visual_cursor(screen_point.0, screen_point.1, Some(hwnd));
+        thread::sleep(Duration::from_millis(20));
+    }
+    let end = client_points.last().expect("drag path is non-empty");
+    unsafe {
+        PostMessageW(
+            Some(hwnd),
+            WM_LBUTTONUP,
+            WPARAM(0),
+            windows_point_lparam(end.x, end.y),
+        )?;
+    }
+    settle_visual_cursor(to.0, to.1, Some(hwnd));
+    Ok(())
+}
+
+fn screen_to_client_point(hwnd: HWND, point: (i32, i32)) -> Result<POINT> {
+    let mut point = POINT {
+        x: point.0,
+        y: point.1,
+    };
+    if !unsafe { ScreenToClient(hwnd, &mut point) }.as_bool() {
+        return Err(anyhow!("unable to map drag point into the target window"));
+    }
+    Ok(point)
 }
 
 fn press_key(params: &Value) -> Result<Value> {

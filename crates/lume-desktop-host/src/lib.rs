@@ -132,6 +132,19 @@ pub(crate) fn desktop_scroll_options(
     Ok(DesktopScrollOptions { direction, pages })
 }
 
+pub(crate) fn desktop_drag_points(from: (i64, i64), to: (i64, i64), steps: u32) -> Vec<(i64, i64)> {
+    let steps = steps.max(1);
+    (1..=steps)
+        .map(|step| {
+            let progress = f64::from(step) / f64::from(steps);
+            (
+                (from.0 as f64 + ((to.0 - from.0) as f64 * progress)).round() as i64,
+                (from.1 as f64 + ((to.1 - from.1) as f64 * progress)).round() as i64,
+            )
+        })
+        .collect()
+}
+
 impl<T: DesktopBackend + ?Sized> DesktopBackend for Box<T> {
     fn invoke(&self, method: &str, params: &Value) -> Result<Value> {
         (**self).invoke(method, params)
@@ -541,5 +554,28 @@ mod scroll_options_tests {
             desktop_scroll_options(&json!({ "direction": "up", "pages": -1 })),
             Err("pages must be > 0")
         );
+    }
+}
+
+#[cfg(test)]
+mod drag_points_tests {
+    use super::*;
+
+    #[test]
+    fn interpolates_drag_points_through_the_exact_endpoint() {
+        let points = desktop_drag_points((0, 0), (100, 50), 10);
+
+        assert_eq!(points.len(), 10);
+        assert_eq!(points[0], (10, 5));
+        assert_eq!(points[5], (60, 30));
+        assert_eq!(points[9], (100, 50));
+    }
+
+    #[test]
+    fn preserves_negative_desktop_coordinates() {
+        let points = desktop_drag_points((-100, 50), (20, -10), 12);
+
+        assert_eq!(points[0], (-90, 45));
+        assert_eq!(points[11], (20, -10));
     }
 }

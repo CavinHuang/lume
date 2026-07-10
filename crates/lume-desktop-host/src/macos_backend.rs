@@ -1,8 +1,9 @@
 use crate::{
     current_computer_use_permission_app_bundle_name,
     current_computer_use_permission_app_bundle_path, current_computer_use_permission_clients,
-    desktop_click_options, desktop_permission_diagnostics, desktop_permission_granted,
-    desktop_permission_guide_launch_for_app_bundle_path, desktop_scroll_options, macos_overlay,
+    desktop_click_options, desktop_drag_points, desktop_permission_diagnostics,
+    desktop_permission_granted, desktop_permission_guide_launch_for_app_bundle_path,
+    desktop_scroll_options, macos_overlay,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_click_event_codes,
         macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
@@ -402,16 +403,23 @@ fn drag(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
     let Some(to_y) = numeric_param(params, "toY") else {
         return Ok(failed_action("toY is required"));
     };
-    activate_macos_window(&window)?;
+    let global_pointer_fallback = global_pointer_fallback_enabled();
+    if global_pointer_fallback {
+        activate_macos_window(&window)?;
+    }
     drag_mouse(
         from_x,
         from_y,
         to_x,
         to_y,
         window.owner_pid as c_int,
-        global_pointer_fallback_enabled(),
+        global_pointer_fallback,
     );
-    Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
+    Ok(json!({
+        "status": "ok",
+        "inputMode": if global_pointer_fallback { "global_drag_event" } else { "targeted_drag_event" },
+        "visualPointer": visual_pointer_mode(),
+    }))
 }
 
 fn press_key(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
@@ -773,7 +781,6 @@ fn drag_mouse(
 ) {
     unsafe {
         let from = cg_point(from_x, from_y);
-        let to = cg_point(to_x, to_y);
         if global_pointer_fallback {
             move_physical_pointer(from_x, from_y);
         } else {
@@ -792,20 +799,20 @@ fn drag_mouse(
             K_CG_MOUSE_BUTTON_LEFT,
             event_target,
         );
-        if global_pointer_fallback {
-            move_physical_pointer(to_x, to_y);
-        } else {
+        for (x, y) in desktop_drag_points((from_x, from_y), (to_x, to_y), 10) {
+            post_mouse_event(
+                K_CG_EVENT_LEFT_MOUSE_DRAGGED,
+                cg_point(x, y),
+                K_CG_MOUSE_BUTTON_LEFT,
+                event_target,
+            );
+        }
+        if !global_pointer_fallback {
             move_visible_pointer(to_x, to_y);
         }
         post_mouse_event(
-            K_CG_EVENT_LEFT_MOUSE_DRAGGED,
-            to,
-            K_CG_MOUSE_BUTTON_LEFT,
-            event_target,
-        );
-        post_mouse_event(
             K_CG_EVENT_LEFT_MOUSE_UP,
-            to,
+            cg_point(to_x, to_y),
             K_CG_MOUSE_BUTTON_LEFT,
             event_target,
         );
