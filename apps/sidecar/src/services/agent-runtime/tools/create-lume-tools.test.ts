@@ -19,6 +19,7 @@ describe("create-lume-tools", () => {
       windowId: "win:wechat",
       appId: "wechat.exe",
       appName: "微信",
+      windowTitle: "项目群",
     });
     expect(desktopWindowBindingFromMessageMetadata({
       desktopWindow: { title: "missing id" },
