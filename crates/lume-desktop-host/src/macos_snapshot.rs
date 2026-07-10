@@ -278,7 +278,7 @@ pub fn macos_pointer_input_mode(global_pointer_fallback: bool) -> &'static str {
     }
 }
 
-pub fn macos_click_requires_activation(global_pointer_fallback: bool) -> bool {
+pub fn macos_pointer_requires_activation(global_pointer_fallback: bool) -> bool {
     global_pointer_fallback
 }
 
@@ -772,7 +772,12 @@ mod click_event_tests {
 
     #[test]
     fn activates_apps_only_for_global_click_fallbacks() {
-        assert!(!macos_click_requires_activation(false));
-        assert!(macos_click_requires_activation(true));
+        assert!(!macos_pointer_requires_activation(false));
+        assert!(macos_pointer_requires_activation(true));
+    }
+
+    #[test]
+    fn does_not_activate_apps_for_targeted_pointer_moves() {
+        assert!(!macos_pointer_requires_activation(false));
     }
 }

@@ -6,16 +6,16 @@ use crate::{
     desktop_scroll_options, macos_overlay,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_click_event_codes,
-        macos_click_requires_activation, macos_current_context_result, macos_get_window_result,
-        macos_get_window_state_result, macos_global_pointer_fallback_enabled_from,
-        macos_integral_scroll_page_count, macos_key_chord, macos_list_apps_result,
-        macos_list_windows_result, macos_matching_secondary_action, macos_pointer_input_mode,
-        macos_preferred_click_actions, macos_resolve_action_point, macos_scroll_action_name,
-        macos_scroll_wheel_deltas, macos_set_value_attribute_is_settable,
-        macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
-        macos_visible_pointer_mode, macos_visible_pointer_motion_points,
-        macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
-        MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
+        macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
+        macos_global_pointer_fallback_enabled_from, macos_integral_scroll_page_count,
+        macos_key_chord, macos_list_apps_result, macos_list_windows_result,
+        macos_matching_secondary_action, macos_pointer_input_mode,
+        macos_pointer_requires_activation, macos_preferred_click_actions,
+        macos_resolve_action_point, macos_scroll_action_name, macos_scroll_wheel_deltas,
+        macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
+        macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
+        macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
+        MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_LUME_VISUAL_POINTER_ENV, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
         MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
@@ -158,9 +158,15 @@ fn move_pointer(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         Ok(point) => point,
         Err(result) => return Ok(result),
     };
-    activate_macos_window(&window)?;
+    if macos_pointer_requires_activation(false) {
+        activate_macos_window(&window)?;
+    }
     move_mouse(x, y, window.owner_pid as c_int, false);
-    Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
+    Ok(json!({
+        "status": "ok",
+        "inputMode": macos_pointer_input_mode(false),
+        "visualPointer": visual_pointer_mode()
+    }))
 }
 
 fn click(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
@@ -188,7 +194,7 @@ fn click(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         Err(result) => return Ok(result),
     };
     let global_pointer_fallback = global_pointer_fallback_enabled();
-    if macos_click_requires_activation(global_pointer_fallback) {
+    if macos_pointer_requires_activation(global_pointer_fallback) {
         activate_macos_window(&window)?;
     }
     move_mouse(x, y, window.owner_pid as c_int, global_pointer_fallback);
@@ -442,9 +448,8 @@ fn press_key(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
     let Some((key_code, flags)) = macos_key_chord(&keys) else {
         return Ok(failed_action("key or keys is required"));
     };
-    activate_macos_window(&window)?;
     send_key(key_code as c_ushort, flags, window.owner_pid as c_int);
-    Ok(json!({ "status": "ok" }))
+    Ok(json!({ "status": "ok", "inputMode": "targeted_event" }))
 }
 
 fn guarded_text_action(
@@ -466,14 +471,17 @@ fn guarded_text_action(
 }
 
 fn type_text(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
-    activate_macos_window(window)?;
     move_visible_pointer_for_params(window, params);
     let text = params
         .get("text")
         .and_then(Value::as_str)
         .unwrap_or_default();
     send_text(text, window.owner_pid as c_int);
-    Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
+    Ok(json!({
+        "status": "ok",
+        "inputMode": "targeted_event",
+        "visualPointer": visual_pointer_mode()
+    }))
 }
 
 fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {

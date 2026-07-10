@@ -70,11 +70,11 @@ use windows::{
             WindowsAndMessaging::{
                 BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics,
                 GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
-                IsIconic, IsWindow, IsWindowVisible, PostMessageW, SetCursorPos,
+                IsIconic, IsWindow, IsWindowVisible, PostMessageW, SendMessageW, SetCursorPos,
                 SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, WM_LBUTTONDOWN, WM_LBUTTONUP,
-                WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-                WM_RBUTTONDOWN, WM_RBUTTONUP,
+                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, WM_CHAR, WM_KEYDOWN, WM_KEYUP,
+                WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+                WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
             },
         },
     },
@@ -802,13 +802,29 @@ fn activation_thread_ids(current: u32, foreground: u32, target: u32) -> Vec<u32>
 }
 
 fn move_pointer(params: &Value) -> Result<Value> {
-    let target = target_window(params);
-    if let Some(hwnd) = target {
-        activate(hwnd)?;
-    }
+    let Some(target) = target_window(params) else {
+        return Ok(stale_target());
+    };
     let (x, y) = action_point(params)?;
-    animate_pointer(x, y, target)?;
-    Ok(json!({ "status": "ok" }))
+    animate_visual_pointer(x, y, Some(target));
+    post_targeted_pointer_move(target, (x, y))?;
+    Ok(json!({
+        "status": "ok",
+        "inputMode": preferred_pointer_move_injection()
+    }))
+}
+
+fn post_targeted_pointer_move(hwnd: HWND, point: (i32, i32)) -> Result<()> {
+    let point = screen_to_client_point(hwnd, point)?;
+    unsafe {
+        PostMessageW(
+            Some(hwnd),
+            WM_MOUSEMOVE,
+            WPARAM(0),
+            windows_point_lparam(point.x, point.y),
+        )?;
+    }
+    Ok(())
 }
 
 fn click(params: &Value) -> Result<Value> {
@@ -1072,9 +1088,9 @@ fn screen_to_client_point(hwnd: HWND, point: (i32, i32)) -> Result<POINT> {
 }
 
 fn press_key(params: &Value) -> Result<Value> {
-    if let Some(hwnd) = target_window(params) {
-        activate(hwnd)?;
-    }
+    let Some(hwnd) = target_window(params) else {
+        return Ok(stale_target());
+    };
     let keys = params
         .get("keys")
         .and_then(Value::as_array)
@@ -1093,25 +1109,152 @@ fn press_key(params: &Value) -> Result<Value> {
         .iter()
         .map(|key| virtual_key(key))
         .collect::<Result<Vec<_>>>()?;
-    for key in &virtual_keys {
-        send_virtual_key(*key, false)?;
-    }
-    for key in virtual_keys.iter().rev() {
-        send_virtual_key(*key, true)?;
-    }
-    Ok(json!({ "status": "ok" }))
+    post_targeted_key_chord(hwnd, &virtual_keys)?;
+    Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
 }
 
 fn type_text(params: &Value) -> Result<Value> {
-    if let Some(hwnd) = target_window(params) {
-        activate(hwnd)?;
-    }
+    let Some(hwnd) = target_window(params) else {
+        return Ok(stale_target());
+    };
     let text = params
         .get("text")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    send_unicode(text)?;
-    Ok(json!({ "status": "ok" }))
+    let input_mode = if let Some(edit_hwnd) = find_targeted_text_window(params, hwnd)? {
+        send_text_to_edit_window(edit_hwnd, text);
+        "targeted_edit_message"
+    } else {
+        post_targeted_text(hwnd, text)?;
+        "targeted_window_message"
+    };
+    Ok(json!({ "status": "ok", "inputMode": input_mode }))
+}
+
+fn post_targeted_key_chord(hwnd: HWND, keys: &[VIRTUAL_KEY]) -> Result<()> {
+    for (message, key) in windows_key_message_sequence(keys) {
+        unsafe {
+            PostMessageW(Some(hwnd), message, WPARAM(key), LPARAM(0))?;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
+fn windows_key_message_sequence(keys: &[VIRTUAL_KEY]) -> Vec<(u32, usize)> {
+    keys.iter()
+        .map(|key| (WM_KEYDOWN, key.0 as usize))
+        .chain(keys.iter().rev().map(|key| (WM_KEYUP, key.0 as usize)))
+        .collect()
+}
+
+fn post_targeted_text(hwnd: HWND, text: &str) -> Result<()> {
+    for (message, code_unit) in windows_text_message_sequence(text) {
+        unsafe {
+            PostMessageW(Some(hwnd), message, WPARAM(code_unit), LPARAM(0))?;
+        }
+        thread::sleep(Duration::from_millis(8));
+    }
+    Ok(())
+}
+
+fn windows_text_message_sequence(text: &str) -> Vec<(u32, usize)> {
+    text.encode_utf16()
+        .map(|code_unit| (WM_CHAR, usize::from(code_unit)))
+        .collect()
+}
+
+fn send_text_to_edit_window(hwnd: HWND, text: &str) {
+    const EM_SETSEL: u32 = 0x00B1;
+    const EM_REPLACESEL: u32 = 0x00C2;
+    let mut text = text.encode_utf16().collect::<Vec<_>>();
+    text.push(0);
+    unsafe {
+        SendMessageW(hwnd, EM_SETSEL, Some(WPARAM(usize::MAX)), Some(LPARAM(-1)));
+        SendMessageW(
+            hwnd,
+            EM_REPLACESEL,
+            Some(WPARAM(1)),
+            Some(LPARAM(text.as_ptr() as isize)),
+        );
+    }
+}
+
+fn find_targeted_text_window(params: &Value, root_hwnd: HWND) -> Result<Option<HWND>> {
+    if let Some(element) = resolve_element(params)? {
+        if let Some(hwnd) = text_window_handle_candidate(&element, root_hwnd, false) {
+            return Ok(Some(hwnd));
+        }
+    }
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let automation: IUIAutomation =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+        let walker = automation.ControlViewWalker()?;
+        let root = automation.ElementFromHandle(root_hwnd)?;
+        Ok(
+            find_descendant_text_window(&walker, &root, root_hwnd, true, 0)
+                .or_else(|| find_descendant_text_window(&walker, &root, root_hwnd, false, 0)),
+        )
+    }
+}
+
+fn find_descendant_text_window(
+    walker: &IUIAutomationTreeWalker,
+    root: &IUIAutomationElement,
+    root_hwnd: HWND,
+    require_writable: bool,
+    depth: usize,
+) -> Option<HWND> {
+    if depth >= 12 {
+        return None;
+    }
+    let mut child = unsafe { walker.GetFirstChildElement(root) }.ok();
+    while let Some(element) = child {
+        if let Some(hwnd) = text_window_handle_candidate(&element, root_hwnd, require_writable) {
+            return Some(hwnd);
+        }
+        if let Some(hwnd) =
+            find_descendant_text_window(walker, &element, root_hwnd, require_writable, depth + 1)
+        {
+            return Some(hwnd);
+        }
+        child = unsafe { walker.GetNextSiblingElement(&element) }.ok();
+    }
+    None
+}
+
+fn text_window_handle_candidate(
+    element: &IUIAutomationElement,
+    root_hwnd: HWND,
+    require_writable: bool,
+) -> Option<HWND> {
+    let hwnd = unsafe { element.CurrentNativeWindowHandle() }.ok()?;
+    if hwnd == root_hwnd || !unsafe { IsWindow(Some(hwnd)).as_bool() } {
+        return None;
+    }
+    let role = unsafe { element.CurrentControlType() }
+        .map(control_type_name)
+        .unwrap_or("unknown");
+    let class_name = unsafe { element.CurrentClassName() }
+        .map(|value| value.to_string().to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(role, "edit" | "document")
+        && !["edit", "rich", "text"]
+            .iter()
+            .any(|needle| class_name.contains(needle))
+    {
+        return None;
+    }
+    if require_writable {
+        let pattern =
+            unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+                .ok()?;
+        if unsafe { pattern.CurrentIsReadOnly() }.ok()?.as_bool() {
+            return None;
+        }
+    }
+    Some(hwnd)
 }
 
 fn set_value(params: &Value) -> Result<Value> {
@@ -1290,13 +1433,6 @@ fn window_id(hwnd: HWND) -> String {
     format!("win:{}", hwnd.0 as usize)
 }
 
-fn animate_pointer(x: i32, y: i32, target_window: Option<HWND>) -> Result<()> {
-    move_visual_cursor(x, y, target_window);
-    animate_physical_pointer(x, y)?;
-    settle_visual_cursor(x, y, target_window);
-    Ok(())
-}
-
 fn animate_visual_pointer(x: i32, y: i32, target_window: Option<HWND>) {
     move_visual_cursor(x, y, target_window);
     thread::sleep(Duration::from_secs_f64(spring_close_enough_time_seconds()));
@@ -1362,6 +1498,10 @@ fn preferred_pointer_injection(params: &Value, button: DesktopMouseButton) -> &'
     } else {
         "targeted_window_message"
     }
+}
+
+fn preferred_pointer_move_injection() -> &'static str {
+    "targeted_window_message"
 }
 
 fn windows_button_message_spec(button: DesktopMouseButton) -> (u32, u32, usize) {
@@ -1632,6 +1772,35 @@ mod tests {
         assert_eq!(
             preferred_pointer_injection(&json!({ "x": 10, "y": 20 }), DesktopMouseButton::Left,),
             "targeted_window_message"
+        );
+    }
+
+    #[test]
+    fn moves_pointer_with_targeted_window_messages() {
+        assert_eq!(
+            preferred_pointer_move_injection(),
+            "targeted_window_message"
+        );
+    }
+
+    #[test]
+    fn orders_targeted_key_messages_like_the_reference_runtime() {
+        assert_eq!(
+            windows_key_message_sequence(&[VK_CONTROL, VIRTUAL_KEY(b'S' as u16)]),
+            vec![
+                (WM_KEYDOWN, VK_CONTROL.0 as usize),
+                (WM_KEYDOWN, b'S' as usize),
+                (WM_KEYUP, b'S' as usize),
+                (WM_KEYUP, VK_CONTROL.0 as usize),
+            ]
+        );
+    }
+
+    #[test]
+    fn encodes_targeted_text_as_utf16_window_messages() {
+        assert_eq!(
+            windows_text_message_sequence("A😀"),
+            vec![(WM_CHAR, 0x41), (WM_CHAR, 0xD83D), (WM_CHAR, 0xDE00)]
         );
     }
 
