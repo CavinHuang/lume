@@ -17,7 +17,19 @@ const MAC_PERMISSION_GUIDE_BINARY_NAME = "LumeComputerUsePermissionGuide";
 const MAC_CURSOR_ASSET_NAME = "official-software-cursor-window-252.png";
 const MAC_CURSOR_ASSET_SOURCE = resolve(CRATE_DIR, "assets", MAC_CURSOR_ASSET_NAME);
 const MAC_BUNDLE_ICON_NAME = "LumeComputerUse.icns";
-const MAC_BUNDLE_ICON_SOURCE = resolve(REPO_ROOT, "apps", "desktop", "assets", "icon.icns");
+const MAC_BUNDLE_ICONSET_NAME = "LumeComputerUse.iconset";
+const MAC_BUNDLE_ICON_ENTRIES = [
+  ["icon_16x16.png", 16],
+  ["icon_16x16@2x.png", 32],
+  ["icon_32x32.png", 32],
+  ["icon_32x32@2x.png", 64],
+  ["icon_128x128.png", 128],
+  ["icon_128x128@2x.png", 256],
+  ["icon_256x256.png", 256],
+  ["icon_256x256@2x.png", 512],
+  ["icon_512x512.png", 512],
+  ["icon_512x512@2x.png", 1024],
+];
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
 const MAC_BUNDLE_VARIANT = process.env.LUME_COMPUTER_USE_BUNDLE_VARIANT === "dev" ? "dev" : "release";
 const MAC_BUNDLE_CONFIG = MAC_BUNDLE_VARIANT === "dev"
@@ -79,7 +91,7 @@ function writeMacAppBundle() {
   chmodSync(OUT_FILE, 0o755);
   copyFileSync(CURSOR_LICENSE, resolve(resourcesDir, "LICENSE.open-codex-computer-use"));
   copyFileSync(MAC_CURSOR_ASSET_SOURCE, resolve(resourcesDir, MAC_CURSOR_ASSET_NAME));
-  copyFileSync(MAC_BUNDLE_ICON_SOURCE, resolve(resourcesDir, MAC_BUNDLE_ICON_NAME));
+  buildMacBundleIcon(resourcesDir);
   const infoPlistPath = resolve(contentsDir, "Info.plist");
   writeFileSync(infoPlistPath, macInfoPlist());
   lintMacInfoPlist(infoPlistPath);
@@ -87,6 +99,38 @@ function writeMacAppBundle() {
   buildMacPermissionGuide(resolve(macosDir, MAC_PERMISSION_GUIDE_BINARY_NAME));
   signMacAppBundle(appRoot);
   console.error(`[desktop-host] wrote ${appRoot}`);
+}
+
+function buildMacBundleIcon(resourcesDir) {
+  const iconsetDir = resolve(resourcesDir, MAC_BUNDLE_ICONSET_NAME);
+  rmSync(iconsetDir, { recursive: true, force: true });
+  mkdirSync(iconsetDir, { recursive: true });
+  for (const [fileName, pixelSize] of MAC_BUNDLE_ICON_ENTRIES) {
+    const result = spawnSync("sips", [
+      "-z",
+      String(pixelSize),
+      String(pixelSize),
+      MAC_CURSOR_ASSET_SOURCE,
+      "--out",
+      resolve(iconsetDir, fileName),
+    ], {
+      cwd: REPO_ROOT,
+      stdio: "inherit",
+    });
+    if (result.status !== 0) process.exit(result.status ?? 1);
+  }
+  const result = spawnSync("iconutil", [
+    "-c",
+    "icns",
+    iconsetDir,
+    "-o",
+    resolve(resourcesDir, MAC_BUNDLE_ICON_NAME),
+  ], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
+  rmSync(iconsetDir, { recursive: true, force: true });
+  if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
 function lintMacInfoPlist(infoPlistPath) {
