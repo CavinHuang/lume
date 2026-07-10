@@ -52,17 +52,19 @@ export interface CreateLumeRuntimeToolsOutput {
 
 export function desktopWindowBindingFromMessageMetadata(
   messageMetadata: Record<string, unknown> | undefined,
-): { windowId: string; appId?: string; appName?: string } | undefined {
+): { windowId: string; appId?: string; appName?: string; windowTitle?: string } | undefined {
   const window = recordValue(messageMetadata?.desktopWindow);
   const app = recordValue(messageMetadata?.desktopApp);
   const windowId = stringValue(window.id);
   if (!windowId) return undefined;
   const appId = stringValue(app.id);
   const appName = stringValue(app.name);
+  const windowTitle = stringValue(window.title);
   return {
     windowId,
     ...(appId ? { appId } : {}),
     ...(appName ? { appName } : {}),
+    ...(windowTitle ? { windowTitle } : {}),
   };
 }
 

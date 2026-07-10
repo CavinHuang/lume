@@ -411,6 +411,7 @@ describe("createComputerUseMcpTools", () => {
           windowId: "win:wechat",
           appId: "wechat.exe",
           appName: "微信",
+          windowTitle: "项目群",
           targetLabel: "输入框",
           windowRevision: "rev-bound",
           x: 250,
@@ -433,12 +434,19 @@ describe("createComputerUseMcpTools", () => {
 
   test("requires a one-time confirmation for consequential actions", async () => {
     const calls: unknown[] = [];
-    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string }> = [];
+    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedWindow?: { id: string; title: string } }> = [];
     const tools = createComputerUseMcpTools({
       threadId: "thread-1",
       emitDesktopActionRequest: (request) => requests.push(request),
       invoke: async (method, input) => {
         calls.push({ method, input });
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "rev-1",
+            window: { id: "window-1", title: "项目群", appId: "wechat.exe", appName: "微信" },
+          };
+        }
         return { status: "ok" };
       },
     });
@@ -449,8 +457,9 @@ describe("createComputerUseMcpTools", () => {
     );
 
     await Bun.sleep(0);
-    expect(calls).toEqual([]);
+    expect(calls).toEqual([{ method: "get_window_state", input: { windowId: "window-1" } }]);
     expect(requests[0]?.targetLabel).toBe("发送");
+    expect(requests[0]?.expectedWindow).toEqual({ id: "window-1", title: "项目群" });
     submitDesktopActionDecision({
       threadId: "thread-1",
       requestId: requests[0]!.requestId,
@@ -458,8 +467,8 @@ describe("createComputerUseMcpTools", () => {
     });
     const result = await resultPromise;
 
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toEqual({
+    expect(calls).toHaveLength(3);
+    expect(calls[2]).toEqual({
       method: "wait_for_state",
       input: { windowId: "window-1", revisionNot: "rev-1", timeoutMs: 1_500 },
     });
@@ -502,7 +511,7 @@ describe("createComputerUseMcpTools", () => {
 
   test("derives consequential target labels from element ids before action confirmation", async () => {
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
-    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedRevision?: string; targetPoint?: { x: number; y: number }; summary?: string }> = [];
+    const requests: Array<{ threadId: string; requestId: string; targetLabel?: string; expectedRevision?: string; expectedWindow?: { id: string; title: string }; targetPoint?: { x: number; y: number }; summary?: string }> = [];
     const tools = createComputerUseMcpTools({
       threadId: "thread-derived",
       emitDesktopActionRequest: (request) => requests.push(request),
@@ -512,7 +521,7 @@ describe("createComputerUseMcpTools", () => {
           return {
             status: "ok",
             revision: "derived-rev",
-            window: { id: "window-1", appId: "wechat.exe", appName: "微信" },
+            window: { id: "window-1", title: "项目群", appId: "wechat.exe", appName: "微信" },
             accessibility: {
               tree: [
                 { id: "root.0", role: "edit", name: "输入框" },
@@ -535,6 +544,7 @@ describe("createComputerUseMcpTools", () => {
     expect(requests[0]).toMatchObject({
       targetLabel: "发送",
       expectedRevision: "derived-rev",
+      expectedWindow: { id: "window-1", title: "项目群" },
       targetPoint: { x: 280, y: 620 },
       summary: "微信：点击「发送」",
     });
@@ -554,6 +564,7 @@ describe("createComputerUseMcpTools", () => {
         targetLabel: "发送",
         appId: "wechat.exe",
         appName: "微信",
+        windowTitle: "项目群",
         x: 280,
         y: 620,
       },
@@ -567,7 +578,7 @@ describe("createComputerUseMcpTools", () => {
       verification: {
         status: "ok",
         revision: "derived-rev",
-        window: { id: "window-1" },
+        window: { id: "window-1", title: "项目群" },
       },
     });
   });

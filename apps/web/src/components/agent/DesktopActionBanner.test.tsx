@@ -18,6 +18,7 @@ describe('DesktopActionBanner', () => {
           risk: 'critical',
           expiresAt: '2026-07-08T12:00:00.000Z',
           expectedWindowId: 'win:wechat',
+          expectedWindow: { id: 'win:wechat', title: '项目群' },
           expectedRevision: 'rev-safe',
           summary: '微信：填写内容「输入框」',
         }}
@@ -28,6 +29,8 @@ describe('DesktopActionBanner', () => {
     expect(html).not.toContain('set_value')
     expect(html).toContain('目标点')
     expect(html).toContain('280,620')
+    expect(html).toContain('目标窗口')
+    expect(html).toContain('项目群')
     expect(html).toContain('执行前复核窗口版本')
     expect(html).not.toContain('password=secret')
   })

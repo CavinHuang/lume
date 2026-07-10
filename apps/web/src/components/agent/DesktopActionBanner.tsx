@@ -53,8 +53,14 @@ export function DesktopActionBanner({
             <p className="mt-1 text-xs text-muted-foreground">
               Lume 会在执行前重新验证窗口和目标状态。本次允许不会保存为长期授权。
             </p>
-            {(request.targetPoint || request.expectedRevision) ? (
+            {(request.expectedWindow || request.expectedWindowId || request.targetPoint || request.expectedRevision) ? (
               <div className="mt-2 flex flex-wrap gap-1.5">
+                {request.expectedWindow || request.expectedWindowId ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
+                    <MonitorUp size={11} />
+                    目标窗口 {request.expectedWindow?.title || request.expectedWindowId}
+                  </span>
+                ) : null}
                 {request.targetPoint ? (
                   <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
                     <Crosshair size={11} />

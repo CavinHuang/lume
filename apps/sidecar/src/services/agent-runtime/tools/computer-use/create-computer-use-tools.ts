@@ -82,6 +82,7 @@ export function createComputerUseMcpTools(input: {
     windowId: string;
     appId?: string;
     appName?: string;
+    windowTitle?: string;
   };
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
@@ -226,7 +227,7 @@ export function createComputerUseMcpTools(input: {
 async function resolveBoundDesktopTarget(
   invoke: ComputerUseInvoke,
   snapshotId: string,
-  fallback?: { windowId: string; appId?: string; appName?: string },
+  fallback?: { windowId: string; appId?: string; appName?: string; windowTitle?: string },
 ): Promise<{ status: "ok"; args: Record<string, unknown> } | { status: "blocked"; result: unknown }> {
   if (fallback?.windowId) {
     return {
@@ -235,6 +236,7 @@ async function resolveBoundDesktopTarget(
         windowId: fallback.windowId,
         ...(fallback.appId ? { appId: fallback.appId } : {}),
         ...(fallback.appName ? { appName: fallback.appName } : {}),
+        ...(fallback.windowTitle ? { windowTitle: fallback.windowTitle } : {}),
       },
     };
   }
@@ -256,6 +258,7 @@ async function resolveBoundDesktopTarget(
     status: "ok",
     args: {
       windowId,
+      ...(stringValue(window.title) ? { windowTitle: stringValue(window.title) } : {}),
       ...(stringValue(app.id) ? { appId: stringValue(app.id) } : {}),
       ...(stringValue(app.name) ? { appName: stringValue(app.name) } : {}),
     },
@@ -419,7 +422,8 @@ async function prepareDesktopActionArgsForSafety(
 ): Promise<{ status: "ok"; args: Record<string, unknown> } | { status: "blocked"; result: unknown }> {
   const suppliedLabel = stringValue(args.targetLabel) ?? stringValue(args.label);
   const needsConfirmation = requiresDesktopActionConfirmation({ kind: action, targetLabel: suppliedLabel });
-  const needsState = shouldInspectTargetState(action, args) || (needsConfirmation && !stringValue(args.windowRevision));
+  const needsState = shouldInspectTargetState(action, args)
+    || (needsConfirmation && (!stringValue(args.windowRevision) || !stringValue(args.windowTitle)));
   if (!needsState) {
     return { status: "ok", args };
   }
@@ -442,6 +446,7 @@ async function prepareDesktopActionArgsForSafety(
       ...(typeof args.windowId === "string" ? {} : typeof window.id === "string" ? { windowId: window.id } : {}),
       ...(typeof window.appId === "string" && !stringValue(args.appId) ? { appId: window.appId } : {}),
       ...(typeof window.appName === "string" && !stringValue(args.appName) ? { appName: window.appName } : {}),
+      ...(typeof window.title === "string" && !stringValue(args.windowTitle) ? { windowTitle: window.title } : {}),
       ...(derivedLabel ? { targetLabel: derivedLabel } : {}),
       ...(derivedPoint && !hasPoint(args) ? derivedPoint : {}),
       windowRevision: state.revision,
@@ -552,6 +557,8 @@ function createActionRequest(
   const targetPoint = pointFromArgs(args);
   const appId = stringValue(args.appId) ?? "unknown";
   const appName = stringValue(args.appName) ?? appId;
+  const windowId = stringValue(args.windowId);
+  const windowTitle = stringValue(args.windowTitle);
   return {
     threadId,
     requestId: `desktop_action:${randomUUID()}`,
@@ -562,7 +569,8 @@ function createActionRequest(
     ...(targetPoint ? { targetPoint } : {}),
     risk: "critical",
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    ...(stringValue(args.windowId) ? { expectedWindowId: stringValue(args.windowId) } : {}),
+    ...(windowId ? { expectedWindowId: windowId } : {}),
+    ...(windowId && windowTitle ? { expectedWindow: { id: windowId, title: windowTitle } } : {}),
     ...(stringValue(args.windowRevision) ? { expectedRevision: stringValue(args.windowRevision) } : {}),
     summary: `${appName}：${desktopActionSummaryLabel(action)}${targetLabel ? `「${targetLabel}」` : ""}`,
   };

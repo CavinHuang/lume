@@ -153,6 +153,7 @@ export interface AgentDesktopActionRequest {
   risk: AgentDesktopActionRisk;
   expiresAt: string;
   expectedWindowId?: string;
+  expectedWindow?: Pick<DesktopWindowRef, "id" | "title">;
   expectedRevision?: string;
   summary: string;
 }
