@@ -16,6 +16,15 @@ describe("createComputerUseMcpTools", () => {
       { required: ["elementId"] },
       { required: ["x", "y"] },
     ]);
+    expect(schema("click").properties.clickCount).toMatchObject({
+      type: "integer",
+      minimum: 1,
+    });
+    expect(schema("click").properties.clickCount.maximum).toBeUndefined();
+    expect(schema("click").properties.mouseButton).toMatchObject({
+      type: "string",
+      enum: ["left", "right", "middle"],
+    });
     expect(schema("drag").required).toEqual(["windowId", "fromX", "fromY", "toX", "toY"]);
     expect(schema("type_text").required).toEqual(["windowId", "text"]);
     expect(schema("search_context").required).toEqual(["query"]);

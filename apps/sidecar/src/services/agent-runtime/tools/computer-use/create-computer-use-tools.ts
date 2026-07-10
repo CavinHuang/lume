@@ -650,7 +650,7 @@ function describeTool(
     launch_app: "Launch an application by executable/app name or absolute path. Use list_windows afterward to obtain its windowId.",
     activate_window: "Bring one exact windowId to the foreground. Verify with get_window_state after activation.",
     move_pointer: "Move the visible agent pointer to an accessibility element or absolute screen coordinate in one window. Coordinates use the desktop screen space represented by screenshot origin metadata.",
-    click: "Click an accessibility element or absolute screen coordinate in one window. Call get_window_state or wait_for_state afterward to verify the intended state change.",
+    click: "Click an accessibility element or absolute screen coordinate in one window. Supports single, double, or triple click with the left, right, or middle mouse button. Call get_window_state or wait_for_state afterward to verify the intended state change.",
     perform_secondary_action: "Right-click an accessibility element or absolute screen coordinate in one window. Call get_window_state afterward to inspect the resulting menu or state.",
     scroll: "Scroll the active content in one exact windowId by deltaY. Positive deltaY scrolls down. Verify the resulting state afterward.",
     drag: "Drag from one absolute desktop coordinate to another inside one exact windowId, then verify the result with get_window_state.",
@@ -738,9 +738,17 @@ function toolSchema(
     case "activate_window":
       return object({ windowId, windowRevision: actionTarget.windowRevision }, windowScopedRequired(["windowId"]));
     case "move_pointer":
-    case "click":
     case "perform_secondary_action":
       return pointTarget();
+    case "click":
+      return pointTarget({
+        clickCount: integer("Number of clicks. Defaults to 1.", { minimum: 1 }),
+        mouseButton: {
+          type: "string",
+          enum: ["left", "right", "middle"],
+          description: "Mouse button to click. Defaults to left.",
+        },
+      });
     case "scroll":
       return object({
         ...actionTarget,

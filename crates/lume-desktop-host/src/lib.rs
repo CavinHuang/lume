@@ -50,6 +50,51 @@ pub trait DesktopBackend: Send + Sync {
     fn invoke(&self, method: &str, params: &Value) -> Result<Value>;
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DesktopMouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DesktopClickOptions {
+    pub count: u32,
+    pub button: DesktopMouseButton,
+}
+
+pub(crate) fn desktop_click_options(
+    params: &Value,
+    force_secondary: bool,
+) -> std::result::Result<DesktopClickOptions, &'static str> {
+    if force_secondary {
+        return Ok(DesktopClickOptions {
+            count: 1,
+            button: DesktopMouseButton::Right,
+        });
+    }
+
+    let count = match params.get("clickCount") {
+        None => 1,
+        Some(value) => value
+            .as_u64()
+            .and_then(|count| u32::try_from(count).ok())
+            .filter(|count| *count > 0)
+            .ok_or("clickCount must be a positive integer")?,
+    };
+    let button = match params
+        .get("mouseButton")
+        .and_then(Value::as_str)
+        .unwrap_or("left")
+    {
+        "left" => DesktopMouseButton::Left,
+        "right" => DesktopMouseButton::Right,
+        "middle" => DesktopMouseButton::Middle,
+        _ => return Err("mouseButton must be left, right, or middle"),
+    };
+    Ok(DesktopClickOptions { count, button })
+}
+
 impl<T: DesktopBackend + ?Sized> DesktopBackend for Box<T> {
     fn invoke(&self, method: &str, params: &Value) -> Result<Value> {
         (**self).invoke(method, params)
@@ -364,4 +409,57 @@ fn rpc_result(id: Value, result: Value) -> Value {
 
 fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     json!({ "id": id, "error": { "code": code, "message": message } })
+}
+
+#[cfg(test)]
+mod click_options_tests {
+    use super::*;
+
+    #[test]
+    fn parses_codex_aligned_click_count_and_mouse_button() {
+        assert_eq!(
+            desktop_click_options(&json!({}), false),
+            Ok(DesktopClickOptions {
+                count: 1,
+                button: DesktopMouseButton::Left,
+            })
+        );
+        assert_eq!(
+            desktop_click_options(&json!({ "clickCount": 2, "mouseButton": "middle" }), false,),
+            Ok(DesktopClickOptions {
+                count: 2,
+                button: DesktopMouseButton::Middle,
+            })
+        );
+        assert_eq!(
+            desktop_click_options(&json!({ "clickCount": 4 }), false),
+            Ok(DesktopClickOptions {
+                count: 4,
+                button: DesktopMouseButton::Left,
+            })
+        );
+        assert_eq!(
+            desktop_click_options(&json!({ "clickCount": 3, "mouseButton": "left" }), true,),
+            Ok(DesktopClickOptions {
+                count: 1,
+                button: DesktopMouseButton::Right,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_click_counts_and_mouse_buttons() {
+        assert_eq!(
+            desktop_click_options(&json!({ "clickCount": 0 }), false),
+            Err("clickCount must be a positive integer")
+        );
+        assert_eq!(
+            desktop_click_options(&json!({ "clickCount": 1.5 }), false),
+            Err("clickCount must be a positive integer")
+        );
+        assert_eq!(
+            desktop_click_options(&json!({ "mouseButton": "back" }), false),
+            Err("mouseButton must be left, right, or middle")
+        );
+    }
 }

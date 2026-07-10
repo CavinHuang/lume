@@ -10,7 +10,7 @@ use crate::windows_cursor_motion::{
 use crate::windows_overlay::{
     move_visual_cursor, pulse_visual_cursor, settle_visual_cursor, VISUAL_CURSOR_WINDOW_TITLE,
 };
-use crate::DesktopBackend;
+use crate::{desktop_click_options, DesktopBackend, DesktopMouseButton};
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
@@ -52,9 +52,10 @@ use windows::{
             Input::KeyboardAndMouse::{
                 SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
                 KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-                MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT,
-                VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME,
-                VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
+                MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN,
+                MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY, VK_BACK,
+                VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU,
+                VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
                 BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics,
@@ -794,9 +795,13 @@ fn move_pointer(params: &Value) -> Result<Value> {
 }
 
 fn click(params: &Value, secondary: bool) -> Result<Value> {
+    let options = match desktop_click_options(params, secondary) {
+        Ok(options) => options,
+        Err(message) => return Ok(json!({ "status": "failed", "message": message })),
+    };
     let target = target_window(params);
-    let semantic = preferred_pointer_injection(params, secondary) == "uia";
-    if requires_foreground_activation(params, secondary) {
+    let semantic = preferred_pointer_injection(params, options.button) == "uia";
+    if requires_foreground_activation(params, options.button) {
         if let Some(hwnd) = target {
             activate(hwnd)?;
         }
@@ -814,7 +819,7 @@ fn click(params: &Value, secondary: bool) -> Result<Value> {
     } else {
         current_pointer()?
     };
-    if semantic && try_invoke_element(params)? {
+    if semantic && try_invoke_element(params, options.count)? {
         pulse_visual_cursor(point.0, point.1, target);
         return Ok(json!({ "status": "ok", "inputMode": "uia_invoke" }));
     }
@@ -824,12 +829,10 @@ fn click(params: &Value, secondary: bool) -> Result<Value> {
         }
         animate_physical_pointer(point.0, point.1)?;
     }
-    if secondary {
-        send_mouse(MOUSEEVENTF_RIGHTDOWN, 0)?;
-        send_mouse(MOUSEEVENTF_RIGHTUP, 0)?;
-    } else {
-        send_mouse(MOUSEEVENTF_LEFTDOWN, 0)?;
-        send_mouse(MOUSEEVENTF_LEFTUP, 0)?;
+    let (down, up) = mouse_button_event_flags(options.button);
+    for _ in 0..options.count {
+        send_mouse(down, 0)?;
+        send_mouse(up, 0)?;
     }
     pulse_visual_cursor(point.0, point.1, target);
     Ok(json!({ "status": "ok", "inputMode": "physical_pointer" }))
@@ -911,7 +914,7 @@ fn type_text(params: &Value) -> Result<Value> {
 
 fn set_value(params: &Value) -> Result<Value> {
     let target = target_window(params);
-    let semantic = preferred_pointer_injection(params, false) == "uia";
+    let semantic = preferred_pointer_injection(params, DesktopMouseButton::Left) == "uia";
     if !semantic {
         if let Some(hwnd) = target {
             activate(hwnd)?;
@@ -1149,19 +1152,21 @@ fn virtual_desktop_bounds(start: CursorPoint, end: CursorPoint) -> CursorBounds 
     )
 }
 
-fn preferred_pointer_injection(params: &Value, secondary: bool) -> &'static str {
-    if !secondary && params.get("elementId").and_then(Value::as_str).is_some() {
+fn preferred_pointer_injection(params: &Value, button: DesktopMouseButton) -> &'static str {
+    if button == DesktopMouseButton::Left
+        && params.get("elementId").and_then(Value::as_str).is_some()
+    {
         "uia"
     } else {
         "physical"
     }
 }
 
-fn requires_foreground_activation(params: &Value, secondary: bool) -> bool {
-    preferred_pointer_injection(params, secondary) == "physical"
+fn requires_foreground_activation(params: &Value, button: DesktopMouseButton) -> bool {
+    preferred_pointer_injection(params, button) == "physical"
 }
 
-fn try_invoke_element(params: &Value) -> Result<bool> {
+fn try_invoke_element(params: &Value, click_count: u32) -> Result<bool> {
     let Some(element) = resolve_element(params)? else {
         return Ok(false);
     };
@@ -1170,10 +1175,25 @@ fn try_invoke_element(params: &Value) -> Result<bool> {
     let Ok(pattern) = pattern else {
         return Ok(false);
     };
-    unsafe {
-        pattern.Invoke()?;
+    for _ in 0..click_count {
+        unsafe {
+            pattern.Invoke()?;
+        }
     }
     Ok(true)
+}
+
+fn mouse_button_event_flags(
+    button: DesktopMouseButton,
+) -> (
+    windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
+    windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
+) {
+    match button {
+        DesktopMouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        DesktopMouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        DesktopMouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+    }
 }
 
 fn try_set_element_value(params: &Value, value: &str) -> Result<bool> {
@@ -1271,25 +1291,33 @@ mod tests {
     #[test]
     fn prefers_uia_for_element_scoped_primary_actions() {
         assert_eq!(
-            preferred_pointer_injection(&json!({ "elementId": "0.1" }), false),
+            preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Left,),
             "uia"
         );
         assert_eq!(
-            preferred_pointer_injection(&json!({ "elementId": "0.1" }), true),
+            preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Right,),
             "physical"
         );
         assert_eq!(
-            preferred_pointer_injection(&json!({ "x": 10, "y": 20 }), false),
+            preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Middle,),
             "physical"
         );
-        assert!(!requires_foreground_activation(
-            &json!({ "elementId": "0.1" }),
-            false
-        ));
-        assert!(requires_foreground_activation(
-            &json!({ "elementId": "0.1" }),
-            true
-        ));
+    }
+
+    #[test]
+    fn maps_all_supported_mouse_buttons_to_windows_events() {
+        assert_eq!(
+            mouse_button_event_flags(DesktopMouseButton::Left),
+            (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)
+        );
+        assert_eq!(
+            mouse_button_event_flags(DesktopMouseButton::Right),
+            (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
+        );
+        assert_eq!(
+            mouse_button_event_flags(DesktopMouseButton::Middle),
+            (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP)
+        );
     }
 
     #[test]

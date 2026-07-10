@@ -1,3 +1,5 @@
+#[cfg(any(target_os = "macos", test))]
+use crate::DesktopMouseButton;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -190,6 +192,15 @@ pub fn macos_preferred_click_actions(secondary: bool) -> &'static [&'static str]
         &["AXShowMenu"]
     } else {
         &["AXPress", "AXConfirm", "AXOpen"]
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_click_event_codes(button: DesktopMouseButton) -> (u32, u32, u32) {
+    match button {
+        DesktopMouseButton::Left => (1, 2, 0),
+        DesktopMouseButton::Right => (3, 4, 1),
+        DesktopMouseButton::Middle => (25, 26, 2),
     }
 }
 
@@ -661,4 +672,23 @@ fn stale_element() -> Value {
 
 fn failed_action(message: &str) -> Value {
     json!({ "status": "failed", "message": message })
+}
+
+#[cfg(test)]
+mod click_event_tests {
+    use super::*;
+    use crate::DesktopMouseButton;
+
+    #[test]
+    fn maps_all_supported_mouse_buttons_to_core_graphics_events() {
+        assert_eq!(macos_click_event_codes(DesktopMouseButton::Left), (1, 2, 0));
+        assert_eq!(
+            macos_click_event_codes(DesktopMouseButton::Right),
+            (3, 4, 1)
+        );
+        assert_eq!(
+            macos_click_event_codes(DesktopMouseButton::Middle),
+            (25, 26, 2)
+        );
+    }
 }

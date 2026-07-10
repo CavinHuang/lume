@@ -1,11 +1,11 @@
 use crate::{
     current_computer_use_permission_app_bundle_name,
     current_computer_use_permission_app_bundle_path, current_computer_use_permission_clients,
-    desktop_permission_diagnostics, desktop_permission_granted,
+    desktop_click_options, desktop_permission_diagnostics, desktop_permission_granted,
     desktop_permission_guide_launch_for_app_bundle_path, macos_overlay,
     macos_snapshot::{
-        find_macos_window, first_visible_user_window, macos_current_context_result,
-        macos_get_window_result, macos_get_window_state_result,
+        find_macos_window, first_visible_user_window, macos_click_event_codes,
+        macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
         macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
         macos_list_windows_result, macos_pointer_input_mode, macos_preferred_click_actions,
         macos_resolve_action_point, macos_set_value_attribute_is_settable,
@@ -17,7 +17,7 @@ use crate::{
         MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
     },
-    DesktopBackend, DesktopPermissionClientRecord,
+    DesktopBackend, DesktopClickOptions, DesktopMouseButton, DesktopPermissionClientRecord,
 };
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -160,6 +160,10 @@ fn move_pointer(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
 }
 
 fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result<Value> {
+    let options = match desktop_click_options(params, secondary) {
+        Ok(options) => options,
+        Err(message) => return Ok(failed_action(message)),
+    };
     let Some(mut window) = required_window(params, windows) else {
         return Ok(stale_target());
     };
@@ -167,7 +171,7 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
     if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
         move_visible_pointer_for_params(&window, params);
         activate_macos_window(&window)?;
-        if let Some(input_mode) = perform_element_click_action(&window, element_id, secondary)? {
+        if let Some(input_mode) = perform_element_click_action(&window, element_id, options)? {
             pulse_visible_pointer_for_params(&window, params);
             return Ok(json!({
                 "status": "ok",
@@ -186,7 +190,7 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
     click_mouse(
         x,
         y,
-        secondary,
+        options,
         window.owner_pid as c_int,
         global_pointer_fallback,
     );
@@ -200,8 +204,11 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
 fn perform_element_click_action(
     window: &MacOSWindowInfo,
     element_id: &str,
-    secondary: bool,
+    options: DesktopClickOptions,
 ) -> Result<Option<&'static str>> {
+    if options.button == DesktopMouseButton::Middle {
+        return Ok(None);
+    }
     unsafe {
         let app = AXUIElementCreateApplication(window.owner_pid as c_int);
         if app.is_null() {
@@ -214,19 +221,25 @@ fn perform_element_click_action(
         };
         let element = matching_ax_element_by_id(root, element_id);
         let handled = element.is_some_and(|element| {
-            let handled = macos_preferred_click_actions(secondary)
-                .iter()
-                .any(|action| perform_ax_action(element, action));
+            let actions =
+                macos_preferred_click_actions(options.button == DesktopMouseButton::Right);
+            let handled = (0..options.count).all(|_| {
+                actions
+                    .iter()
+                    .any(|action| perform_ax_action(element, action))
+            });
             CFRelease(element as CFTypeRef);
             handled
         });
         CFRelease(root as CFTypeRef);
         CFRelease(app as CFTypeRef);
-        Ok(handled.then_some(if secondary {
-            "accessibility_menu"
-        } else {
-            "accessibility_action"
-        }))
+        Ok(
+            handled.then_some(if options.button == DesktopMouseButton::Right {
+                "accessibility_menu"
+            } else {
+                "accessibility_action"
+            }),
+        )
     }
 }
 
@@ -346,7 +359,10 @@ fn set_value(params: &Value, window: &MacOSWindowInfo) -> Result<Value> {
                 click_mouse(
                     x,
                     y,
-                    false,
+                    DesktopClickOptions {
+                        count: 1,
+                        button: DesktopMouseButton::Left,
+                    },
                     window.owner_pid as c_int,
                     global_pointer_fallback,
                 );
@@ -605,25 +621,21 @@ fn move_mouse(x: i64, y: i64, target_pid: c_int, global_pointer_fallback: bool) 
     }
 }
 
-fn click_mouse(x: i64, y: i64, secondary: bool, target_pid: c_int, global_pointer_fallback: bool) {
+fn click_mouse(
+    x: i64,
+    y: i64,
+    options: DesktopClickOptions,
+    target_pid: c_int,
+    global_pointer_fallback: bool,
+) {
     unsafe {
         let point = cg_point(x, y);
-        let (down, up, button) = if secondary {
-            (
-                K_CG_EVENT_RIGHT_MOUSE_DOWN,
-                K_CG_EVENT_RIGHT_MOUSE_UP,
-                K_CG_MOUSE_BUTTON_RIGHT,
-            )
-        } else {
-            (
-                K_CG_EVENT_LEFT_MOUSE_DOWN,
-                K_CG_EVENT_LEFT_MOUSE_UP,
-                K_CG_MOUSE_BUTTON_LEFT,
-            )
-        };
+        let (down, up, button) = macos_click_event_codes(options.button);
         let event_target = (!global_pointer_fallback).then_some(target_pid);
-        post_mouse_event(down, point, button, event_target);
-        post_mouse_event(up, point, button, event_target);
+        for click_state in 1..=options.count {
+            post_mouse_click_event(down, point, button, event_target, i64::from(click_state));
+            post_mouse_click_event(up, point, button, event_target, i64::from(click_state));
+        }
         if !global_pointer_fallback {
             pulse_visible_pointer(x, y);
         }
@@ -726,6 +738,20 @@ unsafe fn post_mouse_event(
     target_pid: Option<c_int>,
 ) {
     let event = CGEventCreateMouseEvent(ptr::null(), event_type, point, button);
+    post_event(event, target_pid);
+}
+
+unsafe fn post_mouse_click_event(
+    event_type: c_uint,
+    point: CGPoint,
+    button: c_uint,
+    target_pid: Option<c_int>,
+    click_state: i64,
+) {
+    let event = CGEventCreateMouseEvent(ptr::null(), event_type, point, button);
+    if !event.is_null() {
+        CGEventSetIntegerValueField(event, K_CG_MOUSE_EVENT_CLICK_STATE, click_state);
+    }
     post_event(event, target_pid);
 }
 
@@ -1716,12 +1742,10 @@ const K_CG_WINDOW_IMAGE_NOMINAL_RESOLUTION: c_uint = 16;
 const K_CG_HID_EVENT_TAP: c_uint = 0;
 const K_CG_EVENT_LEFT_MOUSE_DOWN: c_uint = 1;
 const K_CG_EVENT_LEFT_MOUSE_UP: c_uint = 2;
-const K_CG_EVENT_RIGHT_MOUSE_DOWN: c_uint = 3;
-const K_CG_EVENT_RIGHT_MOUSE_UP: c_uint = 4;
 const K_CG_EVENT_MOUSE_MOVED: c_uint = 5;
 const K_CG_EVENT_LEFT_MOUSE_DRAGGED: c_uint = 6;
+const K_CG_MOUSE_EVENT_CLICK_STATE: c_uint = 1;
 const K_CG_MOUSE_BUTTON_LEFT: c_uint = 0;
-const K_CG_MOUSE_BUTTON_RIGHT: c_uint = 1;
 const K_CG_SCROLL_EVENT_UNIT_PIXEL: c_uint = 0;
 const K_AX_ERROR_SUCCESS: c_int = 0;
 const K_AX_VALUE_CGPOINT_TYPE: c_int = 1;
@@ -1802,6 +1826,7 @@ extern "C" {
         unicode_string: *const u16,
     );
     fn CGEventSetFlags(event: CGEventRef, flags: u64);
+    fn CGEventSetIntegerValueField(event: CGEventRef, field: c_uint, value: i64);
     fn CGEventPost(tap: c_uint, event: CGEventRef);
     fn CGEventPostToPid(pid: c_int, event: CGEventRef);
 }
