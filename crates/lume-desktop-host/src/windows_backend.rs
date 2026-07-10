@@ -831,9 +831,11 @@ fn click(params: &Value) -> Result<Value> {
     let semantic = preferred_pointer_injection(params, options.button) == "uia";
     let point = action_point(params)?;
     animate_visual_pointer(point.0, point.1, Some(target));
-    if semantic && try_invoke_element(params, options.count)? {
-        pulse_visual_cursor(point.0, point.1, Some(target));
-        return Ok(json!({ "status": "ok", "inputMode": "uia_invoke" }));
+    if semantic {
+        if let Some(input_mode) = try_preferred_element_click(params, options.count)? {
+            pulse_visual_cursor(point.0, point.1, Some(target));
+            return Ok(json!({ "status": "ok", "inputMode": input_mode }));
+        }
     }
     post_targeted_click(target, point, options)?;
     pulse_visual_cursor(point.0, point.1, Some(target));
@@ -1437,21 +1439,56 @@ fn windows_button_message_spec(button: DesktopMouseButton) -> (u32, u32, usize) 
     }
 }
 
-fn try_invoke_element(params: &Value, click_count: u32) -> Result<bool> {
+fn preferred_click_action_name(
+    has_invoke: bool,
+    has_selection: bool,
+    has_toggle: bool,
+) -> Option<&'static str> {
+    if has_invoke {
+        Some("Invoke")
+    } else if has_selection {
+        Some("Select")
+    } else if has_toggle {
+        Some("Toggle")
+    } else {
+        None
+    }
+}
+
+fn try_preferred_element_click(params: &Value, click_count: u32) -> Result<Option<&'static str>> {
     let Some(element) = resolve_element(params)? else {
-        return Ok(false);
+        return Ok(None);
     };
-    let pattern =
-        unsafe { element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) };
-    let Ok(pattern) = pattern else {
-        return Ok(false);
+    let action = unsafe {
+        preferred_click_action_name(
+            element
+                .GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+                .is_ok(),
+            element
+                .GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
+                    UIA_SelectionItemPatternId,
+                )
+                .is_ok(),
+            element
+                .GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+                .is_ok(),
+        )
     };
-    for _ in 0..click_count {
-        unsafe {
-            pattern.Invoke()?;
+    let Some(action) = action else {
+        return Ok(None);
+    };
+    let attempts = if action == "Invoke" { click_count } else { 1 };
+    for _ in 0..attempts {
+        if !invoke_secondary_action(&element, action)? {
+            return Ok(None);
         }
     }
-    Ok(true)
+    Ok(Some(match action {
+        "Invoke" => "uia_invoke",
+        "Select" => "uia_select",
+        "Toggle" => "uia_toggle",
+        _ => unreachable!(),
+    }))
 }
 
 fn supported_secondary_actions(element: &IUIAutomationElement) -> Vec<&'static str> {
@@ -1636,6 +1673,23 @@ mod tests {
             preferred_pointer_injection(&json!({ "x": 10, "y": 20 }), DesktopMouseButton::Left,),
             "targeted_window_message"
         );
+    }
+
+    #[test]
+    fn orders_primary_uia_click_actions_like_the_reference_runtime() {
+        assert_eq!(
+            preferred_click_action_name(true, true, true),
+            Some("Invoke")
+        );
+        assert_eq!(
+            preferred_click_action_name(false, true, true),
+            Some("Select")
+        );
+        assert_eq!(
+            preferred_click_action_name(false, false, true),
+            Some("Toggle")
+        );
+        assert_eq!(preferred_click_action_name(false, false, false), None);
     }
 
     #[test]
