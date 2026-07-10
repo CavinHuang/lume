@@ -92,6 +92,10 @@ fn get_window_state_can_include_screenshot_pixels_when_requested() {
         .decode(encoded)
         .expect("screenshot PNG must be valid base64");
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    assert!(matches!(
+        result["screenshots"][0]["captureMode"].as_str(),
+        Some("print_window") | Some("screen_bitblt")
+    ));
 }
 
 #[test]

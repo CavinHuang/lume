@@ -29,6 +29,7 @@ use windows::{
                 IWICBitmapFrameEncode, IWICImagingFactory, WICBitmapEncoderNoCache,
             },
         },
+        Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
         System::{
             Com::{
                 CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER,
@@ -63,11 +64,11 @@ use windows::{
             },
             WindowsAndMessaging::{
                 BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowRect,
-                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow,
-                IsWindowVisible, PostMessageW, SendMessageW, SetForegroundWindow, ShowWindow,
-                SW_RESTORE, WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-                WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-                WM_RBUTTONDOWN, WM_RBUTTONUP,
+                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow,
+                IsIconic, IsWindow, IsWindowVisible, PostMessageW, SendMessageW,
+                SetForegroundWindow, ShowWindow, PW_RENDERFULLCONTENT, SW_RESTORE, WM_CHAR,
+                WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+                WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
             },
         },
     },
@@ -363,8 +364,12 @@ fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Valu
     });
     if include_pixels {
         match capture_window_png_data_url(hwnd, width, height) {
-            Ok(data_url) => {
-                screenshot["dataUrl"] = Value::String(data_url);
+            Ok(capture) => {
+                screenshot["dataUrl"] = Value::String(capture.data_url);
+                screenshot["captureMode"] = Value::String(capture.mode.to_owned());
+                if let Some(reason) = capture.fallback_reason {
+                    screenshot["captureFallbackReason"] = Value::String(reason);
+                }
             }
             Err(error) => {
                 screenshot["error"] = Value::String(error.to_string());
@@ -382,7 +387,13 @@ fn screenshot_id(window: &Value) -> String {
     )
 }
 
-fn capture_window_png_data_url(hwnd: HWND, width: i32, height: i32) -> Result<String> {
+struct WindowCapture {
+    data_url: String,
+    mode: &'static str,
+    fallback_reason: Option<String>,
+}
+
+fn capture_window_png_data_url(hwnd: HWND, width: i32, height: i32) -> Result<WindowCapture> {
     let mut rect = RECT::default();
     unsafe {
         GetWindowRect(hwnd, &mut rect)?;
@@ -408,22 +419,44 @@ fn capture_window_png_data_url(hwnd: HWND, width: i32, height: i32) -> Result<St
     }
 
     let old_object = unsafe { SelectObject(memory_dc, HGDIOBJ::from(bitmap)) };
-    let capture_result = unsafe {
-        BitBlt(
-            memory_dc,
-            0,
-            0,
-            width,
-            height,
-            Some(screen_dc),
-            rect.left,
-            rect.top,
-            SRCCOPY,
-        )
+    let print_capture = if unsafe { IsHungAppWindow(hwnd).as_bool() } {
+        Err(anyhow!("target window is not responding"))
+    } else {
+        let print_result =
+            unsafe { PrintWindow(hwnd, memory_dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)) };
+        if print_result.as_bool() {
+            bitmap_to_png_data_url(memory_dc, bitmap, width, height, true)
+        } else {
+            Err(anyhow!("PrintWindow returned no pixels"))
+        }
     };
-    let result = capture_result
-        .map_err(|error| anyhow!("window capture failed: {error}"))
-        .and_then(|_| bitmap_to_png_data_url(memory_dc, bitmap, width, height));
+    let result = match print_capture {
+        Ok(data_url) => Ok(WindowCapture {
+            data_url,
+            mode: "print_window",
+            fallback_reason: None,
+        }),
+        Err(print_error) => unsafe {
+            BitBlt(
+                memory_dc,
+                0,
+                0,
+                width,
+                height,
+                Some(screen_dc),
+                rect.left,
+                rect.top,
+                SRCCOPY,
+            )
+            .map_err(|error| anyhow!("window capture failed: {error}"))
+            .and_then(|_| bitmap_to_png_data_url(memory_dc, bitmap, width, height, false))
+            .map(|data_url| WindowCapture {
+                data_url,
+                mode: "screen_bitblt",
+                fallback_reason: Some(print_error.to_string()),
+            })
+        },
+    };
     unsafe {
         if !old_object.is_invalid() {
             SelectObject(memory_dc, old_object);
@@ -440,6 +473,7 @@ fn bitmap_to_png_data_url(
     bitmap: windows::Win32::Graphics::Gdi::HBITMAP,
     width: i32,
     height: i32,
+    reject_empty: bool,
 ) -> Result<String> {
     let pixel_bytes = (width as usize)
         .checked_mul(height as usize)
@@ -472,6 +506,9 @@ fn bitmap_to_png_data_url(
     };
     if copied == 0 {
         return Err(anyhow!("unable to read captured bitmap"));
+    }
+    if reject_empty && !pixels_have_visible_content(&pixels) {
+        return Err(anyhow!("PrintWindow returned empty pixels"));
     }
     let capacity = pixel_bytes
         .checked_add(height as usize)
@@ -509,6 +546,12 @@ fn bitmap_to_png_data_url(
     }
     png.truncate(written);
     Ok(format!("data:image/png;base64,{}", BASE64.encode(png)))
+}
+
+fn pixels_have_visible_content(pixels: &[u8]) -> bool {
+    pixels
+        .chunks_exact(4)
+        .any(|pixel| pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0)
 }
 
 fn accessibility_state(hwnd: HWND) -> Result<Value> {
@@ -1719,6 +1762,12 @@ mod tests {
             windows_text_message_sequence("A😀"),
             vec![(WM_CHAR, 0x41), (WM_CHAR, 0xD83D), (WM_CHAR, 0xDE00)]
         );
+    }
+
+    #[test]
+    fn rejects_empty_print_window_frames_before_screen_fallback() {
+        assert!(!pixels_have_visible_content(&[0; 16]));
+        assert!(pixels_have_visible_content(&[0, 0, 0, 0, 12, 0, 0, 0,]));
     }
 
     #[test]
