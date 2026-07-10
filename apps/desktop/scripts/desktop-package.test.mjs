@@ -120,6 +120,7 @@ test('desktop-host resource build packages the macOS software cursor overlay', (
 
 test('desktop-host resource build packages the macOS permission guide helper', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+  const guide = readFileSync(resolve(REPO_ROOT, 'crates/lume-desktop-host/macos/LumeComputerUsePermissionGuide.swift'), 'utf8')
 
   assert.equal(
     existsSync(resolve(REPO_ROOT, 'crates/lume-desktop-host/macos/LumeComputerUsePermissionGuide.swift')),
@@ -129,6 +130,11 @@ test('desktop-host resource build packages the macOS permission guide helper', (
   assert.match(script, /LumeComputerUsePermissionGuide/)
   assert.match(script, /swiftc/)
   assert.match(script, /-framework",\s*"AppKit/)
+  assert.match(guide, /AXIsProcessTrusted/)
+  assert.match(guide, /CGPreflightScreenCaptureAccess/)
+  assert.match(guide, /Timer\.scheduledTimer/)
+  assert.match(guide, /setPermissionGranted/)
+  assert.match(guide, /DispatchQueue\.main\.asyncAfter/)
 })
 
 test('desktop-host resource build prefers a stable macOS signing identity', () => {

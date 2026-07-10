@@ -1,4 +1,6 @@
+import ApplicationServices
 import AppKit
+import CoreGraphics
 import Foundation
 
 struct PermissionGuideConfig {
@@ -67,6 +69,8 @@ enum LumeComputerUsePermissionGuideMain {
 final class PermissionGuideDelegate: NSObject, NSApplicationDelegate {
     private let config: PermissionGuideConfig
     private var window: NSWindow?
+    private var guideView: PermissionGuideView?
+    private var refreshTimer: Timer?
 
     init(config: PermissionGuideConfig) {
         self.config = config
@@ -82,14 +86,29 @@ final class PermissionGuideDelegate: NSObject, NSApplicationDelegate {
         window.title = "Authorize \(config.appName)"
         window.isReleasedWhenClosed = false
         window.center()
-        window.contentView = PermissionGuideView(config: config, target: self)
+        let guideView = PermissionGuideView(config: config, target: self)
+        window.contentView = guideView
         self.window = window
+        self.guideView = guideView
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        refreshPermissionStatus()
+        refreshTimer = Timer.scheduledTimer(
+            timeInterval: 1,
+            target: self,
+            selector: #selector(refreshPermissionStatus),
+            userInfo: nil,
+            repeats: true
+        )
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
     }
 
     @objc
@@ -101,11 +120,31 @@ final class PermissionGuideDelegate: NSObject, NSApplicationDelegate {
     func closeGuide() {
         NSApp.terminate(nil)
     }
+
+    @objc
+    func refreshPermissionStatus() {
+        guard permissionGranted(config.permission) else {
+            guideView?.setPermissionGranted(false)
+            return
+        }
+
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        guideView?.setPermissionGranted(true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            NSApp.terminate(nil)
+        }
+    }
 }
 
 final class PermissionGuideView: NSView {
     private let config: PermissionGuideConfig
     private weak var target: PermissionGuideDelegate?
+    private var titleField: NSTextField?
+    private var bodyField: NSTextField?
+    private var hintField: NSTextField?
+    private var settingsButton: NSButton?
+    private var closeButton: NSButton?
 
     init(config: PermissionGuideConfig, target: PermissionGuideDelegate) {
         self.config = config
@@ -139,6 +178,7 @@ final class PermissionGuideView: NSView {
         title.font = NSFont.systemFont(ofSize: 28, weight: .bold)
         title.alignment = .center
         title.maximumNumberOfLines = 1
+        titleField = title
 
         let body = NSTextField(wrappingLabelWithString:
             "Open macOS System Settings and enable \(config.appName) for \(config.permissionTitle). Do not authorize the main Lume app."
@@ -147,6 +187,7 @@ final class PermissionGuideView: NSView {
         body.textColor = .secondaryLabelColor
         body.alignment = .center
         body.maximumNumberOfLines = 3
+        bodyField = body
 
         let tile = DraggableAppTileView(config: config)
         tile.translatesAutoresizingMaskIntoConstraints = false
@@ -158,6 +199,7 @@ final class PermissionGuideView: NSView {
         hint.textColor = .tertiaryLabelColor
         hint.alignment = .center
         hint.maximumNumberOfLines = 2
+        hintField = hint
 
         let buttons = NSStackView()
         buttons.orientation = .horizontal
@@ -171,6 +213,7 @@ final class PermissionGuideView: NSView {
         )
         settingsButton.bezelStyle = .rounded
         settingsButton.keyEquivalent = "\r"
+        self.settingsButton = settingsButton
 
         let closeButton = NSButton(
             title: "Close",
@@ -178,6 +221,7 @@ final class PermissionGuideView: NSView {
             action: #selector(PermissionGuideDelegate.closeGuide)
         )
         closeButton.bezelStyle = .rounded
+        self.closeButton = closeButton
 
         buttons.addArrangedSubview(settingsButton)
         buttons.addArrangedSubview(closeButton)
@@ -199,6 +243,34 @@ final class PermissionGuideView: NSView {
             tile.widthAnchor.constraint(equalToConstant: 420),
             tile.heightAnchor.constraint(equalToConstant: 58),
         ])
+    }
+
+    func setPermissionGranted(_ granted: Bool) {
+        guard granted else {
+            titleField?.stringValue = "Authorize \(config.appName)"
+            bodyField?.stringValue = "Open macOS System Settings and enable \(config.appName) for \(config.permissionTitle). Do not authorize the main Lume app."
+            hintField?.stringValue = "If macOS asks you to add an app manually, drag the tile above into the permission list."
+            settingsButton?.isEnabled = true
+            closeButton?.title = "Close"
+            return
+        }
+
+        titleField?.stringValue = "Authorized \(config.appName)"
+        bodyField?.stringValue = "\(config.appName) is now allowed for \(config.permissionTitle). You can return to Lume."
+        hintField?.stringValue = "Closing this guide automatically..."
+        settingsButton?.isEnabled = false
+        closeButton?.title = "Done"
+    }
+}
+
+func permissionGranted(_ permission: String) -> Bool {
+    switch permission {
+    case "accessibility":
+        return AXIsProcessTrusted()
+    case "screenRecording":
+        return CGPreflightScreenCaptureAccess()
+    default:
+        return false
     }
 }
 
