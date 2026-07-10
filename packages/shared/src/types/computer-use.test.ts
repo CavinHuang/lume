@@ -24,6 +24,9 @@ describe("computer-use shared contracts", () => {
   test("always confirms externally consequential actions", () => {
     expect(requiresDesktopActionConfirmation({ kind: "click", targetLabel: "发送" })).toBeTrue();
     expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["ENTER"], targetLabel: "付款" })).toBeTrue();
+    expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["ENTER"] })).toBeTrue();
+    expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["Return"] })).toBeTrue();
     expect(requiresDesktopActionConfirmation({ kind: "click", targetLabel: "展开详情" })).toBeFalse();
+    expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["TAB"] })).toBeFalse();
   });
 });

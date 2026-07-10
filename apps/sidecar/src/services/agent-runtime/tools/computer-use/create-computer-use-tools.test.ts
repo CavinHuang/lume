@@ -693,6 +693,74 @@ describe("createComputerUseMcpTools", () => {
     ]);
   });
 
+  test("requires confirmation before pressing Enter even when the focused target has no label", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const requests: Array<{ threadId: string; requestId: string; summary?: string; targetLabel?: string }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-enter",
+      emitDesktopActionRequest: (request) => requests.push(request),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "enter-rev",
+            window: { id: "window-enter", title: "群聊", appId: "wechat.exe", appName: "微信" },
+            accessibility: {
+              focusedElement: { id: "root.input", role: "edit" },
+            },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const pressKey = tools.find((tool) => tool.name === "mcp__computer_use__press_key")!;
+    const resultPromise = pressKey.call(
+      { windowId: "window-enter", key: "ENTER" },
+      { toolUseId: "tool-enter", abortSignal: new AbortController().signal } as never,
+    );
+
+    await Bun.sleep(0);
+    expect(calls).toEqual([{ method: "get_window_state", input: { windowId: "window-enter" } }]);
+    expect(requests[0]).toMatchObject({
+      threadId: "thread-enter",
+      summary: "微信：按键",
+    });
+
+    submitDesktopActionDecision({
+      threadId: "thread-enter",
+      requestId: requests[0]!.requestId,
+      decision: "allow_once",
+    });
+    const result = await resultPromise;
+
+    expect(calls).toEqual([
+      { method: "get_window_state", input: { windowId: "window-enter" } },
+      { method: "get_window_state", input: { windowId: "window-enter" } },
+      {
+        method: "press_key",
+        input: {
+          windowId: "window-enter",
+          key: "ENTER",
+          windowRevision: "enter-rev",
+          appId: "wechat.exe",
+          appName: "微信",
+          windowTitle: "群聊",
+        },
+      },
+      {
+        method: "wait_for_state",
+        input: { windowId: "window-enter", revisionNot: "enter-rev", timeoutMs: 1_500 },
+      },
+    ]);
+    expect(JSON.parse(result.content as string)).toEqual({
+      status: "ok",
+      verification: {
+        status: "ok",
+      },
+    });
+  });
+
   test("emits desktop action visual lifecycle without leaking typed text", async () => {
     const visualEvents: unknown[] = [];
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];

@@ -235,11 +235,14 @@ export interface DesktopActionIntent {
 }
 
 const CONSEQUENTIAL_TARGET_RE = /(?:发送|删除|付款|支付|购买|提交|授权|确认订单|send|delete|pay|purchase|submit|authorize)/i;
+const CONSEQUENTIAL_KEY_RE = /^(?:enter|return)$/i;
 
 export function isDesktopActionStatus(value: unknown): value is DesktopActionStatus {
   return typeof value === "string" && (DESKTOP_ACTION_STATUSES as readonly string[]).includes(value);
 }
 
 export function requiresDesktopActionConfirmation(intent: DesktopActionIntent): boolean {
-  return CONSEQUENTIAL_TARGET_RE.test(intent.targetLabel?.trim() ?? "");
+  if (CONSEQUENTIAL_TARGET_RE.test(intent.targetLabel?.trim() ?? "")) return true;
+  if (intent.kind !== "press_key") return false;
+  return intent.keys?.some((key) => CONSEQUENTIAL_KEY_RE.test(key.trim())) ?? false;
 }
