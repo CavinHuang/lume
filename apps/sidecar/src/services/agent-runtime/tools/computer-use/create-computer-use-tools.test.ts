@@ -25,6 +25,15 @@ describe("createComputerUseMcpTools", () => {
       type: "string",
       enum: ["left", "right", "middle"],
     });
+    expect(schema("perform_secondary_action").required).toEqual([
+      "windowId",
+      "elementId",
+      "action",
+    ]);
+    expect(schema("perform_secondary_action").anyOf).toBeUndefined();
+    expect(schema("perform_secondary_action").properties.action).toMatchObject({
+      type: "string",
+    });
     expect(schema("drag").required).toEqual(["windowId", "fromX", "fromY", "toX", "toY"]);
     expect(schema("type_text").required).toEqual(["windowId", "text"]);
     expect(schema("search_context").required).toEqual(["query"]);
@@ -33,6 +42,7 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("current_context").properties.refresh).toMatchObject({ type: "boolean" });
     expect(description("type_text")).toContain("passwords or OTPs");
     expect(description("click")).toContain("get_window_state");
+    expect(description("perform_secondary_action")).toContain("secondary accessibility action");
     expect(description("diagnose_permissions")).toContain("Lume Computer Use.app");
     expect(description("diagnose_permissions")).toContain("instruction");
     expect(description("request_permissions")).toContain("Lume Computer Use.app");
@@ -52,6 +62,7 @@ describe("createComputerUseMcpTools", () => {
     expect(required("get_window_state")).toBeUndefined();
     expect(required("activate_window")).toBeUndefined();
     expect(required("click")).toBeUndefined();
+    expect(required("perform_secondary_action")).toEqual(["elementId", "action"]);
     expect(required("scroll")).toEqual(["deltaY"]);
     expect(required("drag")).toEqual(["fromX", "fromY", "toX", "toY"]);
     expect(required("press_key")).toBeUndefined();
@@ -483,6 +494,58 @@ describe("createComputerUseMcpTools", () => {
       input: { windowId: "window-1", revisionNot: "rev-1", timeoutMs: 1_500 },
     });
     expect(JSON.parse(result.content as string)).toEqual({ status: "ok", verification: { status: "ok" } });
+  });
+
+  test("requires confirmation for consequential secondary actions without a label", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const requests: Array<{
+      threadId: string;
+      requestId: string;
+      action: string;
+      secondaryAction?: string;
+      summary?: string;
+    }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-secondary-delete",
+      emitDesktopActionRequest: (request) => requests.push(request),
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state" || method === "wait_for_state") {
+          return {
+            status: "ok",
+            revision: "rev-delete",
+            window: { id: "window-1", title: "列表", appId: "notes.exe", appName: "笔记" },
+            accessibility: {
+              tree: [{ id: "root.2", role: "row", actions: ["AXDelete"] }],
+            },
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const secondaryAction = tools.find(
+      (tool) => tool.name === "mcp__computer_use__perform_secondary_action",
+    )!;
+    const resultPromise = secondaryAction.call(
+      { windowId: "window-1", elementId: "root.2", action: "AXDelete" },
+      { toolUseId: "tool-secondary-delete", abortSignal: new AbortController().signal } as never,
+    );
+
+    await Bun.sleep(0);
+    expect(requests[0]?.action).toBe("perform_secondary_action");
+    expect(requests[0]?.secondaryAction).toBe("AXDelete");
+    expect(requests[0]?.summary).toBe("笔记：执行辅助操作「AXDelete」");
+    submitDesktopActionDecision({
+      threadId: "thread-secondary-delete",
+      requestId: requests[0]!.requestId,
+      decision: "allow_once",
+    });
+    await resultPromise;
+
+    expect(calls[2]).toMatchObject({
+      method: "perform_secondary_action",
+      input: { windowId: "window-1", elementId: "root.2", action: "AXDelete" },
+    });
   });
 
   test("captures a fresh window revision before confirming consequential actions", async () => {

@@ -27,6 +27,14 @@ describe("computer-use shared contracts", () => {
     expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["ENTER"] })).toBeTrue();
     expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["Return"] })).toBeTrue();
     expect(requiresDesktopActionConfirmation({ kind: "click", targetLabel: "展开详情" })).toBeFalse();
+    expect(requiresDesktopActionConfirmation({
+      kind: "perform_secondary_action",
+      secondaryAction: "AXDelete",
+    })).toBeTrue();
+    expect(requiresDesktopActionConfirmation({
+      kind: "perform_secondary_action",
+      secondaryAction: "AXShowMenu",
+    })).toBeFalse();
     expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["TAB"] })).toBeFalse();
   });
 });

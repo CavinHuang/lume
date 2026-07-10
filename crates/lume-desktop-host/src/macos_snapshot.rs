@@ -55,6 +55,7 @@ pub struct MacOSElementInfo {
     pub focused: bool,
     pub sensitive: bool,
     pub settable: bool,
+    pub actions: Vec<String>,
     pub children: Vec<MacOSElementInfo>,
 }
 
@@ -193,6 +194,17 @@ pub fn macos_preferred_click_actions(secondary: bool) -> &'static [&'static str]
     } else {
         &["AXPress", "AXConfirm", "AXOpen"]
     }
+}
+
+pub fn macos_matching_secondary_action<'a>(
+    actions: &'a [String],
+    requested: &str,
+) -> Option<&'a str> {
+    let requested = requested.trim();
+    actions
+        .iter()
+        .find(|action| action.eq_ignore_ascii_case(requested))
+        .map(String::as_str)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -418,6 +430,9 @@ fn element_json(element: &MacOSElementInfo, id: &str) -> Value {
     }
     if element.settable {
         value["settable"] = Value::Bool(true);
+    }
+    if !element.actions.is_empty() {
+        value["actions"] = json!(element.actions);
     }
     let children = element
         .children

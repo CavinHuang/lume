@@ -453,8 +453,7 @@ async function prepareDesktopActionArgsForSafety(
   action: DesktopActionKind,
   args: Record<string, unknown>,
 ): Promise<{ status: "ok"; args: Record<string, unknown> } | { status: "blocked"; result: unknown }> {
-  const suppliedLabel = stringValue(args.targetLabel) ?? stringValue(args.label);
-  const needsConfirmation = requiresDesktopActionConfirmation({ kind: action, targetLabel: suppliedLabel });
+  const needsConfirmation = requiresDesktopActionConfirmation(actionIntentFromArgs(action, args));
   const needsState = shouldInspectTargetState(action, args)
     || (needsConfirmation && (!stringValue(args.windowRevision) || !stringValue(args.windowTitle)));
   if (!needsState) {
@@ -491,6 +490,7 @@ function actionIntentFromArgs(action: DesktopActionKind, args: Record<string, un
   return {
     kind: action,
     targetLabel: stringValue(args.targetLabel) ?? stringValue(args.label),
+    secondaryAction: action === "perform_secondary_action" ? stringValue(args.action) : undefined,
     keys: Array.isArray(args.keys)
       ? args.keys.filter((key): key is string => typeof key === "string")
       : stringValue(args.key)?.split("+"),
@@ -594,6 +594,8 @@ function createActionRequest(
   args: Record<string, unknown>,
 ): AgentDesktopActionRequest {
   const targetLabel = stringValue(args.targetLabel) ?? stringValue(args.label);
+  const secondaryAction = action === "perform_secondary_action" ? stringValue(args.action) : undefined;
+  const summaryTarget = targetLabel ?? secondaryAction;
   const targetPoint = pointFromArgs(args);
   const appId = stringValue(args.appId) ?? "unknown";
   const appName = stringValue(args.appName) ?? appId;
@@ -605,6 +607,7 @@ function createActionRequest(
     toolUseId: toolUseId ?? "",
     app: { id: appId, name: appName },
     action,
+    ...(secondaryAction ? { secondaryAction } : {}),
     ...(targetLabel ? { targetLabel } : {}),
     ...(targetPoint ? { targetPoint } : {}),
     risk: "critical",
@@ -612,7 +615,7 @@ function createActionRequest(
     ...(windowId ? { expectedWindowId: windowId } : {}),
     ...(windowId && windowTitle ? { expectedWindow: { id: windowId, title: windowTitle } } : {}),
     ...(stringValue(args.windowRevision) ? { expectedRevision: stringValue(args.windowRevision) } : {}),
-    summary: `${appName}：${desktopActionSummaryLabel(action)}${targetLabel ? `「${targetLabel}」` : ""}`,
+    summary: `${appName}：${desktopActionSummaryLabel(action)}${summaryTarget ? `「${summaryTarget}」` : ""}`,
   };
 }
 
@@ -627,7 +630,7 @@ function desktopActionSummaryLabel(action: DesktopActionKind): string {
     scroll: "滚动",
     set_value: "填写内容",
     drag: "拖拽",
-    perform_secondary_action: "打开菜单",
+    perform_secondary_action: "执行辅助操作",
   };
   return labels[action];
 }
@@ -650,8 +653,8 @@ function describeTool(
     launch_app: "Launch an application by executable/app name or absolute path. Use list_windows afterward to obtain its windowId.",
     activate_window: "Bring one exact windowId to the foreground. Verify with get_window_state after activation.",
     move_pointer: "Move the visible agent pointer to an accessibility element or absolute screen coordinate in one window. Coordinates use the desktop screen space represented by screenshot origin metadata.",
-    click: "Click an accessibility element or absolute screen coordinate in one window. Supports single, double, or triple click with the left, right, or middle mouse button. Call get_window_state or wait_for_state afterward to verify the intended state change.",
-    perform_secondary_action: "Right-click an accessibility element or absolute screen coordinate in one window. Call get_window_state afterward to inspect the resulting menu or state.",
+    click: "Click an accessibility element or absolute screen coordinate in one window. Supports one or more clicks with the left, right, or middle mouse button. Call get_window_state or wait_for_state afterward to verify the intended state change.",
+    perform_secondary_action: "Invoke one named secondary accessibility action exposed by an element, such as AXShowMenu, Toggle, Select, Expand, Collapse, or ScrollIntoView. Use an action listed on the latest get_window_state tree and verify the result afterward.",
     scroll: "Scroll the active content in one exact windowId by deltaY. Positive deltaY scrolls down. Verify the resulting state afterward.",
     drag: "Drag from one absolute desktop coordinate to another inside one exact windowId, then verify the result with get_window_state.",
     press_key: "Press one key chord or ordered key list in one exact windowId. Use named keys such as CTRL, SHIFT, ENTER, TAB, ESCAPE, or arrow keys.",
@@ -738,8 +741,12 @@ function toolSchema(
     case "activate_window":
       return object({ windowId, windowRevision: actionTarget.windowRevision }, windowScopedRequired(["windowId"]));
     case "move_pointer":
-    case "perform_secondary_action":
       return pointTarget();
+    case "perform_secondary_action":
+      return object({
+        ...actionTarget,
+        action: string("Exact secondary accessibility action listed on the target element."),
+      }, windowScopedRequired(["windowId", "elementId", "action"]));
     case "click":
       return pointTarget({
         clickCount: integer("Number of clicks. Defaults to 1.", { minimum: 1 }),

@@ -2,9 +2,10 @@ use lume_desktop_host::macos_snapshot::{
     find_macos_window, first_visible_user_window, macos_current_context_result,
     macos_get_window_result, macos_get_window_state_result,
     macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
-    macos_list_windows_result, macos_pointer_input_mode, macos_preferred_click_actions,
-    macos_resolve_action_point, macos_set_value_attribute_is_settable,
-    macos_text_target_is_sensitive, macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
+    macos_list_windows_result, macos_matching_secondary_action, macos_pointer_input_mode,
+    macos_preferred_click_actions, macos_resolve_action_point,
+    macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
+    macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
     macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
     MacOSWindowInfo, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
 };
@@ -265,6 +266,7 @@ fn maps_accessibility_elements_to_stable_tree_nodes() {
             focused: false,
             sensitive: false,
             settable: true,
+            actions: vec!["AXPress".into(), "AXShowMenu".into()],
             children: vec![],
         },
         MacOSElementInfo {
@@ -279,6 +281,7 @@ fn maps_accessibility_elements_to_stable_tree_nodes() {
             focused: true,
             sensitive: true,
             settable: true,
+            actions: vec![],
             children: vec![],
         },
     ];
@@ -293,6 +296,10 @@ fn maps_accessibility_elements_to_stable_tree_nodes() {
         "A: 这个 PR 今天能发吗？"
     );
     assert_eq!(state["accessibility"]["tree"][0]["settable"], true);
+    assert_eq!(
+        state["accessibility"]["tree"][0]["actions"],
+        json!(["AXPress", "AXShowMenu"])
+    );
     assert_eq!(state["accessibility"]["tree"][1]["id"], "root.1");
     assert_eq!(state["accessibility"]["tree"][1]["role"], "text_field");
     assert_eq!(state["accessibility"]["tree"][1]["sensitive"], true);
@@ -303,6 +310,17 @@ fn maps_accessibility_elements_to_stable_tree_nodes() {
     assert!(document_text.contains("聊天记录"));
     assert!(document_text.contains("A: 这个 PR 今天能发吗？"));
     assert!(!document_text.contains("secret-token"));
+}
+
+#[test]
+fn matches_macos_secondary_actions_case_insensitively() {
+    let actions = vec!["AXPress".to_owned(), "AXShowMenu".to_owned()];
+
+    assert_eq!(
+        macos_matching_secondary_action(&actions, "axshowmenu"),
+        Some("AXShowMenu")
+    );
+    assert_eq!(macos_matching_secondary_action(&actions, "AXRaise"), None);
 }
 
 #[test]
@@ -371,6 +389,7 @@ fn resolves_macos_action_points_from_nested_element_ids() {
         focused: false,
         sensitive: false,
         settable: false,
+        actions: vec![],
         children: vec![MacOSElementInfo {
             role: "AXButton".into(),
             title: "发送".into(),
@@ -383,6 +402,7 @@ fn resolves_macos_action_points_from_nested_element_ids() {
             focused: false,
             sensitive: false,
             settable: false,
+            actions: vec![],
             children: vec![],
         }],
     }];
@@ -430,6 +450,7 @@ fn detects_sensitive_macos_text_targets_before_typing() {
         focused: true,
         sensitive: true,
         settable: true,
+        actions: vec![],
         children: vec![],
     }];
 

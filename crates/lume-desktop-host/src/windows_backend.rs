@@ -41,13 +41,19 @@ use windows::{
         },
         UI::{
             Accessibility::{
-                CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-                IUIAutomationTextPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
-                UIA_ButtonControlTypeId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
-                UIA_GroupControlTypeId, UIA_InvokePatternId, UIA_ListControlTypeId,
-                UIA_ListItemControlTypeId, UIA_MenuItemControlTypeId, UIA_PaneControlTypeId,
-                UIA_TabItemControlTypeId, UIA_TextControlTypeId, UIA_TextPatternId,
-                UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
+                CUIAutomation, ExpandCollapseState, ExpandCollapseState_Collapsed,
+                ExpandCollapseState_Expanded, ExpandCollapseState_LeafNode,
+                ExpandCollapseState_PartiallyExpanded, IUIAutomation, IUIAutomationElement,
+                IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
+                IUIAutomationScrollItemPattern, IUIAutomationSelectionItemPattern,
+                IUIAutomationTextPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
+                IUIAutomationValuePattern, UIA_ButtonControlTypeId, UIA_DocumentControlTypeId,
+                UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_GroupControlTypeId,
+                UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+                UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_ScrollItemPatternId,
+                UIA_SelectionItemPatternId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
+                UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId,
+                UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
             },
             Input::KeyboardAndMouse::{
                 SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
@@ -87,8 +93,8 @@ impl DesktopBackend for WindowsDesktopBackend {
             "launch_app" => launch_app(params),
             "activate_window" => with_window(params, |hwnd| activate(hwnd)),
             "move_pointer" => move_pointer(params),
-            "click" => click(params, false),
-            "perform_secondary_action" => click(params, true),
+            "click" => click(params),
+            "perform_secondary_action" => perform_secondary_action(params),
             "scroll" => scroll(params),
             "drag" => drag(params),
             "press_key" => press_key(params),
@@ -592,6 +598,7 @@ unsafe fn collect_accessibility_children(
         let sensitive = unsafe { element.CurrentIsPassword() }
             .map(|value| value.as_bool())
             .unwrap_or(false);
+        let actions = supported_secondary_actions(&element);
         if !name.trim().is_empty()
             && !sensitive
             && matches!(
@@ -619,7 +626,7 @@ unsafe fn collect_accessibility_children(
                 selected_text,
             )
         };
-        result.push(json!({
+        let mut node = json!({
             "id": path,
             "role": role,
             "name": if sensitive { "[SENSITIVE]" } else { name.as_str() },
@@ -633,7 +640,11 @@ unsafe fn collect_accessibility_children(
             "focused": focused,
             "sensitive": sensitive,
             "children": children,
-        }));
+        });
+        if !actions.is_empty() {
+            node["actions"] = json!(actions);
+        }
+        result.push(node);
         index += 1;
         child = unsafe { walker.GetNextSiblingElement(&element) }.ok();
     }
@@ -794,8 +805,8 @@ fn move_pointer(params: &Value) -> Result<Value> {
     Ok(json!({ "status": "ok" }))
 }
 
-fn click(params: &Value, secondary: bool) -> Result<Value> {
-    let options = match desktop_click_options(params, secondary) {
+fn click(params: &Value) -> Result<Value> {
+    let options = match desktop_click_options(params, false) {
         Ok(options) => options,
         Err(message) => return Ok(json!({ "status": "failed", "message": message })),
     };
@@ -836,6 +847,39 @@ fn click(params: &Value, secondary: bool) -> Result<Value> {
     }
     pulse_visual_cursor(point.0, point.1, target);
     Ok(json!({ "status": "ok", "inputMode": "physical_pointer" }))
+}
+
+fn perform_secondary_action(params: &Value) -> Result<Value> {
+    let Some(element_id) = params.get("elementId").and_then(Value::as_str) else {
+        return Ok(failed_action("elementId is required"));
+    };
+    let Some(requested_action) = params
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|action| !action.is_empty())
+    else {
+        return Ok(failed_action("action is required"));
+    };
+    let Some(action) = normalized_secondary_action(requested_action) else {
+        return Ok(invalid_secondary_action(requested_action, element_id));
+    };
+    if action == "SetFocus" && !focus_action_enabled() {
+        return Ok(failed_action(
+            "SetFocus is disabled by default to avoid stealing user focus; set LUME_COMPUTER_USE_ALLOW_FOCUS_ACTIONS=1 to enable it.",
+        ));
+    }
+    let Some(element) = resolve_element(params)? else {
+        return Ok(json!({
+            "status": "stale_target",
+            "message": "target element is unavailable",
+        }));
+    };
+    match invoke_secondary_action(&element, action) {
+        Ok(true) => Ok(json!({ "status": "ok", "inputMode": "uia_action" })),
+        Ok(false) => Ok(invalid_secondary_action(requested_action, element_id)),
+        Err(error) => Ok(failed_action(&error.to_string())),
+    }
 }
 
 fn scroll(params: &Value) -> Result<Value> {
@@ -1183,6 +1227,148 @@ fn try_invoke_element(params: &Value, click_count: u32) -> Result<bool> {
     Ok(true)
 }
 
+fn supported_secondary_actions(element: &IUIAutomationElement) -> Vec<&'static str> {
+    let mut actions = Vec::new();
+    unsafe {
+        if element
+            .GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+            .is_ok()
+        {
+            actions.push("Invoke");
+        }
+        if element
+            .GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+            .is_ok()
+        {
+            actions.push("Toggle");
+        }
+        if element
+            .GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)
+            .is_ok()
+        {
+            actions.push("Select");
+        }
+        if let Ok(pattern) = element
+            .GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(UIA_ExpandCollapsePatternId)
+        {
+            actions.extend_from_slice(expand_collapse_action_names(
+                pattern.CurrentExpandCollapseState().ok(),
+            ));
+        }
+        if element
+            .GetCurrentPatternAs::<IUIAutomationScrollItemPattern>(UIA_ScrollItemPatternId)
+            .is_ok()
+        {
+            actions.push("ScrollIntoView");
+        }
+    }
+    actions
+}
+
+fn expand_collapse_action_names(state: Option<ExpandCollapseState>) -> &'static [&'static str] {
+    match state {
+        Some(state) if state == ExpandCollapseState_Collapsed => &["Expand"],
+        Some(state)
+            if state == ExpandCollapseState_Expanded
+                || state == ExpandCollapseState_PartiallyExpanded =>
+        {
+            &["Collapse"]
+        }
+        Some(state) if state == ExpandCollapseState_LeafNode => &[],
+        _ => &["Expand", "Collapse"],
+    }
+}
+
+fn normalized_secondary_action(action: &str) -> Option<&'static str> {
+    match action.trim().to_ascii_lowercase().as_str() {
+        "invoke" => Some("Invoke"),
+        "toggle" => Some("Toggle"),
+        "select" => Some("Select"),
+        "expand" => Some("Expand"),
+        "collapse" => Some("Collapse"),
+        "scrollintoview" => Some("ScrollIntoView"),
+        "setfocus" => Some("SetFocus"),
+        _ => None,
+    }
+}
+
+fn focus_action_enabled() -> bool {
+    let lume = std::env::var("LUME_COMPUTER_USE_ALLOW_FOCUS_ACTIONS").ok();
+    let compatible = std::env::var("OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS").ok();
+    focus_action_enabled_from(lume.as_deref(), compatible.as_deref())
+}
+
+fn focus_action_enabled_from(lume: Option<&str>, compatible: Option<&str>) -> bool {
+    lume.into_iter().chain(compatible).any(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn invoke_secondary_action(element: &IUIAutomationElement, action: &str) -> Result<bool> {
+    unsafe {
+        match action {
+            "Invoke" => {
+                let Ok(pattern) =
+                    element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId)
+                else {
+                    return Ok(false);
+                };
+                pattern.Invoke()?;
+            }
+            "Toggle" => {
+                let Ok(pattern) =
+                    element.GetCurrentPatternAs::<IUIAutomationTogglePattern>(UIA_TogglePatternId)
+                else {
+                    return Ok(false);
+                };
+                pattern.Toggle()?;
+            }
+            "Select" => {
+                let Ok(pattern) = element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(
+                    UIA_SelectionItemPatternId,
+                ) else {
+                    return Ok(false);
+                };
+                pattern.Select()?;
+            }
+            "Expand" => {
+                let Ok(pattern) = element
+                    .GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(
+                        UIA_ExpandCollapsePatternId,
+                    )
+                else {
+                    return Ok(false);
+                };
+                pattern.Expand()?;
+            }
+            "Collapse" => {
+                let Ok(pattern) = element
+                    .GetCurrentPatternAs::<IUIAutomationExpandCollapsePattern>(
+                        UIA_ExpandCollapsePatternId,
+                    )
+                else {
+                    return Ok(false);
+                };
+                pattern.Collapse()?;
+            }
+            "ScrollIntoView" => {
+                let Ok(pattern) = element
+                    .GetCurrentPatternAs::<IUIAutomationScrollItemPattern>(UIA_ScrollItemPatternId)
+                else {
+                    return Ok(false);
+                };
+                pattern.ScrollIntoView()?;
+            }
+            "SetFocus" => element.SetFocus()?,
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
 fn mouse_button_event_flags(
     button: DesktopMouseButton,
 ) -> (
@@ -1321,6 +1507,50 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_reference_secondary_action_names() {
+        assert_eq!(normalized_secondary_action(" invoke "), Some("Invoke"));
+        assert_eq!(normalized_secondary_action("TOGGLE"), Some("Toggle"));
+        assert_eq!(normalized_secondary_action("select"), Some("Select"));
+        assert_eq!(normalized_secondary_action("expand"), Some("Expand"));
+        assert_eq!(normalized_secondary_action("collapse"), Some("Collapse"));
+        assert_eq!(
+            normalized_secondary_action("scrollIntoView"),
+            Some("ScrollIntoView")
+        );
+        assert_eq!(normalized_secondary_action("setFocus"), Some("SetFocus"));
+        assert_eq!(normalized_secondary_action("AXShowMenu"), None);
+    }
+
+    #[test]
+    fn keeps_focus_stealing_secondary_actions_opt_in() {
+        assert!(!focus_action_enabled_from(None, None));
+        assert!(focus_action_enabled_from(Some("true"), None));
+        assert!(focus_action_enabled_from(None, Some("1")));
+        assert!(!focus_action_enabled_from(Some("false"), Some("0")));
+    }
+
+    #[test]
+    fn exposes_only_the_available_expand_or_collapse_action() {
+        assert_eq!(
+            expand_collapse_action_names(Some(ExpandCollapseState_Collapsed)),
+            &["Expand"]
+        );
+        assert_eq!(
+            expand_collapse_action_names(Some(ExpandCollapseState_Expanded)),
+            &["Collapse"]
+        );
+        assert_eq!(
+            expand_collapse_action_names(Some(ExpandCollapseState_PartiallyExpanded)),
+            &["Collapse"]
+        );
+        assert_eq!(
+            expand_collapse_action_names(Some(ExpandCollapseState_LeafNode)),
+            &[] as &[&str]
+        );
+        assert_eq!(expand_collapse_action_names(None), &["Expand", "Collapse"]);
+    }
+
+    #[test]
     fn document_text_uses_the_text_pattern_instead_of_control_labels() {
         let source = "  本周完成：桌面上下文绑定。\r\n下周计划：继续验证。  ";
         assert_eq!(normalize_document_text(Some(source.into())), source);
@@ -1391,6 +1621,16 @@ fn int_param(params: &Value, name: &str) -> Result<i32> {
 
 fn stale_target() -> Value {
     json!({ "status": "stale_target", "message": "target window is unavailable" })
+}
+
+fn failed_action(message: &str) -> Value {
+    json!({ "status": "failed", "message": message })
+}
+
+fn invalid_secondary_action(action: &str, element_id: &str) -> Value {
+    failed_action(&format!(
+        "{action} is not a valid secondary action for {element_id}"
+    ))
 }
 
 fn now_millis() -> u128 {

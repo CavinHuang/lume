@@ -43,6 +43,7 @@ export interface DesktopElementRef {
   enabled?: boolean;
   focused?: boolean;
   sensitive?: boolean;
+  actions?: string[];
   children?: DesktopElementRef[];
 }
 
@@ -148,6 +149,7 @@ export interface AgentDesktopActionRequest {
   toolUseId: string;
   app: Pick<DesktopAppRef, "id" | "name">;
   action: DesktopActionKind;
+  secondaryAction?: string;
   targetLabel?: string;
   targetPoint?: { x: number; y: number };
   risk: AgentDesktopActionRisk;
@@ -232,10 +234,12 @@ export interface DesktopActionIntent {
   kind: DesktopActionKind;
   targetLabel?: string;
   keys?: string[];
+  secondaryAction?: string;
 }
 
 const CONSEQUENTIAL_TARGET_RE = /(?:发送|删除|付款|支付|购买|提交|授权|确认订单|send|delete|pay|purchase|submit|authorize)/i;
 const CONSEQUENTIAL_KEY_RE = /^(?:enter|return)$/i;
+const CONSEQUENTIAL_SECONDARY_ACTION_RE = /(?:send|delete|remove|pay|purchase|submit|confirm|authorize)/i;
 
 export function isDesktopActionStatus(value: unknown): value is DesktopActionStatus {
   return typeof value === "string" && (DESKTOP_ACTION_STATUSES as readonly string[]).includes(value);
@@ -243,6 +247,7 @@ export function isDesktopActionStatus(value: unknown): value is DesktopActionSta
 
 export function requiresDesktopActionConfirmation(intent: DesktopActionIntent): boolean {
   if (CONSEQUENTIAL_TARGET_RE.test(intent.targetLabel?.trim() ?? "")) return true;
+  if (CONSEQUENTIAL_SECONDARY_ACTION_RE.test(intent.secondaryAction?.trim() ?? "")) return true;
   if (intent.kind !== "press_key") return false;
   return intent.keys?.some((key) => CONSEQUENTIAL_KEY_RE.test(key.trim())) ?? false;
 }

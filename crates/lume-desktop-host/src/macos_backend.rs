@@ -7,12 +7,12 @@ use crate::{
         find_macos_window, first_visible_user_window, macos_click_event_codes,
         macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
         macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
-        macos_list_windows_result, macos_pointer_input_mode, macos_preferred_click_actions,
-        macos_resolve_action_point, macos_set_value_attribute_is_settable,
-        macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
-        macos_visible_pointer_mode, macos_visible_pointer_motion_points,
-        macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
-        MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
+        macos_list_windows_result, macos_matching_secondary_action, macos_pointer_input_mode,
+        macos_preferred_click_actions, macos_resolve_action_point,
+        macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
+        macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
+        macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
+        MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_LUME_VISUAL_POINTER_ENV, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
         MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
@@ -107,8 +107,8 @@ impl DesktopBackend for MacOSDesktopBackend {
             }
             "activate_window" => activate_window(params, &windows),
             "move_pointer" => move_pointer(params, &windows),
-            "click" => click(params, &windows, false),
-            "perform_secondary_action" => click(params, &windows, true),
+            "click" => click(params, &windows),
+            "perform_secondary_action" => perform_secondary_action(params, &windows),
             "scroll" => scroll(params, &windows),
             "drag" => drag(params, &windows),
             "press_key" => press_key(params, &windows),
@@ -159,8 +159,8 @@ fn move_pointer(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
     Ok(json!({ "status": "ok", "visualPointer": visual_pointer_mode() }))
 }
 
-fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result<Value> {
-    let options = match desktop_click_options(params, secondary) {
+fn click(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
+    let options = match desktop_click_options(params, false) {
         Ok(options) => options,
         Err(message) => return Ok(failed_action(message)),
     };
@@ -199,6 +199,59 @@ fn click(params: &Value, windows: &[MacOSWindowInfo], secondary: bool) -> Result
         "inputMode": macos_pointer_input_mode(global_pointer_fallback),
         "visualPointer": visual_pointer_mode()
     }))
+}
+
+fn perform_secondary_action(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
+    let Some(window) = required_window(params, windows) else {
+        return Ok(stale_target());
+    };
+    let Some(element_id) = params.get("elementId").and_then(Value::as_str) else {
+        return Ok(failed_action("elementId is required"));
+    };
+    let Some(requested_action) = params
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|action| !action.is_empty())
+    else {
+        return Ok(failed_action("action is required"));
+    };
+
+    unsafe {
+        let app = AXUIElementCreateApplication(window.owner_pid as c_int);
+        if app.is_null() {
+            return Ok(stale_target());
+        }
+        let root = matching_ax_window(app, window.window_id).or_else(|| first_ax_window(app));
+        let Some(root) = root else {
+            CFRelease(app as CFTypeRef);
+            return Ok(stale_target());
+        };
+        let element = matching_ax_element_by_id(root, element_id);
+        let Some(element) = element else {
+            CFRelease(root as CFTypeRef);
+            CFRelease(app as CFTypeRef);
+            return Ok(json!({
+                "status": "stale_target",
+                "message": "target element is unavailable",
+            }));
+        };
+        let actions = copy_ax_action_names(element);
+        let matching_action = macos_matching_secondary_action(&actions, requested_action);
+        let result = match matching_action {
+            Some(action) if perform_ax_action(element, action) => {
+                json!({ "status": "ok", "inputMode": "accessibility_action" })
+            }
+            Some(action) => failed_action(&format!("AXUIElementPerformAction({action}) failed")),
+            None => failed_action(&format!(
+                "{requested_action} is not a valid secondary action for {element_id}"
+            )),
+        };
+        CFRelease(element as CFTypeRef);
+        CFRelease(root as CFTypeRef);
+        CFRelease(app as CFTypeRef);
+        Ok(result)
+    }
 }
 
 fn perform_element_click_action(
@@ -1233,6 +1286,7 @@ unsafe fn collect_ax_element(
     let (x, y) = copy_ax_point_attribute(element, "AXPosition").unwrap_or((0.0, 0.0));
     let (width, height) = copy_ax_size_attribute(element, "AXSize").unwrap_or((0.0, 0.0));
     let children = collect_ax_children(element, depth, remaining, lines, selected_text);
+    let actions = copy_ax_action_names(element);
     Some(MacOSElementInfo {
         role,
         title,
@@ -1245,6 +1299,7 @@ unsafe fn collect_ax_element(
         focused: copy_ax_bool_attribute(element, "AXFocused").unwrap_or(false),
         sensitive,
         settable: ax_attribute_is_settable(element, "AXValue").unwrap_or(false),
+        actions,
         children,
     })
 }
@@ -1410,6 +1465,26 @@ unsafe fn copy_ax_string_attribute(element: AXUIElementRef, attribute: &str) -> 
     };
     CFRelease(value);
     text
+}
+
+unsafe fn copy_ax_action_names(element: AXUIElementRef) -> Vec<String> {
+    let mut actions: CFArrayRef = ptr::null();
+    if AXUIElementCopyActionNames(element, &mut actions) != K_AX_ERROR_SUCCESS || actions.is_null()
+    {
+        return Vec::new();
+    }
+    let mut output = Vec::new();
+    let count = CFArrayGetCount(actions);
+    for index in 0..count {
+        let action = CFArrayGetValueAtIndex(actions, index);
+        if !action.is_null() && cf_type_matches(action, CFStringGetTypeID()) {
+            if let Some(action) = cf_string_to_string(action as CFStringRef) {
+                output.push(action);
+            }
+        }
+    }
+    CFRelease(actions as CFTypeRef);
+    output
 }
 
 unsafe fn copy_ax_bool_attribute(element: AXUIElementRef, attribute: &str) -> Option<bool> {
@@ -1767,6 +1842,7 @@ extern "C" {
     fn AXIsProcessTrusted() -> c_uchar;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> c_uchar;
     fn AXUIElementCreateApplication(pid: c_int) -> AXUIElementRef;
+    fn AXUIElementCopyActionNames(element: AXUIElementRef, names: *mut CFArrayRef) -> c_int;
     fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
         attribute: CFStringRef,
