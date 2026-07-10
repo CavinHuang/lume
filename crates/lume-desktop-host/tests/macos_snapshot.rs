@@ -1,10 +1,10 @@
 use lume_desktop_host::macos_snapshot::{
-    find_macos_window, first_visible_user_window, macos_current_context_result, macos_get_window_result,
-    macos_get_window_state_result, macos_global_pointer_fallback_enabled_from, macos_key_chord,
-    macos_list_apps_result, macos_list_windows_result, macos_pointer_input_mode,
-    macos_preferred_click_actions, macos_resolve_action_point,
-    macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
-    macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
+    find_macos_window, first_visible_user_window, macos_current_context_result,
+    macos_get_window_result, macos_get_window_state_result,
+    macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
+    macos_list_windows_result, macos_pointer_input_mode, macos_preferred_click_actions,
+    macos_resolve_action_point, macos_set_value_attribute_is_settable,
+    macos_text_target_is_sensitive, macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
     macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
     MacOSWindowInfo, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
 };
@@ -15,6 +15,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
         MacOSWindowInfo {
             window_id: 42,
             owner_pid: 1001,
+            bundle_identifier: None,
             owner_name: "微信".into(),
             title: "项目群".into(),
             x: 10.0,
@@ -33,6 +34,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
         MacOSWindowInfo {
             window_id: 77,
             owner_pid: 1002,
+            bundle_identifier: None,
             owner_name: "TextEdit".into(),
             title: "周报.rtf".into(),
             x: 200.0,
@@ -51,6 +53,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
         MacOSWindowInfo {
             window_id: 99,
             owner_pid: 1003,
+            bundle_identifier: None,
             owner_name: "Dock".into(),
             title: "Dock".into(),
             x: 0.0,
@@ -95,6 +98,25 @@ fn maps_unique_apps_from_visible_macos_windows() {
     assert_eq!(result["apps"][0]["id"], "pid:1001");
     assert_eq!(result["apps"][0]["name"], "微信");
     assert_eq!(result["apps"][0]["processId"], 1001);
+}
+
+#[test]
+fn prefers_stable_macos_bundle_identifier_for_app_identity() {
+    let mut windows = sample_windows();
+    windows[0].bundle_identifier = Some("com.tencent.xinWeChat".into());
+
+    let apps = macos_list_apps_result(&windows);
+    let context = macos_current_context_result(&windows[0], false);
+    let state = macos_get_window_state_result(&windows[0], false);
+
+    assert_eq!(apps["apps"][0]["id"], "com.tencent.xinWeChat");
+    assert_eq!(apps["apps"][0]["platformId"], "1001");
+    assert_eq!(context["snapshot"]["app"]["id"], "com.tencent.xinWeChat");
+    assert_eq!(
+        context["snapshot"]["window"]["appId"],
+        "com.tencent.xinWeChat"
+    );
+    assert_eq!(state["window"]["appId"], "com.tencent.xinWeChat");
 }
 
 #[test]

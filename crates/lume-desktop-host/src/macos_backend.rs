@@ -23,6 +23,7 @@ use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     env,
     ffi::{CStr, CString},
     os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
@@ -1481,6 +1482,7 @@ fn system_windows() -> Result<Vec<MacOSWindowInfo>> {
     }
     let mut windows = Vec::new();
     let mut focused_assigned = false;
+    let mut bundle_identifiers = HashMap::<u32, Option<String>>::new();
     unsafe {
         let count = CFArrayGetCount(array);
         for index in 0..count {
@@ -1492,9 +1494,15 @@ fn system_windows() -> Result<Vec<MacOSWindowInfo>> {
             if bounds.is_null() {
                 continue;
             }
+            let owner_pid = cf_dictionary_i64(dict, "kCGWindowOwnerPID").unwrap_or_default() as u32;
+            let bundle_identifier = bundle_identifiers
+                .entry(owner_pid)
+                .or_insert_with(|| running_app_bundle_identifier(owner_pid))
+                .clone();
             let mut window = MacOSWindowInfo {
                 window_id: cf_dictionary_i64(dict, "kCGWindowNumber").unwrap_or_default() as u64,
-                owner_pid: cf_dictionary_i64(dict, "kCGWindowOwnerPID").unwrap_or_default() as u32,
+                owner_pid,
+                bundle_identifier,
                 owner_name: cf_dictionary_string(dict, "kCGWindowOwnerName").unwrap_or_default(),
                 title: cf_dictionary_string(dict, "kCGWindowName").unwrap_or_default(),
                 x: cf_dictionary_f64(bounds, "X").unwrap_or_default(),
@@ -1607,6 +1615,45 @@ unsafe fn cf_string_to_string(value: CFStringRef) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn running_app_bundle_identifier(owner_pid: u32) -> Option<String> {
+    if owner_pid == 0 {
+        return None;
+    }
+    unsafe {
+        let class_name = CString::new("NSRunningApplication").ok()?;
+        let class = objc_getClass(class_name.as_ptr());
+        if class.is_null() {
+            return None;
+        }
+        let app = objc_msg_send(
+            class as ObjcId,
+            objc_selector("runningApplicationWithProcessIdentifier:")?,
+            owner_pid as c_int,
+        );
+        if app.is_null() {
+            return None;
+        }
+        let bundle_identifier = objc_msg_send(app, objc_selector("bundleIdentifier")?);
+        if bundle_identifier.is_null() {
+            return None;
+        }
+        let value = objc_msg_send(bundle_identifier, objc_selector("UTF8String")?) as *const c_char;
+        if value.is_null() {
+            return None;
+        }
+        CStr::from_ptr(value).to_str().ok().and_then(|value| {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_owned())
+        })
+    }
+}
+
+unsafe fn objc_selector(name: &str) -> Option<ObjcSel> {
+    let name = CString::new(name).ok()?;
+    let selector = sel_registerName(name.as_ptr());
+    (!selector.is_null()).then_some(selector)
+}
+
 fn stale_target() -> Value {
     json!({ "status": "stale_target", "message": "target window is unavailable" })
 }
@@ -1633,6 +1680,9 @@ type CGEventRef = *const c_void;
 type CGEventSourceRef = *const c_void;
 type Sqlite3 = c_void;
 type Sqlite3Stmt = c_void;
+type ObjcClass = *const c_void;
+type ObjcId = *const c_void;
+type ObjcSel = *const c_void;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1679,6 +1729,14 @@ const K_AX_VALUE_CGSIZE_TYPE: c_int = 2;
 const SQLITE_OK: c_int = 0;
 const SQLITE_ROW: c_int = 100;
 const SQLITE_OPEN_READONLY: c_int = 1;
+
+#[link(name = "objc")]
+extern "C" {
+    fn objc_getClass(name: *const c_char) -> ObjcClass;
+    fn sel_registerName(name: *const c_char) -> ObjcSel;
+    #[link_name = "objc_msgSend"]
+    fn objc_msg_send(receiver: ObjcId, selector: ObjcSel, ...) -> ObjcId;
+}
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {

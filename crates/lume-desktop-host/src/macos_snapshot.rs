@@ -23,6 +23,7 @@ const MACOS_VISIBLE_POINTER_FRAME_INTERVAL_SECONDS: f64 = 1.0 / 60.0;
 pub struct MacOSWindowInfo {
     pub window_id: u64,
     pub owner_pid: u32,
+    pub bundle_identifier: Option<String>,
     pub owner_name: String,
     pub title: String,
     pub x: f64,
@@ -611,7 +612,8 @@ fn normalized_optional_text(value: Option<&str>) -> Option<String> {
 }
 
 fn app_id(window: &MacOSWindowInfo) -> String {
-    format!("pid:{}", window.owner_pid)
+    normalized_optional_text(window.bundle_identifier.as_deref())
+        .unwrap_or_else(|| format!("pid:{}", window.owner_pid))
 }
 
 fn window_id(window: &MacOSWindowInfo) -> String {
