@@ -215,6 +215,28 @@ pub fn macos_preferred_click_actions(secondary: bool) -> &'static [&'static str]
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_click_candidate_contains_point(
+    origin: (f64, f64),
+    size: (f64, f64),
+    point: (i64, i64),
+) -> bool {
+    let (x, y) = origin;
+    let (width, height) = size;
+    if !x.is_finite()
+        || !y.is_finite()
+        || !width.is_finite()
+        || !height.is_finite()
+        || width <= 0.0
+        || height <= 0.0
+    {
+        return false;
+    }
+    let point_x = point.0 as f64;
+    let point_y = point.1 as f64;
+    point_x >= x && point_x < x + width && point_y >= y && point_y < y + height
+}
+
 pub fn macos_matching_secondary_action<'a>(
     actions: &'a [String],
     requested: &str,
@@ -798,6 +820,25 @@ mod click_event_tests {
     #[test]
     fn does_not_activate_apps_for_targeted_pointer_moves() {
         assert!(!macos_pointer_requires_activation(false));
+    }
+
+    #[test]
+    fn limits_click_recovery_candidates_to_the_original_hit_point() {
+        assert!(macos_click_candidate_contains_point(
+            (100.0, 200.0),
+            (80.0, 40.0),
+            (140, 220),
+        ));
+        assert!(!macos_click_candidate_contains_point(
+            (100.0, 200.0),
+            (80.0, 40.0),
+            (190, 220),
+        ));
+        assert!(!macos_click_candidate_contains_point(
+            (100.0, 200.0),
+            (0.0, 40.0),
+            (100, 220),
+        ));
     }
 }
 

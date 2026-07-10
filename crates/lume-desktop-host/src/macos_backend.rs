@@ -5,12 +5,12 @@ use crate::{
     desktop_permission_granted, desktop_permission_guide_launch_for_app_bundle_path,
     desktop_scroll_options, macos_overlay,
     macos_snapshot::{
-        find_macos_window, first_visible_user_window, macos_click_event_codes,
-        macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
-        macos_global_pointer_fallback_enabled_from, macos_integral_scroll_page_count,
-        macos_key_chord, macos_list_apps_result, macos_list_windows_result,
-        macos_matching_secondary_action, macos_png_data_url, macos_pointer_input_mode,
-        macos_pointer_requires_activation, macos_preferred_click_actions,
+        find_macos_window, first_visible_user_window, macos_click_candidate_contains_point,
+        macos_click_event_codes, macos_current_context_result, macos_get_window_result,
+        macos_get_window_state_result, macos_global_pointer_fallback_enabled_from,
+        macos_integral_scroll_page_count, macos_key_chord, macos_list_apps_result,
+        macos_list_windows_result, macos_matching_secondary_action, macos_png_data_url,
+        macos_pointer_input_mode, macos_pointer_requires_activation, macos_preferred_click_actions,
         macos_resolve_action_point, macos_screen_capture_helper_path, macos_scroll_action_name,
         macos_scroll_wheel_deltas, macos_set_value_attribute_is_settable,
         macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
@@ -29,7 +29,9 @@ use std::{
     collections::HashMap,
     env,
     ffi::{CStr, CString},
-    os::raw::{c_char, c_double, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
+    os::raw::{
+        c_char, c_double, c_float, c_int, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void,
+    },
     path::Path,
     process::Command,
     ptr,
@@ -177,21 +179,24 @@ fn click(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         return Ok(stale_target());
     };
     enrich_accessibility_text(&mut window);
-    if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
-        move_visible_pointer_for_params(&window, params);
-        if let Some(input_mode) = perform_element_click_action(&window, element_id, options)? {
-            pulse_visible_pointer_for_params(&window, params);
-            return Ok(json!({
-                "status": "ok",
-                "inputMode": input_mode,
-                "visualPointer": visual_pointer_mode()
-            }));
-        }
-    }
     let (x, y) = match macos_resolve_action_point(&window, params) {
         Ok(point) => point,
         Err(result) => return Ok(result),
     };
+    move_visible_pointer(x, y);
+    if let Some(input_mode) = perform_ax_click_action(
+        &window,
+        params.get("elementId").and_then(Value::as_str),
+        (x, y),
+        options,
+    )? {
+        pulse_visible_pointer(x, y);
+        return Ok(json!({
+            "status": "ok",
+            "inputMode": input_mode,
+            "visualPointer": visual_pointer_mode()
+        }));
+    }
     let global_pointer_fallback = global_pointer_fallback_enabled();
     if macos_pointer_requires_activation(global_pointer_fallback) {
         activate_macos_window(&window)?;
@@ -204,6 +209,7 @@ fn click(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         window.owner_pid as c_int,
         global_pointer_fallback,
     );
+    pulse_visible_pointer(x, y);
     Ok(json!({
         "status": "ok",
         "inputMode": macos_pointer_input_mode(global_pointer_fallback),
@@ -264,9 +270,10 @@ fn perform_secondary_action(params: &Value, windows: &[MacOSWindowInfo]) -> Resu
     }
 }
 
-fn perform_element_click_action(
+fn perform_ax_click_action(
     window: &MacOSWindowInfo,
-    element_id: &str,
+    element_id: Option<&str>,
+    point: (i64, i64),
     options: DesktopClickOptions,
 ) -> Result<Option<&'static str>> {
     if options.button == DesktopMouseButton::Middle {
@@ -277,24 +284,52 @@ fn perform_element_click_action(
         if app.is_null() {
             return Ok(None);
         }
-        let root = matching_ax_window(app, window.window_id).or_else(|| first_ax_window(app));
-        let Some(root) = root else {
-            CFRelease(app as CFTypeRef);
-            return Ok(None);
-        };
-        let element = matching_ax_element_by_id(root, element_id);
-        let handled = element.is_some_and(|element| {
-            let actions =
-                macos_preferred_click_actions(options.button == DesktopMouseButton::Right);
-            let handled = (0..options.count).all(|_| {
-                actions
-                    .iter()
-                    .any(|action| perform_ax_action(element, action))
-            });
-            CFRelease(element as CFTypeRef);
-            handled
-        });
-        CFRelease(root as CFTypeRef);
+        let mut handled = false;
+        if let Some(element_id) = element_id {
+            let root = matching_ax_window(app, window.window_id).or_else(|| first_ax_window(app));
+            if let Some(root) = root {
+                if let Some(element) = matching_ax_element_by_id(root, element_id) {
+                    handled = perform_preferred_ax_click_action(element, options);
+                    if !handled {
+                        let mut remaining = 64;
+                        handled = perform_descendant_ax_click_action(
+                            element,
+                            options,
+                            point,
+                            0,
+                            &mut remaining,
+                        );
+                    }
+                    CFRelease(element as CFTypeRef);
+                }
+                CFRelease(root as CFTypeRef);
+            }
+        }
+        if !handled {
+            let mut hit_element = ptr::null();
+            let hit_result = AXUIElementCopyElementAtPosition(
+                app,
+                point.0 as c_float,
+                point.1 as c_float,
+                &mut hit_element,
+            );
+            if !hit_element.is_null() {
+                if hit_result == K_AX_ERROR_SUCCESS {
+                    handled = perform_preferred_ax_click_action(hit_element, options);
+                    if !handled {
+                        let mut remaining = 64;
+                        handled = perform_descendant_ax_click_action(
+                            hit_element,
+                            options,
+                            point,
+                            0,
+                            &mut remaining,
+                        );
+                    }
+                }
+                CFRelease(hit_element as CFTypeRef);
+            }
+        }
         CFRelease(app as CFTypeRef);
         Ok(
             handled.then_some(if options.button == DesktopMouseButton::Right {
@@ -304,6 +339,70 @@ fn perform_element_click_action(
             }),
         )
     }
+}
+
+unsafe fn perform_preferred_ax_click_action(
+    element: AXUIElementRef,
+    options: DesktopClickOptions,
+) -> bool {
+    let available_actions = copy_ax_action_names(element);
+    macos_preferred_click_actions(options.button == DesktopMouseButton::Right)
+        .iter()
+        .filter(|preferred| {
+            available_actions
+                .iter()
+                .any(|available| available.eq_ignore_ascii_case(preferred))
+        })
+        .any(|action| (0..options.count).all(|_| perform_ax_action(element, action)))
+}
+
+unsafe fn perform_descendant_ax_click_action(
+    parent: AXUIElementRef,
+    options: DesktopClickOptions,
+    point: (i64, i64),
+    depth: usize,
+    remaining: &mut usize,
+) -> bool {
+    if depth >= 3 || *remaining == 0 {
+        return false;
+    }
+    let Some(children) = copy_ax_attribute(parent, "AXChildren") else {
+        return false;
+    };
+    if !cf_type_matches(children as CFTypeRef, CFArrayGetTypeID()) {
+        CFRelease(children as CFTypeRef);
+        return false;
+    }
+    let count = CFArrayGetCount(children as CFArrayRef);
+    let mut handled = false;
+    for index in 0..count {
+        if *remaining == 0 {
+            break;
+        }
+        *remaining -= 1;
+        let child = CFArrayGetValueAtIndex(children as CFArrayRef, index) as AXUIElementRef;
+        if child.is_null() {
+            continue;
+        }
+        let origin = copy_ax_point_attribute(child, "AXPosition");
+        let size = copy_ax_size_attribute(child, "AXSize");
+        let contains_point = origin.zip(size).is_some_and(|(origin, size)| {
+            macos_click_candidate_contains_point(origin, size, point)
+        });
+        if origin.is_some() && size.is_some() && !contains_point {
+            continue;
+        }
+        if perform_descendant_ax_click_action(child, options, point, depth + 1, remaining) {
+            handled = true;
+            break;
+        }
+        if contains_point && perform_preferred_ax_click_action(child, options) {
+            handled = true;
+            break;
+        }
+    }
+    CFRelease(children as CFTypeRef);
+    handled
 }
 
 fn scroll(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
@@ -619,12 +718,6 @@ fn with_visual_pointer(mut result: Value) -> Value {
 fn move_visible_pointer_for_params(window: &MacOSWindowInfo, params: &Value) {
     if let Ok((x, y)) = macos_resolve_action_point(window, params) {
         move_visible_pointer(x, y);
-    }
-}
-
-fn pulse_visible_pointer_for_params(window: &MacOSWindowInfo, params: &Value) {
-    if let Ok((x, y)) = macos_resolve_action_point(window, params) {
-        pulse_visible_pointer(x, y);
     }
 }
 
@@ -1865,6 +1958,12 @@ extern "C" {
     fn AXIsProcessTrusted() -> c_uchar;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> c_uchar;
     fn AXUIElementCreateApplication(pid: c_int) -> AXUIElementRef;
+    fn AXUIElementCopyElementAtPosition(
+        application: AXUIElementRef,
+        x: c_float,
+        y: c_float,
+        element: *mut AXUIElementRef,
+    ) -> c_int;
     fn AXUIElementCopyActionNames(element: AXUIElementRef, names: *mut CFArrayRef) -> c_int;
     fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
