@@ -116,7 +116,21 @@ export async function resolveDesktopContextProjection(
   if (!windowId) return undefined;
   const state = asRecord(await invoke("get_window_state", { windowId, includeScreenshot: true }));
   if (state.status !== "ok") return undefined;
+  if (!matchesRetainedDesktopTarget(messageMetadata, state)) return undefined;
   return splitDesktopContextImages(snapshotFromWindowState(snapshotId, messageMetadata, state));
+}
+
+function matchesRetainedDesktopTarget(
+  messageMetadata: Record<string, unknown>,
+  state: Record<string, unknown>,
+): boolean {
+  const expectedApp = asRecord(messageMetadata.desktopApp);
+  const expectedWindow = asRecord(messageMetadata.desktopWindow);
+  const actualWindow = asRecord(state.window);
+  const expectedAppId = stringValue(expectedApp.id);
+  const expectedWindowId = stringValue(expectedWindow.id);
+  return (!expectedAppId || stringValue(actualWindow.appId) === expectedAppId)
+    && (!expectedWindowId || stringValue(actualWindow.id) === expectedWindowId);
 }
 
 function snapshotFromWindowState(

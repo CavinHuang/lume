@@ -156,4 +156,33 @@ describe("resolveDesktopContextProjection", () => {
       }],
     });
   });
+
+  test("rejects expired snapshot fallback when the retained window now belongs to another app", async () => {
+    const hostCalls: unknown[] = [];
+    const result = await resolveDesktopContextProjection(
+      {
+        desktopContextSnapshotId: "expired",
+        desktopApp: { id: "wechat.exe", name: "微信" },
+        desktopWindow: { id: "win:wechat", title: "项目群" },
+      },
+      {
+        currentContext: async () => ({ status: "unavailable" }),
+      },
+      async (method, input) => {
+        hostCalls.push({ method, input });
+        return {
+          status: "ok",
+          capturedAt: 300,
+          window: { id: "win:wechat", appId: "notes.exe", title: "项目群", focused: true },
+          accessibility: { documentText: "另一个应用的内容" },
+        };
+      },
+    );
+
+    expect(hostCalls).toEqual([{
+      method: "get_window_state",
+      input: { windowId: "win:wechat", includeScreenshot: true },
+    }]);
+    expect(result).toBeUndefined();
+  });
 });
