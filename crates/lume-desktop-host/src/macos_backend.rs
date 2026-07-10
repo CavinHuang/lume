@@ -6,15 +6,16 @@ use crate::{
     desktop_scroll_options, macos_overlay,
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_click_event_codes,
-        macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
-        macos_global_pointer_fallback_enabled_from, macos_integral_scroll_page_count,
-        macos_key_chord, macos_list_apps_result, macos_list_windows_result,
-        macos_matching_secondary_action, macos_pointer_input_mode, macos_preferred_click_actions,
-        macos_resolve_action_point, macos_scroll_action_name, macos_scroll_wheel_deltas,
-        macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
-        macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
-        macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
-        MacOSWindowInfo, MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
+        macos_click_requires_activation, macos_current_context_result, macos_get_window_result,
+        macos_get_window_state_result, macos_global_pointer_fallback_enabled_from,
+        macos_integral_scroll_page_count, macos_key_chord, macos_list_apps_result,
+        macos_list_windows_result, macos_matching_secondary_action, macos_pointer_input_mode,
+        macos_preferred_click_actions, macos_resolve_action_point, macos_scroll_action_name,
+        macos_scroll_wheel_deltas, macos_set_value_attribute_is_settable,
+        macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
+        macos_visible_pointer_mode, macos_visible_pointer_motion_points,
+        macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
+        MACOS_EVENT_FLAG_MASK_COMMAND, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_LUME_VISUAL_POINTER_ENV, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
         MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
@@ -173,7 +174,6 @@ fn click(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
     enrich_accessibility_text(&mut window);
     if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
         move_visible_pointer_for_params(&window, params);
-        activate_macos_window(&window)?;
         if let Some(input_mode) = perform_element_click_action(&window, element_id, options)? {
             pulse_visible_pointer_for_params(&window, params);
             return Ok(json!({
@@ -187,8 +187,10 @@ fn click(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
         Ok(point) => point,
         Err(result) => return Ok(result),
     };
-    activate_macos_window(&window)?;
     let global_pointer_fallback = global_pointer_fallback_enabled();
+    if macos_click_requires_activation(global_pointer_fallback) {
+        activate_macos_window(&window)?;
+    }
     move_mouse(x, y, window.owner_pid as c_int, global_pointer_fallback);
     click_mouse(
         x,

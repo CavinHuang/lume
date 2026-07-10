@@ -278,6 +278,10 @@ pub fn macos_pointer_input_mode(global_pointer_fallback: bool) -> &'static str {
     }
 }
 
+pub fn macos_click_requires_activation(global_pointer_fallback: bool) -> bool {
+    global_pointer_fallback
+}
+
 pub fn macos_visible_pointer_enabled_from(
     lume_value: Option<&str>,
     open_computer_use_value: Option<&str>,
@@ -764,5 +768,11 @@ mod click_event_tests {
     fn uses_ax_page_actions_only_for_integral_page_counts() {
         assert_eq!(macos_integral_scroll_page_count(2.0), Some(2));
         assert_eq!(macos_integral_scroll_page_count(0.5), None);
+    }
+
+    #[test]
+    fn activates_apps_only_for_global_click_fallbacks() {
+        assert!(!macos_click_requires_activation(false));
+        assert!(macos_click_requires_activation(true));
     }
 }

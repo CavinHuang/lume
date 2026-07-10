@@ -63,10 +63,9 @@ use windows::{
             Input::KeyboardAndMouse::{
                 SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
                 KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-                MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN,
-                MOUSEEVENTF_RIGHTUP, MOUSEINPUT, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE,
-                VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR,
-                VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
+                MOUSEINPUT, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
+                VK_ESCAPE, VK_HOME, VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT,
+                VK_SHIFT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
                 BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetSystemMetrics,
@@ -74,7 +73,8 @@ use windows::{
                 IsIconic, IsWindow, IsWindowVisible, PostMessageW, SetCursorPos,
                 SetForegroundWindow, ShowWindow, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
                 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SW_RESTORE, WM_LBUTTONDOWN, WM_LBUTTONUP,
-                WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+                WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
+                WM_RBUTTONDOWN, WM_RBUTTONUP,
             },
         },
     },
@@ -816,43 +816,43 @@ fn click(params: &Value) -> Result<Value> {
         Ok(options) => options,
         Err(message) => return Ok(json!({ "status": "failed", "message": message })),
     };
-    let target = target_window(params);
-    let semantic = preferred_pointer_injection(params, options.button) == "uia";
-    if requires_foreground_activation(params, options.button) {
-        if let Some(hwnd) = target {
-            activate(hwnd)?;
-        }
-    }
-    let point = if params.get("elementId").is_some()
-        || (params.get("x").is_some() && params.get("y").is_some())
-    {
-        let point = action_point(params)?;
-        if semantic {
-            animate_visual_pointer(point.0, point.1, target);
-        } else {
-            animate_pointer(point.0, point.1, target)?;
-        }
-        point
-    } else {
-        current_pointer()?
+    let Some(target) = target_window(params) else {
+        return Ok(stale_target());
     };
+    let semantic = preferred_pointer_injection(params, options.button) == "uia";
+    let point = action_point(params)?;
+    animate_visual_pointer(point.0, point.1, Some(target));
     if semantic && try_invoke_element(params, options.count)? {
-        pulse_visual_cursor(point.0, point.1, target);
+        pulse_visual_cursor(point.0, point.1, Some(target));
         return Ok(json!({ "status": "ok", "inputMode": "uia_invoke" }));
     }
-    if semantic {
-        if let Some(hwnd) = target {
-            activate(hwnd)?;
+    post_targeted_click(target, point, options)?;
+    pulse_visual_cursor(point.0, point.1, Some(target));
+    Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
+}
+
+fn post_targeted_click(
+    hwnd: HWND,
+    point: (i32, i32),
+    options: crate::DesktopClickOptions,
+) -> Result<()> {
+    let point = screen_to_client_point(hwnd, point)?;
+    let lparam = windows_point_lparam(point.x, point.y);
+    let (down, up, down_state) = windows_button_message_spec(options.button);
+    for index in 0..options.count {
+        unsafe {
+            PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), lparam)?;
+            PostMessageW(Some(hwnd), down, WPARAM(down_state), lparam)?;
         }
-        animate_physical_pointer(point.0, point.1)?;
+        thread::sleep(Duration::from_millis(35));
+        unsafe {
+            PostMessageW(Some(hwnd), up, WPARAM(0), lparam)?;
+        }
+        if index + 1 < options.count {
+            thread::sleep(Duration::from_millis(50));
+        }
     }
-    let (down, up) = mouse_button_event_flags(options.button);
-    for _ in 0..options.count {
-        send_mouse(down, 0)?;
-        send_mouse(up, 0)?;
-    }
-    pulse_visual_cursor(point.0, point.1, target);
-    Ok(json!({ "status": "ok", "inputMode": "physical_pointer" }))
+    Ok(())
 }
 
 fn perform_secondary_action(params: &Value) -> Result<Value> {
@@ -1360,12 +1360,16 @@ fn preferred_pointer_injection(params: &Value, button: DesktopMouseButton) -> &'
     {
         "uia"
     } else {
-        "physical"
+        "targeted_window_message"
     }
 }
 
-fn requires_foreground_activation(params: &Value, button: DesktopMouseButton) -> bool {
-    preferred_pointer_injection(params, button) == "physical"
+fn windows_button_message_spec(button: DesktopMouseButton) -> (u32, u32, usize) {
+    match button {
+        DesktopMouseButton::Left => (WM_LBUTTONDOWN, WM_LBUTTONUP, 0x0001),
+        DesktopMouseButton::Right => (WM_RBUTTONDOWN, WM_RBUTTONUP, 0x0002),
+        DesktopMouseButton::Middle => (WM_MBUTTONDOWN, WM_MBUTTONUP, 0x0010),
+    }
 }
 
 fn try_invoke_element(params: &Value, click_count: u32) -> Result<bool> {
@@ -1527,19 +1531,6 @@ fn invoke_secondary_action(element: &IUIAutomationElement, action: &str) -> Resu
     Ok(true)
 }
 
-fn mouse_button_event_flags(
-    button: DesktopMouseButton,
-) -> (
-    windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
-    windows::Win32::UI::Input::KeyboardAndMouse::MOUSE_EVENT_FLAGS,
-) {
-    match button {
-        DesktopMouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
-        DesktopMouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
-        DesktopMouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
-    }
-}
-
 fn try_set_element_value(params: &Value, value: &str) -> Result<bool> {
     let Some(element) = resolve_element(params)? else {
         return Ok(false);
@@ -1556,14 +1547,6 @@ fn try_set_element_value(params: &Value, value: &str) -> Result<bool> {
         pattern.SetValue(&BSTR::from(value))?;
     }
     Ok(true)
-}
-
-fn current_pointer() -> Result<(i32, i32)> {
-    let mut point = POINT::default();
-    unsafe {
-        GetCursorPos(&mut point)?;
-    }
-    Ok((point.x, point.y))
 }
 
 fn send_mouse(
@@ -1633,34 +1616,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prefers_uia_for_element_scoped_primary_actions() {
+    fn prefers_uia_then_targeted_window_messages_for_clicks() {
         assert_eq!(
             preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Left,),
             "uia"
         );
         assert_eq!(
             preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Right,),
-            "physical"
+            "targeted_window_message"
         );
         assert_eq!(
             preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Middle,),
-            "physical"
+            "targeted_window_message"
+        );
+        assert_eq!(
+            preferred_pointer_injection(&json!({ "x": 10, "y": 20 }), DesktopMouseButton::Left,),
+            "targeted_window_message"
         );
     }
 
     #[test]
-    fn maps_all_supported_mouse_buttons_to_windows_events() {
+    fn maps_mouse_buttons_to_targeted_window_messages() {
         assert_eq!(
-            mouse_button_event_flags(DesktopMouseButton::Left),
-            (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)
+            windows_button_message_spec(DesktopMouseButton::Left),
+            (WM_LBUTTONDOWN, WM_LBUTTONUP, 0x0001)
         );
         assert_eq!(
-            mouse_button_event_flags(DesktopMouseButton::Right),
-            (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
+            windows_button_message_spec(DesktopMouseButton::Right),
+            (WM_RBUTTONDOWN, WM_RBUTTONUP, 0x0002)
         );
         assert_eq!(
-            mouse_button_event_flags(DesktopMouseButton::Middle),
-            (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP)
+            windows_button_message_spec(DesktopMouseButton::Middle),
+            (WM_MBUTTONDOWN, WM_MBUTTONUP, 0x0010)
         );
     }
 
