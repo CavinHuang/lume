@@ -45,6 +45,16 @@ fn requires_a_valid_handshake_before_desktop_calls() {
 
     let result = session.handle(json!({ "id": 4, "method": "list_apps", "params": {} }));
     assert_eq!(result["result"], json!({ "status": "ok", "apps": [] }));
+
+    let subscription = session.handle(json!({
+        "id": 5,
+        "method": "system.set_event_subscription",
+        "params": { "enabled": true }
+    }));
+    assert_eq!(
+        subscription["result"],
+        json!({ "status": "ok", "enabled": true })
+    );
 }
 
 #[test]

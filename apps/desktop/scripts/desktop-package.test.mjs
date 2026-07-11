@@ -142,6 +142,19 @@ test('desktop-host resource build packages the macOS permission guide helper', (
   assert.match(guide, /DispatchQueue\.main\.asyncAfter/)
 })
 
+test('desktop-host resource build packages the macOS foreground event monitor', () => {
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+  const helperPath = resolve(REPO_ROOT, 'crates/lume-desktop-host/macos/LumeComputerUseEventMonitor.swift')
+  const helper = readFileSync(helperPath, 'utf8')
+
+  assert.equal(existsSync(helperPath), true)
+  assert.match(script, /LumeComputerUseEventMonitor\.swift/)
+  assert.match(script, /LumeComputerUseEventMonitor/)
+  assert.match(helper, /didActivateApplicationNotification/)
+  assert.match(helper, /foreground_changed/)
+  assert.doesNotMatch(helper, /localizedName|bundleIdentifier|window|title|clipboard/)
+})
+
 test('desktop-host resource build prefers a stable macOS signing identity', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
 

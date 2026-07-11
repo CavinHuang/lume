@@ -13,6 +13,8 @@ function createService(input: {
   snapshot?: DesktopContextSnapshot;
   now?: () => number;
   proposalRecords?: DesktopProposalRecord[];
+  onInvokeHost?: (method: string, params: Record<string, unknown>) => void;
+  manageHostEventSubscription?: boolean;
 } = {}) {
   const snapshots = new Map<string, DesktopContextSnapshot>();
   const proposalRecords = input.proposalRecords ?? [];
@@ -64,9 +66,11 @@ function createService(input: {
         return true;
       },
     }),
-    invokeHost: async () => ({
-      status: "ok",
-      snapshot: input.snapshot ?? {
+    invokeHost: async (method, params) => {
+      input.onInvokeHost?.(method, params);
+      return {
+        status: "ok",
+        snapshot: input.snapshot ?? {
         id: "snap-1",
         app: { id: "wechat.exe", name: "微信" },
         window: {
@@ -80,9 +84,11 @@ function createService(input: {
         eventType: "foreground_changed",
         visibleText: "客户问 password=secret 怎么处理",
         untrusted: true,
-      },
-    }),
+        },
+      };
+    },
     now: input.now,
+    manageHostEventSubscription: input.manageHostEventSubscription,
   });
 }
 
@@ -257,6 +263,39 @@ describe("DesktopContextService", () => {
     expect(await service.captureCurrent({ userInitiated: true })).toMatchObject({ status: "blocked" });
     service.setSuspended("system_suspended", false);
     expect(await service.captureCurrent({ userInitiated: true })).toMatchObject({ status: "ok" });
+    service.close();
+  });
+
+  test("coalesces native foreground notifications into one settled capture", async () => {
+    const calls: string[] = [];
+    const service = createService({ onInvokeHost: (method) => calls.push(method) });
+    service.unlock(Buffer.alloc(32, 4));
+
+    service.handleHostNotification("context.event", { type: "foreground_changed" });
+    service.handleHostNotification("context.event", { type: "foreground_changed" });
+    service.handleHostNotification("ignored.event", { type: "foreground_changed" });
+    await Bun.sleep(180);
+
+    expect(calls).toEqual(["current_context"]);
+    service.close();
+  });
+
+  test("subscribes to native events only while background collection is allowed", async () => {
+    const subscriptions: boolean[] = [];
+    const service = createService({
+      manageHostEventSubscription: true,
+      onInvokeHost: (method, params) => {
+        if (method === "system.set_event_subscription") subscriptions.push(params.enabled === true);
+      },
+    });
+
+    service.unlock(Buffer.alloc(32, 4));
+    service.setSuspended("screen_locked", true);
+    service.setSuspended("screen_locked", false);
+    service.updateSettings({ ...service.getSettings(), enabled: false });
+    await Bun.sleep(0);
+
+    expect(subscriptions).toEqual([true, false, true, false]);
     service.close();
   });
 

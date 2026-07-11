@@ -1,7 +1,10 @@
 use std::{env, fs, io::ErrorKind};
 
 use anyhow::{bail, Context, Result};
-use lume_desktop_host::{DesktopBackend, DesktopSession, UnsupportedBackend};
+use lume_desktop_host::{
+    desktop_events::{start_desktop_event_monitor, DesktopEventMonitor},
+    DesktopBackend, DesktopSession, UnsupportedBackend,
+};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -81,28 +84,85 @@ fn create_backend() -> Box<dyn DesktopBackend> {
     Box::new(UnsupportedBackend)
 }
 
-async fn handle_stream<S>(mut stream: S, token: String) -> Result<()>
+async fn handle_stream<S>(stream: S, token: String) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    let (mut reader, mut writer) = tokio::io::split(stream);
     let mut session = DesktopSession::new(token, create_backend());
+    let mut event_monitor: Option<DesktopEventMonitor> = None;
     loop {
-        let body_length = match stream.read_u32_le().await {
-            Ok(length) => length as usize,
-            Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(()),
-            Err(error) => return Err(error.into()),
-        };
-        if body_length > MAX_FRAME_BYTES {
-            bail!("desktop host frame exceeds {MAX_FRAME_BYTES} bytes");
+        enum Incoming {
+            Request(Result<Option<Value>>),
+            Event(Option<Value>),
         }
-        let mut body = vec![0_u8; body_length];
-        stream.read_exact(&mut body).await?;
-        let request: Value = serde_json::from_slice(&body)?;
-        let response = serde_json::to_vec(&session.handle(request))?;
-        stream.write_u32_le(response.len() as u32).await?;
-        stream.write_all(&response).await?;
-        stream.flush().await?;
+        let incoming = if let Some(monitor) = event_monitor.as_mut() {
+            tokio::select! {
+                request = read_message(&mut reader) => Incoming::Request(request),
+                event = monitor.recv() => Incoming::Event(event),
+            }
+        } else {
+            Incoming::Request(read_message(&mut reader).await)
+        };
+        match incoming {
+            Incoming::Request(request) => {
+                let Some(request) = request? else {
+                    return Ok(());
+                };
+                let event_subscription = request
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .filter(|method| *method == "system.set_event_subscription")
+                    .map(|_| request["params"]["enabled"].as_bool().unwrap_or(false));
+                let response = session.handle(request);
+                write_message(&mut writer, &response).await?;
+                if session.is_authenticated() {
+                    match event_subscription {
+                        Some(true) if event_monitor.is_none() => {
+                            match start_desktop_event_monitor() {
+                                Ok(monitor) => event_monitor = Some(monitor),
+                                Err(error) => {
+                                    eprintln!("desktop event monitor unavailable: {error:#}")
+                                }
+                            }
+                        }
+                        Some(false) => event_monitor = None,
+                        _ => {}
+                    }
+                }
+            }
+            Incoming::Event(Some(event)) => write_message(&mut writer, &event).await?,
+            Incoming::Event(None) => event_monitor = None,
+        }
     }
+}
+
+async fn read_message<R>(reader: &mut R) -> Result<Option<Value>>
+where
+    R: AsyncRead + Unpin,
+{
+    let body_length = match reader.read_u32_le().await {
+        Ok(length) => length as usize,
+        Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if body_length > MAX_FRAME_BYTES {
+        bail!("desktop host frame exceeds {MAX_FRAME_BYTES} bytes");
+    }
+    let mut body = vec![0_u8; body_length];
+    reader.read_exact(&mut body).await?;
+    Ok(Some(serde_json::from_slice(&body)?))
+}
+
+async fn write_message<W>(writer: &mut W, message: &Value) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    let response = serde_json::to_vec(message)?;
+    writer.write_u32_le(response.len() as u32).await?;
+    writer.write_all(&response).await?;
+    writer.flush().await?;
+    Ok(())
 }
 
 #[cfg(windows)]

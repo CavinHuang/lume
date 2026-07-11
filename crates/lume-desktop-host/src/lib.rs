@@ -2,6 +2,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::path::Path;
 
+pub mod desktop_events;
 #[cfg(target_os = "macos")]
 pub mod macos_backend;
 #[cfg(target_os = "macos")]
@@ -166,6 +167,10 @@ impl<B: DesktopBackend> DesktopSession<B> {
         }
     }
 
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticated
+    }
+
     pub fn handle(&mut self, request: Value) -> Value {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
         let Some(method) = request.get("method").and_then(Value::as_str) else {
@@ -190,6 +195,16 @@ impl<B: DesktopBackend> DesktopSession<B> {
 
         if !self.authenticated {
             return rpc_error(id, -32001, "desktop host authentication required");
+        }
+
+        if method == "system.set_event_subscription" {
+            return rpc_result(
+                id,
+                json!({
+                    "status": "ok",
+                    "enabled": params.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+                }),
+            );
         }
 
         match self.backend.invoke(method, &params) {

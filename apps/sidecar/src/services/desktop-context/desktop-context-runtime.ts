@@ -12,6 +12,7 @@ import {
 
 let runtime: { settingsPath: string; service: DesktopContextService } | null = null;
 let notificationWriter: ((method: string, params: unknown) => void) | undefined;
+let hostNotificationsRegistered = false;
 
 function getRuntime(): { settingsPath: string; service: DesktopContextService } {
   if (runtime) return runtime;
@@ -22,9 +23,16 @@ function getRuntime(): { settingsPath: string; service: DesktopContextService } 
       dbPath: getDesktopContextDbPath(),
       settings: loadDesktopAssistantSettings(settingsPath),
       invokeHost: invokeDesktopHost,
+      manageHostEventSubscription: true,
       emitNotification: (method, params) => notificationWriter?.(method, params),
     }),
   };
+  if (!hostNotificationsRegistered) {
+    hostNotificationsRegistered = true;
+    invokeDesktopHost.onNotification((method, params) => {
+      runtime?.service.handleHostNotification(method, params);
+    });
+  }
   return runtime;
 }
 

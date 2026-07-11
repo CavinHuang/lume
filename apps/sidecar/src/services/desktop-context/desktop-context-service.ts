@@ -17,6 +17,8 @@ type DesktopContextTargetMetadata = Pick<DesktopContextTarget, "app" | "window">
 
 const PERMISSION_POLL_INTERVAL_MS = 250;
 const PERMISSION_POLL_ATTEMPTS = 240;
+const CONTEXT_EVENT_SETTLE_MS = 150;
+const CONTEXT_RECONCILE_INTERVAL_MS = 30_000;
 
 interface DesktopContextStoreLike {
   put(snapshot: DesktopContextSnapshot): void;
@@ -41,6 +43,9 @@ export class DesktopContextService {
   #lastFingerprint: string | null = null;
   #lastSnapshotId: string | null = null;
   #collectorCapturePending = false;
+  #collectorCaptureQueued = false;
+  #eventCaptureTimer: ReturnType<typeof setTimeout> | null = null;
+  #hostEventSubscriptionEnabled: boolean | null = null;
   #suspensionReasons = new Set<DesktopContextSuspensionReason>();
   #proposals = new Map<string, DesktopProactiveProposal>();
   #proposalFingerprints = new Set<string>();
@@ -52,6 +57,7 @@ export class DesktopContextService {
     emitNotification?: (method: string, params: unknown) => void;
     createStore?: (input: { dbPath: string; key: Buffer; retentionMs: number; maxBytes: number }) => DesktopContextStoreLike;
     now?: () => number;
+    manageHostEventSubscription?: boolean;
   };
 
   constructor(input: {
@@ -61,6 +67,7 @@ export class DesktopContextService {
     emitNotification?: (method: string, params: unknown) => void;
     createStore?: (input: { dbPath: string; key: Buffer; retentionMs: number; maxBytes: number }) => DesktopContextStoreLike;
     now?: () => number;
+    manageHostEventSubscription?: boolean;
   }) {
     this.#input = input;
     this.#settings = input.settings;
@@ -99,6 +106,18 @@ export class DesktopContextService {
 
   getSettings(): DesktopAssistantSettings {
     return structuredClone(this.#settings);
+  }
+
+  handleHostNotification(method: string, params: unknown): void {
+    const event = asRecord(params);
+    if (method !== "context.event" || event.type !== "foreground_changed") return;
+    if (!this.#settings.enabled || !this.#key || this.#suspensionReasons.size > 0) return;
+    if (this.#eventCaptureTimer) clearTimeout(this.#eventCaptureTimer);
+    this.#eventCaptureTimer = setTimeout(() => {
+      this.#eventCaptureTimer = null;
+      this.#queueCapture();
+    }, CONTEXT_EVENT_SETTLE_MS);
+    this.#eventCaptureTimer.unref?.();
   }
 
   async captureCurrent(input: { userInitiated?: boolean } = {}): Promise<unknown> {
@@ -292,7 +311,10 @@ export class DesktopContextService {
 
   close(): void {
     if (this.#collector) clearInterval(this.#collector);
+    if (this.#eventCaptureTimer) clearTimeout(this.#eventCaptureTimer);
     this.#collector = null;
+    this.#eventCaptureTimer = null;
+    this.#syncHostEventSubscription(false);
     this.#store?.close();
     this.#store = null;
     this.#key?.fill(0);
@@ -301,16 +323,47 @@ export class DesktopContextService {
 
   #syncCollector(): void {
     if (this.#collector) clearInterval(this.#collector);
+    if (this.#eventCaptureTimer) clearTimeout(this.#eventCaptureTimer);
     this.#collector = null;
-    if (!this.#settings.enabled || !this.#key || this.#suspensionReasons.size > 0) return;
+    this.#eventCaptureTimer = null;
+    const active = this.#settings.enabled && this.#key !== null && this.#suspensionReasons.size === 0;
+    this.#syncHostEventSubscription(active);
+    if (!active) return;
     this.#collector = setInterval(() => {
-      if (this.#collectorCapturePending) return;
-      this.#collectorCapturePending = true;
-      void this.captureCurrent()
-        .catch(() => undefined)
-        .finally(() => { this.#collectorCapturePending = false; });
-    }, 3_000);
+      this.#queueCapture();
+    }, CONTEXT_RECONCILE_INTERVAL_MS);
     this.#collector.unref?.();
+  }
+
+  #queueCapture(): void {
+    this.#collectorCaptureQueued = true;
+    if (this.#collectorCapturePending) return;
+    this.#collectorCapturePending = true;
+    void (async () => {
+      while (this.#collectorCaptureQueued) {
+        this.#collectorCaptureQueued = false;
+        await this.captureCurrent().catch(() => undefined);
+      }
+    })().finally(() => {
+      this.#collectorCapturePending = false;
+    });
+  }
+
+  #syncHostEventSubscription(enabled: boolean): void {
+    if (this.#input.manageHostEventSubscription !== true) return;
+    if (this.#hostEventSubscriptionEnabled === enabled) return;
+    this.#hostEventSubscriptionEnabled = enabled;
+    void this.#input.invokeHost("system.set_event_subscription", { enabled })
+      .then((result) => {
+        if (asRecord(result).status !== "ok" && this.#hostEventSubscriptionEnabled === enabled) {
+          this.#hostEventSubscriptionEnabled = null;
+        }
+      })
+      .catch(() => {
+        if (this.#hostEventSubscriptionEnabled === enabled) {
+          this.#hostEventSubscriptionEnabled = null;
+        }
+      });
   }
 
   #ensureStore(): DesktopContextStoreLike {

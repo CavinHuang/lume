@@ -56,6 +56,29 @@ describe("createDesktopHostInvoker", () => {
     ]);
   });
 
+  test("forwards authenticated host notifications to context listeners", async () => {
+    let notify: ((method: string, params: unknown) => void) | undefined;
+    const invoke = createDesktopHostInvoker({
+      env: { LUME_DESKTOP_HOST_ENDPOINT: "endpoint", LUME_DESKTOP_HOST_TOKEN: "token" },
+      createClient: () => ({
+        call: async () => ({ status: "ok" }),
+        onNotification(listener) {
+          notify = listener;
+          return () => { notify = undefined; };
+        },
+      }),
+    });
+    const events: unknown[] = [];
+    invoke.onNotification((method, params) => events.push({ method, params }));
+
+    await invoke("list_apps", {});
+    notify?.("context.event", { type: "foreground_changed" });
+    expect(events).toEqual([{
+      method: "context.event",
+      params: { type: "foreground_changed" },
+    }]);
+  });
+
   test("converts connection failures into an explicit unavailable result", async () => {
     const invoke = createDesktopHostInvoker({
       env: { LUME_DESKTOP_HOST_ENDPOINT: "endpoint", LUME_DESKTOP_HOST_TOKEN: "token" },
