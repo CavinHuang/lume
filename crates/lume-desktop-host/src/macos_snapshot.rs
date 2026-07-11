@@ -58,6 +58,7 @@ pub struct MacOSWindowInfo {
     pub selected_text: Option<String>,
     pub screenshot_data_url: Option<String>,
     pub screenshot_error: Option<String>,
+    pub accessibility_truncated: bool,
     pub elements: Vec<MacOSElementInfo>,
 }
 
@@ -178,7 +179,7 @@ pub fn macos_get_window_state_result_with_related(
             "selectedText": normalized_optional_text(window.selected_text.as_deref()).unwrap_or_default(),
             "documentText": visible_text,
             "visibleText": visible_text,
-            "truncated": false,
+            "truncated": window.accessibility_truncated,
         },
     })
 }
@@ -229,6 +230,13 @@ pub fn macos_text_target_is_sensitive(window: &MacOSWindowInfo, params: &Value) 
             .unwrap_or(false);
     }
     focused_sensitive_element(&window.elements)
+}
+
+pub fn macos_non_sensitive_selected_text(
+    sensitive: bool,
+    selected_text: Option<String>,
+) -> Option<String> {
+    (!sensitive).then_some(selected_text).flatten()
 }
 
 pub fn macos_preferred_click_actions(secondary: bool) -> &'static [&'static str] {

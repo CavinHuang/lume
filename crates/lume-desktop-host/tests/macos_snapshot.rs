@@ -3,8 +3,8 @@ use lume_desktop_host::macos_snapshot::{
     macos_get_window_result, macos_get_window_state_result,
     macos_get_window_state_result_with_related, macos_global_pointer_fallback_enabled_from,
     macos_key_chord, macos_list_apps_result, macos_list_windows_result,
-    macos_matching_secondary_action, macos_pointer_input_mode, macos_preferred_click_actions,
-    macos_related_transient_windows, macos_resolve_action_point,
+    macos_matching_secondary_action, macos_non_sensitive_selected_text, macos_pointer_input_mode,
+    macos_preferred_click_actions, macos_related_transient_windows, macos_resolve_action_point,
     macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
     macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
     macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
@@ -31,6 +31,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             selected_text: None,
             screenshot_data_url: None,
             screenshot_error: None,
+            accessibility_truncated: false,
             elements: vec![],
         },
         MacOSWindowInfo {
@@ -50,6 +51,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             selected_text: None,
             screenshot_data_url: None,
             screenshot_error: None,
+            accessibility_truncated: false,
             elements: vec![],
         },
         MacOSWindowInfo {
@@ -69,6 +71,7 @@ fn sample_windows() -> Vec<MacOSWindowInfo> {
             selected_text: None,
             screenshot_data_url: None,
             screenshot_error: None,
+            accessibility_truncated: false,
             elements: vec![],
         },
     ]
@@ -535,6 +538,28 @@ fn detects_sensitive_macos_text_targets_before_typing() {
         &sample_windows()[0],
         &json!({ "elementId": "root.0" })
     ));
+}
+
+#[test]
+fn never_exposes_selected_text_from_sensitive_macos_elements() {
+    assert_eq!(
+        macos_non_sensitive_selected_text(true, Some("123456".into())),
+        None
+    );
+    assert_eq!(
+        macos_non_sensitive_selected_text(false, Some("项目周报".into())),
+        Some("项目周报".into())
+    );
+}
+
+#[test]
+fn reports_when_the_macos_accessibility_tree_was_truncated() {
+    let mut window = sample_windows()[0].clone();
+    window.accessibility_truncated = true;
+
+    let state = macos_get_window_state_result(&window, false);
+
+    assert_eq!(state["accessibility"]["truncated"], true);
 }
 
 #[test]

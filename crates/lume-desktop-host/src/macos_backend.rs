@@ -11,8 +11,8 @@ use crate::{
         macos_get_window_state_result_with_related, macos_global_pointer_fallback_enabled_from,
         macos_integral_scroll_page_count, macos_key_chord, macos_likely_containing_row_action,
         macos_likely_synthetic_side_action, macos_list_apps_result, macos_list_windows_result,
-        macos_matching_secondary_action, macos_png_data_url, macos_pointer_input_mode,
-        macos_pointer_requires_activation, macos_preferred_click_actions,
+        macos_matching_secondary_action, macos_non_sensitive_selected_text, macos_png_data_url,
+        macos_pointer_input_mode, macos_pointer_requires_activation, macos_preferred_click_actions,
         macos_related_transient_windows, macos_resolve_action_point,
         macos_screen_capture_helper_path, macos_scroll_action_name, macos_scroll_wheel_deltas,
         macos_set_value_attribute_is_settable, macos_should_prefer_containing_web_row,
@@ -1532,6 +1532,7 @@ fn enrich_accessibility_text(window: &mut MacOSWindowInfo) {
             if let Some(selected_text) = text.selected_text {
                 window.selected_text = Some(selected_text);
             }
+            window.accessibility_truncated = text.truncated;
             window.elements = text.elements;
             CFRelease(root as CFTypeRef);
         }
@@ -1542,6 +1543,7 @@ fn enrich_accessibility_text(window: &mut MacOSWindowInfo) {
 struct AxTextSnapshot {
     document_text: String,
     selected_text: Option<String>,
+    truncated: bool,
     elements: Vec<MacOSElementInfo>,
 }
 
@@ -1553,6 +1555,7 @@ unsafe fn collect_ax_text(root: AXUIElementRef) -> AxTextSnapshot {
     AxTextSnapshot {
         document_text: lines.join("\n"),
         selected_text,
+        truncated: remaining == 0,
         elements,
     }
 }
@@ -1608,10 +1611,11 @@ unsafe fn collect_ax_element(
     let sensitive = role == "AXSecureTextField"
         || copy_ax_bool_attribute(element, "AXProtectedContent") == Some(true);
     if selected_text.is_none() {
-        if let Some(text) = copy_ax_string_attribute(element, "AXSelectedText") {
-            if !sensitive {
-                push_text(lines, &text);
-            }
+        if let Some(text) = macos_non_sensitive_selected_text(
+            sensitive,
+            copy_ax_string_attribute(element, "AXSelectedText"),
+        ) {
+            push_text(lines, &text);
             *selected_text = Some(text);
         }
     }
@@ -1980,6 +1984,7 @@ fn system_windows() -> Result<Vec<MacOSWindowInfo>> {
                 selected_text: None,
                 screenshot_data_url: None,
                 screenshot_error: None,
+                accessibility_truncated: false,
                 elements: vec![],
             };
             if !focused_assigned && is_focus_candidate(&window) {
