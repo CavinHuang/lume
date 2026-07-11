@@ -70,11 +70,12 @@ use windows::{
             },
             WindowsAndMessaging::{
                 BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowRect,
-                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow,
-                IsIconic, IsWindow, IsWindowVisible, PostMessageW, SendMessageW,
-                SetForegroundWindow, ShowWindow, PW_RENDERFULLCONTENT, SW_RESTORE, WM_CHAR,
-                WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-                WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP,
+                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsChild,
+                IsHungAppWindow, IsIconic, IsWindow, IsWindowVisible, PostMessageW, SendMessageW,
+                SetForegroundWindow, ShowWindow, WindowFromPoint, PW_RENDERFULLCONTENT, SW_RESTORE,
+                WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+                WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
+                WM_RBUTTONUP,
             },
         },
     },
@@ -1387,9 +1388,23 @@ fn drag(params: &Value) -> Result<Value> {
     let from_y = int_param(params, "fromY")?;
     let to_x = int_param(params, "toX")?;
     let to_y = int_param(params, "toY")?;
-    post_targeted_drag(hwnd, (from_x, from_y), (to_x, to_y))?;
+    let input_window = targeted_child_at_point(hwnd, (from_x, from_y)).unwrap_or(hwnd);
+    post_targeted_drag(input_window, (from_x, from_y), (to_x, to_y))?;
     pulse_visual_cursor(to_x, to_y, Some(hwnd));
     Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
+}
+
+fn targeted_child_at_point(root: HWND, point: (i32, i32)) -> Option<HWND> {
+    let child = unsafe {
+        WindowFromPoint(POINT {
+            x: point.0,
+            y: point.1,
+        })
+    };
+    if child.0.is_null() || child == root {
+        return None;
+    }
+    unsafe { IsChild(root, child).as_bool().then_some(child) }
 }
 
 fn post_targeted_drag(hwnd: HWND, from: (i32, i32), to: (i32, i32)) -> Result<()> {
