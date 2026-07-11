@@ -201,14 +201,21 @@ fn list_apps() -> Result<Value> {
     for hwnd in enumerate_windows()? {
         if let Some(window) = window_json(hwnd) {
             let app_id = window["appId"].as_str().unwrap_or_default().to_owned();
-            apps.entry(app_id.clone()).or_insert_with(|| {
+            let app = apps.entry(app_id.clone()).or_insert_with(|| {
                 json!({
                     "id": app_id,
                     "name": window["appName"],
+                    "displayName": window["appName"],
                     "processId": window["processId"],
                     "platformId": window["platformId"],
+                    "isRunning": true,
+                    "windows": [],
                 })
             });
+            app["windows"]
+                .as_array_mut()
+                .expect("app windows is initialized as an array")
+                .push(window);
         }
     }
     Ok(json!({ "status": "ok", "apps": apps.into_values().collect::<Vec<_>>() }))

@@ -98,7 +98,25 @@ fn maps_unique_apps_from_visible_macos_windows() {
     assert_eq!(result["apps"].as_array().unwrap().len(), 2);
     assert_eq!(result["apps"][0]["id"], "pid:1001");
     assert_eq!(result["apps"][0]["name"], "微信");
+    assert_eq!(result["apps"][0]["displayName"], "微信");
+    assert_eq!(result["apps"][0]["isRunning"], true);
     assert_eq!(result["apps"][0]["processId"], 1001);
+    assert_eq!(result["apps"][0]["windows"][0]["id"], "macos:42");
+}
+
+#[test]
+fn groups_multiple_visible_windows_under_their_app() {
+    let mut windows = sample_windows();
+    let mut second_wechat_window = windows[0].clone();
+    second_wechat_window.window_id = 43;
+    second_wechat_window.title = "产品群".into();
+    second_wechat_window.is_focused = false;
+    windows.insert(1, second_wechat_window);
+
+    let result = macos_list_apps_result(&windows);
+
+    assert_eq!(result["apps"][0]["windows"].as_array().unwrap().len(), 2);
+    assert_eq!(result["apps"][0]["windows"][1]["id"], "macos:43");
 }
 
 #[test]

@@ -91,14 +91,22 @@ pub fn macos_list_apps_result(windows: &[MacOSWindowInfo]) -> Value {
     let mut apps = BTreeMap::<String, Value>::new();
     for window in visible_user_windows(windows) {
         let app_id = app_id(window);
-        apps.entry(app_id.clone()).or_insert_with(|| {
+        let window_value = window_json(window);
+        let app = apps.entry(app_id.clone()).or_insert_with(|| {
             json!({
                 "id": app_id,
                 "name": window.owner_name,
+                "displayName": window.owner_name,
                 "processId": window.owner_pid,
                 "platformId": window.owner_pid.to_string(),
+                "isRunning": true,
+                "windows": [],
             })
         });
+        app["windows"]
+            .as_array_mut()
+            .expect("app windows is initialized as an array")
+            .push(window_value);
     }
     json!({ "status": "ok", "apps": apps.into_values().collect::<Vec<_>>() })
 }
