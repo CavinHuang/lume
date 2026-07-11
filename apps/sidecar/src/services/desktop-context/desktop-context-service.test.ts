@@ -93,6 +93,38 @@ function createService(input: {
 }
 
 describe("DesktopContextService", () => {
+  test("lists visible apps through a metadata-only projection", async () => {
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: false,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+      },
+      invokeHost: async () => ({
+        status: "ok",
+        apps: [{
+          id: "wechat.exe",
+          name: "微信",
+          displayName: "微信",
+          isRunning: true,
+          processId: 1234,
+          windows: [{ id: "win:1", title: "客户机密群" }],
+        }],
+      }),
+    });
+
+    const result = await service.listApps();
+
+    expect(result).toEqual({
+      status: "ok",
+      apps: [{ id: "wechat.exe", name: "微信", isRunning: true }],
+    });
+    expect(JSON.stringify(result)).not.toContain("客户机密群");
+    expect(JSON.stringify(result)).not.toContain("1234");
+  });
+
   test("reads foreground target metadata without unlocking or collecting window content", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
     const service = new DesktopContextService({

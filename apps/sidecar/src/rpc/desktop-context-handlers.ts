@@ -13,6 +13,7 @@ interface DesktopContextRpcService {
   getForegroundTarget(): Promise<unknown>;
   captureWindow(input: { windowId?: string; userInitiated?: boolean }): Promise<unknown>;
   requestPermissions(): Promise<unknown>;
+  listApps(): Promise<unknown>;
   currentContext(input?: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean }): Promise<unknown>;
   searchContext(input: { query?: string; limit?: number }): Promise<unknown>;
   getSettings(): DesktopAssistantSettings;
@@ -55,6 +56,7 @@ export function createDesktopContextHandlers(service: DesktopContextRpcService):
       });
     },
     [DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS]: async () => service.requestPermissions(),
+    [DESKTOP_CONTEXT_IPC_CHANNELS.LIST_APPS]: async () => service.listApps(),
     [DESKTOP_CONTEXT_IPC_CHANNELS.GET_CURRENT]: async (params) => {
       const input = readRecord(params);
       return service.currentContext({

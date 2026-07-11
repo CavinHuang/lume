@@ -2,6 +2,14 @@ import type { DesktopAssistantSettings, DesktopAssistantStatus } from '@lume/sha
 
 export type DesktopAssistantDiagnosticTone = 'ok' | 'warning' | 'error'
 
+export function toggleAllowedDesktopApp(allowedApps: string[], appId: string, allowed: boolean): string[] {
+  const normalized = appId.trim().toLowerCase()
+  if (!normalized) return allowedApps
+  const exists = allowedApps.some((item) => item.trim().toLowerCase() === normalized)
+  if (allowed) return exists ? allowedApps : [...allowedApps, appId.trim()]
+  return allowedApps.filter((item) => item.trim().toLowerCase() !== normalized)
+}
+
 export function buildDesktopAssistantDiagnostics({
   settings,
   status,
@@ -70,7 +78,7 @@ export function buildDesktopAssistantDiagnostics({
     return {
       tone: 'warning',
       title: '应用白名单为空',
-      details: ['请添加进程名，例如 WeChat.exe 或 chrome.exe。空白名单不会进行后台采集。'],
+      details: ['请从当前可见应用中选择，或手动填写应用标识。空白名单不会进行后台采集。'],
     }
   }
   return {

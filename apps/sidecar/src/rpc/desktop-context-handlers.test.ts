@@ -27,6 +27,7 @@ describe("desktop context RPC handlers", () => {
         calls.push({ requestPermissions: true });
         return { status: "permission_denied" };
       },
+      listApps: async () => ({ status: "ok", apps: [{ id: "wechat.exe", name: "微信", isRunning: true }] }),
       currentContext: async (input) => ({ status: "ok", input }),
       searchContext: async (input) => ({ status: "ok", input }),
       getSettings: () => ({ enabled: false, allowedApps: [], retentionHours: 24, maxStorageBytes: 100 }),
@@ -61,6 +62,10 @@ describe("desktop context RPC handlers", () => {
     });
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS]?.({})).toEqual({ status: "permission_denied" });
     expect(calls.at(-1)).toEqual({ requestPermissions: true });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.LIST_APPS]?.({})).toEqual({
+      status: "ok",
+      apps: [{ id: "wechat.exe", name: "微信", isRunning: true }],
+    });
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.GET_CURRENT]?.({
       snapshotId: "snap-1",
       includeScreenshot: true,
@@ -84,6 +89,7 @@ describe("desktop context RPC handlers", () => {
       getForegroundTarget: async () => ({}),
       captureWindow: async () => ({}),
       requestPermissions: async () => ({}),
+      listApps: async () => ({ status: "ok", apps: [] }),
       currentContext: async () => ({}),
       searchContext: async () => ({}),
       getSettings: () => ({ enabled: false, allowedApps: [], retentionHours: 24, maxStorageBytes: 100 }),

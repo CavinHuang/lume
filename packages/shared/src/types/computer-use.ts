@@ -202,6 +202,12 @@ export interface DesktopAssistantStatus {
   collector: { running: boolean; suspensionReasons: DesktopContextSuspensionReason[] };
 }
 
+export interface DesktopAppDiscoveryResult {
+  status: DesktopActionStatus;
+  apps: Array<Pick<DesktopAppRef, "id" | "name"> & { isRunning: boolean }>;
+  message?: string;
+}
+
 export type DesktopContextSuspensionReason = "screen_locked" | "system_suspended";
 
 export const DESKTOP_CONTEXT_IPC_CHANNELS = {
@@ -211,6 +217,7 @@ export const DESKTOP_CONTEXT_IPC_CHANNELS = {
   GET_FOREGROUND_TARGET: "desktop-context:get-foreground-target",
   CAPTURE_WINDOW: "desktop-context:capture-window",
   REQUEST_PERMISSIONS: "desktop-context:request-permissions",
+  LIST_APPS: "desktop-context:list-apps",
   GET_CURRENT: "desktop-context:get-current",
   SEARCH: "desktop-context:search",
   GET_SETTINGS: "desktop-context:get-settings",

@@ -1,5 +1,6 @@
 import type {
   DesktopAssistantSettings,
+  DesktopAppDiscoveryResult,
   DesktopContextSnapshot,
   DesktopContextSuspensionReason,
   DesktopContextTarget,
@@ -172,6 +173,30 @@ export class DesktopContextService {
     if (!target) return { status: "failed", message: "desktop host returned an invalid window target" };
     if (isLumeShellTarget(target)) return { status: "unavailable", message: LUME_SELF_CONTEXT_MESSAGE };
     return { status: "ok", ...target };
+  }
+
+  async listApps(): Promise<DesktopAppDiscoveryResult> {
+    const response = asRecord(await this.#input.invokeHost("list_apps", {}));
+    const status = isDesktopActionStatus(response.status) ? response.status : "failed";
+    if (status !== "ok") {
+      return {
+        status,
+        apps: [],
+        ...(stringValue(response.message) ? { message: stringValue(response.message) } : {}),
+      };
+    }
+    const apps = Array.isArray(response.apps) ? response.apps : [];
+    const seen = new Set<string>();
+    const projection: DesktopAppDiscoveryResult["apps"] = [];
+    for (const candidate of apps) {
+      const app = asRecord(candidate);
+      const id = stringValue(app.id);
+      if (!id || seen.has(id.toLowerCase())) continue;
+      const name = stringValue(app.name) ?? stringValue(app.displayName) ?? id;
+      seen.add(id.toLowerCase());
+      projection.push({ id, name, isRunning: app.isRunning !== false });
+    }
+    return { status: "ok", apps: projection };
   }
 
   async captureWindow(input: { windowId?: string; userInitiated?: boolean } = {}): Promise<unknown> {

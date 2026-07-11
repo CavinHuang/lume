@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { DesktopAssistantSettings, DesktopAssistantStatus } from '@lume/shared'
-import { buildDesktopAssistantDiagnostics } from './desktop-assistant-settings-state'
+import { buildDesktopAssistantDiagnostics, toggleAllowedDesktopApp } from './desktop-assistant-settings-state'
 
 const enabledSettings: DesktopAssistantSettings = {
   enabled: true,
@@ -16,6 +16,15 @@ const readyStatus: DesktopAssistantStatus = {
 }
 
 describe('desktop assistant settings state', () => {
+  test('toggles discovered app ids case-insensitively without duplicates', () => {
+    expect(toggleAllowedDesktopApp(['WeChat.exe', 'chrome.exe'], 'wechat.exe', false)).toEqual(['chrome.exe'])
+    expect(toggleAllowedDesktopApp(['WeChat.exe'], 'wechat.exe', true)).toEqual(['WeChat.exe'])
+    expect(toggleAllowedDesktopApp(['WeChat.exe'], 'com.apple.TextEdit', true)).toEqual([
+      'WeChat.exe',
+      'com.apple.TextEdit',
+    ])
+  })
+
   test('prioritizes desktop host failures as actionable errors', () => {
     expect(buildDesktopAssistantDiagnostics({
       settings: enabledSettings,

@@ -4,6 +4,7 @@ import { Database, Loader2, Monitor, ShieldCheck, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   DESKTOP_CONTEXT_IPC_CHANNELS,
+  type DesktopAppDiscoveryResult,
   type DesktopAssistantSettings as DesktopAssistantSettingsValue,
   type DesktopAssistantStatus,
   type DesktopContextSnapshot,
@@ -15,7 +16,7 @@ import { sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
-import { buildDesktopAssistantDiagnostics } from './desktop-assistant-settings-state'
+import { buildDesktopAssistantDiagnostics, toggleAllowedDesktopApp } from './desktop-assistant-settings-state'
 import { buildDesktopProposalWelcomeState } from './desktop-assistant-proposals-state'
 
 export function DesktopAssistantSettings() {
@@ -27,21 +28,24 @@ export function DesktopAssistantSettings() {
   const [status, setStatus] = useState<DesktopAssistantStatus | null>(null)
   const [activity, setActivity] = useState<DesktopContextSnapshot[]>([])
   const [proposals, setProposals] = useState<DesktopProactiveProposal[]>([])
+  const [appDiscovery, setAppDiscovery] = useState<DesktopAppDiscoveryResult>({ status: 'unavailable', apps: [] })
   const [appsDraft, setAppsDraft] = useState('')
   const [saving, setSaving] = useState(false)
 
   const refresh = async () => {
-    const [nextSettings, nextStatus, nextActivity, nextProposals] = await Promise.all([
+    const [nextSettings, nextStatus, nextActivity, nextProposals, nextAppDiscovery] = await Promise.all([
       sidecarCall<DesktopAssistantSettingsValue>(DESKTOP_CONTEXT_IPC_CHANNELS.GET_SETTINGS),
       sidecarCall<DesktopAssistantStatus>(DESKTOP_CONTEXT_IPC_CHANNELS.GET_STATUS),
       sidecarCall<DesktopContextSnapshot[]>(DESKTOP_CONTEXT_IPC_CHANNELS.LIST_ACTIVITY, { limit: 30 }),
       sidecarCall<DesktopProactiveProposal[]>(DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS),
+      sidecarCall<DesktopAppDiscoveryResult>(DESKTOP_CONTEXT_IPC_CHANNELS.LIST_APPS),
     ])
     setSettings(nextSettings)
     setAppsDraft(nextSettings.allowedApps.join(', '))
     setStatus(nextStatus)
     setActivity(nextActivity)
     setProposals(nextProposals)
+    setAppDiscovery(nextAppDiscovery)
   }
 
   useEffect(() => {
@@ -69,6 +73,11 @@ export function DesktopAssistantSettings() {
   const updateProposal = async (id: string, status: DesktopProactiveProposalStatus) => {
     await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL, { id, status })
     await refresh()
+  }
+
+  const setAppAllowed = async (appId: string, allowed: boolean) => {
+    if (!settings) return
+    await save({ allowedApps: toggleAllowedDesktopApp(settings.allowedApps, appId, allowed) })
   }
 
   const openProposal = async (proposal: DesktopProactiveProposal) => {
@@ -103,16 +112,43 @@ export function DesktopAssistantSettings() {
         <SettingRow
           icon={<ShieldCheck className="size-4" />}
           title="允许的应用"
-          description="填写进程名，以逗号分隔，例如 WeChat.exe, Slack.exe。空白名单不会采集。"
+          description="只对选中的应用进行后台感知；Alt+L 的用户主动读取不受此白名单限制。"
         >
-          <div className="flex w-[330px] gap-2">
-            <Input value={appsDraft} onChange={(event) => setAppsDraft(event.target.value)} placeholder="WeChat.exe, chrome.exe" />
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={saving}
-              onClick={() => void save({ allowedApps: appsDraft.split(',').map((item) => item.trim()).filter(Boolean) })}
-            >保存</Button>
+          <div className="w-[min(430px,48vw)] space-y-2.5">
+            {appDiscovery.apps.length > 0 ? (
+              <div className="max-h-44 overflow-y-auto rounded-xl border border-border/70 bg-background/50 px-3">
+                {appDiscovery.apps.map((app) => {
+                  const checked = settings.allowedApps.some((item) => item.toLowerCase() === app.id.toLowerCase())
+                  return (
+                    <div key={app.id} className="flex min-h-11 items-center justify-between gap-3 border-b border-border/50 last:border-b-0">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium text-foreground">{app.name}</p>
+                        <p className="truncate font-mono text-[10px] text-muted-foreground">{app.id}</p>
+                      </div>
+                      <Switch
+                        checked={checked}
+                        disabled={saving}
+                        aria-label={`允许后台感知 ${app.name}`}
+                        onCheckedChange={(next) => void setAppAllowed(app.id, next)}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="rounded-lg border border-dashed border-border px-3 py-2 text-[11px] text-muted-foreground">
+                {appDiscovery.message || '未发现可见应用，可在下方手动填写应用标识。'}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Input value={appsDraft} onChange={(event) => setAppsDraft(event.target.value)} placeholder="WeChat.exe, com.apple.TextEdit" />
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={saving}
+                onClick={() => void save({ allowedApps: appsDraft.split(',').map((item) => item.trim()).filter(Boolean) })}
+              >保存</Button>
+            </div>
           </div>
         </SettingRow>
         <SettingRow title="主动建议" description="本地事件先筛选候选，不会为每个桌面事件调用模型。">
