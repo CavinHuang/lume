@@ -12,7 +12,7 @@ import {
   type DesktopProactiveProposalStatus,
 } from '@lume/shared'
 import { activeTabIdAtom, currentWorkspaceIdAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
-import { sidecarCall } from '@/lib/desktop-api'
+import { onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -52,6 +52,16 @@ export function DesktopAssistantSettings() {
     void refresh().catch((error) => toast.error(error instanceof Error ? error.message : '桌面助手加载失败'))
   }, [])
 
+  useEffect(() => {
+    const unlisten = onSidecarEvent((method) => {
+      if (method !== DESKTOP_CONTEXT_IPC_CHANNELS.PROPOSAL_UPDATED) return
+      void sidecarCall<DesktopProactiveProposal[]>(DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS)
+        .then(setProposals)
+        .catch(() => undefined)
+    })
+    return () => { void unlisten.then((dispose) => dispose()) }
+  }, [])
+
   const save = async (patch: Partial<DesktopAssistantSettingsValue>) => {
     if (!settings) return
     setSaving(true)
@@ -82,7 +92,10 @@ export function DesktopAssistantSettings() {
 
   const openProposal = async (proposal: DesktopProactiveProposal) => {
     try {
-      await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL, { id: proposal.id, status: 'opened' })
+      await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL, {
+        id: proposal.id,
+        status: proposal.resultStatus === 'ready' ? 'accepted' : 'opened',
+      })
       const next = buildDesktopProposalWelcomeState({ proposal, tabs, currentWorkspaceId })
       setTabs(next.tabs)
       setWelcomePromptSeed(next.promptSeed)
@@ -204,13 +217,19 @@ export function DesktopAssistantSettings() {
               <div className="min-w-0">
                 <p className="truncate font-medium text-foreground">{item.summary}</p>
                 <p className="mt-1 truncate text-muted-foreground">
-                  {proposalKindLabel(item.kind)} · {item.status} · {item.app.name}
+                  {proposalKindLabel(item.kind)} · {item.status} · {proposalResultStatusLabel(item.resultStatus)} · {item.app.name}
                 </p>
+                {item.resultStatus === 'ready' && item.result && (
+                  <div className="mt-2 rounded-lg border border-border/70 bg-background/60 px-3 py-2.5">
+                    <p className="font-medium text-foreground">{item.result.title}</p>
+                    <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{item.result.body}</p>
+                  </div>
+                )}
               </div>
               <div className="flex shrink-0 gap-2">
                 {(item.status === 'pending' || item.status === 'opened') && (
                   <Button type="button" variant="secondary" onClick={() => void openProposal(item)}>
-                    开始处理
+                    {item.resultStatus === 'ready' ? '采用建议' : '开始处理'}
                   </Button>
                 )}
                 {item.status !== 'dismissed' && (
@@ -285,6 +304,15 @@ function proposalKindLabel(kind: DesktopProactiveProposal['kind']): string {
     daily_wrap: '每日回顾',
     follow_up: '事项跟进',
   }[kind]
+}
+
+function proposalResultStatusLabel(status: DesktopProactiveProposal['resultStatus']): string {
+  return {
+    generating: '正在生成',
+    ready: '建议已就绪',
+    unavailable: '等待手动处理',
+    failed: '生成失败',
+  }[status ?? 'unavailable']
 }
 
 function diagnosticToneClassName(tone: 'ok' | 'warning' | 'error'): string {

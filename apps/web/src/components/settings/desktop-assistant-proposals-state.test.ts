@@ -82,6 +82,26 @@ describe('desktop assistant proposal state', () => {
     expect(result.promptSeed).toContain('发送前必须让我确认')
   })
 
+  test('carries a generated reply result into the bound agent task', () => {
+    const result = buildDesktopProposalWelcomeState({
+      proposal: {
+        ...proposal,
+        resultStatus: 'ready',
+        result: {
+          title: '建议回复',
+          body: '收到，我会在今天下班前同步进展。',
+          suggestedAction: 'reply_draft',
+        },
+      },
+      tabs: [],
+      currentWorkspaceId: null,
+    })
+
+    expect(result.promptSeed).toContain('收到，我会在今天下班前同步进展。')
+    expect(result.promptSeed).toContain('填入草稿')
+    expect(result.promptSeed).toContain('发送前必须让我确认')
+  })
+
   test('opens a desktop notification click by proposal id without trusting notification text', () => {
     const result = buildDesktopProposalOpenRequestState({
       proposalId: 'proposal:snap-1',

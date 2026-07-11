@@ -13,6 +13,10 @@ function createService(input: {
   snapshot?: DesktopContextSnapshot;
   now?: () => number;
   proposalRecords?: DesktopProposalRecord[];
+  generateProposalResult?: (input: {
+    kind: "reply" | "conflict" | "prompt_rescue" | "daily_wrap" | "follow_up";
+    snapshots: DesktopContextSnapshot[];
+  }) => Promise<{ title: string; body: string; suggestedAction: "reply_draft" }>;
   onInvokeHost?: (method: string, params: Record<string, unknown>) => void;
   manageHostEventSubscription?: boolean;
 } = {}) {
@@ -30,6 +34,7 @@ function createService(input: {
       notificationsEnabled: input.notificationsEnabled,
     },
     emitNotification: input.emitNotification,
+    generateProposalResult: input.generateProposalResult,
     createStore: () => ({
       put(snapshot) {
         snapshots.set(snapshot.id, {
@@ -618,6 +623,49 @@ describe("DesktopContextService", () => {
     expect(proposals[0]?.status).toBe("pending");
     expect(JSON.stringify(proposals[0])).not.toContain("password=secret");
     expect(JSON.stringify(proposals[0])).not.toContain("客户问");
+  });
+
+  test("generates an encrypted-ready result from redacted context without leaking it to notifications", async () => {
+    const received: DesktopContextSnapshot[][] = [];
+    const notifications: unknown[] = [];
+    const service = createService({
+      proactiveEnabled: true,
+      notificationsEnabled: true,
+      emitNotification: (_method, params) => notifications.push(params),
+      generateProposalResult: async (input) => {
+        received.push(input.snapshots);
+        return {
+          title: "建议回复",
+          body: "收到，我会在今天下班前同步进展。",
+          suggestedAction: "reply_draft",
+        };
+      },
+    });
+    service.unlock(Buffer.alloc(32, 4));
+
+    await service.captureCurrent();
+    await Bun.sleep(0);
+
+    expect(received).toHaveLength(1);
+    expect(JSON.stringify(received)).toContain("password=[REDACTED]");
+    expect(JSON.stringify(received)).not.toContain("password=secret");
+    expect(service.listProposals()[0]).toMatchObject({
+      resultStatus: "ready",
+      result: {
+        title: "建议回复",
+        body: "收到，我会在今天下班前同步进展。",
+        suggestedAction: "reply_draft",
+      },
+    });
+    expect(notifications).toHaveLength(2);
+    expect(notifications[1]).toEqual({
+      proposal: {
+        id: "proposal:reply:snap-1",
+        status: "pending",
+        resultStatus: "ready",
+      },
+    });
+    expect(JSON.stringify(notifications)).not.toContain("今天下班前");
   });
 
   test("classifies all proactive proposal kinds with local non-sensitive rules", async () => {

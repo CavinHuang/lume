@@ -99,14 +99,24 @@ describe("DesktopContextStore", () => {
 
   sqliteTest("encrypts proactive proposals and restores their status after restart", () => {
     const { dbPath, store } = createStore();
-    store.putProposal(proposal("proposal-1", 100), "fingerprint-1");
+    const proposalWithResult: DesktopProactiveProposal = {
+      ...proposal("proposal-1", 100),
+      resultStatus: "ready",
+      result: {
+        title: "建议回复",
+        body: "这是只应存在于加密载荷中的回复草稿",
+        suggestedAction: "reply_draft",
+      },
+    };
+    store.putProposal(proposalWithResult, "fingerprint-1");
     store.updateProposalStatus("proposal-1", "dismissed");
     store.close();
 
     assert.doesNotMatch(readFileSync(dbPath).toString("utf8"), /敏感项目群/);
+    assert.doesNotMatch(readFileSync(dbPath).toString("utf8"), /只应存在于加密载荷/);
     const reopened = new DesktopContextStore({ dbPath, key: Buffer.alloc(32, 7) });
     assert.deepEqual(reopened.listProposalRecords(), [{
-      proposal: { ...proposal("proposal-1", 100), status: "dismissed" },
+      proposal: { ...proposalWithResult, status: "dismissed" },
       fingerprint: "fingerprint-1",
     }]);
     reopened.close();

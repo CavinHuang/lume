@@ -122,6 +122,25 @@ export type DesktopProactiveProposalStatus =
   | "dismissed"
   | "expired";
 
+export type DesktopProactiveProposalResultStatus =
+  | "generating"
+  | "ready"
+  | "unavailable"
+  | "failed";
+
+export type DesktopProactiveProposalSuggestedAction =
+  | "reply_draft"
+  | "review_conflict"
+  | "apply_fix"
+  | "review_summary"
+  | "create_follow_up";
+
+export interface DesktopProactiveProposalResult {
+  title: string;
+  body: string;
+  suggestedAction: DesktopProactiveProposalSuggestedAction;
+}
+
 export interface DesktopProactiveProposal {
   id: string;
   kind: DesktopProactiveProposalKind;
@@ -130,12 +149,18 @@ export interface DesktopProactiveProposal {
   app: Pick<DesktopAppRef, "id" | "name">;
   window: Pick<DesktopWindowRef, "id" | "title">;
   summary: string;
+  resultStatus?: DesktopProactiveProposalResultStatus;
+  result?: DesktopProactiveProposalResult;
   createdAt: number;
   expiresAt: number;
 }
 
 export interface DesktopProactiveProposalCreatedNotification {
   proposal: Pick<DesktopProactiveProposal, "id" | "kind" | "status" | "snapshotId" | "app" | "createdAt" | "expiresAt">;
+}
+
+export interface DesktopProactiveProposalUpdatedNotification {
+  proposal: Pick<DesktopProactiveProposal, "id" | "status" | "resultStatus">;
 }
 
 export interface DesktopActionResult {
@@ -228,6 +253,7 @@ export const DESKTOP_CONTEXT_IPC_CHANNELS = {
   LIST_PROPOSALS: "desktop-context:list-proposals",
   UPDATE_PROPOSAL: "desktop-context:update-proposal",
   PROPOSAL_CREATED: "desktop-context:proposal-created",
+  PROPOSAL_UPDATED: "desktop-context:proposal-updated",
   PROPOSAL_OPEN_REQUEST: "desktop-context:proposal-open-request",
   ACTION_REQUEST: "agent:desktop-action-request",
   SUBMIT_ACTION: "agent:submit-desktop-action",
@@ -258,6 +284,18 @@ const CONSEQUENTIAL_SECONDARY_ACTION_RE = /(?:send|delete|remove|pay|purchase|su
 
 export function isDesktopActionStatus(value: unknown): value is DesktopActionStatus {
   return typeof value === "string" && (DESKTOP_ACTION_STATUSES as readonly string[]).includes(value);
+}
+
+export function desktopProposalSuggestedAction(
+  kind: DesktopProactiveProposalKind,
+): DesktopProactiveProposalSuggestedAction {
+  switch (kind) {
+    case "reply": return "reply_draft";
+    case "conflict": return "review_conflict";
+    case "prompt_rescue": return "apply_fix";
+    case "daily_wrap": return "review_summary";
+    case "follow_up": return "create_follow_up";
+  }
 }
 
 export function requiresDesktopActionConfirmation(intent: DesktopActionIntent): boolean {

@@ -5,6 +5,7 @@ import {
 } from "../infra/config-paths";
 import { invokeDesktopHost } from "./desktop-host-runtime";
 import { DesktopContextService } from "./desktop-context-service";
+import { createDesktopProposalResultGenerator } from "./desktop-proposal-generator";
 import {
   loadDesktopAssistantSettings,
   saveDesktopAssistantSettings,
@@ -25,6 +26,7 @@ function getRuntime(): { settingsPath: string; service: DesktopContextService } 
       invokeHost: invokeDesktopHost,
       manageHostEventSubscription: true,
       emitNotification: (method, params) => notificationWriter?.(method, params),
+      generateProposalResult: createDesktopProposalResultGenerator(),
     }),
   };
   if (!hostNotificationsRegistered) {

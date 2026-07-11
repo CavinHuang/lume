@@ -7,14 +7,20 @@ import type {
   DesktopProactiveProposal,
   DesktopProactiveProposalCreatedNotification,
   DesktopProactiveProposalKind,
+  DesktopProactiveProposalResult,
   DesktopProactiveProposalStatus,
+  DesktopProactiveProposalUpdatedNotification,
 } from "@lume/shared";
-import { DESKTOP_CONTEXT_IPC_CHANNELS, isDesktopActionStatus } from "@lume/shared";
+import { DESKTOP_CONTEXT_IPC_CHANNELS, desktopProposalSuggestedAction, isDesktopActionStatus } from "@lume/shared";
 import { createHash } from "node:crypto";
 import { DesktopContextStore, type DesktopProposalRecord } from "./desktop-context-store";
 
 type HostInvoke = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 type DesktopContextTargetMetadata = Pick<DesktopContextTarget, "app" | "window">;
+type GenerateDesktopProposalResult = (input: {
+  kind: DesktopProactiveProposalKind;
+  snapshots: DesktopContextSnapshot[];
+}) => Promise<DesktopProactiveProposalResult | undefined>;
 
 const PERMISSION_POLL_INTERVAL_MS = 250;
 const PERMISSION_POLL_ATTEMPTS = 240;
@@ -64,6 +70,7 @@ export class DesktopContextService {
     settings: DesktopAssistantSettings;
     invokeHost: HostInvoke;
     emitNotification?: (method: string, params: unknown) => void;
+    generateProposalResult?: GenerateDesktopProposalResult;
     createStore?: (input: { dbPath: string; key: Buffer; retentionMs: number; maxBytes: number }) => DesktopContextStoreLike;
     now?: () => number;
     manageHostEventSubscription?: boolean;
@@ -74,6 +81,7 @@ export class DesktopContextService {
     settings: DesktopAssistantSettings;
     invokeHost: HostInvoke;
     emitNotification?: (method: string, params: unknown) => void;
+    generateProposalResult?: GenerateDesktopProposalResult;
     createStore?: (input: { dbPath: string; key: Buffer; retentionMs: number; maxBytes: number }) => DesktopContextStoreLike;
     now?: () => number;
     manageHostEventSubscription?: boolean;
@@ -161,7 +169,7 @@ export class DesktopContextService {
     store.purge();
     this.#lastFingerprint = fingerprint;
     this.#lastSnapshotId = snapshot.id;
-    this.#maybeCreateProposal(snapshot);
+    this.#maybeCreateProposal(store.getRedacted(snapshot.id), store);
     return { status: "ok", ...snapshotToTarget(snapshot) };
   }
 
@@ -229,7 +237,7 @@ export class DesktopContextService {
     store.purge();
     this.#lastFingerprint = snapshotFingerprint(snapshot);
     this.#lastSnapshotId = snapshot.id;
-    this.#maybeCreateProposal(snapshot);
+    this.#maybeCreateProposal(store.getRedacted(snapshot.id), store);
     return { status: "ok", ...snapshotToTarget(snapshot) };
   }
 
@@ -424,8 +432,8 @@ export class DesktopContextService {
     };
   }
 
-  #maybeCreateProposal(snapshot: DesktopContextSnapshot): void {
-    if (!this.#settings.proactiveEnabled) return;
+  #maybeCreateProposal(snapshot: DesktopContextSnapshot | undefined, store: DesktopContextStoreLike): void {
+    if (!this.#settings.proactiveEnabled || !snapshot) return;
     const visibleText = [snapshot.selectedText, snapshot.visibleText].filter(Boolean).join("\n");
     const createdAt = this.#now();
     for (const kind of proposalKinds(visibleText, this.#settings, createdAt)) {
@@ -440,6 +448,7 @@ export class DesktopContextService {
         app: { id: snapshot.app.id, name: snapshot.app.name },
         window: { id: snapshot.window.id, title: snapshot.window.title },
         summary: proposalSummary(kind, snapshot.app.name),
+        resultStatus: this.#input.generateProposalResult ? "generating" : "unavailable",
         createdAt,
         expiresAt: createdAt + proposalLifetimeMs(kind),
       };
@@ -451,7 +460,61 @@ export class DesktopContextService {
           proposalToCreatedNotification(proposal),
         );
       }
+      this.#generateProposalResult(proposal, fingerprint, store);
     }
+  }
+
+  #generateProposalResult(
+    proposal: DesktopProactiveProposal,
+    fingerprint: string,
+    store: DesktopContextStoreLike,
+  ): void {
+    const generate = this.#input.generateProposalResult;
+    if (!generate) return;
+    const snapshots = proposal.kind === "daily_wrap"
+      ? store.recent(50).filter((snapshot) => snapshot.capturedAt >= proposal.createdAt - 24 * 60 * 60 * 1_000)
+      : [store.getRedacted(proposal.snapshotId)].filter((snapshot): snapshot is DesktopContextSnapshot => Boolean(snapshot));
+    void generate({ kind: proposal.kind, snapshots })
+      .then((result) => {
+        const current = this.#proposals.get(proposal.id);
+        if (!current) return;
+        const normalized = normalizeProposalResult(proposal.kind, result);
+        const next: DesktopProactiveProposal = normalized
+          ? { ...current, resultStatus: "ready", result: normalized }
+          : { ...current, resultStatus: "unavailable" };
+        this.#commitGeneratedProposal(next, fingerprint, store);
+      })
+      .catch(() => {
+        const current = this.#proposals.get(proposal.id);
+        if (!current) return;
+        const next: DesktopProactiveProposal = { ...current, resultStatus: "failed" };
+        this.#commitGeneratedProposal(next, fingerprint, store);
+      });
+  }
+
+  #commitGeneratedProposal(
+    proposal: DesktopProactiveProposal,
+    fingerprint: string,
+    store: DesktopContextStoreLike,
+  ): void {
+    this.#proposals.set(proposal.id, proposal);
+    try {
+      store.putProposal?.(proposal, fingerprint);
+      this.#emitProposalUpdated(proposal);
+    } catch {
+      // The service may close while a background model request is still in flight.
+    }
+  }
+
+  #emitProposalUpdated(proposal: DesktopProactiveProposal): void {
+    const notification: DesktopProactiveProposalUpdatedNotification = {
+      proposal: {
+        id: proposal.id,
+        status: proposal.status,
+        resultStatus: proposal.resultStatus,
+      },
+    };
+    this.#input.emitNotification?.(DESKTOP_CONTEXT_IPC_CHANNELS.PROPOSAL_UPDATED, notification);
   }
 
   #now(): number {
@@ -572,6 +635,20 @@ function proposalLifetimeMs(kind: DesktopProactiveProposalKind): number {
   if (kind === "follow_up") return 24 * 60 * 60 * 1_000;
   if (kind === "daily_wrap") return 12 * 60 * 60 * 1_000;
   return 30 * 60 * 1_000;
+}
+
+function normalizeProposalResult(
+  kind: DesktopProactiveProposalKind,
+  result: DesktopProactiveProposalResult | undefined,
+): DesktopProactiveProposalResult | undefined {
+  const title = result?.title.trim().slice(0, 80);
+  const body = result?.body.trim().slice(0, 2_000);
+  if (!title || !body) return undefined;
+  return {
+    title,
+    body,
+    suggestedAction: desktopProposalSuggestedAction(kind),
+  };
 }
 
 function proposalToCreatedNotification(proposal: DesktopProactiveProposal): DesktopProactiveProposalCreatedNotification {

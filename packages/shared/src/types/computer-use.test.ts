@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DESKTOP_ACTION_STATUSES,
+  desktopProposalSuggestedAction,
   isDesktopActionStatus,
   requiresDesktopActionConfirmation,
 } from "./computer-use";
@@ -36,5 +37,21 @@ describe("computer-use shared contracts", () => {
       secondaryAction: "AXShowMenu",
     })).toBeFalse();
     expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["TAB"] })).toBeFalse();
+  });
+
+  test("maps every proactive proposal kind to one explicit next action", () => {
+    expect([
+      desktopProposalSuggestedAction("reply"),
+      desktopProposalSuggestedAction("conflict"),
+      desktopProposalSuggestedAction("prompt_rescue"),
+      desktopProposalSuggestedAction("daily_wrap"),
+      desktopProposalSuggestedAction("follow_up"),
+    ]).toEqual([
+      "reply_draft",
+      "review_conflict",
+      "apply_fix",
+      "review_summary",
+      "create_follow_up",
+    ]);
   });
 });
