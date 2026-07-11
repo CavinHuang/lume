@@ -21,6 +21,7 @@ const checks = [
   [bun, ["test", "apps/sidecar/src/services/agent-runtime/tools/computer-use/create-computer-use-tools.test.ts"]],
   [bun, ["test", "apps/sidecar/src/services/agent-runtime/context/context-assembler.test.ts"]],
   [bun, ["run", "--filter", "@lume/shared", "typecheck"]],
+  [bun, ["run", "--filter", "@lume/desktop", "typecheck"]],
   [bun, ["run", "--filter", "@lume/sidecar", "typecheck"]],
   [bun, ["run", "--filter", "@lume/web", "typecheck"]],
 ];

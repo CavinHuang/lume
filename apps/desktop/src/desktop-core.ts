@@ -130,6 +130,85 @@ export function createDesktopProposalOpenRequest(value) {
   return { proposalId }
 }
 
+const desktopActionHudLabels = {
+  launch_app: '启动应用',
+  activate_window: '切换窗口',
+  move_pointer: '移动鼠标',
+  click: '点击',
+  press_key: '按键',
+  type_text: '输入内容',
+  scroll: '滚动页面',
+  set_value: '填写内容',
+  drag: '拖拽',
+  perform_secondary_action: '执行更多操作',
+}
+
+const desktopActionHudPhases = {
+  started: 'Lume 正在操作',
+  completed: '操作完成',
+  failed: '操作未完成',
+}
+
+function boundedLabel(value, maxLength) {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
+}
+
+export function createDesktopActionHudView(method, params) {
+  if (method !== 'agent:runtime-event') return null
+  const event = params?.event
+  if (!event || event.type !== 'desktop.action_visual') return null
+  const title = desktopActionHudPhases[event.phase]
+  const actionLabel = desktopActionHudLabels[event.action]
+  const appName = boundedLabel(event.app?.name, 80)
+  if (!title || !actionLabel || !appName) return null
+  const targetLabel = boundedLabel(event.targetLabel, 120)
+  const status = boundedLabel(event.status, 32)
+  const x = Number.isFinite(event.point?.x) ? event.point.x : null
+  const y = Number.isFinite(event.point?.y) ? event.point.y : null
+  return {
+    phase: event.phase,
+    title,
+    actionLabel,
+    appName,
+    ...(targetLabel ? { targetLabel } : {}),
+    ...(status ? { status } : {}),
+    ...(x !== null && y !== null ? { point: { x, y } } : {}),
+  }
+}
+
+export function computeDesktopActionHudBounds(workArea, size = { width: 420, height: 86 }) {
+  const width = Math.min(size.width, workArea.width)
+  const height = Math.min(size.height, workArea.height)
+  return {
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
+    y: Math.round(workArea.y + Math.min(28, Math.max(0, workArea.height - height))),
+    width,
+    height,
+  }
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+export function createDesktopActionHudHtml(view) {
+  const phase = view.phase === 'completed' || view.phase === 'failed' ? view.phase : 'started'
+  const detail = `${view.actionLabel}${view.targetLabel ? ` · ${view.targetLabel}` : ''}`
+  const status = view.status ? `<span class="status">${escapeHtml(view.status)}</span>` : ''
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:"Avenir Next","Microsoft YaHei UI","Segoe UI",sans-serif}
+body{display:flex;align-items:flex-start;justify-content:center;padding:1px}.hud{width:100%;height:76px;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid rgba(158,233,216,.72);border-radius:18px;color:#fff;background:rgba(16,42,42,.96);box-shadow:0 18px 55px rgba(3,34,32,.4);backdrop-filter:blur(18px)}
+.hud.completed{border-color:rgba(167,243,208,.72);background:rgba(16,42,32,.96)}.hud.failed{border-color:rgba(252,165,165,.72);background:rgba(50,21,21,.96)}
+.mark{width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;border-radius:13px;background:#caffec;color:#0d574c;font-weight:800;font-size:16px;box-shadow:0 0 24px rgba(127,255,218,.3)}.failed .mark{background:#fee2e2;color:#b91c1c}.copy{min-width:0;flex:1}.title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;letter-spacing:.01em}.app{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.1);color:#d6fff2;font-size:11px;font-weight:600}.detail{margin-top:4px;display:flex;align-items:center;gap:8px;color:rgba(255,255,255,.68);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.status{padding:2px 6px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(0,0,0,.2);font:10px ui-monospace,SFMono-Regular,Consolas,monospace;color:rgba(255,255,255,.75)}
+</style></head><body><div class="hud ${phase}"><div class="mark">L</div><div class="copy"><div class="title">${escapeHtml(view.title)}<span class="app">${escapeHtml(view.appName)}</span></div><div class="detail">${escapeHtml(detail)}${status}</div></div></div></body></html>`
+}
+
 export function createOpenFileDialogOptions(): OpenDialogOptions {
   return {
     properties: ['openFile', 'multiSelections'],

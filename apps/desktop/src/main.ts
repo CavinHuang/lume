@@ -31,11 +31,14 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   computeQuickInputBounds,
+  computeDesktopActionHudBounds,
   computeStorageStats,
   computeToggleAction,
   copyDirRecursive,
   createDesktopProposalNotification,
   createDesktopProposalOpenRequest,
+  createDesktopActionHudHtml,
+  createDesktopActionHudView,
   createFileMetadata,
   createOpenFileDialogOptions,
   createOpenFolderDialogOptions,
@@ -107,6 +110,9 @@ const DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD = 'desktop-context:get-foregr
 const DESKTOP_CONTEXT_CAPTURE_WINDOW_METHOD = 'desktop-context:capture-window'
 const DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD = 'desktop-context:proposal-created'
 const DESKTOP_CONTEXT_PROPOSAL_OPEN_REQUEST_METHOD = 'desktop-context:proposal-open-request'
+const DESKTOP_ACTION_HUD_SIZE = { width: 420, height: 86 }
+const DESKTOP_ACTION_HUD_COMPLETED_MS = 1_600
+const DESKTOP_ACTION_HUD_STALE_MS = 30_000
 
 let mainWindow = null
 let wereadWindow = null
@@ -119,6 +125,9 @@ let windowBehavior = {
 
 // 快速输入子窗口（Alt+L）；Task 5 之前始终为 null，此处仅占位以便 IPC 信任集合与事件广播先行就绪。
 let quickInputWindow = null
+let actionHudWindow = null
+let actionHudHideTimer: ReturnType<typeof setTimeout> | null = null
+let actionHudGeneration = 0
 let latestQuickInputContext: {
   status: string
   snapshotId?: string
@@ -187,9 +196,68 @@ protocol.registerSchemesAsPrivileged([
 const sidecarHost = createSidecarHost({
   onNotification(method, params) {
     showDesktopProposalNotification(method, params)
+    showDesktopActionHud(method, params)
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
 })
+
+function ensureDesktopActionHudWindow() {
+  if (actionHudWindow && !actionHudWindow.isDestroyed()) return actionHudWindow
+  const win = new BrowserWindow({
+    width: DESKTOP_ACTION_HUD_SIZE.width,
+    height: DESKTOP_ACTION_HUD_SIZE.height,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    focusable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: createSecureWebPreferences(),
+  })
+  actionHudWindow = win
+  win.setIgnoreMouseEvents(true, { forward: true })
+  win.setAlwaysOnTop(true, 'floating')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('data:text/html')) event.preventDefault()
+  })
+  win.on('closed', () => {
+    if (actionHudWindow === win) actionHudWindow = null
+  })
+  return win
+}
+
+function showDesktopActionHud(method, params) {
+  const view = createDesktopActionHudView(method, params)
+  if (!view) return
+  const win = ensureDesktopActionHudWindow()
+  const display = view.point
+    ? screen.getDisplayNearestPoint(view.point)
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  win.setBounds(computeDesktopActionHudBounds(display.workArea, DESKTOP_ACTION_HUD_SIZE), false)
+  if (actionHudHideTimer) clearTimeout(actionHudHideTimer)
+  const generation = ++actionHudGeneration
+  const html = createDesktopActionHudHtml(view)
+  void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    .then(() => {
+      if (generation !== actionHudGeneration || win.isDestroyed()) return
+      win.showInactive()
+    })
+    .catch((error) => {
+      console.error(`[desktop] desktop action HUD failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  actionHudHideTimer = setTimeout(() => {
+    if (generation === actionHudGeneration && !win.isDestroyed()) win.hide()
+    actionHudHideTimer = null
+  }, view.phase === 'started' ? DESKTOP_ACTION_HUD_STALE_MS : DESKTOP_ACTION_HUD_COMPLETED_MS)
+}
 
 function showDesktopProposalNotification(method, params) {
   if (method !== DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD) return

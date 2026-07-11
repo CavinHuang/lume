@@ -19,6 +19,11 @@ import {
   validateRendererEventChannel,
   validateRendererInvokeCommand,
 } from "../src/electron-security.ts";
+import {
+  computeDesktopActionHudBounds,
+  createDesktopActionHudHtml,
+  createDesktopActionHudView,
+} from "../src/desktop-core.ts";
 
 test("renderer IPC commands are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("sidecar_call"), true);
@@ -243,6 +248,63 @@ test("main process registers Alt+L global shortcut after app ready", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   assert.match(mainSource, /globalShortcut\.register\(['"]Alt\+L['"]/);
   assert.match(mainSource, /globalShortcut\.unregisterAll\(\)/);
+});
+
+test("desktop action HUD projects only non-sensitive action metadata", () => {
+  const view = createDesktopActionHudView("agent:runtime-event", {
+    threadId: "thread-1",
+    event: {
+      type: "desktop.action_visual",
+      phase: "started",
+      action: "type_text",
+      app: { id: "wechat.exe", name: "微信" },
+      targetLabel: "消息输入框",
+      point: { x: 620, y: 480 },
+      text: "must-not-leak",
+      args: { text: "must-not-leak" },
+    },
+  });
+
+  assert.deepEqual(view, {
+    phase: "started",
+    title: "Lume 正在操作",
+    actionLabel: "输入内容",
+    appName: "微信",
+    targetLabel: "消息输入框",
+    point: { x: 620, y: 480 },
+  });
+  assert.equal(JSON.stringify(view).includes("must-not-leak"), false);
+  assert.equal(createDesktopActionHudView("other", { event: {} }), null);
+});
+
+test("desktop action HUD escapes labels and stays inside the target display", () => {
+  const html = createDesktopActionHudHtml({
+    phase: "failed",
+    title: "操作未完成",
+    actionLabel: "点击",
+    appName: "微信",
+    targetLabel: '<img src=x onerror="alert(1)">',
+    status: "failed",
+  });
+  const bounds = computeDesktopActionHudBounds(
+    { x: 1920, y: 0, width: 1280, height: 720 },
+    { width: 420, height: 86 },
+  );
+
+  assert.equal(html.includes("<img src=x"), false);
+  assert.match(html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
+  assert.deepEqual(bounds, { x: 2350, y: 28, width: 420, height: 86 });
+});
+
+test("desktop action HUD uses a click-through cross-app overlay window", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+
+  assert.match(mainSource, /function showDesktopActionHud\(method, params\)/);
+  assert.match(mainSource, /alwaysOnTop:\s*true/);
+  assert.match(mainSource, /transparent:\s*true/);
+  assert.match(mainSource, /focusable:\s*false/);
+  assert.match(mainSource, /setIgnoreMouseEvents\(true/);
+  assert.match(mainSource, /showInactive\(\)/);
 });
 
 test("quick input window is registered before its renderer loads", () => {
