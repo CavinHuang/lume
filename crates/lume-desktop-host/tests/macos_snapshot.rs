@@ -2,13 +2,13 @@ use lume_desktop_host::macos_snapshot::{
     find_macos_window, first_visible_user_window, macos_current_context_result,
     macos_get_window_result, macos_get_window_state_result,
     macos_get_window_state_result_with_related, macos_global_pointer_fallback_enabled_from,
-    macos_key_chord, macos_list_apps_result, macos_list_windows_result,
-    macos_matching_secondary_action, macos_non_sensitive_selected_text, macos_pointer_input_mode,
-    macos_preferred_click_actions, macos_related_transient_windows, macos_resolve_action_point,
-    macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
-    macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
-    macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
-    MacOSWindowInfo, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
+    macos_key_chord, macos_list_apps_result, macos_list_apps_result_with_discovered,
+    macos_list_windows_result, macos_matching_secondary_action, macos_non_sensitive_selected_text,
+    macos_pointer_input_mode, macos_preferred_click_actions, macos_related_transient_windows,
+    macos_resolve_action_point, macos_set_value_attribute_is_settable,
+    macos_text_target_is_sensitive, macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
+    macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSDiscoveredApp,
+    MacOSElementInfo, MacOSWindowInfo, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
 };
 use serde_json::json;
 
@@ -106,6 +106,46 @@ fn maps_unique_apps_from_visible_macos_windows() {
     assert_eq!(result["apps"][0]["isRunning"], true);
     assert_eq!(result["apps"][0]["processId"], 1001);
     assert_eq!(result["apps"][0]["windows"][0]["id"], "macos:42");
+}
+
+#[test]
+fn merges_recent_installed_apps_with_running_macos_windows() {
+    let mut windows = sample_windows();
+    windows[0].bundle_identifier = Some("com.tencent.xinWeChat".into());
+    let discovered = vec![
+        MacOSDiscoveredApp {
+            id: "com.tencent.xinWeChat".into(),
+            name: "WeChat".into(),
+            path: "/Applications/WeChat.app".into(),
+            is_running: true,
+            is_frontmost: true,
+            last_used_at: Some(1_700_000_000_000),
+            usage_count: Some(20),
+        },
+        MacOSDiscoveredApp {
+            id: "com.apple.TextEdit".into(),
+            name: "TextEdit".into(),
+            path: "/System/Applications/TextEdit.app".into(),
+            is_running: false,
+            is_frontmost: false,
+            last_used_at: Some(1_699_000_000_000),
+            usage_count: Some(8),
+        },
+    ];
+
+    let result = macos_list_apps_result_with_discovered(&windows, &discovered);
+    let apps = result["apps"].as_array().unwrap();
+
+    assert_eq!(apps.len(), 3);
+    assert_eq!(apps[0]["id"], "com.tencent.xinWeChat");
+    assert_eq!(apps[0]["name"], "微信");
+    assert_eq!(apps[0]["isFrontmost"], true);
+    assert_eq!(apps[0]["windows"][0]["id"], "macos:42");
+    assert_eq!(apps[1]["id"], "pid:1002");
+    assert_eq!(apps[2]["id"], "com.apple.TextEdit");
+    assert_eq!(apps[2]["isRunning"], false);
+    assert_eq!(apps[2]["path"], "/System/Applications/TextEdit.app");
+    assert_eq!(apps[2]["windows"], json!([]));
 }
 
 #[test]

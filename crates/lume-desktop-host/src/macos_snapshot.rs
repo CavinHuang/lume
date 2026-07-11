@@ -1,6 +1,7 @@
 #[cfg(any(target_os = "macos", test))]
 use crate::{DesktopMouseButton, DesktopScrollDirection};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -79,6 +80,18 @@ pub struct MacOSElementInfo {
     pub children: Vec<MacOSElementInfo>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MacOSDiscoveredApp {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub is_running: bool,
+    pub is_frontmost: bool,
+    pub last_used_at: Option<u64>,
+    pub usage_count: Option<u64>,
+}
+
 pub fn macos_list_windows_result(windows: &[MacOSWindowInfo], app_filter: Option<&str>) -> Value {
     let windows = visible_user_windows(windows)
         .into_iter()
@@ -89,11 +102,39 @@ pub fn macos_list_windows_result(windows: &[MacOSWindowInfo], app_filter: Option
 }
 
 pub fn macos_list_apps_result(windows: &[MacOSWindowInfo]) -> Value {
+    macos_list_apps_result_with_discovered(windows, &[])
+}
+
+pub fn macos_list_apps_result_with_discovered(
+    windows: &[MacOSWindowInfo],
+    discovered: &[MacOSDiscoveredApp],
+) -> Value {
     let mut apps = BTreeMap::<String, Value>::new();
+    for discovered_app in discovered {
+        let id = discovered_app.id.trim();
+        let name = discovered_app.name.trim();
+        if id.is_empty() || name.is_empty() {
+            continue;
+        }
+        apps.insert(
+            id.to_ascii_lowercase(),
+            json!({
+                "id": id,
+                "name": name,
+                "displayName": name,
+                "path": discovered_app.path,
+                "isRunning": discovered_app.is_running,
+                "isFrontmost": discovered_app.is_frontmost,
+                "lastUsedAt": discovered_app.last_used_at,
+                "usageCount": discovered_app.usage_count,
+                "windows": [],
+            }),
+        );
+    }
     for window in visible_user_windows(windows) {
         let app_id = app_id(window);
         let window_value = window_json(window);
-        let app = apps.entry(app_id.clone()).or_insert_with(|| {
+        let app = apps.entry(app_id.to_ascii_lowercase()).or_insert_with(|| {
             json!({
                 "id": app_id,
                 "name": window.owner_name,
@@ -101,15 +142,61 @@ pub fn macos_list_apps_result(windows: &[MacOSWindowInfo]) -> Value {
                 "processId": window.owner_pid,
                 "platformId": window.owner_pid.to_string(),
                 "isRunning": true,
+                "isFrontmost": window.is_focused,
                 "windows": [],
             })
         });
+        app["name"] = json!(window.owner_name);
+        app["displayName"] = json!(window.owner_name);
+        app["processId"] = json!(window.owner_pid);
+        app["platformId"] = json!(window.owner_pid.to_string());
+        app["isRunning"] = json!(true);
+        if window.is_focused {
+            app["isFrontmost"] = json!(true);
+        }
         app["windows"]
             .as_array_mut()
             .expect("app windows is initialized as an array")
             .push(window_value);
     }
-    json!({ "status": "ok", "apps": apps.into_values().collect::<Vec<_>>() })
+    let mut values = apps.into_values().collect::<Vec<_>>();
+    values.sort_by(compare_macos_apps);
+    json!({ "status": "ok", "apps": values })
+}
+
+fn compare_macos_apps(left: &Value, right: &Value) -> std::cmp::Ordering {
+    right["isFrontmost"]
+        .as_bool()
+        .unwrap_or(false)
+        .cmp(&left["isFrontmost"].as_bool().unwrap_or(false))
+        .then_with(|| {
+            right["isRunning"]
+                .as_bool()
+                .unwrap_or(false)
+                .cmp(&left["isRunning"].as_bool().unwrap_or(false))
+        })
+        .then_with(|| {
+            right["lastUsedAt"]
+                .as_u64()
+                .cmp(&left["lastUsedAt"].as_u64())
+        })
+        .then_with(|| {
+            right["usageCount"]
+                .as_u64()
+                .cmp(&left["usageCount"].as_u64())
+        })
+        .then_with(|| {
+            left["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .cmp(
+                    &right["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase(),
+                )
+        })
 }
 
 pub fn macos_get_window_result(window: Option<MacOSWindowInfo>) -> Value {

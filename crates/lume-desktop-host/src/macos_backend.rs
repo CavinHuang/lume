@@ -10,15 +10,16 @@ use crate::{
         macos_current_context_result_with_related, macos_get_window_result,
         macos_get_window_state_result_with_related, macos_global_pointer_fallback_enabled_from,
         macos_integral_scroll_page_count, macos_key_chord, macos_likely_containing_row_action,
-        macos_likely_synthetic_side_action, macos_list_apps_result, macos_list_windows_result,
-        macos_matching_secondary_action, macos_non_sensitive_selected_text, macos_png_data_url,
-        macos_pointer_input_mode, macos_pointer_requires_activation, macos_preferred_click_actions,
+        macos_likely_synthetic_side_action, macos_list_apps_result_with_discovered,
+        macos_list_windows_result, macos_matching_secondary_action,
+        macos_non_sensitive_selected_text, macos_png_data_url, macos_pointer_input_mode,
+        macos_pointer_requires_activation, macos_preferred_click_actions,
         macos_related_transient_windows, macos_resolve_action_point,
         macos_screen_capture_helper_path, macos_scroll_action_name, macos_scroll_wheel_deltas,
         macos_set_value_attribute_is_settable, macos_should_prefer_containing_web_row,
         macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
         macos_visible_pointer_mode, macos_visible_pointer_motion_points,
-        macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
+        macos_wait_for_state_result, MacOSDiscoveredApp, MacOSElementInfo, MacOSWindowInfo,
         MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV, MACOS_LUME_VISUAL_POINTER_ENV,
         MACOS_NON_SETTABLE_SET_VALUE_ERROR, MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
@@ -47,6 +48,17 @@ pub struct MacOSDesktopBackend;
 
 impl DesktopBackend for MacOSDesktopBackend {
     fn invoke(&self, method: &str, params: &Value) -> Result<Value> {
+        if method == "list_apps" {
+            let windows = system_windows().unwrap_or_default();
+            let discovered = discover_macos_apps();
+            return Ok(macos_list_apps_result_with_discovered(
+                &windows,
+                &discovered,
+            ));
+        }
+        if method == "launch_app" {
+            return Ok(launch_app(params));
+        }
         let permissions = permission_state();
         if method == "diagnose_permissions" {
             return Ok(desktop_permission_diagnostics(
@@ -71,16 +83,12 @@ impl DesktopBackend for MacOSDesktopBackend {
         if method == "wait_for_state" {
             return wait_for_state(params);
         }
-        if method == "launch_app" {
-            return Ok(launch_app(params));
-        }
         let windows = system_windows()?;
         match method {
             "list_windows" => Ok(macos_list_windows_result(
                 &windows,
                 params.get("appId").and_then(Value::as_str),
             )),
-            "list_apps" => Ok(macos_list_apps_result(&windows)),
             "get_window" => {
                 let window = match params.get("windowId").and_then(Value::as_str) {
                     Some(window_id) => find_macos_window(&windows, window_id),
@@ -144,6 +152,23 @@ impl DesktopBackend for MacOSDesktopBackend {
             })),
         }
     }
+}
+
+fn discover_macos_apps() -> Vec<MacOSDiscoveredApp> {
+    let Ok(current_exe) = env::current_exe() else {
+        return Vec::new();
+    };
+    let Some(directory) = current_exe.parent() else {
+        return Vec::new();
+    };
+    let helper = directory.join("LumeComputerUseAppDiscovery");
+    let Ok(output) = Command::new(helper).output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    serde_json::from_slice(&output.stdout).unwrap_or_default()
 }
 
 fn launch_app(params: &Value) -> Value {

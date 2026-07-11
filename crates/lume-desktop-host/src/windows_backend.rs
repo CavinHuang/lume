@@ -1,5 +1,10 @@
 use std::{
-    collections::BTreeMap, ffi::c_void, mem::size_of, path::Path, process::Command, thread,
+    collections::{BTreeMap, HashSet},
+    ffi::c_void,
+    mem::size_of,
+    path::Path,
+    process::Command,
+    thread,
     time::Duration,
 };
 
@@ -198,9 +203,13 @@ fn list_windows(params: &Value) -> Result<Value> {
 
 fn list_apps() -> Result<Value> {
     let mut apps = BTreeMap::<String, Value>::new();
+    let mut running_names = HashSet::<String>::new();
     for hwnd in enumerate_windows()? {
         if let Some(window) = window_json(hwnd) {
             let app_id = window["appId"].as_str().unwrap_or_default().to_owned();
+            running_names.insert(normalized_app_name(
+                window["appName"].as_str().unwrap_or_default(),
+            ));
             let app = apps.entry(app_id.clone()).or_insert_with(|| {
                 json!({
                     "id": app_id,
@@ -209,16 +218,155 @@ fn list_apps() -> Result<Value> {
                     "processId": window["processId"],
                     "platformId": window["platformId"],
                     "isRunning": true,
+                    "isFrontmost": window["focused"],
                     "windows": [],
                 })
             });
+            if window["focused"] == true {
+                app["isFrontmost"] = json!(true);
+            }
             app["windows"]
                 .as_array_mut()
                 .expect("app windows is initialized as an array")
                 .push(window);
         }
     }
-    Ok(json!({ "status": "ok", "apps": apps.into_values().collect::<Vec<_>>() }))
+    for discovered in discover_start_apps() {
+        if running_names.contains(&normalized_app_name(&discovered.name)) {
+            continue;
+        }
+        let id = discovered.id;
+        let name = discovered.name;
+        apps.entry(id.to_ascii_lowercase()).or_insert_with(|| {
+            json!({
+                "id": id,
+                "name": name,
+                "displayName": name,
+                "path": format!("shell:AppsFolder\\{}", id),
+                "isRunning": false,
+                "isFrontmost": false,
+                "windows": [],
+            })
+        });
+    }
+    let mut values = apps.into_values().collect::<Vec<_>>();
+    values.sort_by(compare_windows_apps);
+    Ok(json!({ "status": "ok", "apps": values }))
+}
+
+#[derive(Debug, PartialEq)]
+struct WindowsDiscoveredApp {
+    id: String,
+    name: String,
+}
+
+fn discover_start_apps() -> Vec<WindowsDiscoveredApp> {
+    let output = Command::new("powershell.exe")
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress",
+        ])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    parse_start_apps_json(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_start_apps_json(input: &str) -> Vec<WindowsDiscoveredApp> {
+    let Ok(value) = serde_json::from_str::<Value>(input) else {
+        return Vec::new();
+    };
+    let candidates = match value {
+        Value::Array(values) => values,
+        Value::Object(_) => vec![value],
+        _ => return Vec::new(),
+    };
+    let mut seen = HashSet::<String>::new();
+    candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            let id = candidate.get("AppID")?.as_str()?.trim();
+            let name = candidate.get("Name")?.as_str()?.trim();
+            if id.is_empty() || name.is_empty() || !seen.insert(id.to_ascii_lowercase()) {
+                return None;
+            }
+            Some(WindowsDiscoveredApp {
+                id: id.to_owned(),
+                name: name.to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn normalized_app_name(name: &str) -> String {
+    name.trim()
+        .strip_suffix(".exe")
+        .unwrap_or(name.trim())
+        .to_ascii_lowercase()
+}
+
+fn compare_windows_apps(left: &Value, right: &Value) -> std::cmp::Ordering {
+    right["isFrontmost"]
+        .as_bool()
+        .unwrap_or(false)
+        .cmp(&left["isFrontmost"].as_bool().unwrap_or(false))
+        .then_with(|| {
+            right["isRunning"]
+                .as_bool()
+                .unwrap_or(false)
+                .cmp(&left["isRunning"].as_bool().unwrap_or(false))
+        })
+        .then_with(|| {
+            left["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .cmp(
+                    &right["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase(),
+                )
+        })
+}
+
+#[cfg(test)]
+mod app_discovery_tests {
+    use super::{compare_windows_apps, parse_start_apps_json};
+    use serde_json::json;
+
+    #[test]
+    fn parses_start_apps_and_deduplicates_ids() {
+        let apps = parse_start_apps_json(
+            r#"[{"Name":"微信","AppID":"Tencent.WeChat"},{"Name":"微信","AppID":"tencent.wechat"},{"Name":"","AppID":"missing.name"},{"Name":"Broken","AppID":""}]"#,
+        );
+
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].id, "Tencent.WeChat");
+        assert_eq!(apps[0].name, "微信");
+    }
+
+    #[test]
+    fn sorts_frontmost_then_running_then_installed_apps() {
+        let mut apps = vec![
+            json!({ "name": "Calculator", "isRunning": false, "isFrontmost": false }),
+            json!({ "name": "Word", "isRunning": true, "isFrontmost": false }),
+            json!({ "name": "WeChat", "isRunning": true, "isFrontmost": true }),
+        ];
+
+        apps.sort_by(compare_windows_apps);
+
+        assert_eq!(apps[0]["name"], "WeChat");
+        assert_eq!(apps[1]["name"], "Word");
+        assert_eq!(apps[2]["name"], "Calculator");
+    }
 }
 
 fn get_window(params: &Value) -> Result<Value> {
@@ -953,7 +1101,18 @@ fn launch_app(params: &Value) -> Result<Value> {
     if command.is_empty() {
         return Ok(json!({ "status": "failed", "message": "path or app is required" }));
     }
-    Command::new(command).spawn()?;
+    if command.starts_with("shell:")
+        || matches!(
+            Path::new(command)
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("lnk" | "url" | "appref-ms")
+        )
+    {
+        Command::new("explorer.exe").arg(command).spawn()?;
+    } else {
+        Command::new(command).spawn()?;
+    }
     Ok(json!({ "status": "ok", "message": format!("launched {}", Path::new(command).display()) }))
 }
 

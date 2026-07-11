@@ -18,6 +18,8 @@ const MAC_SCREEN_CAPTURE_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUseSc
 const MAC_SCREEN_CAPTURE_BINARY_NAME = "LumeComputerUseScreenCapture";
 const MAC_EVENT_MONITOR_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUseEventMonitor.swift");
 const MAC_EVENT_MONITOR_BINARY_NAME = "LumeComputerUseEventMonitor";
+const MAC_APP_DISCOVERY_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUseAppDiscovery.swift");
+const MAC_APP_DISCOVERY_BINARY_NAME = "LumeComputerUseAppDiscovery";
 const MAC_CURSOR_ASSET_NAME = "official-software-cursor-window-252.png";
 const MAC_CURSOR_ASSET_SOURCE = resolve(CRATE_DIR, "assets", MAC_CURSOR_ASSET_NAME);
 const MAC_BUNDLE_ICON_NAME = "LumeComputerUse.icns";
@@ -103,6 +105,7 @@ function writeMacAppBundle() {
   buildMacPermissionGuide(resolve(macosDir, MAC_PERMISSION_GUIDE_BINARY_NAME));
   buildMacScreenCapture(resolve(macosDir, MAC_SCREEN_CAPTURE_BINARY_NAME));
   buildMacEventMonitor(resolve(macosDir, MAC_EVENT_MONITOR_BINARY_NAME));
+  buildMacAppDiscovery(resolve(macosDir, MAC_APP_DISCOVERY_BINARY_NAME));
   signMacAppBundle(appRoot);
   console.error(`[desktop-host] wrote ${appRoot}`);
 }
@@ -211,6 +214,25 @@ function buildMacEventMonitor(outputPath) {
     "AppKit",
     "-framework",
     "ApplicationServices",
+  ], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+  chmodSync(outputPath, 0o755);
+}
+
+function buildMacAppDiscovery(outputPath) {
+  const result = spawnSync("xcrun", [
+    "swiftc",
+    "-parse-as-library",
+    MAC_APP_DISCOVERY_SOURCE,
+    "-o",
+    outputPath,
+    "-framework",
+    "AppKit",
+    "-framework",
+    "CoreServices",
   ], {
     cwd: REPO_ROOT,
     stdio: "inherit",

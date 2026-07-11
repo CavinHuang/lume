@@ -124,7 +124,7 @@ test('desktop-host resource build compiles @main macOS helpers as libraries', ()
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
   const swiftCompileBlocks = script.match(/spawnSync\("xcrun", \[\s*"swiftc",[\s\S]*?\], \{/g) ?? []
 
-  assert.equal(swiftCompileBlocks.length, 4)
+  assert.equal(swiftCompileBlocks.length, 5)
   for (const block of swiftCompileBlocks) {
     assert.match(block, /"-parse-as-library"/)
   }
@@ -173,6 +173,16 @@ test('desktop-host resource build packages the macOS context event monitor', () 
   assert.match(helper, /CGEvent\.tapCreate/)
   assert.match(helper, /interaction_changed/)
   assert.doesNotMatch(helper, /localizedName|bundleIdentifier|clipboard|kAXTitleAttribute|kAXValueAttribute|kAXSelectedTextAttribute/)
+})
+
+test('desktop-host resource build packages permission-free macOS app discovery', () => {
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+  const helperPath = resolve(REPO_ROOT, 'crates/lume-desktop-host/macos/LumeComputerUseAppDiscovery.swift')
+
+  assert.equal(existsSync(helperPath), true)
+  assert.match(script, /LumeComputerUseAppDiscovery\.swift/)
+  assert.match(script, /LumeComputerUseAppDiscovery/)
+  assert.match(readFileSync(helperPath, 'utf8'), /MDQueryCreate/)
 })
 
 test('desktop-host resource build prefers a stable macOS signing identity', () => {
