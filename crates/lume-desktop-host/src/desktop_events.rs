@@ -37,11 +37,11 @@ pub fn start_desktop_event_monitor() -> Result<DesktopEventMonitor> {
 }
 
 #[cfg(any(windows, test))]
-fn foreground_changed_event(occurred_at: u128) -> Value {
+fn context_changed_event(event_type: &str, occurred_at: u128) -> Value {
     json!({
         "method": "context.event",
         "params": {
-            "type": "foreground_changed",
+            "type": event_type,
             "occurredAt": occurred_at,
         },
     })
@@ -70,8 +70,11 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
         UI::{
             Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK},
             WindowsAndMessaging::{
-                GetMessageW, PeekMessageW, PostThreadMessageW, EVENT_SYSTEM_FOREGROUND, MSG,
-                PM_NOREMOVE, WINEVENT_OUTOFCONTEXT, WM_QUIT,
+                GetMessageW, PeekMessageW, PostThreadMessageW, EVENT_OBJECT_FOCUS,
+                EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
+                EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_SCROLLINGEND, EVENT_SYSTEM_SCROLLINGSTART, MSG, PM_NOREMOVE,
+                WINEVENT_OUTOFCONTEXT, WM_QUIT,
             },
         },
     };
@@ -81,7 +84,7 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
         SENDERS.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
-    unsafe extern "system" fn foreground_callback(
+    unsafe extern "system" fn event_callback(
         hook: HWINEVENTHOOK,
         event: u32,
         hwnd: HWND,
@@ -90,7 +93,18 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
         _event_thread: u32,
         _event_time: u32,
     ) {
-        if event != EVENT_SYSTEM_FOREGROUND || hwnd.0.is_null() {
+        let event_type = match event {
+            EVENT_SYSTEM_FOREGROUND => "foreground_changed",
+            EVENT_OBJECT_FOCUS => "focus_changed",
+            EVENT_OBJECT_SELECTION
+            | EVENT_OBJECT_SELECTIONADD
+            | EVENT_OBJECT_SELECTIONREMOVE
+            | EVENT_OBJECT_SELECTIONWITHIN => "selection_changed",
+            EVENT_OBJECT_VALUECHANGE => "value_changed",
+            EVENT_SYSTEM_SCROLLINGSTART | EVENT_SYSTEM_SCROLLINGEND => "scroll_changed",
+            _ => return,
+        };
+        if hwnd.0.is_null() {
             return;
         }
         if let Some(sender) = senders()
@@ -98,7 +112,7 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
             .unwrap_or_else(|error| error.into_inner())
             .get(&(hook.0 as usize))
         {
-            let _ = sender.send(foreground_changed_event(now_millis()));
+            let _ = sender.send(context_changed_event(event_type, now_millis()));
         }
     }
 
@@ -108,30 +122,47 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
         let thread_id = GetCurrentThreadId();
         let mut message = MSG::default();
         let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
-        let hook = SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
-            None,
-            Some(foreground_callback),
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT,
-        );
-        if hook.is_invalid() {
+        let ranges = [
+            (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND),
+            (EVENT_SYSTEM_SCROLLINGSTART, EVENT_SYSTEM_SCROLLINGEND),
+            (EVENT_OBJECT_FOCUS, EVENT_OBJECT_FOCUS),
+            (EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONWITHIN),
+            (EVENT_OBJECT_VALUECHANGE, EVENT_OBJECT_VALUECHANGE),
+        ];
+        let hooks = ranges
+            .into_iter()
+            .map(|(event_min, event_max)| {
+                SetWinEventHook(
+                    event_min,
+                    event_max,
+                    None,
+                    Some(event_callback),
+                    0,
+                    0,
+                    WINEVENT_OUTOFCONTEXT,
+                )
+            })
+            .collect::<Vec<_>>();
+        if hooks.iter().any(|hook| hook.is_invalid()) {
+            for hook in hooks.into_iter().filter(|hook| !hook.is_invalid()) {
+                let _ = UnhookWinEvent(hook);
+            }
             let _ = ready_sender.send(Err("SetWinEventHook failed".to_owned()));
             return;
         }
-        senders()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .insert(hook.0 as usize, sender);
+        {
+            let mut registered = senders().lock().unwrap_or_else(|error| error.into_inner());
+            for hook in &hooks {
+                registered.insert(hook.0 as usize, sender.clone());
+            }
+        }
         let _ = ready_sender.send(Ok(thread_id));
         while GetMessageW(&mut message, None, 0, 0).0 > 0 {}
-        senders()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(&(hook.0 as usize));
-        let _ = UnhookWinEvent(hook);
+        let mut registered = senders().lock().unwrap_or_else(|error| error.into_inner());
+        for hook in hooks {
+            registered.remove(&(hook.0 as usize));
+            let _ = UnhookWinEvent(hook);
+        }
     });
     let thread_id = ready_receiver
         .recv_timeout(Duration::from_secs(2))
@@ -202,14 +233,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn foreground_events_contain_no_desktop_content() {
-        assert_eq!(
-            foreground_changed_event(123),
-            json!({
-                "method": "context.event",
-                "params": { "type": "foreground_changed", "occurredAt": 123 },
-            }),
-        );
+    fn context_events_contain_no_desktop_content() {
+        for event_type in [
+            "foreground_changed",
+            "focus_changed",
+            "selection_changed",
+            "value_changed",
+            "scroll_changed",
+        ] {
+            assert_eq!(
+                context_changed_event(event_type, 123),
+                json!({
+                    "method": "context.event",
+                    "params": { "type": event_type, "occurredAt": 123 },
+                }),
+            );
+        }
     }
 
     #[cfg(windows)]

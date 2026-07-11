@@ -19,6 +19,13 @@ const PERMISSION_POLL_INTERVAL_MS = 250;
 const PERMISSION_POLL_ATTEMPTS = 240;
 const CONTEXT_EVENT_SETTLE_MS = 150;
 const CONTEXT_RECONCILE_INTERVAL_MS = 30_000;
+const CONTEXT_CHANGE_EVENT_TYPES = new Set([
+  "foreground_changed",
+  "focus_changed",
+  "selection_changed",
+  "value_changed",
+  "scroll_changed",
+]);
 
 interface DesktopContextStoreLike {
   put(snapshot: DesktopContextSnapshot): void;
@@ -110,7 +117,7 @@ export class DesktopContextService {
 
   handleHostNotification(method: string, params: unknown): void {
     const event = asRecord(params);
-    if (method !== "context.event" || event.type !== "foreground_changed") return;
+    if (method !== "context.event" || typeof event.type !== "string" || !CONTEXT_CHANGE_EVENT_TYPES.has(event.type)) return;
     if (!this.#settings.enabled || !this.#key || this.#suspensionReasons.size > 0) return;
     if (this.#eventCaptureTimer) clearTimeout(this.#eventCaptureTimer);
     this.#eventCaptureTimer = setTimeout(() => {

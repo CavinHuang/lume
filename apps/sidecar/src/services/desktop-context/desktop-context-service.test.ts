@@ -266,14 +266,18 @@ describe("DesktopContextService", () => {
     service.close();
   });
 
-  test("coalesces native foreground notifications into one settled capture", async () => {
+  test("coalesces native context notifications into one settled capture", async () => {
     const calls: string[] = [];
     const service = createService({ onInvokeHost: (method) => calls.push(method) });
     service.unlock(Buffer.alloc(32, 4));
 
     service.handleHostNotification("context.event", { type: "foreground_changed" });
-    service.handleHostNotification("context.event", { type: "foreground_changed" });
+    service.handleHostNotification("context.event", { type: "focus_changed" });
+    service.handleHostNotification("context.event", { type: "selection_changed" });
+    service.handleHostNotification("context.event", { type: "value_changed" });
+    service.handleHostNotification("context.event", { type: "scroll_changed" });
     service.handleHostNotification("ignored.event", { type: "foreground_changed" });
+    service.handleHostNotification("context.event", { type: "raw_key" });
     await Bun.sleep(180);
 
     expect(calls).toEqual(["current_context"]);
