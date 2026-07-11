@@ -53,6 +53,7 @@ export interface DesktopScreenshotRef {
   height: number;
   origin: { x: number; y: number };
   mimeType: string;
+  zIndex?: number;
   dataUrl?: string;
   captureMode?: "screen_capture_kit" | "windows_graphics_capture" | "print_window" | "screen_bitblt";
   captureFallbackReason?: string;

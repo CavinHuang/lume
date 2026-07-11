@@ -360,15 +360,56 @@ fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Valu
     if width == 0 || height == 0 {
         return Vec::new();
     }
+    let mut screenshots = vec![screenshot_ref(
+        hwnd,
+        screenshot_id(window),
+        RECT {
+            left: window["bounds"]["x"].as_i64().unwrap_or_default() as i32,
+            top: window["bounds"]["y"].as_i64().unwrap_or_default() as i32,
+            right: window["bounds"]["x"].as_i64().unwrap_or_default() as i32 + width,
+            bottom: window["bounds"]["y"].as_i64().unwrap_or_default() as i32 + height,
+        },
+        include_pixels,
+        0,
+    )];
+    let related = related_transient_windows(hwnd, 2);
+    let related_count = related.len();
+    screenshots.extend(
+        related
+            .into_iter()
+            .enumerate()
+            .map(|(index, (related, bounds))| {
+                screenshot_ref(
+                    related,
+                    transient_screenshot_id(related, &bounds),
+                    bounds,
+                    include_pixels,
+                    (related_count - index) as i64,
+                )
+            }),
+    );
+    screenshots
+}
+
+fn screenshot_ref(
+    hwnd: HWND,
+    id: String,
+    bounds: RECT,
+    include_pixels: bool,
+    z_index: i64,
+) -> Value {
+    let width = (bounds.right - bounds.left).max(0);
+    let height = (bounds.bottom - bounds.top).max(0);
     let mut screenshot = json!({
-        "id": screenshot_id(window),
+        "id": id,
         "width": width,
         "height": height,
         "origin": {
-            "x": window["bounds"]["x"],
-            "y": window["bounds"]["y"],
+            "x": bounds.left,
+            "y": bounds.top,
         },
         "mimeType": "image/png",
+        "zIndex": z_index,
     });
     if include_pixels {
         match capture_window_png_data_url(hwnd, width, height) {
@@ -386,7 +427,7 @@ fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Valu
             }
         }
     }
-    vec![screenshot]
+    screenshot
 }
 
 fn screenshot_id(window: &Value) -> String {
@@ -395,6 +436,86 @@ fn screenshot_id(window: &Value) -> String {
         window["id"].as_str().unwrap_or_default(),
         window_revision(window)
     )
+}
+
+fn transient_screenshot_id(hwnd: HWND, bounds: &RECT) -> String {
+    format!(
+        "screenshot:{}:{}:{}:{}:{}",
+        window_id(hwnd),
+        bounds.left,
+        bounds.top,
+        bounds.right - bounds.left,
+        bounds.bottom - bounds.top,
+    )
+}
+
+struct RelatedWindowSearch {
+    target: HWND,
+    target_process_id: u32,
+    target_bounds: RECT,
+    reached_target: bool,
+    limit: usize,
+    windows: Vec<(HWND, RECT)>,
+}
+
+fn related_transient_windows(target: HWND, limit: usize) -> Vec<(HWND, RECT)> {
+    let mut target_process_id = 0;
+    unsafe {
+        GetWindowThreadProcessId(target, Some(&mut target_process_id));
+    }
+    let mut target_bounds = RECT::default();
+    if target_process_id == 0 || unsafe { GetWindowRect(target, &mut target_bounds) }.is_err() {
+        return Vec::new();
+    }
+    let mut search = RelatedWindowSearch {
+        target,
+        target_process_id,
+        target_bounds,
+        reached_target: false,
+        limit,
+        windows: Vec::new(),
+    };
+    unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = &mut *(lparam.0 as *mut RelatedWindowSearch);
+        if hwnd == search.target {
+            search.reached_target = true;
+            return BOOL(1);
+        }
+        if search.reached_target
+            || search.windows.len() >= search.limit
+            || !IsWindowVisible(hwnd).as_bool()
+        {
+            return BOOL(1);
+        }
+        let mut process_id = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+        if process_id != search.target_process_id {
+            return BOOL(1);
+        }
+        let mut bounds = RECT::default();
+        if GetWindowRect(hwnd, &mut bounds).is_ok()
+            && bounds.right > bounds.left
+            && bounds.bottom > bounds.top
+            && rectangles_intersect(&bounds, &search.target_bounds)
+        {
+            search.windows.push((hwnd, bounds));
+        }
+        BOOL(1)
+    }
+    unsafe {
+        let _ = EnumWindows(
+            Some(callback),
+            LPARAM((&mut search as *mut RelatedWindowSearch) as isize),
+        );
+    }
+    search.windows
+}
+
+fn rectangles_intersect(left: &RECT, right: &RECT) -> bool {
+    left.left < right.right
+        && left.right > right.left
+        && left.top < right.bottom
+        && left.bottom > right.top
 }
 
 struct WindowCapture {
@@ -1748,6 +1869,31 @@ fn try_set_element_value(params: &Value, value: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selects_only_overlapping_bounds_for_related_window_screenshots() {
+        let target = RECT {
+            left: 100,
+            top: 100,
+            right: 900,
+            bottom: 700,
+        };
+        let popup = RECT {
+            left: 240,
+            top: 180,
+            right: 560,
+            bottom: 420,
+        };
+        let outside = RECT {
+            left: 1_200,
+            top: 100,
+            right: 1_500,
+            bottom: 400,
+        };
+
+        assert!(rectangles_intersect(&popup, &target));
+        assert!(!rectangles_intersect(&outside, &target));
+    }
 
     #[test]
     fn prefers_uia_then_targeted_window_messages_for_clicks() {

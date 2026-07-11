@@ -119,9 +119,17 @@ pub fn macos_get_window_result(window: Option<MacOSWindowInfo>) -> Value {
 }
 
 pub fn macos_current_context_result(window: &MacOSWindowInfo, include_screenshot: bool) -> Value {
+    macos_current_context_result_with_related(window, &[], include_screenshot)
+}
+
+pub fn macos_current_context_result_with_related(
+    window: &MacOSWindowInfo,
+    related_windows: &[MacOSWindowInfo],
+    include_screenshot: bool,
+) -> Value {
     let window_value = window_json(window);
     let visible_text = context_visible_text(window);
-    let screenshot = screenshot_ref(window, include_screenshot);
+    let screenshots = screenshot_refs(window, related_windows, include_screenshot);
     let mut snapshot = json!({
         "status": "ok",
         "snapshot": {
@@ -135,8 +143,8 @@ pub fn macos_current_context_result(window: &MacOSWindowInfo, include_screenshot
             "capturedAt": now_millis(),
             "eventType": "foreground_changed",
             "visibleText": visible_text,
-            "screenshotId": screenshot["id"],
-            "screenshots": [screenshot],
+            "screenshotId": screenshots[0]["id"],
+            "screenshots": screenshots,
             "untrusted": true,
         }
     });
@@ -147,6 +155,14 @@ pub fn macos_current_context_result(window: &MacOSWindowInfo, include_screenshot
 }
 
 pub fn macos_get_window_state_result(window: &MacOSWindowInfo, include_screenshot: bool) -> Value {
+    macos_get_window_state_result_with_related(window, &[], include_screenshot)
+}
+
+pub fn macos_get_window_state_result_with_related(
+    window: &MacOSWindowInfo,
+    related_windows: &[MacOSWindowInfo],
+    include_screenshot: bool,
+) -> Value {
     let tree = element_tree_json(&window.elements);
     let focused = focused_element(&tree).unwrap_or(Value::Null);
     let visible_text = context_visible_text(window);
@@ -155,7 +171,7 @@ pub fn macos_get_window_state_result(window: &MacOSWindowInfo, include_screensho
         "window": window_json(window),
         "revision": window_revision(window),
         "capturedAt": now_millis(),
-        "screenshots": [screenshot_ref(window, include_screenshot)],
+        "screenshots": screenshot_refs(window, related_windows, include_screenshot),
         "accessibility": {
             "tree": tree,
             "focusedElement": focused,
@@ -547,6 +563,38 @@ fn visible_user_windows(windows: &[MacOSWindowInfo]) -> Vec<&MacOSWindowInfo> {
         .collect()
 }
 
+pub fn macos_related_transient_windows(
+    windows: &[MacOSWindowInfo],
+    target: &MacOSWindowInfo,
+    limit: usize,
+) -> Vec<MacOSWindowInfo> {
+    let Some(target_index) = windows
+        .iter()
+        .position(|window| window.window_id == target.window_id)
+    else {
+        return Vec::new();
+    };
+    windows[..target_index]
+        .iter()
+        .filter(|window| {
+            window.owner_pid == target.owner_pid
+                && window.is_onscreen
+                && window.width > 0.0
+                && window.height > 0.0
+                && window_bounds_intersect(window, target)
+        })
+        .take(limit)
+        .cloned()
+        .collect()
+}
+
+fn window_bounds_intersect(left: &MacOSWindowInfo, right: &MacOSWindowInfo) -> bool {
+    left.x < right.x + right.width
+        && left.x + left.width > right.x
+        && left.y < right.y + right.height
+        && left.y + left.height > right.y
+}
+
 fn window_json(window: &MacOSWindowInfo) -> Value {
     json!({
         "id": window_id(window),
@@ -566,7 +614,20 @@ fn window_json(window: &MacOSWindowInfo) -> Value {
     })
 }
 
-fn screenshot_ref(window: &MacOSWindowInfo, include_pixels: bool) -> Value {
+fn screenshot_refs(
+    window: &MacOSWindowInfo,
+    related_windows: &[MacOSWindowInfo],
+    include_pixels: bool,
+) -> Vec<Value> {
+    let mut screenshots = vec![screenshot_ref(window, include_pixels, 0)];
+    let related_count = related_windows.len();
+    screenshots.extend(related_windows.iter().enumerate().map(|(index, related)| {
+        screenshot_ref(related, include_pixels, (related_count - index) as i64)
+    }));
+    screenshots
+}
+
+fn screenshot_ref(window: &MacOSWindowInfo, include_pixels: bool, z_index: i64) -> Value {
     let mut screenshot = json!({
         "id": screenshot_id(window),
         "width": rounded(window.width).max(0),
@@ -576,6 +637,7 @@ fn screenshot_ref(window: &MacOSWindowInfo, include_pixels: bool) -> Value {
             "y": rounded(window.y),
         },
         "mimeType": "image/png",
+        "zIndex": z_index,
     });
     if include_pixels {
         if let Some(data_url) = normalized_optional_text(window.screenshot_data_url.as_deref()) {

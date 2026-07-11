@@ -20,6 +20,11 @@ fn lists_windows_and_apps_with_stable_status_shapes() {
     let apps = backend.invoke("list_apps", &json!({})).unwrap();
     assert_eq!(apps["status"], "ok");
     assert!(apps["apps"].is_array());
+    assert!(apps["apps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|app| app["windows"].is_array()));
 }
 
 #[test]
@@ -60,6 +65,7 @@ fn get_window_state_returns_screenshot_metadata_without_pixels_by_default() {
     assert_eq!(result["status"], "ok");
     let screenshot = &result["screenshots"][0];
     assert_eq!(screenshot["mimeType"], "image/png");
+    assert_eq!(screenshot["zIndex"], 0);
     assert!(screenshot["width"].as_i64().unwrap_or_default() > 0);
     assert!(screenshot["height"].as_i64().unwrap_or_default() > 0);
     assert!(screenshot.get("dataUrl").is_none());

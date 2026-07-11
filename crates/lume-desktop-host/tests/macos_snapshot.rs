@@ -1,9 +1,10 @@
 use lume_desktop_host::macos_snapshot::{
     find_macos_window, first_visible_user_window, macos_current_context_result,
     macos_get_window_result, macos_get_window_state_result,
-    macos_global_pointer_fallback_enabled_from, macos_key_chord, macos_list_apps_result,
-    macos_list_windows_result, macos_matching_secondary_action, macos_pointer_input_mode,
-    macos_preferred_click_actions, macos_resolve_action_point,
+    macos_get_window_state_result_with_related, macos_global_pointer_fallback_enabled_from,
+    macos_key_chord, macos_list_apps_result, macos_list_windows_result,
+    macos_matching_secondary_action, macos_pointer_input_mode, macos_preferred_click_actions,
+    macos_related_transient_windows, macos_resolve_action_point,
     macos_set_value_attribute_is_settable, macos_text_target_is_sensitive,
     macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
     macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSElementInfo,
@@ -236,6 +237,59 @@ fn includes_macos_screenshot_error_only_when_pixels_are_requested() {
         with_pixels["screenshots"][0]["error"],
         "window capture returned null"
     );
+}
+
+#[test]
+fn includes_overlapping_frontmost_app_windows_as_bounded_screenshots() {
+    let target = sample_windows()[0].clone();
+    let mut popup = target.clone();
+    popup.window_id = 44;
+    popup.title = String::new();
+    popup.x = 240.0;
+    popup.y = 160.0;
+    popup.width = 320.0;
+    popup.height = 240.0;
+    popup.layer = 3;
+    popup.is_focused = false;
+    popup.screenshot_data_url = Some("data:image/png;base64,iVBORw0KGgo=".into());
+    let windows = vec![popup, target.clone()];
+
+    let related = macos_related_transient_windows(&windows, &target, 2);
+    let state = macos_get_window_state_result_with_related(&target, &related, true);
+
+    assert_eq!(related.len(), 1);
+    assert_eq!(related[0].window_id, 44);
+    assert_eq!(state["screenshots"].as_array().unwrap().len(), 2);
+    assert!(state["screenshots"][0]["id"]
+        .as_str()
+        .unwrap()
+        .contains("macos:42"));
+    assert!(state["screenshots"][1]["id"]
+        .as_str()
+        .unwrap()
+        .contains("macos:44"));
+    assert_eq!(state["screenshots"][0]["zIndex"], 0);
+    assert_eq!(state["screenshots"][1]["zIndex"], 1);
+    assert_eq!(
+        state["screenshots"][1]["origin"],
+        json!({ "x": 240, "y": 160 })
+    );
+}
+
+#[test]
+fn excludes_background_non_overlapping_and_other_app_windows_from_related_screenshots() {
+    let target = sample_windows()[0].clone();
+    let mut background = target.clone();
+    background.window_id = 45;
+    let mut non_overlapping = target.clone();
+    non_overlapping.window_id = 46;
+    non_overlapping.x = 2_000.0;
+    let mut other_app = target.clone();
+    other_app.window_id = 47;
+    other_app.owner_pid = 9999;
+    let windows = vec![non_overlapping, other_app, target.clone(), background];
+
+    assert!(macos_related_transient_windows(&windows, &target, 2).is_empty());
 }
 
 #[test]

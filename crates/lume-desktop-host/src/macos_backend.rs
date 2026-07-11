@@ -7,12 +7,13 @@ use crate::{
     macos_snapshot::{
         find_macos_window, first_visible_user_window, macos_click_action_points,
         macos_click_candidate_contains_point, macos_click_event_codes,
-        macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
-        macos_global_pointer_fallback_enabled_from, macos_integral_scroll_page_count,
-        macos_key_chord, macos_likely_containing_row_action, macos_likely_synthetic_side_action,
-        macos_list_apps_result, macos_list_windows_result, macos_matching_secondary_action,
-        macos_png_data_url, macos_pointer_input_mode, macos_pointer_requires_activation,
-        macos_preferred_click_actions, macos_resolve_action_point,
+        macos_current_context_result_with_related, macos_get_window_result,
+        macos_get_window_state_result_with_related, macos_global_pointer_fallback_enabled_from,
+        macos_integral_scroll_page_count, macos_key_chord, macos_likely_containing_row_action,
+        macos_likely_synthetic_side_action, macos_list_apps_result, macos_list_windows_result,
+        macos_matching_secondary_action, macos_png_data_url, macos_pointer_input_mode,
+        macos_pointer_requires_activation, macos_preferred_click_actions,
+        macos_related_transient_windows, macos_resolve_action_point,
         macos_screen_capture_helper_path, macos_scroll_action_name, macos_scroll_wheel_deltas,
         macos_set_value_attribute_is_settable, macos_should_prefer_containing_web_row,
         macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
@@ -91,11 +92,19 @@ impl DesktopBackend for MacOSDesktopBackend {
                 let Some(mut window) = first_visible_user_window(&windows) else {
                     return Ok(stale_target());
                 };
+                let mut related = macos_related_transient_windows(&windows, &window, 2);
                 enrich_accessibility_text(&mut window);
                 let include_screenshot =
                     params.get("includeScreenshot").and_then(Value::as_bool) == Some(true);
                 capture_screenshot_if_requested(&mut window, include_screenshot);
-                Ok(macos_current_context_result(&window, include_screenshot))
+                for related_window in &mut related {
+                    capture_screenshot_if_requested(related_window, include_screenshot);
+                }
+                Ok(macos_current_context_result_with_related(
+                    &window,
+                    &related,
+                    include_screenshot,
+                ))
             }
             "get_window_state" => {
                 let window = match params.get("windowId").and_then(Value::as_str) {
@@ -105,12 +114,20 @@ impl DesktopBackend for MacOSDesktopBackend {
                 let Some(window) = window else {
                     return Ok(stale_target());
                 };
+                let mut related = macos_related_transient_windows(&windows, &window, 2);
                 let mut window = window;
                 enrich_accessibility_text(&mut window);
                 let include_screenshot =
                     params.get("includeScreenshot").and_then(Value::as_bool) == Some(true);
                 capture_screenshot_if_requested(&mut window, include_screenshot);
-                Ok(macos_get_window_state_result(&window, include_screenshot))
+                for related_window in &mut related {
+                    capture_screenshot_if_requested(related_window, include_screenshot);
+                }
+                Ok(macos_get_window_state_result_with_related(
+                    &window,
+                    &related,
+                    include_screenshot,
+                ))
             }
             "activate_window" => activate_window(params, &windows),
             "move_pointer" => move_pointer(params, &windows),
