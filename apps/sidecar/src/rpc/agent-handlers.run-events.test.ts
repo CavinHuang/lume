@@ -38,8 +38,8 @@ mock.module("../services/agent/agent-service", () => ({
     options?.onExecutionStarted?.();
     for (const event of mockRuntimeEvents) {
       emit.onRuntimeEvent?.({
-        ...(event as Record<string, unknown>),
-        threadId: (input as { threadId?: string }).threadId ?? "thread-1"
+        threadId: (input as { threadId?: string }).threadId ?? "thread-1",
+        ...(event as Record<string, unknown>)
       });
     }
     emit.onComplete(mockCompletePayload);
@@ -47,6 +47,11 @@ mock.module("../services/agent/agent-service", () => ({
   },
   sendAgentMessage: async () => undefined,
   generateAgentTitle: async () => undefined,
+  generateWelcomeSuggestions: async () => [],
+  listAgentMessageQueue: () => [],
+  promoteQueuedAgentMessageToGuidance: () => undefined,
+  removeQueuedAgentMessage: () => undefined,
+  reorderAgentMessageQueue: () => undefined,
   stopAgent: async () => undefined,
   submitAgentToolPermission: () => false,
   submitAskUserQuestionAnswers: () => false
@@ -814,6 +819,34 @@ describe("agent-handlers run events", () => {
           createdAt: "2026-05-11T00:00:00.000Z",
           delta: "hello"
         }
+      }
+    });
+  });
+
+  test("routes child runtime notifications by the event thread instead of the parent emitter", async () => {
+    mockRuntimeEvents.splice(0, mockRuntimeEvents.length, {
+      id: "child-runtime-1",
+      type: "assistant.delta",
+      threadId: "child-thread",
+      runId: "child-attempt-1",
+      createdAt: "2026-05-11T00:00:00.000Z",
+      delta: "child output"
+    });
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    const { createAgentHandlers } = await import("./agent-handlers");
+    const handlers = createAgentHandlers({
+      writeNotification: (method, params) => notifications.push({ method, params }),
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined
+    });
+
+    await handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!({ threadId: "parent-thread", userMessage: "hi" });
+
+    expect(notifications).toContainEqual({
+      method: AGENT_IPC_CHANNELS.RUNTIME_EVENT,
+      params: {
+        threadId: "child-thread",
+        event: expect.objectContaining({ threadId: "child-thread", runId: "child-attempt-1" })
       }
     });
   });

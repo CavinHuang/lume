@@ -1148,6 +1148,14 @@ export class QueryEngine {
       }
 
       if (toolUseBlocks.length === 0) {
+        const feedback = await this.config.completionGuard?.()
+        if (feedback) {
+          this.messages.push({
+            role: 'user',
+            content: feedback,
+          })
+          continue
+        }
         completedNaturally = true
         break // No tool calls - agent is done
       }
@@ -1329,19 +1337,20 @@ export class QueryEngine {
     }
 
     // Partition into concurrent (read-only or concurrency-safe) and serial (mutations)
-    const concurrent: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
-    const serial: Array<{ block: ToolUseBlock; tool?: ToolDefinition }> = []
+    const concurrent: Array<{ index: number; block: ToolUseBlock; tool?: ToolDefinition }> = []
+    const serial: Array<{ index: number; block: ToolUseBlock; tool?: ToolDefinition }> = []
 
-    for (const block of toolUseBlocks) {
+    for (const [index, block] of toolUseBlocks.entries()) {
       const tool = this.config.tools.find((t) => t.name === block.name)
       if (tool?.isReadOnly?.() || tool?.isConcurrencySafe?.()) {
-        concurrent.push({ block, tool })
+        concurrent.push({ index, block, tool })
       } else {
-        serial.push({ block, tool })
+        serial.push({ index, block, tool })
       }
     }
 
-    const results: (ToolResult & { tool_name?: string })[] = []
+    const results: Array<(ToolResult & { tool_name?: string }) | undefined> =
+      new Array(toolUseBlocks.length)
 
     // Execute concurrent tools (batched by MAX_CONCURRENCY)
     for (let i = 0; i < concurrent.length; i += MAX_CONCURRENCY) {
@@ -1351,8 +1360,11 @@ export class QueryEngine {
           this.executeSingleTool(item.block, item.tool, context),
         ),
       )
-      for (const batchResult of batchResults) {
-        results.push(batchResult.result)
+      for (const [batchIndex, batchResult] of batchResults.entries()) {
+        const item = batch[batchIndex]
+        if (item) {
+          results[item.index] = batchResult.result
+        }
         events.push(...batchResult.events)
         toolsUsed.push(...batchResult.toolsUsed)
       }
@@ -1361,12 +1373,24 @@ export class QueryEngine {
     // Execute serial tools sequentially
     for (const item of serial) {
       const result = await this.executeSingleTool(item.block, item.tool, context)
-      results.push(result.result)
+      results[item.index] = result.result
       events.push(...result.events)
       toolsUsed.push(...result.toolsUsed)
     }
 
-    return { results, events, toolsUsed }
+    return {
+      results: toolUseBlocks.map((block, index) =>
+        results[index] ?? {
+          type: 'tool_result' as const,
+          tool_use_id: block.id,
+          content: `Error: Tool "${block.name}" did not return a result`,
+          is_error: true,
+          tool_name: block.name,
+        },
+      ),
+      events,
+      toolsUsed,
+    }
   }
 
   /**

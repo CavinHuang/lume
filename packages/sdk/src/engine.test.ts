@@ -73,6 +73,105 @@ describe("QueryEngine turn limits", () => {
       num_turns: 1
     })
   })
+
+  test("completion guard feeds back into the loop before natural completion", async () => {
+    let guardCalls = 0
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        {
+          content: [{ type: "text", text: "initial answer" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "text", text: "completed after guard" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      completionGuard: async () => {
+        guardCalls += 1
+        return guardCalls === 1 ? "A task is still awaiting review. Resolve it before finishing." : undefined
+      }
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false,
+      num_turns: 2
+    })
+    expect(guardCalls).toBe(2)
+    expect(engine.getMessages()).toContainEqual(expect.objectContaining({
+      role: "user",
+      content: "A task is still awaiting review. Resolve it before finishing."
+    }))
+  })
+
+  test("preserves provider tool-call result order across concurrent and serial tools", async () => {
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        {
+          content: [
+            { type: "tool_use", id: "serial-1", name: "Serial", input: {} },
+            { type: "tool_use", id: "concurrent-1", name: "Concurrent", input: {} }
+          ],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [
+        {
+          name: "Serial",
+          description: "serial tool",
+          inputSchema: { type: "object", properties: {} },
+          async call() {
+            return { type: "tool_result" as const, tool_use_id: "", content: "serial result" }
+          }
+        },
+        {
+          name: "Concurrent",
+          description: "concurrent tool",
+          inputSchema: { type: "object", properties: {} },
+          isConcurrencySafe: () => true,
+          async call() {
+            return { type: "tool_result" as const, tool_use_id: "", content: "concurrent result" }
+          }
+        }
+      ],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await collectResult(engine)
+
+    const toolResultMessage = engine.getMessages().find((message) =>
+      message.role === "user" &&
+      Array.isArray(message.content) &&
+      message.content.every((block: any) => block.type === "tool_result")
+    )
+    expect(toolResultMessage?.content).toEqual([
+      expect.objectContaining({ tool_use_id: "serial-1", content: "serial result" }),
+      expect.objectContaining({ tool_use_id: "concurrent-1", content: "concurrent result" })
+    ])
+  })
 })
 
 describe("QueryEngine context controller", () => {

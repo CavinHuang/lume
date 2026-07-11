@@ -1,34 +1,13 @@
-import { describe, expect, mock, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-
-mock.module('@ant-design/x-markdown', () => ({
-  XMarkdown: ({
-    children,
-    className,
-    rootClassName,
-  }: {
-    children: React.ReactNode
-    className?: string
-    rootClassName?: string
-  }) => {
-    return (
-      <section data-x-markdown="true" data-root-class={rootClassName ?? ''} className={className}>
-        {children}
-      </section>
-    )
-  },
-}))
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 const {
-  SubagentMarkdown,
-  SubagentResultCard,
   SubagentHeader,
-  isSubagentOutputTruncated,
   resolveSubagentHeaderAvatarSrc,
 } = await import('./SubagentInlinePanel') as typeof import('./SubagentInlinePanel') & {
-  SubagentMarkdown: React.ComponentType<{ output: string }>
-  SubagentResultCard: React.ComponentType<{ output: string }>
   SubagentHeader: React.ComponentType<{
     label: string
     agentType: string
@@ -41,43 +20,19 @@ const {
     avatarSrc?: string
     onClick: () => void
   }>
-  isSubagentOutputTruncated: (output: string) => boolean
   resolveSubagentHeaderAvatarSrc: (agentType: string) => string | undefined
 }
 
-describe('SubagentInlinePanel markdown output', () => {
-  test('renders completed subagent output through the Markdown renderer', () => {
-    const markup = renderToStaticMarkup(
-      <SubagentMarkdown output={'**完成**\n\n| 项目 | 状态 |\n|---|---|\n| PO-1 | OK |'} />,
-    )
+describe('SubagentInlinePanel conversation output', () => {
+  test('reuses the canonical runtime conversation projection and renderer', () => {
+    const source = readFileSync(join(process.cwd(), 'apps/web/src/components/agent/SubagentInlinePanel.tsx'), 'utf8')
 
-    expect(markup).toContain('data-x-markdown="true"')
-    expect(markup).toContain('data-root-class="x-markdown-light"')
-    expect(markup).toContain('agent-message-markdown')
-    expect(markup).toContain('| 项目 | 状态 |')
-  })
-
-  test('frames completed subagent output as a copyable result', () => {
-    const markup = renderToStaticMarkup(
-      <SubagentResultCard output={'## 完成\n\n这里是交付结果。'} />,
-    )
-
-    expect(markup).toContain('结果已完成')
-    expect(markup).toContain('复制结果')
-    expect(markup).toContain('data-x-markdown="true"')
-    expect(markup).toContain('这里是交付结果。')
-  })
-
-  test('warns when completed subagent output looks truncated', () => {
-    const output = '前半段\n...(truncated)...\n后半段'
-
-    expect(isSubagentOutputTruncated(output)).toBe(true)
-    expect(isSubagentOutputTruncated('完整结果')).toBe(false)
-
-    const markup = renderToStaticMarkup(<SubagentResultCard output={output} />)
-
-    expect(markup).toContain('data-subagent-output-truncated="true"')
-    expect(markup).toContain('结果可能被截断')
+    expect(source).toContain('applyRuntimeEventsIncremental')
+    expect(source).toContain('RuntimeEventContentBlock')
+    expect(source).toContain('showAssistantAvatar={false}')
+    expect(source).toContain('selectSubagentRunEvents')
+    expect(source).not.toContain('SubagentLiveOutput')
+    expect(source).not.toContain('publicText')
   })
 
   test('renders a known agent avatar in the subagent header', () => {

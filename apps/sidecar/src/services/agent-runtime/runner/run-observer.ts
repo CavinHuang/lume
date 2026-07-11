@@ -44,6 +44,7 @@ export class LumeRunObserver {
   private readonly toolSpanIds = new Map<string, string>();
   private readonly subagentSpanIds = new Map<string, string>();
   private readonly subagentParentToolCallIds = new Map<string, string>();
+  private readonly nextRuntimeSequenceByRun = new Map<string, number>();
   private compactionSpanId?: string;
   private emittedModelStreamText = false;
   private emittedModelStreamThinking = false;
@@ -136,7 +137,7 @@ export class LumeRunObserver {
         await this.stateStore.appendItem(this.state.runId, item);
         if (item.type === "assistant_message" && (this.emittedModelStreamText || this.emittedModelStreamThinking)) {
           const finalRuntimeEvent = projectAssistantMessageFinalRuntimeEvent(this.state, item);
-          if (finalRuntimeEvent) emitRuntimeEvent?.(finalRuntimeEvent);
+          if (finalRuntimeEvent) this.emitRuntimeEvent(emitRuntimeEvent, finalRuntimeEvent);
           continue;
         }
         const runtimeEvents = projectRunItemToRuntimeEvents(this.state, item, {
@@ -151,7 +152,7 @@ export class LumeRunObserver {
           if (event.type === "assistant.thinking_delta" && item.type === "model_stream") {
             this.emittedModelStreamThinking = true;
           }
-          emitRuntimeEvent?.(event);
+          this.emitRuntimeEvent(emitRuntimeEvent, event);
         }
       }
       await this.recordSdkMessageTrace(message);
@@ -196,7 +197,7 @@ export class LumeRunObserver {
         includeAssistantThinking: true,
         includeModelStreamText: true
       })) {
-        emitRuntimeEvent?.(event);
+        this.emitRuntimeEvent(emitRuntimeEvent, event);
       }
     });
   }
@@ -220,7 +221,7 @@ export class LumeRunObserver {
         includeAssistantThinking: true,
         includeModelStreamText: true
       })) {
-        emitRuntimeEvent?.(event);
+        this.emitRuntimeEvent(emitRuntimeEvent, event);
       }
     });
   }
@@ -384,6 +385,16 @@ export class LumeRunObserver {
 
   private enqueue(task: () => Promise<void>): void {
     this.queue = this.queue.then(task, task);
+  }
+
+  private emitRuntimeEvent(
+    emit: ((event: LumeRuntimeEvent) => void) | undefined,
+    event: LumeRuntimeEvent
+  ): void {
+    if (!emit) return;
+    const sequence = this.nextRuntimeSequenceByRun.get(event.runId) ?? 0;
+    this.nextRuntimeSequenceByRun.set(event.runId, sequence + 1);
+    emit({ ...event, sequence });
   }
 
   private rememberSubagentParentToolCall(message: SDKMessage & Record<string, unknown>): void {

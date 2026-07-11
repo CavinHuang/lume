@@ -30,14 +30,17 @@ import {
   defineTool,
   finalizeSubagentOutputFromState,
   summarizeSubagentAssistantEvent,
-  type ToolDefinition,
-  annotateSubagentStreamingEvent
+  type ToolDefinition
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
   AgentBrowserAuthRequest,
   AgentSendInput,
-  AgentToolPermissionRequest
+  AgentToolPermissionRequest,
+  LumeRuntimeEvent,
+  SubagentTaskReport,
+  SubagentTask,
+  SubagentTaskFeedback
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -63,6 +66,8 @@ import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
+import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
+import { buildSubagentWorkContext, resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
 import { announceSubagentCompletion } from "../../agent/subagents/subagent-announce-service";
 import { createAgentThreadWithModelRef, getAgentThreadMeta, updateAgentThreadMeta } from "../../agent/agent-thread-manager";
 import {
@@ -134,12 +139,17 @@ export interface CreateRuntimeCoreSessionInput {
   channelId?: string;
   threadType?: AgentSendInput["threadType"];
   subagentType?: string;
+  subagentRunId?: string;
+  subagentId?: string;
+  subagentTaskId?: string;
+  subagentAttempt?: number;
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
   messageAttachments?: AgentSendInput["messageAttachments"];
   attachedDirectories?: string[];
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
@@ -149,6 +159,25 @@ export interface CreateRuntimeCoreSessionInput {
   workflowHooks?: LumeWorkflowHookRuntimeLike;
   applyWorkflowHookEffects?: (result: LumeWorkflowHookExecutionResult) => Promise<void> | void;
   trace?: ContextAssemblyInput["trace"];
+}
+
+interface BoundSubagentIdentity {
+  runId: string;
+  taskId: string;
+}
+
+function resolveBoundSubagentIdentity(
+  input: Pick<CreateRuntimeCoreSessionInput, "threadType" | "subagentRunId" | "subagentTaskId">
+): BoundSubagentIdentity | undefined {
+  const runId = input.subagentRunId?.trim() ?? "";
+  const taskId = input.subagentTaskId?.trim() ?? "";
+  if (Boolean(runId) !== Boolean(taskId)) {
+    throw new Error("subagentRunId 与 subagentTaskId 必须同时提供");
+  }
+  if (input.threadType !== "subagent" || !runId || !taskId) {
+    return undefined;
+  }
+  return { runId, taskId };
 }
 
 export interface RuntimeCoreSessionLike {
@@ -324,12 +353,16 @@ async function runSidecarSubagent(input: {
   deliveryThreadId: string;
   parentToolUseId?: string;
   subagentType?: string;
+  subagentId?: string;
+  subagentTaskId?: string;
+  subagentAttempt?: number;
   modelOverride: ResolvedSubagentModelOverride;
   channelId?: string;
   workspaceId?: string;
   chatType?: AgentSendInput["chatType"];
   messageMetadata?: Record<string, unknown>;
   permissionMode?: AgentSendInput["permissionMode"];
+  onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
@@ -337,6 +370,7 @@ async function runSidecarSubagent(input: {
   result: ToolResult;
   status: "completed" | "errored" | "aborted" | "timed_out";
   output?: string;
+  completionSummary?: string;
   error?: string;
 }> {
   const prompt = typeof input.toolInput.prompt === "string" ? input.toolInput.prompt : "";
@@ -359,7 +393,6 @@ async function runSidecarSubagent(input: {
   }
 
   const { runAgentRuntime } = await import("./attempt");
-  const forwardEvent = input.context.emitEvent ?? (() => undefined);
   const childPermissionMode = (
     typeof input.toolInput.mode === "string"
       ? input.toolInput.mode
@@ -388,6 +421,9 @@ async function runSidecarSubagent(input: {
       sessionId: input.childThreadId,
       deliveryThreadId: input.deliveryThreadId,
       subagentRunId: input.runId,
+      subagentId: input.subagentId,
+      subagentTaskId: input.subagentTaskId,
+      subagentAttempt: input.subagentAttempt,
       ...(subagentType ? { subagentType } : {}),
       ...(input.modelOverride.modelRef ? { modelRef: input.modelOverride.modelRef } : {}),
       channelId: resolvedChannelId,
@@ -427,20 +463,13 @@ async function runSidecarSubagent(input: {
         }
       }
 
-      const taggedEvent = annotateSubagentStreamingEvent(message as SDKMessage, {
-        subagentRunId: input.runId,
-        parentSessionId: input.deliveryThreadId,
-        parentToolUseId: input.parentToolUseId
-      });
-      if (taggedEvent) {
-        forwardEvent(taggedEvent);
-      }
     },
     onComplete: () => undefined,
     onError: (error) => {
       subagentStatus = "errored";
       subagentErrorMessage = error;
     },
+    onRuntimeEvent: input.onRuntimeEvent,
     onAskUserQuestion: input.emitAskUserQuestion ?? (() => undefined),
     onBrowserAuthRequest: input.emitBrowserAuthRequest ?? (() => undefined),
     onToolPermissionRequest: input.emitToolPermissionRequest ?? (() => undefined)
@@ -467,6 +496,7 @@ async function runSidecarSubagent(input: {
   return {
     status: subagentStatus,
     output: finalized.output,
+    ...(finalized.lastAssistantMessage ? { completionSummary: finalized.lastAssistantMessage } : {}),
     ...(subagentErrorMessage ? { error: subagentErrorMessage } : {}),
     result: {
       type: "tool_result",
@@ -545,6 +575,65 @@ function resolveForegroundSubagentTimeoutMs(): number {
     }
   }
   return DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS;
+}
+
+/** A child Run receives IDs from the coordinator; the model cannot redirect a report. */
+function createBoundSubagentTaskReportTool(input: { runId: string; taskId: string }): ToolDefinition {
+  return defineTool({
+    name: "TaskReport",
+    description: "Submit the current subagent task result. This is a submission for main-agent review, not acceptance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["submitted", "failed", "blocked"] },
+        summary: { type: "string" },
+        completedWork: { type: "array", items: { type: "string" } },
+        remainingWork: { type: "array", items: { type: "string" } },
+        artifacts: { type: "array", items: { type: "object", properties: { path: { type: "string" }, description: { type: "string" } }, required: ["path"] } },
+        verification: { type: "array", items: { type: "object", properties: { command: { type: "string" }, result: { type: "string" }, passed: { type: "boolean" } }, required: ["result", "passed"] } },
+        blockers: { type: "array", items: { type: "string" } }
+      },
+      required: ["status", "summary"]
+    },
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    async call(raw) {
+      const report = normalizeBoundSubagentReport(raw)
+      getSubagentCoordinator().submitReport({ runId: input.runId, report })
+      return { data: { ok: true, taskId: input.taskId, runId: input.runId, status: report.status } }
+    }
+  })
+}
+
+function normalizeBoundSubagentReport(raw: unknown): SubagentTaskReport {
+  const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
+  const status = value.status
+  const summary = typeof value.summary === "string" ? value.summary.trim() : ""
+  if ((status !== "submitted" && status !== "failed" && status !== "blocked") || !summary) {
+    throw new Error("TaskReport 需要 status(submitted|failed|blocked) 和非空 summary")
+  }
+  const strings = (name: string) => Array.isArray(value[name]) ? value[name].filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()) : undefined
+  const artifacts = Array.isArray(value.artifacts) ? value.artifacts.flatMap((item) => {
+    const record = item && typeof item === "object" ? item as Record<string, unknown> : {}
+    return typeof record.path === "string" && record.path.trim() ? [{ path: record.path.trim(), ...(typeof record.description === "string" && record.description.trim() ? { description: record.description.trim() } : {}) }] : []
+  }) : undefined
+  const verification = Array.isArray(value.verification) ? value.verification.flatMap((item) => {
+    const record = item && typeof item === "object" ? item as Record<string, unknown> : {}
+    return typeof record.result === "string" && typeof record.passed === "boolean" ? [{ result: record.result, passed: record.passed, ...(typeof record.command === "string" && record.command.trim() ? { command: record.command.trim() } : {}) }] : []
+  }) : undefined
+  return { status, summary, ...(strings("completedWork")?.length ? { completedWork: strings("completedWork") } : {}), ...(strings("remainingWork")?.length ? { remainingWork: strings("remainingWork") } : {}), ...(artifacts?.length ? { artifacts } : {}), ...(verification?.length ? { verification } : {}), ...(strings("blockers")?.length ? { blockers: strings("blockers") } : {}) }
+}
+
+function buildSubagentTaskInstruction(task: SubagentTask, feedback: SubagentTaskFeedback[]): string {
+  const latestFeedback = feedback.at(-1)?.instruction
+  return [
+    "## Bound task",
+    task.objective,
+    task.acceptanceCriteria.length ? `Acceptance criteria:\n${task.acceptanceCriteria.map((item) => `- ${item}`).join("\n")}` : undefined,
+    task.expectedArtifacts?.length ? `Expected artifacts:\n${task.expectedArtifacts.map((item) => `- ${item}`).join("\n")}` : undefined,
+    latestFeedback && latestFeedback !== task.objective ? `## Parent feedback for this attempt\n${latestFeedback}` : undefined,
+    "Complete only this task, then submit TaskReport."
+  ].filter((item): item is string => Boolean(item)).join("\n\n")
 }
 
 const ListDirectoryTool = defineTool({
@@ -630,8 +719,10 @@ function buildRuntimeCoreTools(input: {
   threadType?: AgentSendInput["threadType"];
   permissionMode?: AgentSendInput["permissionMode"];
   subagentDefinition?: AgentDefinition;
+  boundSubagentReportTool?: ToolDefinition;
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
@@ -666,10 +757,9 @@ function buildRuntimeCoreTools(input: {
     ...(input.workspaceSlug ? { threadWorkspaceDir: input.cwd } : {}),
     onTaskContractUpdated: input.emitTaskContractUpdated
   });
-  const taskReportTool = createTaskReportTool({
-    sessionDir: getRuntimeCoreSessionDir(input.sessionId),
-    threadId: input.sessionId
-  });
+  const taskReportTool = input.boundSubagentReportTool
+    ? input.boundSubagentReportTool
+    : createTaskReportTool({ sessionDir: getRuntimeCoreSessionDir(input.sessionId), threadId: input.sessionId });
   const todoTool = createTodoTool({
     threadId: input.sessionId,
     onTodoUpdated: input.emitTodoUpdated,
@@ -716,119 +806,135 @@ function buildRuntimeCoreTools(input: {
         toolInput,
         workspaceSlug: input.workspaceSlug
       });
-      // ★ 与 Delegate 对齐：创建会话栏可见的子会话 thread（带 parentThreadId），
-      // 使 Task 派生的 subagent 在左侧栏母会话下显示为子会话节点。
-      const childMeta = createAgentThreadWithModelRef(
-        resolveTaskThreadInitialTitle(toolInput),
-        modelOverride.modelRef,
-        modelOverride.channelId ?? input.channelId,
-        input.workspaceId,
-        parentThreadId,
-        modelOverride.resolvedModelId ?? context.model
-      );
-      const subagentRun = buildSidecarSubagentRunContext({
-        parentThreadId,
-        parentToolUseId: context.toolUseId,
-        toolInput,
-        policy,
-        createChildThreadId: () => childMeta.id
-      });
-      const enrichedContext = {
-        ...context,
-        emitEvent: input.emitSdkMessage
-          ? (event: SDKMessage) => { input.emitSdkMessage!(event); }
-          : context.emitEvent,
-        onSubagentEnd: async ({ status, output, error }: { status: "completed" | "errored" | "aborted" | "timed_out"; output?: string; error?: string }) => {
-          getSubagentRunRegistry().update(subagentRun.runId, { status, outcome: { output, error } });
-          const run = getSubagentRunRegistry().get(subagentRun.runId);
-          if (run) await announceSubagentCompletion({ run });
-          // 子会话完成时用输出摘要派生标题（与 Delegate 对齐）
-          const newTitle = deriveDelegateTitle(childMeta.title, output);
-          if (newTitle && newTitle !== childMeta.title) {
-            updateAgentThreadMeta(childMeta.id, { title: newTitle });
-          }
-        }
-      };
-      const runInBackground = toolInput.run_in_background === true;
-      const executionInput = buildSidecarSubagentExecutionInput({
-        forwardedToolInput: subagentRun.forwardedToolInput,
-        modelOverride,
-        runInBackground
-      });
-      getSubagentRunRegistry().create({
-        ...subagentRun.registryInput,
-        deliveryThreadId: parentThreadId,
-        parentToolUseId: context.toolUseId,
-        ...(modelOverride.modelRef ? { modelRef: modelOverride.modelRef } : {}),
-        ...(modelOverride.channelId ? { channelId: modelOverride.channelId } : input.channelId ? { channelId: input.channelId } : {}),
-        ...(modelOverride.resolvedModelId ? { modelId: modelOverride.resolvedModelId } : context.model ? { modelId: context.model } : {})
-      });
-      const executeSubagent = () => runSidecarSubagent({
-        toolInput: executionInput,
-        context: enrichedContext,
-        runId: subagentRun.runId,
-        childThreadId: subagentRun.childThreadId,
-        parentThreadId,
-        deliveryThreadId: parentThreadId,
-        parentToolUseId: context.toolUseId,
-        subagentType: subagentRun.registryInput.resolvedAgentId,
-        modelOverride,
-        channelId: input.channelId,
-        workspaceId: input.workspaceId,
-        chatType: input.chatType,
-        messageMetadata: input.messageMetadata,
-        permissionMode,
-        emitAskUserQuestion: input.emitAskUserQuestion,
-        emitBrowserAuthRequest: input.emitBrowserAuthRequest,
-        emitToolPermissionRequest: input.emitToolPermissionRequest
-      });
-      if (runInBackground) {
-        void executeSubagent()
-          .then(async (execution) => {
-            await enrichedContext.onSubagentEnd?.({
-              runId: subagentRun.runId,
-              status: execution.status,
-              output: execution.output,
-              error: execution.error
-            });
-          })
-          .catch(async (err: any) => {
-            getSubagentRunRegistry().update(subagentRun.runId, {
-              status: "errored",
-              outcome: { error: err?.message ?? String(err) }
-            });
-            const run = getSubagentRunRegistry().get(subagentRun.runId);
-            if (run) await announceSubagentCompletion({ run });
-          });
-        return {
-          type: "tool_result" as const,
-          tool_use_id: "",
-          content: `Background subagent started: ${subagentRun.runId}`
-        };
-      }
       try {
-        const execution = await runForegroundSubagentWithTimeout({
-          execution: executeSubagent(),
-          childThreadId: subagentRun.childThreadId,
-          timeoutMs: resolveForegroundSubagentTimeoutMs(),
-          stopSubagent: async (threadId) => {
-            const { stopAgentRuntime } = await import("./attempt");
-            return stopAgentRuntime(threadId);
+        const coordinator = getSubagentCoordinator();
+        const taskId = typeof toolInput.task_id === "string" ? toolInput.task_id.trim() : undefined;
+        const subagentId = typeof toolInput.subagent_id === "string" ? toolInput.subagent_id.trim() : undefined;
+        const work = coordinator.list(parentThreadId);
+        const dispatch = resolveSubagentDispatchPolicy({
+          prompt: typeof toolInput.prompt === "string" ? toolInput.prompt : "",
+          taskId,
+          subagentId,
+          newTask: toolInput.new_task === true,
+          unresolvedTasks: work.tasks.filter((task) => task.status === "open" || task.status === "running" || task.status === "awaiting_review")
+        });
+        if (!dispatch.allowed) {
+          return { type: "tool_result" as const, tool_use_id: "", content: dispatch.message, is_error: true };
+        }
+        const result = await coordinator.runAgentTask({
+          parentThreadId,
+          parentRunId: input.runId ?? parentThreadId,
+          parentToolUseId: context.toolUseId ?? crypto.randomUUID(),
+          prompt: typeof toolInput.prompt === "string" ? toolInput.prompt : "",
+          description: typeof toolInput.description === "string" ? toolInput.description : "Subagent",
+          subagentType: typeof toolInput.subagent_type === "string" ? toolInput.subagent_type : undefined,
+          subagentId,
+          taskId,
+          acceptanceCriteria: Array.isArray(toolInput.acceptance_criteria) ? toolInput.acceptance_criteria.filter((item: unknown): item is string => typeof item === "string") : undefined,
+          expectedArtifacts: Array.isArray(toolInput.expected_artifacts) ? toolInput.expected_artifacts.filter((item: unknown): item is string => typeof item === "string") : undefined,
+          createSession: ({ subagentId, title, agentType }) => {
+            const child = createAgentThreadWithModelRef(title, modelOverride.modelRef, modelOverride.channelId ?? input.channelId, input.workspaceId, parentThreadId, modelOverride.resolvedModelId ?? context.model)
+            return { threadId: child.id, modelRef: modelOverride.modelRef }
+          },
+          execute: async ({ run, session, task, feedback, signal }) => {
+            const stopChild = () => {
+              void import("./attempt").then((module) => module.stopAgentRuntime(session.threadId)).catch(() => undefined)
+            }
+            signal.addEventListener("abort", stopChild, { once: true })
+            try {
+              const execution = await runSidecarSubagent({
+              toolInput: {
+                ...toolInput,
+                prompt: buildSubagentTaskInstruction(task, feedback),
+                run_in_background: undefined,
+                isolation: undefined,
+                subagent_run_id: run.runId
+              },
+              context,
+              runId: run.runId,
+              childThreadId: session.threadId,
+              parentThreadId,
+              deliveryThreadId: parentThreadId,
+              parentToolUseId: context.toolUseId,
+              subagentType: session.agentType,
+              subagentId: session.subagentId,
+              subagentTaskId: task.taskId,
+              subagentAttempt: run.attempt,
+              modelOverride,
+              channelId: input.channelId,
+              workspaceId: input.workspaceId,
+              chatType: input.chatType,
+              messageMetadata: input.messageMetadata,
+              onRuntimeEvent: (event) => {
+                coordinator.bindRuntimeRun(run.runId, event.runId);
+                input.emitRuntimeEvent?.(event);
+              },
+              permissionMode,
+              emitAskUserQuestion: input.emitAskUserQuestion,
+              emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+              emitToolPermissionRequest: input.emitToolPermissionRequest
+              })
+              return {
+                status: execution.status === "aborted" ? "cancelled" : execution.status,
+                error: execution.error,
+                completionSummary: execution.completionSummary,
+              }
+            } finally {
+              signal.removeEventListener("abort", stopChild)
+            }
           }
-        });
-        await enrichedContext.onSubagentEnd?.({
-          runId: subagentRun.runId,
-          status: execution.status,
-          output: execution.output,
-          error: execution.error
-        });
-        return execution.result;
-      } catch (err: any) {
-        getSubagentRunRegistry().update(subagentRun.runId, { status: "errored", outcome: { error: err.message } });
-        throw err;
+        })
+        return { type: "tool_result" as const, tool_use_id: "", content: JSON.stringify(result) }
+      } catch (error) {
+        return { type: "tool_result" as const, tool_use_id: "", content: `Subagent error: ${error instanceof Error ? error.message : String(error)}`, is_error: true }
       }
     }
   };
+
+  const finishAgentTaskTool = defineTool({
+    name: "FinishAgentTask",
+    description: "Accept, defer, or cancel a submitted Subagent task. A completed Run is not accepted until this tool is called.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string" },
+        resolution: { type: "string", enum: ["accepted", "deferred", "cancelled"] },
+        reason: { type: "string" }
+      },
+      required: ["task_id", "resolution", "reason"]
+    },
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    async call(raw) {
+      const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
+      const taskId = typeof value.task_id === "string" ? value.task_id.trim() : ""
+      const reason = typeof value.reason === "string" ? value.reason.trim() : ""
+      const resolution = value.resolution
+      if (!taskId || !reason || (resolution !== "accepted" && resolution !== "deferred" && resolution !== "cancelled")) throw new Error("FinishAgentTask 参数无效")
+      const task = getSubagentCoordinator().finishTask({ taskId, resolution, reason })
+      return { data: { ok: true, taskId: task.taskId, status: task.status } }
+    }
+  })
+
+  const retireSubagentTool = defineTool({
+    name: "RetireSubagent",
+    description: "Retire an idle persistent Subagent Session while keeping its child-thread history available.",
+    inputSchema: { type: "object", properties: { subagent_id: { type: "string" }, reason: { type: "string" } }, required: ["subagent_id", "reason"] },
+    isReadOnly: false,
+    isConcurrencySafe: false,
+    async call(raw) {
+      const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
+      const subagentId = typeof value.subagent_id === "string" ? value.subagent_id.trim() : ""
+      const reason = typeof value.reason === "string" ? value.reason.trim() : ""
+      if (!subagentId || !reason) throw new Error("RetireSubagent 参数无效")
+      const session = getSubagentCoordinator().retireSession({ subagentId, reason })
+      return { data: { ok: true, subagentId: session.subagentId, status: session.status } }
+    }
+  })
+
+  const taskLoopTools = input.threadType === "subagent"
+    ? [taskReportTool, todoTool]
+    : [taskReportTool, sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
 
   const delegateTool: ToolDefinition = {
     ...AgentTool,
@@ -928,6 +1034,7 @@ function buildRuntimeCoreTools(input: {
         workspaceId: input.workspaceId,
         chatType: input.chatType,
         messageMetadata: input.messageMetadata,
+        onRuntimeEvent: input.emitRuntimeEvent,
         permissionMode,
         emitAskUserQuestion: input.emitAskUserQuestion,
         emitBrowserAuthRequest: input.emitBrowserAuthRequest,
@@ -1024,7 +1131,7 @@ function buildRuntimeCoreTools(input: {
     groups: [
       { source: "sdk", tools: baseTools },
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
-      { source: "task", tools: [taskReportTool, sidecarAgentTool, delegateTool, waitForDelegationsTool, todoTool] },
+      { source: "task", tools: taskLoopTools },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
       ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : []),
       ...(input.pluginCommandTools?.length
@@ -1239,6 +1346,10 @@ export async function buildWaitForDelegationsResult(
 export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
+  const boundSubagentIdentity = resolveBoundSubagentIdentity(input);
+  const boundSubagentReportTool = boundSubagentIdentity
+    ? createBoundSubagentTaskReportTool(boundSubagentIdentity)
+    : undefined;
   const sessionManager = createOrResumeRuntimeCoreSessionManager(input.cwd, input.lumeSessionId, input.agentDir);
   const agents = { ...buildBuiltinAgents(), ...loadCustomAgents(input.workspaceSlug) };
   const subagentDefinition = input.subagentType ? agents[input.subagentType] : undefined;
@@ -1343,8 +1454,10 @@ export async function createRuntimeCoreSession(
     chatType: input.chatType,
     permissionMode: input.permissionMode,
     subagentDefinition,
+    boundSubagentReportTool,
     messageMetadata: input.messageMetadata,
     emitSdkMessage: input.emitSdkMessage,
+    emitRuntimeEvent: input.emitRuntimeEvent,
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
@@ -1399,7 +1512,13 @@ export async function createRuntimeCoreSession(
     threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
-    agentSystemPrompt: subagentDefinition?.prompt,
+    agentSystemPrompt: boundSubagentIdentity
+      ? [
+          subagentDefinition?.prompt,
+          "You are executing one bound Subagent Task. Do not create nested subagents or change the task acceptance criteria. Before ending this run, call TaskReport with submitted, failed, or blocked status and a concise summary. TaskReport is a submission to the parent agent, never final acceptance.",
+          `Bound task: ${boundSubagentIdentity.taskId}; attempt: ${input.subagentAttempt ?? 1}.`
+        ].filter(Boolean).join("\n\n")
+      : subagentDefinition?.prompt,
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
     attachedDirectories: input.attachedDirectories,
@@ -1426,7 +1545,10 @@ export async function createRuntimeCoreSession(
     userMessageForModelLength: contextAssembly.userMessageForModel.length
   });
   await applyWorkflowHookEffectsSafely(input.applyWorkflowHookEffects, afterContextResult);
-  const systemPrompt = contextAssembly.systemPrompt;
+  const unresolvedSubagentTasks = input.threadType === "subagent"
+    ? []
+    : getSubagentCoordinator().list(input.lumeSessionId).tasks.filter((task) => task.status === "open" || task.status === "running" || task.status === "awaiting_review");
+  const systemPrompt = [contextAssembly.systemPrompt, buildSubagentWorkContext(unresolvedSubagentTasks)].filter(Boolean).join("\n\n");
   const context = sessionManager.buildSessionContext();
 
   const agentOptions: AgentOptions = {
@@ -1449,6 +1571,7 @@ export async function createRuntimeCoreSession(
     shouldLoadFilesystemSkill: createRuntimeSkillFilter(input.workspaceSlug),
     resolveRuntimeTools: (tools) => ToolRuntime.resolveDynamicTools({
       tools,
+      requiredTools: boundSubagentReportTool ? [boundSubagentReportTool] : undefined,
       cwd: input.cwd,
       sessionId: input.lumeSessionId,
       permissionMode: input.permissionMode,
@@ -1461,6 +1584,11 @@ export async function createRuntimeCoreSession(
         messageMetadata: input.messageMetadata
       }
     }),
+    ...(boundSubagentIdentity
+      ? { completionGuard: async () => getSubagentCoordinator().getRunCompletionBlocker(boundSubagentIdentity.runId) }
+      : input.runId
+        ? { completionGuard: async () => getSubagentCoordinator().getCompletionBlocker(input.lumeSessionId, input.runId!) }
+        : {}),
     additionalDirectories: input.workspaceSlug ? [input.cwd, ...(input.attachedDirectories ?? [])] : input.attachedDirectories,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,

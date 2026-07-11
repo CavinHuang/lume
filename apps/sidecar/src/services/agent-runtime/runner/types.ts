@@ -30,8 +30,13 @@ export interface AgentRuntimeRunParams {
   input: AgentSendInput;
   runtime: {
     sessionId: string;
+    /** Raw user text for persistence/UI; never forwarded to the model or a child runtime. */
+    visibleUserMessage?: string;
     deliveryThreadId?: string;
     subagentRunId?: string;
+    subagentId?: string;
+    subagentTaskId?: string;
+    subagentAttempt?: number;
     subagentType?: string;
     modelRef?: string;
     channelId: string;

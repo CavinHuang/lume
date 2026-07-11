@@ -1,8 +1,8 @@
 import { useRef, useEffect, useCallback, useLayoutEffect, useMemo, useState, type TouchEventHandler, type WheelEventHandler } from 'react'
 import { ArrowDown } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentSubagentRunsAtom } from '@/atoms'
-import { getThreadMessages, getThreadRuntimeEvents, sidecarCall } from '@/lib/desktop-api'
+import { agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentSubagentRunsAtom, agentSubagentWorkAtom } from '@/atoms'
+import { getThreadMessages, getThreadRuntimeEvents, listSubagentWork, sidecarCall } from '@/lib/desktop-api'
 import {
   AGENT_IPC_CHANNELS,
   type AgentListSubagentRunsResult,
@@ -66,6 +66,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const reconcileCacheRef = useRef<ReconcileCache>(new Map())
   const showScrollButtonRef = useRef(false)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
+  const setSubagentWork = useSetAtom(agentSubagentWorkAtom)
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const loadedRuntimeEventThreadsRef = useRef<Set<string>>(new Set())
   const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
@@ -227,7 +228,10 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         setSubagentRuns((prev) => ({ ...prev, [threadId]: r.runs }))
       })
       .catch((err) => console.error('[AgentMessages] 加载 subagent runs 失败:', err))
-  }, [threadId, setSubagentRuns])
+    listSubagentWork(threadId)
+      .then((work) => setSubagentWork((prev) => ({ ...prev, [threadId]: work })))
+      .catch((err) => console.error('[AgentMessages] 加载 subagent work 失败:', err))
+  }, [threadId, setSubagentRuns, setSubagentWork])
 
   useEffect(() => {
     if (runtimeEvents.length > 0 || loadedRuntimeEventThreadsRef.current.has(threadId)) return

@@ -672,6 +672,8 @@ describe("agent-service", () => {
       .toContain("请继续完成上一轮未完成的原始任务");
     expect((runAgentRuntimeCalls.at(-1) as { input?: { userMessage?: string } })?.input?.userMessage)
       .toContain("用户发送的继续指令：继续");
+    expect((runAgentRuntimeCalls.at(-1) as { runtime?: { visibleUserMessage?: string } })?.runtime?.visibleUserMessage)
+      .toBe("继续");
   });
 
   test("sendAgentMessage 在进程重启后应把裸继续扩展为未完成 run 的恢复指令", async () => {

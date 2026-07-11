@@ -677,6 +677,12 @@ describe('areRuntimeEventContentBlockPropsEqual', () => {
     const next = { message: baseAssistantMessage, threadId: 't1', streaming: false, animate: true }
     expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
   })
+
+  test('detects assistant avatar visibility change', () => {
+    const prev = { message: baseAssistantMessage, threadId: 't1', showAssistantAvatar: true }
+    const next = { message: baseAssistantMessage, threadId: 't1', showAssistantAvatar: false }
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
+  })
 })
 
 describe('stabilizeRuntimeMessages', () => {

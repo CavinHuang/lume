@@ -79,7 +79,7 @@ export function CommandPalette() {
     if (!tabs.find((t) => t.id === thread.id)) {
       setTabs((prev) => [
         ...prev,
-        { id: thread.id, type: 'agent' as const, title: thread.title, threadId: thread.id },
+        { id: thread.id, type: 'agent' as const, title: thread.title, threadId: thread.id, ...(thread.parentThreadId ? { readOnly: true } : {}) },
       ])
     }
     closePalette()

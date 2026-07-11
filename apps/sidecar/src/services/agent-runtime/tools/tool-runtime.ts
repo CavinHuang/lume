@@ -76,6 +76,7 @@ export class ToolRuntime {
 
   static resolveDynamicTools(input: {
     tools: ToolDefinition[];
+    requiredTools?: ToolDefinition[];
     cwd: string;
     sessionId: string;
     permissionMode?: AgentSendInput["permissionMode"];
@@ -90,9 +91,24 @@ export class ToolRuntime {
       policyInput: input.policyInput,
       groups: [{ source: "sdk", tools: input.tools }]
     });
-    setRuntimeToolDescriptors(input.sessionId, descriptors);
+    const descriptorsByCanonicalName = new Map(descriptors.map((descriptor) => [descriptor.canonicalName, descriptor]));
+    if (input.requiredTools?.length) {
+      const requiredRegistry = new ToolRegistry();
+      requiredRegistry.registerMany(createToolDescriptorsFromDefinitions(input.requiredTools, "task"));
+      for (const descriptor of requiredRegistry.list()) {
+        descriptorsByCanonicalName.set(descriptor.canonicalName, {
+          ...descriptor,
+          metadata: {
+            ...descriptor.metadata,
+            allowedInPlanMode: true
+          }
+        });
+      }
+    }
+    const resolvedDescriptors = Array.from(descriptorsByCanonicalName.values());
+    setRuntimeToolDescriptors(input.sessionId, resolvedDescriptors);
     return materializeRuntimeTools({
-      descriptors,
+      descriptors: resolvedDescriptors,
       threadId: input.sessionId,
       cwd: input.cwd
     });

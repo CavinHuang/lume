@@ -127,6 +127,28 @@ describe('runtime-event-state', () => {
     ])
   })
 
+  test('deduplicates raw and model-expanded user events by messageId', () => {
+    const state = appendRuntimeEvents({}, [
+      runtimeEvent({
+        id: 'raw',
+        type: 'message.user.submitted',
+        text: '继续',
+        messageId: 'message-continue',
+      }),
+      runtimeEvent({
+        id: 'runtime',
+        type: 'message.user.submitted',
+        text: '请继续完成上一轮未完成的原始任务。\n\n用户发送的继续指令：继续',
+        messageId: 'message-continue',
+        createdAt: '2026-05-11T00:00:01.000Z',
+      }),
+    ])
+
+    expect(state['thread-1']?.events.filter((event) => event.type === 'message.user.submitted')).toEqual([
+      expect.objectContaining({ id: 'raw', text: '继续', messageId: 'message-continue' }),
+    ])
+  })
+
   test('appendRuntimeEvent 全局去重 user submit：中间隔 delta 也不重复', () => {
     // 乐观追加后，后端先推 assistant.delta（使 acc.at(-1) 不再是 user submit），
     // 再推真实 user submit → 必须按全局去重，不能因 at(-1) 已变而重复。

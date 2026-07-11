@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useSetAtom } from 'jotai'
-import { onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
+import { listSubagentWork, onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
   agentRuntimeStatusAtom,
@@ -8,6 +8,7 @@ import {
   agentPendingInteractiveAtom,
   agentMessageQueueAtom,
   agentSubagentRunsAtom,
+  agentSubagentWorkAtom,
   agentPlanModePhaseAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
@@ -27,6 +28,7 @@ import {
   type AgentBrowserAuthRequest,
   type AgentToolPermissionRequest,
   type AgentSubagentCompletionEvent,
+  type AgentSubagentWorkChangedEvent,
   type AgentMessageQueueSnapshot,
   type PlanModePhaseChangedEvent,
   type LumeRuntimeEvent,
@@ -49,6 +51,7 @@ export function useGlobalAgentListeners() {
   const setPendingInteractive = useSetAtom(agentPendingInteractiveAtom)
   const setMessageQueues = useSetAtom(agentMessageQueueAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
+  const setSubagentWork = useSetAtom(agentSubagentWorkAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
@@ -252,6 +255,13 @@ export function useGlobalAgentListeners() {
           })
           break
         }
+        case AGENT_IPC_CHANNELS.SUBAGENT_WORK_CHANGED: {
+          const event = params as AgentSubagentWorkChangedEvent
+          void listSubagentWork(event.parentThreadId)
+            .then((work) => setSubagentWork((prev) => ({ ...prev, [event.parentThreadId]: work })))
+            .catch((error) => console.error('[useGlobalAgentListeners] 刷新 subagent work 失败:', error))
+          break
+        }
         case AGENT_IPC_CHANNELS.PLAN_MODE_PHASE_CHANGED: {
           const e = params as PlanModePhaseChangedEvent
           setPlanModePhase((prev) => ({ ...prev, [e.threadId]: e }))
@@ -305,5 +315,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs, enqueueRuntimeEvent])
 }

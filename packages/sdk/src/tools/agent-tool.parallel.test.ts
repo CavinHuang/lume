@@ -251,34 +251,55 @@ describe("AgentTool parallel execution", () => {
     })
   })
 
-  test("background AgentTool progress uses latest child input and cumulative output tokens", async () => {
-    const emitted: SDKMessage[] = []
-    const provider = new StaticProvider([{
-      content: [{ type: "text", text: "background child done" }],
-      stopReason: "end_turn",
-      usage: { input_tokens: 20, output_tokens: 6 }
-    }])
+  test("legacy background inputs are hidden from the schema and still await subagent completion", async () => {
+    expect(AgentTool.inputSchema.properties).not.toHaveProperty("run_in_background")
+    expect(AgentTool.inputSchema.properties).not.toHaveProperty("isolation")
 
-    await AgentTool.call({
-      prompt: "background child task",
+    let resolveResponse: ((response: CreateMessageResponse) => void) | undefined
+    let endStarted = false
+    let settled = false
+    let releaseEnd!: () => void
+    const endRelease = new Promise<void>((resolve) => {
+      releaseEnd = resolve
+    })
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      createMessage: async () => new Promise<CreateMessageResponse>((resolveResponsePromise) => {
+        resolveResponse = resolveResponsePromise
+      })
+    }
+
+    const pending = AgentTool.call({
+      prompt: "legacy background child task",
       description: "background",
       subagent_run_id: "child-run-bg",
       mode: "bypassPermissions",
-      run_in_background: true
+      run_in_background: true,
+      isolation: "remote"
     }, {
       cwd: process.cwd(),
       provider,
       model: "test-model",
       apiType: "anthropic-messages",
       sessionId: "parent-thread",
-      emitEvent: (event) => emitted.push(event)
+      onSubagentEnd: async () => {
+        endStarted = true
+        await endRelease
+      }
     })
+    pending.then(() => { settled = true })
 
-    await waitFor(() => emitted.some((event) =>
-      event.type === "system"
-      && event.subtype === "task_progress"
-      && event.usage.total_tokens === 26
-    ))
+    await waitFor(() => resolveResponse !== undefined)
+    resolveResponse?.({
+      content: [{ type: "text", text: "child done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 20, output_tokens: 6 }
+    })
+    await waitFor(() => endStarted)
+    expect(settled).toBeFalse()
+    releaseEnd()
+    await pending
+    expect(settled).toBeTrue()
   })
 })
 

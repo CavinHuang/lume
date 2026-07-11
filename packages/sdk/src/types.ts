@@ -1225,6 +1225,11 @@ export interface AgentOptions {
       permissionMode?: PermissionMode
     }
   ) => ToolDefinition[] | Promise<ToolDefinition[]>
+  /**
+   * Host-owned completion policy. Returning feedback keeps the agent loop alive
+   * and presents that feedback to the model as an internal user message.
+   */
+  completionGuard?: () => Promise<string | undefined>
   /** Explicit skill definitions provided by the host runtime */
   skills?: import('./skills/types.js').SkillDefinition[]
   /** Explicit filesystem roots to scan for skills */
@@ -1394,6 +1399,8 @@ export interface QueryEngineConfig {
   }
   /** Optional host-owned context policy bridge. Defaults preserve SDK compaction behavior. */
   contextController?: AgentContextController
+  /** Optional host-owned policy that can prevent natural completion. */
+  completionGuard?: () => Promise<string | undefined>
 }
 
 // --------------------------------------------------------------------------

@@ -8,11 +8,9 @@
 import type { ToolDefinition, ToolContext, ToolResult, AgentDefinition, SDKMessage } from '../types.js'
 import { QueryEngine } from '../engine.js'
 import { createProvider, type ApiType } from '../providers/index.js'
-import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { loadSession } from '../session.js'
 import { finalizeSubagentOutputFromState, summarizeSubagentAssistantEvent } from './subagent-output.js'
 import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
-import { createAgentProgressTracker } from '../utils/usage.js'
 import { getSkill } from '../skills/registry.js'
 import { recordSkillUsage } from '../skills/evolution.js'
 
@@ -51,7 +49,7 @@ const BUILTIN_AGENTS: Record<string, AgentDefinition> = {
 
 export const AgentTool: ToolDefinition = {
   name: 'Agent',
-  description: 'Launch a new agent to handle complex, multi-step tasks. Each agent has its own context and tool set. IMPORTANT: When tasks are independent, produce MULTIPLE Agent tool_use calls in a single response — they will execute in parallel automatically. Do not use run_in_background.',
+  description: 'Launch a new agent to handle complex, multi-step tasks. Each agent has its own context and tool set. IMPORTANT: When tasks are independent, produce MULTIPLE Agent tool_use calls in a single response — they will execute in parallel automatically. Each call waits for its subagent result.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -66,6 +64,28 @@ export const AgentTool: ToolDefinition = {
       subagent_type: {
         type: 'string',
         description: 'The type of agent to use (e.g., "Explore", "Plan", or a custom agent name)',
+      },
+      subagent_id: {
+        type: 'string',
+        description: 'Optional persistent subagent Session ID to reuse for this task',
+      },
+      task_id: {
+        type: 'string',
+        description: 'Optional persistent task ID to continue or reassign',
+      },
+      new_task: {
+        type: 'boolean',
+        description: 'Must be true when creating independent work without task_id. Never copy a raw user continuation message into prompt.',
+      },
+      acceptance_criteria: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Acceptance criteria for a newly created persistent task',
+      },
+      expected_artifacts: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Expected files or other artifacts for a newly created persistent task',
       },
       model: {
         type: 'string',
@@ -92,18 +112,9 @@ export const AgentTool: ToolDefinition = {
         enum: ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk', 'auto'],
         description: 'Permission mode for the spawned agent',
       },
-      isolation: {
-        type: 'string',
-        enum: ['remote', 'worktree'],
-        description: 'Isolation mode. remote is treated as a background subagent alias in this SDK.',
-      },
       cwd: {
         type: 'string',
         description: 'Optional working directory override for the spawned agent',
-      },
-      run_in_background: {
-        type: 'boolean',
-        description: 'Whether to run in background',
       },
       subagent_run_id: {
         type: 'string',
@@ -193,15 +204,8 @@ export const AgentTool: ToolDefinition = {
 
     let subagentStatus: 'completed' | 'errored' | 'aborted' = 'completed'
     let subagentErrorMessage = ''
-    const progressTracker = createAgentProgressTracker()
-    let latestProgressUsage = progressTracker.snapshot()
 
-    const runSubagent = async (
-      progress?: {
-        taskId: string
-        description: string
-      },
-    ) => {
+    const runSubagent = async () => {
       // Fire SubagentStart hook on the parent's hook registry
       if (context.hookRegistry) {
         const hookResult = await context.hookRegistry.executeDetailed('SubagentStart', {
@@ -215,8 +219,6 @@ export const AgentTool: ToolDefinition = {
         }
       }
 
-      const startedAt = Date.now()
-      let toolUseCount = 0
       const engine = new QueryEngine({
         cwd: effectiveCwd,
         model: subModel,
@@ -264,9 +266,6 @@ export const AgentTool: ToolDefinition = {
           context.emitEvent?.(taggedEvent)
         }
         if (event.type === 'assistant') {
-          if (event.usage) {
-            latestProgressUsage = progressTracker.update(event.usage)
-          }
           const summary = summarizeSubagentAssistantEvent(
             event.message.content as Array<Record<string, unknown>>,
             resultText,
@@ -276,24 +275,6 @@ export const AgentTool: ToolDefinition = {
           lastAssistantMessage = summary.lastAssistantMessage || lastAssistantMessage
           toolCalls.length = 0
           toolCalls.push(...summary.toolCalls)
-          toolUseCount += summary.toolUseCount
-          if (progress) {
-            context.emitEvent?.({
-              type: 'system',
-              subtype: 'task_progress',
-              task_id: progress.taskId,
-              description: progress.description,
-              last_tool_name: toolCalls.at(-1),
-              usage: {
-                total_tokens: latestProgressUsage.totalTokens,
-                tool_uses: toolUseCount,
-                duration_ms: Date.now() - startedAt,
-              },
-              summary: resultText.slice(0, 200) || undefined,
-              session_id: context.sessionId || '',
-              subagent_run_id: agentId,
-            } as any)
-          }
           continue
         }
 
@@ -343,104 +324,6 @@ export const AgentTool: ToolDefinition = {
       }
 
       return finalized.output
-    }
-
-    if (input.run_in_background || input.isolation === 'remote') {
-      const task = createTaskRecord({
-        subject: input.description || 'Background subagent',
-        description: input.prompt,
-        status: 'running',
-        taskType: 'subagent',
-        metadata: {
-          agentType,
-          team_name: input.team_name,
-          mode: input.mode,
-          isolation: input.isolation,
-          cwd: effectiveCwd,
-          name: input.name,
-        },
-      })
-
-      context.emitEvent?.({
-        type: 'system',
-        subtype: 'task_started',
-        task_id: task.id,
-        description: task.subject,
-        task_type: 'subagent',
-        prompt: input.prompt,
-        session_id: context.sessionId || '',
-        subagent_run_id: agentId,
-      } as any)
-
-      void runSubagent({
-        taskId: task.id,
-        description: task.subject,
-      })
-        .then(async (output) => {
-          updateTaskRecord(task.id, { status: 'completed', output })
-          await context.onSubagentEnd?.({ runId: agentId, status: 'completed', output })
-          context.emitEvent?.({
-            type: 'system',
-            subtype: 'task_progress',
-            task_id: task.id,
-            description: task.subject,
-            last_tool_name: 'Agent',
-            usage: {
-              total_tokens: latestProgressUsage.totalTokens,
-              tool_uses: 1,
-              duration_ms: 0,
-            },
-            summary: 'Subagent completed',
-            session_id: context.sessionId || '',
-          })
-          context.emitEvent?.({
-            type: 'system',
-            subtype: 'task_notification',
-            task_id: task.id,
-            status: 'completed',
-            summary: task.subject,
-            output_file: task.outputFile || '',
-            session_id: context.sessionId || '',
-            subagent_run_id: agentId,
-          })
-        })
-        .catch(async (err: any) => {
-          updateTaskRecord(task.id, {
-            status: 'failed',
-            output: `Subagent error: ${err.message}`,
-          })
-          await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })
-          context.emitEvent?.({
-            type: 'system',
-            subtype: 'task_progress',
-            task_id: task.id,
-            description: task.subject,
-            last_tool_name: 'Agent',
-            usage: {
-              total_tokens: latestProgressUsage.totalTokens,
-              tool_uses: 1,
-              duration_ms: 0,
-            },
-            summary: 'Subagent failed',
-            session_id: context.sessionId || '',
-          })
-          context.emitEvent?.({
-            type: 'system',
-            subtype: 'task_notification',
-            task_id: task.id,
-            status: 'failed',
-            summary: task.subject,
-            output_file: task.outputFile || '',
-            session_id: context.sessionId || '',
-            subagent_run_id: agentId,
-          })
-        })
-
-      return {
-        type: 'tool_result',
-        tool_use_id: '',
-        content: `Background subagent started: ${task.id}\nUse TaskOutput to inspect the result.`,
-      }
     }
 
     try {

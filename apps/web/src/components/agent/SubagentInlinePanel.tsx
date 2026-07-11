@@ -1,12 +1,16 @@
-import { memo, useState, useRef, useEffect, useLayoutEffect, useSyncExternalStore } from 'react'
+import { useMemo, useState, useRef, useLayoutEffect } from 'react'
 import { useAtomValue } from 'jotai'
-import { Loader2, ChevronDown, Bot, Copy, Check, AlertTriangle } from 'lucide-react'
-import { XMarkdown } from '@ant-design/x-markdown'
+import { Loader2, ChevronDown, Bot } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentSubagentRunsFamily } from '@/atoms'
+import { agentRuntimeEventsFamily, agentSubagentRunsFamily, agentSubagentWorkFamily } from '@/atoms'
 import { useElapsedTime, formatElapsed } from '@/hooks/useElapsedTime'
-import { getAgentRole, type SubagentRunStatus } from '@lume/shared'
+import { getAgentRole, type SubagentRunStatus, type SubagentTaskReport } from '@lume/shared'
 import { resolveSubagentRoleDisplay } from './subagent-role-display'
+import { selectSubagentRunEvents, summarizeSubagentRunActivity } from './subagent-run-projection'
+import { applyRuntimeEventsIncremental, type ProjectionRef } from './runtime-event-message-projection'
+import type { RuntimeMessageView } from './runtime-message-view'
+import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
+import { isNearScrollBottom } from './agent-message-state'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 
@@ -29,21 +33,40 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
   const [expanded, setExpanded] = useState(false)
   const expandedContentMounted = useDeferredUnmount(expanded)
   const expandedContentRef = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    if (!expanded || !expandedContentMounted) return
-    if (expandedContentRef.current) {
-      expandedContentRef.current.scrollTop = 0
-    }
-  }, [expanded, expandedContentMounted])
+  const projectionRef = useRef<ProjectionRef | null>(null)
+  const shouldAutoScrollRef = useRef(true)
 
   // 优先用 runId 查找，其次用 toolUseId 查找
   const runs = useAtomValue(agentSubagentRunsFamily(threadId)) ?? []
+  const work = useAtomValue(agentSubagentWorkFamily(threadId))
   const runRecord = runId
     ? runs.find(r => r.runId === runId)
     : toolUseId
       ? runs.find(r => r.parentToolUseId === toolUseId)
       : undefined
+  const workRun = runId
+    ? work?.runs.find((item) => item.runId === runId)
+    : toolUseId
+      ? work?.runs.find((item) => item.parentToolUseId === toolUseId)
+      : undefined
+  const childEvents = useAtomValue(agentRuntimeEventsFamily(workRun?.childThreadId ?? ''))?.events ?? []
+  const runEvents = useMemo(
+    () => workRun ? selectSubagentRunEvents(childEvents, workRun) : [],
+    [childEvents, workRun],
+  )
+  const runMessages = useMemo(() => {
+    const projected = applyRuntimeEventsIncremental(runEvents, projectionRef.current)
+    projectionRef.current = projected.ref
+    return projected.messages
+  }, [runEvents])
+  const runActivity = useMemo(() => summarizeSubagentRunActivity(runEvents), [runEvents])
+  const taskRecord = workRun ? work?.tasks.find((item) => item.taskId === workRun.taskId) : undefined
+
+  useLayoutEffect(() => {
+    const container = expandedContentRef.current
+    if (!expanded || !expandedContentMounted || !container || !shouldAutoScrollRef.current) return
+    container.scrollTop = container.scrollHeight
+  }, [expanded, expandedContentMounted, runMessages])
 
   const requestedAgentId = (runRecord as { requestedAgentId?: string } | undefined)?.requestedAgentId
   const resolvedAgentId = (runRecord as { resolvedAgentId?: string } | undefined)?.resolvedAgentId
@@ -55,24 +78,31 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
     resolvedAgentId,
     label: fallbackLabel,
   })
-  const effectiveStatus = status ?? runRecord?.status
-  const effectiveStartedAt = startedAt ?? runRecord?.startedAt ?? runRecord?.createdAt
+  const effectiveStatus = workRun?.status ?? status ?? runRecord?.status
+  const effectiveStartedAt = startedAt ?? workRun?.startedAt ?? workRun?.createdAt ?? runRecord?.startedAt ?? runRecord?.createdAt
 
   const isRunning = effectiveStatus === 'running' || effectiveStatus === 'accepted'
   const isDone = effectiveStatus === 'completed'
-  const hasStatusError = effectiveStatus === 'errored' || effectiveStatus === 'timed_out' || effectiveStatus === 'aborted'
-  const hasOutcomeError = !!runRecord?.outcome?.error
+  const hasStatusError = effectiveStatus === 'errored' || effectiveStatus === 'timed_out' || effectiveStatus === 'aborted' || effectiveStatus === 'cancelled'
+  const hasOutcomeError = !!runRecord?.outcome?.error || !!workRun?.error || !!runActivity.error
   const isError = hasStatusError || hasOutcomeError
-  const errorMessage = runRecord?.outcome?.error
+  const errorMessage = runActivity.error ?? workRun?.error ?? runRecord?.outcome?.error
   const isPending = !runRecord && !effectiveStatus
   const elapsed = useElapsedTime(effectiveStartedAt, isRunning || isPending)
-  const finalOutput = isDone ? runRecord?.outcome?.output : undefined
+  const collapsedOutput = runActivity.text || workRun?.report?.summary || runRecord?.outcome?.output
 
   const indent = depth > 0
   const avatarSrc = resolveSubagentHeaderAvatarSrc(roleDisplay.runtimeId)
   const toggleExpanded = () => {
     onUserResizeStart?.()
-    setExpanded(v => !v)
+    setExpanded((current) => {
+      if (!current) shouldAutoScrollRef.current = true
+      return !current
+    })
+  }
+  const handleConversationScroll = () => {
+    const container = expandedContentRef.current
+    if (container) shouldAutoScrollRef.current = isNearScrollBottom(container)
   }
 
   return (
@@ -108,10 +138,10 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
         </div>
       )}
       {!expanded && !isPending && isRunning && (
-        <SubagentRunningPreview />
+        <SubagentRunningPreview output={collapsedOutput} latestToolName={runActivity.toolName} />
       )}
       {!expanded && !isPending && isDone && (
-        <SubagentCompletedPreview output={finalOutput} />
+        <SubagentCompletedPreview output={collapsedOutput} />
       )}
       {!expanded && !isPending && isError && (
         <SubagentErrorPreview error={errorMessage} />
@@ -120,6 +150,7 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
         <AnimatedCollapsiblePanel open={expanded}>
           <div
             ref={expandedContentRef}
+            onScroll={handleConversationScroll}
             className="max-h-[min(70vh,720px)] overflow-y-auto overscroll-contain border-t border-border/30"
           >
             <SubagentExpandedContent
@@ -127,10 +158,15 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
               isRunning={isRunning}
               agentType={roleDisplay.runtimeId}
               roleBadges={roleDisplay.badges}
-              task={description ?? runRecord?.task ?? prompt}
+              task={description ?? workRun?.instruction ?? runRecord?.task ?? prompt}
               prompt={prompt}
+              attempt={workRun?.attempt}
+              taskStatus={taskRecord?.status}
               error={isError ? errorMessage : undefined}
-              output={finalOutput}
+              messages={runMessages}
+              childThreadId={workRun?.childThreadId}
+              report={workRun?.report}
+              onUserResizeStart={onUserResizeStart}
             />
           </div>
         </AnimatedCollapsiblePanel>
@@ -195,12 +231,12 @@ export function resolveSubagentHeaderAvatarSrc(agentType: string): string | unde
   return role ? AGENT_ROLE_ASSETS.roles[role.id] : undefined
 }
 
-function SubagentRunningPreview() {
+function SubagentRunningPreview({ output, latestToolName }: { output?: string; latestToolName?: string }) {
   return (
     <div className="px-3 pb-2">
       <p className="text-[12px] text-foreground/60 flex items-center gap-1.5">
         <Loader2 size={10} className="animate-spin text-blue-500 flex-shrink-0" />
-        <span>Subagent 正在执行...</span>
+        <span className="line-clamp-2">{output ? getSubagentCollapsedPreviewText(output) : latestToolName ? `正在使用 ${latestToolName}...` : 'Subagent 正在执行...'}</span>
       </p>
     </div>
   )
@@ -230,7 +266,7 @@ function SubagentErrorPreview({ error }: { error?: string }) {
 }
 
 function SubagentExpandedContent({
-  depth, isRunning, agentType, roleBadges, task, prompt, error, output,
+  depth, isRunning, agentType, roleBadges, task, prompt, attempt, taskStatus, error, messages, childThreadId, report, onUserResizeStart,
 }: {
   depth: number
   isRunning: boolean
@@ -238,8 +274,13 @@ function SubagentExpandedContent({
   roleBadges: string[]
   task?: string
   prompt?: string
+  attempt?: number
+  taskStatus?: string
   error?: string
-  output?: string
+  messages: RuntimeMessageView[]
+  childThreadId?: string
+  report?: SubagentTaskReport
+  onUserResizeStart?: () => void
 }) {
   return (
     <div className={cn(depth > 0 && depth < 3 && 'ml-3 border-l-2 border-l-foreground/15')}>
@@ -267,6 +308,13 @@ function SubagentExpandedContent({
               <span className="text-foreground/30">任务: </span>{task}
             </p>
           )}
+          {(attempt || taskStatus) && (
+            <p className="text-[11px] text-foreground/45">
+              {attempt ? <span>尝试 #{attempt}</span> : null}
+              {attempt && taskStatus ? <span> · </span> : null}
+              {taskStatus ? <span>任务状态: {taskStatus}</span> : null}
+            </p>
+          )}
           {prompt && prompt !== task && (
             <p className="text-[11px] text-foreground/40 leading-relaxed line-clamp-3">
               <span className="text-foreground/30">提示: </span>{prompt}
@@ -275,12 +323,28 @@ function SubagentExpandedContent({
         </div>
       )}
       {/* 消息流 */}
-      <div className="p-3 space-y-2 overflow-hidden">
-        {!output && !error && (
+      <div className="space-y-5 overflow-hidden p-3">
+        {messages.length === 0 && !error && (
           <p className="text-[12px] text-muted-foreground/50">等待 subagent 结果...</p>
         )}
-        {output && (
-          <SubagentResultCard output={output} />
+        {childThreadId && messages.map((message, index) => (
+          <RuntimeEventContentBlock
+            key={message.id}
+            message={message}
+            threadId={childThreadId}
+            streaming={isRunning && index === messages.length - 1}
+            showAssistantAvatar={false}
+            onUserResizeStart={onUserResizeStart}
+          />
+        ))}
+        {report && (
+          <div className="space-y-1 rounded-lg border border-border/30 bg-muted/15 px-3 py-2 text-[11px] text-foreground/60">
+            <p><span className="text-foreground/35">提交状态: </span>{report.status}</p>
+            {report.remainingWork?.length ? <p><span className="text-foreground/35">剩余工作: </span>{report.remainingWork.join('；')}</p> : null}
+            {report.artifacts?.length ? <p><span className="text-foreground/35">产物: </span>{report.artifacts.map((item) => item.path).join('、')}</p> : null}
+            {report.verification?.length ? <p><span className="text-foreground/35">验证: </span>{report.verification.map((item) => `${item.passed ? '✓' : '✗'} ${item.result}`).join('；')}</p> : null}
+            {report.blockers?.length ? <p><span className="text-foreground/35">阻塞: </span>{report.blockers.join('；')}</p> : null}
+          </div>
         )}
         {error && (
           <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2">
@@ -297,107 +361,6 @@ function SubagentExpandedContent({
     </div>
   )
 }
-
-export function SubagentResultCard({ output }: { output: string }) {
-  const [copied, setCopied] = useState(false)
-  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const truncated = isSubagentOutputTruncated(output)
-
-  useEffect(() => () => {
-    if (copyResetRef.current !== null) {
-      clearTimeout(copyResetRef.current)
-      copyResetRef.current = null
-    }
-  }, [])
-
-  const copyOutput = async () => {
-    const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard)
-    if (!writeText) return
-
-    try {
-      await writeText(output)
-      setCopied(true)
-      if (copyResetRef.current !== null) {
-        clearTimeout(copyResetRef.current)
-      }
-      copyResetRef.current = setTimeout(() => {
-        setCopied(false)
-        copyResetRef.current = null
-      }, 2000)
-    } catch (error) {
-      console.error('[SubagentInlinePanel] 复制 subagent 结果失败:', error)
-    }
-  }
-
-  return (
-    <article className="overflow-hidden rounded-lg border border-border/40 bg-background/80">
-      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/35 bg-muted/20 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-foreground/60">
-          <Check size={12} className="shrink-0 text-green-500" />
-          <span className="truncate">结果已完成</span>
-        </div>
-        <Button
-                variant="ghost"
-          type="button"
-          onClick={() => void copyOutput()}
-          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-foreground/50 transition-colors hover:bg-background/70 hover:text-foreground"
-          title={copied ? '已复制' : '复制 subagent 结果'}
-          aria-label={copied ? '已复制 subagent 结果' : '复制 subagent 结果'}
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          <span>{copied ? '已复制' : '复制结果'}</span>
-        </Button>
-      </div>
-      {truncated && (
-        <div
-          data-subagent-output-truncated="true"
-          className="mx-3 mt-3 flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5 text-amber-700 dark:text-amber-200"
-        >
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>结果可能被截断，完整内容可能需要让 subagent 写入文件或重新输出。</span>
-        </div>
-      )}
-      <div className="px-3 py-2">
-        <SubagentMarkdown output={output} />
-      </div>
-    </article>
-  )
-}
-
-export function isSubagentOutputTruncated(output: string): boolean {
-  return /\.\.\.\(truncated(?:\s+by [^)]+)?\)(?:\.\.\.)?/i.test(output)
-}
-
-function useIsDark(): boolean {
-  return useSyncExternalStore(
-    (callback) => {
-      if (typeof document === 'undefined') return () => {}
-      const observer = new MutationObserver(callback)
-      observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-      return () => observer.disconnect()
-    },
-    () => typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
-    () => false,
-  )
-}
-
-export const SubagentMarkdown = memo(function SubagentMarkdown({ output, compact = false }: { output: string; compact?: boolean }) {
-  const isDark = useIsDark()
-
-  return (
-    <div className="min-w-0 w-full overflow-hidden">
-      <XMarkdown
-        className={cn(
-          'agent-message-markdown x-markdown text-[12px] leading-relaxed',
-          compact && '[&_ol]:my-1 [&_p]:mb-1 [&_ul]:my-1',
-        )}
-        rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
-      >
-        {output}
-      </XMarkdown>
-    </div>
-  )
-})
 
 function getSubagentCollapsedPreviewText(output: string): string {
   const withoutCodeBlocks = output.replace(/```[\s\S]*?```/g, ' ')

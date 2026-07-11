@@ -1033,6 +1033,7 @@ export class Agent {
         status: status.status,
       })),
       contextController: opts.contextController,
+      completionGuard: opts.completionGuard,
     })
     this.currentEngine = engine
 

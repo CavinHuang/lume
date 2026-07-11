@@ -30,6 +30,7 @@ interface RuntimeEventContentBlockProps {
   message: RuntimeMessageView
   animate?: boolean
   streaming?: boolean
+  showAssistantAvatar?: boolean
   threadId: string
   onOpenThreadFile?: (path: string) => void
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
@@ -42,7 +43,7 @@ interface RuntimeEventContentBlockProps {
  * 让未变历史消息跳过 re-render。引用不同即视为变化（re-render）——不再用 JSON.stringify
  * 兜底内容比较（2c 移除）。
  *
- * - 标量 props（streaming/animate/threadId）直接比较；
+ * - 标量 props（streaming/animate/showAssistantAvatar/threadId）直接比较；
  * - onOpen* / onUserResizeStart 回调由父级 useCallback 保证引用稳定，不参与比较；
  * - message 用引用比较（===）。
  */
@@ -52,6 +53,7 @@ export function areRuntimeEventContentBlockPropsEqual(
 ): boolean {
   if (prev.streaming !== next.streaming) return false
   if (prev.animate !== next.animate) return false
+  if (prev.showAssistantAvatar !== next.showAssistantAvatar) return false
   if (prev.threadId !== next.threadId) return false
   return prev.message === next.message
 }
@@ -95,6 +97,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   message,
   animate,
   streaming,
+  showAssistantAvatar = true,
   threadId,
   onOpenThreadFile,
   onOpenThreadImage,
@@ -151,9 +154,14 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
 
   return (
     <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
-      <div className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-bg-elevated)] text-[var(--lume-accent)] shadow-[0_10px_24px_-20px_hsl(var(--lume-shadow-panel)/0.72)]">
-        <Sparkles size={21} strokeWidth={1.8} fill="currentColor" fillOpacity={0.1} />
-      </div>
+      {showAssistantAvatar && (
+        <div
+          data-agent-message-avatar="true"
+          className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-bg-elevated)] text-[var(--lume-accent)] shadow-[0_10px_24px_-20px_hsl(var(--lume-shadow-panel)/0.72)]"
+        >
+          <Sparkles size={21} strokeWidth={1.8} fill="currentColor" fillOpacity={0.1} />
+        </div>
+      )}
       <div className="min-w-0 flex-1 space-y-4 pt-2">
         {useMinimalMode ? (
           <MinimalAssistantContent

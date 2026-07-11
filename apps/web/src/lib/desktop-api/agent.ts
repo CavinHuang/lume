@@ -23,6 +23,7 @@ import type {
   AgentMessageQueueInput,
   AgentMessageQueueOperationResult,
   AgentMessageQueueSnapshot,
+  AgentListSubagentWorkResult,
   AgentPromoteQueuedMessageToGuidanceInput,
   AgentRemoveQueuedMessageInput,
   AgentReorderMessageQueueInput,
@@ -51,6 +52,12 @@ export const getThreadRuntimeEvents = (threadId: string) =>
   invoke<AgentThreadRuntimeEventsResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS,
     params: { threadId },
+  })
+
+export const listSubagentWork = (parentThreadId: string) =>
+  invoke<AgentListSubagentWorkResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.LIST_SUBAGENT_WORK,
+    params: { parentThreadId },
   })
 
 export const getThreadMessages = (threadId: string) =>

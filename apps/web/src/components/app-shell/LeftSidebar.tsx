@@ -93,7 +93,14 @@ export function LeftSidebar() {
     if (!tabs.find((tab) => tab.id === thread.id)) {
       setTabs((previous) => [
         ...previous,
-        { id: thread.id, type: 'agent', title: thread.title, threadId: thread.id },
+        {
+          id: thread.id,
+          type: 'agent',
+          title: thread.title,
+          threadId: thread.id,
+          // Persistent subagent threads are parent-controlled during the first release.
+          ...(thread.parentThreadId ? { readOnly: true } : {}),
+        },
       ])
     }
   }

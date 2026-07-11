@@ -15,11 +15,21 @@ export async function listThreadRuntimeEvents(input: {
 
   return {
     threadId: input.threadId,
-    events: sortRuntimeEvents([
+    events: assignRunSequences(sortRuntimeEvents([
       ...runs.flatMap((run) => projectRunStateToRuntimeEvents(run)),
       ...taskRuns.flatMap((taskRun) => projectTaskRunToRuntimeEvents(input.threadId, taskRun))
-    ])
+    ]))
   };
+}
+
+/** Event timestamps can collide across parallel child runs; sequence is the stable order within one run. */
+function assignRunSequences(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
+  const nextByRun = new Map<string, number>();
+  return events.map((event) => {
+    const next = nextByRun.get(event.runId) ?? 0;
+    nextByRun.set(event.runId, next + 1);
+    return { ...event, sequence: next };
+  });
 }
 
 function sortRuntimeEvents(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {

@@ -777,6 +777,7 @@ export async function sendAgentMessage(
     },
     runtime: {
       sessionId: threadId,
+      visibleUserMessage: userMessage,
       modelRef: canonicalModelRef,
       channelId: resolvedChannelId,
       resolvedModelId,
@@ -1003,6 +1004,9 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
 }
 
 export function stopAgent(threadId: string): void {
+  void import("./subagents/subagent-coordinator")
+    .then((module) => module.getSubagentCoordinator().cancelByParentThread(threadId))
+    .catch(() => undefined);
   const sessionStateManager = getSessionStateManager();
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);
@@ -1021,6 +1025,9 @@ export function stopAgent(threadId: string): void {
 }
 
 export function stopAllAgents(): void {
+  void import("./subagents/subagent-coordinator")
+    .then((module) => module.getSubagentCoordinator().cancelAll())
+    .catch(() => undefined);
   void import("../agent-runtime/runtime-core/attempt")
     .then((module) => module.stopAllAgentRuntimeSessions())
     .catch(() => undefined);

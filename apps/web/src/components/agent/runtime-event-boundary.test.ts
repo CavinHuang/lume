@@ -89,6 +89,15 @@ describe('RuntimeEvent UI boundary', () => {
     expect(subagentPanel).toContain('onUserResizeStart')
   })
 
+  test('subagent conversation follows streaming output only while the user stays near the bottom', () => {
+    const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
+
+    expect(subagentPanel).toContain('isNearScrollBottom')
+    expect(subagentPanel).toContain('shouldAutoScrollRef')
+    expect(subagentPanel).toContain('scrollHeight')
+    expect(subagentPanel).not.toContain('scrollTop = 0')
+  })
+
   test('tool and subagent expansion use animated delayed-unmount panels', () => {
     const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
     const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
@@ -118,12 +127,13 @@ describe('RuntimeEvent UI boundary', () => {
     expect(subagentPanel).not.toContain('<SubagentMarkdown output={output} compact />')
   })
 
-  test('stable markdown renderers are memoized', () => {
+  test('stable markdown rendering stays centralized in the canonical message renderer', () => {
     const contentBlock = source('apps/web/src/components/agent/RuntimeEventContentBlock.tsx')
     const subagentPanel = source('apps/web/src/components/agent/SubagentInlinePanel.tsx')
 
     expect(contentBlock).toContain('const SmoothText = memo(')
-    expect(subagentPanel).toContain('export const SubagentMarkdown = memo(')
+    expect(subagentPanel).toContain('RuntimeEventContentBlock')
+    expect(subagentPanel).not.toContain('SubagentMarkdown')
   })
 
   test('streaming markdown updates are throttled at the message renderer boundary', () => {

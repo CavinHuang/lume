@@ -152,8 +152,13 @@ function isDuplicateSubmittedUserEvent(
   return events.some((event) => (
     event.type === 'message.user.submitted'
     && event.threadId === next.threadId
-    && event.text === next.text
-    && Math.abs(Date.parse(event.createdAt) - Date.parse(next.createdAt)) < 30_000
+    && (
+      (event.messageId && next.messageId && event.messageId === next.messageId)
+      || (
+        event.text === next.text
+        && Math.abs(Date.parse(event.createdAt) - Date.parse(next.createdAt)) < 30_000
+      )
+    )
   ))
 }
 

@@ -3,7 +3,7 @@
 | 项 | 值 |
 |---|---|
 | 日期 | 2026-07-10 |
-| 状态 | 已批准，待实施计划 |
+| 状态 | 已实施，待人工验收 |
 | 范围 | SDK、Sidecar、Shared、Web |
 | 参考实现 | `openai/openai-agents-js` commit `04807e33347b2b92bdde7685d83d84f1bc144c6d` |
 | 取代设计 | `2026-06-29-delegate-independent-subsession-design.md`、`2026-06-30-delegate-stage2-wait-design.md` 中的双工具、后台委派和显式 wait 决策 |

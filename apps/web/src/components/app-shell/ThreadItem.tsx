@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import {
   agentStreamingStatesFamily,
   agentSubagentRunsFamily,
+  agentSubagentWorkFamily,
   agentRuntimeStatusFamily,
   activeTabIdAtom,
   expandedThreadIdsAtom,
@@ -66,6 +67,7 @@ export const ThreadItem = memo(function ThreadItem({
   const isStreaming = streamingState === 'streaming'
   const runtimeStatus = useAtomValue(agentRuntimeStatusFamily(thread.id))
   const childRuns = useAtomValue(agentSubagentRunsFamily(thread.id)) ?? []
+  const subagentWork = useAtomValue(agentSubagentWorkFamily(thread.id))
   const activeTabId = useAtomValue(activeTabIdAtom)
   const expandedSet = useAtomValue(expandedThreadIdsAtom)
   const collapsedSet = useAtomValue(collapsedThreadIdsAtom)
@@ -91,10 +93,11 @@ export const ThreadItem = memo(function ThreadItem({
   // 母会话综合：自身 + 一层子代理 runs
   // blocked 仅母自身；running 母或子运行；completed 母或子全完成；否则 idle
   const childTotal = thread.children?.length ?? 0
-  const childCompleted = childRuns.filter((r) => r.status === 'completed').length
+  const effectiveRuns = subagentWork?.runs ?? childRuns
+  const childCompleted = effectiveRuns.filter((r) => r.status === 'completed').length
   const hasChildren = childTotal > 0
-  const childRunning = childRuns.some((r) => r.status === 'running' || r.status === 'accepted')
-  const childAllCompleted = childRuns.length > 0 && childRuns.every((r) => r.status === 'completed')
+  const childRunning = effectiveRuns.some((r) => r.status === 'running' || r.status === 'queued')
+  const childAllCompleted = effectiveRuns.length > 0 && effectiveRuns.every((r) => r.status === 'completed')
   const treeStatus: ThreadStatus =
     selfStatus === 'blocked' ? 'blocked'
       : selfStatus === 'running' || childRunning ? 'running'
