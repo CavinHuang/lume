@@ -461,6 +461,7 @@ async function prepareDesktopActionArgsForSafety(
   }
   const state = asRecord(await invoke("get_window_state", {
     ...(typeof args.windowId === "string" ? { windowId: args.windowId } : {}),
+    ...(hasScreenshotPoint(args) ? { includeScreenshot: true } : {}),
   }));
   if (state.status !== "ok" || typeof state.revision !== "string") {
     return {
@@ -471,6 +472,12 @@ async function prepareDesktopActionArgsForSafety(
   const window = asRecord(state.window);
   const derivedLabel = deriveTargetLabel(action, args, state);
   const derivedPoint = deriveTargetPoint(action, args, state);
+  if (hasScreenshotPoint(args) && !derivedPoint) {
+    return {
+      status: "blocked",
+      result: { status: "stale_target", message: "screenshot target no longer matches the current window" },
+    };
+  }
   const desktopContentRisk = detectDesktopContentRisk(state);
   return {
     status: "ok",
@@ -489,6 +496,9 @@ async function prepareDesktopActionArgsForSafety(
 }
 
 function shouldInspectTargetState(action: DesktopActionKind, args: Record<string, unknown>): boolean {
+  if (hasScreenshotPoint(args) && (action === "move_pointer" || action === "click")) {
+    return true;
+  }
   if (
     stringValue(args.elementId) && (
       action === "move_pointer"
@@ -532,7 +542,13 @@ function detectDesktopContentRisk(state: Record<string, unknown>): "suspected_pr
 }
 
 function desktopInvocationArgs(args: Record<string, unknown>): Record<string, unknown> {
-  const { desktopContentRisk: _desktopContentRisk, ...publicArgs } = args;
+  const {
+    desktopContentRisk: _desktopContentRisk,
+    screenshotX: _screenshotX,
+    screenshotY: _screenshotY,
+    screenshotId: _screenshotId,
+    ...publicArgs
+  } = args;
   return publicArgs;
 }
 
@@ -580,13 +596,35 @@ function deriveTargetPoint(
   state: Record<string, unknown>,
 ): { x: number; y: number } | undefined {
   const elementId = stringValue(args.elementId);
-  if (!elementId) return undefined;
-  const accessibility = asRecord(state.accessibility);
-  const bounds = boundsFromElement(findElementById(accessibility.tree, elementId));
-  if (!bounds) return undefined;
+  if (elementId) {
+    const accessibility = asRecord(state.accessibility);
+    const bounds = boundsFromElement(findElementById(accessibility.tree, elementId));
+    if (!bounds) return undefined;
+    return {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    };
+  }
+  const screenshotX = typeof args.screenshotX === "number" ? args.screenshotX : undefined;
+  const screenshotY = typeof args.screenshotY === "number" ? args.screenshotY : undefined;
+  if (screenshotX === undefined || screenshotY === undefined) return undefined;
+  const requestedScreenshotId = stringValue(args.screenshotId);
+  const screenshots = Array.isArray(state.screenshots) ? state.screenshots.map(asRecord) : [];
+  const screenshot = screenshots.find((candidate) => !requestedScreenshotId || candidate.id === requestedScreenshotId);
+  const windowBounds = asRecord(asRecord(state.window).bounds);
+  const origin = asRecord(screenshot?.origin);
+  const screenshotWidth = numberValue(screenshot?.width);
+  const screenshotHeight = numberValue(screenshot?.height);
+  const windowWidth = numberValue(windowBounds.width);
+  const windowHeight = numberValue(windowBounds.height);
+  const originX = numberValue(origin.x);
+  const originY = numberValue(origin.y);
+  if (!screenshotWidth || !screenshotHeight || !windowWidth || !windowHeight || originX === undefined || originY === undefined) {
+    return undefined;
+  }
   return {
-    x: bounds.x + bounds.width / 2,
-    y: bounds.y + bounds.height / 2,
+    x: originX + screenshotX * windowWidth / screenshotWidth,
+    y: originY + screenshotY * windowHeight / screenshotHeight,
   };
 }
 
@@ -620,6 +658,14 @@ function labelFromElement(value: unknown): string | undefined {
 
 function hasPoint(args: Record<string, unknown>): boolean {
   return typeof args.x === "number" && typeof args.y === "number";
+}
+
+function hasScreenshotPoint(args: Record<string, unknown>): boolean {
+  return typeof args.screenshotX === "number" && typeof args.screenshotY === "number";
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function createActionRequest(
@@ -690,8 +736,8 @@ function describeTool(
     get_window_state: "Capture the current revision, accessibility tree, focused element, visible document text, and optional screenshot for one window. Re-run this before consequential actions and after actions to verify the result.",
     launch_app: "Launch an application by executable/app name or absolute path. Use list_windows afterward to obtain its windowId.",
     activate_window: "Bring one exact windowId to the foreground. Verify with get_window_state after activation.",
-    move_pointer: "Move the visible agent pointer to an accessibility element or absolute screen coordinate in one window. Coordinates use the desktop screen space represented by screenshot origin metadata.",
-    click: "Click an accessibility element or absolute screen coordinate in one window. Supports one or more clicks with the left, right, or middle mouse button. Call get_window_state or wait_for_state afterward to verify the intended state change.",
+    move_pointer: "Move the visible agent pointer to an accessibility element, screenshot pixel, or absolute screen coordinate in one window. Prefer elementId, then screenshotX/screenshotY from the latest screenshot.",
+    click: "Click an accessibility element, screenshot pixel, or absolute screen coordinate in one window. Supports one or more clicks with the left, right, or middle mouse button. Call get_window_state or wait_for_state afterward to verify the intended state change.",
     perform_secondary_action: "Invoke one named secondary accessibility action exposed by an element, such as AXShowMenu, Toggle, Select, Expand, Collapse, or ScrollIntoView. Use an action listed on the latest get_window_state tree and verify the result afterward.",
     scroll: "Scroll one accessibility element up, down, left, or right by a positive number of pages. Fractional pages are supported and default to 1. Use an element from the latest get_window_state tree and verify the result afterward.",
     drag: "Drag from one absolute desktop coordinate to another inside one exact windowId, then verify the result with get_window_state.",
@@ -737,6 +783,9 @@ function toolSchema(
     ...elementTarget,
     x: number("Absolute desktop x coordinate."),
     y: number("Absolute desktop y coordinate."),
+    screenshotId: string("Optional screenshot id from the latest get_window_state response."),
+    screenshotX: number("X coordinate in pixels within the latest screenshot."),
+    screenshotY: number("Y coordinate in pixels within the latest screenshot."),
   };
   const object = (
     properties: Record<string, unknown>,
@@ -755,7 +804,7 @@ function toolSchema(
   const pointTarget = (extra: Record<string, unknown> = {}) => object(
     { ...actionTarget, ...extra },
     windowScopedRequired(["windowId"]),
-    [{ required: ["elementId"] }, { required: ["x", "y"] }],
+    [{ required: ["elementId"] }, { required: ["x", "y"] }, { required: ["screenshotX", "screenshotY"] }],
   );
 
   switch (name) {

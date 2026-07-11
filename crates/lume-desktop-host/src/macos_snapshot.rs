@@ -571,12 +571,27 @@ fn screenshot_ref(window: &MacOSWindowInfo, include_pixels: bool) -> Value {
     });
     if include_pixels {
         if let Some(data_url) = normalized_optional_text(window.screenshot_data_url.as_deref()) {
+            if let Some((width, height)) = png_data_url_dimensions(&data_url) {
+                screenshot["width"] = json!(width);
+                screenshot["height"] = json!(height);
+            }
             screenshot["dataUrl"] = Value::String(data_url);
         } else if let Some(error) = normalized_optional_text(window.screenshot_error.as_deref()) {
             screenshot["error"] = Value::String(error);
         }
     }
     screenshot
+}
+
+fn png_data_url_dimensions(data_url: &str) -> Option<(u32, u32)> {
+    let encoded = data_url.strip_prefix("data:image/png;base64,")?;
+    let png = BASE64.decode(encoded).ok()?;
+    if png.len() < 24 || &png[..8] != b"\x89PNG\r\n\x1a\n" || &png[12..16] != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes(png[16..20].try_into().ok()?);
+    let height = u32::from_be_bytes(png[20..24].try_into().ok()?);
+    (width > 0 && height > 0).then_some((width, height))
 }
 
 fn context_visible_text(window: &MacOSWindowInfo) -> String {
@@ -1054,5 +1069,15 @@ mod screen_capture_helper_tests {
             macos_png_data_url(b"not png").unwrap_err(),
             "ScreenCaptureKit helper returned invalid PNG data"
         );
+    }
+
+    #[test]
+    fn reads_retina_png_dimensions_from_the_ihdr_chunk() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend_from_slice(&1600_u32.to_be_bytes());
+        png.extend_from_slice(&1200_u32.to_be_bytes());
+        let data_url = macos_png_data_url(&png).unwrap();
+
+        assert_eq!(png_data_url_dimensions(&data_url), Some((1600, 1200)));
     }
 }

@@ -16,6 +16,7 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("click").anyOf).toEqual([
       { required: ["elementId"] },
       { required: ["x", "y"] },
+      { required: ["screenshotX", "screenshotY"] },
     ]);
     expect(schema("click").properties.clickCount).toMatchObject({
       type: "integer",
@@ -113,6 +114,50 @@ describe("createComputerUseMcpTools", () => {
     expect(JSON.parse(result.content as string)).toEqual({
       status: "ok",
       apps: [{ id: "wechat", name: "微信" }],
+    });
+  });
+
+  test("maps Retina screenshot pixels to absolute desktop coordinates", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "rev-retina",
+            window: {
+              id: "win:retina",
+              bounds: { x: 100, y: 50, width: 800, height: 600 },
+            },
+            screenshots: [{
+              id: "shot-retina",
+              width: 1600,
+              height: 1200,
+              origin: { x: 100, y: 50 },
+            }],
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const move = tools.find((tool) => tool.name === "mcp__computer_use__move_pointer")!;
+    await move.call({
+      windowId: "win:retina",
+      screenshotId: "shot-retina",
+      screenshotX: 800,
+      screenshotY: 600,
+    }, { toolUseId: "tool-retina" } as never);
+
+    expect(calls.find((call) => call.method === "move_pointer")?.input).toEqual({
+      windowId: "win:retina",
+      windowRevision: "rev-retina",
+      x: 500,
+      y: 350,
+    });
+    expect(calls[0]).toEqual({
+      method: "get_window_state",
+      input: { windowId: "win:retina", includeScreenshot: true },
     });
   });
 
