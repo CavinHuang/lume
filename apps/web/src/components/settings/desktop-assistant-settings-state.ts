@@ -42,6 +42,16 @@ export function buildDesktopAssistantDiagnostics({
       details: [status.host.message?.trim() || 'Lume 无法连接桌面 Host，Computer Use 和当前应用读取会暂不可用。'],
     }
   }
+  if (status.collector.suspensionReasons.length > 0) {
+    const locked = status.collector.suspensionReasons.includes('screen_locked')
+    return {
+      tone: 'warning',
+      title: '桌面感知已暂停',
+      details: [locked
+        ? '系统处于锁屏状态；解锁后会自动恢复，不会在锁屏期间读取或保存桌面内容。'
+        : '系统正在挂起；恢复后会自动继续桌面感知。'],
+    }
+  }
   if (!status.store.unlocked) {
     return {
       tone: 'warning',

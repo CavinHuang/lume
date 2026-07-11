@@ -216,6 +216,28 @@ describe("DesktopContextService", () => {
     });
   });
 
+  test("keeps collection suspended until every system reason is cleared", async () => {
+    const service = createService();
+    service.unlock(Buffer.alloc(32, 4));
+
+    service.setSuspended("screen_locked", true);
+    service.setSuspended("system_suspended", true);
+    expect(await service.captureCurrent({ userInitiated: true })).toEqual({
+      status: "blocked",
+      message: "desktop context capture is suspended: screen_locked, system_suspended",
+    });
+    expect((await service.getStatus() as { collector: unknown }).collector).toEqual({
+      running: false,
+      suspensionReasons: ["screen_locked", "system_suspended"],
+    });
+
+    service.setSuspended("screen_locked", false);
+    expect(await service.captureCurrent({ userInitiated: true })).toMatchObject({ status: "blocked" });
+    service.setSuspended("system_suspended", false);
+    expect(await service.captureCurrent({ userInitiated: true })).toMatchObject({ status: "ok" });
+    service.close();
+  });
+
   test("turns macOS permission diagnostics into an actionable capture message", async () => {
     const service = new DesktopContextService({
       dbPath: "unused.sqlite",
@@ -301,6 +323,7 @@ describe("DesktopContextService", () => {
         ],
       },
       store: { unlocked: false, items: 0, bytes: 0 },
+      collector: { running: false, suspensionReasons: [] },
     });
     expect(calls).toEqual(["diagnose_permissions"]);
   });

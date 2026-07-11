@@ -1,4 +1,4 @@
-import type { DesktopAssistantSettings } from "@lume/shared";
+import type { DesktopAssistantSettings, DesktopContextSuspensionReason } from "@lume/shared";
 import {
   getDesktopContextDbPath,
   getDesktopContextSettingsPath,
@@ -35,6 +35,9 @@ export function setDesktopContextNotificationWriter(writer: (method: string, par
 export const desktopContextRpcService = {
   unlock(key: Buffer): void {
     getRuntime().service.unlock(key);
+  },
+  setSuspended(reason: DesktopContextSuspensionReason, suspended: boolean) {
+    return getRuntime().service.setSuspended(reason, suspended);
   },
   captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown> {
     return getRuntime().service.captureCurrent(input);

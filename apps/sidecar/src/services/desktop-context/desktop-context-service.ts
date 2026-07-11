@@ -5,6 +5,7 @@ import type {
   DesktopProactiveProposal,
   DesktopProactiveProposalCreatedNotification,
   DesktopProactiveProposalStatus,
+  DesktopContextSuspensionReason,
 } from "@lume/shared";
 import { DESKTOP_CONTEXT_IPC_CHANNELS, isDesktopActionStatus } from "@lume/shared";
 import { DesktopContextStore } from "./desktop-context-store";
@@ -35,6 +36,7 @@ export class DesktopContextService {
   #lastFingerprint: string | null = null;
   #lastSnapshotId: string | null = null;
   #collectorCapturePending = false;
+  #suspensionReasons = new Set<DesktopContextSuspensionReason>();
   #proposals = new Map<string, DesktopProactiveProposal>();
   #proposalFingerprints = new Set<string>();
   #settings: DesktopAssistantSettings;
@@ -66,6 +68,19 @@ export class DesktopContextService {
     this.#syncCollector();
   }
 
+  setSuspended(reason: DesktopContextSuspensionReason, suspended: boolean): {
+    suspended: boolean;
+    suspensionReasons: DesktopContextSuspensionReason[];
+  } {
+    if (suspended) this.#suspensionReasons.add(reason);
+    else this.#suspensionReasons.delete(reason);
+    this.#syncCollector();
+    return {
+      suspended: this.#suspensionReasons.size > 0,
+      suspensionReasons: [...this.#suspensionReasons],
+    };
+  }
+
   updateSettings(settings: DesktopAssistantSettings): void {
     this.#store?.close();
     this.#store = null;
@@ -78,6 +93,7 @@ export class DesktopContextService {
   }
 
   async captureCurrent(input: { userInitiated?: boolean } = {}): Promise<unknown> {
+    if (this.#suspensionReasons.size > 0) return this.#suspendedResult();
     if (!this.#settings.enabled && input.userInitiated !== true) {
       return { status: "unavailable", message: "desktop assistant is disabled" };
     }
@@ -113,6 +129,7 @@ export class DesktopContextService {
   }
 
   async getForegroundTarget(): Promise<unknown> {
+    if (this.#suspensionReasons.size > 0) return this.#suspendedResult();
     const response = asRecord(await this.#input.invokeHost("get_window", {}));
     if (response.status !== "ok") return attachDesktopPermissionCaptureMessage(response);
     const target = targetFromWindow(response.window);
@@ -122,6 +139,7 @@ export class DesktopContextService {
   }
 
   async captureWindow(input: { windowId?: string; userInitiated?: boolean } = {}): Promise<unknown> {
+    if (this.#suspensionReasons.size > 0) return this.#suspendedResult();
     if (!this.#settings.enabled && input.userInitiated !== true) {
       return { status: "unavailable", message: "desktop assistant is disabled" };
     }
@@ -184,6 +202,7 @@ export class DesktopContextService {
   }
 
   async currentContext(input: { snapshotId?: string; includeScreenshot?: boolean; refresh?: boolean } = {}): Promise<unknown> {
+    if (this.#suspensionReasons.size > 0) return this.#suspendedResult();
     if (!this.#key) return { status: "unavailable", message: "desktop context store is locked" };
     if (!this.#settings.enabled && !input.snapshotId) {
       return { status: "unavailable", message: "desktop assistant is disabled" };
@@ -204,6 +223,7 @@ export class DesktopContextService {
   }
 
   async searchContext(input: { query?: string; limit?: number }): Promise<unknown> {
+    if (this.#suspensionReasons.size > 0) return this.#suspendedResult();
     if (!this.#settings.enabled) return { status: "unavailable", message: "desktop assistant is disabled" };
     if (!this.#key) return { status: "unavailable", message: "desktop context store is locked" };
     const query = input.query?.trim();
@@ -220,6 +240,10 @@ export class DesktopContextService {
     return {
       host: desktopAssistantHostStatus(host, diagnostics),
       store: { unlocked: this.#key !== null, ...stats },
+      collector: {
+        running: this.#collector !== null,
+        suspensionReasons: [...this.#suspensionReasons],
+      },
     };
   }
 
@@ -263,7 +287,7 @@ export class DesktopContextService {
   #syncCollector(): void {
     if (this.#collector) clearInterval(this.#collector);
     this.#collector = null;
-    if (!this.#settings.enabled || !this.#key) return;
+    if (!this.#settings.enabled || !this.#key || this.#suspensionReasons.size > 0) return;
     this.#collector = setInterval(() => {
       if (this.#collectorCapturePending) return;
       this.#collectorCapturePending = true;
@@ -286,6 +310,13 @@ export class DesktopContextService {
     });
     this.#store.purge();
     return this.#store;
+  }
+
+  #suspendedResult(): { status: "blocked"; message: string } {
+    return {
+      status: "blocked",
+      message: `desktop context capture is suspended: ${[...this.#suspensionReasons].join(", ")}`,
+    };
   }
 
   #maybeCreateProposal(snapshot: DesktopContextSnapshot): void {

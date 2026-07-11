@@ -7,6 +7,10 @@ describe("desktop context RPC handlers", () => {
     const calls: unknown[] = [];
     const handlers = createDesktopContextHandlers({
       unlock: (key) => calls.push({ unlockBytes: key.length }),
+      setSuspended: (reason, suspended) => {
+        calls.push({ setSuspended: { reason, suspended } });
+        return { suspended };
+      },
       captureCurrent: async (input) => {
         calls.push({ captureCurrent: input });
         return { status: "ok", snapshotId: "snap-1" };
@@ -36,6 +40,11 @@ describe("desktop context RPC handlers", () => {
 
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.UNLOCK]?.({ key: Buffer.alloc(32, 1).toString("base64") })).toEqual({ ok: true });
     expect(calls).toEqual([{ unlockBytes: 32 }]);
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.SET_SUSPENDED]?.({
+      reason: "screen_locked",
+      suspended: true,
+    })).toEqual({ suspended: true });
+    expect(calls.at(-1)).toEqual({ setSuspended: { reason: "screen_locked", suspended: true } });
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT]?.({ userInitiated: true })).toEqual({ status: "ok", snapshotId: "snap-1" });
     expect(calls.at(-1)).toEqual({ captureCurrent: { userInitiated: true } });
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.GET_FOREGROUND_TARGET]?.({})).toEqual({
@@ -70,6 +79,7 @@ describe("desktop context RPC handlers", () => {
   test("rejects malformed encryption keys", async () => {
     const handlers = createDesktopContextHandlers({
       unlock: () => undefined,
+      setSuspended: () => ({}),
       captureCurrent: async () => ({}),
       getForegroundTarget: async () => ({}),
       captureWindow: async () => ({}),

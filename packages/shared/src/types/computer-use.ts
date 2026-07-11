@@ -54,6 +54,8 @@ export interface DesktopScreenshotRef {
   origin: { x: number; y: number };
   mimeType: string;
   dataUrl?: string;
+  captureMode?: "screen_capture_kit" | "print_window" | "screen_bitblt";
+  captureFallbackReason?: string;
 }
 
 export interface DesktopWindowState {
@@ -195,10 +197,14 @@ export interface DesktopAssistantStatus {
     }>;
   };
   store: { unlocked: boolean; items: number; bytes: number };
+  collector: { running: boolean; suspensionReasons: DesktopContextSuspensionReason[] };
 }
+
+export type DesktopContextSuspensionReason = "screen_locked" | "system_suspended";
 
 export const DESKTOP_CONTEXT_IPC_CHANNELS = {
   UNLOCK: "desktop-context:unlock",
+  SET_SUSPENDED: "desktop-context:set-suspended",
   CAPTURE_CURRENT: "desktop-context:capture-current",
   GET_FOREGROUND_TARGET: "desktop-context:get-foreground-target",
   CAPTURE_WINDOW: "desktop-context:capture-window",

@@ -11,6 +11,7 @@ import {
   nativeImage,
   Notification,
   protocol,
+  powerMonitor,
   safeStorage,
   screen,
   shell,
@@ -100,6 +101,7 @@ const SIDE_CAR_EVENT_CHANNEL = 'sidecar:event'
 const DATA_MIGRATE_PROGRESS_CHANNEL = 'data:migrate-progress'
 const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
 const DESKTOP_CONTEXT_UNLOCK_METHOD = 'desktop-context:unlock'
+const DESKTOP_CONTEXT_SET_SUSPENDED_METHOD = 'desktop-context:set-suspended'
 const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
 const DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD = 'desktop-context:get-foreground-target'
 const DESKTOP_CONTEXT_CAPTURE_WINDOW_METHOD = 'desktop-context:capture-window'
@@ -1086,6 +1088,7 @@ app.whenReady().then(async () => {
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
   await unlockDesktopContextStore()
+  registerDesktopContextPowerEvents()
   await captureQuickInputContext()
   await createMainWindow()
   logDesktopStartup('main window ready')
@@ -1183,6 +1186,19 @@ async function unlockDesktopContextStore() {
   } finally {
     key?.fill(0)
   }
+}
+
+function registerDesktopContextPowerEvents() {
+  const update = (reason: 'screen_locked' | 'system_suspended', suspended: boolean) => {
+    void sidecarHost.call(DESKTOP_CONTEXT_SET_SUSPENDED_METHOD, { reason, suspended })
+      .catch((error) => logDesktopStartup(
+        `desktop context suspension update failed: ${error instanceof Error ? error.message : String(error)}`,
+      ))
+  }
+  powerMonitor.on('lock-screen', () => update('screen_locked', true))
+  powerMonitor.on('unlock-screen', () => update('screen_locked', false))
+  powerMonitor.on('suspend', () => update('system_suspended', true))
+  powerMonitor.on('resume', () => update('system_suspended', false))
 }
 
 async function captureQuickInputContext() {

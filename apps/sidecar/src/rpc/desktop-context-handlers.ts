@@ -1,12 +1,14 @@
 import {
   DESKTOP_CONTEXT_IPC_CHANNELS,
   type DesktopAssistantSettings,
+  type DesktopContextSuspensionReason,
   type DesktopProactiveProposalStatus,
 } from "@lume/shared";
 import type { RpcHandler } from "./types";
 
 interface DesktopContextRpcService {
   unlock(key: Buffer): void;
+  setSuspended(reason: DesktopContextSuspensionReason, suspended: boolean): unknown;
   captureCurrent(input?: { userInitiated?: boolean }): Promise<unknown>;
   getForegroundTarget(): Promise<unknown>;
   captureWindow(input: { windowId?: string; userInitiated?: boolean }): Promise<unknown>;
@@ -31,6 +33,12 @@ export function createDesktopContextHandlers(service: DesktopContextRpcService):
       service.unlock(key);
       key.fill(0);
       return { ok: true };
+    },
+    [DESKTOP_CONTEXT_IPC_CHANNELS.SET_SUSPENDED]: async (params) => {
+      const input = readRecord(params);
+      if (!isSuspensionReason(input.reason)) throw new Error("invalid desktop suspension reason");
+      if (typeof input.suspended !== "boolean") throw new Error("suspended must be a boolean");
+      return service.setSuspended(input.reason, input.suspended);
     },
     [DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT]: async (params) => {
       const input = readRecord(params);
@@ -94,4 +102,8 @@ function isProposalStatus(value: unknown): value is DesktopProactiveProposalStat
     || value === "accepted"
     || value === "dismissed"
     || value === "expired";
+}
+
+function isSuspensionReason(value: unknown): value is DesktopContextSuspensionReason {
+  return value === "screen_locked" || value === "system_suspended";
 }

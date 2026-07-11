@@ -12,6 +12,7 @@ const enabledSettings: DesktopAssistantSettings = {
 const readyStatus: DesktopAssistantStatus = {
   host: { status: 'ok' },
   store: { unlocked: true, items: 2, bytes: 1024 },
+  collector: { running: true, suspensionReasons: [] },
 }
 
 describe('desktop assistant settings state', () => {
@@ -40,6 +41,20 @@ describe('desktop assistant settings state', () => {
       tone: 'warning',
       title: '本地加密存储未解锁',
       details: ['重启后需要 Electron 主进程完成安全密钥初始化，之后才能保留桌面快照。'],
+    })
+  })
+
+  test('reports system suspension before collection settings', () => {
+    expect(buildDesktopAssistantDiagnostics({
+      settings: enabledSettings,
+      status: {
+        ...readyStatus,
+        collector: { running: false, suspensionReasons: ['screen_locked'] },
+      },
+    })).toEqual({
+      tone: 'warning',
+      title: '桌面感知已暂停',
+      details: ['系统处于锁屏状态；解锁后会自动恢复，不会在锁屏期间读取或保存桌面内容。'],
     })
   })
 
