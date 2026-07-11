@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { Crosshair, MonitorUp, ShieldCheck } from 'lucide-react'
+import { Crosshair, MonitorUp, ShieldAlert, ShieldCheck } from 'lucide-react'
 import type { AgentDesktopActionRequest, AgentDesktopActionResponseInput } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { agentPendingInteractiveAtom } from '@/atoms'
@@ -53,6 +53,12 @@ export function DesktopActionBanner({
             <p className="mt-1 text-xs text-muted-foreground">
               Lume 会在执行前重新验证窗口和目标状态。本次允许不会保存为长期授权。
             </p>
+            {request.securityWarning === 'suspected_prompt_injection' ? (
+              <div className="mt-2 flex items-start gap-1.5 rounded-xl border border-destructive/20 bg-destructive/5 px-2.5 py-2 text-xs text-destructive">
+                <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
+                <span>页面中检测到疑似提示注入内容。请只在该操作符合你的原始意图时允许。</span>
+              </div>
+            ) : null}
             {(request.expectedWindow || request.expectedWindowId || request.targetPoint || request.expectedRevision) ? (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {request.expectedWindow || request.expectedWindowId ? (

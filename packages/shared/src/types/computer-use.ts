@@ -159,6 +159,7 @@ export interface AgentDesktopActionRequest {
   expectedWindowId?: string;
   expectedWindow?: Pick<DesktopWindowRef, "id" | "title">;
   expectedRevision?: string;
+  securityWarning?: "suspected_prompt_injection";
   summary: string;
 }
 

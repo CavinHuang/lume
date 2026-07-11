@@ -20,6 +20,7 @@ describe('DesktopActionBanner', () => {
           expectedWindowId: 'win:wechat',
           expectedWindow: { id: 'win:wechat', title: '项目群' },
           expectedRevision: 'rev-safe',
+          securityWarning: 'suspected_prompt_injection',
           summary: '微信：填写内容「输入框」',
         }}
       />,
@@ -32,6 +33,7 @@ describe('DesktopActionBanner', () => {
     expect(html).toContain('目标窗口')
     expect(html).toContain('项目群')
     expect(html).toContain('执行前复核窗口版本')
+    expect(html).toContain('检测到疑似提示注入内容')
     expect(html).not.toContain('password=secret')
   })
 })

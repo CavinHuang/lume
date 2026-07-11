@@ -164,7 +164,7 @@ export function createComputerUseMcpTools(input: {
           if (
             !readOnly
             && !NON_DESKTOP_ACTION_TOOLS.has(name)
-            && requiresDesktopActionConfirmation(actionIntentFromArgs(name as DesktopActionKind, args))
+            && desktopActionRequiresConfirmation(name as DesktopActionKind, args)
           ) {
             if (!input.threadId || !input.emitDesktopActionRequest) {
               return toolResult(context.toolUseId, {
@@ -195,7 +195,7 @@ export function createComputerUseMcpTools(input: {
               args,
             });
           }
-          const rawResult = await invoke(name, args);
+          const rawResult = await invoke(name, desktopInvocationArgs(args));
           const result = await attachPostActionVerification(invoke, name, args, rawResult);
           if (!readOnly && !NON_DESKTOP_ACTION_TOOLS.has(name)) {
             const status = resultStatus(result);
@@ -471,6 +471,7 @@ async function prepareDesktopActionArgsForSafety(
   const window = asRecord(state.window);
   const derivedLabel = deriveTargetLabel(action, args, state);
   const derivedPoint = deriveTargetPoint(action, args, state);
+  const desktopContentRisk = detectDesktopContentRisk(state);
   return {
     status: "ok",
     args: {
@@ -481,19 +482,9 @@ async function prepareDesktopActionArgsForSafety(
       ...(typeof window.title === "string" && !stringValue(args.windowTitle) ? { windowTitle: window.title } : {}),
       ...(derivedLabel ? { targetLabel: derivedLabel } : {}),
       ...(derivedPoint && !hasPoint(args) ? derivedPoint : {}),
+      ...(desktopContentRisk ? { desktopContentRisk } : {}),
       windowRevision: state.revision,
     },
-  };
-}
-
-function actionIntentFromArgs(action: DesktopActionKind, args: Record<string, unknown>) {
-  return {
-    kind: action,
-    targetLabel: stringValue(args.targetLabel) ?? stringValue(args.label),
-    secondaryAction: action === "perform_secondary_action" ? stringValue(args.action) : undefined,
-    keys: Array.isArray(args.keys)
-      ? args.keys.filter((key): key is string => typeof key === "string")
-      : stringValue(args.key)?.split("+"),
   };
 }
 
@@ -511,6 +502,49 @@ function shouldInspectTargetState(action: DesktopActionKind, args: Record<string
     return true;
   }
   return action === "press_key" && containsEnterKey(actionIntentFromArgs(action, args).keys);
+}
+
+function desktopActionRequiresConfirmation(
+  action: DesktopActionKind,
+  args: Record<string, unknown>,
+): boolean {
+  return args.desktopContentRisk === "suspected_prompt_injection"
+    || requiresDesktopActionConfirmation(actionIntentFromArgs(action, args));
+}
+
+function detectDesktopContentRisk(state: Record<string, unknown>): "suspected_prompt_injection" | undefined {
+  const accessibility = asRecord(state.accessibility);
+  const text = [state.visibleText, accessibility.visibleText, accessibility.documentText]
+    .filter((value): value is string => typeof value === "string")
+    .join("\n")
+    .toLowerCase();
+  if (!text) return undefined;
+  const injectionSignals = [
+    /ignore (?:all |any )?(?:previous|prior|above) instructions/,
+    /reveal (?:the |your )?(?:system prompt|developer message|hidden instructions)/,
+    /(?:system prompt|developer message).*(?:secret|confidential|override)/,
+    /(?:忽略|无视)(?:之前|以上|先前|所有).{0,12}(?:指令|提示|要求)/,
+    /(?:泄露|显示|输出).{0,12}(?:系统提示词|开发者消息|隐藏指令)/,
+  ];
+  return injectionSignals.some((signal) => signal.test(text))
+    ? "suspected_prompt_injection"
+    : undefined;
+}
+
+function desktopInvocationArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const { desktopContentRisk: _desktopContentRisk, ...publicArgs } = args;
+  return publicArgs;
+}
+
+function actionIntentFromArgs(action: DesktopActionKind, args: Record<string, unknown>) {
+  return {
+    kind: action,
+    targetLabel: stringValue(args.targetLabel) ?? stringValue(args.label),
+    secondaryAction: action === "perform_secondary_action" ? stringValue(args.action) : undefined,
+    keys: Array.isArray(args.keys)
+      ? args.keys.filter((key): key is string => typeof key === "string")
+      : stringValue(args.key)?.split("+"),
+  };
 }
 
 function containsEnterKey(keys: string[] | undefined): boolean {
@@ -616,6 +650,9 @@ function createActionRequest(
     ...(windowId ? { expectedWindowId: windowId } : {}),
     ...(windowId && windowTitle ? { expectedWindow: { id: windowId, title: windowTitle } } : {}),
     ...(stringValue(args.windowRevision) ? { expectedRevision: stringValue(args.windowRevision) } : {}),
+    ...(args.desktopContentRisk === "suspected_prompt_injection"
+      ? { securityWarning: "suspected_prompt_injection" as const }
+      : {}),
     summary: `${appName}：${desktopActionSummaryLabel(action)}${summaryTarget ? `「${summaryTarget}」` : ""}`,
   };
 }
