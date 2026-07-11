@@ -205,6 +205,8 @@ function buildMacEventMonitor(outputPath) {
     outputPath,
     "-framework",
     "AppKit",
+    "-framework",
+    "ApplicationServices",
   ], {
     cwd: REPO_ROOT,
     stdio: "inherit",

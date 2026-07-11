@@ -25,6 +25,7 @@ const CONTEXT_CHANGE_EVENT_TYPES = new Set([
   "selection_changed",
   "value_changed",
   "scroll_changed",
+  "interaction_changed",
 ]);
 
 interface DesktopContextStoreLike {

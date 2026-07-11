@@ -276,6 +276,7 @@ describe("DesktopContextService", () => {
     service.handleHostNotification("context.event", { type: "selection_changed" });
     service.handleHostNotification("context.event", { type: "value_changed" });
     service.handleHostNotification("context.event", { type: "scroll_changed" });
+    service.handleHostNotification("context.event", { type: "interaction_changed" });
     service.handleHostNotification("ignored.event", { type: "foreground_changed" });
     service.handleHostNotification("context.event", { type: "raw_key" });
     await Bun.sleep(180);

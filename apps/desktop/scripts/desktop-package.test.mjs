@@ -142,7 +142,7 @@ test('desktop-host resource build packages the macOS permission guide helper', (
   assert.match(guide, /DispatchQueue\.main\.asyncAfter/)
 })
 
-test('desktop-host resource build packages the macOS foreground event monitor', () => {
+test('desktop-host resource build packages the macOS context event monitor', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
   const helperPath = resolve(REPO_ROOT, 'crates/lume-desktop-host/macos/LumeComputerUseEventMonitor.swift')
   const helper = readFileSync(helperPath, 'utf8')
@@ -151,8 +151,18 @@ test('desktop-host resource build packages the macOS foreground event monitor', 
   assert.match(script, /LumeComputerUseEventMonitor\.swift/)
   assert.match(script, /LumeComputerUseEventMonitor/)
   assert.match(helper, /didActivateApplicationNotification/)
+  assert.match(helper, /AXObserverCreate/)
+  assert.match(helper, /kAXFocusedUIElementChangedNotification/)
+  assert.match(helper, /kAXSelectedTextChangedNotification/)
+  assert.match(helper, /kAXValueChangedNotification/)
   assert.match(helper, /foreground_changed/)
-  assert.doesNotMatch(helper, /localizedName|bundleIdentifier|window|title|clipboard/)
+  assert.match(helper, /focus_changed/)
+  assert.match(helper, /selection_changed/)
+  assert.match(helper, /value_changed/)
+  assert.match(helper, /scroll_changed/)
+  assert.match(helper, /CGEvent\.tapCreate/)
+  assert.match(helper, /interaction_changed/)
+  assert.doesNotMatch(helper, /localizedName|bundleIdentifier|clipboard|kAXTitleAttribute|kAXValueAttribute|kAXSelectedTextAttribute/)
 })
 
 test('desktop-host resource build prefers a stable macOS signing identity', () => {
