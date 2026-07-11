@@ -237,6 +237,121 @@ pub(crate) fn macos_click_candidate_contains_point(
     point_x >= x && point_x < x + width && point_y >= y && point_y < y + height
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_click_action_points(
+    origin: (f64, f64),
+    size: (f64, f64),
+    is_synthetic_text: bool,
+) -> Vec<(i64, i64)> {
+    let (x, y) = origin;
+    let (width, height) = size;
+    if !x.is_finite()
+        || !y.is_finite()
+        || !width.is_finite()
+        || !height.is_finite()
+        || width <= 0.0
+        || height <= 0.0
+    {
+        return Vec::new();
+    }
+    let center = (rounded(x + width / 2.0), rounded(y + height / 2.0));
+    let leading_offset = (width * 0.3).max(20.0).min((width - 4.0).max(20.0));
+    let leading = (rounded(x + leading_offset), center.1);
+    if is_synthetic_text {
+        return vec![leading];
+    }
+    if (leading.0 - center.0).abs() < 1 {
+        vec![center]
+    } else {
+        vec![center, leading]
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_likely_synthetic_side_action(
+    parent: (f64, f64, f64, f64),
+    candidate: (f64, f64, f64, f64),
+    has_primary_action: bool,
+    labels: &[String],
+) -> bool {
+    let has_side_action_label = labels.iter().any(|label| {
+        let normalized = label.trim().to_lowercase();
+        matches!(
+            normalized.as_str(),
+            "完成" | "done" | "complete" | "archive"
+        ) || (normalized.chars().count() <= 24
+            && (normalized.contains("完成")
+                || (normalized.contains("mark")
+                    && (normalized.contains("done") || normalized.contains("complete")))))
+    });
+    let (parent_x, _, parent_width, parent_height) = parent;
+    let (candidate_x, _, candidate_width, candidate_height) = candidate;
+    if parent_width <= 0.0
+        || parent_height <= 0.0
+        || candidate_width <= 0.0
+        || candidate_height <= 0.0
+    {
+        return false;
+    }
+    let trailing_band_width = (parent_width * 0.22).max(56.0).min(140.0);
+    let is_trailing =
+        candidate_x + candidate_width / 2.0 >= parent_x + parent_width - trailing_band_width;
+    let is_compact = candidate_width <= 88.0_f64.max(parent_width * 0.18)
+        && candidate_height <= 44.0_f64.max(parent_height * 1.2);
+    (has_side_action_label && has_primary_action && is_compact)
+        || (is_trailing && is_compact && (has_primary_action || has_side_action_label))
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_should_prefer_containing_web_row(
+    role: Option<&str>,
+    is_synthetic_text: bool,
+    has_web_area_ancestor: bool,
+    app_name: &str,
+    bundle_identifier: Option<&str>,
+) -> bool {
+    if !has_web_area_ancestor {
+        return false;
+    }
+    let normalized_name = app_name.trim().to_lowercase();
+    let scoped_app = bundle_identifier
+        .map(str::trim)
+        .map(str::to_lowercase)
+        .is_some_and(|bundle| {
+            bundle.starts_with("com.electron.")
+                || bundle.contains(".electron.")
+                || bundle.contains("lark")
+                || bundle.contains("feishu")
+        })
+        || matches!(normalized_name.as_str(), "lark" | "feishu" | "飞书");
+    scoped_app
+        && role.map_or(is_synthetic_text, |role| {
+            matches!(role, "AXStaticText" | "AXGroup") || is_synthetic_text
+        })
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_likely_containing_row_action(
+    target: (f64, f64, f64, f64),
+    candidate: (f64, f64, f64, f64),
+    has_primary_action: bool,
+) -> bool {
+    if !has_primary_action {
+        return false;
+    }
+    let (target_x, target_y, target_width, target_height) = target;
+    let (candidate_x, candidate_y, candidate_width, candidate_height) = candidate;
+    let center_x = target_x + target_width / 2.0;
+    let center_y = target_y + target_height / 2.0;
+    center_x >= candidate_x - 2.0
+        && center_x <= candidate_x + candidate_width + 2.0
+        && center_y >= candidate_y - 2.0
+        && center_y <= candidate_y + candidate_height + 2.0
+        && candidate_width >= target_width
+        && candidate_height >= target_height
+        && candidate_height <= (target_height + 32.0).max(target_height * 2.0)
+}
+
 pub fn macos_matching_secondary_action<'a>(
     actions: &'a [String],
     requested: &str,
@@ -838,6 +953,73 @@ mod click_event_tests {
             (100.0, 200.0),
             (0.0, 40.0),
             (100, 220),
+        ));
+    }
+
+    #[test]
+    fn probes_the_center_and_leading_content_without_drifting_to_trailing_actions() {
+        assert_eq!(
+            macos_click_action_points((100.0, 200.0), (200.0, 40.0), false),
+            vec![(200, 220), (160, 220)]
+        );
+        assert_eq!(
+            macos_click_action_points((100.0, 200.0), (200.0, 40.0), true),
+            vec![(160, 220)]
+        );
+    }
+
+    #[test]
+    fn recognizes_compact_trailing_completion_actions() {
+        assert!(macos_likely_synthetic_side_action(
+            (100.0, 200.0, 400.0, 48.0),
+            (430.0, 204.0, 56.0, 36.0),
+            true,
+            &["Mark done".to_owned()],
+        ));
+        assert!(!macos_likely_synthetic_side_action(
+            (100.0, 200.0, 400.0, 48.0),
+            (120.0, 204.0, 240.0, 36.0),
+            true,
+            &["Open item".to_owned()],
+        ));
+    }
+
+    #[test]
+    fn scopes_web_row_recovery_to_electron_web_content() {
+        assert!(macos_should_prefer_containing_web_row(
+            Some("AXStaticText"),
+            false,
+            true,
+            "Feishu",
+            Some("com.bytedance.lark"),
+        ));
+        assert!(!macos_should_prefer_containing_web_row(
+            Some("AXButton"),
+            false,
+            true,
+            "Feishu",
+            Some("com.bytedance.lark"),
+        ));
+        assert!(!macos_should_prefer_containing_web_row(
+            Some("AXStaticText"),
+            false,
+            true,
+            "Safari",
+            Some("com.apple.Safari"),
+        ));
+    }
+
+    #[test]
+    fn accepts_only_tightly_bounded_containing_row_actions() {
+        assert!(macos_likely_containing_row_action(
+            (180.0, 210.0, 120.0, 20.0),
+            (100.0, 200.0, 400.0, 48.0),
+            true,
+        ));
+        assert!(!macos_likely_containing_row_action(
+            (180.0, 210.0, 120.0, 20.0),
+            (0.0, 0.0, 1200.0, 800.0),
+            true,
         ));
     }
 }

@@ -5,14 +5,16 @@ use crate::{
     desktop_permission_granted, desktop_permission_guide_launch_for_app_bundle_path,
     desktop_scroll_options, macos_overlay,
     macos_snapshot::{
-        find_macos_window, first_visible_user_window, macos_click_candidate_contains_point,
-        macos_click_event_codes, macos_current_context_result, macos_get_window_result,
-        macos_get_window_state_result, macos_global_pointer_fallback_enabled_from,
-        macos_integral_scroll_page_count, macos_key_chord, macos_list_apps_result,
-        macos_list_windows_result, macos_matching_secondary_action, macos_png_data_url,
-        macos_pointer_input_mode, macos_pointer_requires_activation, macos_preferred_click_actions,
-        macos_resolve_action_point, macos_screen_capture_helper_path, macos_scroll_action_name,
-        macos_scroll_wheel_deltas, macos_set_value_attribute_is_settable,
+        find_macos_window, first_visible_user_window, macos_click_action_points,
+        macos_click_candidate_contains_point, macos_click_event_codes,
+        macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
+        macos_global_pointer_fallback_enabled_from, macos_integral_scroll_page_count,
+        macos_key_chord, macos_likely_containing_row_action, macos_likely_synthetic_side_action,
+        macos_list_apps_result, macos_list_windows_result, macos_matching_secondary_action,
+        macos_png_data_url, macos_pointer_input_mode, macos_pointer_requires_activation,
+        macos_preferred_click_actions, macos_resolve_action_point,
+        macos_screen_capture_helper_path, macos_scroll_action_name, macos_scroll_wheel_deltas,
+        macos_set_value_attribute_is_settable, macos_should_prefer_containing_web_row,
         macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
         macos_visible_pointer_mode, macos_visible_pointer_motion_points,
         macos_wait_for_state_result, MacOSElementInfo, MacOSWindowInfo,
@@ -289,7 +291,10 @@ fn perform_ax_click_action(
             let root = matching_ax_window(app, window.window_id).or_else(|| first_ax_window(app));
             if let Some(root) = root {
                 if let Some(element) = matching_ax_element_by_id(root, element_id) {
-                    handled = perform_preferred_ax_click_action(element, options);
+                    handled = perform_containing_web_row_click(window, element, options);
+                    if !handled {
+                        handled = perform_preferred_ax_click_action(element, options);
+                    }
                     if !handled {
                         let mut remaining = 64;
                         handled = perform_descendant_ax_click_action(
@@ -299,6 +304,9 @@ fn perform_ax_click_action(
                             0,
                             &mut remaining,
                         );
+                    }
+                    if !handled {
+                        handled = perform_nearby_ax_click_action(app, element, options);
                     }
                     CFRelease(element as CFTypeRef);
                 }
@@ -315,7 +323,10 @@ fn perform_ax_click_action(
             );
             if !hit_element.is_null() {
                 if hit_result == K_AX_ERROR_SUCCESS {
-                    handled = perform_preferred_ax_click_action(hit_element, options);
+                    handled = perform_containing_web_row_click(window, hit_element, options);
+                    if !handled {
+                        handled = perform_preferred_ax_click_action(hit_element, options);
+                    }
                     if !handled {
                         let mut remaining = 64;
                         handled = perform_descendant_ax_click_action(
@@ -345,6 +356,14 @@ unsafe fn perform_preferred_ax_click_action(
     element: AXUIElementRef,
     options: DesktopClickOptions,
 ) -> bool {
+    if options.button == DesktopMouseButton::Left
+        && options.count == 1
+        && !has_ax_ancestor_role(element, "AXWebArea", 12)
+        && select_containing_list_item(element)
+    {
+        thread::sleep(Duration::from_millis(150));
+        return true;
+    }
     let available_actions = copy_ax_action_names(element);
     macos_preferred_click_actions(options.button == DesktopMouseButton::Right)
         .iter()
@@ -354,6 +373,185 @@ unsafe fn perform_preferred_ax_click_action(
                 .any(|available| available.eq_ignore_ascii_case(preferred))
         })
         .any(|action| (0..options.count).all(|_| perform_ax_action(element, action)))
+}
+
+unsafe fn select_containing_list_item(element: AXUIElementRef) -> bool {
+    let retained = CFRetain(element as CFTypeRef);
+    if retained.is_null() {
+        return false;
+    }
+    let mut current = retained as AXUIElementRef;
+    for _ in 0..8 {
+        let Some(parent) = copy_ax_attribute(current, "AXParent") else {
+            CFRelease(current as CFTypeRef);
+            return false;
+        };
+        let is_selectable_list = copy_ax_string_attribute(parent as AXUIElementRef, "AXRole")
+            .is_some_and(|role| role == "AXList")
+            && ax_attribute_is_settable(parent as AXUIElementRef, "AXSelectedChildren")
+                .unwrap_or(false);
+        if is_selectable_list {
+            let selected = set_ax_element_array_attribute(
+                parent as AXUIElementRef,
+                "AXSelectedChildren",
+                current,
+            );
+            CFRelease(parent);
+            CFRelease(current as CFTypeRef);
+            return selected;
+        }
+        CFRelease(current as CFTypeRef);
+        current = parent as AXUIElementRef;
+    }
+    CFRelease(current as CFTypeRef);
+    false
+}
+
+unsafe fn perform_containing_web_row_click(
+    window: &MacOSWindowInfo,
+    element: AXUIElementRef,
+    options: DesktopClickOptions,
+) -> bool {
+    if options.button != DesktopMouseButton::Left || options.count != 1 {
+        return false;
+    }
+    let role = copy_ax_string_attribute(element, "AXRole");
+    if !macos_should_prefer_containing_web_row(
+        role.as_deref(),
+        false,
+        has_ax_ancestor_role(element, "AXWebArea", 12),
+        &window.owner_name,
+        window.bundle_identifier.as_deref(),
+    ) {
+        return false;
+    }
+    let Some(target_frame) = ax_element_frame(element) else {
+        return false;
+    };
+    let retained = CFRetain(element as CFTypeRef);
+    if retained.is_null() {
+        return false;
+    }
+    let mut current = retained as AXUIElementRef;
+    for _ in 0..6 {
+        let Some(parent) = copy_ax_attribute(current, "AXParent") else {
+            break;
+        };
+        CFRelease(current as CFTypeRef);
+        current = parent as AXUIElementRef;
+        let actions = copy_ax_action_names(current);
+        let has_primary_action = actions
+            .iter()
+            .any(|action| action.eq_ignore_ascii_case("AXPress"));
+        let Some(candidate_frame) = ax_element_frame(current) else {
+            continue;
+        };
+        if macos_likely_containing_row_action(target_frame, candidate_frame, has_primary_action)
+            && !ax_element_is_likely_side_action(element, current)
+            && perform_ax_action(current, "AXPress")
+        {
+            CFRelease(current as CFTypeRef);
+            thread::sleep(Duration::from_millis(150));
+            return true;
+        }
+    }
+    CFRelease(current as CFTypeRef);
+    false
+}
+
+unsafe fn perform_nearby_ax_click_action(
+    app: AXUIElementRef,
+    element: AXUIElementRef,
+    options: DesktopClickOptions,
+) -> bool {
+    let Some((origin, size)) = copy_ax_point_attribute(element, "AXPosition")
+        .zip(copy_ax_size_attribute(element, "AXSize"))
+    else {
+        return false;
+    };
+    let role = copy_ax_string_attribute(element, "AXRole");
+    for point in macos_click_action_points(origin, size, role.as_deref() == Some("AXStaticText")) {
+        let mut hit_element = ptr::null();
+        if AXUIElementCopyElementAtPosition(
+            app,
+            point.0 as c_float,
+            point.1 as c_float,
+            &mut hit_element,
+        ) != K_AX_ERROR_SUCCESS
+            || hit_element.is_null()
+        {
+            continue;
+        }
+        let blocked_side_action = ax_element_is_likely_side_action(element, hit_element);
+        let handled =
+            !blocked_side_action && perform_preferred_ax_click_action(hit_element, options);
+        CFRelease(hit_element as CFTypeRef);
+        if handled {
+            return true;
+        }
+    }
+    false
+}
+
+unsafe fn has_ax_ancestor_role(
+    element: AXUIElementRef,
+    expected_role: &str,
+    max_depth: usize,
+) -> bool {
+    let retained = CFRetain(element as CFTypeRef);
+    if retained.is_null() {
+        return false;
+    }
+    let mut current = retained as AXUIElementRef;
+    for _ in 0..max_depth {
+        let Some(parent) = copy_ax_attribute(current, "AXParent") else {
+            break;
+        };
+        CFRelease(current as CFTypeRef);
+        current = parent as AXUIElementRef;
+        if copy_ax_string_attribute(current, "AXRole").as_deref() == Some(expected_role) {
+            CFRelease(current as CFTypeRef);
+            return true;
+        }
+    }
+    CFRelease(current as CFTypeRef);
+    false
+}
+
+unsafe fn ax_element_frame(element: AXUIElementRef) -> Option<(f64, f64, f64, f64)> {
+    copy_ax_point_attribute(element, "AXPosition")
+        .zip(copy_ax_size_attribute(element, "AXSize"))
+        .map(|((x, y), (width, height))| (x, y, width, height))
+}
+
+unsafe fn ax_element_is_likely_side_action(
+    parent: AXUIElementRef,
+    candidate: AXUIElementRef,
+) -> bool {
+    let Some(parent_frame) = ax_element_frame(parent) else {
+        return false;
+    };
+    let Some(candidate_frame) = ax_element_frame(candidate) else {
+        return false;
+    };
+    let actions = copy_ax_action_names(candidate);
+    let has_primary_action = actions.iter().any(|action| {
+        matches!(
+            action.to_ascii_lowercase().as_str(),
+            "axpress" | "axconfirm" | "axopen" | "axshowmenu"
+        )
+    });
+    let labels = [
+        "AXTitle",
+        "AXDescription",
+        "AXHelp",
+        "AXValue",
+        "AXIdentifier",
+    ]
+    .iter()
+    .filter_map(|attribute| copy_ax_string_attribute(candidate, attribute))
+    .collect::<Vec<_>>();
+    macos_likely_synthetic_side_action(parent_frame, candidate_frame, has_primary_action, &labels)
 }
 
 unsafe fn perform_descendant_ax_click_action(
@@ -1570,6 +1768,32 @@ unsafe fn set_ax_string_attribute(
     }
 }
 
+unsafe fn set_ax_element_array_attribute(
+    element: AXUIElementRef,
+    attribute: &str,
+    child: AXUIElementRef,
+) -> bool {
+    let Some(attribute_ref) = create_cf_string(attribute) else {
+        return false;
+    };
+    let values = [child as CFTypeRef];
+    let array = CFArrayCreate(
+        ptr::null(),
+        values.as_ptr(),
+        values.len() as CFIndex,
+        ptr::null(),
+    );
+    if array.is_null() {
+        CFRelease(attribute_ref as CFTypeRef);
+        return false;
+    }
+    let result = AXUIElementSetAttributeValue(element, attribute_ref, array as CFTypeRef)
+        == K_AX_ERROR_SUCCESS;
+    CFRelease(array as CFTypeRef);
+    CFRelease(attribute_ref as CFTypeRef);
+    result
+}
+
 unsafe fn create_cf_string(value: &str) -> Option<CFStringRef> {
     let Ok(value) = CString::new(value) else {
         return None;
@@ -2035,6 +2259,12 @@ extern "C" {
     fn CFArrayGetTypeID() -> CFTypeID;
     fn CFArrayGetCount(array: CFArrayRef) -> CFIndex;
     fn CFArrayGetValueAtIndex(array: CFArrayRef, index: CFIndex) -> CFTypeRef;
+    fn CFArrayCreate(
+        allocator: *const c_void,
+        values: *const CFTypeRef,
+        num_values: CFIndex,
+        callbacks: *const c_void,
+    ) -> CFArrayRef;
     fn CFDictionaryGetValueIfPresent(
         dict: CFDictionaryRef,
         key: CFTypeRef,
