@@ -988,30 +988,36 @@ fn scroll(params: &Value) -> Result<Value> {
     let Some(hwnd) = target_window(params) else {
         return Ok(stale_target());
     };
-    let Some(element) = resolve_element(params)? else {
-        return Ok(json!({
-            "status": "stale_target",
-            "message": "target element is unavailable",
-        }));
-    };
-    let bounds = unsafe { element.CurrentBoundingRectangle().ok() };
-    if try_scroll_element(&element, options)? {
-        if let Some(bounds) = bounds {
-            settle_visual_cursor(
-                (bounds.left + bounds.right) / 2,
-                (bounds.top + bounds.bottom) / 2,
-                Some(hwnd),
-            );
+    if params.get("elementId").and_then(Value::as_str).is_some() {
+        let Some(element) = resolve_element(params)? else {
+            return Ok(json!({
+                "status": "stale_target",
+                "message": "target element is unavailable",
+            }));
+        };
+        let bounds = unsafe { element.CurrentBoundingRectangle().ok() };
+        if try_scroll_element(&element, options)? {
+            if let Some(bounds) = bounds {
+                settle_visual_cursor(
+                    (bounds.left + bounds.right) / 2,
+                    (bounds.top + bounds.bottom) / 2,
+                    Some(hwnd),
+                );
+            }
+            return Ok(json!({ "status": "ok", "inputMode": "uia_scroll" }));
         }
-        return Ok(json!({ "status": "ok", "inputMode": "uia_scroll" }));
+        let Some(bounds) = bounds else {
+            return Ok(failed_action("target element has no scrollable bounds"));
+        };
+        let point = (
+            (bounds.left + bounds.right) / 2,
+            (bounds.top + bounds.bottom) / 2,
+        );
+        settle_visual_cursor(point.0, point.1, Some(hwnd));
+        post_targeted_scroll(hwnd, point, options)?;
+        return Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }));
     }
-    let Some(bounds) = bounds else {
-        return Ok(failed_action("target element has no scrollable bounds"));
-    };
-    let point = (
-        (bounds.left + bounds.right) / 2,
-        (bounds.top + bounds.bottom) / 2,
-    );
+    let point = action_point(params)?;
     settle_visual_cursor(point.0, point.1, Some(hwnd));
     post_targeted_scroll(hwnd, point, options)?;
     Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))

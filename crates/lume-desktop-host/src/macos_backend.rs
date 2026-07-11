@@ -611,19 +611,18 @@ fn scroll(params: &Value, windows: &[MacOSWindowInfo]) -> Result<Value> {
     let Some(window) = required_window(params, windows) else {
         return Ok(stale_target());
     };
-    let Some(element_id) = params.get("elementId").and_then(Value::as_str) else {
-        return Ok(failed_action("elementId is required"));
-    };
     let (x, y) = match macos_resolve_action_point(&window, params) {
         Ok(point) => point,
         Err(result) => return Ok(result),
     };
-    if let Some(handled) = perform_element_scroll_action(&window, element_id, options)? {
-        return Ok(if handled {
-            json!({ "status": "ok", "inputMode": "accessibility_scroll" })
-        } else {
-            failed_action("AX scroll action failed")
-        });
+    if let Some(element_id) = params.get("elementId").and_then(Value::as_str) {
+        if let Some(handled) = perform_element_scroll_action(&window, element_id, options)? {
+            return Ok(if handled {
+                json!({ "status": "ok", "inputMode": "accessibility_scroll" })
+            } else {
+                failed_action("AX scroll action failed")
+            });
+        }
     }
     let global_pointer_fallback = global_pointer_fallback_enabled();
     if global_pointer_fallback {

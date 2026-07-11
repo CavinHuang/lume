@@ -38,15 +38,20 @@ describe("createComputerUseMcpTools", () => {
     });
     expect(schema("perform_secondary_action").properties.x).toBeUndefined();
     expect(schema("perform_secondary_action").properties.y).toBeUndefined();
-    expect(schema("scroll").required).toEqual(["windowId", "elementId", "direction"]);
+    expect(schema("scroll").required).toEqual(["windowId", "direction"]);
+    expect(schema("scroll").anyOf).toEqual([
+      { required: ["elementId"] },
+      { required: ["x", "y"] },
+      { required: ["screenshotX", "screenshotY"] },
+    ]);
     expect(schema("scroll").properties.direction).toMatchObject({
       type: "string",
       enum: ["up", "down", "left", "right"],
     });
     expect(schema("scroll").properties.pages).toMatchObject({ type: "number" });
     expect(schema("scroll").properties.deltaY).toBeUndefined();
-    expect(schema("scroll").properties.x).toBeUndefined();
-    expect(schema("scroll").properties.y).toBeUndefined();
+    expect(schema("scroll").properties.x).toMatchObject({ type: "number" });
+    expect(schema("scroll").properties.y).toMatchObject({ type: "number" });
     expect(schema("drag").required).toEqual(["windowId", "fromX", "fromY", "toX", "toY"]);
     expect(schema("type_text").required).toEqual(["windowId", "text"]);
     expect(schema("set_value").required).toEqual(["windowId", "elementId", "value"]);
@@ -79,7 +84,7 @@ describe("createComputerUseMcpTools", () => {
     expect(required("activate_window")).toBeUndefined();
     expect(required("click")).toBeUndefined();
     expect(required("perform_secondary_action")).toEqual(["elementId", "action"]);
-    expect(required("scroll")).toEqual(["elementId", "direction"]);
+    expect(required("scroll")).toEqual(["direction"]);
     expect(required("drag")).toEqual(["fromX", "fromY", "toX", "toY"]);
     expect(required("press_key")).toBeUndefined();
     expect(required("type_text")).toEqual(["text"]);
@@ -158,6 +163,54 @@ describe("createComputerUseMcpTools", () => {
     expect(calls[0]).toEqual({
       method: "get_window_state",
       input: { windowId: "win:retina", includeScreenshot: true },
+    });
+  });
+
+  test("maps Retina screenshot pixels before coordinate scrolling", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        if (method === "get_window_state") {
+          return {
+            status: "ok",
+            revision: "rev-scroll-retina",
+            window: {
+              id: "win:retina",
+              bounds: { x: 100, y: 50, width: 800, height: 600 },
+            },
+            screenshots: [{
+              id: "shot-retina",
+              width: 1600,
+              height: 1200,
+              origin: { x: 100, y: 50 },
+            }],
+          };
+        }
+        return { status: "ok" };
+      },
+    });
+    const scroll = tools.find((tool) => tool.name === "mcp__computer_use__scroll")!;
+    await scroll.call({
+      windowId: "win:retina",
+      screenshotId: "shot-retina",
+      screenshotX: 800,
+      screenshotY: 600,
+      direction: "down",
+      pages: 0.5,
+    }, { toolUseId: "tool-scroll-retina" } as never);
+
+    expect(calls[0]).toEqual({
+      method: "get_window_state",
+      input: { windowId: "win:retina", includeScreenshot: true },
+    });
+    expect(calls.find((call) => call.method === "scroll")?.input).toEqual({
+      windowId: "win:retina",
+      windowRevision: "rev-scroll-retina",
+      x: 500,
+      y: 350,
+      direction: "down",
+      pages: 0.5,
     });
   });
 

@@ -496,7 +496,7 @@ async function prepareDesktopActionArgsForSafety(
 }
 
 function shouldInspectTargetState(action: DesktopActionKind, args: Record<string, unknown>): boolean {
-  if (hasScreenshotPoint(args) && (action === "move_pointer" || action === "click")) {
+  if (hasScreenshotPoint(args) && (action === "move_pointer" || action === "click" || action === "scroll")) {
     return true;
   }
   if (
@@ -739,7 +739,7 @@ function describeTool(
     move_pointer: "Move the visible agent pointer to an accessibility element, screenshot pixel, or absolute screen coordinate in one window. Prefer elementId, then screenshotX/screenshotY from the latest screenshot.",
     click: "Click an accessibility element, screenshot pixel, or absolute screen coordinate in one window. Supports one or more clicks with the left, right, or middle mouse button. Call get_window_state or wait_for_state afterward to verify the intended state change.",
     perform_secondary_action: "Invoke one named secondary accessibility action exposed by an element, such as AXShowMenu, Toggle, Select, Expand, Collapse, or ScrollIntoView. Use an action listed on the latest get_window_state tree and verify the result afterward.",
-    scroll: "Scroll one accessibility element up, down, left, or right by a positive number of pages. Fractional pages are supported and default to 1. Use an element from the latest get_window_state tree and verify the result afterward.",
+    scroll: "Scroll at one accessibility element, screenshot pixel, or absolute screen coordinate, up, down, left, or right by a positive number of pages. Prefer elementId when available; use screenshotX/screenshotY for canvas, PDF, and WebView content without an accessible scroll element. Fractional pages are supported and default to 1.",
     drag: "Drag from one absolute desktop coordinate to another inside one exact windowId, then verify the result with get_window_state.",
     press_key: "Press one key chord or ordered key list in one exact windowId. Use named keys such as CTRL, SHIFT, ENTER, TAB, ESCAPE, or arrow keys.",
     type_text: "Type ordinary non-secret text into the focused control in one exact windowId. Never use this for passwords or OTPs; secure credentials require the dedicated browserAuth flow.",
@@ -848,14 +848,18 @@ function toolSchema(
       });
     case "scroll":
       return object({
-        ...elementTarget,
+        ...actionTarget,
         direction: {
           type: "string",
           enum: ["up", "down", "left", "right"],
           description: "Scroll direction.",
         },
         pages: number("Positive number of pages to scroll. Fractional values are supported. Defaults to 1."),
-      }, windowScopedRequired(["windowId", "elementId", "direction"]));
+      }, windowScopedRequired(["windowId", "direction"]), [
+        { required: ["elementId"] },
+        { required: ["x", "y"] },
+        { required: ["screenshotX", "screenshotY"] },
+      ]);
     case "drag":
       return object({
         ...actionTarget,
