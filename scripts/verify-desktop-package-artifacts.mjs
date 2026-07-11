@@ -91,14 +91,15 @@ function verifyPackagedApplications(files) {
   const archives = files.filter((file) => /\/resources\/app\.asar$/i.test(file));
   if (archives.length === 0) fail("packaged application app.asar is missing");
 
+  const requiredEntries = ["/dist/main/main.mjs", "/dist/preload/preload.cjs", "/assets/icon.png"];
   for (const archive of archives) {
-    const entries = asar.listPackage(archive);
-    for (const requiredEntry of ["\\dist\\main\\main.mjs", "\\dist\\preload\\preload.cjs", "\\assets\\icon.png"]) {
+    const entries = asar.listPackage(archive).map(toPosix);
+    for (const requiredEntry of requiredEntries) {
       if (!entries.includes(requiredEntry)) {
         fail(`${archive} missing ${requiredEntry}`);
       }
     }
-    if (entries.some((entry) => entry.startsWith("\\src") || entry.startsWith("\\node_modules"))) {
+    if (entries.some((entry) => entry.startsWith("/src") || entry.startsWith("/node_modules"))) {
       fail(`${archive} must contain only bundled main-process runtime files`);
     }
     if (entries.some((entry) => entry.endsWith(".node"))) {
