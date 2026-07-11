@@ -65,16 +65,18 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
     };
     use tokio::sync::mpsc::UnboundedSender;
     use windows::Win32::{
-        Foundation::{HWND, LPARAM, WPARAM},
+        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
         System::Threading::GetCurrentThreadId,
         UI::{
             Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK},
             WindowsAndMessaging::{
-                GetMessageW, PeekMessageW, PostThreadMessageW, EVENT_OBJECT_FOCUS,
-                EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
+                CallNextHookEx, GetMessageW, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
+                UnhookWindowsHookEx, EVENT_OBJECT_FOCUS, EVENT_OBJECT_SELECTION,
+                EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
                 EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_FOREGROUND,
                 EVENT_SYSTEM_SCROLLINGEND, EVENT_SYSTEM_SCROLLINGSTART, MSG, PM_NOREMOVE,
-                WINEVENT_OUTOFCONTEXT, WM_QUIT,
+                WH_MOUSE_LL, WINEVENT_OUTOFCONTEXT, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEHWHEEL,
+                WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONUP,
             },
         },
     };
@@ -82,6 +84,11 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
     fn senders() -> &'static Mutex<HashMap<usize, UnboundedSender<Value>>> {
         static SENDERS: OnceLock<Mutex<HashMap<usize, UnboundedSender<Value>>>> = OnceLock::new();
         SENDERS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    fn mouse_sender() -> &'static Mutex<Option<UnboundedSender<Value>>> {
+        static SENDER: OnceLock<Mutex<Option<UnboundedSender<Value>>>> = OnceLock::new();
+        SENDER.get_or_init(|| Mutex::new(None))
     }
 
     unsafe extern "system" fn event_callback(
@@ -114,6 +121,26 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
         {
             let _ = sender.send(context_changed_event(event_type, now_millis()));
         }
+    }
+
+    unsafe extern "system" fn mouse_callback(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if code >= 0 {
+            let event_type = match wparam.0 as u32 {
+                WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP => Some("interaction_changed"),
+                WM_MOUSEWHEEL | WM_MOUSEHWHEEL => Some("scroll_changed"),
+                _ => None,
+            };
+            if let Some(event_type) = event_type {
+                if let Some(sender) = mouse_sender()
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .as_ref()
+                {
+                    let _ = sender.send(context_changed_event(event_type, now_millis()));
+                }
+            }
+        }
+        CallNextHookEx(None, code, wparam, lparam)
     }
 
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -156,8 +183,18 @@ fn start_windows_event_monitor() -> Result<DesktopEventMonitor> {
                 registered.insert(hook.0 as usize, sender.clone());
             }
         }
+        let mouse_hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_callback), None, 0).ok();
+        *mouse_sender()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(sender);
         let _ = ready_sender.send(Ok(thread_id));
         while GetMessageW(&mut message, None, 0, 0).0 > 0 {}
+        *mouse_sender()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+        if let Some(mouse_hook) = mouse_hook {
+            let _ = UnhookWindowsHookEx(mouse_hook);
+        }
         let mut registered = senders().lock().unwrap_or_else(|error| error.into_inner());
         for hook in hooks {
             registered.remove(&(hook.0 as usize));
@@ -240,6 +277,7 @@ mod tests {
             "selection_changed",
             "value_changed",
             "scroll_changed",
+            "interaction_changed",
         ] {
             assert_eq!(
                 context_changed_event(event_type, 123),
