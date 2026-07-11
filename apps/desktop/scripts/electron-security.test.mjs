@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve, sep } from "node:path";
@@ -332,7 +332,7 @@ const ROOT_PREFIX = ROOT.endsWith(sep) ? ROOT : ROOT + sep;
 
 test("resolveFileProtocolPath: 合法绝对路径返回 ok", () => {
   const url = `lume-file://file/${encodeURIComponent(IMG)}`;
-  assert.deepEqual(resolveFileProtocolPath(url, ROOT), { kind: "ok", absPath: IMG });
+  assert.deepEqual(resolveFileProtocolPath(url, ROOT), { kind: "ok", absPath: realpathSync(IMG) });
 });
 
 test("resolveFileProtocolPath: 正斜杠路径变体返回 ok（跨平台正向用例）", () => {
@@ -345,7 +345,7 @@ test("resolveFileProtocolPath: 正斜杠路径变体返回 ok（跨平台正向�
   assert.equal(result.kind, "ok");
   if (result.kind === "ok") {
     // realpath 后应等于 IMG 的绝对路径
-    assert.equal(result.absPath, resolve(IMG));
+    assert.equal(result.absPath, realpathSync(IMG));
   }
 });
 

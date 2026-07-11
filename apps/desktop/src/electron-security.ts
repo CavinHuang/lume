@@ -178,7 +178,7 @@ export function resolveFileProtocolPath(
 
     // 2) 白名单根
     const root = resolve(workspacesRoot)
-    if (!norm.startsWith(root + sep)) return { kind: 'forbidden' }
+    if (!isPathInsideRoot(norm, root)) return { kind: 'forbidden' }
 
     // 3) 禁 UNC（Windows）—— 冗余 defense-in-depth：合法 workspacesRoot 非 UNC，
     //    UNC 路径会被第 2 层 startsWith(root + sep) 白名单先拦，本层实际不可达，保留作兜底。
@@ -186,12 +186,14 @@ export function resolveFileProtocolPath(
 
     // 4) realpath 校验（防 symlink 逃逸）
     let real: string
+    let realRoot: string
     try {
+      realRoot = realpathSync(root)
       real = realpathSync(norm)
     } catch {
       return { kind: 'notfound' }
     }
-    if (!real.startsWith(root + sep)) return { kind: 'forbidden' }
+    if (!isPathInsideRoot(real, realRoot)) return { kind: 'forbidden' }
 
     // 5) 必须是文件
     if (!statSync(real).isFile()) return { kind: 'notfound' }
@@ -200,6 +202,14 @@ export function resolveFileProtocolPath(
   } catch {
     return { kind: 'forbidden' }
   }
+}
+
+function isPathInsideRoot(filePath: string, root: string): boolean {
+  const relativePath = relative(root, filePath)
+  return relativePath !== ''
+    && relativePath !== '..'
+    && !relativePath.startsWith(`..${sep}`)
+    && !isAbsolute(relativePath)
 }
 
 export function createWindowOpenAction(url) {
