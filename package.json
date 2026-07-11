@@ -20,6 +20,8 @@
     "test:web": "bun run --filter @lume/web test",
     "smoke:web": "bun run --filter @lume/web test:smoke",
     "smoke:core": "bun scripts/smoke-core.mjs",
+    "verify:computer-use": "bun scripts/verify-computer-use.mjs",
+    "verify:computer-use:portable": "bun scripts/verify-computer-use.mjs --skip-native",
     "mcp:test:config": "bun packages/sdk/examples/local-test-mcp-server.ts config",
     "mcp:test:stdio": "bun packages/sdk/examples/local-test-mcp-server.ts stdio",
     "mcp:test:sse": "bun packages/sdk/examples/local-test-mcp-server.ts sse",
