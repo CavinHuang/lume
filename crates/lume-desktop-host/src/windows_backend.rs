@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use crate::windows_capture::capture_window_bgra;
 use crate::windows_cursor_motion::spring_close_enough_time_seconds;
 use crate::windows_overlay::{
     move_visual_cursor, pulse_visual_cursor, settle_visual_cursor, VISUAL_CURSOR_WINDOW_TITLE,
@@ -367,6 +368,8 @@ fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Valu
             Ok(capture) => {
                 screenshot["dataUrl"] = Value::String(capture.data_url);
                 screenshot["captureMode"] = Value::String(capture.mode.to_owned());
+                screenshot["width"] = json!(capture.width);
+                screenshot["height"] = json!(capture.height);
                 if let Some(reason) = capture.fallback_reason {
                     screenshot["captureFallbackReason"] = Value::String(reason);
                 }
@@ -391,9 +394,27 @@ struct WindowCapture {
     data_url: String,
     mode: &'static str,
     fallback_reason: Option<String>,
+    width: u32,
+    height: u32,
 }
 
 fn capture_window_png_data_url(hwnd: HWND, width: i32, height: i32) -> Result<WindowCapture> {
+    let graphics_capture =
+        capture_window_bgra(hwnd, Duration::from_millis(1500)).and_then(|capture| {
+            encode_bgra_png_data_url(&capture.pixels, capture.width, capture.height).map(
+                |data_url| WindowCapture {
+                    data_url,
+                    mode: "windows_graphics_capture",
+                    fallback_reason: None,
+                    width: capture.width,
+                    height: capture.height,
+                },
+            )
+        });
+    let graphics_capture_error = match graphics_capture {
+        Ok(capture) => return Ok(capture),
+        Err(error) => error,
+    };
     let mut rect = RECT::default();
     unsafe {
         GetWindowRect(hwnd, &mut rect)?;
@@ -434,7 +455,9 @@ fn capture_window_png_data_url(hwnd: HWND, width: i32, height: i32) -> Result<Wi
         Ok(data_url) => Ok(WindowCapture {
             data_url,
             mode: "print_window",
-            fallback_reason: None,
+            fallback_reason: Some(graphics_capture_error.to_string()),
+            width: width as u32,
+            height: height as u32,
         }),
         Err(print_error) => unsafe {
             BitBlt(
@@ -453,7 +476,11 @@ fn capture_window_png_data_url(hwnd: HWND, width: i32, height: i32) -> Result<Wi
             .map(|data_url| WindowCapture {
                 data_url,
                 mode: "screen_bitblt",
-                fallback_reason: Some(print_error.to_string()),
+                fallback_reason: Some(format!(
+                    "Windows.Graphics.Capture failed: {graphics_capture_error}; PrintWindow failed: {print_error}"
+                )),
+                width: width as u32,
+                height: height as u32,
             })
         },
     };
@@ -510,7 +537,18 @@ fn bitmap_to_png_data_url(
     if reject_empty && !pixels_have_visible_content(&pixels) {
         return Err(anyhow!("PrintWindow returned empty pixels"));
     }
-    let capacity = pixel_bytes
+    encode_bgra_png_data_url(&pixels, width as u32, height as u32)
+}
+
+fn encode_bgra_png_data_url(pixels: &[u8], width: u32, height: u32) -> Result<String> {
+    let expected_bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixel_count| pixel_count.checked_mul(4))
+        .ok_or_else(|| anyhow!("window capture dimensions are too large"))?;
+    if pixels.len() != expected_bytes {
+        return Err(anyhow!("window capture returned an invalid pixel buffer"));
+    }
+    let capacity = expected_bytes
         .checked_add(height as usize)
         .and_then(|size| size.checked_add(64 * 1024))
         .ok_or_else(|| anyhow!("window capture dimensions are too large"))?;
@@ -529,10 +567,10 @@ fn bitmap_to_png_data_url(
         encoder.CreateNewFrame(&mut frame, &mut options)?;
         let frame = frame.ok_or_else(|| anyhow!("PNG encoder did not create a frame"))?;
         frame.Initialize(options.as_ref())?;
-        frame.SetSize(width as u32, height as u32)?;
+        frame.SetSize(width, height)?;
         let mut pixel_format = GUID_WICPixelFormat32bppBGR;
         frame.SetPixelFormat(&mut pixel_format)?;
-        frame.WritePixels(height as u32, width as u32 * 4, &pixels)?;
+        frame.WritePixels(height, width * 4, pixels)?;
         frame.Commit()?;
         encoder.Commit()?;
 

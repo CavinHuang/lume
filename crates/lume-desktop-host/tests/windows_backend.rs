@@ -94,7 +94,7 @@ fn get_window_state_can_include_screenshot_pixels_when_requested() {
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
     assert!(matches!(
         result["screenshots"][0]["captureMode"].as_str(),
-        Some("print_window") | Some("screen_bitblt")
+        Some("windows_graphics_capture") | Some("print_window") | Some("screen_bitblt")
     ));
 }
 

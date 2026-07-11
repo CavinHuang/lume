@@ -11,6 +11,8 @@ pub mod macos_snapshot;
 #[cfg(windows)]
 pub mod windows_backend;
 #[cfg(windows)]
+mod windows_capture;
+#[cfg(windows)]
 pub mod windows_cursor_glyph;
 pub mod windows_cursor_motion;
 #[cfg(windows)]
