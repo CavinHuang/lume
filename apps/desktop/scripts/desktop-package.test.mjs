@@ -120,6 +120,16 @@ test('desktop-host resource build packages the macOS software cursor overlay', (
   assert.match(script, /LumeComputerUseCursorOverlay/)
 })
 
+test('desktop-host resource build compiles @main macOS helpers as libraries', () => {
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+  const swiftCompileBlocks = script.match(/spawnSync\("xcrun", \[\s*"swiftc",[\s\S]*?\], \{/g) ?? []
+
+  assert.equal(swiftCompileBlocks.length, 4)
+  for (const block of swiftCompileBlocks) {
+    assert.match(block, /"-parse-as-library"/)
+  }
+})
+
 test('desktop-host resource build packages the macOS permission guide helper', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
   const guide = readFileSync(resolve(REPO_ROOT, 'crates/lume-desktop-host/macos/LumeComputerUsePermissionGuide.swift'), 'utf8')

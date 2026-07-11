@@ -150,6 +150,7 @@ function lintMacInfoPlist(infoPlistPath) {
 function buildMacCursorOverlay(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
+    "-parse-as-library",
     MAC_CURSOR_OVERLAY_SOURCE,
     "-o",
     outputPath,
@@ -166,6 +167,7 @@ function buildMacCursorOverlay(outputPath) {
 function buildMacPermissionGuide(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
+    "-parse-as-library",
     MAC_PERMISSION_GUIDE_SOURCE,
     "-o",
     outputPath,
@@ -182,6 +184,7 @@ function buildMacPermissionGuide(outputPath) {
 function buildMacScreenCapture(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
+    "-parse-as-library",
     MAC_SCREEN_CAPTURE_SOURCE,
     "-o",
     outputPath,
@@ -200,6 +203,7 @@ function buildMacScreenCapture(outputPath) {
 function buildMacEventMonitor(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
+    "-parse-as-library",
     MAC_EVENT_MONITOR_SOURCE,
     "-o",
     outputPath,
