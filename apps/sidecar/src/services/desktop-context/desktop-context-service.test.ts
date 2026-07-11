@@ -1,17 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import type { DesktopContextSnapshot } from "@lume/shared";
 import { DesktopContextService } from "./desktop-context-service";
-import { redactDesktopText } from "./desktop-context-store";
+import { redactDesktopText, type DesktopProposalRecord } from "./desktop-context-store";
 
 function createService(input: {
   enabled?: boolean;
   allowedApps?: string[];
   proactiveEnabled?: boolean;
+  dailyWrapEnabled?: boolean;
   notificationsEnabled?: boolean;
   emitNotification?: (method: string, params: unknown) => void;
   snapshot?: DesktopContextSnapshot;
+  now?: () => number;
+  proposalRecords?: DesktopProposalRecord[];
 } = {}) {
   const snapshots = new Map<string, DesktopContextSnapshot>();
+  const proposalRecords = input.proposalRecords ?? [];
   return new DesktopContextService({
     dbPath: "unused.sqlite",
     settings: {
@@ -20,6 +24,7 @@ function createService(input: {
       retentionHours: 24,
       maxStorageBytes: 2_000_000,
       proactiveEnabled: input.proactiveEnabled === true,
+      dailyWrapEnabled: input.dailyWrapEnabled === true,
       notificationsEnabled: input.notificationsEnabled,
     },
     emitNotification: input.emitNotification,
@@ -40,8 +45,24 @@ function createService(input: {
       search: () => [...snapshots.values()],
       purge: () => undefined,
       stats: () => ({ items: snapshots.size, bytes: 0 }),
-      clear: () => snapshots.clear(),
+      clear() {
+        snapshots.clear();
+        proposalRecords.splice(0);
+      },
       close: () => undefined,
+      putProposal(proposal, fingerprint) {
+        const existing = proposalRecords.findIndex((record) => record.fingerprint === fingerprint);
+        const record = { proposal, fingerprint };
+        if (existing >= 0) proposalRecords[existing] = record;
+        else proposalRecords.push(record);
+      },
+      listProposalRecords: () => proposalRecords,
+      updateProposalStatus(id, status) {
+        const record = proposalRecords.find((candidate) => candidate.proposal.id === id);
+        if (!record) return false;
+        record.proposal = { ...record.proposal, status };
+        return true;
+      },
     }),
     invokeHost: async () => ({
       status: "ok",
@@ -61,6 +82,7 @@ function createService(input: {
         untrusted: true,
       },
     }),
+    now: input.now,
   });
 }
 
@@ -522,6 +544,68 @@ describe("DesktopContextService", () => {
     expect(JSON.stringify(proposals[0])).not.toContain("客户问");
   });
 
+  test("classifies all proactive proposal kinds with local non-sensitive rules", async () => {
+    const cases = [
+      ["conflict", "明天下午两个会议时间冲突"],
+      ["prompt_rescue", "导出周报失败，页面一直报错"],
+      ["reply", "客户问能否今天交付？"],
+      ["follow_up", "明天跟进合同审批事项"],
+    ] as const;
+
+    for (const [kind, visibleText] of cases) {
+      const service = createService({
+        proactiveEnabled: true,
+        snapshot: {
+          id: `snap-${kind}`,
+          app: { id: "wechat.exe", name: "微信" },
+          window: {
+            id: "win:1",
+            appId: "wechat.exe",
+            title: "项目群",
+            bounds: { x: 0, y: 0, width: 800, height: 600 },
+            focused: true,
+          },
+          capturedAt: 100,
+          eventType: "foreground_changed",
+          visibleText,
+          untrusted: true,
+        },
+      });
+      service.unlock(Buffer.alloc(32, 4));
+      await service.captureCurrent();
+      expect(service.listProposals().map((proposal) => proposal.kind)).toEqual([kind]);
+      expect(JSON.stringify(service.listProposals())).not.toContain(visibleText);
+      service.close();
+    }
+
+    const wrapService = createService({
+      proactiveEnabled: true,
+      dailyWrapEnabled: true,
+      allowedApps: ["word.exe"],
+      now: () => new Date(2026, 6, 10, 18, 0, 0).getTime(),
+      snapshot: {
+        id: "snap-wrap",
+        app: { id: "word.exe", name: "Word" },
+        window: {
+          id: "win:word",
+          appId: "word.exe",
+          title: "周报.docx",
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          focused: true,
+        },
+        capturedAt: 100,
+        eventType: "foreground_changed",
+        visibleText: "本周项目进展",
+        untrusted: true,
+      },
+    });
+    wrapService.unlock(Buffer.alloc(32, 4));
+    await wrapService.captureCurrent();
+    await wrapService.captureCurrent();
+    expect(wrapService.listProposals().map((proposal) => proposal.kind)).toEqual(["daily_wrap"]);
+    wrapService.close();
+  });
+
   test("emits a non-sensitive proposal notification only when desktop notifications are enabled", async () => {
     const notifications: Array<{ method: string; params: unknown }> = [];
     const service = createService({
@@ -570,6 +654,33 @@ describe("DesktopContextService", () => {
     expect(service.updateProposal(proposal!.id, "dismissed")).toEqual({ updated: true });
     expect(service.listProposals()[0]?.status).toBe("dismissed");
     expect(await service.currentContext({ snapshotId: "snap-1" })).toMatchObject({ status: "ok" });
+  });
+
+  test("restores persisted proposals and their updated status after service restart", () => {
+    const proposalRecords: DesktopProposalRecord[] = [{
+      fingerprint: "hash-only-fingerprint",
+      proposal: {
+        id: "proposal:follow_up:snap-1",
+        kind: "follow_up",
+        status: "pending",
+        snapshotId: "snap-1",
+        app: { id: "wechat.exe", name: "微信" },
+        window: { id: "win:1", title: "项目群" },
+        summary: "微信中可能有一项需要跟进的事项",
+        createdAt: 100,
+        expiresAt: Date.now() + 60_000,
+      },
+    }];
+    const first = createService({ proposalRecords });
+    first.unlock(Buffer.alloc(32, 4));
+    expect(first.listProposals()[0]?.kind).toBe("follow_up");
+    expect(first.updateProposal("proposal:follow_up:snap-1", "dismissed")).toEqual({ updated: true });
+    first.close();
+
+    const second = createService({ proposalRecords });
+    second.unlock(Buffer.alloc(32, 4));
+    expect(second.listProposals()[0]?.status).toBe("dismissed");
+    second.close();
   });
 
   test("captures screenshot pixels only for user-initiated current app selection", async () => {

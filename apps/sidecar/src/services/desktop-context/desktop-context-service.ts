@@ -1,14 +1,16 @@
 import type {
   DesktopAssistantSettings,
   DesktopContextSnapshot,
+  DesktopContextSuspensionReason,
   DesktopContextTarget,
   DesktopProactiveProposal,
   DesktopProactiveProposalCreatedNotification,
+  DesktopProactiveProposalKind,
   DesktopProactiveProposalStatus,
-  DesktopContextSuspensionReason,
 } from "@lume/shared";
 import { DESKTOP_CONTEXT_IPC_CHANNELS, isDesktopActionStatus } from "@lume/shared";
-import { DesktopContextStore } from "./desktop-context-store";
+import { createHash } from "node:crypto";
+import { DesktopContextStore, type DesktopProposalRecord } from "./desktop-context-store";
 
 type HostInvoke = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 type DesktopContextTargetMetadata = Pick<DesktopContextTarget, "app" | "window">;
@@ -27,6 +29,9 @@ interface DesktopContextStoreLike {
   stats(): { items: number; bytes: number };
   clear(): void;
   close(): void;
+  putProposal?(proposal: DesktopProactiveProposal, fingerprint: string): void;
+  listProposalRecords?(): DesktopProposalRecord[];
+  updateProposalStatus?(id: string, status: DesktopProactiveProposalStatus): boolean;
 }
 
 export class DesktopContextService {
@@ -46,6 +51,7 @@ export class DesktopContextService {
     invokeHost: HostInvoke;
     emitNotification?: (method: string, params: unknown) => void;
     createStore?: (input: { dbPath: string; key: Buffer; retentionMs: number; maxBytes: number }) => DesktopContextStoreLike;
+    now?: () => number;
   };
 
   constructor(input: {
@@ -54,6 +60,7 @@ export class DesktopContextService {
     invokeHost: HostInvoke;
     emitNotification?: (method: string, params: unknown) => void;
     createStore?: (input: { dbPath: string; key: Buffer; retentionMs: number; maxBytes: number }) => DesktopContextStoreLike;
+    now?: () => number;
   }) {
     this.#input = input;
     this.#settings = input.settings;
@@ -65,6 +72,8 @@ export class DesktopContextService {
     this.#store = null;
     this.#key?.fill(0);
     this.#key = Buffer.from(key);
+    this.#proposals.clear();
+    this.#proposalFingerprints.clear();
     this.#syncCollector();
   }
 
@@ -248,7 +257,9 @@ export class DesktopContextService {
   }
 
   clear(): { cleared: boolean } {
-    this.#store?.clear();
+    if (this.#key) this.#ensureStore().clear();
+    this.#proposals.clear();
+    this.#proposalFingerprints.clear();
     return { cleared: true };
   }
 
@@ -257,10 +268,12 @@ export class DesktopContextService {
   }
 
   listProposals(): DesktopProactiveProposal[] {
-    const now = Date.now();
+    if (this.#key) this.#ensureStore();
+    const now = this.#now();
     for (const [id, proposal] of this.#proposals) {
       if (proposal.status === "pending" && proposal.expiresAt <= now) {
         this.#proposals.set(id, { ...proposal, status: "expired" });
+        this.#store?.updateProposalStatus?.(id, "expired");
       }
     }
     return Array.from(this.#proposals.values())
@@ -269,9 +282,11 @@ export class DesktopContextService {
   }
 
   updateProposal(id: string, status: DesktopProactiveProposalStatus): { updated: boolean } {
+    if (this.#key) this.#ensureStore();
     const proposal = this.#proposals.get(id);
     if (!proposal) return { updated: false };
     this.#proposals.set(id, { ...proposal, status });
+    this.#store?.updateProposalStatus?.(id, status);
     return { updated: true };
   }
 
@@ -309,6 +324,10 @@ export class DesktopContextService {
       maxBytes: this.#settings.maxStorageBytes,
     });
     this.#store.purge();
+    for (const record of this.#store.listProposalRecords?.() ?? []) {
+      this.#proposals.set(record.proposal.id, record.proposal);
+      this.#proposalFingerprints.add(record.fingerprint);
+    }
     return this.#store;
   }
 
@@ -322,26 +341,35 @@ export class DesktopContextService {
   #maybeCreateProposal(snapshot: DesktopContextSnapshot): void {
     if (!this.#settings.proactiveEnabled) return;
     const visibleText = [snapshot.selectedText, snapshot.visibleText].filter(Boolean).join("\n");
-    if (!looksLikeReplyOpportunity(visibleText)) return;
-    const fingerprint = `${snapshot.app.id}\u0000${snapshot.window.id}\u0000${snapshot.window.title}\u0000${visibleText}`;
-    if (this.#proposalFingerprints.has(fingerprint)) return;
-    this.#proposalFingerprints.add(fingerprint);
-    const createdAt = Date.now();
-    const proposal: DesktopProactiveProposal = {
-      id: `proposal:${snapshot.id}`,
-      kind: "reply",
-      status: "pending",
-      snapshotId: snapshot.id,
-      app: { id: snapshot.app.id, name: snapshot.app.name },
-      window: { id: snapshot.window.id, title: snapshot.window.title },
-      summary: `${snapshot.app.name} 中可能有一条需要回复的消息`,
-      createdAt,
-      expiresAt: createdAt + 30 * 60 * 1_000,
-    };
-    this.#proposals.set(proposal.id, proposal);
-    if (this.#settings.notificationsEnabled !== false) {
-      this.#input.emitNotification?.(DESKTOP_CONTEXT_IPC_CHANNELS.PROPOSAL_CREATED, proposalToCreatedNotification(proposal));
+    const createdAt = this.#now();
+    for (const kind of proposalKinds(visibleText, this.#settings, createdAt)) {
+      const fingerprint = proposalFingerprint(kind, snapshot, visibleText, createdAt);
+      if (this.#proposalFingerprints.has(fingerprint)) continue;
+      this.#proposalFingerprints.add(fingerprint);
+      const proposal: DesktopProactiveProposal = {
+        id: `proposal:${kind}:${snapshot.id}`,
+        kind,
+        status: "pending",
+        snapshotId: snapshot.id,
+        app: { id: snapshot.app.id, name: snapshot.app.name },
+        window: { id: snapshot.window.id, title: snapshot.window.title },
+        summary: proposalSummary(kind, snapshot.app.name),
+        createdAt,
+        expiresAt: createdAt + proposalLifetimeMs(kind),
+      };
+      this.#proposals.set(proposal.id, proposal);
+      this.#store?.putProposal?.(proposal, fingerprint);
+      if (this.#settings.notificationsEnabled !== false) {
+        this.#input.emitNotification?.(
+          DESKTOP_CONTEXT_IPC_CHANNELS.PROPOSAL_CREATED,
+          proposalToCreatedNotification(proposal),
+        );
+      }
     }
+  }
+
+  #now(): number {
+    return this.#input.now?.() ?? Date.now();
   }
 
   async #refreshSnapshot(
@@ -393,9 +421,71 @@ function wait(milliseconds: number): Promise<void> {
 
 const LUME_SELF_CONTEXT_MESSAGE = "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。";
 
-function looksLikeReplyOpportunity(text: string): boolean {
-  if (!text.trim()) return false;
-  return /[?？]|(?:吗|么|如何|怎么|什么时候|能否|是否|回复|请问)/u.test(text);
+function proposalKinds(
+  text: string,
+  settings: DesktopAssistantSettings,
+  now: number,
+): DesktopProactiveProposalKind[] {
+  const kinds: DesktopProactiveProposalKind[] = [];
+  const primary = classifyProposalKind(text);
+  if (primary) kinds.push(primary);
+  if (settings.dailyWrapEnabled === true && new Date(now).getHours() >= 17) {
+    kinds.push("daily_wrap");
+  }
+  return kinds;
+}
+
+function classifyProposalKind(text: string): DesktopProactiveProposalKind | undefined {
+  const normalized = text.trim();
+  if (!normalized) return undefined;
+  if (/(?:冲突|撞期|时间重叠|日程重叠|schedule conflict|double[- ]booked|overlap)/iu.test(normalized)) {
+    return "conflict";
+  }
+  if (/(?:报错|错误|失败|无法|卡住|崩溃|error|failed|failure|unable|stuck|crash)/iu.test(normalized)) {
+    return "prompt_rescue";
+  }
+  if (/[?？]|(?:吗|么|如何|怎么|什么时候|能否|是否|回复|请问)/u.test(normalized)) {
+    return "reply";
+  }
+  if (/(?:跟进|待办|提醒|截止|明天|后天|下周|follow[- ]?up|todo|remind|deadline)/iu.test(normalized)) {
+    return "follow_up";
+  }
+  return undefined;
+}
+
+function proposalFingerprint(
+  kind: DesktopProactiveProposalKind,
+  snapshot: DesktopContextSnapshot,
+  text: string,
+  now: number,
+): string {
+  const source = kind === "daily_wrap"
+    ? `daily_wrap\u0000${localDateKey(now)}`
+    : `${kind}\u0000${snapshot.app.id}\u0000${snapshot.window.id}\u0000${text}`;
+  return createHash("sha256").update(source).digest("hex");
+}
+
+function localDateKey(timestamp: number): string {
+  const date = new Date(timestamp);
+  return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((part) => String(part).padStart(2, "0"))
+    .join("-");
+}
+
+function proposalSummary(kind: DesktopProactiveProposalKind, appName: string): string {
+  switch (kind) {
+    case "reply": return `${appName} 中可能有一条需要回复的消息`;
+    case "conflict": return `${appName} 中可能存在需要处理的安排冲突`;
+    case "prompt_rescue": return `${appName} 中可能有一个需要协助解决的问题`;
+    case "daily_wrap": return "今天的桌面活动可以开始整理";
+    case "follow_up": return `${appName} 中可能有一项需要跟进的事项`;
+  }
+}
+
+function proposalLifetimeMs(kind: DesktopProactiveProposalKind): number {
+  if (kind === "follow_up") return 24 * 60 * 60 * 1_000;
+  if (kind === "daily_wrap") return 12 * 60 * 60 * 1_000;
+  return 30 * 60 * 1_000;
 }
 
 function proposalToCreatedNotification(proposal: DesktopProactiveProposal): DesktopProactiveProposalCreatedNotification {

@@ -3,7 +3,11 @@ import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import type { DatabaseSync as NodeDatabaseSync } from "node:sqlite";
-import type { DesktopContextSnapshot } from "@lume/shared";
+import type {
+  DesktopContextSnapshot,
+  DesktopProactiveProposal,
+  DesktopProactiveProposalStatus,
+} from "@lume/shared";
 
 const DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1_000;
 const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024;
@@ -16,6 +20,16 @@ interface ContextRow {
 
 interface SearchRow {
   redacted_payload: string;
+}
+
+interface ProposalRow {
+  fingerprint: string;
+  encrypted_payload: Uint8Array;
+}
+
+export interface DesktopProposalRecord {
+  proposal: DesktopProactiveProposal;
+  fingerprint: string;
 }
 
 export class DesktopContextStore {
@@ -57,6 +71,18 @@ export class DesktopContextStore {
       );
       CREATE INDEX IF NOT EXISTS desktop_context_captured_at
         ON desktop_context(captured_at);
+      CREATE TABLE IF NOT EXISTS desktop_proposal (
+        id TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        encrypted_payload BLOB NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS desktop_proposal_created_at
+        ON desktop_proposal(created_at);
+      CREATE INDEX IF NOT EXISTS desktop_proposal_expires_at
+        ON desktop_proposal(expires_at);
     `);
   }
 
@@ -145,11 +171,57 @@ export class DesktopContextStore {
     return rows.map((row) => JSON.parse(row.redacted_payload) as DesktopContextSnapshot);
   }
 
+  putProposal(proposal: DesktopProactiveProposal, fingerprint: string): void {
+    const encrypted = encryptPayload(this.#key, Buffer.from(JSON.stringify(proposal), "utf8"));
+    this.#db.prepare(`
+      INSERT OR REPLACE INTO desktop_proposal
+        (id, fingerprint, created_at, expires_at, status, encrypted_payload)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      proposal.id,
+      fingerprint,
+      proposal.createdAt,
+      proposal.expiresAt,
+      proposal.status,
+      encrypted,
+    );
+  }
+
+  listProposalRecords(): DesktopProposalRecord[] {
+    const rows = this.#db.prepare(`
+      SELECT fingerprint, encrypted_payload
+      FROM desktop_proposal
+      ORDER BY created_at DESC
+    `).all() as unknown as ProposalRow[];
+    return rows.map((row) => ({
+      proposal: JSON.parse(
+        decryptPayload(this.#key, Buffer.from(row.encrypted_payload)).toString("utf8"),
+      ) as DesktopProactiveProposal,
+      fingerprint: row.fingerprint,
+    }));
+  }
+
+  updateProposalStatus(id: string, status: DesktopProactiveProposalStatus): boolean {
+    const row = this.#db.prepare(`
+      SELECT fingerprint, encrypted_payload
+      FROM desktop_proposal
+      WHERE id = ?
+    `).get(id) as unknown as ProposalRow | undefined;
+    if (!row) return false;
+    const proposal = JSON.parse(
+      decryptPayload(this.#key, Buffer.from(row.encrypted_payload)).toString("utf8"),
+    ) as DesktopProactiveProposal;
+    this.putProposal({ ...proposal, status }, row.fingerprint);
+    return true;
+  }
+
   purge(): void {
     const expiresBefore = this.#now() - this.#retentionMs;
     const expired = this.#db.prepare("SELECT id FROM desktop_context WHERE captured_at < ?")
       .all(expiresBefore) as unknown as Array<{ id: string }>;
     this.#deleteIds(expired.map((row) => row.id));
+    this.#db.prepare("DELETE FROM desktop_proposal WHERE expires_at < ?")
+      .run(expiresBefore);
 
     const totals = this.#db.prepare("SELECT COALESCE(SUM(byte_size), 0) AS bytes, COUNT(*) AS count FROM desktop_context")
       .get() as { bytes: number; count: number };
@@ -175,7 +247,7 @@ export class DesktopContextStore {
   clear(): void {
     this.#db.exec("BEGIN IMMEDIATE");
     try {
-      this.#db.exec("DELETE FROM desktop_context_fts; DELETE FROM desktop_context;");
+      this.#db.exec("DELETE FROM desktop_context_fts; DELETE FROM desktop_context; DELETE FROM desktop_proposal;");
       this.#db.exec("COMMIT");
     } catch (error) {
       this.#db.exec("ROLLBACK");

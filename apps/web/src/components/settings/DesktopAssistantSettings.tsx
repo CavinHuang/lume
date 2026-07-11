@@ -118,6 +118,13 @@ export function DesktopAssistantSettings() {
         <SettingRow title="主动建议" description="本地事件先筛选候选，不会为每个桌面事件调用模型。">
           <Switch checked={settings.proactiveEnabled === true} disabled={saving} onCheckedChange={(checked) => void save({ proactiveEnabled: checked })} />
         </SettingRow>
+        <SettingRow title="每日回顾" description="17:00 后最多生成一条本地回顾建议，不在系统通知中显示桌面正文。">
+          <Switch
+            checked={settings.dailyWrapEnabled === true}
+            disabled={saving || settings.proactiveEnabled !== true}
+            onCheckedChange={(checked) => void save({ dailyWrapEnabled: checked })}
+          />
+        </SettingRow>
         <SettingRow title="系统通知" description="通知只显示建议类型和应用名，不显示聊天正文。">
           <Switch checked={settings.notificationsEnabled !== false} disabled={saving} onCheckedChange={(checked) => void save({ notificationsEnabled: checked })} />
         </SettingRow>
@@ -161,7 +168,7 @@ export function DesktopAssistantSettings() {
               <div className="min-w-0">
                 <p className="truncate font-medium text-foreground">{item.summary}</p>
                 <p className="mt-1 truncate text-muted-foreground">
-                  {item.kind} · {item.status} · {item.app.name}
+                  {proposalKindLabel(item.kind)} · {item.status} · {item.app.name}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2">
@@ -232,6 +239,16 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function proposalKindLabel(kind: DesktopProactiveProposal['kind']): string {
+  return {
+    reply: '回复建议',
+    conflict: '冲突处理',
+    prompt_rescue: '问题救援',
+    daily_wrap: '每日回顾',
+    follow_up: '事项跟进',
+  }[kind]
 }
 
 function diagnosticToneClassName(tone: 'ok' | 'warning' | 'error'): string {

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DesktopContextSnapshot } from "@lume/shared";
+import type { DesktopContextSnapshot, DesktopProactiveProposal } from "@lume/shared";
 // @ts-expect-error Node strip-types requires the explicit extension for this standalone test.
 import { DesktopContextStore, redactDesktopText } from "./desktop-context-store.ts";
 
@@ -28,6 +28,20 @@ function snapshot(id: string, capturedAt: number, text: string): DesktopContextS
     eventType: "foreground_changed",
     visibleText: text,
     untrusted: true,
+  };
+}
+
+function proposal(id: string, createdAt: number): DesktopProactiveProposal {
+  return {
+    id,
+    kind: "reply",
+    status: "pending",
+    snapshotId: "snap-1",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win:42", title: "敏感项目群" },
+    summary: "微信中可能有一条需要回复的消息",
+    createdAt,
+    expiresAt: createdAt + 30 * 60 * 1_000,
   };
 }
 
@@ -81,6 +95,21 @@ describe("DesktopContextStore", () => {
     assert.equal(store.get("first"), undefined);
     assert.equal(store.get("second")?.id, "second");
     store.close();
+  });
+
+  sqliteTest("encrypts proactive proposals and restores their status after restart", () => {
+    const { dbPath, store } = createStore();
+    store.putProposal(proposal("proposal-1", 100), "fingerprint-1");
+    store.updateProposalStatus("proposal-1", "dismissed");
+    store.close();
+
+    assert.doesNotMatch(readFileSync(dbPath).toString("utf8"), /敏感项目群/);
+    const reopened = new DesktopContextStore({ dbPath, key: Buffer.alloc(32, 7) });
+    assert.deepEqual(reopened.listProposalRecords(), [{
+      proposal: { ...proposal("proposal-1", 100), status: "dismissed" },
+      fingerprint: "fingerprint-1",
+    }]);
+    reopened.close();
   });
 });
 

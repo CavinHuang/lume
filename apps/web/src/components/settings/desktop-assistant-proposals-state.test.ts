@@ -115,4 +115,23 @@ describe('desktop assistant proposal state', () => {
       currentWorkspaceId: 'workspace-1',
     })).toBeNull()
   })
+
+  test('builds dedicated safe prompts for every proactive proposal kind', () => {
+    const expectations = {
+      conflict: '识别可能冲突的安排',
+      prompt_rescue: '诊断当前遇到的问题',
+      daily_wrap: '搜索最近 24 小时',
+      follow_up: '提取需要跟进的事项',
+    } as const
+
+    for (const [kind, expected] of Object.entries(expectations)) {
+      const result = buildDesktopProposalWelcomeState({
+        proposal: { ...proposal, kind: kind as keyof typeof expectations },
+        tabs: [],
+        currentWorkspaceId: null,
+      })
+      expect(result.promptSeed).toContain(expected)
+      expect(result.promptSeed).not.toContain(`这个${kind}建议`)
+    }
+  })
 })
