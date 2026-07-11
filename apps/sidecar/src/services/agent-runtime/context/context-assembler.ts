@@ -210,6 +210,7 @@ export class ContextAssembler {
         "If the loaded snapshot is enough, answer from it. If the user asks about the selected app's current state, call mcp__computer_use__current_context with desktop_context.snapshot.id and refresh true.",
         "If visible text is missing, too generic, or the app is chat/image-heavy such as WeChat, call mcp__computer_use__current_context with includeScreenshot true, refresh true, and desktop_context.snapshot.id before answering.",
         "If fresher structure is needed, call mcp__computer_use__get_window_state with desktop_context.snapshot.window.id before acting.",
+        "Before any mutating desktop action, inspect the target window state. If window.focused is false, call mcp__computer_use__activate_window and verify focused is true so the user can see the operation.",
         "For desktop operations, Prefer elementId targets from get_window_state over raw coordinates, then verify the state after each operation.",
         "Consequential actions still require Lume confirmation; do not bypass confirmation or ask the user to paste secrets into chat."
       ].join("\n")

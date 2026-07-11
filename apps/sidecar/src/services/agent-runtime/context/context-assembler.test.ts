@@ -61,6 +61,9 @@ describe("ContextAssembler", () => {
     expect(result.systemPrompt).toContain("refresh true");
     expect(result.systemPrompt).toContain("mcp__computer_use__get_window_state");
     expect(result.systemPrompt).toContain("desktop_context.snapshot.window.id");
+    expect(result.systemPrompt).toContain("If window.focused is false");
+    expect(result.systemPrompt).toContain("mcp__computer_use__activate_window");
+    expect(result.systemPrompt).toContain("so the user can see the operation");
     expect(result.systemPrompt).toContain("includeScreenshot true");
     expect(result.systemPrompt).toContain("Prefer elementId targets");
     expect(result.systemPrompt).toContain("verify the state after each operation");
