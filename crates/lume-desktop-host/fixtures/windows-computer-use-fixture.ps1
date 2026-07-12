@@ -17,10 +17,10 @@ $counterLabel = New-Object System.Windows.Forms.Label
 $counterLabel.Text = 'Counter: 0'
 $counterLabel.SetBounds(24, 72, 240, 28)
 
-$input = New-Object System.Windows.Forms.TextBox
-$input.Text = 'seed'
-$input.AccessibleName = 'Fixture Input'
-$input.SetBounds(24, 112, 320, 30)
+$textBox = New-Object System.Windows.Forms.TextBox
+$textBox.Text = 'seed'
+$textBox.AccessibleName = 'Fixture Input'
+$textBox.SetBounds(24, 112, 320, 30)
 
 $list = New-Object System.Windows.Forms.ListBox
 $list.AccessibleName = 'Fixture Scroll'
@@ -37,22 +37,24 @@ $dragPad.BackColor = [System.Drawing.Color]::Orange
 $dragPad.BorderStyle = 'FixedSingle'
 $dragPad.SetBounds(24, 402, 520, 120)
 
-$form.Controls.AddRange(@($button, $counterLabel, $input, $list, $dragLabel, $dragPad))
+$form.Controls.AddRange(@($button, $counterLabel, $textBox, $list, $dragLabel, $dragPad))
 
 $counter = 0
 $lastKey = 'none'
 $lastDrag = 'none'
 $dragStart = $null
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 function Write-FixtureState {
   $temporaryPath = "$StatePath.tmp"
-  @{
+  $json = @{
     counter = $counter
-    text = $input.Text
+    text = $textBox.Text
     scroll = $list.TopIndex
     lastKey = $lastKey
     lastDrag = $lastDrag
-  } | ConvertTo-Json -Compress | Set-Content -LiteralPath $temporaryPath -Encoding utf8
+  } | ConvertTo-Json -Compress
+  [System.IO.File]::WriteAllText($temporaryPath, $json, $utf8NoBom)
   Move-Item -LiteralPath $temporaryPath -Destination $StatePath -Force
 }
 
@@ -61,8 +63,8 @@ $button.Add_Click({
   $counterLabel.Text = "Counter: $script:counter"
   Write-FixtureState
 })
-$input.Add_TextChanged({ Write-FixtureState })
-$input.Add_KeyDown({
+$textBox.Add_TextChanged({ Write-FixtureState })
+$textBox.Add_KeyDown({
   param($sender, $eventArgs)
   $script:lastKey = $eventArgs.KeyCode.ToString()
   Write-FixtureState

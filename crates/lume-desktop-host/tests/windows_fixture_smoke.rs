@@ -57,7 +57,9 @@ fn drives_a_real_windows_fixture_through_uia_and_targeted_input() {
         )
         .unwrap();
     assert_eq!(clicked["status"], "ok");
-    wait_for_fixture_state(&fixture.state_path, |state| state["counter"] == 1);
+    wait_for_fixture_state(&fixture.state_path, "button click", |state| {
+        state["counter"] == 1
+    });
 
     let set = backend
         .invoke(
@@ -70,7 +72,9 @@ fn drives_a_real_windows_fixture_through_uia_and_targeted_input() {
         )
         .unwrap();
     assert_eq!(set["status"], "ok");
-    wait_for_fixture_state(&fixture.state_path, |state| state["text"] == "set-value-ok");
+    wait_for_fixture_state(&fixture.state_path, "set value", |state| {
+        state["text"] == "set-value-ok"
+    });
 
     let typed = backend
         .invoke(
@@ -83,7 +87,7 @@ fn drives_a_real_windows_fixture_through_uia_and_targeted_input() {
         )
         .unwrap();
     assert_eq!(typed["status"], "ok");
-    wait_for_fixture_state(&fixture.state_path, |state| {
+    wait_for_fixture_state(&fixture.state_path, "type text", |state| {
         state["text"] == "set-value-ok-typed"
     });
 
@@ -99,7 +103,7 @@ fn drives_a_real_windows_fixture_through_uia_and_targeted_input() {
         )
         .unwrap();
     assert_eq!(scrolled["status"], "ok");
-    wait_for_fixture_state(&fixture.state_path, |state| {
+    wait_for_fixture_state(&fixture.state_path, "scroll", |state| {
         state["scroll"].as_i64().unwrap_or_default() > 0
     });
 
@@ -116,7 +120,9 @@ fn drives_a_real_windows_fixture_through_uia_and_targeted_input() {
         )
         .unwrap();
     assert_eq!(dragged["status"], "ok");
-    wait_for_fixture_state(&fixture.state_path, |state| state["lastDrag"] != "none");
+    wait_for_fixture_state(&fixture.state_path, "drag", |state| {
+        state["lastDrag"] != "none"
+    });
 
     fixture.stop();
 }
@@ -188,19 +194,21 @@ fn center_y(element: &Value) -> i64 {
     element["bounds"]["y"].as_i64().unwrap() + element["bounds"]["height"].as_i64().unwrap() / 2
 }
 
-fn wait_for_fixture_state(path: &PathBuf, predicate: impl Fn(&Value) -> bool) {
+fn wait_for_fixture_state(path: &PathBuf, step: &str, predicate: impl Fn(&Value) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(8);
+    let mut last_state = None;
     while Instant::now() < deadline {
         if let Ok(data) = fs::read(path) {
             if let Ok(state) = serde_json::from_slice::<Value>(&data) {
                 if predicate(&state) {
                     return;
                 }
+                last_state = Some(state);
             }
         }
         thread::sleep(Duration::from_millis(50));
     }
-    panic!("fixture state did not reach the expected value");
+    panic!("fixture state did not reach {step}: {last_state:?}");
 }
 
 fn unique_state_path() -> PathBuf {
