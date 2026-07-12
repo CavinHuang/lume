@@ -196,6 +196,14 @@ test('desktop-host resource build prefers a stable macOS signing identity', () =
   assert.match(script, /ad-hoc identity.*TCC/)
 })
 
+test('release desktop package requires a stable macOS computer-use signing identity', () => {
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+
+  assert.match(pkg.scripts.package, /build-desktop-host-resources\.mjs --require-stable-signing/)
+  assert.match(script, /REQUIRE_STABLE_SIGNING/)
+  assert.match(script, /requires a stable macOS signing identity/)
+})
+
 test('node-repl resource build clears generated output before writing resources', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-node-repl-resources.mjs'), 'utf8')
 

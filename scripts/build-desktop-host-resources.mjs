@@ -38,6 +38,7 @@ const MAC_BUNDLE_ICON_ENTRIES = [
 ];
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
 const MAC_BUNDLE_VARIANT = process.env.LUME_COMPUTER_USE_BUNDLE_VARIANT === "dev" ? "dev" : "release";
+const REQUIRE_STABLE_SIGNING = process.argv.includes("--require-stable-signing");
 const MAC_BUNDLE_CONFIG = MAC_BUNDLE_VARIANT === "dev"
   ? {
       appBundleName: "Lume Computer Use (Dev).app",
@@ -287,6 +288,9 @@ function signMacAppBundle(appRoot) {
     throw new Error(`unsupported LUME_COMPUTER_USE_CODESIGN_MODE: ${mode}`);
   }
   const identity = resolveMacCodesignIdentity(mode);
+  if (REQUIRE_STABLE_SIGNING && (!identity || identity === "-")) {
+    throw new Error("release packaging requires a stable macOS signing identity for Lume Computer Use.app");
+  }
   if (!identity) {
     console.error(`[desktop-host] skipped codesign for ${appRoot}`);
     return;
