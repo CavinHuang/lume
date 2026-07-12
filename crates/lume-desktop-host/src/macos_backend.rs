@@ -48,6 +48,10 @@ pub struct MacOSDesktopBackend;
 
 impl DesktopBackend for MacOSDesktopBackend {
     fn invoke(&self, method: &str, params: &Value) -> Result<Value> {
+        #[cfg(debug_assertions)]
+        if let Some(result) = crate::macos_fixture_runtime::invoke(method, params)? {
+            return Ok(result);
+        }
         if method == "list_apps" {
             let windows = system_windows().unwrap_or_default();
             let discovered = discover_macos_apps();

@@ -5,6 +5,10 @@ use std::path::Path;
 pub mod desktop_events;
 #[cfg(target_os = "macos")]
 pub mod macos_backend;
+#[cfg(debug_assertions)]
+pub mod macos_fixture_protocol;
+#[cfg(all(target_os = "macos", debug_assertions))]
+mod macos_fixture_runtime;
 #[cfg(target_os = "macos")]
 pub mod macos_overlay;
 pub mod macos_snapshot;
