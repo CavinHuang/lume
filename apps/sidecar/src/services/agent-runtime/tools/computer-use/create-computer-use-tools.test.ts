@@ -65,6 +65,10 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("current_context").properties.includeScreenshot).toBeUndefined();
     expect(schema("take_screenshot").required).toEqual(["windowId"]);
     expect(description("take_screenshot")).toContain("final visual fallback");
+    expect(description("list_apps")).toContain("Start here");
+    expect(description("get_window")).toContain("rehydrate");
+    expect(description("get_window_state")).toContain("does not activate");
+    expect(description("launch_app")).toContain("poll list_apps");
     expect(description("type_text")).toContain("passwords or OTPs");
     expect(description("click")).toContain("get_window_state");
     expect(description("click")).toContain("targeted window coordinates before screenshot coordinates");

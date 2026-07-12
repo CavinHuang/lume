@@ -211,8 +211,9 @@ export class ContextAssembler {
         "Prefer accessibility text and elements from desktop_context, current_context, and get_window_state before visual inspection.",
         "Call mcp__computer_use__take_screenshot only when completeness is minimal, the requested content is inherently visual, or structured state cannot verify the result.",
         "If fresher structure is needed, call mcp__computer_use__get_window_state with desktop_context.snapshot.window.id before acting.",
-        "Before any mutating desktop action, inspect the target window state. If window.focused is false, call mcp__computer_use__activate_window and verify focused is true so the user can see the operation.",
-        "For desktop operations, prefer elementId semantic actions, then targeted window input, and use screenshot coordinates only as the final fallback; then verify the state after each operation.",
+        "When choosing a target, reuse the exact windowId returned by Lume; if it becomes stale, call mcp__computer_use__get_window to rehydrate it. Never guess or reconstruct a windowId.",
+        "Passive reads do not require activation. Call mcp__computer_use__activate_window only when the user needs to see the target or the platform action requires foreground focus.",
+        "For desktop operations, prefer elementId semantic actions, then targeted window input, and use screenshot coordinates only as the final fallback; batch related low-risk inputs against the same window and verify once after each logical action batch.",
         "Consequential actions still require Lume confirmation; do not bypass confirmation or ask the user to paste secrets into chat."
       ].join("\n")
       : "";
