@@ -18,6 +18,10 @@ interface PendingRequest {
 export interface DesktopHostRpcClientOptions {
   token: string;
   connect: () => Promise<DesktopHostConnection>;
+  connectTimeoutMs?: number;
+  retryDelayMs?: number;
+  now?: () => number;
+  sleep?: (delayMs: number) => Promise<void>;
   timeoutMs?: number;
 }
 
@@ -29,9 +33,17 @@ export class DesktopHostRpcClient {
   #notificationListeners = new Set<(method: string, params: unknown) => void>();
   #decoder = new DesktopHostFrameDecoder();
   readonly #timeoutMs: number;
+  readonly #connectTimeoutMs: number;
+  readonly #retryDelayMs: number;
+  readonly #now: () => number;
+  readonly #sleep: (delayMs: number) => Promise<void>;
 
   constructor(private readonly options: DesktopHostRpcClientOptions) {
     this.#timeoutMs = options.timeoutMs ?? 15_000;
+    this.#connectTimeoutMs = Math.max(0, options.connectTimeoutMs ?? 5_000);
+    this.#retryDelayMs = Math.max(1, options.retryDelayMs ?? 100);
+    this.#now = options.now ?? Date.now;
+    this.#sleep = options.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
   }
 
   start(): Promise<void> {
@@ -57,7 +69,14 @@ export class DesktopHostRpcClient {
   }
 
   async #start(): Promise<void> {
-    const connection = await this.options.connect();
+    const deadline = this.#now() + this.#connectTimeoutMs;
+    let connection: DesktopHostConnection;
+    try {
+      connection = await this.options.connect();
+    } catch (error) {
+      const initialError = error instanceof Error ? error : new Error(String(error));
+      connection = await this.#retryConnect(deadline, initialError);
+    }
     this.#connection = connection;
     connection.onData((chunk) => this.#onData(chunk));
     connection.onClose(() => this.#onDisconnect(new Error("desktop host connection closed")));
@@ -67,6 +86,19 @@ export class DesktopHostRpcClient {
     if (handshake.status !== "ok" || handshake.protocolVersion !== 1) {
       this.close();
       throw new Error("desktop host handshake rejected");
+    }
+  }
+
+  async #retryConnect(deadline: number, lastError: Error): Promise<DesktopHostConnection> {
+    while (true) {
+      try {
+        return await this.options.connect();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+      const now = this.#now();
+      if (now >= deadline) throw lastError;
+      await this.#sleep(Math.min(this.#retryDelayMs, deadline - now));
     }
   }
 

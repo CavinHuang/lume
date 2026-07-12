@@ -21,6 +21,60 @@ class FakeConnection implements DesktopHostConnection {
 }
 
 describe("DesktopHostRpcClient", () => {
+  test("retries startup connection failures until the desktop host socket is ready", async () => {
+    const connection = new FakeConnection();
+    let attempts = 0;
+    let clock = 0;
+    const client = new DesktopHostRpcClient({
+      token: "token",
+      connect: async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("socket not ready");
+        return connection;
+      },
+      connectTimeoutMs: 500,
+      retryDelayMs: 50,
+      now: () => clock,
+      sleep: async (delayMs) => { clock += delayMs; },
+      timeoutMs: 100,
+    });
+
+    const start = client.start();
+    for (let index = 0; index < 10 && attempts < 3; index += 1) {
+      await Promise.resolve();
+    }
+    for (let index = 0; index < 10 && connection.sent().length === 0; index += 1) {
+      await Promise.resolve();
+    }
+    expect(connection.sent()).toHaveLength(1);
+    expect(attempts).toBe(3);
+    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 1 } });
+
+    await expect(start).resolves.toBeUndefined();
+  });
+
+  test("stops retrying at the startup connection deadline", async () => {
+    let attempts = 0;
+    let clock = 0;
+    const client = new DesktopHostRpcClient({
+      token: "token",
+      connect: async () => {
+        attempts += 1;
+        throw new Error(`socket not ready ${attempts}`);
+      },
+      connectTimeoutMs: 100,
+      retryDelayMs: 50,
+      now: () => clock,
+      sleep: async (delayMs) => { clock += delayMs; },
+    });
+    const start = client.start();
+    for (let index = 0; index < 20 && attempts < 4; index += 1) {
+      await Promise.resolve();
+    }
+    await expect(start).rejects.toThrow("socket not ready 4");
+    expect(attempts).toBe(4);
+  });
+
   test("authenticates before forwarding calls", async () => {
     const connection = new FakeConnection();
     const client = new DesktopHostRpcClient({
