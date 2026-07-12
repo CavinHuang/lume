@@ -206,6 +206,9 @@ describe("DesktopContextService", () => {
           accessibility: {
             documentText: "这个问题怎么回复？",
           },
+          textSource: "accessibility_visible",
+          completeness: "partial",
+          fallbackReason: "document text unavailable",
           screenshots: [{
             id: "shot-wechat",
             width: 800,
@@ -231,10 +234,13 @@ describe("DesktopContextService", () => {
     });
     expect(calls).toEqual([{
       method: "get_window_state",
-      params: { windowId: "win:wechat", includeScreenshot: true },
+      params: { windowId: "win:wechat" },
     }]);
     expect(snapshots.get("window:win:wechat:200")).toMatchObject({
       visibleText: "这个问题怎么回复？",
+      textSource: "accessibility_visible",
+      completeness: "partial",
+      fallbackReason: "document text unavailable",
       untrusted: true,
     });
   });
@@ -807,7 +813,7 @@ describe("DesktopContextService", () => {
     second.close();
   });
 
-  test("captures screenshot pixels only for user-initiated current app selection", async () => {
+  test("does not capture screenshot pixels for user-initiated current app selection", async () => {
     const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
     const rawSnapshots = new Map<string, DesktopContextSnapshot>();
     const service = new DesktopContextService({
@@ -874,11 +880,11 @@ describe("DesktopContextService", () => {
 
     await service.captureCurrent();
     const selected = await service.captureCurrent({ userInitiated: true });
-    const current = await service.currentContext({ snapshotId: "snap-2", includeScreenshot: true });
+    const current = await service.currentContext({ snapshotId: "snap-1", includeScreenshot: true });
 
-    expect(calls.map((call) => call.params)).toEqual([{}, { includeScreenshot: true }]);
-    expect(selected).toMatchObject({ status: "ok", snapshotId: "snap-2" });
-    expect(JSON.stringify(current)).toContain("iVBORw0KGgo=");
+    expect(calls.map((call) => call.params)).toEqual([{}, {}]);
+    expect(selected).toMatchObject({ status: "ok", snapshotId: "snap-1", unchanged: true });
+    expect(JSON.stringify(current)).not.toContain("iVBORw0KGgo=");
     expect(JSON.stringify(current)).not.toContain("secret");
   });
 

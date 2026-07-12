@@ -122,18 +122,18 @@ export async function resolveDesktopContextProjection(
   const snapshotId = messageMetadata.desktopContextSnapshotId;
   if (typeof snapshotId !== "string" || !snapshotId.trim()) return undefined;
 
-  const result = asRecord(await service.currentContext({ snapshotId, includeScreenshot: true }));
+  const result = asRecord(await service.currentContext({ snapshotId }));
   if (result.status === "ok" && result.snapshot) {
-    return splitDesktopContextImages(result.snapshot);
+    return stripDesktopContextImages(result.snapshot);
   }
 
   const desktopWindow = asRecord(messageMetadata?.desktopWindow);
   const windowId = stringValue(desktopWindow.id);
   if (!windowId) return undefined;
-  const state = asRecord(await invoke("get_window_state", { windowId, includeScreenshot: true }));
+  const state = asRecord(await invoke("get_window_state", { windowId }));
   if (state.status !== "ok") return undefined;
   if (!matchesRetainedDesktopTarget(messageMetadata, state)) return undefined;
-  return splitDesktopContextImages(snapshotFromWindowState(snapshotId, messageMetadata, state));
+  return stripDesktopContextImages(snapshotFromWindowState(snapshotId, messageMetadata, state));
 }
 
 function matchesRetainedDesktopTarget(
@@ -157,6 +157,7 @@ function snapshotFromWindowState(
   const app = asRecord(messageMetadata.desktopApp);
   const window = asRecord(state.window);
   const accessibility = asRecord(state.accessibility);
+  const visibleText = stringValue(accessibility.documentText) ?? stringValue(accessibility.visibleText);
   return {
     id: snapshotId,
     app: {
@@ -168,9 +169,10 @@ function snapshotFromWindowState(
     ...(stringValue(accessibility.selectedText)
       ? { selectedText: stringValue(accessibility.selectedText) }
       : {}),
-    ...(stringValue(accessibility.documentText)
-      ? { visibleText: stringValue(accessibility.documentText) }
-      : {}),
+    ...(visibleText ? { visibleText } : {}),
+    ...(stringValue(state.textSource) ? { textSource: stringValue(state.textSource) } : {}),
+    ...(stringValue(state.completeness) ? { completeness: stringValue(state.completeness) } : {}),
+    ...(stringValue(state.fallbackReason) ? { fallbackReason: stringValue(state.fallbackReason) } : {}),
     ...(Array.isArray(state.screenshots) ? { screenshots: state.screenshots } : {}),
     untrusted: true,
   };
@@ -186,19 +188,15 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function splitDesktopContextImages(snapshot: unknown): { snapshot: unknown; imageBlocks?: unknown[] } {
+function stripDesktopContextImages(snapshot: unknown): { snapshot: unknown } {
   const value = asRecord(snapshot);
   if (!Object.keys(value).length) return { snapshot };
-  const imageBlocks: unknown[] = [];
-  const sanitized = sanitizeSnapshotImages(value, imageBlocks);
-  return imageBlocks.length > 0
-    ? { snapshot: sanitized, imageBlocks }
-    : { snapshot: sanitized };
+  return { snapshot: sanitizeSnapshotImages(value) };
 }
 
-function sanitizeSnapshotImages(value: unknown, imageBlocks: unknown[]): unknown {
+function sanitizeSnapshotImages(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => sanitizeSnapshotImages(item, imageBlocks));
+    return value.map((item) => sanitizeSnapshotImages(item));
   }
   const record = asRecord(value);
   if (!Object.keys(record).length) return value;
@@ -207,27 +205,12 @@ function sanitizeSnapshotImages(value: unknown, imageBlocks: unknown[]): unknown
     if (key === "screenshots" && Array.isArray(item)) {
       output[key] = item.map((candidate) => {
         const screenshot = asRecord(candidate);
-        const { dataUrl, ...metadata } = screenshot;
-        const image = parseDataUrl(dataUrl);
-        if (image) {
-          imageBlocks.push({
-            type: "image",
-            source: image,
-            _meta: { screenshotId: typeof screenshot.id === "string" ? screenshot.id : undefined, persist: false },
-          });
-        }
+        const { dataUrl: _dataUrl, ...metadata } = screenshot;
         return metadata;
       });
       continue;
     }
-    output[key] = sanitizeSnapshotImages(item, imageBlocks);
+    output[key] = sanitizeSnapshotImages(item);
   }
   return output;
-}
-
-function parseDataUrl(value: unknown): { type: "base64"; media_type: string; data: string } | undefined {
-  if (typeof value !== "string") return undefined;
-  const match = /^data:(image\/[^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(value);
-  if (!match) return undefined;
-  return { type: "base64", media_type: match[1]!, data: match[2]!.replace(/\s/g, "") };
 }

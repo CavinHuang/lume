@@ -216,7 +216,7 @@ pub fn macos_current_context_result_with_related(
     include_screenshot: bool,
 ) -> Value {
     let window_value = window_json(window);
-    let visible_text = context_visible_text(window);
+    let quality = macos_context_quality(window);
     let screenshots = screenshot_refs(window, related_windows, include_screenshot);
     let mut snapshot = json!({
         "status": "ok",
@@ -230,7 +230,9 @@ pub fn macos_current_context_result_with_related(
             "window": window_value,
             "capturedAt": now_millis(),
             "eventType": "foreground_changed",
-            "visibleText": visible_text,
+            "visibleText": quality.text,
+            "textSource": quality.source,
+            "completeness": quality.completeness,
             "screenshotId": screenshots[0]["id"],
             "screenshots": screenshots,
             "untrusted": true,
@@ -238,6 +240,9 @@ pub fn macos_current_context_result_with_related(
     });
     if let Some(selected_text) = normalized_optional_text(window.selected_text.as_deref()) {
         snapshot["snapshot"]["selectedText"] = Value::String(selected_text);
+    }
+    if let Some(reason) = quality.fallback_reason {
+        snapshot["snapshot"]["fallbackReason"] = Value::String(reason);
     }
     snapshot
 }
@@ -253,8 +258,8 @@ pub fn macos_get_window_state_result_with_related(
 ) -> Value {
     let tree = element_tree_json(&window.elements);
     let focused = focused_element(&tree).unwrap_or(Value::Null);
-    let visible_text = context_visible_text(window);
-    json!({
+    let quality = macos_context_quality(window);
+    let mut state = json!({
         "status": "ok",
         "window": window_json(window),
         "revision": window_revision(window),
@@ -264,11 +269,17 @@ pub fn macos_get_window_state_result_with_related(
             "tree": tree,
             "focusedElement": focused,
             "selectedText": normalized_optional_text(window.selected_text.as_deref()).unwrap_or_default(),
-            "documentText": visible_text,
-            "visibleText": visible_text,
+            "documentText": quality.text,
+            "visibleText": quality.text,
             "truncated": window.accessibility_truncated,
         },
-    })
+        "textSource": quality.source,
+        "completeness": quality.completeness,
+    });
+    if let Some(reason) = quality.fallback_reason {
+        state["fallbackReason"] = Value::String(reason);
+    }
+    state
 }
 
 pub fn macos_wait_for_state_result(window: Option<MacOSWindowInfo>, params: &Value) -> Value {
@@ -771,6 +782,56 @@ fn context_visible_text(window: &MacOSWindowInfo) -> String {
         window.owner_name.trim().to_owned()
     } else {
         window.title.trim().to_owned()
+    }
+}
+
+struct MacOSContextQuality {
+    text: String,
+    source: &'static str,
+    completeness: &'static str,
+    fallback_reason: Option<String>,
+}
+
+fn macos_context_quality(window: &MacOSWindowInfo) -> MacOSContextQuality {
+    let completeness = if window.accessibility_truncated {
+        "partial"
+    } else {
+        "complete"
+    };
+    if normalized_optional_text(window.selected_text.as_deref()).is_some() {
+        return MacOSContextQuality {
+            text: context_visible_text(window),
+            source: "accessibility_selection",
+            completeness,
+            fallback_reason: None,
+        };
+    }
+    if let Some(text) = normalized_optional_text(window.document_text.as_deref()) {
+        return MacOSContextQuality {
+            text,
+            source: "accessibility_document",
+            completeness,
+            fallback_reason: None,
+        };
+    }
+    let element_text = element_document_text(&window.elements);
+    if !element_text.is_empty() {
+        return MacOSContextQuality {
+            text: element_text,
+            source: "accessibility_tree",
+            completeness: "partial",
+            fallback_reason: Some("document text unavailable".to_owned()),
+        };
+    }
+    MacOSContextQuality {
+        text: context_visible_text(window),
+        source: "window_title",
+        completeness: if window.accessibility_truncated {
+            "partial"
+        } else {
+            "minimal"
+        },
+        fallback_reason: Some("accessibility text unavailable".to_owned()),
     }
 }
 

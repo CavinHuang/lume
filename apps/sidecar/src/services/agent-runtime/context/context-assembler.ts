@@ -208,10 +208,11 @@ export class ContextAssembler {
         "Do not ask the user to copy or paste content from the attached desktop app; use desktop_context first, then current_context or get_window_state when fresher evidence is needed.",
         "If desktop_context.snapshot.selectedText is present, treat it as the user's selected content inside the attached desktop app and prioritize it over broader visibleText.",
         "If the loaded snapshot is enough, answer from it. If the user asks about the selected app's current state, call mcp__computer_use__current_context with desktop_context.snapshot.id and refresh true.",
-        "If visible text is missing, too generic, or the app is chat/image-heavy such as WeChat, call mcp__computer_use__current_context with includeScreenshot true, refresh true, and desktop_context.snapshot.id before answering.",
+        "Prefer accessibility text and elements from desktop_context, current_context, and get_window_state before visual inspection.",
+        "Call mcp__computer_use__take_screenshot only when completeness is minimal, the requested content is inherently visual, or structured state cannot verify the result.",
         "If fresher structure is needed, call mcp__computer_use__get_window_state with desktop_context.snapshot.window.id before acting.",
         "Before any mutating desktop action, inspect the target window state. If window.focused is false, call mcp__computer_use__activate_window and verify focused is true so the user can see the operation.",
-        "For desktop operations, Prefer elementId targets from get_window_state over raw coordinates, then verify the state after each operation.",
+        "For desktop operations, prefer elementId semantic actions, then targeted window input, and use screenshot coordinates only as the final fallback; then verify the state after each operation.",
         "Consequential actions still require Lume confirmation; do not bypass confirmation or ask the user to paste secrets into chat."
       ].join("\n")
       : "";
@@ -235,7 +236,6 @@ export class ContextAssembler {
     const desktopContextBrief = desktopContextForPrompt
       ? `<desktop_context trust="untrusted">\n${JSON.stringify(desktopContextForPrompt)}\n</desktop_context>`
       : "";
-    const desktopContextImageBlocks = desktopContextImages(input.desktopContext);
     const userMessageForModel = [
       memoryContext.userMessageForModel,
       desktopContextBrief,
@@ -252,7 +252,6 @@ export class ContextAssembler {
       memoryUserMessagePrefix: memoryContext.prefix,
       memoryContextUsedItems: memoryContext.items,
       userMessageForModel,
-      ...(desktopContextImageBlocks.length > 0 ? { userMessageContentBlocks: desktopContextImageBlocks } : {}),
       sessionContext: "",
       budget: {
         ...DEFAULT_CONTEXT_BUDGET,
@@ -272,15 +271,6 @@ function promptDesktopContext(value: unknown): unknown {
   if (!Object.keys(record).length) return value;
   const { imageBlocks: _imageBlocks, ...promptValue } = record;
   return promptValue;
-}
-
-function desktopContextImages(value: unknown): ContentBlockParam[] {
-  const imageBlocks = asRecord(value).imageBlocks;
-  if (!Array.isArray(imageBlocks)) return [];
-  return imageBlocks.filter((block): block is ContentBlockParam => {
-    const record = asRecord(block);
-    return record.type === "image" && !!record.source;
-  });
 }
 
 function asRecord(value: unknown): Record<string, any> {

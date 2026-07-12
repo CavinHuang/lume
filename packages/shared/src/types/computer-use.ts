@@ -59,6 +59,15 @@ export interface DesktopScreenshotRef {
   captureFallbackReason?: string;
 }
 
+export type DesktopContextTextSource =
+  | "accessibility_selection"
+  | "accessibility_document"
+  | "accessibility_visible"
+  | "accessibility_tree"
+  | "window_title";
+
+export type DesktopContextCompleteness = "complete" | "partial" | "minimal";
+
 export interface DesktopWindowState {
   window: DesktopWindowRef;
   revision: string;
@@ -69,7 +78,12 @@ export interface DesktopWindowState {
     focusedElement?: DesktopElementRef;
     selectedText?: string;
     documentText?: string;
+    visibleText?: string;
+    truncated?: boolean;
   };
+  textSource?: DesktopContextTextSource;
+  completeness?: DesktopContextCompleteness;
+  fallbackReason?: string;
 }
 
 export type DesktopContextEventType =
@@ -87,6 +101,9 @@ export interface DesktopContextSnapshot {
   eventType: DesktopContextEventType;
   selectedText?: string;
   visibleText?: string;
+  textSource?: DesktopContextTextSource;
+  completeness?: DesktopContextCompleteness;
+  fallbackReason?: string;
   screenshotId?: string;
   screenshots?: DesktopScreenshotRef[];
   untrusted: true;

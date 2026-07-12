@@ -65,6 +65,7 @@ describe("create-lume-tools", () => {
       "list_windows",
       "get_window",
       "get_window_state",
+      "take_screenshot",
       "launch_app",
       "activate_window",
       "move_pointer",

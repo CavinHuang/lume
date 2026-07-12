@@ -355,6 +355,8 @@ fn prefers_accessibility_text_for_context_and_window_state() {
         "A: 这个 PR 今天能发吗？\nB: 我看完测试后回复"
     );
     assert_eq!(context["snapshot"]["selectedText"], "这个 PR 今天能发吗？");
+    assert_eq!(context["snapshot"]["textSource"], "accessibility_selection");
+    assert_eq!(context["snapshot"]["completeness"], "complete");
     assert_eq!(
         state["accessibility"]["documentText"],
         "A: 这个 PR 今天能发吗？\nB: 我看完测试后回复"
@@ -362,6 +364,22 @@ fn prefers_accessibility_text_for_context_and_window_state() {
     assert_eq!(
         state["accessibility"]["selectedText"],
         "这个 PR 今天能发吗？"
+    );
+    assert_eq!(state["textSource"], "accessibility_selection");
+    assert_eq!(state["completeness"], "complete");
+}
+
+#[test]
+fn marks_macos_title_only_context_as_minimal() {
+    let window = sample_windows()[0].clone();
+
+    let context = macos_current_context_result(&window, false);
+
+    assert_eq!(context["snapshot"]["textSource"], "window_title");
+    assert_eq!(context["snapshot"]["completeness"], "minimal");
+    assert_eq!(
+        context["snapshot"]["fallbackReason"],
+        "accessibility text unavailable"
     );
 }
 
@@ -600,6 +618,7 @@ fn reports_when_the_macos_accessibility_tree_was_truncated() {
     let state = macos_get_window_state_result(&window, false);
 
     assert_eq!(state["accessibility"]["truncated"], true);
+    assert_eq!(state["completeness"], "partial");
 }
 
 #[test]

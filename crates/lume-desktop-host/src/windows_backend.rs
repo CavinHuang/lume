@@ -392,14 +392,21 @@ fn get_window_state(params: &Value) -> Result<Value> {
     );
     let accessibility = accessibility_state(hwnd)
         .unwrap_or_else(|error| fallback_accessibility_state(title, Some(error.to_string())));
-    Ok(json!({
+    let quality = context_quality(&accessibility, title);
+    let mut state = json!({
         "status": "ok",
         "window": window,
         "revision": revision,
         "capturedAt": now_millis(),
         "screenshots": screenshots,
         "accessibility": accessibility,
-    }))
+        "textSource": quality.source,
+        "completeness": quality.completeness,
+    });
+    if let Some(reason) = quality.fallback_reason {
+        state["fallbackReason"] = Value::String(reason);
+    }
+    Ok(state)
 }
 
 fn is_action(method: &str) -> bool {
@@ -464,11 +471,7 @@ fn current_context(params: &Value) -> Result<Value> {
         &window,
         params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
     );
-    let visible_text = accessibility
-        .get("documentText")
-        .and_then(Value::as_str)
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| window["title"].as_str().unwrap_or_default());
+    let quality = context_quality(&accessibility, window["title"].as_str().unwrap_or_default());
     let selected_text = accessibility
         .get("selectedText")
         .and_then(Value::as_str)
@@ -483,7 +486,9 @@ fn current_context(params: &Value) -> Result<Value> {
         "window": window,
         "capturedAt": now_millis(),
         "eventType": "foreground_changed",
-        "visibleText": visible_text,
+        "visibleText": quality.text,
+        "textSource": quality.source,
+        "completeness": quality.completeness,
         "screenshotId": screenshot_id(&window),
         "screenshots": screenshots,
         "untrusted": true,
@@ -491,10 +496,101 @@ fn current_context(params: &Value) -> Result<Value> {
     if let Some(selected_text) = selected_text {
         snapshot["selectedText"] = Value::String(selected_text.to_owned());
     }
+    if let Some(reason) = quality.fallback_reason {
+        snapshot["fallbackReason"] = Value::String(reason);
+    }
     Ok(json!({
         "status": "ok",
         "snapshot": snapshot,
     }))
+}
+
+struct ContextTextSelection {
+    text: String,
+    source: &'static str,
+    completeness: &'static str,
+    fallback_reason: Option<String>,
+}
+
+fn context_quality(accessibility: &Value, window_title: &str) -> ContextTextSelection {
+    let selected_text = accessibility
+        .get("selectedText")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    let document_text = accessibility
+        .get("documentText")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let visible_text = accessibility
+        .get("visibleText")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let truncated = accessibility
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let unavailable_reason = accessibility
+        .get("unavailableReason")
+        .and_then(Value::as_str);
+    let mut selection = select_context_text(
+        window_title,
+        document_text,
+        visible_text,
+        truncated,
+        unavailable_reason,
+    );
+    if !selected_text.is_empty() {
+        selection.source = "accessibility_selection";
+        selection.completeness = if truncated { "partial" } else { "complete" };
+        selection.fallback_reason = None;
+    }
+    selection
+}
+
+fn select_context_text(
+    window_title: &str,
+    document_text: &str,
+    visible_text: &str,
+    truncated: bool,
+    unavailable_reason: Option<&str>,
+) -> ContextTextSelection {
+    if let Some(reason) = unavailable_reason {
+        return ContextTextSelection {
+            text: window_title.trim().to_owned(),
+            source: "window_title",
+            completeness: "minimal",
+            fallback_reason: Some(reason.to_owned()),
+        };
+    }
+    let document_text = document_text.trim();
+    if !document_text.is_empty() {
+        return ContextTextSelection {
+            text: document_text.to_owned(),
+            source: "accessibility_document",
+            completeness: if truncated { "partial" } else { "complete" },
+            fallback_reason: unavailable_reason.map(str::to_owned),
+        };
+    }
+    let visible_text = visible_text.trim();
+    if !visible_text.is_empty() && visible_text != window_title.trim() {
+        return ContextTextSelection {
+            text: visible_text.to_owned(),
+            source: "accessibility_visible",
+            completeness: "partial",
+            fallback_reason: Some("document text unavailable".to_owned()),
+        };
+    }
+    ContextTextSelection {
+        text: window_title.trim().to_owned(),
+        source: "window_title",
+        completeness: "minimal",
+        fallback_reason: Some(
+            unavailable_reason
+                .unwrap_or("accessibility text unavailable")
+                .to_owned(),
+        ),
+    }
 }
 
 fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Value> {
@@ -2050,6 +2146,59 @@ fn try_set_element_value(params: &Value, value: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prefers_windows_document_text_over_visible_nodes() {
+        let result = select_context_text("项目群", "完整正文", "消息 A\n消息 B", false, None);
+
+        assert_eq!(result.text, "完整正文");
+        assert_eq!(result.source, "accessibility_document");
+        assert_eq!(result.completeness, "complete");
+    }
+
+    #[test]
+    fn treats_windows_selected_text_as_complete_semantic_context() {
+        let result = context_quality(
+            &json!({
+                "selectedText": "这个 PR 今天能发吗？",
+                "documentText": "",
+                "visibleText": "微信",
+                "truncated": false,
+            }),
+            "微信",
+        );
+
+        assert_eq!(result.source, "accessibility_selection");
+        assert_eq!(result.completeness, "complete");
+        assert_eq!(result.fallback_reason, None);
+    }
+
+    #[test]
+    fn falls_back_to_windows_visible_nodes_before_window_title() {
+        let result = select_context_text("微信", "", "客户：今天能交付吗？", false, None);
+
+        assert_eq!(result.text, "客户：今天能交付吗？");
+        assert_eq!(result.source, "accessibility_visible");
+        assert_eq!(result.completeness, "partial");
+    }
+
+    #[test]
+    fn marks_window_title_only_context_as_minimal() {
+        let result = select_context_text("微信", "微信", "微信", false, Some("UIA unavailable"));
+
+        assert_eq!(result.text, "微信");
+        assert_eq!(result.source, "window_title");
+        assert_eq!(result.completeness, "minimal");
+        assert_eq!(result.fallback_reason.as_deref(), Some("UIA unavailable"));
+    }
+
+    #[test]
+    fn marks_truncated_windows_accessibility_as_partial() {
+        let result = select_context_text("微信", "完整正文", "", true, None);
+
+        assert_eq!(result.source, "accessibility_document");
+        assert_eq!(result.completeness, "partial");
+    }
 
     #[test]
     fn selects_only_overlapping_bounds_for_related_window_screenshots() {

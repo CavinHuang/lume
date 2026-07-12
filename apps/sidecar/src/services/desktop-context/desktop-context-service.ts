@@ -147,7 +147,7 @@ export class DesktopContextService {
     }
     const response = asRecord(await this.#input.invokeHost(
       "current_context",
-      input.userInitiated === true ? { includeScreenshot: true } : {},
+      {},
     ));
     if (response.status !== "ok") return attachDesktopPermissionCaptureMessage(response);
     const snapshot = normalizeSnapshot(response.snapshot);
@@ -219,7 +219,6 @@ export class DesktopContextService {
     if (!windowId) return { status: "failed", message: "windowId is required" };
     const state = asRecord(await this.#input.invokeHost("get_window_state", {
       windowId,
-      ...(input.userInitiated === true ? { includeScreenshot: true } : {}),
     }));
     if (state.status !== "ok") return attachDesktopPermissionCaptureMessage(state);
     const snapshot = snapshotFromWindowStateTarget(state);
@@ -760,6 +759,7 @@ function snapshotFromWindowStateTarget(value: Record<string, unknown>): DesktopC
       ? { selectedText: accessibility.selectedText }
       : {}),
     ...(visibleText ? { visibleText } : {}),
+    ...contextQualityFields(value),
     ...(screenshots?.[0]?.id ? { screenshotId: screenshots[0].id } : {}),
     ...(screenshots ? { screenshots } : {}),
     untrusted: true,
@@ -810,6 +810,7 @@ function snapshotFromWindowState(
       ? { selectedText: accessibility.selectedText }
       : {}),
     ...(visibleText ? { visibleText } : {}),
+    ...contextQualityFields(value),
     ...(screenshots?.[0]?.id ? { screenshotId: screenshots[0].id } : {}),
     ...(screenshots ? { screenshots } : {}),
     untrusted: true,
@@ -823,6 +824,34 @@ function contextVisibleText(accessibility: Record<string, unknown>, window: Reco
   if (visibleText) return visibleText;
   const title = typeof window.title === "string" ? window.title.trim() : "";
   return title || undefined;
+}
+
+function contextQualityFields(value: Record<string, unknown>): Pick<
+  DesktopContextSnapshot,
+  "textSource" | "completeness" | "fallbackReason"
+> {
+  const textSources = new Set([
+    "accessibility_selection",
+    "accessibility_document",
+    "accessibility_visible",
+    "accessibility_tree",
+    "window_title",
+  ]);
+  const completenessValues = new Set(["complete", "partial", "minimal"]);
+  const textSource = typeof value.textSource === "string" && textSources.has(value.textSource)
+    ? value.textSource as DesktopContextSnapshot["textSource"]
+    : undefined;
+  const completeness = typeof value.completeness === "string" && completenessValues.has(value.completeness)
+    ? value.completeness as DesktopContextSnapshot["completeness"]
+    : undefined;
+  const fallbackReason = typeof value.fallbackReason === "string" && value.fallbackReason.trim()
+    ? value.fallbackReason.trim()
+    : undefined;
+  return {
+    ...(textSource ? { textSource } : {}),
+    ...(completeness ? { completeness } : {}),
+    ...(fallbackReason ? { fallbackReason } : {}),
+  };
 }
 
 function attachScreenshotPixels(

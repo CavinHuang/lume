@@ -64,14 +64,16 @@ describe("ContextAssembler", () => {
     expect(result.systemPrompt).toContain("If window.focused is false");
     expect(result.systemPrompt).toContain("mcp__computer_use__activate_window");
     expect(result.systemPrompt).toContain("so the user can see the operation");
-    expect(result.systemPrompt).toContain("includeScreenshot true");
-    expect(result.systemPrompt).toContain("Prefer elementId targets");
+    expect(result.systemPrompt).toContain("mcp__computer_use__take_screenshot");
+    expect(result.systemPrompt).toContain("accessibility text and elements");
+    expect(result.systemPrompt).not.toContain("chat/image-heavy such as WeChat");
+    expect(result.systemPrompt).toContain("prefer elementId semantic actions");
     expect(result.systemPrompt).toContain("verify the state after each operation");
     expect(result.systemPrompt).toContain("Consequential actions still require Lume confirmation");
     expect(result.systemPrompt).toContain("Do not ask the user to copy or paste content from the attached desktop app");
   });
 
-  test("attaches desktop screenshot image blocks without putting base64 in prompt text", async () => {
+  test("does not attach desktop screenshot image blocks to first-turn context", async () => {
     const result = await new ContextAssembler().assemble({
       threadId: "desktop-image-thread",
       runId: "desktop-image-run",
@@ -97,11 +99,7 @@ describe("ContextAssembler", () => {
 
     expect(result.userMessageForModel).toContain("snap-image");
     expect(result.userMessageForModel).not.toContain("iVBORw0KGgo=");
-    expect(result.userMessageContentBlocks).toEqual([{
-      type: "image",
-      source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
-      _meta: { screenshotId: "shot-1", persist: false },
-    }]);
+    expect(result.userMessageContentBlocks).toBeUndefined();
   });
 
   const originalConfigDir = process.env.LUME_CONFIG_DIR;

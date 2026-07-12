@@ -61,8 +61,14 @@ describe("createComputerUseMcpTools", () => {
     expect(schema("diagnose_permissions").required).toBeUndefined();
     expect(schema("request_permissions").required).toBeUndefined();
     expect(schema("current_context").properties.refresh).toMatchObject({ type: "boolean" });
+    expect(schema("get_window_state").properties.includeScreenshot).toBeUndefined();
+    expect(schema("current_context").properties.includeScreenshot).toBeUndefined();
+    expect(schema("take_screenshot").required).toEqual(["windowId"]);
+    expect(description("take_screenshot")).toContain("final visual fallback");
     expect(description("type_text")).toContain("passwords or OTPs");
     expect(description("click")).toContain("get_window_state");
+    expect(description("click")).toContain("targeted window coordinates before screenshot coordinates");
+    expect(description("scroll")).toContain("targeted window coordinates before screenshot coordinates");
     expect(description("perform_secondary_action")).toContain("secondary accessibility action");
     expect(description("diagnose_permissions")).toContain("Lume Computer Use.app");
     expect(description("diagnose_permissions")).toContain("instruction");
@@ -327,6 +333,57 @@ describe("createComputerUseMcpTools", () => {
         type: "image",
         source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
         _meta: { screenshotId: "screenshot:window-1:rev-1", persist: false },
+      },
+    ]);
+  });
+
+  test("captures screenshots only through the explicit fallback tool", async () => {
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, input) => {
+        calls.push({ method, input });
+        return {
+          status: "ok",
+          screenshots: [{
+            id: "shot-explicit",
+            width: 320,
+            height: 200,
+            origin: { x: 10, y: 20 },
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+          }],
+        };
+      },
+    });
+    const screenshot = tools.find((tool) => tool.name === "mcp__computer_use__take_screenshot")!;
+
+    const result = await screenshot.call(
+      { windowId: "win:wechat" },
+      { toolUseId: "tool-explicit-screenshot" } as never,
+    );
+
+    expect(calls).toEqual([{
+      method: "get_window_state",
+      input: { windowId: "win:wechat", includeScreenshot: true },
+    }]);
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({
+          status: "ok",
+          screenshots: [{
+            id: "shot-explicit",
+            width: 320,
+            height: 200,
+            origin: { x: 10, y: 20 },
+            mimeType: "image/png",
+          }],
+        }),
+      },
+      {
+        type: "image",
+        source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
+        _meta: { screenshotId: "shot-explicit", persist: false },
       },
     ]);
   });

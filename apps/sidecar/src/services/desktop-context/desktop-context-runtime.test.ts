@@ -17,18 +17,18 @@ describe("resolveDesktopContextProjection", () => {
       },
     );
 
-    expect(calls).toEqual([{ snapshotId: "snapshot-1", includeScreenshot: true }]);
+    expect(calls).toEqual([{ snapshotId: "snapshot-1" }]);
     expect(result).toEqual({
       snapshot: { id: "snapshot-1", visibleText: "redacted" },
     });
   });
 
-  test("resolves retained screenshot pixels as non-persistent image blocks", async () => {
+  test("does not inject retained screenshot pixels into first-turn context", async () => {
     const result = await resolveDesktopContextProjection(
       { desktopContextSnapshotId: "snapshot-image" },
       {
         currentContext: async (input) => {
-          expect(input).toEqual({ snapshotId: "snapshot-image", includeScreenshot: true });
+          expect(input).toEqual({ snapshotId: "snapshot-image" });
           return {
             status: "ok",
             snapshot: {
@@ -60,11 +60,6 @@ describe("resolveDesktopContextProjection", () => {
         }],
         visibleText: "redacted",
       },
-      imageBlocks: [{
-        type: "image",
-        source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
-        _meta: { screenshotId: "shot-1", persist: false },
-      }],
     });
   });
 
@@ -122,15 +117,19 @@ describe("resolveDesktopContextProjection", () => {
           }],
           accessibility: {
             selectedText: "客户的问题",
-            documentText: "客户问今天能不能交付",
+            documentText: "",
+            visibleText: "客户问今天能不能交付",
           },
+          textSource: "accessibility_visible",
+          completeness: "partial",
+          fallbackReason: "document text unavailable",
         };
       },
     );
 
     expect(hostCalls).toEqual([{
       method: "get_window_state",
-      input: { windowId: "win:wechat", includeScreenshot: true },
+      input: { windowId: "win:wechat" },
     }]);
     expect(result).toEqual({
       snapshot: {
@@ -140,6 +139,9 @@ describe("resolveDesktopContextProjection", () => {
         capturedAt: 200,
         selectedText: "客户的问题",
         visibleText: "客户问今天能不能交付",
+        textSource: "accessibility_visible",
+        completeness: "partial",
+        fallbackReason: "document text unavailable",
         screenshots: [{
           id: "shot-fresh",
           width: 640,
@@ -149,11 +151,6 @@ describe("resolveDesktopContextProjection", () => {
         }],
         untrusted: true,
       },
-      imageBlocks: [{
-        type: "image",
-        source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
-        _meta: { screenshotId: "shot-fresh", persist: false },
-      }],
     });
   });
 
@@ -181,7 +178,7 @@ describe("resolveDesktopContextProjection", () => {
 
     expect(hostCalls).toEqual([{
       method: "get_window_state",
-      input: { windowId: "win:wechat", includeScreenshot: true },
+      input: { windowId: "win:wechat" },
     }]);
     expect(result).toBeUndefined();
   });
