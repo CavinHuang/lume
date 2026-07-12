@@ -1549,12 +1549,13 @@ fn windows_text_message_sequence(text: &str) -> Vec<(u32, usize)> {
 }
 
 fn send_text_to_edit_window(hwnd: HWND, text: &str) {
+    const WM_GETTEXTLENGTH: u32 = 0x000E;
     const EM_SETSEL: u32 = 0x00B1;
     const EM_REPLACESEL: u32 = 0x00C2;
     let mut text = text.encode_utf16().collect::<Vec<_>>();
     text.push(0);
     unsafe {
-        let end = GetWindowTextLengthW(hwnd).max(0) as usize;
+        let end = SendMessageW(hwnd, WM_GETTEXTLENGTH, None, None).0.max(0) as usize;
         SendMessageW(
             hwnd,
             EM_SETSEL,
