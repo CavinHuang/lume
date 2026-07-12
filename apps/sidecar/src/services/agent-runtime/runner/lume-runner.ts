@@ -316,7 +316,6 @@ export class LumeRunner {
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
       emitDesktopActionRequest: this.emit.onDesktopActionRequest,
-      emitRuntimeEvent: this.emit.onRuntimeEvent,
       emitToolPermissionRequest: this.emit.onToolPermissionRequest,
       emitTaskContractUpdated: this.emit.onTaskContractUpdated,
       emitTodoUpdated: this.emit.onTodoUpdated,

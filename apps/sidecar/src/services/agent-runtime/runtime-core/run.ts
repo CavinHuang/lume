@@ -155,7 +155,6 @@ export interface CreateRuntimeCoreSessionInput {
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
-  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -479,7 +478,6 @@ async function runSidecarSubagent(input: {
     onAskUserQuestion: input.emitAskUserQuestion ?? (() => undefined),
     onBrowserAuthRequest: input.emitBrowserAuthRequest ?? (() => undefined),
     onDesktopActionRequest: input.emitDesktopActionRequest,
-    onRuntimeEvent: input.emitRuntimeEvent,
     onToolPermissionRequest: input.emitToolPermissionRequest ?? (() => undefined)
   });
 
@@ -734,7 +732,6 @@ function buildRuntimeCoreTools(input: {
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
-  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -1053,7 +1050,6 @@ function buildRuntimeCoreTools(input: {
         emitAskUserQuestion: input.emitAskUserQuestion,
         emitBrowserAuthRequest: input.emitBrowserAuthRequest,
         emitDesktopActionRequest: input.emitDesktopActionRequest,
-        emitRuntimeEvent: input.emitRuntimeEvent,
         emitToolPermissionRequest: input.emitToolPermissionRequest
       });
       if (runInBackground) {
@@ -1477,7 +1473,6 @@ export async function createRuntimeCoreSession(
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
-    emitRuntimeEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
     emitTodoUpdated: input.emitTodoUpdated,
