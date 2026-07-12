@@ -1077,9 +1077,12 @@ ipcMain.handle('lume:update:install', async (event) => {
   return null
 })
 
+// Windows 任务栏图标/分组依赖 AppUserModelId，必须在 ready 事件前设置；
+// 否则任务栏会回退到承载进程 exe 的图标——dev 下即 electron.exe 的默认图标。
+app.setAppUserModelId(DESKTOP_APP_ID)
+
 app.whenReady().then(async () => {
   logDesktopStartup('app ready')
-  app.setAppUserModelId(DESKTOP_APP_ID)
   registerAppProtocol()
   registerFileProtocol()
   const configDir = applyLauncherConfig()
