@@ -14,6 +14,7 @@ import { AgentsSettings } from './AgentsSettings'
 import { McpSettings } from './McpSettings'
 import { ImSettings } from './ImSettings'
 import { PermissionSettings } from './PermissionSettings'
+import { DesktopAssistantSettings } from './DesktopAssistantSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
 import { MemorySettings } from './MemorySettings'
 import { ReadingSettings } from './ReadingSettings'
@@ -100,6 +101,7 @@ export function SettingsView() {
           {tab === 'memory' && <MemorySettings />}
           {tab === 'reading' && <ReadingSettings />}
           {tab === 'permissions' && <PermissionSettings />}
+          {tab === 'desktop-assistant' && <DesktopAssistantSettings />}
           {tab === 'shortcuts' && (
             <SettingsPlaceholder
               title="快捷键"

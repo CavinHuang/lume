@@ -1,0 +1,105 @@
+import { describe, expect, test } from "bun:test";
+import { DESKTOP_CONTEXT_IPC_CHANNELS } from "@lume/shared";
+import { createDesktopContextHandlers } from "./desktop-context-handlers";
+
+describe("desktop context RPC handlers", () => {
+  test("decodes the bootstrap key and delegates non-secret operations", async () => {
+    const calls: unknown[] = [];
+    const handlers = createDesktopContextHandlers({
+      unlock: (key) => calls.push({ unlockBytes: key.length }),
+      setSuspended: (reason, suspended) => {
+        calls.push({ setSuspended: { reason, suspended } });
+        return { suspended };
+      },
+      captureCurrent: async (input) => {
+        calls.push({ captureCurrent: input });
+        return { status: "ok", snapshotId: "snap-1" };
+      },
+      getForegroundTarget: async () => {
+        calls.push({ getForegroundTarget: true });
+        return { status: "ok", window: { id: "win:1" } };
+      },
+      captureWindow: async (input) => {
+        calls.push({ captureWindow: input });
+        return { status: "ok", snapshotId: "snap-window" };
+      },
+      requestPermissions: async () => {
+        calls.push({ requestPermissions: true });
+        return { status: "permission_denied" };
+      },
+      listApps: async () => ({ status: "ok", apps: [{ id: "wechat.exe", name: "微信", isRunning: true }] }),
+      currentContext: async (input) => ({ status: "ok", input }),
+      searchContext: async (input) => ({ status: "ok", input }),
+      getSettings: () => ({ enabled: false, allowedApps: [], retentionHours: 24, maxStorageBytes: 100 }),
+      updateSettings: (settings) => settings,
+      getStatus: async () => ({ host: { status: "ok" }, store: { unlocked: true, items: 0, bytes: 0 } }),
+      clear: () => ({ cleared: true }),
+      listActivity: () => [],
+      listProposals: () => [{ id: "proposal-1", status: "pending" }],
+      updateProposal: (id, status) => ({ id, status }),
+    });
+
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.UNLOCK]?.({ key: Buffer.alloc(32, 1).toString("base64") })).toEqual({ ok: true });
+    expect(calls).toEqual([{ unlockBytes: 32 }]);
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.SET_SUSPENDED]?.({
+      reason: "screen_locked",
+      suspended: true,
+    })).toEqual({ suspended: true });
+    expect(calls.at(-1)).toEqual({ setSuspended: { reason: "screen_locked", suspended: true } });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_CURRENT]?.({ userInitiated: true })).toEqual({ status: "ok", snapshotId: "snap-1" });
+    expect(calls.at(-1)).toEqual({ captureCurrent: { userInitiated: true } });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.GET_FOREGROUND_TARGET]?.({})).toEqual({
+      status: "ok",
+      window: { id: "win:1" },
+    });
+    expect(calls.at(-1)).toEqual({ getForegroundTarget: true });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.CAPTURE_WINDOW]?.({
+      windowId: "win:1",
+      userInitiated: true,
+    })).toEqual({ status: "ok", snapshotId: "snap-window" });
+    expect(calls.at(-1)).toEqual({
+      captureWindow: { windowId: "win:1", userInitiated: true },
+    });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS]?.({})).toEqual({ status: "permission_denied" });
+    expect(calls.at(-1)).toEqual({ requestPermissions: true });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.LIST_APPS]?.({})).toEqual({
+      status: "ok",
+      apps: [{ id: "wechat.exe", name: "微信", isRunning: true }],
+    });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.GET_CURRENT]?.({
+      snapshotId: "snap-1",
+      includeScreenshot: true,
+      refresh: true,
+    })).toEqual({
+      status: "ok",
+      input: { snapshotId: "snap-1", includeScreenshot: true, refresh: true },
+    });
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS]?.({})).toEqual([{ id: "proposal-1", status: "pending" }]);
+    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL]?.({ id: "proposal-1", status: "dismissed" })).toEqual({
+      id: "proposal-1",
+      status: "dismissed",
+    });
+  });
+
+  test("rejects malformed encryption keys", async () => {
+    const handlers = createDesktopContextHandlers({
+      unlock: () => undefined,
+      setSuspended: () => ({}),
+      captureCurrent: async () => ({}),
+      getForegroundTarget: async () => ({}),
+      captureWindow: async () => ({}),
+      requestPermissions: async () => ({}),
+      listApps: async () => ({ status: "ok", apps: [] }),
+      currentContext: async () => ({}),
+      searchContext: async () => ({}),
+      getSettings: () => ({ enabled: false, allowedApps: [], retentionHours: 24, maxStorageBytes: 100 }),
+      updateSettings: (settings) => settings,
+      getStatus: async () => ({}),
+      clear: () => ({ cleared: true }),
+      listActivity: () => [],
+      listProposals: () => [],
+      updateProposal: () => ({ updated: false }),
+    });
+    expect(() => handlers[DESKTOP_CONTEXT_IPC_CHANNELS.UNLOCK]?.({ key: "bad" })).toThrow("32-byte");
+  });
+});

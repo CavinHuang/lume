@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { listSubagentWork, onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
@@ -12,12 +12,18 @@ import {
   agentPlanModePhaseAtom,
   agentThreadsAtom,
   agentErrorMessagesAtom,
+  desktopActionVisualAtom,
   agentSidePanelViewAtom,
+  activeTabIdAtom,
+  currentWorkspaceIdAtom,
   tabsAtom,
+  welcomePromptSeedAtom,
 } from '@/atoms'
+import { buildDesktopProposalOpenRequestState } from '@/components/settings/desktop-assistant-proposals-state'
 import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
 import {
   AGENT_IPC_CHANNELS,
+  DESKTOP_CONTEXT_IPC_CHANNELS,
   type AgentMessageAppendedEvent,
   type AgentPendingInteractiveState,
   type AgentRuntimeEventNotification,
@@ -26,12 +32,14 @@ import {
   type AgentThreadMeta,
   type AgentAskUserQuestionRequest,
   type AgentBrowserAuthRequest,
+  type AgentDesktopActionRequest,
   type AgentToolPermissionRequest,
   type AgentSubagentCompletionEvent,
   type AgentSubagentWorkChangedEvent,
   type AgentMessageQueueSnapshot,
   type PlanModePhaseChangedEvent,
   type LumeRuntimeEvent,
+  type DesktopProactiveProposal,
 } from '@lume/shared'
 import {
   planPreviewToPendingTaskApproval,
@@ -39,10 +47,12 @@ import {
   removePendingTaskApprovalsForThread,
   upsertPendingAskUserQuestion,
   upsertPendingBrowserAuthRequest,
+  upsertPendingDesktopActionRequest,
   upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from './pending-interactive-state'
 import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
+import { projectDesktopActionVisualEvent } from './desktop-action-visual-state'
 
 export function useGlobalAgentListeners() {
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
@@ -55,11 +65,17 @@ export function useGlobalAgentListeners() {
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
+  const setDesktopActionVisual = useSetAtom(desktopActionVisualAtom)
   const setSidePanelViews = useSetAtom(agentSidePanelViewAtom)
   const setTabs = useSetAtom(tabsAtom)
+  const tabs = useAtomValue(tabsAtom)
+  const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const runtimeEventsRafRef = useRef<number | null>(null)
+  const desktopActionVisualTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const flushRuntimeEvents = useCallback(() => {
     runtimeEventsRafRef.current = null
     const batch = pendingRuntimeEventsRef.current
@@ -86,6 +102,9 @@ export function useGlobalAgentListeners() {
             for (const request of state.browserAuthRequests ?? []) {
               next = upsertPendingBrowserAuthRequest(next, request)
             }
+            for (const request of state.desktopActionRequests ?? []) {
+              next = upsertPendingDesktopActionRequest(next, request)
+            }
             for (const request of state.toolPermissions ?? []) {
               next = upsertPendingToolPermission(next, request)
             }
@@ -106,6 +125,19 @@ export function useGlobalAgentListeners() {
           const notification = params as AgentRuntimeEventNotification
           const { threadId, event } = notification
           enqueueRuntimeEvent(event)
+          if (event.type === 'desktop.action_visual') {
+            if (desktopActionVisualTimerRef.current) {
+              clearTimeout(desktopActionVisualTimerRef.current)
+              desktopActionVisualTimerRef.current = null
+            }
+            setDesktopActionVisual(projectDesktopActionVisualEvent(event))
+            if (event.phase !== 'started') {
+              desktopActionVisualTimerRef.current = setTimeout(() => {
+                setDesktopActionVisual(null)
+                desktopActionVisualTimerRef.current = null
+              }, 1_600)
+            }
+          }
           if (event.type === 'plan.preview') {
             setPendingInteractive((prev) => upsertPendingTaskApproval(prev, planPreviewToPendingTaskApproval(event)))
           }
@@ -178,6 +210,35 @@ export function useGlobalAgentListeners() {
             })
           break
         }
+        case DESKTOP_CONTEXT_IPC_CHANNELS.PROPOSAL_OPEN_REQUEST: {
+          const proposalId = typeof (params as { proposalId?: unknown })?.proposalId === 'string'
+            ? (params as { proposalId: string }).proposalId
+            : ''
+          if (!proposalId) break
+          void sidecarCall<DesktopProactiveProposal[]>(DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS)
+            .then((proposals) => {
+              const next = buildDesktopProposalOpenRequestState({
+                proposalId,
+                proposals: Array.isArray(proposals) ? proposals : [],
+                tabs,
+                currentWorkspaceId,
+              })
+              if (!next) return
+              setTabs(next.tabs)
+              setWelcomePromptSeed(next.promptSeed)
+              setActiveTabId(next.activeTabId)
+              void sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL, {
+                id: next.proposal.id,
+                status: 'opened',
+              }).catch((error) => {
+                console.error('[useGlobalAgentListeners] 标记桌面建议已打开失败:', error)
+              })
+            })
+            .catch((error) => {
+              console.error('[useGlobalAgentListeners] 打开桌面建议失败:', error)
+            })
+          break
+        }
         case AGENT_IPC_CHANNELS.MESSAGE_APPENDED: {
           const event = params as AgentMessageAppendedEvent
           void sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS)
@@ -206,6 +267,11 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST: {
           const req = params as AgentBrowserAuthRequest
           setPendingInteractive((prev) => upsertPendingBrowserAuthRequest(prev, req))
+          break
+        }
+        case AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST: {
+          const req = params as AgentDesktopActionRequest
+          setPendingInteractive((prev) => upsertPendingDesktopActionRequest(prev, req))
           break
         }
         case AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST: {
@@ -308,6 +374,10 @@ export function useGlobalAgentListeners() {
         cancelAnimationFrame(runtimeEventsRafRef.current)
         runtimeEventsRafRef.current = null
       }
+      if (desktopActionVisualTimerRef.current) {
+        clearTimeout(desktopActionVisualTimerRef.current)
+        desktopActionVisualTimerRef.current = null
+      }
       // flush 残留事件，避免卸载丢失最后一帧
       const batch = pendingRuntimeEventsRef.current
       if (batch.length > 0) {
@@ -315,5 +385,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setSidePanelViews, setTabs, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, enqueueRuntimeEvent])
 }

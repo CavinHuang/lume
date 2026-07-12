@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLumeRuntimeTools } from "./create-lume-tools";
+import { createLumeRuntimeTools, desktopWindowBindingFromMessageMetadata } from "./create-lume-tools";
 
 function baseInput() {
   return {
@@ -11,6 +11,21 @@ function baseInput() {
 }
 
 describe("create-lume-tools", () => {
+  test("retains the selected desktop window as a fallback tool target", () => {
+    expect(desktopWindowBindingFromMessageMetadata({
+      desktopApp: { id: "wechat.exe", name: "微信" },
+      desktopWindow: { id: "win:wechat", title: "项目群" },
+    })).toEqual({
+      windowId: "win:wechat",
+      appId: "wechat.exe",
+      appName: "微信",
+      windowTitle: "项目群",
+    });
+    expect(desktopWindowBindingFromMessageMetadata({
+      desktopWindow: { title: "missing id" },
+    })).toBeUndefined();
+  });
+
   test("includes the IM reply tool for all runtime threads", () => {
     const result = createLumeRuntimeTools(baseInput());
 
@@ -39,5 +54,33 @@ describe("create-lume-tools", () => {
     expect(result.availableToolNames).toContain("mcp__node_repl__js_reset");
     expect(result.availableToolNames).toContain("mcp__node_repl__js_add_node_module_dir");
     expect(toolNames).not.toContain("js");
+  });
+
+  test("includes built-in computer-use tools with MCP-compatible names", () => {
+    const result = createLumeRuntimeTools(baseInput());
+    const toolNames = result.customTools.map((tool) => tool.name);
+
+    for (const name of [
+      "list_apps",
+      "list_windows",
+      "get_window",
+      "get_window_state",
+      "launch_app",
+      "activate_window",
+      "move_pointer",
+      "click",
+      "press_key",
+      "type_text",
+      "scroll",
+      "set_value",
+      "drag",
+      "perform_secondary_action",
+      "current_context",
+      "search_context",
+      "wait_for_state",
+    ]) {
+      expect(toolNames).toContain(`mcp__computer_use__${name}`);
+      expect(result.availableToolNames).toContain(`mcp__computer_use__${name}`);
+    }
   });
 });

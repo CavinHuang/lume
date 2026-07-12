@@ -1,6 +1,6 @@
 import type { Editor } from '@tiptap/react'
 import { EditorContent } from '@tiptap/react'
-import { Loader2, Image, FileText, Plus, Send, Puzzle } from 'lucide-react'
+import { Loader2, LoaderCircle, Image, FileText, MonitorOff, Plus, Send, Puzzle } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
@@ -8,8 +8,10 @@ import { LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import { AgentAttachmentGrid } from '@/components/agent/AgentAttachmentGrid'
 import { sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, type AgentListPluginsResult, type AgentPluginListItem, type AgentWelcomeSuggestion } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentListPluginsResult, type AgentPluginListItem, type AgentWelcomeSuggestion, type DesktopContextTarget } from '@lume/shared'
 import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
+import { DesktopContextPlusItem } from '@/components/agent/DesktopContextPlusItem'
+import { DesktopContextSelectionChip } from '@/components/agent/DesktopContextSelectionChip'
 
 import { Button } from '@/components/ui/button'
 type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
@@ -41,8 +43,18 @@ interface LumeWelcomeSurfaceProps {
   hasText: boolean
   onSend: () => void
   onAttach: () => void
+  onAttachMenuOpen?: () => void | Promise<void>
   onRemovePendingFile: (index: number) => void
   onPluginSelect?: (pluginName: string) => void
+  desktopContextTarget?: DesktopContextTarget
+  selectedDesktopContextTarget?: DesktopContextTarget
+  desktopContextCaptureLoading?: boolean
+  desktopContextCaptureMessage?: string
+  desktopContextPermissionRequestAvailable?: boolean
+  desktopContextPermissionRequestLoading?: boolean
+  onSelectDesktopContextTarget?: (target: DesktopContextTarget) => void
+  onRequestDesktopContextPermissions?: () => void | Promise<void>
+  onClearDesktopContextTarget?: () => void
   folderBar?: ReactNode
   suggestions?: AgentWelcomeSuggestion[]
   onSuggestionSelect?: (prompt: string) => void
@@ -61,8 +73,18 @@ export function LumeWelcomeSurface({
   hasText,
   onSend,
   onAttach,
+  onAttachMenuOpen,
   onRemovePendingFile,
   onPluginSelect,
+  desktopContextTarget,
+  selectedDesktopContextTarget,
+  desktopContextCaptureLoading = false,
+  desktopContextCaptureMessage,
+  desktopContextPermissionRequestAvailable = false,
+  desktopContextPermissionRequestLoading = false,
+  onSelectDesktopContextTarget,
+  onRequestDesktopContextPermissions,
+  onClearDesktopContextTarget,
   folderBar,
   suggestions,
   onSuggestionSelect,
@@ -85,6 +107,12 @@ export function LumeWelcomeSurface({
   const handleSelectPlugin = (pluginName: string) => {
     setPluginsPopoverOpen(false)
     onPluginSelect?.(pluginName)
+  }
+
+  const handleToggleAttachMenu = () => {
+    const nextOpen = !attachMenuOpen
+    setAttachMenuOpen(nextOpen)
+    if (nextOpen) void onAttachMenuOpen?.()
   }
 
   const composerState = deriveLumeComposerState({
@@ -162,6 +190,16 @@ export function LumeWelcomeSurface({
                   </div>
                 ) : null
               }
+              supportingContent={
+                selectedDesktopContextTarget ? (
+                  <div className="px-4 pb-2">
+                    <DesktopContextSelectionChip
+                      target={selectedDesktopContextTarget}
+                      onClear={onClearDesktopContextTarget}
+                    />
+                  </div>
+                ) : undefined
+              }
               leadingTools={
                 <>
                   <div className="relative">
@@ -170,7 +208,7 @@ export function LumeWelcomeSurface({
                       type="button"
                       aria-label="添加"
                       title="添加"
-                      onClick={() => setAttachMenuOpen((v) => !v)}
+                      onClick={handleToggleAttachMenu}
                       disabled={sending}
                       className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
                     >
@@ -179,7 +217,7 @@ export function LumeWelcomeSurface({
                     {attachMenuOpen && (
                       <>
                         <div className="fixed inset-0 z-40" onClick={() => setAttachMenuOpen(false)} />
-                        <div className="absolute bottom-full left-0 z-50 mb-2 w-[140px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
+                        <div className="absolute bottom-full left-0 z-50 mb-2 w-[360px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
                           <Button
                 variant="ghost"
                             type="button"
@@ -207,6 +245,53 @@ export function LumeWelcomeSurface({
                             <Puzzle size={15} className="text-[var(--text-3)]" />
                             插件
                           </Button>
+                          <div className="border-t border-[var(--lume-border-subtle)]" />
+                          <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
+                            当前应用
+                          </div>
+                          {desktopContextTarget ? (
+                            <DesktopContextPlusItem
+                              target={desktopContextTarget}
+                              active={false}
+                              onActivate={() => {
+                                setAttachMenuOpen(false)
+                                onSelectDesktopContextTarget?.(desktopContextTarget)
+                              }}
+                            />
+                          ) : (
+                            <div className="px-3 pb-3">
+                              <div className="rounded-xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--surface-2)_72%,transparent)] px-3 py-2.5">
+                                <div className="flex items-start gap-2.5">
+                                  <div className="mt-0.5 text-[var(--text-3)]">
+                                    {desktopContextCaptureLoading
+                                      ? <LoaderCircle size={15} className="animate-spin" />
+                                      : <MonitorOff size={15} />}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-[var(--text-1)]">
+                                      {desktopContextCaptureLoading ? '正在检查当前应用' : '当前应用暂不可用'}
+                                    </div>
+                                    <div className="mt-0.5 text-xs leading-5 text-[var(--text-3)]">
+                                      {desktopContextCaptureLoading
+                                        ? 'Lume 正在读取启动或唤起前的前台窗口。'
+                                        : desktopContextCaptureMessage ?? '请切回目标应用后重新打开 Lume。'}
+                                    </div>
+                                  </div>
+                                </div>
+                                {!desktopContextCaptureLoading && desktopContextPermissionRequestAvailable && onRequestDesktopContextPermissions ? (
+                                  <Button
+                                    variant="secondary"
+                                    type="button"
+                                    disabled={desktopContextPermissionRequestLoading}
+                                    onClick={() => void onRequestDesktopContextPermissions()}
+                                    className="mt-2 h-7 rounded-lg px-2 text-xs"
+                                  >
+                                    {desktopContextPermissionRequestLoading ? '等待系统授权' : '启动授权引导'}
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </>
                     )}

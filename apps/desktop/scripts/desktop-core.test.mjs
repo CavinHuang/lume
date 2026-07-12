@@ -8,6 +8,8 @@ import {
   computeStorageStats,
   copyDirRecursive,
   createFileMetadata,
+  createDesktopProposalNotification,
+  createDesktopProposalOpenRequest,
   createOpenFileDialogOptions,
   createOpenFolderDialogOptions,
   createUpdateDownloadProgressEvents,
@@ -22,6 +24,9 @@ import {
   readWindowBehaviorFromConfigDir,
   resolveConfigDirValue,
   restoreMainWindow,
+  resolveQuickInputContextCapture,
+  resolveRememberedDesktopTarget,
+  shouldCaptureRememberedDesktopTarget,
   shouldHideToTray,
   validateExternalUrl,
   validateMigrationTarget,
@@ -106,6 +111,47 @@ test('show main window restores minimized windows before showing and focusing', 
   assert.deepEqual(calls, ['restore', 'show', 'focus'])
   assert.equal(restoreMainWindow(null), false)
   assert.equal(restoreMainWindow({ isDestroyed: () => true }), false)
+})
+
+test('desktop proposal notifications exclude sensitive proposal context', () => {
+  const notification = createDesktopProposalNotification({
+    proposal: {
+      kind: 'reply',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '客户项目群' },
+      summary: '客户问 password=secret 怎么处理',
+    },
+  })
+
+  assert.deepEqual(notification, {
+    title: 'Lume 桌面助手',
+    body: '微信 中有一条可处理的回复建议',
+  })
+
+  const serialized = JSON.stringify(notification)
+  assert.equal(serialized.includes('客户项目群'), false)
+  assert.equal(serialized.includes('password=secret'), false)
+  assert.equal(createDesktopProposalNotification(null), null)
+  assert.equal(createDesktopProposalNotification({ proposal: { kind: 'unknown', app: { name: '微信' } } }), null)
+})
+
+test('desktop proposal notification click events expose only the proposal id', () => {
+  const request = createDesktopProposalOpenRequest({
+    proposal: {
+      id: 'proposal:snap-1',
+      kind: 'reply',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '客户项目群' },
+      summary: '客户问 password=secret 怎么处理',
+    },
+  })
+
+  assert.deepEqual(request, { proposalId: 'proposal:snap-1' })
+  const serialized = JSON.stringify(request)
+  assert.equal(serialized.includes('客户项目群'), false)
+  assert.equal(serialized.includes('password=secret'), false)
+  assert.equal(createDesktopProposalOpenRequest(null), null)
+  assert.equal(createDesktopProposalOpenRequest({ proposal: { id: '' } }), null)
 })
 
 test('file and folder dialog options match desktop selection contracts', () => {
@@ -463,3 +509,121 @@ test('deriveTemplateImageBuffer produces black pixels preserving original alpha'
     [0, 0, 0, 255, 0, 0, 0, 128, 0, 0, 0, 0],
   )
 })
+test("resolveQuickInputContextCapture keeps the last app context when a follow-up capture sees Lume", () => {
+  const previous = {
+    status: "ok",
+    snapshotId: "snap-wechat",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win-wechat", title: "项目群" },
+    capturedAt: 123,
+  };
+
+  assert.deepEqual(
+    resolveQuickInputContextCapture(previous, {
+      status: "unavailable",
+      message: "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。",
+    }, 1_123),
+    previous,
+  );
+});
+
+test("resolveQuickInputContextCapture does not reuse an old app context after Lume regains focus", () => {
+  const previous = {
+    status: "ok",
+    snapshotId: "snap-wechat",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win-wechat", title: "项目群" },
+    capturedAt: 1_000,
+  };
+
+  assert.deepEqual(
+    resolveQuickInputContextCapture(previous, {
+      status: "unavailable",
+      message: "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。",
+    }, 61_001),
+    {
+      status: "unavailable",
+      message: "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。",
+    },
+  );
+});
+
+test("resolveQuickInputContextCapture replaces stale context with a newer valid app capture", () => {
+  const previous = {
+    status: "ok",
+    snapshotId: "snap-wechat",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win-wechat", title: "项目群" },
+  };
+
+  assert.deepEqual(
+    resolveQuickInputContextCapture(previous, {
+      status: "ok",
+      snapshotId: "snap-doc",
+      app: { id: "word.exe", name: "Word" },
+      window: { id: "win-doc", title: "周报.docx" },
+      capturedAt: 456,
+    }),
+    {
+      status: "ok",
+      snapshotId: "snap-doc",
+      app: { id: "word.exe", name: "Word" },
+      window: { id: "win-doc", title: "周报.docx" },
+      capturedAt: 456,
+    },
+  );
+});
+
+test("resolveQuickInputContextCapture reports the first unavailable capture when no app context exists", () => {
+  assert.deepEqual(
+    resolveQuickInputContextCapture(
+      { status: "unavailable", message: "desktop context has not been captured" },
+      { status: "permission_denied", message: "missing Accessibility" },
+    ),
+    { status: "permission_denied", message: "missing Accessibility" },
+  );
+});
+
+test("resolveRememberedDesktopTarget retains only valid non-Lume foreground metadata", () => {
+  const remembered = resolveRememberedDesktopTarget(null, {
+    status: "ok",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win:wechat", title: "项目群" },
+  }, 500);
+
+  assert.deepEqual(remembered, {
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win:wechat", title: "项目群" },
+    rememberedAt: 500,
+  });
+  assert.equal(resolveRememberedDesktopTarget(remembered, {
+    status: "unavailable",
+    message: "当前前台窗口是 Lume",
+  }, 600), remembered);
+});
+
+test("shouldCaptureRememberedDesktopTarget refreshes only a newer or different remembered window", () => {
+  const latest = {
+    status: "ok",
+    snapshotId: "snap-wechat",
+    app: { id: "wechat.exe", name: "微信" },
+    window: { id: "win:wechat", title: "项目群" },
+    capturedAt: 700,
+  };
+
+  assert.equal(shouldCaptureRememberedDesktopTarget(latest, {
+    app: latest.app,
+    window: latest.window,
+    rememberedAt: 600,
+  }), false);
+  assert.equal(shouldCaptureRememberedDesktopTarget(latest, {
+    app: latest.app,
+    window: { id: "win:word", title: "周报.docx" },
+    rememberedAt: 600,
+  }), true);
+  assert.equal(shouldCaptureRememberedDesktopTarget(latest, {
+    app: latest.app,
+    window: latest.window,
+    rememberedAt: 800,
+  }), true);
+});

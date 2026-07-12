@@ -2,6 +2,7 @@ import { atom, type Atom, type WritableAtom } from 'jotai'
 import { atomFamily, atomWithStorage, selectAtom } from 'jotai/utils'
 import type { AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, AgentListSubagentWorkResult, PlanModePhaseChangedEvent, AgentSendInput, AgentMessageQueueSnapshot } from '@lume/shared'
 import type { RuntimeEventState } from '@/hooks/runtime-event-state'
+import type { DesktopActionVisualOverlayState } from '@/hooks/desktop-action-visual-state'
 import type { AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 
 /**
@@ -28,6 +29,7 @@ export const agentStreamingStatesFamily = createThreadSliceFamily(agentStreaming
 export const agentRuntimeStatusAtom = atom<Record<string, AgentRuntimeStatus>>({})
 export const agentRuntimeStatusFamily = createThreadSliceFamily(agentRuntimeStatusAtom)
 export const agentRuntimeEventsAtom = atom<RuntimeEventState>({})
+export const desktopActionVisualAtom = atom<DesktopActionVisualOverlayState | null>(null)
 
 /**
  * 按 threadId 切片订阅 runtime events。selectAtom + Object.is 比较：

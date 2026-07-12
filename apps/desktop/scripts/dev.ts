@@ -15,6 +15,7 @@ const buildDesktopRuntimeScript = resolve(desktopRoot, "scripts", "build.ts");
 const buildSidecarBundleScript = resolve(desktopRoot, "..", "..", "scripts", "build-sidecar-bundle.mjs");
 const buildNativesBinaryScript = resolve(desktopRoot, "..", "..", "scripts", "build-natives-binary.mjs");
 const buildNodeReplResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-node-repl-resources.mjs");
+const buildDesktopHostResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-desktop-host-resources.mjs");
 
 let child = null;
 let stopping = false;
@@ -96,6 +97,18 @@ const nodeReplResourcesResult = spawnSync("node", [buildNodeReplResourcesScript]
 });
 if (nodeReplResourcesResult.status !== 0) {
   process.exit(nodeReplResourcesResult.status ?? 1);
+}
+
+const desktopHostResourcesResult = spawnSync("node", [buildDesktopHostResourcesScript], {
+  cwd: resolve(desktopRoot, "..", ".."),
+  env: {
+    ...process.env,
+    LUME_COMPUTER_USE_BUNDLE_VARIANT: "dev",
+  },
+  stdio: "inherit",
+});
+if (desktopHostResourcesResult.status !== 0) {
+  process.exit(desktopHostResourcesResult.status ?? 1);
 }
 
 child = spawn(electronBin, [desktopRoot], {

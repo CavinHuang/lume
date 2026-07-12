@@ -1,5 +1,5 @@
-import { useAtomValue } from 'jotai'
-import { tabsAtom, activeTabIdAtom } from '@/atoms'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { tabsAtom, activeTabIdAtom, clearTabDesktopContextTarget, setTabDesktopContextTarget } from '@/atoms'
 import { AgentView } from '@/components/agent/AgentView'
 import { AutomationManagementView } from '@/components/automation/AutomationManagementView'
 import { LumeView } from '@/components/lume/LumeView'
@@ -10,6 +10,7 @@ import { WelcomeView } from '@/components/welcome/WelcomeView'
 
 export function TabContent() {
   const tabs = useAtomValue(tabsAtom)
+  const setTabs = useSetAtom(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
   const activeTab = tabs.find((t) => t.id === activeTabId)
 
@@ -22,11 +23,23 @@ export function TabContent() {
   }
 
   if (activeTab.type === 'welcome') {
-    return <WelcomeView workspaceId={activeTab.workspaceId} />
+    return <WelcomeView workspaceId={activeTab.workspaceId} desktopContextTarget={activeTab.desktopContextTarget} />
   }
 
   if (activeTab.type === 'agent' && activeTab.threadId) {
-    return <AgentView threadId={activeTab.threadId} readOnly={activeTab.readOnly} />
+    return (
+      <AgentView
+        threadId={activeTab.threadId}
+        readOnly={activeTab.readOnly}
+        desktopContextTarget={activeTab.desktopContextTarget}
+        onSelectDesktopContextTarget={(target) => {
+          setTabs((prev) => setTabDesktopContextTarget(prev, activeTab.id, target))
+        }}
+        onClearDesktopContextTarget={() => {
+          setTabs((prev) => clearTabDesktopContextTarget(prev, activeTab.id))
+        }}
+      />
+    )
   }
 
   if (activeTab.type === 'settings') {

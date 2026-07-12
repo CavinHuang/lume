@@ -109,6 +109,8 @@ export async function saveSession(
   messages: NormalizedMessageParam[],
   metadata: SaveSessionMetadata,
 ): Promise<void> {
+  const persistedMessages = sanitizePersistedValue(messages) as NormalizedMessageParam[]
+  const persistedSessionMessages = sanitizePersistedValue(metadata.sessionMessages) as SessionMessage[] | undefined
   const data = normalizeSessionData(sessionId, {
     metadata: {
       id: sessionId,
@@ -116,13 +118,13 @@ export async function saveSession(
       model: metadata.model || 'claude-sonnet-4-6',
       createdAt: metadata.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      messageCount: messages.length,
+      messageCount: persistedMessages.length,
       summary: metadata.summary,
       tag: metadata.tag,
       forkedFrom: metadata.forkedFrom,
     },
-    messages,
-    sessionMessages: metadata.sessionMessages,
+    messages: persistedMessages,
+    sessionMessages: persistedSessionMessages,
     checkpoints: metadata.checkpoints,
   })
 
@@ -145,6 +147,41 @@ export async function saveSession(
   }
 
   throw lastError
+}
+
+function sanitizePersistedValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizePersistedValue(item))
+  }
+  if (!isRecord(value)) return value
+  if (value.type === 'image' && isRecord(value._meta) && value._meta.persist === false) {
+    return omitNonPersistentImagePayload(value)
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, sanitizePersistedValue(item)]),
+  )
+}
+
+function omitNonPersistentImagePayload(value: Record<string, unknown>): Record<string, unknown> {
+  const source = isRecord(value.source) ? value.source : {}
+  const mediaType = typeof source.media_type === 'string'
+    ? source.media_type
+    : typeof value.mimeType === 'string'
+      ? value.mimeType
+      : undefined
+  return {
+    ...value,
+    source: {
+      type: 'omitted',
+      ...(mediaType ? { media_type: mediaType } : {}),
+      reason: 'image omitted from persisted transcript',
+    },
+    ...(typeof value.data === 'string' ? { data: '[omitted]' } : {}),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
 export async function loadSession(sessionId: string): Promise<SessionData | null> {

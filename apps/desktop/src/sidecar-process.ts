@@ -1,8 +1,12 @@
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 export const SIDECAR_BUNDLE_NAME = 'index.mjs'
 export const NATIVE_BINARY_NAME = 'lume-natives.node'
 export const NODE_REPL_BINARY_NAME = 'node_repl'
+export const DESKTOP_HOST_BINARY_NAME = 'lume_desktop_host'
+export const DESKTOP_HOST_MAC_RELEASE_APP_NAME = 'Lume Computer Use.app'
+export const DESKTOP_HOST_MAC_DEV_APP_NAME = 'Lume Computer Use (Dev).app'
+export const DESKTOP_HOST_MAC_APP_NAME = DESKTOP_HOST_MAC_RELEASE_APP_NAME
 
 export function getSidecarScriptPath({ appIsPackaged, resourcesPath, desktopRoot }) {
   if (appIsPackaged) {
@@ -49,6 +53,98 @@ export function getNodeReplHostBinaryPath({
 }) {
   const fileName = platform === 'win32' ? `${NODE_REPL_BINARY_NAME}.exe` : NODE_REPL_BINARY_NAME
   return join(getNodeReplRootPath({ appIsPackaged, resourcesPath, desktopRoot }), 'bin', fileName)
+}
+
+export function getDesktopHostBinaryPath({
+  appIsPackaged,
+  resourcesPath,
+  desktopRoot,
+  platform = process.platform,
+  arch = process.arch,
+}) {
+  if (platform !== 'win32' && platform !== 'darwin') {
+    throw new Error(`unsupported desktop host target: ${platform}-${arch}`)
+  }
+  const targetId = getNativeTargetId({ platform, arch })
+  const fileName = platform === 'win32'
+    ? `${DESKTOP_HOST_BINARY_NAME}.exe`
+    : DESKTOP_HOST_BINARY_NAME
+  const root = appIsPackaged
+    ? join(resourcesPath, 'desktop-host')
+    : resolve(desktopRoot, 'resources', 'desktop-host')
+  if (platform === 'darwin') {
+    return join(root, targetId, getDesktopHostMacAppName({ appIsPackaged }), 'Contents', 'MacOS', fileName)
+  }
+  return join(root, targetId, fileName)
+}
+
+function getDesktopHostMacAppName({ appIsPackaged }: { appIsPackaged: boolean }): string {
+  return appIsPackaged ? DESKTOP_HOST_MAC_RELEASE_APP_NAME : DESKTOP_HOST_MAC_DEV_APP_NAME
+}
+
+export function createDesktopHostTokenFilePath(endpoint: string): string {
+  return `${endpoint}.token`
+}
+
+export function createDesktopHostSpawnConfig({
+  binaryPath,
+  endpoint,
+  sessionToken,
+  tokenFilePath,
+  env = {},
+  platform = process.platform,
+}) {
+  if (platform === 'darwin') {
+    if (!tokenFilePath) {
+      throw new Error('tokenFilePath is required for macOS desktop host launch')
+    }
+    return {
+      command: '/usr/bin/open',
+      args: [
+        '-n',
+        '-W',
+        '-g',
+        desktopHostMacAppPathFromExecutable(binaryPath),
+        '--args',
+        '--endpoint',
+        endpoint,
+        '--token-file',
+        tokenFilePath,
+      ],
+      options: {
+        env: { ...env },
+        stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    }
+  }
+  return {
+    command: binaryPath,
+    args: ['--endpoint', endpoint],
+    options: {
+      env: { ...env, LUME_DESKTOP_HOST_TOKEN: sessionToken },
+      stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    },
+  }
+}
+
+function desktopHostMacAppPathFromExecutable(binaryPath: string): string {
+  const macosDir = dirname(binaryPath)
+  const contentsDir = dirname(macosDir)
+  const appRoot = dirname(contentsDir)
+  const appName = basename(appRoot)
+  if (
+    basename(macosDir) !== 'MacOS'
+    || basename(contentsDir) !== 'Contents'
+    || (
+      appName !== DESKTOP_HOST_MAC_RELEASE_APP_NAME
+      && appName !== DESKTOP_HOST_MAC_DEV_APP_NAME
+    )
+  ) {
+    throw new Error('macOS desktop host must be launched from Lume Computer Use.app')
+  }
+  return appRoot
 }
 
 export function createUtilityProcessSidecarForkConfig({ sidecarScriptPath, env }) {

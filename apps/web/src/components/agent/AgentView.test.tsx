@@ -28,6 +28,7 @@ let latestAgentMessagesProps: {
   }) => void
   onOpenMemorySource?: (path: string) => void
 } | null = null
+let latestAgentInputProps: Record<string, unknown> | null = null
 
 const sidecarCallMock = mock(async (channel: string, payload?: Record<string, unknown>) => {
   if (channel === AGENT_IPC_CHANNELS.READ_FILE) {
@@ -57,6 +58,7 @@ mock.module('@/lib/desktop-api', () => ({
     ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
   agentSend: (...args: unknown[]) =>
     (globalThis as any).__lumeDesktopAgentSend?.(...args) ?? Promise.resolve(undefined),
+  createThread: () => Promise.resolve({ id: 'thread-1' }),
   clearCache: () => Promise.resolve({ cleared: [], skipped: [] }),
   copyFile: () => Promise.resolve(undefined),
   openFileDialog: () =>
@@ -106,7 +108,10 @@ mock.module('./AgentMessages', () => ({
 }))
 
 mock.module('./AgentInput', () => ({
-  AgentInput: () => <div>agent-input</div>,
+  AgentInput: (props: Record<string, unknown>) => {
+    latestAgentInputProps = props
+    return <div>agent-input</div>
+  },
 }))
 
 mock.module('./PermissionBanner', () => ({
@@ -566,6 +571,67 @@ describe('AgentView plan approval tab behavior', () => {
 })
 
 describe('AgentView readOnly replay mode', () => {
+  test('passes tab-level desktop context clear action to the input composer', async () => {
+    const { container, cleanup } = installFakeDom()
+    const store = createStore()
+    const target = {
+      snapshotId: 'snap-wechat',
+      app: { id: 'wechat.exe', name: '微信' },
+      window: { id: 'win:wechat', title: '项目群' },
+    }
+    let cleared = false
+    latestAgentInputProps = null
+    store.set(tabsAtom, [
+      { id: 'thread-1', type: 'agent', title: 'Chat', threadId: 'thread-1' },
+    ])
+    store.set(activeTabIdAtom, 'thread-1')
+    store.set(agentThreadsAtom, [
+      {
+        id: 'thread-1',
+        title: 'Chat',
+        workspaceId: 'workspace-1',
+        pinned: false,
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ])
+    store.set(agentWorkspacesAtom, [
+      { id: 'workspace-1', name: 'Workspace', slug: 'workspace', createdAt: 1, updatedAt: 2 },
+    ])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
+    store.set(rightPanelWorkspacesAtom, {})
+    store.set(agentPendingInteractiveAtom, {})
+
+    let root: Root | null = createRoot(container as never)
+    try {
+      await act(async () => {
+        root!.render(
+          <Provider store={store}>
+            <AgentView
+              threadId="thread-1"
+              desktopContextTarget={target}
+              onClearDesktopContextTarget={() => { cleared = true }}
+            />
+          </Provider>,
+        )
+        await flush()
+      })
+
+      expect(latestAgentInputProps?.desktopContextTarget).toEqual(target)
+      expect(typeof latestAgentInputProps?.onClearDesktopContextTarget).toBe('function')
+      ;(latestAgentInputProps?.onClearDesktopContextTarget as (() => void) | undefined)?.()
+      expect(cleared).toBe(true)
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
   test('hides the input composer when readOnly', async () => {
     const { container, cleanup } = installFakeDom()
     const store = createStore()

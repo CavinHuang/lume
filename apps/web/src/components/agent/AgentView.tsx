@@ -15,13 +15,14 @@ import { AgentInput, type PendingMessageAttachment } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
 import { BrowserAuthBanner } from './BrowserAuthBanner'
+import { DesktopActionBanner } from './DesktopActionBanner'
 import { PlanApprovalOverlay } from './PlanApprovalOverlay'
 import { ErrorBanner } from './ErrorBanner'
 import { ThreadFileEnvProvider } from './thread-file-env'
 import { Loader2, Upload, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { type AgentMessageAttachmentInput } from '@lume/shared'
+import { type AgentMessageAttachmentInput, type DesktopContextTarget } from '@lume/shared'
 import {
   createPendingAttachmentsFromSourcePaths,
   isFileDragPayload,
@@ -39,23 +40,40 @@ import { Button } from '@/components/ui/button'
 interface AgentViewProps {
   threadId: string
   readOnly?: boolean
+  messageMetadata?: Record<string, unknown>
+  onMessageMetadataConsumed?: () => void
+  desktopContextTarget?: DesktopContextTarget
+  onSelectDesktopContextTarget?: (target: DesktopContextTarget) => void
+  onClearDesktopContextTarget?: () => void
 }
 
-export function AgentView({ threadId, readOnly }: AgentViewProps) {
+export function AgentView({
+  threadId,
+  readOnly,
+  messageMetadata,
+  onMessageMetadataConsumed,
+  desktopContextTarget,
+  onSelectDesktopContextTarget,
+  onClearDesktopContextTarget,
+}: AgentViewProps) {
   const streamingState = useAtomValue(agentStreamingStatesFamily(threadId)) ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveFamily(threadId))
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
   const pendingBrowserAuthRequests = pendingInteractive?.browserAuthRequests ?? []
+  const pendingDesktopActionRequests = pendingInteractive?.desktopActionRequests ?? []
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
   const pendingTaskApprovals = pendingInteractive?.taskApprovals ?? []
   const activeTaskApproval = pendingTaskApprovals[0]
   const activeToolPermission = activeTaskApproval ? undefined : pendingToolPermissions[0]
   const activeBrowserAuthRequest = activeTaskApproval || activeToolPermission ? undefined : pendingBrowserAuthRequests[0]
-  const activeAskUserQuestion = activeTaskApproval || activeToolPermission || activeBrowserAuthRequest
+  const activeDesktopActionRequest = activeTaskApproval || activeToolPermission || activeBrowserAuthRequest
+    ? undefined
+    : pendingDesktopActionRequests[0]
+  const activeAskUserQuestion = activeTaskApproval || activeToolPermission || activeBrowserAuthRequest || activeDesktopActionRequest
     ? undefined
     : pendingAskUserQuestions[0]
   const hasComposerOverlay = Boolean(
-    activeTaskApproval || activeToolPermission || activeBrowserAuthRequest || activeAskUserQuestion
+    activeTaskApproval || activeToolPermission || activeBrowserAuthRequest || activeDesktopActionRequest || activeAskUserQuestion
   )
   const [approvalOverlayVisible, setApprovalOverlayVisible] = useState(Boolean(activeTaskApproval))
 
@@ -233,6 +251,11 @@ export function AgentView({ threadId, readOnly }: AgentViewProps) {
                   onAddPendingAttachments={addPendingAttachments}
                   onRemovePendingAttachment={removePendingAttachment}
                   onClearPendingAttachments={clearPendingAttachments}
+                  messageMetadata={messageMetadata}
+                  onMessageMetadataConsumed={onMessageMetadataConsumed}
+                  desktopContextTarget={desktopContextTarget}
+                  onSelectDesktopContextTarget={onSelectDesktopContextTarget}
+                  onClearDesktopContextTarget={onClearDesktopContextTarget}
                 />
               </div>
               {activeTaskApproval && (
@@ -252,6 +275,11 @@ export function AgentView({ threadId, readOnly }: AgentViewProps) {
               {activeBrowserAuthRequest && (
                 <div className="absolute inset-x-0 bottom-0 z-30">
                   <BrowserAuthBanner threadId={threadId} request={activeBrowserAuthRequest} />
+                </div>
+              )}
+              {activeDesktopActionRequest && (
+                <div className="absolute inset-x-0 bottom-0 z-30">
+                  <DesktopActionBanner threadId={threadId} request={activeDesktopActionRequest} />
                 </div>
               )}
               {activeAskUserQuestion && (

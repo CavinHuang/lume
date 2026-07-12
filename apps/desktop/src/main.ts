@@ -7,7 +7,10 @@ import {
   ipcMain,
   net,
   nativeImage,
+  Notification,
   protocol,
+  powerMonitor,
+  safeStorage,
   screen,
   shell,
   utilityProcess,
@@ -26,9 +29,14 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   computeQuickInputBounds,
+  computeDesktopActionHudBounds,
   computeStorageStats,
   computeToggleAction,
   copyDirRecursive,
+  createDesktopProposalNotification,
+  createDesktopProposalOpenRequest,
+  createDesktopActionHudHtml,
+  createDesktopActionHudView,
   createFileMetadata,
   createOpenFileDialogOptions,
   createOpenFolderDialogOptions,
@@ -45,9 +53,12 @@ import {
   getQuickInputUrl,
   parseJsonFile,
   readWindowBehaviorFromConfigDir,
+  resolveQuickInputContextCapture,
+  resolveRememberedDesktopTarget,
   resolveExistingPath,
   resolveConfigDirValue,
   restoreMainWindow,
+  shouldCaptureRememberedDesktopTarget,
   shouldHideToTray as shouldHideToTrayCore,
   validateExternalUrl,
   validateMigrationTarget,
@@ -67,6 +78,7 @@ import {
 } from './electron-security'
 import {
   createUtilityProcessSidecarForkConfig,
+  getDesktopHostBinaryPath,
   getNativeBinaryPath,
   getNodeReplHostBinaryPath,
   getNodeReplRootPath,
@@ -74,6 +86,8 @@ import {
 } from './sidecar-process'
 import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
+import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
+import { loadOrCreateDesktopContextKey } from './desktop-context-key'
 
 const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -89,6 +103,16 @@ const TEXT_FILE_LIMIT = 512 * 1024
 const SIDE_CAR_EVENT_CHANNEL = 'sidecar:event'
 const DATA_MIGRATE_PROGRESS_CHANNEL = 'data:migrate-progress'
 const UPDATE_DOWNLOAD_CHANNEL = 'update:download'
+const DESKTOP_CONTEXT_UNLOCK_METHOD = 'desktop-context:unlock'
+const DESKTOP_CONTEXT_SET_SUSPENDED_METHOD = 'desktop-context:set-suspended'
+const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
+const DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD = 'desktop-context:get-foreground-target'
+const DESKTOP_CONTEXT_CAPTURE_WINDOW_METHOD = 'desktop-context:capture-window'
+const DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD = 'desktop-context:proposal-created'
+const DESKTOP_CONTEXT_PROPOSAL_OPEN_REQUEST_METHOD = 'desktop-context:proposal-open-request'
+const DESKTOP_ACTION_HUD_SIZE = { width: 420, height: 86 }
+const DESKTOP_ACTION_HUD_COMPLETED_MS = 1_600
+const DESKTOP_ACTION_HUD_STALE_MS = 30_000
 
 let mainWindow = null
 let wereadWindow = null
@@ -103,6 +127,24 @@ let windowBehavior = {
 
 // 快速输入子窗口（Alt+L）；Task 5 之前始终为 null，此处仅占位以便 IPC 信任集合与事件广播先行就绪。
 let quickInputWindow = null
+let actionHudWindow = null
+let actionHudHideTimer: ReturnType<typeof setTimeout> | null = null
+let actionHudGeneration = 0
+let latestQuickInputContext: {
+  status: string
+  snapshotId?: string
+  app?: { id: string; name: string }
+  window?: { id: string; title: string }
+  capturedAt?: number
+  message?: string
+} = { status: 'unavailable', message: 'desktop context has not been captured' }
+let rememberedQuickInputDesktopTarget: {
+  app: { id: string; name: string }
+  window: { id: string; title: string }
+  rememberedAt: number
+} | null = null
+let desktopHostSupervisor: ReturnType<typeof createDesktopHostSupervisor> | null = null
+let desktopHostState: DesktopHostState = { available: false, reason: 'desktop host has not started' }
 
 /** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow 存在时纳入。 */
 function getTrustedWindows() {
@@ -161,6 +203,8 @@ const sidecarHost = createSidecarHost({
       void handleRenderRequest(params)
       return
     }
+    showDesktopProposalNotification(method, params)
+    showDesktopActionHud(method, params)
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
 })
@@ -195,6 +239,89 @@ async function handleRenderRequest(params: {
         error: { code, message: err?.message ?? 'render error' },
       })
       .catch(() => {})
+  }
+}
+
+function ensureDesktopActionHudWindow() {
+  if (actionHudWindow && !actionHudWindow.isDestroyed()) return actionHudWindow
+  const win = new BrowserWindow({
+    width: DESKTOP_ACTION_HUD_SIZE.width,
+    height: DESKTOP_ACTION_HUD_SIZE.height,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    focusable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: createSecureWebPreferences(),
+  })
+  actionHudWindow = win
+  win.setIgnoreMouseEvents(true, { forward: true })
+  win.setAlwaysOnTop(true, 'floating')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('data:text/html')) event.preventDefault()
+  })
+  win.on('closed', () => {
+    if (actionHudWindow === win) actionHudWindow = null
+  })
+  return win
+}
+
+function showDesktopActionHud(method, params) {
+  const view = createDesktopActionHudView(method, params)
+  if (!view) return
+  const win = ensureDesktopActionHudWindow()
+  const display = view.point
+    ? screen.getDisplayNearestPoint(view.point)
+    : screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  win.setBounds(computeDesktopActionHudBounds(display.workArea, DESKTOP_ACTION_HUD_SIZE), false)
+  if (actionHudHideTimer) clearTimeout(actionHudHideTimer)
+  const generation = ++actionHudGeneration
+  const html = createDesktopActionHudHtml(view)
+  void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    .then(() => {
+      if (generation !== actionHudGeneration || win.isDestroyed()) return
+      win.showInactive()
+    })
+    .catch((error) => {
+      console.error(`[desktop] desktop action HUD failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
+  actionHudHideTimer = setTimeout(() => {
+    if (generation === actionHudGeneration && !win.isDestroyed()) win.hide()
+    actionHudHideTimer = null
+  }, view.phase === 'started' ? DESKTOP_ACTION_HUD_STALE_MS : DESKTOP_ACTION_HUD_COMPLETED_MS)
+}
+
+function showDesktopProposalNotification(method, params) {
+  if (method !== DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD) return
+
+  const notification = createDesktopProposalNotification(params)
+  if (!notification || !Notification.isSupported()) return
+
+  try {
+    const desktopNotification = new Notification(notification)
+    desktopNotification.on('click', () => {
+      const openRequest = createDesktopProposalOpenRequest(params)
+      if (!openRequest) return
+      emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, {
+        method: DESKTOP_CONTEXT_PROPOSAL_OPEN_REQUEST_METHOD,
+        params: openRequest,
+      })
+      void showMainWindow().catch((error) => {
+        console.error(`[desktop] show main window failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    })
+    desktopNotification.show()
+  } catch (error) {
+    console.error(`[desktop] desktop proposal notification failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -376,7 +503,8 @@ function shouldHideToTray(eventType) {
   })
 }
 
-function showMainWindow() {
+async function showMainWindow() {
+  await captureQuickInputContext()
   restoreMainWindow(mainWindow)
   refreshTrayMenu()
 }
@@ -407,6 +535,15 @@ function attachWindowBehavior(win) {
     event.preventDefault()
     win.hide()
     refreshTrayMenu()
+  })
+
+  win.on('blur', () => {
+    const timer = setTimeout(() => {
+      rememberForegroundDesktopTarget().catch((error) => {
+        console.error(`[desktop] remember foreground desktop target failed: ${error.message}`)
+      })
+    }, 120)
+    timer.unref?.()
   })
 }
 
@@ -546,6 +683,7 @@ async function toggleQuickInput() {
     destroyed: exists ? quickInputWindow.isDestroyed() : undefined,
   })
   if (action === 'create') {
+    await captureQuickInputContext()
     await createQuickInputWindow()
     return
   }
@@ -553,6 +691,7 @@ async function toggleQuickInput() {
     quickInputWindow.hide()
     return
   }
+  await captureQuickInputContext()
   quickInputWindow.show()
   quickInputWindow.focus()
 }
@@ -565,6 +704,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
         ok: true,
         source: 'desktop',
         sidecar: 'ready',
+        desktopHost: sanitizeDesktopHostState(desktopHostState),
       }
     }
     case 'sidecar_healthcheck':
@@ -585,6 +725,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
         quickInputWindow.hide()
       }
       return null
+    case 'quick_input_get_context':
+      return prepareQuickInputContext()
     case 'open_file_dialog': {
       const result = await dialog.showOpenDialog(mainWindow, createOpenFileDialogOptions())
       return {
@@ -762,6 +904,11 @@ function createSidecarHost({ onNotification }) {
       ...process.env,
       LUME_CONFIG_DIR: configDir,
       LUME_DEFAULT_SKILLS_AUTOSTART: 'true',
+    }
+
+    if (desktopHostState.available) {
+      env.LUME_DESKTOP_HOST_ENDPOINT = desktopHostState.endpoint
+      env.LUME_DESKTOP_HOST_TOKEN = desktopHostState.token
     }
 
     const defaultSkillsArchive = getDefaultSkillsArchivePath()
@@ -1093,9 +1240,13 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(nativeImage.createFromPath(getAssetPath('icon.png')))
   }
+  desktopHostState = await startDesktopHost()
   await sidecarHost.start()
   logDesktopStartup('sidecar ready')
   pageRenderer = new PageRenderer()
+  await unlockDesktopContextStore()
+  registerDesktopContextPowerEvents()
+  await captureQuickInputContext()
   await createMainWindow()
   logDesktopStartup('main window ready')
   // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
@@ -1125,10 +1276,11 @@ app.whenReady().then(async () => {
 
 app.on('activate', async () => {
   if (!mainWindow || mainWindow.isDestroyed()) {
+    await captureQuickInputContext()
     await createMainWindow()
     return
   }
-  showMainWindow()
+  await showMainWindow()
 })
 
 app.on('before-quit', () => {
@@ -1142,6 +1294,109 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', async () => {
+  desktopHostSupervisor?.stop()
   await sidecarHost.stop()
   globalShortcut.unregisterAll()
 })
+
+async function startDesktopHost(): Promise<DesktopHostState> {
+  if (process.platform !== 'win32' && process.platform !== 'darwin') {
+    return { available: false, reason: `desktop host is unsupported on ${process.platform}` }
+  }
+  try {
+    const binaryPath = getDesktopHostBinaryPath({
+      appIsPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      desktopRoot: DESKTOP_ROOT,
+    })
+    desktopHostSupervisor = createDesktopHostSupervisor({
+      binaryPath,
+      log: logDesktopStartup,
+    })
+    const state = await desktopHostSupervisor.start()
+    logDesktopStartup(state.available ? 'desktop host started' : ('reason' in state ? state.reason : 'desktop host unavailable'))
+    return state
+  } catch (error) {
+    const reason = `desktop host unavailable: ${error instanceof Error ? error.message : String(error)}`
+    logDesktopStartup(reason)
+    return { available: false, reason }
+  }
+}
+
+function sanitizeDesktopHostState(state: DesktopHostState) {
+  return state.available
+    ? { available: true, endpoint: state.endpoint }
+    : { available: false, reason: 'reason' in state ? state.reason : 'desktop host unavailable' }
+}
+
+async function unlockDesktopContextStore() {
+  let key = null
+  try {
+    key = loadOrCreateDesktopContextKey({
+      path: join(resolveConfigDir(), 'desktop-context', 'key.bin'),
+      safeStorage,
+    })
+    await sidecarHost.call(DESKTOP_CONTEXT_UNLOCK_METHOD, { key: key.toString('base64') })
+    logDesktopStartup('desktop context store unlocked')
+  } catch (error) {
+    logDesktopStartup(`desktop context store unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    key?.fill(0)
+  }
+}
+
+function registerDesktopContextPowerEvents() {
+  const update = (reason: 'screen_locked' | 'system_suspended', suspended: boolean) => {
+    void sidecarHost.call(DESKTOP_CONTEXT_SET_SUSPENDED_METHOD, { reason, suspended })
+      .catch((error) => logDesktopStartup(
+        `desktop context suspension update failed: ${error instanceof Error ? error.message : String(error)}`,
+      ))
+  }
+  powerMonitor.on('lock-screen', () => update('screen_locked', true))
+  powerMonitor.on('unlock-screen', () => update('screen_locked', false))
+  powerMonitor.on('suspend', () => update('system_suspended', true))
+  powerMonitor.on('resume', () => update('system_suspended', false))
+}
+
+async function captureQuickInputContext() {
+  try {
+    const value = await sidecarHost.call(DESKTOP_CONTEXT_CAPTURE_METHOD, { userInitiated: true })
+    latestQuickInputContext = resolveQuickInputContextCapture(latestQuickInputContext, value)
+  } catch (error) {
+    latestQuickInputContext = resolveQuickInputContextCapture(latestQuickInputContext, {
+      status: 'unavailable',
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
+async function prepareQuickInputContext() {
+  if (!shouldCaptureRememberedDesktopTarget(latestQuickInputContext, rememberedQuickInputDesktopTarget)) {
+    return latestQuickInputContext
+  }
+  const target = rememberedQuickInputDesktopTarget
+  if (!target) return latestQuickInputContext
+  rememberedQuickInputDesktopTarget = null
+  try {
+    const value = await sidecarHost.call(DESKTOP_CONTEXT_CAPTURE_WINDOW_METHOD, {
+      windowId: target.window.id,
+      userInitiated: true,
+    })
+    latestQuickInputContext = resolveQuickInputContextCapture(latestQuickInputContext, value)
+  } catch (error) {
+    latestQuickInputContext = resolveQuickInputContextCapture(latestQuickInputContext, {
+      status: 'unavailable',
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+  return latestQuickInputContext
+}
+
+async function rememberForegroundDesktopTarget() {
+  const value = await sidecarHost.call(DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD, {})
+  rememberedQuickInputDesktopTarget = resolveRememberedDesktopTarget(
+    rememberedQuickInputDesktopTarget,
+    value,
+    Date.now(),
+  )
+}

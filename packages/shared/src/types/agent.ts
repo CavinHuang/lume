@@ -949,6 +949,7 @@ export interface AgentPendingInteractiveState {
   threadId: string
   askUserQuestions?: AgentAskUserQuestionRequest[]
   browserAuthRequests?: AgentBrowserAuthRequest[]
+  desktopActionRequests?: import('./computer-use').AgentDesktopActionRequest[]
   toolPermissions?: AgentToolPermissionRequest[]
   taskApprovals?: AgentTaskApprovalRequest[]
 }
@@ -1612,8 +1613,12 @@ export const AGENT_IPC_CHANNELS = {
   SUBMIT_ASK_USER_QUESTION: 'agent:submit-ask-user-question',
   /** 浏览器安全凭证请求（sidecar -> web） */
   BROWSER_AUTH_REQUEST: 'agent:browser-auth-request',
+  /** 高风险桌面动作确认（sidecar -> web） */
+  DESKTOP_ACTION_REQUEST: 'agent:desktop-action-request',
   /** 浏览器安全凭证提交（web -> sidecar） */
   SUBMIT_BROWSER_AUTH: 'agent:submit-browser-auth',
+  /** 高风险桌面动作确认结果（web -> sidecar） */
+  SUBMIT_DESKTOP_ACTION: 'agent:submit-desktop-action',
   /** 工具权限确认请求（sidecar -> web） */
   TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
   /** 工具权限确认结果（web -> sidecar） */

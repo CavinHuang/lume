@@ -35,6 +35,7 @@ import {
 import type {
   AgentAskUserQuestionRequest,
   AgentBrowserAuthRequest,
+  AgentDesktopActionRequest,
   AgentSendInput,
   AgentToolPermissionRequest,
   LumeRuntimeEvent,
@@ -78,6 +79,7 @@ import {
 } from "./session-store";
 import { ContextAssembler } from "../context/context-assembler";
 import type { ContextAssemblyInput } from "../context/context-assembler";
+import { resolveDesktopContextProjection } from "../../desktop-context/desktop-context-runtime";
 import { createKernelContextController } from "../context/context-controller";
 import { buildRuntimeUserMessageInput } from "./message-attachment-input";
 import { createTaskContractWriteTool } from "../plan/task-contract-write-tool";
@@ -152,6 +154,8 @@ export interface CreateRuntimeCoreSessionInput {
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
+  emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -365,6 +369,8 @@ async function runSidecarSubagent(input: {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
+  emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
 }): Promise<{
   result: ToolResult;
@@ -472,6 +478,8 @@ async function runSidecarSubagent(input: {
     onRuntimeEvent: input.onRuntimeEvent,
     onAskUserQuestion: input.emitAskUserQuestion ?? (() => undefined),
     onBrowserAuthRequest: input.emitBrowserAuthRequest ?? (() => undefined),
+    onDesktopActionRequest: input.emitDesktopActionRequest,
+    onRuntimeEvent: input.emitRuntimeEvent,
     onToolPermissionRequest: input.emitToolPermissionRequest ?? (() => undefined)
   });
 
@@ -725,6 +733,8 @@ function buildRuntimeCoreTools(input: {
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
+  emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -773,12 +783,16 @@ function buildRuntimeCoreTools(input: {
     chatType: input.chatType,
     workspaceSlug: input.workspaceSlug,
     permissionMode,
+    messageMetadata: input.messageMetadata,
     memoryToolPolicy: memoryRuntimeConfig.toolPolicy,
     includeCitations,
     automationExecution,
+    runId: input.runId,
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion ?? (() => {}),
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+    emitDesktopActionRequest: input.emitDesktopActionRequest,
+    emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {})
   });
 
@@ -1038,6 +1052,8 @@ function buildRuntimeCoreTools(input: {
         permissionMode,
         emitAskUserQuestion: input.emitAskUserQuestion,
         emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+        emitDesktopActionRequest: input.emitDesktopActionRequest,
+        emitRuntimeEvent: input.emitRuntimeEvent,
         emitToolPermissionRequest: input.emitToolPermissionRequest
       });
       if (runInBackground) {
@@ -1460,6 +1476,8 @@ export async function createRuntimeCoreSession(
     emitRuntimeEvent: input.emitRuntimeEvent,
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+    emitDesktopActionRequest: input.emitDesktopActionRequest,
+    emitRuntimeEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
     emitTodoUpdated: input.emitTodoUpdated,
@@ -1500,6 +1518,7 @@ export async function createRuntimeCoreSession(
   const workflowContext = beforeContextResult
     ? { appendContext: collectAppendContextEffects(beforeContextResult.effects) }
     : undefined;
+  const desktopContext = await resolveDesktopContextProjection(input.messageMetadata);
 
   const contextAssembly = await new ContextAssembler().assemble({
     threadId: input.lumeSessionId,
@@ -1526,6 +1545,7 @@ export async function createRuntimeCoreSession(
     enabledPlugins,
     tokenBudget: contextTokenBudget,
     workflowContext,
+    desktopContext,
     trace: input.trace
   });
   const afterContextResult = await executeWorkflowHookSafely(input.workflowHooks, {
@@ -1647,6 +1667,7 @@ export async function createRuntimeCoreSession(
 
   const userMessageForModel = buildRuntimeUserMessageInput({
     userMessage: contextAssembly.userMessageForModel,
+    contentBlocks: contextAssembly.userMessageContentBlocks,
     attachments: input.messageAttachments,
     provider: input.provider,
     workspaceSlug: input.workspaceSlug,

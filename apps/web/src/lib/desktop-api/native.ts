@@ -31,6 +31,8 @@ export const statFilePaths = (paths: string[]) =>
   invoke<{ files: DesktopSelectedFile[] }>('stat_file_paths', { paths })
 export const openFolderDialog = () =>
   invoke<{ path: string | null }>('open_folder_dialog')
+export const getQuickInputContext = () =>
+  invoke<unknown>('quick_input_get_context')
 export const openExternal = (url: string) => invoke('open_external', { url })
 export const readTextFile = (path: string) =>
   invoke<{ content: string; truncated: boolean }>('read_text_file', { path })

@@ -1158,6 +1158,12 @@ export const submitBrowserAuthInputSchema = z.object({
   values: z.record(z.string(), z.string()).optional()
 });
 
+export const submitDesktopActionInputSchema = z.object({
+  threadId: idSchema,
+  requestId: idSchema,
+  decision: z.enum(["allow_once", "deny"])
+});
+
 export const submitToolPermissionInputSchema = z.object({
   threadId: idSchema,
   requestId: idSchema,

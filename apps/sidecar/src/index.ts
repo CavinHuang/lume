@@ -150,6 +150,10 @@ async function boot(): Promise<void> {
   if (envAutostartEnabled("LUME_DEFAULT_SKILLS_AUTOSTART", false)) {
     seedDefaultSkills();
   }
+  {
+    const { setDesktopContextNotificationWriter } = await import("./services/desktop-context/desktop-context-runtime");
+    setDesktopContextNotificationWriter(writeNotification);
+  }
   if (envAutostartEnabled("LUME_IM_AUTOSTART", true)) {
     void imRuntimeManager.startEnabledAccounts().catch((error) => {
       console.error(`[IM Runtime] 启动失败: ${error instanceof Error ? error.message : String(error)}`);

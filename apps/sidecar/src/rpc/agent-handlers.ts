@@ -163,6 +163,10 @@ import {
   listPendingBrowserAuthRequests,
   submitBrowserAuthResponse
 } from "../services/agent-runtime/interruption/browser-auth-session";
+import {
+  listPendingDesktopActionRequests,
+  submitDesktopActionDecision
+} from "../services/agent-runtime/interruption/desktop-action-session";
 import { listPendingToolPermissionRequests } from "../services/agent-runtime/interruption/tool-permission-session";
 import {
   getAgentProxyStatus,
@@ -238,6 +242,7 @@ import {
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
   submitBrowserAuthInputSchema,
+  submitDesktopActionInputSchema,
   submitTaskApprovalInputSchema,
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
@@ -389,6 +394,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         },
         onBrowserAuthRequest: (request) => {
           context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
+        },
+        onDesktopActionRequest: (request) => {
+          context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
         },
         onToolPermissionRequest: (request) => {
           context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
@@ -563,6 +571,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           }
           context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
         },
+      onDesktopActionRequest: (request: unknown) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
+      },
       onToolPermissionRequest: (request: unknown) =>
         {
           const toolRequest = request as { toolName?: string; reason?: string };
@@ -799,11 +810,13 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       const askRequests = listPendingAskUserQuestionRequests();
       const browserAuthRequests = listPendingBrowserAuthRequests();
+      const desktopActionRequests = listPendingDesktopActionRequests();
       const toolRequests = listPendingToolPermissionRequests();
       const taskApprovalRequests = await listPendingTaskApprovalRequests();
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
       for (const request of browserAuthRequests) threadIds.add(request.threadId);
+      for (const request of desktopActionRequests) threadIds.add(request.threadId);
       for (const request of toolRequests) threadIds.add(request.threadId);
       for (const request of taskApprovalRequests) threadIds.add(request.threadId);
 
@@ -812,12 +825,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         if (input.threadId && input.threadId !== threadId) continue;
         const askUserQuestions = askRequests.filter((request) => request.threadId === threadId);
         const browserAuthForThread = browserAuthRequests.filter((request) => request.threadId === threadId);
+        const desktopActionsForThread = desktopActionRequests.filter((request) => request.threadId === threadId);
         const toolPermissions = toolRequests.filter((request) => request.threadId === threadId);
         const taskApprovals = taskApprovalRequests.filter((request) => request.threadId === threadId);
         result.push({
           threadId,
           ...(askUserQuestions.length > 0 ? { askUserQuestions } : {}),
           ...(browserAuthForThread.length > 0 ? { browserAuthRequests: browserAuthForThread } : {}),
+          ...(desktopActionsForThread.length > 0 ? { desktopActionRequests: desktopActionsForThread } : {}),
           ...(toolPermissions.length > 0 ? { toolPermissions } : {}),
           ...(taskApprovals.length > 0 ? { taskApprovals } : {})
         });
@@ -1528,6 +1543,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       const handled = await submitBrowserAuthResponse(input);
       return { handled };
+    },
+    [AGENT_IPC_CHANNELS.SUBMIT_DESKTOP_ACTION]: async (params) => {
+      const input = validateInput(
+        submitDesktopActionInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.SUBMIT_DESKTOP_ACTION
+      );
+      return { handled: submitDesktopActionDecision(input) };
     },
     [AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION]: async (params) => {
       const input = validateInput(

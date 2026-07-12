@@ -11,6 +11,8 @@ import { createModelMetaHandlers } from "./model-meta-handlers";
 import { createReadingHandlers } from "./reading-handlers";
 import { createRoutineHandlers } from "./routine-handlers";
 import { createSystemHandlers } from "./system-handlers";
+import { createDesktopContextHandlers } from "./desktop-context-handlers";
+import { desktopContextRpcService } from "../services/desktop-context/desktop-context-runtime";
 import type { NotificationWriter, RpcHandler } from "./types";
 
 export interface CreateRpcHandlersContext {
@@ -55,6 +57,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     }),
     createAutomationHandlers(),
     createRoutineHandlers(),
+    createDesktopContextHandlers(desktopContextRpcService),
     createAgentHandlers({
       writeNotification: context.writeNotification,
       planModePhaseTracker,
