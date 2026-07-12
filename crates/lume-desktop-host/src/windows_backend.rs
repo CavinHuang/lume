@@ -1554,7 +1554,13 @@ fn send_text_to_edit_window(hwnd: HWND, text: &str) {
     let mut text = text.encode_utf16().collect::<Vec<_>>();
     text.push(0);
     unsafe {
-        SendMessageW(hwnd, EM_SETSEL, Some(WPARAM(usize::MAX)), Some(LPARAM(-1)));
+        let end = GetWindowTextLengthW(hwnd).max(0) as usize;
+        SendMessageW(
+            hwnd,
+            EM_SETSEL,
+            Some(WPARAM(end)),
+            Some(LPARAM(end as isize)),
+        );
         SendMessageW(
             hwnd,
             EM_REPLACESEL,
