@@ -747,6 +747,8 @@ export function deriveTemplateImageBuffer(
     out[i + 3] = rgba[i + 3]
   }
   return out
+}
+
 const QUICK_INPUT_CONTEXT_FALLBACK_TTL_MS = 60_000
 
 export function resolveQuickInputContextCapture(previous, value, now = Date.now()) {
