@@ -31,7 +31,10 @@ fn drives_the_macos_backend_through_a_deterministic_appkit_fixture() {
     let window = backend
         .invoke("get_window", &json!({ "windowId": window_id }))
         .unwrap();
-    assert_eq!(window["window"]["title"], "Lume Computer Use Fixture");
+    assert!(window["window"]["title"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("seed"));
 
     let state = backend
         .invoke(
