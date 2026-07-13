@@ -84,4 +84,27 @@ describe("saveComputerUseScreenshots", () => {
     });
     expect(saved[0]!.screenshotId).toBe("screenshot:42:100:1");
   });
+
+  test("writes only the requested screenshot region", () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAIAAAAAgCAIAAABVQOdyAAAAV0lEQVR42u3RsQ0AAAzCMP5/mh5RsVnKnMVpMm2873w/LgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMC/AyLv7R6HOOOKAAAAAElFTkSuQmCC",
+      "base64",
+    );
+    const saved = saveComputerUseScreenshots({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      pixelRegion: { x: 32, y: 0, width: 32, height: 32 },
+      screenshots: [{
+        id: "screenshot:42:region:1",
+        mimeType: "image/png",
+        width: 128,
+        height: 32,
+        dataUrl: `data:image/png;base64,${png.toString("base64")}`,
+      }],
+    });
+    const written = readFileSync(saved[0]!.absPath);
+    expect(saved[0]).toMatchObject({ width: 32, height: 32 });
+    expect(written.readUInt32BE(16)).toBe(32);
+    expect(written.readUInt32BE(20)).toBe(32);
+  });
 });

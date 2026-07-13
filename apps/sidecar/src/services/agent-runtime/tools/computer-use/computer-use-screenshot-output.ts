@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { toThreadRelativePath } from "../../../agent/agent-files-service";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
+import { cropPng, type PngRegion } from "./png-region";
 
 export interface SavedComputerUseScreenshot {
   screenshotId: string;
@@ -26,6 +27,7 @@ export function saveComputerUseScreenshots(input: {
   workspaceSlug: string;
   threadId: string;
   screenshots: unknown[];
+  pixelRegion?: PngRegion;
 }): SavedComputerUseScreenshot[] {
   const dir = join(getAgentThreadFilesPath(input.workspaceSlug, input.threadId), "computer-use");
   const saved: SavedComputerUseScreenshot[] = [];
@@ -39,8 +41,17 @@ export function saveComputerUseScreenshots(input: {
     const prefix = `data:${mediaType};base64,`;
     if (!dataUrl.startsWith(prefix)) throw new Error("screenshot pixels unavailable");
 
-    const bytes = Buffer.from(dataUrl.slice(prefix.length), "base64");
+    let bytes: Buffer<ArrayBufferLike> = Buffer.from(dataUrl.slice(prefix.length), "base64");
     if (bytes.length === 0) throw new Error("screenshot pixels unavailable");
+    let outputWidth = typeof screenshot.width === "number" ? screenshot.width : undefined;
+    let outputHeight = typeof screenshot.height === "number" ? screenshot.height : undefined;
+    if (input.pixelRegion) {
+      if (mediaType !== "image/png") throw new Error("screenshot regions require PNG capture");
+      const cropped = cropPng(bytes, input.pixelRegion);
+      bytes = cropped.bytes;
+      outputWidth = cropped.width;
+      outputHeight = cropped.height;
+    }
     mkdirSync(dir, { recursive: true });
     const capturedAt = Date.now();
     const hostScreenshotId = typeof screenshot.id === "string" ? screenshot.id : "";
@@ -57,8 +68,8 @@ export function saveComputerUseScreenshots(input: {
       filename,
       mediaType,
       size: bytes.length,
-      ...(typeof screenshot.width === "number" ? { width: screenshot.width } : {}),
-      ...(typeof screenshot.height === "number" ? { height: screenshot.height } : {}),
+      ...(outputWidth !== undefined ? { width: outputWidth } : {}),
+      ...(outputHeight !== undefined ? { height: outputHeight } : {}),
       absPath,
     });
   }

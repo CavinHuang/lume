@@ -258,6 +258,11 @@ impl ComputerUseProtocolAdapter {
             return Ok(json!({ "status": "failed", "message": "screenshot pixels unavailable" }));
         };
         screenshots.truncate(1);
+        let pixel_region =
+            match screenshot_pixel_region(params, &legacy["window"], screenshots.first()) {
+                Ok(region) => region,
+                Err(result) => return Ok(result),
+            };
         let screenshot_id = unique_id("screenshot", window_id);
         if let Some(previous) = self
             .latest_screenshot_by_window
@@ -269,13 +274,17 @@ impl ComputerUseProtocolAdapter {
         if let Some(primary) = screenshots.first_mut() {
             primary["id"] = Value::String(screenshot_id);
         }
-        Ok(json!({
+        let mut result = json!({
             "status": "ok",
             "window": window,
             "capturedAt": now_millis(),
             "screenshots": screenshots,
             "region": params.get("region").cloned().unwrap_or(Value::Null),
-        }))
+        });
+        if let Some(pixel_region) = pixel_region {
+            result["pixelRegion"] = pixel_region;
+        }
+        Ok(result)
     }
 
     fn dispatch<B: DesktopBackend>(
@@ -563,6 +572,69 @@ fn bounds_origin(window: &Value) -> (i64, i64) {
         window["bounds"]["x"].as_i64().unwrap_or_default(),
         window["bounds"]["y"].as_i64().unwrap_or_default(),
     )
+}
+
+fn screenshot_pixel_region(
+    params: &Value,
+    platform_window: &Value,
+    screenshot: Option<&Value>,
+) -> std::result::Result<Option<Value>, Value> {
+    let Some(region) = params.get("region") else {
+        return Ok(None);
+    };
+    let Some(region) = region.as_object() else {
+        return Err(json!({ "status": "failed", "message": "screenshot region is invalid" }));
+    };
+    let number = |key: &str| {
+        region
+            .get(key)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+    };
+    let (Some(x), Some(y), Some(width), Some(height)) =
+        (number("x"), number("y"), number("width"), number("height"))
+    else {
+        return Err(json!({ "status": "failed", "message": "screenshot region is invalid" }));
+    };
+    let window_width = platform_window["bounds"]["width"]
+        .as_f64()
+        .unwrap_or_default();
+    let window_height = platform_window["bounds"]["height"]
+        .as_f64()
+        .unwrap_or_default();
+    if x < 0.0
+        || y < 0.0
+        || width <= 0.0
+        || height <= 0.0
+        || x + width > window_width
+        || y + height > window_height
+    {
+        return Err(
+            json!({ "status": "failed", "message": "screenshot region is outside window bounds" }),
+        );
+    }
+    let Some(screenshot) = screenshot else {
+        return Err(json!({ "status": "failed", "message": "screenshot pixels unavailable" }));
+    };
+    let pixel_width = screenshot["width"].as_f64().unwrap_or_default();
+    let pixel_height = screenshot["height"].as_f64().unwrap_or_default();
+    if window_width <= 0.0 || window_height <= 0.0 || pixel_width <= 0.0 || pixel_height <= 0.0 {
+        return Err(json!({ "status": "failed", "message": "screenshot dimensions are invalid" }));
+    }
+    let left = (x * pixel_width / window_width).floor().max(0.0);
+    let top = (y * pixel_height / window_height).floor().max(0.0);
+    let right = ((x + width) * pixel_width / window_width)
+        .ceil()
+        .min(pixel_width);
+    let bottom = ((y + height) * pixel_height / window_height)
+        .ceil()
+        .min(pixel_height);
+    Ok(Some(json!({
+        "x": left as u64,
+        "y": top as u64,
+        "width": (right - left).max(1.0) as u64,
+        "height": (bottom - top).max(1.0) as u64,
+    })))
 }
 
 fn has_coordinates(params: &Map<String, Value>) -> bool {

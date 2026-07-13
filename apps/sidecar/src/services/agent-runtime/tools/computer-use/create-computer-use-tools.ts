@@ -335,7 +335,13 @@ function persistScreenshot(
     : Object.keys(asRecord(result.screenshot)).length
       ? [result.screenshot]
       : [];
-  const saved = saveComputerUseScreenshots({ workspaceSlug, threadId, screenshots: candidates });
+  const pixelRegion = canonicalPixelRegion(result.pixelRegion);
+  const saved = saveComputerUseScreenshots({
+    workspaceSlug,
+    threadId,
+    screenshots: candidates,
+    ...(pixelRegion ? { pixelRegion } : {}),
+  });
   const first = saved[0];
   if (!first) throw new Error("screenshot pixels unavailable");
   return { absPath: first.absPath, metadata: {
@@ -348,6 +354,13 @@ function persistScreenshot(
     ...(result.window ? { window: result.window } : {}),
     ...(result.region ? { region: result.region } : {}),
   } };
+}
+
+function canonicalPixelRegion(value: unknown): { x: number; y: number; width: number; height: number } | undefined {
+  const region = asRecord(value);
+  const values = [region.x, region.y, region.width, region.height];
+  if (!values.every((item) => typeof item === "number" && Number.isInteger(item))) return undefined;
+  return region as unknown as { x: number; y: number; width: number; height: number };
 }
 
 function actionIntent(action: DesktopActionKind, args: Record<string, unknown>) {

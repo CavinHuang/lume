@@ -201,3 +201,28 @@ fn issues_unique_screenshot_ids_and_rejects_cross_window_reuse() {
         .unwrap();
     assert_eq!(stale["status"], "stale_target");
 }
+
+#[test]
+fn maps_window_relative_screenshot_regions_to_captured_pixels() {
+    let backend = FakeBackend::new();
+    let mut adapter = ComputerUseProtocolAdapter::new();
+    let result = adapter
+        .invoke(
+            &backend,
+            "take_screenshot",
+            &json!({
+                "window": window(),
+                "region": { "x": 10, "y": 20, "width": 100, "height": 50 }
+            }),
+        )
+        .unwrap();
+
+    assert_eq!(
+        result["region"],
+        json!({ "x": 10, "y": 20, "width": 100, "height": 50 })
+    );
+    assert_eq!(
+        result["pixelRegion"],
+        json!({ "x": 20, "y": 40, "width": 200, "height": 100 })
+    );
+}
