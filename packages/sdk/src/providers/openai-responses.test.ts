@@ -243,7 +243,13 @@ describe("OpenAIResponsesProvider", () => {
     expect(requestBody?.input).toContainEqual({
       role: "user",
       type: "message",
-      content: [{ type: "input_image", image_url: "data:image/png;base64,ZmFrZQ==" }],
+      content: [
+        {
+          type: "input_text",
+          text: "The following image was returned by a tool. Inspect its pixels directly and use it as visual evidence for the current user request.",
+        },
+        { type: "input_image", image_url: "data:image/png;base64,ZmFrZQ==" },
+      ],
     })
   })
 })

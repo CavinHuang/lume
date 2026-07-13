@@ -31,6 +31,9 @@ type ResponsesInputContent =
   | { type: 'input_text'; text: string }
   | { type: 'input_image'; image_url: string }
 
+const TOOL_RESULT_IMAGE_INSTRUCTION =
+  'The following image was returned by a tool. Inspect its pixels directly and use it as visual evidence for the current user request.'
+
 interface ResponsesFunctionTool {
   type: 'function'
   name: string
@@ -357,6 +360,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
 
     const contentParts: ResponsesInputContent[] = []
     const toolResults: Array<{ tool_use_id: string; content: string }> = []
+    let hasToolResultImageInstruction = false
 
     for (const block of normalizeContentBlocks(msg.content)) {
       if (block.type === 'text') {
@@ -387,6 +391,10 @@ export class OpenAIResponsesProvider implements LLMProvider {
             if (item.type !== 'image') continue
             const url = toolResultImageToUrl(item)
             if (url) {
+              if (!hasToolResultImageInstruction) {
+                contentParts.push({ type: 'input_text', text: TOOL_RESULT_IMAGE_INSTRUCTION })
+                hasToolResultImageInstruction = true
+              }
               contentParts.push({ type: 'input_image', image_url: url })
             }
           }

@@ -131,7 +131,16 @@ describe("OpenAIProvider", () => {
 
     expect(requestBody?.messages).toEqual([
       { role: "tool", tool_call_id: "call_1", content: "generated image" },
-      { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,ZmFrZQ==" } }] },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "The following image was returned by a tool. Inspect its pixels directly and use it as visual evidence for the current user request.",
+          },
+          { type: "image_url", image_url: { url: "data:image/png;base64,ZmFrZQ==" } },
+        ],
+      },
     ])
   })
 

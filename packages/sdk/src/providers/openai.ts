@@ -36,6 +36,9 @@ type OpenAIContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } }
 
+const TOOL_RESULT_IMAGE_INSTRUCTION =
+  'The following image was returned by a tool. Inspect its pixels directly and use it as visual evidence for the current user request.'
+
 interface OpenAIToolCall {
   id: string
   type: 'function'
@@ -483,6 +486,7 @@ export class OpenAIProvider implements LLMProvider {
     const textParts: string[] = []
     const contentParts: OpenAIContentPart[] = []
     const toolResults: Array<{ tool_use_id: string; content: string }> = []
+    let hasToolResultImageInstruction = false
 
     for (const block of normalizeContentBlocks(msg.content)) {
       if (block.type === 'text') {
@@ -514,6 +518,10 @@ export class OpenAIProvider implements LLMProvider {
             if (item.type !== 'image') continue
             const url = toolResultImageToOpenAIUrl(item)
             if (url) {
+              if (!hasToolResultImageInstruction) {
+                contentParts.push({ type: 'text', text: TOOL_RESULT_IMAGE_INSTRUCTION })
+                hasToolResultImageInstruction = true
+              }
               contentParts.push({ type: 'image_url', image_url: { url } })
             }
           }
