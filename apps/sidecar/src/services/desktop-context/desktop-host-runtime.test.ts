@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DesktopHostRequestError } from "./desktop-host-client";
 import { createDesktopHostInvoker } from "./desktop-host-runtime";
 
 describe("createDesktopHostInvoker", () => {
@@ -87,6 +88,28 @@ describe("createDesktopHostInvoker", () => {
     await expect(invoke("list_apps", {})).resolves.toEqual({
       status: "unavailable",
       message: "desktop host connection failed: pipe closed",
+    });
+  });
+
+  test("preserves authenticated host request errors", async () => {
+    const invoke = createDesktopHostInvoker({
+      env: {
+        LUME_DESKTOP_HOST_ENDPOINT: "endpoint",
+        LUME_DESKTOP_HOST_TOKEN: "token",
+      },
+      createClient: () => ({
+        call: async () => {
+          throw new DesktopHostRequestError(
+            "stale_target: use the latest state.window",
+            -32000,
+          );
+        },
+      }),
+    });
+
+    await expect(invoke("click", {})).rejects.toMatchObject({
+      code: -32000,
+      message: "stale_target: use the latest state.window",
     });
   });
 });

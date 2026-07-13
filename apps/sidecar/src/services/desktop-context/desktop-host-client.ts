@@ -3,6 +3,13 @@ import { DesktopHostFrameDecoder, encodeDesktopHostFrame } from "./desktop-host-
 
 export const DESKTOP_HOST_PROTOCOL_VERSION = 3;
 
+export class DesktopHostRequestError extends Error {
+  constructor(message: string, readonly code?: number) {
+    super(message);
+    this.name = "DesktopHostRequestError";
+  }
+}
+
 export interface DesktopHostConnection {
   write(data: Buffer): void;
   onData(listener: (chunk: Buffer) => void): void;
@@ -143,7 +150,10 @@ export class DesktopHostRpcClient {
         clearTimeout(pending.timeout);
         if (message.error) {
           const error = asRecord(message.error);
-          pending.reject(new Error(typeof error.message === "string" ? error.message : "desktop host request failed"));
+          pending.reject(new DesktopHostRequestError(
+            typeof error.message === "string" ? error.message : "desktop host request failed",
+            typeof error.code === "number" ? error.code : undefined,
+          ));
         } else {
           pending.resolve(message.result);
         }

@@ -102,6 +102,33 @@ describe("DesktopHostRpcClient", () => {
     await expect(call).resolves.toEqual({ status: "ok", apps: [] });
   });
 
+  test("classifies host JSON-RPC errors separately from connection failures", async () => {
+    const connection = new FakeConnection();
+    const client = new DesktopHostRpcClient({
+      token: "token",
+      connect: async () => connection,
+      timeoutMs: 100,
+    });
+    const start = client.start();
+    await Promise.resolve();
+    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 3 } });
+    await start;
+
+    const call = client.call("click", {});
+    await Promise.resolve();
+    connection.receive({
+      id: 2,
+      error: { code: -32000, message: "stale_target: use the latest state.window" },
+    });
+    const error = await call.catch((value) => value);
+
+    expect(error).toMatchObject({
+      name: "DesktopHostRequestError",
+      code: -32000,
+      message: "stale_target: use the latest state.window",
+    });
+  });
+
   test("delivers host notifications without treating them as responses", async () => {
     const connection = new FakeConnection();
     const events: unknown[] = [];

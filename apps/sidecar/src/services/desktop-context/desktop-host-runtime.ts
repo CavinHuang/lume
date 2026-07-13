@@ -1,4 +1,8 @@
-import { connectDesktopHost, DesktopHostRpcClient } from "./desktop-host-client";
+import {
+  connectDesktopHost,
+  DesktopHostRequestError,
+  DesktopHostRpcClient,
+} from "./desktop-host-client";
 
 interface DesktopHostCallable {
   call(method: string, params: Record<string, unknown>): Promise<unknown>;
@@ -43,6 +47,7 @@ export function createDesktopHostInvoker(input: {
       }
       return await client.call(method, params);
     } catch (error) {
+      if (error instanceof DesktopHostRequestError) throw error;
       const message = `desktop host connection failed: ${error instanceof Error ? error.message : String(error)}`;
       if (method === "diagnose_permissions") {
         return unavailablePermissionDiagnostics(message);
