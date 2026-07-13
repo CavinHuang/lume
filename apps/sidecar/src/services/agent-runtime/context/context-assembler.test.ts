@@ -57,19 +57,21 @@ describe("ContextAssembler", () => {
 
     expect(result.systemPrompt).toContain("historical app/title hint");
     expect(result.systemPrompt).toContain("If desktop_context.snapshot.selectedText is present");
-    expect(result.systemPrompt).toContain("list_apps/list_windows");
+    expect(result.systemPrompt).toContain("Use list_apps, choose one unique Window, call get_window");
     expect(result.systemPrompt).toContain("mcp__computer_use__get_window_state");
     expect(result.systemPrompt).toContain("replace the prior target with state.window");
     expect(result.systemPrompt).toContain("Never reconstruct a Window id");
     expect(result.systemPrompt).toContain("Passive reads do not activate windows");
     expect(result.systemPrompt).toContain("use activate_window only");
     expect(result.systemPrompt).toContain("Input tools restore and activate");
-    expect(result.systemPrompt).toContain("mcp__computer_use__take_screenshot");
+    expect(result.systemPrompt).toContain("include_screenshot defaults to true");
+    expect(result.systemPrompt).toContain("include_screenshot:false, include_text:true");
     expect(result.systemPrompt).toContain("focused_element");
     expect(result.systemPrompt).not.toContain("chat/image-heavy such as WeChat");
     expect(result.systemPrompt).toContain("prefer element_index semantic actions");
     expect(result.systemPrompt).toContain("observe once after the logical batch");
-    expect(result.systemPrompt).toContain("dispatched means input was sent");
+    expect(result.systemPrompt).toContain("null input result means the OS input was dispatched");
+    expect(result.systemPrompt).not.toContain("mcp__computer_use__take_screenshot");
     expect(result.systemPrompt).toContain("action-time Lume confirmation");
     expect(result.systemPrompt).toContain("Do not ask the user to copy or paste content from the attached desktop app");
   });
