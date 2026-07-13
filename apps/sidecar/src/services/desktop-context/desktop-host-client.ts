@@ -1,7 +1,7 @@
 import { createConnection, type Socket } from "node:net";
 import { DesktopHostFrameDecoder, encodeDesktopHostFrame } from "./desktop-host-protocol";
 
-export const DESKTOP_HOST_PROTOCOL_VERSION = 2;
+export const DESKTOP_HOST_PROTOCOL_VERSION = 3;
 
 export interface DesktopHostConnection {
   write(data: Buffer): void;
@@ -95,7 +95,7 @@ export class DesktopHostRpcClient {
         : "unknown";
       this.close();
       throw new Error(
-        `desktop host protocol version mismatch: expected ${DESKTOP_HOST_PROTOCOL_VERSION}, received ${received}`,
+        `desktop host protocol version mismatch: expected ${DESKTOP_HOST_PROTOCOL_VERSION}, received ${received}; restart Lume`,
       );
     }
   }

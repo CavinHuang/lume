@@ -27,50 +27,37 @@ export interface Window {
   title?: string;
 }
 
-export interface AccessibilityElement {
-  element_index: number;
-  role: string;
-  name?: string;
-  value?: string;
-  bounds?: DesktopBounds;
-  enabled?: boolean;
-  focused?: boolean;
-  editable?: boolean;
-  sensitive?: boolean;
-  actions?: string[];
-  children?: AccessibilityElement[];
-}
-
 export interface AccessibilityState {
-  tree: AccessibilityElement[];
-  focused_element?: AccessibilityElement;
+  tree: string;
+  focused_element?: string;
   selected_text?: string;
-  selected_elements?: AccessibilityElement[];
+  selected_elements?: string[];
   document_text?: string;
-  visible_text?: string;
-  truncated?: boolean;
 }
 
 export interface WindowState {
-  status: DesktopActionStatus;
-  stateId: string;
   window: Window;
-  focused: boolean;
-  capturedAt: number;
-  accessibility: AccessibilityState;
-  textSource?: DesktopContextTextSource;
-  completeness?: DesktopContextCompleteness;
-  fallbackReason?: string;
+  accessibility: AccessibilityState | null;
+  screenshots: Screenshot[];
 }
 
 export interface Screenshot {
-  screenshotId: string;
-  window: Window;
-  threadPath: string;
-  width: number;
-  height: number;
-  capturedAt: number;
-  region?: DesktopBounds;
+  id: string;
+  url: string;
+  width?: number;
+  height?: number;
+  originX?: number;
+  originY?: number;
+  zIndex: number;
+}
+
+export interface ListAppsApp {
+  id: string;
+  displayName?: string;
+  isRunning?: boolean;
+  lastUsedDate?: string;
+  useCount?: number;
+  windows: Window[];
 }
 
 export const DESKTOP_ACTION_PHASES = [
@@ -92,7 +79,6 @@ export interface DesktopActionLedgerEntry {
   phase: DesktopActionPhase;
   createdAt: number;
   updatedAt: number;
-  stateId?: string;
   screenshotId?: string;
   point?: { x: number; y: number };
   textLength?: number;
@@ -387,7 +373,8 @@ export type DesktopConfirmationCategory =
   | "account"
   | "financial"
   | "sensitive_data"
-  | "medical";
+  | "medical"
+  | "install";
 
 export interface DesktopActionConfirmationClassification {
   required: boolean;
@@ -407,6 +394,7 @@ const CONFIRMATION_PATTERNS: Array<[DesktopConfirmationCategory, RegExp]> = [
   ["financial", /(?:付款|支付|购买|转账|退款|银行卡|pay|purchase|transfer|refund|bank)/i],
   ["sensitive_data", /(?:密码|验证码|身份证|通讯录|地址|电话|邮箱|password|otp|identity|contacts?|address|phone|email)/i],
   ["medical", /(?:医疗|病历|处方|诊断|用药|预约|medical|health|prescription|diagnosis|medication)/i],
+  ["install", /(?:安装|卸载|install|uninstall)/i],
 ];
 
 export function isDesktopActionStatus(value: unknown): value is DesktopActionStatus {

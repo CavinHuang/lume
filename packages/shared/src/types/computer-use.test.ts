@@ -64,6 +64,18 @@ describe("computer-use shared contracts", () => {
       required: true,
       categories: ["account"],
     });
+    expect(classifyDesktopActionConfirmation({ kind: "launch_app", targetLabel: "安装更新" })).toMatchObject({
+      required: true,
+      categories: ["install"],
+    });
+    expect(classifyDesktopActionConfirmation({ kind: "click", targetLabel: "删除草稿" })).toMatchObject({
+      required: true,
+      categories: ["delete"],
+    });
+    expect(classifyDesktopActionConfirmation({ kind: "click", targetLabel: "确认付款" })).toMatchObject({
+      required: true,
+      categories: ["financial"],
+    });
   });
 
   test("maps every proactive proposal kind to one explicit next action", () => {

@@ -24,7 +24,7 @@ pub mod windows_cursor_motion;
 #[cfg(windows)]
 pub mod windows_overlay;
 
-pub const PROTOCOL_VERSION: u64 = 2;
+pub const PROTOCOL_VERSION: u64 = 3;
 pub const COMPUTER_USE_PERMISSION_APP_NAME: &str = "Lume Computer Use";
 pub const COMPUTER_USE_PERMISSION_APP_BUNDLE_NAME: &str = "Lume Computer Use.app";
 pub const COMPUTER_USE_PERMISSION_BUNDLE_ID: &str = "com.lume.computer-use";

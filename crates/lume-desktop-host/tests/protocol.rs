@@ -40,11 +40,11 @@ fn requires_a_valid_handshake_before_desktop_calls() {
     }));
     assert_eq!(
         accepted["result"],
-        json!({ "status": "ok", "protocolVersion": 2 })
+        json!({ "status": "ok", "protocolVersion": 3 })
     );
 
     let result = session.handle(json!({ "id": 4, "method": "list_apps", "params": {} }));
-    assert_eq!(result["result"], json!({ "status": "ok", "apps": [] }));
+    assert_eq!(result["result"], json!([]));
 
     let subscription = session.handle(json!({
         "id": 5,

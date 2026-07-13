@@ -1,5 +1,5 @@
 use crate::DesktopBackend;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde_json::{json, Map, Value};
 use std::{
     collections::HashMap,
@@ -7,20 +7,21 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-static NEXT_SNAPSHOT_ID: AtomicU64 = AtomicU64::new(1);
-const MAX_STATE_SNAPSHOTS: usize = 32;
+static NEXT_SCREENSHOT_ID: AtomicU64 = AtomicU64::new(1);
+const MAX_SCREENSHOTS: usize = 32;
+const ELEMENT_SNAPSHOT_TTL_MS: u64 = 30_000;
 
 #[derive(Default)]
 pub struct ComputerUseProtocolAdapter {
-    states: HashMap<String, ElementSnapshot>,
-    screenshots: HashMap<String, u64>,
-    latest_screenshot_by_window: HashMap<u64, String>,
+    latest_elements: HashMap<u64, ElementSnapshot>,
+    screenshots: HashMap<String, ScreenshotSnapshot>,
+    latest_screenshots_by_window: HashMap<u64, Vec<String>>,
 }
 
 struct ElementSnapshot {
-    window_id: u64,
     index_to_platform_id: HashMap<u64, String>,
     fingerprints: HashMap<u64, ElementFingerprint>,
+    captured_at: u64,
 }
 
 #[derive(Clone, Eq, PartialEq)]
@@ -29,6 +30,23 @@ struct ElementFingerprint {
     role: String,
     name: String,
     sensitive: bool,
+}
+
+#[derive(Clone)]
+struct ScreenshotSnapshot {
+    window_id: u64,
+    geometry: Value,
+    transform: Option<ScreenshotTransform>,
+}
+
+#[derive(Clone)]
+struct ScreenshotTransform {
+    capture_left: i64,
+    capture_top: i64,
+    physical_width: f64,
+    physical_height: f64,
+    logical_width: f64,
+    logical_height: f64,
 }
 
 impl ComputerUseProtocolAdapter {
@@ -42,65 +60,54 @@ impl ComputerUseProtocolAdapter {
         method: &str,
         params: &Value,
     ) -> Result<Value> {
+        if method == "desktop_context.preflight_action" {
+            return self.preflight_action(backend, params);
+        }
         if let Some(internal_method) = method.strip_prefix("desktop_context.") {
             return backend.invoke(internal_method, params);
         }
         match method {
-            "list_apps" => self.list_apps(backend),
-            "list_windows" => self.list_windows(backend, params),
+            "list_windows" => self.list_windows(backend),
             "get_window" => self.get_window(backend, params),
+            "list_apps" => self.list_apps(backend),
+            "launch_app" => self.null_action(backend, method, params),
             "get_window_state" => self.get_window_state(backend, params),
-            "take_screenshot" => self.take_screenshot(backend, params),
-            "launch_app" => backend.invoke(method, params),
-            "activate_window"
-            | "click"
+            "click"
             | "press_key"
             | "type_text"
             | "scroll"
             | "set_value"
             | "drag"
-            | "perform_secondary_action" => self.dispatch(backend, method, params),
-            "move_pointer" | "current_context" | "search_context" | "wait_for_state" => Ok(json!({
-                "status": "failed",
-                "message": format!("method is not part of Computer Use v2: {method}")
-            })),
-            // Permission diagnostics remain a host facility but are not Agent-visible tools.
+            | "perform_secondary_action"
+            | "activate_window" => self.dispatch(backend, method, params),
+            "take_screenshot" | "move_pointer" | "current_context" | "search_context"
+            | "wait_for_state" => Err(anyhow!("method is not part of Computer Use v3: {method}")),
+            // Permission diagnostics remain a private host facility.
             _ => backend.invoke(method, params),
         }
     }
 
-    fn list_windows<B: DesktopBackend>(&self, backend: &B, params: &Value) -> Result<Value> {
-        let result = backend.invoke("list_windows", &json!({}))?;
-        if result["status"] != "ok" {
-            return Ok(result);
-        }
-        let app_filter = params.get("app").and_then(Value::as_str);
-        let windows = result["windows"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(canonical_window)
-            .filter(|window| app_filter.is_none_or(|app| window["app"].as_str() == Some(app)))
-            .collect::<Vec<_>>();
-        Ok(json!({ "status": "ok", "windows": windows }))
+    fn list_windows<B: DesktopBackend>(&self, backend: &B) -> Result<Value> {
+        let result = checked_result(backend.invoke("list_windows", &json!({}))?)?;
+        Ok(Value::Array(
+            result["windows"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(canonical_window)
+                .collect(),
+        ))
     }
 
     fn list_apps<B: DesktopBackend>(&self, backend: &B) -> Result<Value> {
-        let result = backend.invoke("list_apps", &json!({}))?;
-        if result["status"] != "ok" {
-            return Ok(result);
-        }
+        let result = checked_result(backend.invoke("list_apps", &json!({}))?)?;
         let apps = result["apps"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|app| {
-                let name = app
-                    .get("name")
-                    .or_else(|| app.get("displayName"))?
-                    .as_str()?
-                    .trim();
-                if name.is_empty() {
+                let id = app.get("id")?.as_str()?.trim();
+                if id.is_empty() {
                     return None;
                 }
                 let windows = app["windows"]
@@ -109,33 +116,38 @@ impl ComputerUseProtocolAdapter {
                     .flatten()
                     .filter_map(canonical_window)
                     .collect::<Vec<_>>();
-                Some(json!({
-                    "app": name,
-                    "windows": windows,
-                    "isRunning": app["isRunning"].as_bool().unwrap_or(!windows.is_empty()),
-                    "isFrontmost": app["isFrontmost"].as_bool().unwrap_or(false),
-                    "path": app.get("path").cloned().unwrap_or(Value::Null),
-                }))
+                let mut output = json!({ "id": id, "windows": windows });
+                copy_optional_string(&mut output, "displayName", app, "displayName");
+                if output.get("displayName").is_none() {
+                    copy_optional_string(&mut output, "displayName", app, "name");
+                }
+                copy_optional_bool(&mut output, "isRunning", app, "isRunning");
+                copy_optional_string(&mut output, "lastUsedDate", app, "lastUsedDate");
+                copy_optional_number(&mut output, "useCount", app, "useCount");
+                Some(output)
             })
-            .collect::<Vec<_>>();
-        Ok(json!({ "status": "ok", "apps": apps }))
+            .collect();
+        Ok(Value::Array(apps))
     }
 
     fn get_window<B: DesktopBackend>(&self, backend: &B, params: &Value) -> Result<Value> {
-        let Some(window_id) = canonical_window_id(params) else {
-            return Ok(stale_target("canonical window is required"));
-        };
-        let result = backend.invoke(
+        let window_id = params
+            .get("id")
+            .and_then(Value::as_u64)
+            .filter(|id| *id > 0)
+            .ok_or_else(|| anyhow!("window id is required"))?;
+        let result = checked_result(backend.invoke(
             "get_window",
             &json!({ "windowId": platform_window_id(window_id) }),
-        )?;
-        if result["status"] != "ok" {
-            return Ok(result);
+        )?)?;
+        let window = canonical_window(&result["window"])
+            .ok_or_else(|| anyhow!("platform window could not be rehydrated"))?;
+        if let Some(expected_app) = params.get("app").and_then(Value::as_str) {
+            if window["app"].as_str() != Some(expected_app) {
+                return Err(anyhow!("window app changed before rehydration"));
+            }
         }
-        let Some(window) = canonical_window(&result["window"]) else {
-            return Ok(stale_target("platform window could not be rehydrated"));
-        };
-        Ok(json!({ "status": "ok", "window": window }))
+        Ok(window)
     }
 
     fn get_window_state<B: DesktopBackend>(
@@ -143,148 +155,248 @@ impl ComputerUseProtocolAdapter {
         backend: &B,
         params: &Value,
     ) -> Result<Value> {
-        let Some(window_id) = canonical_window_id(params) else {
-            return Ok(stale_target("canonical window is required"));
-        };
-        let legacy = backend.invoke(
+        let window_id = canonical_window_id(params)?;
+        let include_screenshot = params
+            .get("include_screenshot")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let include_text = params
+            .get("include_text")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let legacy = checked_result(backend.invoke(
             "get_window_state",
-            &json!({ "windowId": platform_window_id(window_id) }),
-        )?;
-        if legacy["status"] != "ok" {
-            return Ok(legacy);
-        }
-        self.canonical_state(
-            legacy,
-            params.get("include_text").and_then(Value::as_bool) != Some(false),
-        )
+            &json!({
+                "windowId": platform_window_id(window_id),
+                "includeScreenshot": include_screenshot,
+                "includeText": include_text,
+            }),
+        )?)?;
+        let window = canonical_window(&legacy["window"])
+            .ok_or_else(|| anyhow!("platform state has no canonical window"))?;
+        let accessibility = if include_text {
+            self.canonical_accessibility(window_id, &legacy)?
+        } else {
+            Value::Null
+        };
+        let screenshots = if include_screenshot {
+            self.canonical_screenshots(window_id, &legacy)?
+        } else {
+            Vec::new()
+        };
+        Ok(json!({
+            "window": window,
+            "accessibility": accessibility,
+            "screenshots": screenshots,
+        }))
     }
 
-    fn canonical_state(&mut self, legacy: Value, include_text: bool) -> Result<Value> {
-        let Some(window) = canonical_window(&legacy["window"]) else {
-            return Ok(stale_target("platform state has no canonical window"));
-        };
-        let window_id = window["id"].as_u64().unwrap_or_default();
+    fn canonical_accessibility(&mut self, window_id: u64, legacy: &Value) -> Result<Value> {
         let origin = bounds_origin(&legacy["window"]);
+        let dpi = legacy["window"]
+            .get("dpi")
+            .and_then(Value::as_f64)
+            .unwrap_or(96.0);
+        let mut records = Vec::new();
+        let mut next_index = 0_u64;
         let mut index_to_platform_id = HashMap::new();
         let mut platform_id_to_index = HashMap::new();
         let mut fingerprints = HashMap::new();
-        let mut next_index = 0_u64;
-        let tree = canonical_elements(
+        index_elements(
             legacy["accessibility"]["tree"]
                 .as_array()
                 .map(Vec::as_slice)
                 .unwrap_or(&[]),
+            0,
             origin,
+            dpi,
             &mut next_index,
+            &mut records,
             &mut index_to_platform_id,
             &mut platform_id_to_index,
             &mut fingerprints,
         );
-        let state_id = unique_id("state", window_id);
-        self.states.insert(
-            state_id.clone(),
+        self.latest_elements.insert(
+            window_id,
             ElementSnapshot {
-                window_id,
                 index_to_platform_id,
                 fingerprints,
+                captured_at: now_millis(),
             },
         );
-        if self.states.len() > MAX_STATE_SNAPSHOTS {
-            if let Some(oldest) = self.states.keys().min().cloned() {
-                self.states.remove(&oldest);
-            }
-        }
-        let focused_element = canonical_focused_element(
+        let title = legacy["window"]["title"].as_str().unwrap_or_default();
+        let app = legacy["window"]["appName"]
+            .as_str()
+            .or_else(|| legacy["window"]["appId"].as_str())
+            .unwrap_or_default();
+        let mut lines = vec![format!("Window: \"{title}\", App: {app}.")];
+        lines.extend(records.iter().map(format_element_line));
+        let mut accessibility = json!({ "tree": lines.join("\n") });
+        if let Some(focused) = focused_element_line(
             &legacy["accessibility"]["focusedElement"],
             origin,
             &platform_id_to_index,
+        ) {
+            accessibility["focused_element"] = Value::String(focused);
+        }
+        copy_nonempty_string(
+            &mut accessibility,
+            "selected_text",
+            &legacy["accessibility"]["selectedText"],
         );
-        let mut accessibility = json!({
-            "tree": tree,
-            "selected_elements": [],
-        });
-        if let Some(focused) = focused_element {
-            accessibility["focused_element"] = focused;
-        }
-        if include_text {
-            copy_nonempty_string(
-                &mut accessibility,
-                "selected_text",
-                &legacy["accessibility"]["selectedText"],
-            );
-            copy_nonempty_string(
-                &mut accessibility,
-                "document_text",
-                &legacy["accessibility"]["documentText"],
-            );
-            copy_nonempty_string(
-                &mut accessibility,
-                "visible_text",
-                &legacy["accessibility"]["visibleText"],
-            );
-        }
-        if let Some(truncated) = legacy["accessibility"]["truncated"].as_bool() {
-            accessibility["truncated"] = Value::Bool(truncated);
-        }
-        let mut state = json!({
-            "status": "ok",
-            "stateId": state_id,
-            "window": window,
-            "focused": legacy["window"]["focused"].as_bool().unwrap_or(false),
-            "capturedAt": legacy["capturedAt"].as_u64().unwrap_or_else(now_millis),
-            "accessibility": accessibility,
-        });
-        copy_field(&mut state, "textSource", &legacy, "textSource");
-        copy_field(&mut state, "completeness", &legacy, "completeness");
-        copy_field(&mut state, "fallbackReason", &legacy, "fallbackReason");
-        Ok(state)
+        copy_nonempty_string(
+            &mut accessibility,
+            "document_text",
+            &legacy["accessibility"]["documentText"],
+        );
+        Ok(accessibility)
     }
 
-    fn take_screenshot<B: DesktopBackend>(&mut self, backend: &B, params: &Value) -> Result<Value> {
-        let Some(window_id) = canonical_window_id(params) else {
-            return Ok(stale_target("canonical window is required"));
-        };
-        let legacy = backend.invoke(
-            "get_window_state",
-            &json!({ "windowId": platform_window_id(window_id), "includeScreenshot": true }),
-        )?;
-        if legacy["status"] != "ok" {
-            return Ok(legacy);
+    fn canonical_screenshots(&mut self, window_id: u64, legacy: &Value) -> Result<Vec<Value>> {
+        let platform_screenshots = legacy["screenshots"]
+            .as_array()
+            .ok_or_else(|| anyhow!("screenshot pixels unavailable"))?;
+        let mut screenshots = Vec::new();
+        for platform in platform_screenshots {
+            let url = platform
+                .get("dataUrl")
+                .and_then(Value::as_str)
+                .filter(|url| !url.is_empty())
+                .ok_or_else(|| anyhow!("screenshot pixels unavailable"))?;
+            let id = unique_screenshot_id(window_id);
+            let mut screenshot = json!({
+                "id": id,
+                "url": url,
+                "zIndex": platform.get("zIndex").and_then(Value::as_i64).unwrap_or(0),
+            });
+            copy_optional_number(&mut screenshot, "width", platform, "width");
+            copy_optional_number(&mut screenshot, "height", platform, "height");
+            if let Some(origin) = platform.get("origin") {
+                copy_optional_number(&mut screenshot, "originX", origin, "x");
+                copy_optional_number(&mut screenshot, "originY", origin, "y");
+            }
+            self.screenshots.insert(
+                id.clone(),
+                ScreenshotSnapshot {
+                    window_id,
+                    geometry: window_geometry(&legacy["window"]),
+                    transform: screenshot_transform(platform),
+                },
+            );
+            screenshots.push(screenshot);
         }
-        let Some(window) = canonical_window(&legacy["window"]) else {
-            return Ok(stale_target("platform screenshot has no canonical window"));
-        };
-        let Some(mut screenshots) = legacy["screenshots"].as_array().cloned() else {
-            return Ok(json!({ "status": "failed", "message": "screenshot pixels unavailable" }));
-        };
-        screenshots.truncate(1);
-        let pixel_region =
-            match screenshot_pixel_region(params, &legacy["window"], screenshots.first()) {
-                Ok(region) => region,
-                Err(result) => return Ok(result),
-            };
-        let screenshot_id = unique_id("screenshot", window_id);
+        if screenshots.is_empty() {
+            return Err(anyhow!("screenshot pixels unavailable"));
+        }
+        let current_ids = screenshots
+            .iter()
+            .filter_map(|screenshot| {
+                screenshot
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
         if let Some(previous) = self
-            .latest_screenshot_by_window
-            .insert(window_id, screenshot_id.clone())
+            .latest_screenshots_by_window
+            .insert(window_id, current_ids)
         {
-            self.screenshots.remove(&previous);
+            for id in previous {
+                self.screenshots.remove(&id);
+            }
         }
-        self.screenshots.insert(screenshot_id.clone(), window_id);
-        if let Some(primary) = screenshots.first_mut() {
-            primary["id"] = Value::String(screenshot_id);
+        while self.screenshots.len() > MAX_SCREENSHOTS {
+            if let Some(oldest) = self.screenshots.keys().min().cloned() {
+                self.screenshots.remove(&oldest);
+            }
         }
-        let mut result = json!({
-            "status": "ok",
-            "window": window,
-            "capturedAt": now_millis(),
-            "screenshots": screenshots,
-            "region": params.get("region").cloned().unwrap_or(Value::Null),
-        });
-        if let Some(pixel_region) = pixel_region {
-            result["pixelRegion"] = pixel_region;
+        Ok(screenshots)
+    }
+
+    fn null_action<B: DesktopBackend>(
+        &self,
+        backend: &B,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value> {
+        checked_result(backend.invoke(method, params)?)?;
+        Ok(Value::Null)
+    }
+
+    fn preflight_action<B: DesktopBackend>(&self, backend: &B, params: &Value) -> Result<Value> {
+        let window_id = canonical_window_id(params)?;
+        if let Some(index) = params.get("element_index").and_then(Value::as_u64) {
+            let snapshot = self.latest_elements.get(&window_id).ok_or_else(|| {
+                anyhow!("element_index requires a current accessibility snapshot")
+            })?;
+            if now_millis().saturating_sub(snapshot.captured_at) > ELEMENT_SNAPSHOT_TTL_MS {
+                return Err(anyhow!("element_index snapshot is stale"));
+            }
+            let element = snapshot
+                .fingerprints
+                .get(&index)
+                .ok_or_else(|| anyhow!("element_index is not present in the latest snapshot"))?;
+            return Ok(json!({
+                "role": element.role,
+                "targetLabel": element.name,
+                "sensitive": element.sensitive,
+            }));
         }
-        Ok(result)
+
+        let window_result = checked_result(backend.invoke(
+            "get_window",
+            &json!({ "windowId": platform_window_id(window_id) }),
+        )?)?;
+        if !window_matches(&window_result["window"], &params["window"]) {
+            return Err(anyhow!("window identity changed before action preflight"));
+        }
+        let mut legacy = params.as_object().cloned().unwrap_or_default();
+        legacy.remove("window");
+        legacy.remove("element_index");
+        legacy.remove("screenshotId");
+        legacy.insert(
+            "windowId".to_owned(),
+            Value::String(platform_window_id(window_id)),
+        );
+        map_logical_coordinate(&mut legacy, "x", "y", &window_result["window"]);
+        let current_state = checked_result(backend.invoke(
+            "get_window_state",
+            &json!({
+                "windowId": platform_window_id(window_id),
+                "includeScreenshot": false,
+                "includeText": true,
+            }),
+        )?)?;
+        if let (Some(x), Some(y)) = (
+            legacy.get("x").and_then(Value::as_i64),
+            legacy.get("y").and_then(Value::as_i64),
+        ) {
+            if let Some(element) = find_platform_element_at_point(
+                current_state["accessibility"]["tree"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
+                x,
+                y,
+            ) {
+                let sensitive = element
+                    .get("sensitive")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                return Ok(json!({
+                    "role": element.get("role").and_then(Value::as_str).unwrap_or("unknown"),
+                    "targetLabel": if sensitive { "" } else { element.get("name").and_then(Value::as_str).unwrap_or("") },
+                    "sensitive": sensitive,
+                }));
+            }
+        }
+        let platform = checked_result(backend.invoke("preflight_action", &Value::Object(legacy))?)?;
+        let mut output = json!({});
+        copy_optional_string(&mut output, "role", &platform, "role");
+        copy_optional_string(&mut output, "targetLabel", &platform, "name");
+        copy_optional_string(&mut output, "recipient", &platform, "recipient");
+        copy_optional_bool(&mut output, "sensitive", &platform, "sensitive");
+        Ok(output)
     }
 
     fn dispatch<B: DesktopBackend>(
@@ -293,94 +405,281 @@ impl ComputerUseProtocolAdapter {
         method: &str,
         params: &Value,
     ) -> Result<Value> {
-        let Some(window_id) = canonical_window_id(params) else {
-            return Ok(stale_target("canonical window is required"));
-        };
-        if let Some(screenshot_id) = params.get("screenshotId").and_then(Value::as_str) {
-            if self.screenshots.get(screenshot_id) != Some(&window_id)
-                || self
-                    .latest_screenshot_by_window
-                    .get(&window_id)
-                    .map(String::as_str)
-                    != Some(screenshot_id)
-            {
-                return Ok(stale_target(
-                    "screenshot does not belong to the current window",
-                ));
-            }
+        let window_id = canonical_window_id(params)?;
+        let window_result = checked_result(backend.invoke(
+            "get_window",
+            &json!({ "windowId": platform_window_id(window_id) }),
+        )?)?;
+        if !window_matches(&window_result["window"], &params["window"]) {
+            return Err(anyhow!("window identity changed before dispatch"));
         }
+        let mut screenshot_transform = None;
+        if let Some(screenshot_id) = params.get("screenshotId").and_then(Value::as_str) {
+            let snapshot = self
+                .screenshots
+                .get(screenshot_id)
+                .ok_or_else(|| anyhow!("screenshot is stale or unknown"))?;
+            if snapshot.window_id != window_id
+                || snapshot.geometry != window_geometry(&window_result["window"])
+                || self
+                    .latest_screenshots_by_window
+                    .get(&window_id)
+                    .is_none_or(|ids| !ids.iter().any(|id| id == screenshot_id))
+            {
+                return Err(anyhow!("screenshot does not match the current window"));
+            }
+            screenshot_transform = snapshot.transform.clone();
+        }
+
         let mut legacy = params.as_object().cloned().unwrap_or_default();
         legacy.remove("window");
-        legacy.remove("stateId");
         legacy.remove("screenshotId");
         legacy.insert(
             "windowId".to_owned(),
             Value::String(platform_window_id(window_id)),
         );
-
-        let window_result = backend.invoke(
-            "get_window",
-            &json!({ "windowId": platform_window_id(window_id) }),
-        )?;
-        if window_result["status"] != "ok"
-            || !window_matches(&window_result["window"], &params["window"])
-        {
-            return Ok(stale_target("window identity changed before dispatch"));
-        }
+        rename_field(&mut legacy, "click_count", "clickCount");
+        rename_field(&mut legacy, "mouse_button", "mouseButton");
+        rename_field(&mut legacy, "from_x", "fromX");
+        rename_field(&mut legacy, "from_y", "fromY");
+        rename_field(&mut legacy, "to_x", "toX");
+        rename_field(&mut legacy, "to_y", "toY");
 
         if let Some(index) = params.get("element_index").and_then(Value::as_u64) {
-            let Some(state_id) = params.get("stateId").and_then(Value::as_str) else {
-                return Ok(stale_target("stateId is required with element_index"));
-            };
-            let Some(snapshot) = self.states.get(state_id) else {
-                return Ok(stale_target("element_index snapshot expired"));
-            };
-            if snapshot.window_id != window_id {
-                return Ok(stale_target("element_index belongs to another window"));
+            let snapshot = self.latest_elements.get(&window_id).ok_or_else(|| {
+                anyhow!("element_index requires a current accessibility snapshot")
+            })?;
+            if now_millis().saturating_sub(snapshot.captured_at) > ELEMENT_SNAPSHOT_TTL_MS {
+                return Err(anyhow!("element_index snapshot is stale"));
             }
-            let Some(platform_id) = snapshot.index_to_platform_id.get(&index) else {
-                return Ok(stale_target("element_index is not present in the snapshot"));
-            };
-            let Some(expected_fingerprint) = snapshot.fingerprints.get(&index) else {
-                return Ok(stale_target("element fingerprint is unavailable"));
-            };
-            let current_state = backend.invoke(
+            let platform_id = snapshot
+                .index_to_platform_id
+                .get(&index)
+                .ok_or_else(|| anyhow!("element_index is not present in the latest snapshot"))?;
+            let expected_fingerprint = snapshot
+                .fingerprints
+                .get(&index)
+                .ok_or_else(|| anyhow!("element fingerprint is unavailable"))?;
+            let current_state = checked_result(backend.invoke(
                 "get_window_state",
-                &json!({ "windowId": platform_window_id(window_id) }),
-            )?;
-            let Some(current_element) = find_platform_element(
+                &json!({ "windowId": platform_window_id(window_id), "includeScreenshot": false }),
+            )?)?;
+            let current_element = find_platform_element(
                 current_state["accessibility"]["tree"]
                     .as_array()
                     .map(Vec::as_slice)
                     .unwrap_or(&[]),
                 platform_id,
-            ) else {
-                return Ok(stale_target("element changed before dispatch"));
-            };
+            )
+            .ok_or_else(|| anyhow!("element changed before dispatch"))?;
             if element_fingerprint(current_element) != *expected_fingerprint {
-                return Ok(stale_target("element changed before dispatch"));
+                return Err(anyhow!("element changed before dispatch"));
             }
             legacy.remove("element_index");
             legacy.insert("elementId".to_owned(), Value::String(platform_id.clone()));
         }
 
         if has_coordinates(&legacy) {
-            let (origin_x, origin_y) = bounds_origin(&window_result["window"]);
-            offset_coordinate(&mut legacy, "x", origin_x);
-            offset_coordinate(&mut legacy, "y", origin_y);
-            offset_coordinate(&mut legacy, "fromX", origin_x);
-            offset_coordinate(&mut legacy, "fromY", origin_y);
-            offset_coordinate(&mut legacy, "toX", origin_x);
-            offset_coordinate(&mut legacy, "toY", origin_y);
+            for (x, y) in [("x", "y"), ("fromX", "fromY"), ("toX", "toY")] {
+                if let Some(transform) = &screenshot_transform {
+                    map_screenshot_coordinate(&mut legacy, x, y, transform);
+                } else {
+                    map_logical_coordinate(&mut legacy, x, y, &window_result["window"]);
+                }
+            }
         }
-        backend.invoke(method, &Value::Object(legacy))
+        #[cfg(target_os = "macos")]
+        {
+            if method != "activate_window" {
+                checked_result(backend.invoke(
+                    "activate_window",
+                    &json!({ "windowId": platform_window_id(window_id) }),
+                )?)?;
+            }
+            if method == "scroll" {
+                dispatch_macos_scroll(backend, &legacy)?;
+                return Ok(Value::Null);
+            }
+        }
+        checked_result(backend.invoke(method, &Value::Object(legacy))?)?;
+        Ok(Value::Null)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn dispatch_macos_scroll<B: DesktopBackend>(
+    backend: &B,
+    legacy: &Map<String, Value>,
+) -> Result<()> {
+    let scroll_x = legacy
+        .get("scrollX")
+        .and_then(Value::as_f64)
+        .unwrap_or_default();
+    let scroll_y = legacy
+        .get("scrollY")
+        .and_then(Value::as_f64)
+        .unwrap_or_default();
+    for (delta, positive, negative) in [(scroll_y, "down", "up"), (scroll_x, "right", "left")] {
+        if delta == 0.0 {
+            continue;
+        }
+        let mut params = legacy.clone();
+        params.remove("scrollX");
+        params.remove("scrollY");
+        params.insert(
+            "direction".to_owned(),
+            Value::String(if delta > 0.0 { positive } else { negative }.to_owned()),
+        );
+        params.insert("pages".to_owned(), json!((delta.abs() / 120.0).max(0.01)));
+        checked_result(backend.invoke("scroll", &Value::Object(params))?)?;
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct IndexedElement {
+    index: u64,
+    depth: usize,
+    role: String,
+    name: String,
+    value: Option<String>,
+    enabled: bool,
+    focused: bool,
+    bounds: Option<(i64, i64, i64, i64)>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn index_elements(
+    elements: &[Value],
+    depth: usize,
+    origin: (i64, i64),
+    dpi: f64,
+    next_index: &mut u64,
+    records: &mut Vec<IndexedElement>,
+    index_to_platform_id: &mut HashMap<u64, String>,
+    platform_id_to_index: &mut HashMap<String, u64>,
+    fingerprints: &mut HashMap<u64, ElementFingerprint>,
+) {
+    for element in elements {
+        let index = *next_index;
+        *next_index += 1;
+        let role = element
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        let sensitive = element.get("sensitive").and_then(Value::as_bool) == Some(true);
+        let name = if sensitive {
+            String::new()
+        } else {
+            element
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        records.push(IndexedElement {
+            index,
+            depth,
+            role,
+            name,
+            value: (!sensitive)
+                .then(|| element.get("value").and_then(Value::as_str))
+                .flatten()
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            enabled: element
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            focused: element
+                .get("focused")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            bounds: relative_bounds(element.get("bounds"), origin, dpi),
+        });
+        if let Some(id) = element.get("id").and_then(Value::as_str) {
+            index_to_platform_id.insert(index, id.to_owned());
+            platform_id_to_index.insert(id.to_owned(), index);
+            fingerprints.insert(index, element_fingerprint(element));
+        }
+        index_elements(
+            element
+                .get("children")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            depth + 1,
+            origin,
+            dpi,
+            next_index,
+            records,
+            index_to_platform_id,
+            platform_id_to_index,
+            fingerprints,
+        );
+    }
+}
+
+fn format_element_line(element: &IndexedElement) -> String {
+    let mut line = format!(
+        "{}{} {}",
+        "\t".repeat(element.depth + 1),
+        element.index,
+        element.role
+    );
+    if !element.name.is_empty() {
+        line.push(' ');
+        line.push_str(&element.name);
+    }
+    if let Some(value) = &element.value {
+        line.push_str(&format!(" value={value:?}"));
+    }
+    if let Some((x, y, width, height)) = element.bounds {
+        line.push_str(&format!(" bounds=({x},{y},{width},{height})"));
+    }
+    if !element.enabled {
+        line.push_str(" (disabled)");
+    }
+    if element.focused {
+        line.push_str(" (focused)");
+    }
+    line
+}
+
+fn focused_element_line(
+    element: &Value,
+    _origin: (i64, i64),
+    indices: &HashMap<String, u64>,
+) -> Option<String> {
+    let id = element.get("id")?.as_str()?;
+    let index = *indices.get(id)?;
+    let role = element
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let name = if element.get("sensitive").and_then(Value::as_bool) == Some(true) {
+        ""
+    } else {
+        element
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
+    Some(format!(
+        "{index} {role}{} (focused)",
+        if name.is_empty() {
+            String::new()
+        } else {
+            format!(" {name}")
+        }
+    ))
 }
 
 fn canonical_window(value: &Value) -> Option<Value> {
     let id = platform_numeric_window_id(value.get("id")?.as_str()?)?;
     let app = value
-        .get("appName")
+        .get("appId")
         .or_else(|| value.get("app"))?
         .as_str()?
         .trim();
@@ -388,22 +687,17 @@ fn canonical_window(value: &Value) -> Option<Value> {
         return None;
     }
     let mut window = json!({ "id": id, "app": app });
-    if let Some(title) = value
-        .get("title")
-        .and_then(Value::as_str)
-        .filter(|title| !title.is_empty())
-    {
-        window["title"] = Value::String(title.to_owned());
-    }
+    copy_optional_string(&mut window, "title", value, "title");
     Some(window)
 }
 
-fn canonical_window_id(params: &Value) -> Option<u64> {
+fn canonical_window_id(params: &Value) -> Result<u64> {
     params
-        .get("window")?
-        .get("id")?
-        .as_u64()
+        .get("window")
+        .and_then(|window| window.get("id"))
+        .and_then(Value::as_u64)
         .filter(|id| *id > 0)
+        .ok_or_else(|| anyhow!("canonical window is required"))
 }
 
 fn platform_numeric_window_id(value: &str) -> Option<u64> {
@@ -418,45 +712,6 @@ fn platform_window_id(id: u64) -> String {
 #[cfg(not(target_os = "macos"))]
 fn platform_window_id(id: u64) -> String {
     format!("win:{id}")
-}
-
-fn canonical_elements(
-    elements: &[Value],
-    origin: (i64, i64),
-    next_index: &mut u64,
-    index_to_platform_id: &mut HashMap<u64, String>,
-    platform_id_to_index: &mut HashMap<String, u64>,
-    fingerprints: &mut HashMap<u64, ElementFingerprint>,
-) -> Vec<Value> {
-    elements
-        .iter()
-        .map(|element| {
-            let index = *next_index;
-            *next_index += 1;
-            if let Some(id) = element.get("id").and_then(Value::as_str) {
-                index_to_platform_id.insert(index, id.to_owned());
-                platform_id_to_index.insert(id.to_owned(), index);
-                fingerprints.insert(index, element_fingerprint(element));
-            }
-            let mut output = canonical_element_fields(element, index, origin);
-            let children = canonical_elements(
-                element
-                    .get("children")
-                    .and_then(Value::as_array)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
-                origin,
-                next_index,
-                index_to_platform_id,
-                platform_id_to_index,
-                fingerprints,
-            );
-            if !children.is_empty() {
-                output["children"] = Value::Array(children);
-            }
-            output
-        })
-        .collect()
 }
 
 fn window_matches(platform: &Value, canonical: &Value) -> bool {
@@ -491,7 +746,45 @@ fn find_platform_element<'a>(elements: &'a [Value], platform_id: &str) -> Option
     None
 }
 
+fn find_platform_element_at_point(elements: &[Value], x: i64, y: i64) -> Option<&Value> {
+    for element in elements.iter().rev() {
+        let contains = element.get("bounds").is_some_and(|bounds| {
+            let left = bounds.get("x").and_then(Value::as_i64).unwrap_or(i64::MAX);
+            let top = bounds.get("y").and_then(Value::as_i64).unwrap_or(i64::MAX);
+            let width = bounds
+                .get("width")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            let height = bounds
+                .get("height")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            x >= left && y >= top && x < left + width && y < top + height
+        });
+        if !contains {
+            continue;
+        }
+        if let Some(found) = find_platform_element_at_point(
+            element
+                .get("children")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+            x,
+            y,
+        ) {
+            return Some(found);
+        }
+        return Some(element);
+    }
+    None
+}
+
 fn element_fingerprint(element: &Value) -> ElementFingerprint {
+    let sensitive = element
+        .get("sensitive")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     ElementFingerprint {
         platform_id: element
             .get("id")
@@ -503,7 +796,7 @@ fn element_fingerprint(element: &Value) -> ElementFingerprint {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
-        name: if element.get("sensitive").and_then(Value::as_bool) == Some(true) {
+        name: if sensitive {
             String::new()
         } else {
             element
@@ -512,59 +805,23 @@ fn element_fingerprint(element: &Value) -> ElementFingerprint {
                 .unwrap_or_default()
                 .to_owned()
         },
-        sensitive: element
-            .get("sensitive")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        sensitive,
     }
 }
 
-fn canonical_focused_element(
-    element: &Value,
+fn relative_bounds(
+    value: Option<&Value>,
     origin: (i64, i64),
-    indices: &HashMap<String, u64>,
-) -> Option<Value> {
-    let id = element.get("id")?.as_str()?;
-    let index = *indices.get(id)?;
-    Some(canonical_element_fields(element, index, origin))
-}
-
-fn canonical_element_fields(element: &Value, index: u64, origin: (i64, i64)) -> Value {
-    let mut output = json!({
-        "element_index": index,
-        "role": element.get("role").and_then(Value::as_str).unwrap_or("unknown"),
-    });
-    for key in [
-        "name",
-        "value",
-        "enabled",
-        "focused",
-        "sensitive",
-        "actions",
-    ] {
-        if let Some(value) = element.get(key).filter(|value| !value.is_null()) {
-            output[key] = value.clone();
-        }
-    }
-    if let Some(bounds) = relative_bounds(element.get("bounds"), origin) {
-        output["bounds"] = bounds;
-    }
-    if element.get("settable").and_then(Value::as_bool) == Some(true)
-        || element.get("role").and_then(Value::as_str) == Some("edit")
-    {
-        output["editable"] = Value::Bool(true);
-    }
-    output
-}
-
-fn relative_bounds(value: Option<&Value>, origin: (i64, i64)) -> Option<Value> {
+    dpi: f64,
+) -> Option<(i64, i64, i64, i64)> {
     let bounds = value?.as_object()?;
-    Some(json!({
-        "x": bounds.get("x")?.as_i64()? - origin.0,
-        "y": bounds.get("y")?.as_i64()? - origin.1,
-        "width": bounds.get("width")?.as_i64()?,
-        "height": bounds.get("height")?.as_i64()?,
-    }))
+    let scale = 96.0 / dpi.max(1.0);
+    Some((
+        ((bounds.get("x")?.as_i64()? - origin.0) as f64 * scale).round() as i64,
+        ((bounds.get("y")?.as_i64()? - origin.1) as f64 * scale).round() as i64,
+        (bounds.get("width")?.as_i64()? as f64 * scale).round() as i64,
+        (bounds.get("height")?.as_i64()? as f64 * scale).round() as i64,
+    ))
 }
 
 fn bounds_origin(window: &Value) -> (i64, i64) {
@@ -574,82 +831,94 @@ fn bounds_origin(window: &Value) -> (i64, i64) {
     )
 }
 
-fn screenshot_pixel_region(
-    params: &Value,
-    platform_window: &Value,
-    screenshot: Option<&Value>,
-) -> std::result::Result<Option<Value>, Value> {
-    let Some(region) = params.get("region") else {
-        return Ok(None);
-    };
-    let Some(region) = region.as_object() else {
-        return Err(json!({ "status": "failed", "message": "screenshot region is invalid" }));
-    };
-    let number = |key: &str| {
-        region
-            .get(key)
-            .and_then(Value::as_f64)
-            .filter(|value| value.is_finite())
-    };
-    let (Some(x), Some(y), Some(width), Some(height)) =
-        (number("x"), number("y"), number("width"), number("height"))
-    else {
-        return Err(json!({ "status": "failed", "message": "screenshot region is invalid" }));
-    };
-    let window_width = platform_window["bounds"]["width"]
-        .as_f64()
-        .unwrap_or_default();
-    let window_height = platform_window["bounds"]["height"]
-        .as_f64()
-        .unwrap_or_default();
-    if x < 0.0
-        || y < 0.0
-        || width <= 0.0
-        || height <= 0.0
-        || x + width > window_width
-        || y + height > window_height
-    {
-        return Err(
-            json!({ "status": "failed", "message": "screenshot region is outside window bounds" }),
-        );
-    }
-    let Some(screenshot) = screenshot else {
-        return Err(json!({ "status": "failed", "message": "screenshot pixels unavailable" }));
-    };
-    let pixel_width = screenshot["width"].as_f64().unwrap_or_default();
-    let pixel_height = screenshot["height"].as_f64().unwrap_or_default();
-    if window_width <= 0.0 || window_height <= 0.0 || pixel_width <= 0.0 || pixel_height <= 0.0 {
-        return Err(json!({ "status": "failed", "message": "screenshot dimensions are invalid" }));
-    }
-    let left = (x * pixel_width / window_width).floor().max(0.0);
-    let top = (y * pixel_height / window_height).floor().max(0.0);
-    let right = ((x + width) * pixel_width / window_width)
-        .ceil()
-        .min(pixel_width);
-    let bottom = ((y + height) * pixel_height / window_height)
-        .ceil()
-        .min(pixel_height);
-    Ok(Some(json!({
-        "x": left as u64,
-        "y": top as u64,
-        "width": (right - left).max(1.0) as u64,
-        "height": (bottom - top).max(1.0) as u64,
-    })))
-}
-
 fn has_coordinates(params: &Map<String, Value>) -> bool {
     ["x", "y", "fromX", "fromY", "toX", "toY"]
         .iter()
         .any(|key| params.get(*key).and_then(Value::as_f64).is_some())
 }
 
-fn offset_coordinate(params: &mut Map<String, Value>, key: &str, offset: i64) {
-    if let Some(value) = params.get(key).and_then(Value::as_i64) {
-        params.insert(key.to_owned(), json!(value + offset));
-        return;
+fn map_logical_coordinate(
+    params: &mut Map<String, Value>,
+    x_key: &str,
+    y_key: &str,
+    window: &Value,
+) {
+    let (origin_x, origin_y) = bounds_origin(window);
+    let scale = window.get("dpi").and_then(Value::as_f64).unwrap_or(96.0) / 96.0;
+    if let Some(value) = params.get(x_key).and_then(Value::as_f64) {
+        params.insert(
+            x_key.to_owned(),
+            json!(origin_x + (value * scale).round() as i64),
+        );
     }
-    if let Some(value) = params.get(key).and_then(Value::as_f64) {
-        params.insert(key.to_owned(), json!(value + offset as f64));
+    if let Some(value) = params.get(y_key).and_then(Value::as_f64) {
+        params.insert(
+            y_key.to_owned(),
+            json!(origin_y + (value * scale).round() as i64),
+        );
+    }
+}
+
+fn map_screenshot_coordinate(
+    params: &mut Map<String, Value>,
+    x_key: &str,
+    y_key: &str,
+    transform: &ScreenshotTransform,
+) {
+    if let Some(value) = params.get(x_key).and_then(Value::as_f64) {
+        params.insert(
+            x_key.to_owned(),
+            json!(
+                transform.capture_left
+                    + (value * transform.physical_width / transform.logical_width).round() as i64
+            ),
+        );
+    }
+    if let Some(value) = params.get(y_key).and_then(Value::as_f64) {
+        params.insert(
+            y_key.to_owned(),
+            json!(
+                transform.capture_top
+                    + (value * transform.physical_height / transform.logical_height).round() as i64
+            ),
+        );
+    }
+}
+
+fn screenshot_transform(value: &Value) -> Option<ScreenshotTransform> {
+    Some(ScreenshotTransform {
+        capture_left: value.get("captureLeft")?.as_i64()?,
+        capture_top: value.get("captureTop")?.as_i64()?,
+        physical_width: value.get("physicalWidth")?.as_f64()?.max(1.0),
+        physical_height: value.get("physicalHeight")?.as_f64()?.max(1.0),
+        logical_width: value.get("width")?.as_f64()?.max(1.0),
+        logical_height: value.get("height")?.as_f64()?.max(1.0),
+    })
+}
+
+fn window_geometry(window: &Value) -> Value {
+    json!({
+        "bounds": window.get("bounds").cloned().unwrap_or(Value::Null),
+        "dpi": window.get("dpi").cloned().unwrap_or(json!(96)),
+    })
+}
+
+fn rename_field(params: &mut Map<String, Value>, from: &str, to: &str) {
+    if let Some(value) = params.remove(from) {
+        params.insert(to.to_owned(), value);
+    }
+}
+
+fn checked_result(value: Value) -> Result<Value> {
+    match value.get("status").and_then(Value::as_str) {
+        None | Some("ok") => Ok(value),
+        Some(_) => Err(anyhow!(
+            "{}",
+            value
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("desktop host request failed")
+        )),
     }
 }
 
@@ -659,21 +928,33 @@ fn copy_nonempty_string(output: &mut Value, key: &str, value: &Value) {
     }
 }
 
-fn copy_field(output: &mut Value, target: &str, source: &Value, source_key: &str) {
-    if let Some(value) = source.get(source_key).filter(|value| !value.is_null()) {
-        output[target] = value.clone();
+fn copy_optional_string(output: &mut Value, target: &str, source: &Value, source_key: &str) {
+    if let Some(value) = source
+        .get(source_key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        output[target] = Value::String(value.to_owned());
     }
 }
 
-fn stale_target(message: &str) -> Value {
-    json!({ "status": "stale_target", "message": message })
+fn copy_optional_bool(output: &mut Value, target: &str, source: &Value, source_key: &str) {
+    if let Some(value) = source.get(source_key).and_then(Value::as_bool) {
+        output[target] = Value::Bool(value);
+    }
 }
 
-fn unique_id(kind: &str, window_id: u64) -> String {
+fn copy_optional_number(output: &mut Value, target: &str, source: &Value, source_key: &str) {
+    if let Some(value) = source.get(source_key).and_then(Value::as_number) {
+        output[target] = Value::Number(value.clone());
+    }
+}
+
+fn unique_screenshot_id(window_id: u64) -> String {
     format!(
-        "{kind}:{window_id}:{}:{}",
+        "screenshot:{window_id}:{}:{}",
         now_millis(),
-        NEXT_SNAPSHOT_ID.fetch_add(1, Ordering::Relaxed),
+        NEXT_SCREENSHOT_ID.fetch_add(1, Ordering::Relaxed),
     )
 }
 
