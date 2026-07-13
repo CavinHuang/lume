@@ -15,11 +15,12 @@ describe('DesktopActionBanner', () => {
           action: 'set_value',
           targetLabel: '输入框',
           targetPoint: { x: 280, y: 620 },
+          confirmationCategories: ['send_message', 'sensitive_data'],
+          recipient: '小树懒',
+          dataTypes: ['输入内容', '敏感数据'],
           risk: 'critical',
           expiresAt: '2026-07-08T12:00:00.000Z',
-          expectedWindowId: 'win:wechat',
-          expectedWindow: { id: 'win:wechat', title: '项目群' },
-          expectedRevision: 'rev-safe',
+          window: { id: 42, app: '微信', title: '项目群' },
           securityWarning: 'suspected_prompt_injection',
           summary: '微信：填写内容「输入框」',
         }}
@@ -30,9 +31,11 @@ describe('DesktopActionBanner', () => {
     expect(html).not.toContain('set_value')
     expect(html).toContain('目标点')
     expect(html).toContain('280,620')
-    expect(html).toContain('目标窗口')
+    expect(html).toContain('目标应用')
     expect(html).toContain('项目群')
-    expect(html).toContain('执行前复核窗口版本')
+    expect(html).toContain('发送消息')
+    expect(html).toContain('接收方 小树懒')
+    expect(html).toContain('数据 输入内容、敏感数据')
     expect(html).toContain('检测到疑似提示注入内容')
     expect(html).not.toContain('password=secret')
   })

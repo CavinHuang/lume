@@ -19,6 +19,17 @@ export function DesktopActionBanner({
   const setPending = useSetAtom(agentPendingInteractiveAtom)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const categoryLabels = request.confirmationCategories?.map((category) => ({
+    send_message: '发送消息',
+    submit_form: '提交表单',
+    delete: '删除',
+    upload: '上传',
+    permission: '权限变更',
+    account: '账户操作',
+    financial: '金融操作',
+    sensitive_data: '敏感数据传输',
+    medical: '医疗操作',
+  })[category]) ?? []
 
   const respond = async (decision: AgentDesktopActionResponseInput['decision']) => {
     setBusy(true)
@@ -59,24 +70,34 @@ export function DesktopActionBanner({
                 <span>页面中检测到疑似提示注入内容。请只在该操作符合你的原始意图时允许。</span>
               </div>
             ) : null}
-            {(request.expectedWindow || request.expectedWindowId || request.targetPoint || request.expectedRevision) ? (
+            {(request.window || request.targetPoint || categoryLabels.length || request.recipient || request.dataTypes?.length) ? (
               <div className="mt-2 flex flex-wrap gap-1.5">
-                {request.expectedWindow || request.expectedWindowId ? (
+                {request.window ? (
                   <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
                     <MonitorUp size={11} />
-                    目标窗口 {request.expectedWindow?.title || request.expectedWindowId}
+                    目标应用 {request.window.app} · {request.window.title || request.window.id}
+                  </span>
+                ) : null}
+                {categoryLabels.map((label) => (
+                  <span key={label} className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
+                    <ShieldCheck size={11} />
+                    {label}
+                  </span>
+                ))}
+                {request.recipient ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
+                    接收方 {request.recipient}
+                  </span>
+                ) : null}
+                {request.dataTypes?.length ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
+                    数据 {request.dataTypes.join('、')}
                   </span>
                 ) : null}
                 {request.targetPoint ? (
                   <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
                     <Crosshair size={11} />
                     目标点 {Math.round(request.targetPoint.x)},{Math.round(request.targetPoint.y)}
-                  </span>
-                ) : null}
-                {request.expectedRevision ? (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white/70 px-2 py-0.5 text-[11px] text-amber-800">
-                    <ShieldCheck size={11} />
-                    执行前复核窗口版本
                   </span>
                 ) : null}
               </div>
