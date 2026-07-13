@@ -32,9 +32,13 @@ pub struct CapturedBgra {
     pub pixels: Vec<u8>,
 }
 
+thread_local! {
+    static WINRT_APARTMENT: std::result::Result<RoApartment, windows::core::Error> =
+        unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.map(|_| RoApartment);
+}
+
 pub fn capture_window_bgra(hwnd: HWND, timeout: Duration) -> Result<CapturedBgra> {
-    unsafe { RoInitialize(RO_INIT_MULTITHREADED)? };
-    let _apartment = RoApartment;
+    ensure_winrt_apartment()?;
     if !GraphicsCaptureSession::IsSupported()? {
         return Err(anyhow!("Windows.Graphics.Capture is unavailable"));
     }
@@ -89,6 +93,15 @@ pub fn capture_window_bgra(hwnd: HWND, timeout: Duration) -> Result<CapturedBgra
     let _ = frame.Close();
     let _ = pool.Close();
     capture
+}
+
+fn ensure_winrt_apartment() -> Result<()> {
+    WINRT_APARTMENT.with(|apartment| {
+        apartment
+            .as_ref()
+            .map(|_| ())
+            .map_err(|error| anyhow!(error.to_string()))
+    })
 }
 
 struct RoApartment;

@@ -13,29 +13,21 @@ use crate::windows_cursor_motion::spring_close_enough_time_seconds;
 use crate::windows_overlay::{
     move_visual_cursor, pulse_visual_cursor, settle_visual_cursor, VISUAL_CURSOR_WINDOW_TITLE,
 };
-use crate::{
-    desktop_click_options, desktop_drag_points, desktop_scroll_options, DesktopBackend,
-    DesktopMouseButton, DesktopScrollDirection, DesktopScrollOptions,
-};
+use crate::{desktop_click_options, desktop_drag_points, DesktopBackend, DesktopMouseButton};
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
 use windows::{
     core::{Interface, BOOL, BSTR, PWSTR},
     Win32::{
-        Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM},
-        Graphics::{
-            Gdi::{
-                BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-                GetDIBits, ReleaseDC, ScreenToClient, SelectObject, BITMAPINFO, BITMAPINFOHEADER,
-                BI_RGB, DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
-            },
-            Imaging::{
-                CLSID_WICImagingFactory, GUID_ContainerFormatPng, GUID_WICPixelFormat24bppBGR,
-                IWICBitmapFrameEncode, IWICImagingFactory, WICBitmapEncoderNoCache,
-            },
+        Foundation::{
+            CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HWND, LPARAM, POINT, RECT,
         },
-        Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
+        Graphics::Imaging::{
+            CLSID_WICImagingFactory, GUID_ContainerFormatPng, GUID_WICPixelFormat24bppBGR,
+            IWICBitmapFrameEncode, IWICImagingFactory, WICBitmapEncoderNoCache,
+        },
+        Storage::Packaging::Appx::GetApplicationUserModelId,
         System::{
             Com::{
                 CoCreateInstance, CoInitializeEx, IStream, CLSCTX_INPROC_SERVER,
@@ -52,30 +44,38 @@ use windows::{
                 ExpandCollapseState_Expanded, ExpandCollapseState_LeafNode,
                 ExpandCollapseState_PartiallyExpanded, IUIAutomation, IUIAutomationElement,
                 IUIAutomationExpandCollapsePattern, IUIAutomationInvokePattern,
-                IUIAutomationScrollItemPattern, IUIAutomationScrollPattern,
-                IUIAutomationSelectionItemPattern, IUIAutomationTextPattern,
-                IUIAutomationTogglePattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
-                ScrollAmount, ScrollAmount_LargeDecrement, ScrollAmount_LargeIncrement,
-                ScrollAmount_NoAmount, UIA_ButtonControlTypeId, UIA_DocumentControlTypeId,
+                IUIAutomationScrollItemPattern, IUIAutomationSelectionItemPattern,
+                IUIAutomationTextPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
+                IUIAutomationValuePattern, UIA_ButtonControlTypeId, UIA_DocumentControlTypeId,
                 UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_GroupControlTypeId,
                 UIA_InvokePatternId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
                 UIA_MenuItemControlTypeId, UIA_PaneControlTypeId, UIA_ScrollItemPatternId,
-                UIA_ScrollPatternId, UIA_SelectionItemPatternId, UIA_TabItemControlTypeId,
-                UIA_TextControlTypeId, UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId,
+                UIA_SelectionItemPatternId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
+                UIA_TextPatternId, UIA_TogglePatternId, UIA_ValuePatternId,
                 UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
             },
+            HiDpi::GetDpiForWindow,
             Input::KeyboardAndMouse::{
-                VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME,
-                VK_LEFT, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_TAB, VK_UP,
+                SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
+                KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
+                MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
+                MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+                MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS,
+                VIRTUAL_KEY, VK_ADD, VK_BACK, VK_CONTROL, VK_DECIMAL, VK_DELETE, VK_DIVIDE,
+                VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT,
+                VK_LWIN, VK_MENU, VK_MULTIPLY, VK_NEXT, VK_NUMPAD0, VK_NUMPAD1, VK_NUMPAD2,
+                VK_NUMPAD3, VK_NUMPAD4, VK_NUMPAD5, VK_NUMPAD6, VK_NUMPAD7, VK_NUMPAD8, VK_NUMPAD9,
+                VK_OEM_1, VK_OEM_2, VK_OEM_3, VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_COMMA,
+                VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_PRIOR, VK_RCONTROL, VK_RETURN,
+                VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SEPARATOR, VK_SHIFT, VK_SPACE,
+                VK_SUBTRACT, VK_TAB, VK_UP,
             },
             WindowsAndMessaging::{
-                BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowRect,
-                GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsChild,
-                IsHungAppWindow, IsIconic, IsWindow, IsWindowVisible, PostMessageW, SendMessageW,
-                SetForegroundWindow, ShowWindow, WindowFromPoint, PW_RENDERFULLCONTENT, SW_RESTORE,
-                WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
-                WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN,
-                WM_RBUTTONUP,
+                BringWindowToTop, EnumWindows, GetForegroundWindow, GetSystemMetrics,
+                GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+                IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow,
+                SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+                SW_RESTORE,
             },
         },
     },
@@ -95,6 +95,7 @@ impl DesktopBackend for WindowsDesktopBackend {
             "list_apps" => list_apps(),
             "get_window" => get_window(params),
             "get_window_state" => get_window_state(params),
+            "preflight_action" => preflight_action(params),
             "current_context" => current_context(params),
             "launch_app" => launch_app(params),
             "activate_window" => with_window(params, |hwnd| activate(hwnd)),
@@ -104,8 +105,8 @@ impl DesktopBackend for WindowsDesktopBackend {
             "scroll" => scroll(params),
             "drag" => drag(params),
             "press_key" => press_key(params),
-            "type_text" => guarded_text_action(params, type_text),
-            "set_value" => guarded_text_action(params, set_value),
+            "type_text" => type_text(params),
+            "set_value" => set_value(params),
             "search_context" => Ok(json!({
                 "status": "unavailable",
                 "message": "desktop context search is provided by the Lume sidecar"
@@ -115,16 +116,6 @@ impl DesktopBackend for WindowsDesktopBackend {
             ),
         }
     }
-}
-
-fn guarded_text_action(params: &Value, action: fn(&Value) -> Result<Value>) -> Result<Value> {
-    if sensitive_text_target(params)? {
-        return Ok(json!({
-            "status": "blocked",
-            "message": "sensitive fields require a dedicated secure credential flow"
-        }));
-    }
-    action(params)
 }
 
 fn sensitive_text_target(params: &Value) -> Result<bool> {
@@ -163,7 +154,7 @@ fn list_apps() -> Result<Value> {
             running_names.insert(normalized_app_name(
                 window["appName"].as_str().unwrap_or_default(),
             ));
-            let app = apps.entry(app_id.clone()).or_insert_with(|| {
+            let app = apps.entry(app_id.to_ascii_lowercase()).or_insert_with(|| {
                 json!({
                     "id": app_id,
                     "name": window["appName"],
@@ -185,12 +176,18 @@ fn list_apps() -> Result<Value> {
         }
     }
     for discovered in discover_start_apps() {
+        let key = discovered.id.to_ascii_lowercase();
+        if let Some(app) = apps.get_mut(&key) {
+            app["name"] = Value::String(discovered.name.clone());
+            app["displayName"] = Value::String(discovered.name);
+            continue;
+        }
         if running_names.contains(&normalized_app_name(&discovered.name)) {
             continue;
         }
         let id = discovered.id;
         let name = discovered.name;
-        apps.entry(id.to_ascii_lowercase()).or_insert_with(|| {
+        apps.entry(key).or_insert_with(|| {
             json!({
                 "id": id,
                 "name": name,
@@ -340,9 +337,13 @@ fn get_window_state(params: &Value) -> Result<Value> {
         hwnd,
         &window,
         params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
-    );
-    let accessibility = accessibility_state(hwnd)
-        .unwrap_or_else(|error| fallback_accessibility_state(title, Some(error.to_string())));
+    )?;
+    let accessibility = if params.get("includeText").and_then(Value::as_bool) == Some(false) {
+        Value::Null
+    } else {
+        accessibility_state(hwnd)
+            .unwrap_or_else(|error| fallback_accessibility_state(title, Some(error.to_string())))
+    };
     let quality = context_quality(&accessibility, title);
     let mut state = json!({
         "status": "ok",
@@ -396,7 +397,7 @@ fn current_context(params: &Value) -> Result<Value> {
         hwnd,
         &window,
         params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
-    );
+    )?;
     let quality = context_quality(&accessibility, window["title"].as_str().unwrap_or_default());
     let selected_text = accessibility
         .get("selectedText")
@@ -519,7 +520,7 @@ fn select_context_text(
     }
 }
 
-fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Value> {
+fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Result<Vec<Value>> {
     let width = window["bounds"]["width"]
         .as_i64()
         .unwrap_or_default()
@@ -529,7 +530,7 @@ fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Valu
         .unwrap_or_default()
         .max(0) as i32;
     if width == 0 || height == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut screenshots = vec![screenshot_ref(
         hwnd,
@@ -542,7 +543,15 @@ fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Valu
         },
         include_pixels,
         0,
-    )];
+        (0, 0),
+    )?];
+    let target_left = window["bounds"]["x"].as_i64().unwrap_or_default() as i32;
+    let target_top = window["bounds"]["y"].as_i64().unwrap_or_default() as i32;
+    let target_dpi = window
+        .get("dpi")
+        .and_then(Value::as_u64)
+        .unwrap_or(96)
+        .max(1) as f64;
     let related = related_transient_windows(hwnd, 2);
     let related_count = related.len();
     screenshots.extend(
@@ -556,10 +565,15 @@ fn screenshot_refs(hwnd: HWND, window: &Value, include_pixels: bool) -> Vec<Valu
                     bounds,
                     include_pixels,
                     (related_count - index) as i64,
+                    (
+                        (f64::from(bounds.left - target_left) * 96.0 / target_dpi).round() as i32,
+                        (f64::from(bounds.top - target_top) * 96.0 / target_dpi).round() as i32,
+                    ),
                 )
-            }),
+            })
+            .collect::<Result<Vec<_>>>()?,
     );
-    screenshots
+    Ok(screenshots)
 }
 
 fn screenshot_ref(
@@ -568,37 +582,36 @@ fn screenshot_ref(
     bounds: RECT,
     include_pixels: bool,
     z_index: i64,
-) -> Value {
+    origin: (i32, i32),
+) -> Result<Value> {
     let width = (bounds.right - bounds.left).max(0);
     let height = (bounds.bottom - bounds.top).max(0);
+    let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
+    let (logical_width, logical_height) = logical_capture_size(width as u32, height as u32, dpi);
     let mut screenshot = json!({
         "id": id,
-        "width": width,
-        "height": height,
+        "width": logical_width,
+        "height": logical_height,
         "origin": {
-            "x": bounds.left,
-            "y": bounds.top,
+            "x": origin.0,
+            "y": origin.1,
         },
         "mimeType": "image/png",
         "zIndex": z_index,
     });
     if include_pixels {
-        match capture_window_png_data_url(hwnd, width, height) {
-            Ok(capture) => {
-                screenshot["dataUrl"] = Value::String(capture.data_url);
-                screenshot["captureMode"] = Value::String(capture.mode.to_owned());
-                screenshot["width"] = json!(capture.width);
-                screenshot["height"] = json!(capture.height);
-                if let Some(reason) = capture.fallback_reason {
-                    screenshot["captureFallbackReason"] = Value::String(reason);
-                }
-            }
-            Err(error) => {
-                screenshot["error"] = Value::String(error.to_string());
-            }
-        }
+        let capture = capture_window_png_data_url(hwnd, width, height)?;
+        screenshot["dataUrl"] = Value::String(capture.data_url);
+        screenshot["captureMode"] = Value::String(capture.mode.to_owned());
+        screenshot["width"] = json!(capture.width);
+        screenshot["height"] = json!(capture.height);
+        screenshot["physicalWidth"] = json!(capture.physical_width);
+        screenshot["physicalHeight"] = json!(capture.physical_height);
+        screenshot["captureLeft"] = json!(bounds.left);
+        screenshot["captureTop"] = json!(bounds.top);
+        screenshot["dpi"] = json!(dpi);
     }
-    screenshot
+    Ok(screenshot)
 }
 
 fn screenshot_id(window: &Value) -> String {
@@ -692,151 +705,114 @@ fn rectangles_intersect(left: &RECT, right: &RECT) -> bool {
 struct WindowCapture {
     data_url: String,
     mode: &'static str,
-    fallback_reason: Option<String>,
     width: u32,
     height: u32,
+    physical_width: u32,
+    physical_height: u32,
 }
 
-fn capture_window_png_data_url(hwnd: HWND, width: i32, height: i32) -> Result<WindowCapture> {
-    let graphics_capture =
-        capture_window_bgra(hwnd, Duration::from_millis(1500)).and_then(|capture| {
-            encode_bgra_png_data_url(&capture.pixels, capture.width, capture.height).map(
-                |data_url| WindowCapture {
-                    data_url,
-                    mode: "windows_graphics_capture",
-                    fallback_reason: None,
-                    width: capture.width,
-                    height: capture.height,
-                },
-            )
-        });
-    let graphics_capture_error = match graphics_capture {
-        Ok(capture) => return Ok(capture),
-        Err(error) => error,
-    };
-    let mut rect = RECT::default();
+fn preflight_action(params: &Value) -> Result<Value> {
+    let hwnd = target_window(params).ok_or_else(|| anyhow!("target window is unavailable"))?;
+    let x = int_param(params, "x")?;
+    let y = int_param(params, "y")?;
     unsafe {
-        GetWindowRect(hwnd, &mut rect)?;
-    }
-    let screen_dc = unsafe { GetDC(None) };
-    if screen_dc.is_invalid() {
-        return Err(anyhow!("unable to acquire screen device context"));
-    }
-    let memory_dc = unsafe { CreateCompatibleDC(Some(screen_dc)) };
-    if memory_dc.is_invalid() {
-        unsafe {
-            ReleaseDC(None, screen_dc);
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let automation: IUIAutomation =
+            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
+        let element = automation.ElementFromPoint(POINT { x, y })?;
+        let mut target_process_id = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut target_process_id));
+        let element_process_id = element.CurrentProcessId().unwrap_or_default() as u32;
+        if target_process_id != 0
+            && element_process_id != 0
+            && target_process_id != element_process_id
+        {
+            return Err(anyhow!("action target is no longer available"));
         }
-        return Err(anyhow!("unable to create capture device context"));
-    }
-    let bitmap = unsafe { CreateCompatibleBitmap(screen_dc, width, height) };
-    if bitmap.is_invalid() {
-        unsafe {
-            let _ = DeleteDC(memory_dc);
-            ReleaseDC(None, screen_dc);
-        }
-        return Err(anyhow!("unable to create capture bitmap"));
-    }
-
-    let old_object = unsafe { SelectObject(memory_dc, HGDIOBJ::from(bitmap)) };
-    let print_capture = if unsafe { IsHungAppWindow(hwnd).as_bool() } {
-        Err(anyhow!("target window is not responding"))
-    } else {
-        let print_result =
-            unsafe { PrintWindow(hwnd, memory_dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)) };
-        if print_result.as_bool() {
-            bitmap_to_png_data_url(memory_dc, bitmap, width, height, true)
+        let sensitive = element
+            .CurrentIsPassword()
+            .map(|value| value.as_bool())
+            .unwrap_or(false);
+        let name = if sensitive {
+            String::new()
         } else {
-            Err(anyhow!("PrintWindow returned no pixels"))
-        }
-    };
-    let result = match print_capture {
-        Ok(data_url) => Ok(WindowCapture {
-            data_url,
-            mode: "print_window",
-            fallback_reason: Some(graphics_capture_error.to_string()),
-            width: width as u32,
-            height: height as u32,
-        }),
-        Err(print_error) => unsafe {
-            BitBlt(
-                memory_dc,
-                0,
-                0,
-                width,
-                height,
-                Some(screen_dc),
-                rect.left,
-                rect.top,
-                SRCCOPY,
-            )
-            .map_err(|error| anyhow!("window capture failed: {error}"))
-            .and_then(|_| bitmap_to_png_data_url(memory_dc, bitmap, width, height, false))
-            .map(|data_url| WindowCapture {
-                data_url,
-                mode: "screen_bitblt",
-                fallback_reason: Some(format!(
-                    "Windows.Graphics.Capture failed: {graphics_capture_error}; PrintWindow failed: {print_error}"
-                )),
-                width: width as u32,
-                height: height as u32,
-            })
-        },
-    };
-    unsafe {
-        if !old_object.is_invalid() {
-            SelectObject(memory_dc, old_object);
-        }
-        let _ = DeleteObject(HGDIOBJ::from(bitmap));
-        let _ = DeleteDC(memory_dc);
-        ReleaseDC(None, screen_dc);
+            element
+                .CurrentName()
+                .map(|value| value.to_string())
+                .unwrap_or_default()
+        };
+        let role = element
+            .CurrentControlType()
+            .map(control_type_name)
+            .unwrap_or("unknown");
+        Ok(json!({
+            "status": "ok",
+            "name": name,
+            "role": role,
+            "sensitive": sensitive,
+        }))
     }
-    result
 }
 
-fn bitmap_to_png_data_url(
-    memory_dc: windows::Win32::Graphics::Gdi::HDC,
-    bitmap: windows::Win32::Graphics::Gdi::HBITMAP,
-    width: i32,
-    height: i32,
-    reject_empty: bool,
-) -> Result<String> {
-    let pixel_bytes = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or_else(|| anyhow!("window capture dimensions are too large"))?;
-    let mut pixels = vec![0_u8; pixel_bytes];
-    let mut info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: width,
-            biHeight: -height,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            biSizeImage: pixel_bytes as u32,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let copied = unsafe {
-        GetDIBits(
-            memory_dc,
-            bitmap,
-            0,
-            height as u32,
-            Some(pixels.as_mut_ptr().cast()),
-            &mut info,
-            DIB_RGB_COLORS,
-        )
-    };
-    if copied == 0 {
-        return Err(anyhow!("unable to read captured bitmap"));
+fn capture_window_png_data_url(hwnd: HWND, _width: i32, _height: i32) -> Result<WindowCapture> {
+    if unsafe { IsIconic(hwnd).as_bool() } {
+        return Err(anyhow!(
+            "target window is minimized; call activate_window, get_window, then get_window_state"
+        ));
     }
-    if reject_empty && !pixels_have_visible_content(&pixels) {
-        return Err(anyhow!("PrintWindow returned empty pixels"));
+    let capture = capture_window_bgra(hwnd, Duration::from_millis(1500))?;
+    let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
+    let (width, height) = logical_capture_size(capture.width, capture.height, dpi);
+    let pixels = scale_bgra_nearest(
+        &capture.pixels,
+        capture.width,
+        capture.height,
+        width,
+        height,
+    )?;
+    Ok(WindowCapture {
+        data_url: encode_bgra_png_data_url(&pixels, width, height)?,
+        mode: "windows_graphics_capture",
+        width,
+        height,
+        physical_width: capture.width,
+        physical_height: capture.height,
+    })
+}
+
+fn logical_capture_size(width: u32, height: u32, dpi: u32) -> (u32, u32) {
+    let dpi = dpi.max(1) as u64;
+    (
+        ((u64::from(width) * 96 + dpi / 2) / dpi).max(1) as u32,
+        ((u64::from(height) * 96 + dpi / 2) / dpi).max(1) as u32,
+    )
+}
+
+fn scale_bgra_nearest(
+    pixels: &[u8],
+    source_width: u32,
+    source_height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Result<Vec<u8>> {
+    let expected = source_width as usize * source_height as usize * 4;
+    if pixels.len() != expected || source_width == 0 || source_height == 0 {
+        return Err(anyhow!("window capture returned an invalid pixel buffer"));
     }
-    encode_bgra_png_data_url(&pixels, width as u32, height as u32)
+    if source_width == target_width && source_height == target_height {
+        return Ok(pixels.to_vec());
+    }
+    let mut output = vec![0_u8; target_width as usize * target_height as usize * 4];
+    for y in 0..target_height {
+        let source_y = u64::from(y) * u64::from(source_height) / u64::from(target_height);
+        for x in 0..target_width {
+            let source_x = u64::from(x) * u64::from(source_width) / u64::from(target_width);
+            let source = ((source_y * u64::from(source_width) + source_x) * 4) as usize;
+            let target = ((u64::from(y) * u64::from(target_width) + u64::from(x)) * 4) as usize;
+            output[target..target + 4].copy_from_slice(&pixels[source..source + 4]);
+        }
+    }
+    Ok(output)
 }
 
 fn encode_bgra_png_data_url(pixels: &[u8], width: u32, height: u32) -> Result<String> {
@@ -890,12 +866,6 @@ fn encode_bgra_png_data_url(pixels: &[u8], width: u32, height: u32) -> Result<St
     }
     png.truncate(written);
     Ok(format!("data:image/png;base64,{}", BASE64.encode(png)))
-}
-
-fn pixels_have_visible_content(pixels: &[u8]) -> bool {
-    pixels
-        .chunks_exact(4)
-        .any(|pixel| pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0)
 }
 
 fn accessibility_state(hwnd: HWND) -> Result<Value> {
@@ -984,6 +954,11 @@ unsafe fn collect_accessibility_children(
         let sensitive = unsafe { element.CurrentIsPassword() }
             .map(|value| value.as_bool())
             .unwrap_or(false);
+        let value = if sensitive {
+            None
+        } else {
+            read_element_value(&element)
+        };
         let actions = supported_secondary_actions(&element);
         if !name.trim().is_empty()
             && !sensitive
@@ -1030,11 +1005,24 @@ unsafe fn collect_accessibility_children(
         if !actions.is_empty() {
             node["actions"] = json!(actions);
         }
+        if let Some(value) = value {
+            node["value"] = Value::String(value);
+        }
         result.push(node);
         index += 1;
         child = unsafe { walker.GetNextSiblingElement(&element) }.ok();
     }
     result
+}
+
+fn read_element_value(element: &IUIAutomationElement) -> Option<String> {
+    unsafe {
+        let pattern = element
+            .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            .ok()?;
+        let value = pattern.CurrentValue().ok()?.to_string();
+        Some(value)
+    }
 }
 
 fn read_selected_text(element: &IUIAutomationElement) -> Option<String> {
@@ -1141,7 +1129,14 @@ fn launch_app(params: &Value) -> Result<Value> {
     {
         Command::new("explorer.exe").arg(command).spawn()?;
     } else {
-        Command::new(command).spawn()?;
+        match Command::new(command).spawn() {
+            Ok(_) => {}
+            Err(_) => {
+                Command::new("explorer.exe")
+                    .arg(format!("shell:AppsFolder\\{command}"))
+                    .spawn()?;
+            }
+        }
     }
     Ok(json!({ "status": "ok", "message": format!("launched {}", Path::new(command).display()) }))
 }
@@ -1170,16 +1165,19 @@ fn activate(hwnd: HWND) -> Result<()> {
         }
 
         let _ = BringWindowToTop(hwnd);
-        let activated = SetForegroundWindow(hwnd).as_bool() || GetForegroundWindow() == hwnd;
+        let _ = SetForegroundWindow(hwnd);
 
         for thread_id in attached_threads.iter().rev() {
             let _ = AttachThreadInput(current_thread, *thread_id, false);
         }
-        if !activated {
-            return Err(anyhow!("unable to activate target window"));
-        }
     }
-    Ok(())
+    for _ in 0..10 {
+        if unsafe { GetForegroundWindow() } == hwnd {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Err(anyhow!("unable to activate target window"))
 }
 
 fn activation_thread_ids(current: u32, foreground: u32, target: u32) -> Vec<u32> {
@@ -1192,30 +1190,166 @@ fn activation_thread_ids(current: u32, foreground: u32, target: u32) -> Vec<u32>
     thread_ids
 }
 
-fn move_pointer(params: &Value) -> Result<Value> {
-    let Some(target) = target_window(params) else {
-        return Ok(stale_target());
-    };
-    let (x, y) = action_point(params)?;
-    animate_visual_pointer(x, y, Some(target));
-    post_targeted_pointer_move(target, (x, y))?;
-    Ok(json!({
-        "status": "ok",
-        "inputMode": preferred_pointer_move_injection()
-    }))
+fn action_window(params: &Value) -> Result<HWND> {
+    let hwnd = target_window(params).ok_or_else(|| anyhow!("target window is unavailable"))?;
+    activate(hwnd)?;
+    Ok(hwnd)
 }
 
-fn post_targeted_pointer_move(hwnd: HWND, point: (i32, i32)) -> Result<()> {
-    let point = screen_to_client_point(hwnd, point)?;
-    unsafe {
-        PostMessageW(
-            Some(hwnd),
-            WM_MOUSEMOVE,
-            WPARAM(0),
-            windows_point_lparam(point.x, point.y),
-        )?;
+fn send_inputs(inputs: &[INPUT], emergency_release: Option<INPUT>) -> Result<()> {
+    if inputs.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) } as usize;
+    if sent == inputs.len() {
+        return Ok(());
+    }
+    if let Some(release) = emergency_release {
+        unsafe {
+            let _ = SendInput(&[release], size_of::<INPUT>() as i32);
+        }
+    }
+    Err(anyhow!(
+        "SendInput dispatched {sent} of {} events: {}",
+        inputs.len(),
+        std::io::Error::last_os_error()
+    ))
+}
+
+fn send_inputs_with_releases(inputs: &[INPUT], releases: &[INPUT]) -> Result<()> {
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) } as usize;
+    if sent == inputs.len() {
+        return Ok(());
+    }
+    if !releases.is_empty() {
+        unsafe {
+            let _ = SendInput(releases, size_of::<INPUT>() as i32);
+        }
+    }
+    Err(anyhow!(
+        "SendInput dispatched {sent} of {} keyboard events: {}",
+        inputs.len(),
+        std::io::Error::last_os_error()
+    ))
+}
+
+fn mouse_input(dx: i32, dy: i32, mouse_data: u32, flags: MOUSE_EVENT_FLAGS) -> INPUT {
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: mouse_data,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+fn mouse_move_input(x: i32, y: i32) -> Result<INPUT> {
+    let bounds = unsafe {
+        (
+            GetSystemMetrics(SM_XVIRTUALSCREEN),
+            GetSystemMetrics(SM_YVIRTUALSCREEN),
+            GetSystemMetrics(SM_CXVIRTUALSCREEN),
+            GetSystemMetrics(SM_CYVIRTUALSCREEN),
+        )
+    };
+    let (dx, dy) = virtual_desktop_absolute((x, y), bounds)?;
+    Ok(mouse_input(
+        dx,
+        dy,
+        0,
+        MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+    ))
+}
+
+fn virtual_desktop_absolute(point: (i32, i32), bounds: (i32, i32, i32, i32)) -> Result<(i32, i32)> {
+    let (left, top, width, height) = bounds;
+    if width <= 1 || height <= 1 {
+        return Err(anyhow!("virtual desktop has invalid dimensions"));
+    }
+    let normalize = |value: i32, origin: i32, extent: i32| {
+        ((i64::from(value - origin) * 65_535) / i64::from(extent - 1)).clamp(0, 65_535) as i32
+    };
+    Ok((
+        normalize(point.0, left, width),
+        normalize(point.1, top, height),
+    ))
+}
+
+fn mouse_button_flags(button: DesktopMouseButton) -> (MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS) {
+    match button {
+        DesktopMouseButton::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+        DesktopMouseButton::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+        DesktopMouseButton::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+    }
+}
+
+fn key_input(key: VIRTUAL_KEY, key_up: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key,
+                wScan: 0,
+                dwFlags: if key_up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    Default::default()
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+fn unicode_input(unit: u16, key_up: bool) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: unit,
+                dwFlags: KEYEVENTF_UNICODE
+                    | if key_up {
+                        KEYEVENTF_KEYUP
+                    } else {
+                        Default::default()
+                    },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+fn keyboard_input_sequence(keys: &[VIRTUAL_KEY]) -> Vec<INPUT> {
+    keys.iter()
+        .map(|key| key_input(*key, false))
+        .chain(keys.iter().rev().map(|key| key_input(*key, true)))
+        .collect()
+}
+
+fn unicode_input_sequence(text: &str) -> Vec<INPUT> {
+    text.encode_utf16()
+        .flat_map(|unit| [unicode_input(unit, false), unicode_input(unit, true)])
+        .collect()
+}
+
+fn move_pointer(params: &Value) -> Result<Value> {
+    let target = action_window(params)?;
+    let (x, y) = action_point(params)?;
+    animate_visual_pointer(x, y, Some(target));
+    send_inputs(&[mouse_move_input(x, y)?], None)?;
+    Ok(json!({ "status": "ok", "inputMode": "send_input" }))
 }
 
 fn click(params: &Value) -> Result<Value> {
@@ -1223,9 +1357,7 @@ fn click(params: &Value) -> Result<Value> {
         Ok(options) => options,
         Err(message) => return Ok(json!({ "status": "failed", "message": message })),
     };
-    let Some(target) = target_window(params) else {
-        return Ok(stale_target());
-    };
+    let target = action_window(params)?;
     let semantic = preferred_pointer_injection(params, options.button) == "uia";
     let point = action_point(params)?;
     animate_visual_pointer(point.0, point.1, Some(target));
@@ -1235,36 +1367,26 @@ fn click(params: &Value) -> Result<Value> {
             return Ok(json!({ "status": "ok", "inputMode": input_mode }));
         }
     }
-    post_targeted_click(target, point, options)?;
+    send_click(point, options)?;
     pulse_visual_cursor(point.0, point.1, Some(target));
-    Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
+    Ok(json!({ "status": "ok", "inputMode": "send_input" }))
 }
 
-fn post_targeted_click(
-    hwnd: HWND,
-    point: (i32, i32),
-    options: crate::DesktopClickOptions,
-) -> Result<()> {
-    let point = screen_to_client_point(hwnd, point)?;
-    let lparam = windows_point_lparam(point.x, point.y);
-    let (down, up, down_state) = windows_button_message_spec(options.button);
+fn send_click(point: (i32, i32), options: crate::DesktopClickOptions) -> Result<()> {
+    let (down, up) = mouse_button_flags(options.button);
+    let mut inputs = vec![mouse_move_input(point.0, point.1)?];
     for index in 0..options.count {
-        unsafe {
-            PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), lparam)?;
-            PostMessageW(Some(hwnd), down, WPARAM(down_state), lparam)?;
-        }
-        thread::sleep(Duration::from_millis(35));
-        unsafe {
-            PostMessageW(Some(hwnd), up, WPARAM(0), lparam)?;
-        }
+        inputs.push(mouse_input(0, 0, 0, down));
+        inputs.push(mouse_input(0, 0, 0, up));
         if index + 1 < options.count {
-            thread::sleep(Duration::from_millis(50));
+            inputs.push(mouse_move_input(point.0, point.1)?);
         }
     }
-    Ok(())
+    send_inputs(&inputs, Some(mouse_input(0, 0, 0, up)))
 }
 
 fn perform_secondary_action(params: &Value) -> Result<Value> {
+    let _target = action_window(params)?;
     let Some(element_id) = params.get("elementId").and_then(Value::as_str) else {
         return Ok(failed_action("elementId is required"));
     };
@@ -1298,389 +1420,94 @@ fn perform_secondary_action(params: &Value) -> Result<Value> {
 }
 
 fn scroll(params: &Value) -> Result<Value> {
-    let options = match desktop_scroll_options(params) {
-        Ok(options) => options,
-        Err(message) => return Ok(failed_action(message)),
-    };
-    let Some(hwnd) = target_window(params) else {
-        return Ok(stale_target());
-    };
-    if params.get("elementId").and_then(Value::as_str).is_some() {
-        let Some(element) = resolve_element(params)? else {
-            return Ok(json!({
-                "status": "stale_target",
-                "message": "target element is unavailable",
-            }));
-        };
-        let bounds = unsafe { element.CurrentBoundingRectangle().ok() };
-        if try_scroll_element(&element, options)? {
-            if let Some(bounds) = bounds {
-                settle_visual_cursor(
-                    (bounds.left + bounds.right) / 2,
-                    (bounds.top + bounds.bottom) / 2,
-                    Some(hwnd),
-                );
-            }
-            return Ok(json!({ "status": "ok", "inputMode": "uia_scroll" }));
-        }
-        let Some(bounds) = bounds else {
-            return Ok(failed_action("target element has no scrollable bounds"));
-        };
-        let point = (
-            (bounds.left + bounds.right) / 2,
-            (bounds.top + bounds.bottom) / 2,
-        );
-        settle_visual_cursor(point.0, point.1, Some(hwnd));
-        post_targeted_scroll(hwnd, point, options)?;
-        return Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }));
-    }
+    let hwnd = action_window(params)?;
     let point = action_point(params)?;
     settle_visual_cursor(point.0, point.1, Some(hwnd));
-    post_targeted_scroll(hwnd, point, options)?;
-    Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
-}
-
-fn try_scroll_element(
-    element: &IUIAutomationElement,
-    options: DesktopScrollOptions,
-) -> Result<bool> {
-    let pattern =
-        unsafe { element.GetCurrentPatternAs::<IUIAutomationScrollPattern>(UIA_ScrollPatternId) };
-    let Ok(pattern) = pattern else {
-        return Ok(false);
-    };
-    let (horizontal, vertical) = windows_scroll_amounts(options.direction);
-    let repeat_count = windows_scroll_repeat_count(options.pages);
-    for index in 0..repeat_count {
-        unsafe { pattern.Scroll(horizontal, vertical)? };
-        if index + 1 < repeat_count {
-            thread::sleep(Duration::from_millis(40));
-        }
+    let scroll_x = number_param(params, "scrollX")?.round() as i32;
+    let scroll_y = number_param(params, "scrollY")?.round() as i32;
+    let mut inputs = vec![mouse_move_input(point.0, point.1)?];
+    if scroll_y != 0 {
+        inputs.push(mouse_input(0, 0, (-scroll_y) as u32, MOUSEEVENTF_WHEEL));
     }
-    Ok(true)
-}
-
-fn post_targeted_scroll(
-    hwnd: HWND,
-    point: (i32, i32),
-    options: DesktopScrollOptions,
-) -> Result<()> {
-    let (message, delta) = windows_scroll_message_and_delta(options.direction, options.pages);
-    unsafe {
-        PostMessageW(
-            Some(hwnd),
-            message,
-            windows_wheel_wparam(delta),
-            windows_point_lparam(point.0, point.1),
-        )?;
+    if scroll_x != 0 {
+        inputs.push(mouse_input(0, 0, scroll_x as u32, MOUSEEVENTF_HWHEEL));
     }
-    Ok(())
-}
-
-fn windows_scroll_amounts(direction: DesktopScrollDirection) -> (ScrollAmount, ScrollAmount) {
-    match direction {
-        DesktopScrollDirection::Up => (ScrollAmount_NoAmount, ScrollAmount_LargeDecrement),
-        DesktopScrollDirection::Down => (ScrollAmount_NoAmount, ScrollAmount_LargeIncrement),
-        DesktopScrollDirection::Left => (ScrollAmount_LargeDecrement, ScrollAmount_NoAmount),
-        DesktopScrollDirection::Right => (ScrollAmount_LargeIncrement, ScrollAmount_NoAmount),
-    }
-}
-
-fn windows_scroll_repeat_count(pages: f64) -> u32 {
-    pages.ceil().clamp(1.0, u32::MAX as f64) as u32
-}
-
-fn windows_scroll_message_and_delta(direction: DesktopScrollDirection, pages: f64) -> (u32, i32) {
-    let delta = (120.0 * pages).round().clamp(1.0, i32::MAX as f64) as i32;
-    match direction {
-        DesktopScrollDirection::Up => (WM_MOUSEWHEEL, delta),
-        DesktopScrollDirection::Down => (WM_MOUSEWHEEL, -delta),
-        DesktopScrollDirection::Left => (WM_MOUSEHWHEEL, delta),
-        DesktopScrollDirection::Right => (WM_MOUSEHWHEEL, -delta),
-    }
-}
-
-fn windows_wheel_wparam(delta: i32) -> WPARAM {
-    WPARAM(usize::from(delta as i16 as u16) << 16)
-}
-
-fn windows_point_lparam(x: i32, y: i32) -> LPARAM {
-    let packed = u32::from(x as i16 as u16) | (u32::from(y as i16 as u16) << 16);
-    LPARAM(packed as isize)
+    send_inputs(&inputs, None)?;
+    Ok(json!({ "status": "ok", "inputMode": "send_input" }))
 }
 
 fn drag(params: &Value) -> Result<Value> {
-    let Some(hwnd) = target_window(params) else {
-        return Ok(stale_target());
-    };
+    let hwnd = action_window(params)?;
     let from_x = int_param(params, "fromX")?;
     let from_y = int_param(params, "fromY")?;
     let to_x = int_param(params, "toX")?;
     let to_y = int_param(params, "toY")?;
-    let input_window = targeted_child_at_point(hwnd, (from_x, from_y)).unwrap_or(hwnd);
-    post_targeted_drag(input_window, (from_x, from_y), (to_x, to_y))?;
+    send_drag((from_x, from_y), (to_x, to_y))?;
     pulse_visual_cursor(to_x, to_y, Some(hwnd));
-    Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
+    Ok(json!({ "status": "ok", "inputMode": "send_input" }))
 }
 
-fn targeted_child_at_point(root: HWND, point: (i32, i32)) -> Option<HWND> {
-    let child = unsafe {
-        WindowFromPoint(POINT {
-            x: point.0,
-            y: point.1,
-        })
-    };
-    if child.0.is_null() || child == root {
-        return None;
-    }
-    unsafe { IsChild(root, child).as_bool().then_some(child) }
-}
-
-fn post_targeted_drag(hwnd: HWND, from: (i32, i32), to: (i32, i32)) -> Result<()> {
-    let start = screen_to_client_point(hwnd, from)?;
+fn send_drag(from: (i32, i32), to: (i32, i32)) -> Result<()> {
     let screen_points = desktop_drag_points(
         (i64::from(from.0), i64::from(from.1)),
         (i64::from(to.0), i64::from(to.1)),
         12,
     );
-    let client_points = screen_points
-        .iter()
-        .map(|point| screen_to_client_point(hwnd, (point.0 as i32, point.1 as i32)))
-        .collect::<Result<Vec<_>>>()?;
-    move_visual_cursor(from.0, from.1, Some(hwnd));
-    settle_visual_cursor(from.0, from.1, Some(hwnd));
-    unsafe {
-        PostMessageW(
-            Some(hwnd),
-            WM_MOUSEMOVE,
-            WPARAM(0),
-            windows_point_lparam(start.x, start.y),
-        )?;
-        PostMessageW(
-            Some(hwnd),
-            WM_LBUTTONDOWN,
-            WPARAM(1),
-            windows_point_lparam(start.x, start.y),
-        )?;
+    let mut inputs = Vec::with_capacity(screen_points.len() + 3);
+    inputs.push(mouse_move_input(from.0, from.1)?);
+    inputs.push(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTDOWN));
+    for point in screen_points {
+        inputs.push(mouse_move_input(point.0 as i32, point.1 as i32)?);
     }
-    for (point, client_point) in screen_points.iter().zip(&client_points) {
-        let screen_point = (point.0 as i32, point.1 as i32);
-        unsafe {
-            PostMessageW(
-                Some(hwnd),
-                WM_MOUSEMOVE,
-                WPARAM(1),
-                windows_point_lparam(client_point.x, client_point.y),
-            )?;
-        }
-        move_visual_cursor(screen_point.0, screen_point.1, Some(hwnd));
-        thread::sleep(Duration::from_millis(20));
-    }
-    let end = client_points.last().expect("drag path is non-empty");
-    unsafe {
-        PostMessageW(
-            Some(hwnd),
-            WM_LBUTTONUP,
-            WPARAM(0),
-            windows_point_lparam(end.x, end.y),
-        )?;
-    }
-    settle_visual_cursor(to.0, to.1, Some(hwnd));
-    Ok(())
-}
-
-fn screen_to_client_point(hwnd: HWND, point: (i32, i32)) -> Result<POINT> {
-    let mut point = POINT {
-        x: point.0,
-        y: point.1,
-    };
-    if !unsafe { ScreenToClient(hwnd, &mut point) }.as_bool() {
-        return Err(anyhow!("unable to map drag point into the target window"));
-    }
-    Ok(point)
+    inputs.push(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTUP));
+    send_inputs(&inputs, Some(mouse_input(0, 0, 0, MOUSEEVENTF_LEFTUP)))
 }
 
 fn press_key(params: &Value) -> Result<Value> {
-    let Some(hwnd) = target_window(params) else {
-        return Ok(stale_target());
-    };
-    let keys = params
-        .get("keys")
-        .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-        .or_else(|| {
-            params
-                .get("key")
-                .and_then(Value::as_str)
-                .map(|key| key.split('+').collect())
-        })
-        .unwrap_or_default();
-    if keys.is_empty() {
-        return Ok(json!({ "status": "failed", "message": "key or keys is required" }));
-    }
-    let virtual_keys = keys
+    let _hwnd = action_window(params)?;
+    let key = params
+        .get("key")
+        .and_then(Value::as_str)
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| anyhow!("key is required"))?;
+    let virtual_keys = parse_key_chord(key)?;
+    let inputs = keyboard_input_sequence(&virtual_keys);
+    let releases = virtual_keys
         .iter()
-        .map(|key| virtual_key(key))
-        .collect::<Result<Vec<_>>>()?;
-    post_targeted_key_chord(hwnd, &virtual_keys)?;
-    Ok(json!({ "status": "ok", "inputMode": "targeted_window_message" }))
+        .rev()
+        .map(|key| key_input(*key, true))
+        .collect::<Vec<_>>();
+    send_inputs_with_releases(&inputs, &releases)?;
+    Ok(json!({ "status": "ok", "inputMode": "send_input" }))
 }
 
 fn type_text(params: &Value) -> Result<Value> {
-    let Some(hwnd) = target_window(params) else {
-        return Ok(stale_target());
-    };
+    let _hwnd = action_window(params)?;
+    if sensitive_text_target(params)? {
+        return Ok(failed_action(
+            "sensitive fields require a dedicated secure credential flow",
+        ));
+    }
     let text = params
         .get("text")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let input_mode = if let Some(edit_hwnd) = find_targeted_text_window(params, hwnd)? {
-        send_text_to_edit_window(edit_hwnd, text);
-        "targeted_edit_message"
-    } else {
-        post_targeted_text(hwnd, text)?;
-        "targeted_window_message"
-    };
-    Ok(json!({ "status": "ok", "inputMode": input_mode }))
-}
-
-fn post_targeted_key_chord(hwnd: HWND, keys: &[VIRTUAL_KEY]) -> Result<()> {
-    for (message, key) in windows_key_message_sequence(keys) {
-        unsafe {
-            PostMessageW(Some(hwnd), message, WPARAM(key), LPARAM(0))?;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    Ok(())
-}
-
-fn windows_key_message_sequence(keys: &[VIRTUAL_KEY]) -> Vec<(u32, usize)> {
-    keys.iter()
-        .map(|key| (WM_KEYDOWN, key.0 as usize))
-        .chain(keys.iter().rev().map(|key| (WM_KEYUP, key.0 as usize)))
-        .collect()
-}
-
-fn post_targeted_text(hwnd: HWND, text: &str) -> Result<()> {
-    for (message, code_unit) in windows_text_message_sequence(text) {
-        unsafe {
-            PostMessageW(Some(hwnd), message, WPARAM(code_unit), LPARAM(0))?;
-        }
-        thread::sleep(Duration::from_millis(8));
-    }
-    Ok(())
-}
-
-fn windows_text_message_sequence(text: &str) -> Vec<(u32, usize)> {
-    text.encode_utf16()
-        .map(|code_unit| (WM_CHAR, usize::from(code_unit)))
-        .collect()
-}
-
-fn send_text_to_edit_window(hwnd: HWND, text: &str) {
-    const WM_GETTEXTLENGTH: u32 = 0x000E;
-    const EM_SETSEL: u32 = 0x00B1;
-    const EM_REPLACESEL: u32 = 0x00C2;
-    let mut text = text.encode_utf16().collect::<Vec<_>>();
-    text.push(0);
-    unsafe {
-        let end = SendMessageW(hwnd, WM_GETTEXTLENGTH, None, None).0.max(0) as usize;
-        SendMessageW(
-            hwnd,
-            EM_SETSEL,
-            Some(WPARAM(end)),
-            Some(LPARAM(end as isize)),
-        );
-        SendMessageW(
-            hwnd,
-            EM_REPLACESEL,
-            Some(WPARAM(1)),
-            Some(LPARAM(text.as_ptr() as isize)),
-        );
-    }
-}
-
-fn find_targeted_text_window(params: &Value, root_hwnd: HWND) -> Result<Option<HWND>> {
-    if let Some(element) = resolve_element(params)? {
-        if let Some(hwnd) = text_window_handle_candidate(&element, root_hwnd, false) {
-            return Ok(Some(hwnd));
-        }
-    }
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let automation: IUIAutomation =
-            CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
-        let walker = automation.ControlViewWalker()?;
-        let root = automation.ElementFromHandle(root_hwnd)?;
-        Ok(
-            find_descendant_text_window(&walker, &root, root_hwnd, true, 0)
-                .or_else(|| find_descendant_text_window(&walker, &root, root_hwnd, false, 0)),
-        )
-    }
-}
-
-fn find_descendant_text_window(
-    walker: &IUIAutomationTreeWalker,
-    root: &IUIAutomationElement,
-    root_hwnd: HWND,
-    require_writable: bool,
-    depth: usize,
-) -> Option<HWND> {
-    if depth >= 12 {
-        return None;
-    }
-    let mut child = unsafe { walker.GetFirstChildElement(root) }.ok();
-    while let Some(element) = child {
-        if let Some(hwnd) = text_window_handle_candidate(&element, root_hwnd, require_writable) {
-            return Some(hwnd);
-        }
-        if let Some(hwnd) =
-            find_descendant_text_window(walker, &element, root_hwnd, require_writable, depth + 1)
-        {
-            return Some(hwnd);
-        }
-        child = unsafe { walker.GetNextSiblingElement(&element) }.ok();
-    }
-    None
-}
-
-fn text_window_handle_candidate(
-    element: &IUIAutomationElement,
-    root_hwnd: HWND,
-    require_writable: bool,
-) -> Option<HWND> {
-    let hwnd = unsafe { element.CurrentNativeWindowHandle() }.ok()?;
-    if hwnd == root_hwnd || !unsafe { IsWindow(Some(hwnd)).as_bool() } {
-        return None;
-    }
-    let role = unsafe { element.CurrentControlType() }
-        .map(control_type_name)
-        .unwrap_or("unknown");
-    let class_name = unsafe { element.CurrentClassName() }
-        .map(|value| value.to_string().to_ascii_lowercase())
-        .unwrap_or_default();
-    if !matches!(role, "edit" | "document")
-        && !["edit", "rich", "text"]
-            .iter()
-            .any(|needle| class_name.contains(needle))
-    {
-        return None;
-    }
-    if require_writable {
-        let pattern =
-            unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
-                .ok()?;
-        if unsafe { pattern.CurrentIsReadOnly() }.ok()?.as_bool() {
-            return None;
-        }
-    }
-    Some(hwnd)
+    let inputs = unicode_input_sequence(text);
+    let releases = text
+        .encode_utf16()
+        .map(|unit| unicode_input(unit, true))
+        .collect::<Vec<_>>();
+    send_inputs_with_releases(&inputs, &releases)?;
+    Ok(json!({ "status": "ok", "inputMode": "send_input_unicode" }))
 }
 
 fn set_value(params: &Value) -> Result<Value> {
-    let Some(target) = target_window(params) else {
-        return Ok(stale_target());
-    };
+    let target = action_window(params)?;
+    if sensitive_text_target(params)? {
+        return Ok(failed_action(
+            "sensitive fields require a dedicated secure credential flow",
+        ));
+    }
     if params.get("elementId").and_then(Value::as_str).is_none() {
         return Ok(failed_action("elementId is required"));
     }
@@ -1782,8 +1609,16 @@ fn window_json(hwnd: HWND) -> Option<Value> {
         if process_id == std::process::id() && title == VISUAL_CURSOR_WINDOW_TITLE {
             return None;
         }
-        let app_name = process_name(process_id).unwrap_or_else(|| format!("process-{process_id}"));
-        let app_id = app_name.to_lowercase();
+        let process_path = process_path(process_id);
+        let app_name = process_path
+            .as_deref()
+            .and_then(|path| Path::new(path).file_name())
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("process-{process_id}"));
+        let app_id = process_application_user_model_id(process_id)
+            .or(process_path)
+            .unwrap_or_else(|| format!("process:{process_id}"));
         let foreground = GetForegroundWindow();
         Some(json!({
             "id": window_id(hwnd),
@@ -1798,13 +1633,14 @@ fn window_json(hwnd: HWND) -> Option<Value> {
             },
             "focused": foreground == hwnd,
             "minimized": IsIconic(hwnd).as_bool(),
+            "dpi": GetDpiForWindow(hwnd).max(96),
             "processId": process_id,
             "platformId": format!("{}", hwnd.0 as usize),
         }))
     }
 }
 
-fn process_name(process_id: u32) -> Option<String> {
+fn process_path(process_id: u32) -> Option<String> {
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()?;
         let mut buffer = vec![0_u16; 32_768];
@@ -1817,8 +1653,29 @@ fn process_name(process_id: u32) -> Option<String> {
         );
         let _ = CloseHandle(handle);
         result.ok()?;
-        let path = String::from_utf16_lossy(&buffer[..size as usize]);
-        Path::new(&path).file_name()?.to_str().map(str::to_owned)
+        Some(String::from_utf16_lossy(&buffer[..size as usize]))
+    }
+}
+
+fn process_application_user_model_id(process_id: u32) -> Option<String> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()?;
+        let mut length = 0_u32;
+        let size_result = GetApplicationUserModelId(handle, &mut length, None);
+        if size_result != ERROR_INSUFFICIENT_BUFFER || length <= 1 {
+            let _ = CloseHandle(handle);
+            return None;
+        }
+        let mut buffer = vec![0_u16; length as usize];
+        let result =
+            GetApplicationUserModelId(handle, &mut length, Some(PWSTR(buffer.as_mut_ptr())));
+        let _ = CloseHandle(handle);
+        if result != ERROR_SUCCESS || length <= 1 {
+            return None;
+        }
+        Some(String::from_utf16_lossy(
+            &buffer[..length.saturating_sub(1) as usize],
+        ))
     }
 }
 
@@ -1848,19 +1705,7 @@ fn preferred_pointer_injection(params: &Value, button: DesktopMouseButton) -> &'
     {
         "uia"
     } else {
-        "targeted_window_message"
-    }
-}
-
-fn preferred_pointer_move_injection() -> &'static str {
-    "targeted_window_message"
-}
-
-fn windows_button_message_spec(button: DesktopMouseButton) -> (u32, u32, usize) {
-    match button {
-        DesktopMouseButton::Left => (WM_LBUTTONDOWN, WM_LBUTTONUP, 0x0001),
-        DesktopMouseButton::Right => (WM_RBUTTONDOWN, WM_RBUTTONUP, 0x0002),
-        DesktopMouseButton::Middle => (WM_MBUTTONDOWN, WM_MBUTTONUP, 0x0010),
+        "send_input"
     }
 }
 
@@ -2202,22 +2047,22 @@ mod tests {
     }
 
     #[test]
-    fn prefers_uia_then_targeted_window_messages_for_clicks() {
+    fn prefers_uia_then_send_input_for_clicks() {
         assert_eq!(
             preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Left,),
             "uia"
         );
         assert_eq!(
             preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Right,),
-            "targeted_window_message"
+            "send_input"
         );
         assert_eq!(
             preferred_pointer_injection(&json!({ "elementId": "0.1" }), DesktopMouseButton::Middle,),
-            "targeted_window_message"
+            "send_input"
         );
         assert_eq!(
             preferred_pointer_injection(&json!({ "x": 10, "y": 20 }), DesktopMouseButton::Left,),
-            "targeted_window_message"
+            "send_input"
         );
     }
 
@@ -2239,53 +2084,65 @@ mod tests {
     }
 
     #[test]
-    fn moves_pointer_with_targeted_window_messages() {
+    fn orders_send_input_key_chords_and_releases_modifiers() {
+        let inputs = keyboard_input_sequence(&[VK_CONTROL, VIRTUAL_KEY(b'S' as u16)]);
+        assert_eq!(inputs.len(), 4);
+        unsafe {
+            assert_eq!(inputs[0].Anonymous.ki.wVk, VK_CONTROL);
+            assert_eq!(inputs[1].Anonymous.ki.wVk, VIRTUAL_KEY(b'S' as u16));
+            assert!(inputs[2].Anonymous.ki.dwFlags.contains(KEYEVENTF_KEYUP));
+            assert_eq!(inputs[3].Anonymous.ki.wVk, VK_CONTROL);
+            assert!(inputs[3].Anonymous.ki.dwFlags.contains(KEYEVENTF_KEYUP));
+        }
+    }
+
+    #[test]
+    fn encodes_text_as_utf16_unicode_send_input_pairs() {
+        let inputs = unicode_input_sequence("中文😀e\u{301}");
+        assert_eq!(inputs.len(), 12);
+        unsafe {
+            assert_eq!(inputs[0].Anonymous.ki.wScan, '中' as u16);
+            assert_eq!(inputs[2].Anonymous.ki.wScan, '文' as u16);
+            assert_eq!(inputs[4].Anonymous.ki.wScan, 0xD83D);
+            assert_eq!(inputs[6].Anonymous.ki.wScan, 0xDE00);
+            assert_eq!(inputs[8].Anonymous.ki.wScan, 'e' as u16);
+            assert_eq!(inputs[10].Anonymous.ki.wScan, 0x0301);
+            assert!(inputs.iter().all(|input| input
+                .Anonymous
+                .ki
+                .dwFlags
+                .contains(KEYEVENTF_UNICODE)));
+            assert!(inputs[11].Anonymous.ki.dwFlags.contains(KEYEVENTF_KEYUP));
+        }
+    }
+
+    #[test]
+    fn normalizes_wgc_pixels_into_the_window_logical_coordinate_space() {
+        assert_eq!(logical_capture_size(800, 600, 96), (800, 600));
+        assert_eq!(logical_capture_size(1410, 1161, 120), (1128, 929));
+        assert_eq!(logical_capture_size(1200, 900, 144), (800, 600));
+        assert_eq!(logical_capture_size(1600, 1200, 192), (800, 600));
+
+        let pixels = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
         assert_eq!(
-            preferred_pointer_move_injection(),
-            "targeted_window_message"
+            scale_bgra_nearest(&pixels, 2, 2, 1, 1).unwrap(),
+            vec![1, 2, 3, 4],
         );
     }
 
     #[test]
-    fn orders_targeted_key_messages_like_the_reference_runtime() {
+    fn maps_mouse_buttons_to_send_input_flags() {
         assert_eq!(
-            windows_key_message_sequence(&[VK_CONTROL, VIRTUAL_KEY(b'S' as u16)]),
-            vec![
-                (WM_KEYDOWN, VK_CONTROL.0 as usize),
-                (WM_KEYDOWN, b'S' as usize),
-                (WM_KEYUP, b'S' as usize),
-                (WM_KEYUP, VK_CONTROL.0 as usize),
-            ]
-        );
-    }
-
-    #[test]
-    fn encodes_targeted_text_as_utf16_window_messages() {
-        assert_eq!(
-            windows_text_message_sequence("A😀"),
-            vec![(WM_CHAR, 0x41), (WM_CHAR, 0xD83D), (WM_CHAR, 0xDE00)]
-        );
-    }
-
-    #[test]
-    fn rejects_empty_print_window_frames_before_screen_fallback() {
-        assert!(!pixels_have_visible_content(&[0; 16]));
-        assert!(pixels_have_visible_content(&[0, 0, 0, 0, 12, 0, 0, 0,]));
-    }
-
-    #[test]
-    fn maps_mouse_buttons_to_targeted_window_messages() {
-        assert_eq!(
-            windows_button_message_spec(DesktopMouseButton::Left),
-            (WM_LBUTTONDOWN, WM_LBUTTONUP, 0x0001)
+            mouse_button_flags(DesktopMouseButton::Left),
+            (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)
         );
         assert_eq!(
-            windows_button_message_spec(DesktopMouseButton::Right),
-            (WM_RBUTTONDOWN, WM_RBUTTONUP, 0x0002)
+            mouse_button_flags(DesktopMouseButton::Right),
+            (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
         );
         assert_eq!(
-            windows_button_message_spec(DesktopMouseButton::Middle),
-            (WM_MBUTTONDOWN, WM_MBUTTONUP, 0x0010)
+            mouse_button_flags(DesktopMouseButton::Middle),
+            (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP)
         );
     }
 
@@ -2334,41 +2191,14 @@ mod tests {
     }
 
     #[test]
-    fn maps_scroll_directions_to_uia_amounts() {
+    fn maps_negative_origin_virtual_desktop_points_to_absolute_send_input() {
         assert_eq!(
-            windows_scroll_amounts(DesktopScrollDirection::Up),
-            (ScrollAmount_NoAmount, ScrollAmount_LargeDecrement)
+            virtual_desktop_absolute((-1920, 0), (-1920, 0, 3840, 1080)).unwrap(),
+            (0, 0),
         );
         assert_eq!(
-            windows_scroll_amounts(DesktopScrollDirection::Down),
-            (ScrollAmount_NoAmount, ScrollAmount_LargeIncrement)
-        );
-        assert_eq!(
-            windows_scroll_amounts(DesktopScrollDirection::Left),
-            (ScrollAmount_LargeDecrement, ScrollAmount_NoAmount)
-        );
-        assert_eq!(
-            windows_scroll_amounts(DesktopScrollDirection::Right),
-            (ScrollAmount_LargeIncrement, ScrollAmount_NoAmount)
-        );
-    }
-
-    #[test]
-    fn maps_fractional_scroll_pages_to_targeted_wheel_messages() {
-        assert_eq!(windows_scroll_repeat_count(0.5), 1);
-        assert_eq!(windows_scroll_repeat_count(1.2), 2);
-        assert_eq!(
-            windows_scroll_message_and_delta(DesktopScrollDirection::Up, 1.0),
-            (WM_MOUSEWHEEL, 120)
-        );
-        assert_eq!(
-            windows_scroll_message_and_delta(DesktopScrollDirection::Right, 0.5),
-            (WM_MOUSEHWHEEL, -60)
-        );
-        assert_eq!(windows_wheel_wparam(-60).0, (u16::MAX as usize - 59) << 16);
-        assert_eq!(
-            windows_point_lparam(-10, 20).0 as u32,
-            (20_u32 << 16) | u32::from((-10_i16) as u16)
+            virtual_desktop_absolute((1919, 1079), (-1920, 0, 3840, 1080)).unwrap(),
+            (65_535, 65_535),
         );
     }
 
@@ -2394,6 +2224,38 @@ mod tests {
         assert_eq!(virtual_key("PAGEUP").unwrap(), VK_PRIOR);
         assert_eq!(virtual_key("PAGEDOWN").unwrap(), VK_NEXT);
         assert_eq!(virtual_key("DELETE").unwrap(), VK_DELETE);
+        assert_eq!(virtual_key("Control_L").unwrap(), VK_LCONTROL);
+        assert_eq!(virtual_key("Control_R").unwrap(), VK_RCONTROL);
+        assert_eq!(virtual_key("KP_0").unwrap(), VK_NUMPAD0);
+        assert_eq!(virtual_key("Numpad_9").unwrap(), VK_NUMPAD9);
+        assert_eq!(virtual_key("KP_Enter").unwrap(), VK_RETURN);
+        assert_eq!(virtual_key("Numpad_Separator").unwrap(), VK_SEPARATOR);
+        assert_eq!(virtual_key("semicolon").unwrap(), VK_OEM_1);
+        assert_eq!(
+            parse_key_chord("Control_L+s").unwrap(),
+            vec![VK_LCONTROL, VIRTUAL_KEY(b'S' as u16)]
+        );
+        assert_eq!(
+            parse_key_chord("plus").unwrap(),
+            vec![VK_LSHIFT, VK_OEM_PLUS]
+        );
+    }
+
+    #[test]
+    fn computer_use_path_has_no_window_message_or_gdi_fallbacks() {
+        let source = include_str!("windows_backend.rs");
+        for forbidden in [
+            concat!("Post", "MessageW"),
+            concat!("WM_", "CHAR"),
+            concat!("EM_", "REPLACESEL"),
+            concat!("Print", "Window"),
+            concat!("Bit", "Blt"),
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "forbidden Computer Use path: {forbidden}"
+            );
+        }
     }
 }
 
@@ -2401,12 +2263,21 @@ fn virtual_key(name: &str) -> Result<VIRTUAL_KEY> {
     let normalized = name.trim().to_ascii_uppercase();
     let key = match normalized.as_str() {
         "CTRL" | "CONTROL" => VK_CONTROL,
+        "CTRL_L" | "CONTROL_L" => VK_LCONTROL,
+        "CTRL_R" | "CONTROL_R" => VK_RCONTROL,
         "SHIFT" => VK_SHIFT,
+        "SHIFT_L" => VK_LSHIFT,
+        "SHIFT_R" => VK_RSHIFT,
         "ALT" => VK_MENU,
+        "ALT_L" | "META_L" => VK_LMENU,
+        "ALT_R" | "META_R" => VK_RMENU,
+        "SUPER_L" | "WIN_L" => VK_LWIN,
+        "SUPER_R" | "WIN_R" => VK_RWIN,
         "ENTER" | "RETURN" => VK_RETURN,
         "TAB" => VK_TAB,
         "ESC" | "ESCAPE" => VK_ESCAPE,
         "BACKSPACE" => VK_BACK,
+        "SPACE" => VK_SPACE,
         "DELETE" | "DEL" => VK_DELETE,
         "HOME" => VK_HOME,
         "END" => VK_END,
@@ -2416,10 +2287,101 @@ fn virtual_key(name: &str) -> Result<VIRTUAL_KEY> {
         "RIGHT" => VK_RIGHT,
         "UP" => VK_UP,
         "DOWN" => VK_DOWN,
-        value if value.len() == 1 => VIRTUAL_KEY(value.as_bytes()[0] as u16),
+        "KP_ADD" | "NUMPAD_ADD" => VK_ADD,
+        "KP_SUBTRACT" | "NUMPAD_SUBTRACT" => VK_SUBTRACT,
+        "KP_MULTIPLY" | "NUMPAD_MULTIPLY" => VK_MULTIPLY,
+        "KP_DIVIDE" | "NUMPAD_DIVIDE" => VK_DIVIDE,
+        "KP_DECIMAL" | "NUMPAD_DECIMAL" => VK_DECIMAL,
+        "KP_ENTER" | "NUMPAD_ENTER" => VK_RETURN,
+        "KP_SEPARATOR" | "NUMPAD_SEPARATOR" => VK_SEPARATOR,
+        "KP_EQUAL" | "NUMPAD_EQUAL" => VK_OEM_PLUS,
+        "SEMICOLON" | "COLON" | ";" | ":" => VK_OEM_1,
+        "SLASH" | "QUESTION" | "/" | "?" => VK_OEM_2,
+        "GRAVE" | "ASCIITILDE" | "`" | "~" => VK_OEM_3,
+        "BRACKETLEFT" | "BRACELEFT" | "[" | "{" => VK_OEM_4,
+        "BACKSLASH" | "BAR" | "\\" | "|" => VK_OEM_5,
+        "BRACKETRIGHT" | "BRACERIGHT" | "]" | "}" => VK_OEM_6,
+        "APOSTROPHE" | "QUOTEDBL" | "'" | "\"" => VK_OEM_7,
+        "COMMA" | "LESS" | "," | "<" => VK_OEM_COMMA,
+        "MINUS" | "UNDERSCORE" | "-" | "_" => VK_OEM_MINUS,
+        "PERIOD" | "GREATER" | "." | ">" => VK_OEM_PERIOD,
+        "EQUAL" | "PLUS" | "=" | "+" => VK_OEM_PLUS,
+        value if value.starts_with("KP_") || value.starts_with("NUMPAD_") => {
+            let digit = value
+                .rsplit('_')
+                .next()
+                .and_then(|value| value.parse::<u16>().ok());
+            match digit {
+                Some(0) => VK_NUMPAD0,
+                Some(1) => VK_NUMPAD1,
+                Some(2) => VK_NUMPAD2,
+                Some(3) => VK_NUMPAD3,
+                Some(4) => VK_NUMPAD4,
+                Some(5) => VK_NUMPAD5,
+                Some(6) => VK_NUMPAD6,
+                Some(7) => VK_NUMPAD7,
+                Some(8) => VK_NUMPAD8,
+                Some(9) => VK_NUMPAD9,
+                _ => return Err(anyhow!("unsupported key: {name}")),
+            }
+        }
+        value if value.starts_with('F') => {
+            let number = value[1..].parse::<u16>().ok();
+            match number.filter(|number| (1..=24).contains(number)) {
+                Some(number) => VIRTUAL_KEY(0x6F + number),
+                None => return Err(anyhow!("unsupported key: {name}")),
+            }
+        }
+        value if value.len() == 1 && value.as_bytes()[0].is_ascii_alphanumeric() => {
+            VIRTUAL_KEY(value.as_bytes()[0] as u16)
+        }
         _ => return Err(anyhow!("unsupported key: {name}")),
     };
     Ok(key)
+}
+
+fn parse_key_chord(chord: &str) -> Result<Vec<VIRTUAL_KEY>> {
+    let parts = if chord.trim() == "+" {
+        vec!["+"]
+    } else {
+        chord.split('+').map(str::trim).collect::<Vec<_>>()
+    };
+    if parts.is_empty() || parts.iter().any(|part| part.is_empty()) {
+        return Err(anyhow!("invalid key chord: {chord}"));
+    }
+    let mut keys = parts
+        .iter()
+        .map(|part| virtual_key(part))
+        .collect::<Result<Vec<_>>>()?;
+    if parts.last().is_some_and(|part| keysym_requires_shift(part))
+        && !keys
+            .iter()
+            .any(|key| matches!(*key, VK_SHIFT | VK_LSHIFT | VK_RSHIFT))
+    {
+        let insert_at = keys.len().saturating_sub(1);
+        keys.insert(insert_at, VK_LSHIFT);
+    }
+    Ok(keys)
+}
+
+fn keysym_requires_shift(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        ":" | "?" | "~" | "{" | "|" | "}" | "\"" | "<" | "_" | ">" | "+"
+    ) || matches!(
+        name.trim().to_ascii_uppercase().as_str(),
+        "COLON"
+            | "QUESTION"
+            | "ASCIITILDE"
+            | "BRACELEFT"
+            | "BAR"
+            | "BRACERIGHT"
+            | "QUOTEDBL"
+            | "LESS"
+            | "UNDERSCORE"
+            | "GREATER"
+            | "PLUS"
+    ) || (name.len() == 1 && name.as_bytes()[0].is_ascii_uppercase())
 }
 
 fn int_param(params: &Value, name: &str) -> Result<i32> {
@@ -2427,6 +2389,13 @@ fn int_param(params: &Value, name: &str) -> Result<i32> {
         .get(name)
         .and_then(Value::as_i64)
         .map(|value| value as i32)
+        .ok_or_else(|| anyhow!("{name} is required"))
+}
+
+fn number_param(params: &Value, name: &str) -> Result<f64> {
+    params
+        .get(name)
+        .and_then(Value::as_f64)
         .ok_or_else(|| anyhow!("{name} is required"))
 }
 
