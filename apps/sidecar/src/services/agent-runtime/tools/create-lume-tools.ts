@@ -15,6 +15,7 @@ import { createRoutineTools } from "./routine/create-routine-tools";
 import { createImageGenTools } from "./image-gen/create-image-gen-tools";
 import { createNodeReplMcpTools } from "./node-repl/create-node-repl-tools";
 import { createComputerUseMcpTools } from "./computer-use/create-computer-use-tools";
+import { createComputerUseVisionRouter } from "./computer-use/computer-use-vision-router";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -29,6 +30,7 @@ export interface CreateLumeRuntimeToolsInput {
   cwd?: string;
   workspaceId?: string;
   channelId?: string;
+  modelRef?: string;
   threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   workspaceSlug?: string;
@@ -48,24 +50,6 @@ export interface CreateLumeRuntimeToolsInput {
 export interface CreateLumeRuntimeToolsOutput {
   customTools: ToolDefinition[];
   availableToolNames: string[];
-}
-
-export function desktopWindowBindingFromMessageMetadata(
-  messageMetadata: Record<string, unknown> | undefined,
-): { windowId: string; appId?: string; appName?: string; windowTitle?: string } | undefined {
-  const window = recordValue(messageMetadata?.desktopWindow);
-  const app = recordValue(messageMetadata?.desktopApp);
-  const windowId = stringValue(window.id);
-  if (!windowId) return undefined;
-  const appId = stringValue(app.id);
-  const appName = stringValue(app.name);
-  const windowTitle = stringValue(window.title);
-  return {
-    windowId,
-    ...(appId ? { appId } : {}),
-    ...(appName ? { appName } : {}),
-    ...(windowTitle ? { windowTitle } : {}),
-  };
 }
 
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
@@ -107,17 +91,17 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     workspaceSlug: input.workspaceSlug,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
   });
-  const boundDesktopWindow = desktopWindowBindingFromMessageMetadata(input.messageMetadata);
+  const computerUseVisionRouter = createComputerUseVisionRouter({
+    currentModelRef: input.modelRef,
+    workspaceSlug: input.workspaceSlug,
+  });
   const computerUseTools = createComputerUseMcpTools({
     workspaceSlug: input.workspaceSlug,
     threadId: input.threadId,
     runId: input.runId,
-    ...(typeof input.messageMetadata?.desktopContextSnapshotId === "string"
-      ? { boundDesktopContextSnapshotId: input.messageMetadata.desktopContextSnapshotId }
-      : {}),
-    ...(boundDesktopWindow ? { boundDesktopWindow } : {}),
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitDesktopActionVisualEvent,
+    routeScreenshot: (path) => computerUseVisionRouter.route(path),
   });
   const customTools = [
     ...memoryTools,
@@ -143,14 +127,4 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
       ...customToolNames
     ]
   };
-}
-
-function recordValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

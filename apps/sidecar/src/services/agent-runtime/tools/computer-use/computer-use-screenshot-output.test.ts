@@ -36,7 +36,7 @@ describe("saveComputerUseScreenshots", () => {
 
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({
-      screenshotId: "shot:1",
+      screenshotId: expect.stringMatching(/^screenshot:/),
       threadPath: expect.stringMatching(/^files\/computer-use\/.+\.png$/),
       mediaType: "image/png",
       width: 320,
@@ -45,6 +45,19 @@ describe("saveComputerUseScreenshots", () => {
     });
     expect(existsSync(saved[0]!.absPath)).toBeTrue();
     expect(readFileSync(saved[0]!.absPath)).toEqual(png);
+
+    const second = saveComputerUseScreenshots({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      screenshots: [{
+        id: "shot:1",
+        mimeType: "image/png",
+        width: 320,
+        height: 200,
+        dataUrl: `data:image/png;base64,${png.toString("base64")}`,
+      }],
+    });
+    expect(second[0]!.screenshotId).not.toBe(saved[0]!.screenshotId);
   });
 
   test("rejects unsupported screenshot media types", () => {
@@ -57,5 +70,18 @@ describe("saveComputerUseScreenshots", () => {
         dataUrl: "data:image/svg+xml;base64,PHN2Zy8+",
       }],
     })).toThrow("unsupported screenshot media type");
+  });
+
+  test("preserves the host v2 screenshot id used for action cache validation", () => {
+    const saved = saveComputerUseScreenshots({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
+      screenshots: [{
+        id: "screenshot:42:100:1",
+        mimeType: "image/png",
+        dataUrl: `data:image/png;base64,${Buffer.from("png").toString("base64")}`,
+      }],
+    });
+    expect(saved[0]!.screenshotId).toBe("screenshot:42:100:1");
   });
 });

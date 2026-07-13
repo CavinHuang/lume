@@ -5,7 +5,8 @@ import { toThreadRelativePath } from "../../../agent/agent-files-service";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 
 export interface SavedComputerUseScreenshot {
-  screenshotId?: string;
+  screenshotId: string;
+  capturedAt: number;
   threadPath: string;
   filename: string;
   mediaType: string;
@@ -41,11 +42,17 @@ export function saveComputerUseScreenshots(input: {
     const bytes = Buffer.from(dataUrl.slice(prefix.length), "base64");
     if (bytes.length === 0) throw new Error("screenshot pixels unavailable");
     mkdirSync(dir, { recursive: true });
-    const filename = `${Date.now()}-${randomUUID().slice(0, 8)}.${extension}`;
+    const capturedAt = Date.now();
+    const hostScreenshotId = typeof screenshot.id === "string" ? screenshot.id : "";
+    const screenshotId = hostScreenshotId.startsWith("screenshot:")
+      ? hostScreenshotId
+      : `screenshot:${randomUUID()}`;
+    const filename = `${capturedAt}-${randomUUID().slice(0, 8)}.${extension}`;
     const absPath = join(dir, filename);
     writeFileSync(absPath, bytes);
     saved.push({
-      ...(typeof screenshot.id === "string" ? { screenshotId: screenshot.id } : {}),
+      screenshotId,
+      capturedAt,
       threadPath: toThreadRelativePath(input.workspaceSlug, input.threadId, absPath),
       filename,
       mediaType,

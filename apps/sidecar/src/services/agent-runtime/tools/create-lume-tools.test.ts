@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLumeRuntimeTools, desktopWindowBindingFromMessageMetadata } from "./create-lume-tools";
+import { createLumeRuntimeTools } from "./create-lume-tools";
 
 function baseInput() {
   return {
@@ -11,21 +11,6 @@ function baseInput() {
 }
 
 describe("create-lume-tools", () => {
-  test("retains the selected desktop window as a fallback tool target", () => {
-    expect(desktopWindowBindingFromMessageMetadata({
-      desktopApp: { id: "wechat.exe", name: "微信" },
-      desktopWindow: { id: "win:wechat", title: "项目群" },
-    })).toEqual({
-      windowId: "win:wechat",
-      appId: "wechat.exe",
-      appName: "微信",
-      windowTitle: "项目群",
-    });
-    expect(desktopWindowBindingFromMessageMetadata({
-      desktopWindow: { title: "missing id" },
-    })).toBeUndefined();
-  });
-
   test("includes the IM reply tool for all runtime threads", () => {
     const result = createLumeRuntimeTools(baseInput());
 
@@ -68,7 +53,6 @@ describe("create-lume-tools", () => {
       "take_screenshot",
       "launch_app",
       "activate_window",
-      "move_pointer",
       "click",
       "press_key",
       "type_text",
@@ -76,12 +60,12 @@ describe("create-lume-tools", () => {
       "set_value",
       "drag",
       "perform_secondary_action",
-      "current_context",
-      "search_context",
-      "wait_for_state",
     ]) {
       expect(toolNames).toContain(`mcp__computer_use__${name}`);
       expect(result.availableToolNames).toContain(`mcp__computer_use__${name}`);
+    }
+    for (const removed of ["move_pointer", "current_context", "search_context", "wait_for_state"] ) {
+      expect(toolNames).not.toContain(`mcp__computer_use__${removed}`);
     }
   });
 });

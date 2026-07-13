@@ -23,7 +23,7 @@ function getRuntime(): { settingsPath: string; service: DesktopContextService } 
     service: new DesktopContextService({
       dbPath: getDesktopContextDbPath(),
       settings: loadDesktopAssistantSettings(settingsPath),
-      invokeHost: invokeDesktopHost,
+      invokeHost: (method, input) => invokeDesktopHost(`desktop_context.${method}`, input),
       manageHostEventSubscription: true,
       emitNotification: (method, params) => notificationWriter?.(method, params),
       generateProposalResult: createDesktopProposalResultGenerator(),
@@ -126,56 +126,7 @@ export async function resolveDesktopContextProjection(
   if (result.status === "ok" && result.snapshot) {
     return stripDesktopContextImages(result.snapshot);
   }
-
-  const desktopWindow = asRecord(messageMetadata?.desktopWindow);
-  const windowId = stringValue(desktopWindow.id);
-  if (!windowId) return undefined;
-  const state = asRecord(await invoke("get_window_state", { windowId }));
-  if (state.status !== "ok") return undefined;
-  if (!matchesRetainedDesktopTarget(messageMetadata, state)) return undefined;
-  return stripDesktopContextImages(snapshotFromWindowState(snapshotId, messageMetadata, state));
-}
-
-function matchesRetainedDesktopTarget(
-  messageMetadata: Record<string, unknown>,
-  state: Record<string, unknown>,
-): boolean {
-  const expectedApp = asRecord(messageMetadata.desktopApp);
-  const expectedWindow = asRecord(messageMetadata.desktopWindow);
-  const actualWindow = asRecord(state.window);
-  const expectedAppId = stringValue(expectedApp.id);
-  const expectedWindowId = stringValue(expectedWindow.id);
-  return (!expectedAppId || stringValue(actualWindow.appId) === expectedAppId)
-    && (!expectedWindowId || stringValue(actualWindow.id) === expectedWindowId);
-}
-
-function snapshotFromWindowState(
-  snapshotId: string,
-  messageMetadata: Record<string, unknown>,
-  state: Record<string, unknown>,
-): Record<string, unknown> {
-  const app = asRecord(messageMetadata.desktopApp);
-  const window = asRecord(state.window);
-  const accessibility = asRecord(state.accessibility);
-  const visibleText = stringValue(accessibility.documentText) ?? stringValue(accessibility.visibleText);
-  return {
-    id: snapshotId,
-    app: {
-      id: stringValue(app.id) ?? stringValue(window.appId) ?? "unknown",
-      name: stringValue(app.name) ?? stringValue(window.appName) ?? "Unknown app",
-    },
-    window,
-    ...(typeof state.capturedAt === "number" ? { capturedAt: state.capturedAt } : {}),
-    ...(stringValue(accessibility.selectedText)
-      ? { selectedText: stringValue(accessibility.selectedText) }
-      : {}),
-    ...(visibleText ? { visibleText } : {}),
-    ...(stringValue(state.textSource) ? { textSource: stringValue(state.textSource) } : {}),
-    ...(stringValue(state.completeness) ? { completeness: stringValue(state.completeness) } : {}),
-    ...(stringValue(state.fallbackReason) ? { fallbackReason: stringValue(state.fallbackReason) } : {}),
-    ...(Array.isArray(state.screenshots) ? { screenshots: state.screenshots } : {}),
-    untrusted: true,
-  };
+  return undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

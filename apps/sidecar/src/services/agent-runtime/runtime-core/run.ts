@@ -720,6 +720,7 @@ function buildRuntimeCoreTools(input: {
   workspaceId?: string;
   workspaceSlug?: string;
   channelId?: string;
+  modelRef?: string;
   provider?: string;
   chatType?: AgentSendInput["chatType"];
   threadType?: AgentSendInput["threadType"];
@@ -776,6 +777,7 @@ function buildRuntimeCoreTools(input: {
     cwd: input.cwd,
     workspaceId: input.workspaceId,
     channelId: input.channelId,
+    modelRef: input.modelRef,
     threadType: input.threadType,
     chatType: input.chatType,
     workspaceSlug: input.workspaceSlug,
@@ -1461,6 +1463,7 @@ export async function createRuntimeCoreSession(
     workspaceId: input.workspaceId,
     workspaceSlug: input.workspaceSlug,
     channelId: input.channelId,
+    modelRef: input.modelRef,
     provider: input.provider,
     threadType: input.threadType,
     chatType: input.chatType,

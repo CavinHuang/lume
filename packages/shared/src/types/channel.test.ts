@@ -121,4 +121,18 @@ describe("channel model capabilities", () => {
       enabled: true
     });
   });
+
+  test("视觉能力只保留渠道显式配置，不依赖静态模型名称", () => {
+    expect(normalizeChannelModel({
+      provider: "stepfun-coding-plan",
+      id: "step-3.7-flash",
+      name: "Step 3.7 Flash",
+      enabled: true,
+      capabilities: { vision: true },
+    }).capabilities).toMatchObject({ chat: true, vision: true });
+    expect(inferChannelModelCapabilities({
+      provider: "stepfun-coding-plan",
+      modelId: "step-3.7-flash",
+    }).vision).toBeUndefined();
+  });
 });

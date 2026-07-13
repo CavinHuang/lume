@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DESKTOP_ACTION_STATUSES,
   DESKTOP_ACTION_PHASES,
+  classifyDesktopActionConfirmation,
   desktopProposalSuggestedAction,
   isDesktopActionStatus,
   requiresDesktopActionConfirmation,
@@ -51,6 +52,18 @@ describe("computer-use shared contracts", () => {
       secondaryAction: "AXShowMenu",
     })).toBeFalse();
     expect(requiresDesktopActionConfirmation({ kind: "press_key", keys: ["TAB"] })).toBeFalse();
+    expect(classifyDesktopActionConfirmation({ kind: "click", targetLabel: "上传病历" })).toMatchObject({
+      required: true,
+      categories: ["upload", "medical"],
+    });
+    expect(classifyDesktopActionConfirmation({ kind: "click", targetLabel: "允许访问通讯录" })).toMatchObject({
+      required: true,
+      categories: ["permission", "sensitive_data"],
+    });
+    expect(classifyDesktopActionConfirmation({ kind: "click", targetLabel: "注销账户" })).toMatchObject({
+      required: true,
+      categories: ["account"],
+    });
   });
 
   test("maps every proactive proposal kind to one explicit next action", () => {

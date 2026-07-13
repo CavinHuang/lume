@@ -10,6 +10,9 @@ export interface LumeSystemModelsConfig {
   chat?: LumeSystemModelSelectionConfig
   agent?: LumeSystemModelSelectionConfig
   embedding?: LumeSystemEmbeddingConfig
+  computerUse?: {
+    visionModelRefs?: string[]
+  }
 }
 
 export interface LumeSystemConfig {

@@ -66,6 +66,7 @@ export const PROVIDER_GROUPS: ProviderGroupInfo[] = [
 export interface ChannelModelCapabilities {
   chat?: boolean
   embedding?: boolean
+  vision?: boolean
 }
 
 /**

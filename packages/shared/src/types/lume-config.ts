@@ -24,6 +24,10 @@ export interface LumeConfigImageGenerationStrategy {
   priorityModelRefs?: string[]
 }
 
+export interface LumeConfigComputerUseStrategy {
+  visionModelRefs?: string[]
+}
+
 export interface LumeConfigAgentSection {
   permissionMode?: LumeConfigPermissionMode
   thinkingLevel?: LumeConfigThinkingLevel
@@ -74,6 +78,7 @@ export interface LumeConfigModelsSection {
   permissionClassifier?: LumeConfigSimpleModelStrategy
   memoryJudgement?: LumeConfigSimpleModelStrategy
   imageGeneration?: LumeConfigImageGenerationStrategy
+  computerUse?: LumeConfigComputerUseStrategy
   contextWindows?: Record<string, number>
   embedding?: {
     defaultModelRef?: string

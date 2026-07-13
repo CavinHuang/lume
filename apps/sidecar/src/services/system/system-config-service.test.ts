@@ -42,6 +42,9 @@ describe("system-config-service", () => {
         },
         embedding: {
           defaultModelRef: "openai/text-embedding-3-small"
+        },
+        computerUse: {
+          visionModelRefs: ["openai/gpt-4.1-mini"]
         }
       }
     }, null, 2), "utf-8");
@@ -54,12 +57,16 @@ describe("system-config-service", () => {
       "  agent:",
       "    defaultModelRef: openai/gpt-5.4-mini",
       "  embedding:",
-      "    defaultModelRef: google/gemini-embedding-001"
+      "    defaultModelRef: google/gemini-embedding-001",
+      "  computerUse:",
+      "    visionModelRefs:",
+      "      - google/gemini-2.5-flash"
     ].join("\n"), "utf-8");
 
     const effective = getEffectiveSystemConfig();
     expect(effective.models?.chat?.defaultModelRef).toBe("anthropic/claude-sonnet-4-5");
     expect(effective.models?.agent?.defaultModelRef).toBe("openai/gpt-5.4-mini");
     expect(effective.models?.embedding?.defaultModelRef).toBe("google/gemini-embedding-001");
+    expect(effective.models?.computerUse?.visionModelRefs).toEqual(["google/gemini-2.5-flash"]);
   });
 });

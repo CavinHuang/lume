@@ -279,11 +279,12 @@ export interface AgentDesktopActionRequest {
   secondaryAction?: string;
   targetLabel?: string;
   targetPoint?: { x: number; y: number };
+  confirmationCategories?: DesktopConfirmationCategory[];
+  recipient?: string;
+  dataTypes?: string[];
   risk: AgentDesktopActionRisk;
   expiresAt: string;
-  expectedWindowId?: string;
-  expectedWindow?: Pick<DesktopWindowRef, "id" | "title">;
-  expectedRevision?: string;
+  window: Window;
   securityWarning?: "suspected_prompt_injection";
   summary: string;
 }
@@ -377,9 +378,36 @@ export interface DesktopActionIntent {
   secondaryAction?: string;
 }
 
+export type DesktopConfirmationCategory =
+  | "send_message"
+  | "submit_form"
+  | "delete"
+  | "upload"
+  | "permission"
+  | "account"
+  | "financial"
+  | "sensitive_data"
+  | "medical";
+
+export interface DesktopActionConfirmationClassification {
+  required: boolean;
+  categories: DesktopConfirmationCategory[];
+}
+
 const CONSEQUENTIAL_TARGET_RE = /(?:发送|删除|付款|支付|购买|提交|授权|确认订单|send|delete|pay|purchase|submit|authorize)/i;
 const CONSEQUENTIAL_KEY_RE = /^(?:enter|return)$/i;
 const CONSEQUENTIAL_SECONDARY_ACTION_RE = /(?:send|delete|remove|pay|purchase|submit|confirm|authorize)/i;
+const CONFIRMATION_PATTERNS: Array<[DesktopConfirmationCategory, RegExp]> = [
+  ["send_message", /(?:发送|回复|发消息|send|reply|message)/i],
+  ["submit_form", /(?:提交|确认订单|submit|confirm\s*(?:form|order)?)/i],
+  ["delete", /(?:删除|移除|清空|delete|remove|erase)/i],
+  ["upload", /(?:上传|附件|upload|attach)/i],
+  ["permission", /(?:允许|授权|权限|permission|authorize|grant\s+access)/i],
+  ["account", /(?:账户|账号|登录|注销|注册|account|sign\s*(?:in|up|out)|log\s*out)/i],
+  ["financial", /(?:付款|支付|购买|转账|退款|银行卡|pay|purchase|transfer|refund|bank)/i],
+  ["sensitive_data", /(?:密码|验证码|身份证|通讯录|地址|电话|邮箱|password|otp|identity|contacts?|address|phone|email)/i],
+  ["medical", /(?:医疗|病历|处方|诊断|用药|预约|medical|health|prescription|diagnosis|medication)/i],
+];
 
 export function isDesktopActionStatus(value: unknown): value is DesktopActionStatus {
   return typeof value === "string" && (DESKTOP_ACTION_STATUSES as readonly string[]).includes(value);
@@ -398,8 +426,26 @@ export function desktopProposalSuggestedAction(
 }
 
 export function requiresDesktopActionConfirmation(intent: DesktopActionIntent): boolean {
+  if (classifyDesktopActionConfirmation(intent).required) return true;
   if (CONSEQUENTIAL_TARGET_RE.test(intent.targetLabel?.trim() ?? "")) return true;
   if (CONSEQUENTIAL_SECONDARY_ACTION_RE.test(intent.secondaryAction?.trim() ?? "")) return true;
   if (intent.kind !== "press_key") return false;
   return intent.keys?.some((key) => CONSEQUENTIAL_KEY_RE.test(key.trim())) ?? false;
+}
+
+export function classifyDesktopActionConfirmation(
+  intent: DesktopActionIntent,
+): DesktopActionConfirmationClassification {
+  const text = `${intent.targetLabel ?? ""} ${intent.secondaryAction ?? ""}`.trim();
+  const categories = CONFIRMATION_PATTERNS
+    .filter(([, pattern]) => pattern.test(text))
+    .map(([category]) => category);
+  if (
+    intent.kind === "press_key"
+    && intent.keys?.some((key) => CONSEQUENTIAL_KEY_RE.test(key.trim()))
+    && !categories.includes("submit_form")
+  ) {
+    categories.push("submit_form");
+  }
+  return { required: categories.length > 0, categories };
 }

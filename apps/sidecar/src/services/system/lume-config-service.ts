@@ -150,6 +150,14 @@ function normalizeImageGenerationStrategy(value: unknown): { priorityModelRefs?:
   };
 }
 
+function normalizeComputerUseStrategy(value: unknown): { visionModelRefs?: string[] } {
+  if (!isPlainObject(value)) return {};
+  const visionModelRefs = normalizeUniqueStringArray(value.visionModelRefs);
+  return {
+    ...(visionModelRefs.length > 0 ? { visionModelRefs } : {})
+  };
+}
+
 function normalizeContextWindows(value: unknown): Record<string, number> | undefined {
   if (!isPlainObject(value)) return undefined;
   const next: Record<string, number> = {};
@@ -528,6 +536,7 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
       permissionClassifier: normalizeModelStrategy(value.models.permissionClassifier),
       memoryJudgement: normalizeModelStrategy(value.models.memoryJudgement),
       imageGeneration: normalizeImageGenerationStrategy(value.models.imageGeneration),
+      computerUse: normalizeComputerUseStrategy(value.models.computerUse),
       ...(normalizeContextWindows(value.models.contextWindows)
         ? { contextWindows: normalizeContextWindows(value.models.contextWindows) }
         : {}),
@@ -705,6 +714,10 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
       imageGeneration: {
         ...(fallback.models?.imageGeneration ?? {}),
         ...(base.models?.imageGeneration ?? {})
+      },
+      computerUse: {
+        ...(fallback.models?.computerUse ?? {}),
+        ...(base.models?.computerUse ?? {})
       },
       contextWindows: {
         ...(fallback.models?.contextWindows ?? {}),
@@ -910,6 +923,10 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
       imageGeneration: {
         ...(file.models?.imageGeneration ?? {}),
         ...(overlay?.models?.imageGeneration ?? {})
+      },
+      computerUse: {
+        ...(file.models?.computerUse ?? {}),
+        ...(overlay?.models?.computerUse ?? {})
       },
       contextWindows: {
         ...(file.models?.contextWindows ?? {}),

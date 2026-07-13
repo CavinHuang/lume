@@ -12,7 +12,8 @@ function createDefaultSystemConfig(): LumeSystemConfig {
     models: {
       chat: {},
       agent: {},
-      embedding: {}
+      embedding: {},
+      computerUse: { visionModelRefs: [] }
     },
     memory: {},
     agent: {},
@@ -68,6 +69,7 @@ function normalizeSystemConfig(input: unknown): LumeSystemConfig {
   const chat = isPlainObject(models.chat) ? models.chat : {};
   const agent = isPlainObject(models.agent) ? models.agent : {};
   const embedding = isPlainObject(models.embedding) ? models.embedding : {};
+  const computerUse = isPlainObject(models.computerUse) ? models.computerUse : {};
 
   return {
     version: SYSTEM_CONFIG_VERSION,
@@ -86,6 +88,11 @@ function normalizeSystemConfig(input: unknown): LumeSystemConfig {
         ...(typeof embedding.defaultModelRef === "string"
           ? { defaultModelRef: embedding.defaultModelRef }
           : {})
+      },
+      computerUse: {
+        visionModelRefs: Array.isArray(computerUse.visionModelRefs)
+          ? computerUse.visionModelRefs.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          : []
       }
     },
     memory: isPlainObject(input.memory) ? input.memory : {},
@@ -134,6 +141,7 @@ export function getEffectiveSystemConfig(workspaceSlug?: string): EffectiveSyste
   const overrideChat = isPlainObject(overrideModels.chat) ? overrideModels.chat : {};
   const overrideAgent = isPlainObject(overrideModels.agent) ? overrideModels.agent : {};
   const overrideEmbedding = isPlainObject(overrideModels.embedding) ? overrideModels.embedding : {};
+  const overrideComputerUse = isPlainObject(overrideModels.computerUse) ? overrideModels.computerUse : {};
 
   return {
     version: SYSTEM_CONFIG_VERSION,
@@ -155,6 +163,12 @@ export function getEffectiveSystemConfig(workspaceSlug?: string): EffectiveSyste
         ...(primary.models?.embedding ?? {}),
         ...(typeof overrideEmbedding.defaultModelRef === "string"
           ? { defaultModelRef: overrideEmbedding.defaultModelRef }
+          : {})
+      },
+      computerUse: {
+        ...primary.models?.computerUse,
+        ...(Array.isArray(overrideComputerUse.visionModelRefs)
+          ? { visionModelRefs: overrideComputerUse.visionModelRefs.filter((value): value is string => typeof value === "string" && value.trim().length > 0) }
           : {})
       }
     },
