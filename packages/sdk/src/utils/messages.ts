@@ -120,19 +120,23 @@ export function collectInternalContextBlocks(
 
 export function renderComputerUseActionFacts(messages: Array<{ role: string; content: any }>): string {
   const facts = new Map<string, string>()
+  const recordFact = (fact: any): void => {
+    if (!fact || typeof fact.actionId !== 'string' || typeof fact.phase !== 'string') return
+    const app = typeof fact.window?.app === 'string' ? fact.window.app : 'unknown app'
+    const windowId = typeof fact.window?.id === 'number' ? `#${fact.window.id}` : ''
+    const action = typeof fact.action === 'string' ? fact.action : 'action'
+    const suffix = fact.phase === 'verified' ? 'verified complete' : 'not verified complete'
+    facts.set(fact.actionId, `${fact.actionId}: ${action} on ${app}${windowId}; phase=${fact.phase}; ${suffix}`)
+  }
   const visit = (value: any): void => {
     if (Array.isArray(value)) {
       value.forEach(visit)
       return
     }
     if (!value || typeof value !== 'object') return
-    const fact = value._meta?.computerUseAction
-    if (fact && typeof fact.actionId === 'string' && typeof fact.phase === 'string') {
-      const app = typeof fact.window?.app === 'string' ? fact.window.app : 'unknown app'
-      const windowId = typeof fact.window?.id === 'number' ? `#${fact.window.id}` : ''
-      const action = typeof fact.action === 'string' ? fact.action : 'action'
-      const suffix = fact.phase === 'verified' ? 'verified complete' : 'not verified complete'
-      facts.set(fact.actionId, `${fact.actionId}: ${action} on ${app}${windowId}; phase=${fact.phase}; ${suffix}`)
+    recordFact(value._meta?.computerUseAction)
+    if (Array.isArray(value._meta?.computerUseActions)) {
+      value._meta.computerUseActions.forEach(recordFact)
     }
     Object.values(value).forEach(visit)
   }
@@ -191,6 +195,16 @@ async function hydrateEphemeralValue(
 function releaseEphemeralValue(value: any): any {
   if (Array.isArray(value)) return value.map(releaseEphemeralValue)
   if (!value || typeof value !== 'object') return value
+  if (
+    value.type === 'text'
+    && value._meta?.contextBlock === 'computer_use_visual'
+    && value._meta?.persist === false
+  ) {
+    const screenshotId = typeof value._meta?.screenshotId === 'string'
+      ? value._meta.screenshotId
+      : 'unknown'
+    return { type: 'text', text: `[Visual observation reference: ${screenshotId}]` }
+  }
   const source = value.source && typeof value.source === 'object' ? value.source : undefined
   if (
     value.type === 'image'

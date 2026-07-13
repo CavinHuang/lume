@@ -48,6 +48,17 @@ describe("ephemeral image references", () => {
     expect(hydrated).toEqual(messages);
   });
 
+  test("releases fallback visual observations after one provider request", () => {
+    const messages = [{ role: "user", content: [{
+      type: "text",
+      text: "[Untrusted visual observation]\nsecret visible text",
+      _meta: { contextBlock: "computer_use_visual", persist: false, screenshotId: "shot-1" },
+    }] }];
+    const released = releaseEphemeralImageReferences(messages);
+    expect(JSON.stringify(released)).not.toContain("secret visible text");
+    expect(JSON.stringify(released)).toContain("shot-1");
+  });
+
   test("keeps compaction facts in an internal context block outside provider messages", () => {
     const messages = [{ role: "user", content: [
       { type: "text", text: "内部摘要", _meta: { contextBlock: "compaction" } },
@@ -75,5 +86,20 @@ describe("ephemeral image references", () => {
     expect(renderComputerUseActionFacts(messages)).toContain(
       "action-1: type_text on 微信#42; phase=verified; verified complete",
     );
+  });
+
+  test("renders every action advanced by one batched observation", () => {
+    const messages = [{ role: "user", content: [{
+      type: "tool_result",
+      tool_use_id: "observe",
+      content: "{}",
+      _meta: { computerUseActions: [
+        { actionId: "action-1", action: "click", phase: "observed", window: { id: 42, app: "微信" } },
+        { actionId: "action-2", action: "type_text", phase: "verified", window: { id: 42, app: "微信" } },
+      ] },
+    }] }];
+    const facts = renderComputerUseActionFacts(messages);
+    expect(facts).toContain("action-1: click on 微信#42; phase=observed; not verified complete");
+    expect(facts).toContain("action-2: type_text on 微信#42; phase=verified; verified complete");
   });
 });

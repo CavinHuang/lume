@@ -3,7 +3,6 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { toThreadRelativePath } from "../../../agent/agent-files-service";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
-import { cropPng, type PngRegion } from "./png-region";
 
 export interface SavedComputerUseScreenshot {
   screenshotId: string;
@@ -27,37 +26,25 @@ export function saveComputerUseScreenshots(input: {
   workspaceSlug: string;
   threadId: string;
   screenshots: unknown[];
-  pixelRegion?: PngRegion;
 }): SavedComputerUseScreenshot[] {
   const dir = join(getAgentThreadFilesPath(input.workspaceSlug, input.threadId), "computer-use");
   const saved: SavedComputerUseScreenshot[] = [];
 
   for (const candidate of input.screenshots) {
     const screenshot = asRecord(candidate);
-    const mediaType = typeof screenshot.mimeType === "string" ? screenshot.mimeType : "";
+    const url = typeof screenshot.url === "string" ? screenshot.url : "";
+    const match = /^data:([^;,]+);base64,(.+)$/s.exec(url);
+    const mediaType = match?.[1] ?? "";
     const extension = EXTENSION_BY_MEDIA_TYPE[mediaType];
     if (!extension) throw new Error(`unsupported screenshot media type: ${mediaType || "unknown"}`);
-    const dataUrl = typeof screenshot.dataUrl === "string" ? screenshot.dataUrl : "";
-    const prefix = `data:${mediaType};base64,`;
-    if (!dataUrl.startsWith(prefix)) throw new Error("screenshot pixels unavailable");
-
-    let bytes: Buffer<ArrayBufferLike> = Buffer.from(dataUrl.slice(prefix.length), "base64");
+    const bytes: Buffer<ArrayBufferLike> = Buffer.from(match?.[2] ?? "", "base64");
     if (bytes.length === 0) throw new Error("screenshot pixels unavailable");
-    let outputWidth = typeof screenshot.width === "number" ? screenshot.width : undefined;
-    let outputHeight = typeof screenshot.height === "number" ? screenshot.height : undefined;
-    if (input.pixelRegion) {
-      if (mediaType !== "image/png") throw new Error("screenshot regions require PNG capture");
-      const cropped = cropPng(bytes, input.pixelRegion);
-      bytes = cropped.bytes;
-      outputWidth = cropped.width;
-      outputHeight = cropped.height;
-    }
+    const outputWidth = typeof screenshot.width === "number" ? screenshot.width : undefined;
+    const outputHeight = typeof screenshot.height === "number" ? screenshot.height : undefined;
     mkdirSync(dir, { recursive: true });
     const capturedAt = Date.now();
     const hostScreenshotId = typeof screenshot.id === "string" ? screenshot.id : "";
-    const screenshotId = hostScreenshotId.startsWith("screenshot:")
-      ? hostScreenshotId
-      : `screenshot:${randomUUID()}`;
+    const screenshotId = hostScreenshotId || `screenshot:${randomUUID()}`;
     const filename = `${capturedAt}-${randomUUID().slice(0, 8)}.${extension}`;
     const absPath = join(dir, filename);
     writeFileSync(absPath, bytes);
