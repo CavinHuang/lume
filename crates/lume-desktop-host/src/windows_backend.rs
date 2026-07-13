@@ -31,7 +31,7 @@ use windows::{
                 BI_RGB, DIB_RGB_COLORS, HGDIOBJ, SRCCOPY,
             },
             Imaging::{
-                CLSID_WICImagingFactory, GUID_ContainerFormatPng, GUID_WICPixelFormat32bppBGR,
+                CLSID_WICImagingFactory, GUID_ContainerFormatPng, GUID_WICPixelFormat24bppBGR,
                 IWICBitmapFrameEncode, IWICImagingFactory, WICBitmapEncoderNoCache,
             },
         },
@@ -921,6 +921,13 @@ fn encode_bgra_png_data_url(pixels: &[u8], width: u32, height: u32) -> Result<St
     if pixels.len() != expected_bytes {
         return Err(anyhow!("window capture returned an invalid pixel buffer"));
     }
+    let stride = width
+        .checked_mul(3)
+        .ok_or_else(|| anyhow!("window capture dimensions are too large"))?;
+    let mut bgr = Vec::with_capacity(expected_bytes / 4 * 3);
+    for pixel in pixels.chunks_exact(4) {
+        bgr.extend_from_slice(&pixel[..3]);
+    }
     let capacity = expected_bytes
         .checked_add(height as usize)
         .and_then(|size| size.checked_add(64 * 1024))
@@ -941,9 +948,9 @@ fn encode_bgra_png_data_url(pixels: &[u8], width: u32, height: u32) -> Result<St
         let frame = frame.ok_or_else(|| anyhow!("PNG encoder did not create a frame"))?;
         frame.Initialize(options.as_ref())?;
         frame.SetSize(width, height)?;
-        let mut pixel_format = GUID_WICPixelFormat32bppBGR;
+        let mut pixel_format = GUID_WICPixelFormat24bppBGR;
         frame.SetPixelFormat(&mut pixel_format)?;
-        frame.WritePixels(height, width * 4, pixels)?;
+        frame.WritePixels(height, stride, &bgr)?;
         frame.Commit()?;
         encoder.Commit()?;
 
@@ -2146,6 +2153,49 @@ fn try_set_element_value(params: &Value, value: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Graphics::Imaging::{
+        GUID_WICPixelFormat24bppBGR, WICDecodeMetadataCacheOnLoad,
+    };
+
+    #[test]
+    fn png_encoder_preserves_bgra_pixel_boundaries() {
+        let bgra = [
+            0, 0, 255, 255, // red
+            0, 255, 0, 255, // green
+            255, 0, 0, 255, // blue
+            255, 255, 255, 255, // white
+        ];
+        let data_url = encode_bgra_png_data_url(&bgra, 4, 1).unwrap();
+        let mut png = BASE64
+            .decode(data_url.strip_prefix("data:image/png;base64,").unwrap())
+            .unwrap();
+
+        let decoded = unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let factory: IWICImagingFactory =
+                CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER).unwrap();
+            let stream = factory.CreateStream().unwrap();
+            stream.InitializeFromMemory(&mut png).unwrap();
+            let decoder = factory
+                .CreateDecoderFromStream(&stream, std::ptr::null(), WICDecodeMetadataCacheOnLoad)
+                .unwrap();
+            let frame = decoder.GetFrame(0).unwrap();
+            assert_eq!(frame.GetPixelFormat().unwrap(), GUID_WICPixelFormat24bppBGR);
+            let mut pixels = vec![0_u8; 12];
+            frame.CopyPixels(std::ptr::null(), 12, &mut pixels).unwrap();
+            pixels
+        };
+
+        assert_eq!(
+            decoded,
+            [
+                0, 0, 255, // red
+                0, 255, 0, // green
+                255, 0, 0, // blue
+                255, 255, 255, // white
+            ]
+        );
+    }
 
     #[test]
     fn prefers_windows_document_text_over_visible_nodes() {
