@@ -20,6 +20,7 @@ import {
   createEstimatedContextUsage,
   normalizeProviderUsage,
 } from './usage.js'
+import { stripImagesFromMessages } from './messages.js'
 
 /**
  * State for tracking auto-compaction across turns.
@@ -56,7 +57,7 @@ export function shouldAutoCompact(
   if (state.consecutiveFailures >= 3) return false
 
   const contextUsage = options.contextUsage ?? createEstimatedContextUsage({
-    messageTokens: estimateMessagesTokens(messages),
+    messageTokens: estimateMessagesTokens(stripImagesFromMessages(messages)),
     contextWindow: getContextWindowSize(model),
     contextWindowSource: 'model',
   })
@@ -107,16 +108,16 @@ export async function compactConversation(
       .join('\n')
 
     // Replace messages with summary
-    const compactedMessages: NormalizedMessageParam[] = [
-      {
-        role: 'user',
-        content: `[Previous conversation summary]\n\n${summary}\n\n[End of summary - conversation continues below]`,
-      },
-      {
-        role: 'assistant',
-        content: 'I understand the context from the previous conversation. I\'ll continue from where we left off.',
-      },
-    ]
+    const actionFacts = renderComputerUseActionFacts(messages)
+    const internalContext = [summary, actionFacts].filter(Boolean).join('\n\n')
+    const compactedMessages = [{
+      role: 'user' as const,
+      content: [{
+        type: 'text' as const,
+        text: internalContext,
+        _meta: { contextBlock: 'compaction' },
+      }],
+    }] as unknown as NormalizedMessageParam[]
 
     return {
       compactedMessages,
@@ -140,21 +141,28 @@ export async function compactConversation(
   }
 }
 
-/**
- * Strip images from messages for compaction safety.
- */
-function stripImagesFromMessages(
-  messages: any[],
-): any[] {
-  return messages.map((msg: any) => {
-    if (typeof msg.content === 'string') return msg
-
-    const filtered = (msg.content as any[]).filter((block: any) => {
-      return block.type !== 'image'
-    })
-
-    return { ...msg, content: filtered.length > 0 ? filtered : '[content removed for compaction]' }
-  })
+function renderComputerUseActionFacts(messages: any[]): string {
+  const facts = new Map<string, string>()
+  const visit = (value: any): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    const fact = value._meta?.computerUseAction
+    if (fact && typeof fact.actionId === 'string' && typeof fact.phase === 'string') {
+      const app = typeof fact.window?.app === 'string' ? fact.window.app : 'unknown app'
+      const windowId = typeof fact.window?.id === 'number' ? `#${fact.window.id}` : ''
+      const action = typeof fact.action === 'string' ? fact.action : 'action'
+      const suffix = fact.phase === 'verified' ? 'verified complete' : 'not verified complete'
+      facts.set(fact.actionId, `${fact.actionId}: ${action} on ${app}${windowId}; phase=${fact.phase}; ${suffix}`)
+    }
+    Object.values(value).forEach(visit)
+  }
+  messages.forEach(visit)
+  return facts.size > 0
+    ? `[Authoritative Computer Use action facts]\n${Array.from(facts.values()).join('\n')}`
+    : ''
 }
 
 /**

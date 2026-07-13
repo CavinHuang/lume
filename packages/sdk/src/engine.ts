@@ -62,7 +62,13 @@ import {
   isPromptTooLongError,
 } from './utils/retry.js'
 import { getSystemContext, getUserContext } from './utils/context.js'
-import { normalizeMessagesForAPI } from './utils/messages.js'
+import {
+  hydrateEphemeralImageReferences,
+  collectInternalContextBlocks,
+  normalizeMessagesForAPI,
+  releaseEphemeralImageReferences,
+  stripInternalContextBlocks,
+} from './utils/messages.js'
 import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
 import { captureFileSnapshots, collectCheckpointPaths } from './utils/file-checkpoints.js'
@@ -900,8 +906,11 @@ export class QueryEngine {
       }
 
       // Micro-compact: truncate large tool results
+      const internalContextBlocks = collectInternalContextBlocks(this.messages as any[])
+      const conversationMessages = stripInternalContextBlocks(this.messages as any[])
+      const hydratedMessages = await hydrateEphemeralImageReferences(conversationMessages)
       const apiMessages = await this.microCompactForProvider(
-        normalizeMessagesForAPI(this.messages as any[]) as NormalizedMessageParam[],
+        normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
       )
 
       this.turnCount++
@@ -913,7 +922,12 @@ export class QueryEngine {
       const providerRequest: CreateMessageParams = {
         model: this.config.model,
         maxTokens: this.config.maxTokens,
-        system: systemPrompt,
+        system: [
+          systemPrompt,
+          internalContextBlocks.length > 0
+            ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
+            : '',
+        ].filter(Boolean).join('\n\n'),
         messages: apiMessages,
         tools: tools.length > 0 ? tools : undefined,
         jsonSchema: this.config.jsonSchema,
@@ -1051,6 +1065,8 @@ export class QueryEngine {
         }
         return
       }
+
+      this.messages = releaseEphemeralImageReferences(this.messages as any[]) as NormalizedMessageParam[]
 
       // Track API timing
       this.apiTimeMs += performance.now() - apiStart

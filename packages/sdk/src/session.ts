@@ -164,6 +164,12 @@ function sanitizePersistedValue(value: unknown): unknown {
 
 function omitNonPersistentImagePayload(value: Record<string, unknown>): Record<string, unknown> {
   const source = isRecord(value.source) ? value.source : {}
+  if (source.type === 'file' && typeof source.path === 'string') {
+    return {
+      type: 'text',
+      text: `[Screenshot reference: ${source.path}]`,
+    }
+  }
   const mediaType = typeof source.media_type === 'string'
     ? source.media_type
     : typeof value.mimeType === 'string'

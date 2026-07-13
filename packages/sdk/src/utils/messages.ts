@@ -6,6 +6,7 @@
  */
 
 import type { UserMessage, AssistantMessage, TokenUsage } from '../types.js'
+import { readFile } from 'node:fs/promises'
 
 /**
  * Create a user message.
@@ -90,6 +91,96 @@ export function normalizeMessagesForAPI(
   return fixToolResultPairing(normalized)
 }
 
+export async function hydrateEphemeralImageReferences(
+  messages: Array<{ role: string; content: any }>,
+  read: (path: string) => Promise<Uint8Array> = readFile,
+): Promise<Array<{ role: string; content: any }>> {
+  return Promise.all(messages.map(async (message) => ({
+    ...message,
+    content: await hydrateEphemeralValue(message.content, read),
+  })))
+}
+
+export function releaseEphemeralImageReferences(
+  messages: Array<{ role: string; content: any }>,
+): Array<{ role: string; content: any }> {
+  return messages.map((message) => ({
+    ...message,
+    content: releaseEphemeralValue(message.content),
+  }))
+}
+
+export function collectInternalContextBlocks(
+  messages: Array<{ role: string; content: any }>,
+): string[] {
+  return messages.flatMap((message) => Array.isArray(message.content)
+    ? message.content.flatMap((block: any) => isInternalContextBlock(block) ? [block.text] : [])
+    : [])
+}
+
+export function stripInternalContextBlocks(
+  messages: Array<{ role: string; content: any }>,
+): Array<{ role: string; content: any }> {
+  return messages.flatMap((message) => {
+    if (!Array.isArray(message.content)) return [message]
+    const content = message.content.filter((block: any) => !isInternalContextBlock(block))
+    return content.length > 0 ? [{ ...message, content }] : []
+  })
+}
+
+function isInternalContextBlock(value: any): value is { type: 'text'; text: string } {
+  return value?.type === 'text'
+    && typeof value.text === 'string'
+    && value._meta?.contextBlock === 'compaction'
+}
+
+async function hydrateEphemeralValue(
+  value: any,
+  read: (path: string) => Promise<Uint8Array>,
+): Promise<any> {
+  if (Array.isArray(value)) return Promise.all(value.map((item) => hydrateEphemeralValue(item, read)))
+  if (!value || typeof value !== 'object') return value
+  const source = value.source && typeof value.source === 'object' ? value.source : undefined
+  if (
+    value.type === 'image'
+    && value._meta?.ephemeral === 'trusted_runtime'
+    && source?.type === 'file'
+    && typeof source.path === 'string'
+    && typeof source.media_type === 'string'
+  ) {
+    const bytes = await read(source.path)
+    return {
+      ...value,
+      source: {
+        type: 'base64',
+        media_type: source.media_type,
+        data: Buffer.from(bytes).toString('base64'),
+      },
+    }
+  }
+  const entries = await Promise.all(
+    Object.entries(value).map(async ([key, item]) => [key, await hydrateEphemeralValue(item, read)] as const),
+  )
+  return Object.fromEntries(entries)
+}
+
+function releaseEphemeralValue(value: any): any {
+  if (Array.isArray(value)) return value.map(releaseEphemeralValue)
+  if (!value || typeof value !== 'object') return value
+  const source = value.source && typeof value.source === 'object' ? value.source : undefined
+  if (
+    value.type === 'image'
+    && value._meta?.ephemeral === 'trusted_runtime'
+    && source?.type === 'file'
+    && typeof source.path === 'string'
+  ) {
+    return { type: 'text', text: `[Screenshot reference: ${source.path}]` }
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, releaseEphemeralValue(item)]),
+  )
+}
+
 function sanitizeContentForAPI(content: any): any {
   if (!Array.isArray(content)) return content
   return content.map(sanitizeContentBlockForAPI)
@@ -165,18 +256,25 @@ export function stripImagesFromMessages(
   messages: Array<{ role: string; content: any }>,
 ): Array<{ role: string; content: any }> {
   return messages.map((msg) => {
-    if (typeof msg.content === 'string') return msg
-    if (!Array.isArray(msg.content)) return msg
-
-    const filtered = (msg.content as any[]).filter(
-      (block: any) => block.type !== 'image',
-    )
-
+    const filtered = stripImagesFromValue(msg.content)
     return {
       ...msg,
-      content: filtered.length > 0 ? filtered : '[content removed]',
+      content: Array.isArray(filtered) && filtered.length === 0 ? '[content removed]' : filtered,
     }
   })
+}
+
+function stripImagesFromValue(value: any): any {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item?.type !== 'image')
+      .map(stripImagesFromValue)
+  }
+  if (!value || typeof value !== 'object') return value
+  if (value.type === 'image') return '[image removed]'
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, stripImagesFromValue(item)]),
+  )
 }
 
 /**
