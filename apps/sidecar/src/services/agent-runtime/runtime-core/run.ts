@@ -728,6 +728,7 @@ function buildRuntimeCoreTools(input: {
   subagentDefinition?: AgentDefinition;
   boundSubagentReportTool?: ToolDefinition;
   messageMetadata?: Record<string, unknown>;
+  originalUserInstruction?: string;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
@@ -783,6 +784,7 @@ function buildRuntimeCoreTools(input: {
     workspaceSlug: input.workspaceSlug,
     permissionMode,
     messageMetadata: input.messageMetadata,
+    originalUserInstruction: input.originalUserInstruction,
     memoryToolPolicy: memoryRuntimeConfig.toolPolicy,
     includeCitations,
     automationExecution,
@@ -1471,6 +1473,7 @@ export async function createRuntimeCoreSession(
     subagentDefinition,
     boundSubagentReportTool,
     messageMetadata: input.messageMetadata,
+    originalUserInstruction: input.userMessage,
     emitSdkMessage: input.emitSdkMessage,
     emitRuntimeEvent: input.emitRuntimeEvent,
     emitAskUserQuestion: input.emitAskUserQuestion,

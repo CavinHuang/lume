@@ -36,6 +36,7 @@ export interface CreateLumeRuntimeToolsInput {
   workspaceSlug?: string;
   permissionMode?: AgentSendInput["permissionMode"];
   messageMetadata?: Record<string, unknown>;
+  originalUserInstruction?: string;
   memoryToolPolicy?: MemoryToolPolicy;
   includeCitations: boolean;
   automationExecution?: boolean;
@@ -102,6 +103,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitDesktopActionVisualEvent,
     routeScreenshot: (path) => computerUseVisionRouter.route(path),
+    originalUserInstruction: input.originalUserInstruction,
   });
   const customTools = [
     ...memoryTools,

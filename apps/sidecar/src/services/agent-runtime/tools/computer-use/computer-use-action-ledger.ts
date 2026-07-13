@@ -9,10 +9,11 @@ import { dirname, join } from "node:path";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import { createLogger } from "../../../infra/logger";
 
-const RECENT_FOCUS_EVENT_MS = 30_000;
-
 export class ComputerUseActionLedger {
   readonly #entries = new Map<string, DesktopActionLedgerEntry>();
+  readonly #expectedText = new Map<string, string>();
+  readonly #baselineFingerprint = new Map<string, string>();
+  readonly #requiresStateChange = new Set<string>();
   readonly #threadId: string;
   readonly #path?: string;
   readonly #log;
@@ -33,10 +34,12 @@ export class ComputerUseActionLedger {
   plan(input: {
     action: DesktopActionKind;
     window: ComputerUseWindow;
-    stateId?: string;
     screenshotId?: string;
     point?: { x: number; y: number };
     text?: string;
+    sensitive?: boolean;
+    baselineFingerprint?: string;
+    requiresStateChange?: boolean;
   }): DesktopActionLedgerEntry {
     const now = Date.now();
     const entry: DesktopActionLedgerEntry = {
@@ -47,12 +50,18 @@ export class ComputerUseActionLedger {
       phase: "planned",
       createdAt: now,
       updatedAt: now,
-      ...(input.stateId ? { stateId: input.stateId } : {}),
       ...(input.screenshotId ? { screenshotId: input.screenshotId } : {}),
       ...(input.point ? { point: input.point } : {}),
-      ...(input.text !== undefined ? { textLength: input.text.length, sensitive: false } : {}),
+      ...(input.text !== undefined
+        ? { textLength: input.text.length, sensitive: input.sensitive === true }
+        : {}),
     };
     this.#entries.set(entry.actionId, entry);
+    if (input.text !== undefined) this.#expectedText.set(entry.actionId, input.text);
+    if (input.baselineFingerprint) {
+      this.#baselineFingerprint.set(entry.actionId, input.baselineFingerprint);
+    }
+    if (input.requiresStateChange) this.#requiresStateChange.add(entry.actionId);
     this.#append(entry);
     this.#log.info("action phase", ledgerLogFields(entry));
     return entry;
@@ -60,23 +69,12 @@ export class ComputerUseActionLedger {
 
   confirm(actionId: string): void { this.#transition(actionId, "confirmed"); }
   dispatch(actionId: string): void { this.#transition(actionId, "dispatched"); }
-  observe(actionId: string, stateId?: string): void {
-    this.#transition(actionId, "observed", undefined, stateId);
-  }
+  observe(actionId: string): void { this.#transition(actionId, "observed"); }
   verify(actionId: string): void { this.#transition(actionId, "verified"); }
 
   fail(actionId: string, failureReason: string): void {
     this.#transition(actionId, "failed", failureReason);
-  }
-
-  hasRecentFocusEvent(window: ComputerUseWindow, now = Date.now()): boolean {
-    for (const entry of this.#entries.values()) {
-      if (entry.window.id !== window.id || entry.window.app !== window.app) continue;
-      if (entry.phase !== "dispatched" && entry.phase !== "observed" && entry.phase !== "verified") continue;
-      if (entry.action !== "click" && entry.action !== "activate_window") continue;
-      if (now - entry.updatedAt <= RECENT_FOCUS_EVENT_MS) return true;
-    }
-    return false;
+    this.#forgetPrivateVerificationState(actionId);
   }
 
   get(actionId: string): DesktopActionLedgerEntry | undefined {
@@ -84,11 +82,47 @@ export class ComputerUseActionLedger {
     return entry ? { ...entry, window: { ...entry.window } } : undefined;
   }
 
+  observeWindow(
+    window: ComputerUseWindow,
+    accessibility: unknown,
+    fingerprint?: string,
+  ): DesktopActionLedgerEntry[] {
+    const observed: DesktopActionLedgerEntry[] = [];
+    const text = accessibilityText(accessibility);
+    for (const current of [...this.#entries.values()]) {
+      if (current.phase !== "dispatched" && current.phase !== "observed") continue;
+      if (current.window.id !== window.id || current.window.app !== window.app) continue;
+      if (current.phase === "dispatched") this.observe(current.actionId);
+      const expected = this.#expectedText.get(current.actionId);
+      const baseline = this.#baselineFingerprint.get(current.actionId);
+      const stateChanged = this.#requiresStateChange.has(current.actionId)
+        && baseline !== undefined
+        && fingerprint !== undefined
+        && baseline !== fingerprint;
+      if (
+        current.action === "activate_window"
+        || (expected !== undefined && expected.length > 0 && text.includes(expected))
+        || stateChanged
+      ) {
+        this.verify(current.actionId);
+      }
+      const next = this.get(current.actionId);
+      if (next && (current.phase === "dispatched" || next.phase === "verified")) observed.push(next);
+      if (next?.phase === "verified") this.#forgetPrivateVerificationState(current.actionId);
+    }
+    return observed;
+  }
+
+  #forgetPrivateVerificationState(actionId: string): void {
+    this.#expectedText.delete(actionId);
+    this.#baselineFingerprint.delete(actionId);
+    this.#requiresStateChange.delete(actionId);
+  }
+
   #transition(
     actionId: string,
     phase: DesktopActionLedgerEntry["phase"],
     failureReason?: string,
-    stateId?: string,
   ): void {
     const current = this.#entries.get(actionId);
     if (!current) throw new Error(`unknown computer-use action: ${actionId}`);
@@ -108,7 +142,6 @@ export class ComputerUseActionLedger {
       phase,
       updatedAt: Date.now(),
       ...(failureReason ? { failureReason } : {}),
-      ...(stateId ? { stateId } : {}),
     };
     this.#entries.set(actionId, next);
     this.#append(next);
@@ -137,6 +170,13 @@ export class ComputerUseActionLedger {
   }
 }
 
+function accessibilityText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(accessibilityText).join("\n");
+  if (!value || typeof value !== "object") return "";
+  return Object.values(value as Record<string, unknown>).map(accessibilityText).join("\n");
+}
+
 function ledgerLogFields(entry: DesktopActionLedgerEntry): Record<string, unknown> {
   return {
     actionId: entry.actionId,
@@ -144,7 +184,6 @@ function ledgerLogFields(entry: DesktopActionLedgerEntry): Record<string, unknow
     phase: entry.phase,
     windowId: entry.window.id,
     app: entry.window.app,
-    ...(entry.stateId ? { stateId: entry.stateId } : {}),
     ...(entry.screenshotId ? { screenshotId: entry.screenshotId } : {}),
     ...(entry.point ? { point: entry.point } : {}),
     ...(entry.textLength !== undefined ? { textLength: entry.textLength, sensitive: entry.sensitive } : {}),

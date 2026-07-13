@@ -1,15 +1,13 @@
 import type { ToolDefinition, ToolInputSchema, ToolResult } from "@lume/agent-sdk";
 import {
-  isDesktopActionStatus,
   classifyDesktopActionConfirmation,
   requiresDesktopActionConfirmation,
   type AgentDesktopActionRequest,
   type DesktopActionKind,
-  type DesktopActionStatus,
   type DesktopActionVisualRuntimeEvent,
   type Window as ComputerUseWindow,
 } from "@lume/shared";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { invokeComputerUse } from "../../../desktop-context/desktop-context-runtime";
 import { waitForDesktopActionDecision } from "../../interruption/desktop-action-session";
 import { ComputerUseActionLedger } from "./computer-use-action-ledger";
@@ -20,13 +18,11 @@ export const COMPUTER_USE_MCP_SERVER_ID = "computer_use";
 const WRAPPER_PREFIX = `mcp__${COMPUTER_USE_MCP_SERVER_ID}__`;
 
 export const COMPUTER_USE_TOOL_NAMES = [
-  "list_apps",
   "list_windows",
   "get_window",
-  "get_window_state",
-  "take_screenshot",
+  "list_apps",
   "launch_app",
-  "activate_window",
+  "get_window_state",
   "click",
   "press_key",
   "type_text",
@@ -34,12 +30,13 @@ export const COMPUTER_USE_TOOL_NAMES = [
   "set_value",
   "drag",
   "perform_secondary_action",
+  "activate_window",
 ] as const;
 
 export type ComputerUseToolName = (typeof COMPUTER_USE_TOOL_NAMES)[number];
 export type ComputerUseHostMethod = ComputerUseToolName;
 export type ComputerUseInvoke = (
-  method: ComputerUseHostMethod,
+  method: ComputerUseHostMethod | "desktop_context.preflight_action",
   input: Record<string, unknown>,
 ) => Promise<unknown>;
 
@@ -48,10 +45,10 @@ const READ_ONLY_TOOLS = new Set<ComputerUseToolName>([
   "list_windows",
   "get_window",
   "get_window_state",
-  "take_screenshot",
 ]);
 
 const INPUT_TOOLS = new Set<ComputerUseToolName>([
+  "launch_app",
   "activate_window",
   "click",
   "press_key",
@@ -68,6 +65,7 @@ export function createComputerUseMcpTools(input: {
   threadId?: string;
   runId?: string;
   routeScreenshot?: (path: string) => Promise<ComputerUseVisionRouteResult>;
+  originalUserInstruction?: string;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
 } = {}): ToolDefinition[] {
@@ -76,6 +74,7 @@ export function createComputerUseMcpTools(input: {
     workspaceSlug: input.workspaceSlug,
     threadId: input.threadId ?? "computer-use",
   });
+  const lastObservationByWindow = new Map<string, string>();
 
   return COMPUTER_USE_TOOL_NAMES.map((name) => {
     const readOnly = READ_ONLY_TOOLS.has(name);
@@ -105,45 +104,25 @@ export function createComputerUseMcpTools(input: {
         try {
           const args = asRecord(rawArgs);
           if (name === "get_window_state") {
-            return toolResult(context.toolUseId, await invoke(name, {
+            const state = await invoke(name, {
               ...args,
-              include_text: args.include_text !== false,
-            }));
-          }
-          if (name === "take_screenshot") {
-            const screenshot = persistScreenshot(
-              await invoke(name, args),
-              input.workspaceSlug,
-              input.threadId,
-            );
-            const route = input.routeScreenshot
-              ? await input.routeScreenshot(screenshot.absPath)
-              : { status: "vision_unavailable" as const };
-            if (route.status === "image_ready") {
-              return toolResultWithEphemeralImage(
-                context.toolUseId,
-                { ...screenshot.metadata, visionRoute: "current_model" },
-                screenshot.absPath,
-              );
-            }
-            if (route.status === "observed") {
-              return toolResult(context.toolUseId, {
-                ...screenshot.metadata,
-                visionRoute: "fallback_model",
-                visionModelKey: route.modelKey,
-                ...route.observation,
-              });
-            }
-            return toolResult(context.toolUseId, {
-              ...screenshot.metadata,
-              status: "vision_unavailable",
-              message: "no verified vision-capable model is available",
+              include_screenshot: args.include_screenshot !== false,
+              include_text: args.include_text === true,
+            });
+            return handleWindowState({
+              state,
+              toolUseId: context.toolUseId,
+              workspaceSlug: input.workspaceSlug,
+              threadId: input.threadId,
+              routeScreenshot: input.routeScreenshot,
+              ledger,
+              lastObservationByWindow,
             });
           }
           if (!INPUT_TOOLS.has(name)) {
             return toolResult(context.toolUseId, await invoke(name, args));
           }
-          const result = await dispatchAction({
+          const actionEntry = await dispatchAction({
             invoke,
             ledger,
             input,
@@ -151,24 +130,23 @@ export function createComputerUseMcpTools(input: {
             args,
             toolUseId: context.toolUseId,
             abortSignal: context.abortSignal,
+            lastObservationByWindow,
           });
-          const actionId = stringValue(result.actionId);
-          const actionEntry = actionId ? ledger.get(actionId) : undefined;
-          return toolResult(context.toolUseId, result, false, actionEntry ? {
+          return toolResult(context.toolUseId, null, false, {
             computerUseAction: {
               actionId: actionEntry.actionId,
               action: actionEntry.action,
               phase: actionEntry.phase,
               window: actionEntry.window,
-              ...(actionEntry.stateId ? { stateId: actionEntry.stateId } : {}),
               ...(actionEntry.screenshotId ? { screenshotId: actionEntry.screenshotId } : {}),
             },
-          } : undefined);
+          });
         } catch (error) {
-          return toolResult(context.toolUseId, {
-            status: "failed",
-            message: error instanceof Error ? error.message : String(error),
-          }, true);
+          return toolResult(
+            context.toolUseId,
+            { error: error instanceof Error ? error.message : String(error) },
+            true,
+          );
         }
       },
     } satisfies ToolDefinition;
@@ -182,6 +160,7 @@ async function dispatchAction(input: {
     workspaceSlug?: string;
     threadId?: string;
     runId?: string;
+    originalUserInstruction?: string;
     emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
     emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
   };
@@ -189,189 +168,277 @@ async function dispatchAction(input: {
   args: Record<string, unknown>;
   toolUseId?: string;
   abortSignal?: AbortSignal;
-}): Promise<Record<string, unknown>> {
+  lastObservationByWindow: Map<string, string>;
+}): Promise<NonNullable<ReturnType<ComputerUseActionLedger["get"]>>> {
   const window = canonicalWindow(input.args.window);
   if (!window && input.action !== "launch_app") {
-    return { status: "stale_target", message: "canonical window is required" };
+    throw new Error("canonical window is required");
   }
 
-  if (input.action === "type_text" && window) {
-    const allowed = await canTypeText(input.invoke, input.ledger, window);
-    if (!allowed) {
-      return {
-        status: "blocked",
-        message: "type_text requires an editable focused element or a recent real click/focus event in this window",
-      };
-    }
-  }
+  const preflight = await preflightAction(input.invoke, input.action, input.args);
+  const intent = actionIntent(
+    input.action,
+    input.args,
+    preflight,
+    input.input.originalUserInstruction,
+  );
+  const classification = classifyDesktopActionConfirmation(intent);
 
   const entry = input.ledger.plan({
     action: input.action,
     window: window ?? { id: 0, app: stringValue(input.args.app) ?? "unknown" },
-    stateId: stringValue(input.args.stateId),
     screenshotId: stringValue(input.args.screenshotId),
     point: pointFromArgs(input.args),
     text: input.action === "type_text"
-      ? stringValue(input.args.text)
+      ? rawString(input.args.text)
       : input.action === "set_value"
-        ? stringValue(input.args.value)
+        ? rawString(input.args.value)
         : undefined,
+    sensitive: preflight.sensitive === true,
+    baselineFingerprint: window
+      ? input.lastObservationByWindow.get(windowKey(window))
+      : undefined,
+    requiresStateChange: classification.categories.some((category) =>
+      category === "send_message" || category === "submit_form" || category === "delete"
+    ),
   });
 
-  if (requiresDesktopActionConfirmation(actionIntent(input.action, input.args))) {
+  if (requiresUserTakeover(
+    input.action,
+    input.args,
+    preflight,
+    input.input.originalUserInstruction,
+  )) {
+    input.ledger.fail(entry.actionId, "user takeover required");
+    throw new Error(
+      "user_takeover_required: password submission and system security barriers must be completed by the user",
+    );
+  }
+
+  if (requiresDesktopActionConfirmation(intent)) {
     if (!input.input.threadId || !input.input.emitDesktopActionRequest) {
       input.ledger.fail(entry.actionId, "confirmation unavailable");
-      return { status: "blocked", message: "desktop action requires explicit user confirmation" };
+      throw new Error("desktop action requires explicit user confirmation");
     }
     const allowed = await waitForDesktopActionDecision(
-      createActionRequest(input.input.threadId, input.toolUseId, input.action, input.args, entry.actionId),
+      createActionRequest(
+        input.input.threadId,
+        input.toolUseId,
+        input.action,
+        input.args,
+        preflight,
+        input.input.originalUserInstruction,
+        entry.actionId,
+      ),
       input.abortSignal ?? new AbortController().signal,
       input.input.emitDesktopActionRequest,
     );
     if (!allowed) {
       input.ledger.fail(entry.actionId, "user denied confirmation");
-      return { status: "cancelled", actionId: entry.actionId };
+      throw new Error("desktop action was denied by the user");
     }
   }
   input.ledger.confirm(entry.actionId);
 
   emitVisual(input.input, input.action, input.args, input.toolUseId, "started");
-  if (window && input.action !== "activate_window") {
-    const activated = asRecord(await input.invoke("activate_window", { window }));
-    if (resultStatus(activated) !== "ok" && resultStatus(activated) !== "dispatched") {
-      input.ledger.fail(entry.actionId, "window activation failed");
-      emitVisual(input.input, input.action, input.args, input.toolUseId, "failed", resultStatus(activated));
-      return { ...activated, actionId: entry.actionId };
+  try {
+    const result = await input.invoke(input.action as ComputerUseHostMethod, input.args);
+    if (result !== null) {
+      throw new Error("Computer Use v3 input methods must return null");
     }
-  }
-
-  const result = asRecord(await input.invoke(input.action as ComputerUseHostMethod, input.args));
-  const status = resultStatus(result);
-  if (status !== "ok" && status !== "dispatched") {
-    input.ledger.fail(entry.actionId, typeof result.message === "string" ? result.message : "dispatch failed");
-    emitVisual(input.input, input.action, input.args, input.toolUseId, "failed", status);
-    return { ...result, actionId: entry.actionId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    input.ledger.fail(entry.actionId, message);
+    emitVisual(input.input, input.action, input.args, input.toolUseId, "failed");
+    throw error;
   }
   input.ledger.dispatch(entry.actionId);
-  await observeDispatchedAction(input.invoke, input.ledger, entry.actionId, input.action, input.args, window);
-  emitVisual(input.input, input.action, input.args, input.toolUseId, "completed", "dispatched");
-  return { status: "dispatched", actionId: entry.actionId };
+  emitVisual(input.input, input.action, input.args, input.toolUseId, "completed");
+  return input.ledger.get(entry.actionId)!;
 }
 
-async function observeDispatchedAction(
+async function preflightAction(
   invoke: ComputerUseInvoke,
-  ledger: ComputerUseActionLedger,
-  actionId: string,
   action: DesktopActionKind,
   args: Record<string, unknown>,
-  window: ComputerUseWindow | undefined,
-): Promise<void> {
-  if (!window || action === "launch_app") return;
+): Promise<Record<string, unknown>> {
+  if (action === "launch_app") return {};
+  const request: Record<string, unknown> = { action };
+  for (const key of ["window", "element_index", "x", "y", "screenshotId"] as const) {
+    if (args[key] !== undefined) request[key] = args[key];
+  }
+  if (action === "perform_secondary_action") request.secondaryAction = args.action;
   try {
-    const state = asRecord(await invoke("get_window_state", { window, include_text: true }));
-    if (resultStatus(state) !== "ok") return;
-    ledger.observe(actionId, stringValue(state.stateId));
-    if (action === "activate_window" && state.focused === true) {
-      ledger.verify(actionId);
-      return;
-    }
-    if (action === "type_text" || action === "set_value") {
-      const expected = action === "type_text" ? stringValue(args.text) : stringValue(args.value);
-      if (expected && accessibilityContainsText(state.accessibility, expected)) {
-        ledger.verify(actionId);
-      }
-      return;
-    }
-    if (action === "press_key" && isSubmitKey(args)) {
-      const previousStateId = stringValue(args.stateId);
-      const observedStateId = stringValue(state.stateId);
-      if (previousStateId && observedStateId && previousStateId !== observedStateId) {
-        ledger.verify(actionId);
-      }
-    }
+    return asRecord(await invoke("desktop_context.preflight_action", request));
   } catch {
-    // Dispatch truth is retained even when post-action observation is unavailable.
+    return {};
   }
 }
 
-function accessibilityContainsText(value: unknown, expected: string): boolean {
-  if (typeof value === "string") return value.includes(expected);
-  if (Array.isArray(value)) return value.some((item) => accessibilityContainsText(item, expected));
-  const record = asRecord(value);
-  if (record.sensitive === true) return false;
-  return Object.entries(record).some(([key, item]) => {
-    if (key === "sensitive") return false;
-    return accessibilityContainsText(item, expected);
-  });
-}
+async function handleWindowState(input: {
+  state: unknown;
+  toolUseId?: string;
+  workspaceSlug?: string;
+  threadId?: string;
+  routeScreenshot?: (path: string) => Promise<ComputerUseVisionRouteResult>;
+  ledger: ComputerUseActionLedger;
+  lastObservationByWindow: Map<string, string>;
+}): Promise<ToolResult> {
+  const result = asRecord(input.state);
+  const window = canonicalWindow(result.window);
+  const fingerprint = windowStateFingerprint(result);
+  const observed = window
+    ? input.ledger.observeWindow(window, result.accessibility, fingerprint)
+    : [];
+  if (window) input.lastObservationByWindow.set(windowKey(window), fingerprint);
+  const latestAction = observed.at(-1);
+  const metadata = latestAction ? {
+    computerUseAction: {
+      actionId: latestAction.actionId,
+      action: latestAction.action,
+      phase: latestAction.phase,
+      window: latestAction.window,
+      ...(latestAction.screenshotId ? { screenshotId: latestAction.screenshotId } : {}),
+    },
+    computerUseActions: observed.map((action) => ({
+      actionId: action.actionId,
+      action: action.action,
+      phase: action.phase,
+      window: action.window,
+      ...(action.screenshotId ? { screenshotId: action.screenshotId } : {}),
+    })),
+  } : undefined;
+  const screenshots = Array.isArray(result.screenshots) ? result.screenshots : [];
+  if (screenshots.length === 0) return toolResult(input.toolUseId, result, false, metadata);
 
-function isSubmitKey(args: Record<string, unknown>): boolean {
-  const keys = Array.isArray(args.keys) ? args.keys : [args.key];
-  return keys.some((key) => typeof key === "string" && /^(?:enter|return)$/i.test(key.trim()));
-}
-
-async function canTypeText(
-  invoke: ComputerUseInvoke,
-  ledger: ComputerUseActionLedger,
-  window: ComputerUseWindow,
-): Promise<boolean> {
-  const state = asRecord(await invoke("get_window_state", { window, include_text: true }));
-  const accessibility = asRecord(state.accessibility);
-  const focused = asRecord(accessibility.focused_element);
-  return focused.editable === true || ledger.hasRecentFocusEvent(window);
-}
-
-function persistScreenshot(
-  value: unknown,
-  workspaceSlug: string | undefined,
-  threadId: string | undefined,
-): { metadata: Record<string, unknown>; absPath: string } {
+  const { workspaceSlug, threadId } = input;
   if (!workspaceSlug || !threadId) {
     throw new Error("computer-use screenshot requires a workspace-bound thread");
   }
-  const result = asRecord(value);
-  const candidates = Array.isArray(result.screenshots)
-    ? result.screenshots
-    : Object.keys(asRecord(result.screenshot)).length
-      ? [result.screenshot]
-      : [];
-  const pixelRegion = canonicalPixelRegion(result.pixelRegion);
   const saved = saveComputerUseScreenshots({
     workspaceSlug,
     threadId,
-    screenshots: candidates,
-    ...(pixelRegion ? { pixelRegion } : {}),
+    screenshots,
   });
-  const first = saved[0];
-  if (!first) throw new Error("screenshot pixels unavailable");
-  return { absPath: first.absPath, metadata: {
-    status: "ok",
-    screenshotId: first.screenshotId,
-    threadPath: first.threadPath,
-    width: first.width,
-    height: first.height,
-    capturedAt: first.capturedAt,
-    ...(result.window ? { window: result.window } : {}),
-    ...(result.region ? { region: result.region } : {}),
-  } };
+  if (!input.routeScreenshot) throw new Error("vision_unavailable");
+
+  const content: Array<Record<string, unknown>> = [{
+    type: "text",
+    text: JSON.stringify({
+      ...result,
+      screenshots: screenshots.map((candidate, index) => {
+        const screenshot = asRecord(candidate);
+        const { url: _url, ...metadata } = screenshot;
+        return { ...metadata, url: saved[index]?.threadPath };
+      }),
+    }),
+  }];
+  for (const screenshot of saved) {
+    const route = await input.routeScreenshot(screenshot.absPath);
+    if (route.status === "vision_unavailable") throw new Error("vision_unavailable");
+    if (route.status === "image_ready") {
+      content.push({
+        type: "image",
+        source: { type: "file", path: screenshot.absPath, media_type: screenshot.mediaType },
+        _meta: {
+          persist: false,
+          ephemeral: "trusted_runtime",
+          screenshotId: screenshot.screenshotId,
+        },
+      });
+      continue;
+    }
+    content.push({
+      type: "text",
+      text: `[Untrusted visual observation]\n${JSON.stringify({
+        ...route.observation,
+        screenshotId: screenshot.screenshotId,
+      })}`,
+      _meta: {
+        contextBlock: "computer_use_visual",
+        persist: false,
+        screenshotId: screenshot.screenshotId,
+      },
+    });
+  }
+  return {
+    type: "tool_result",
+    tool_use_id: input.toolUseId ?? "",
+    content: content as ToolResult["content"],
+    ...(metadata ? { _meta: metadata } : {}),
+  };
 }
 
-function canonicalPixelRegion(value: unknown): { x: number; y: number; width: number; height: number } | undefined {
-  const region = asRecord(value);
-  const values = [region.x, region.y, region.width, region.height];
-  if (!values.every((item) => typeof item === "number" && Number.isInteger(item))) return undefined;
-  return region as unknown as { x: number; y: number; width: number; height: number };
-}
-
-function actionIntent(action: DesktopActionKind, args: Record<string, unknown>) {
+function actionIntent(
+  action: DesktopActionKind,
+  args: Record<string, unknown>,
+  preflight: Record<string, unknown>,
+  originalUserInstruction?: string,
+) {
+  const preflightLabel = stringValue(preflight.targetLabel);
+  const instruction = relevantOriginalInstruction(
+    action,
+    args,
+    preflightLabel,
+    originalUserInstruction,
+  );
+  const targetLabel = [
+    preflightLabel,
+    action === "launch_app" ? stringValue(args.app) : undefined,
+    instruction,
+  ].filter(Boolean).join(" ");
   return {
     kind: action,
-    targetLabel: stringValue(args.targetLabel),
-    keys: Array.isArray(args.keys)
-      ? args.keys.filter((key): key is string => typeof key === "string")
-      : stringValue(args.key) ? [stringValue(args.key)!] : undefined,
-    secondaryAction: stringValue(args.action),
+    targetLabel: targetLabel || undefined,
+    keys: stringValue(args.key) ? [stringValue(args.key)!] : undefined,
+    secondaryAction: stringValue(preflight.secondaryAction) ?? stringValue(args.action),
   };
+}
+
+function relevantOriginalInstruction(
+  action: DesktopActionKind,
+  args: Record<string, unknown>,
+  preflightLabel: string | undefined,
+  originalUserInstruction?: string,
+): string | undefined {
+  const instruction = stringValue(originalUserInstruction);
+  if (!instruction) return undefined;
+  if (action === "press_key") {
+    return /^(?:enter|return)$/i.test(stringValue(args.key) ?? "") ? instruction : undefined;
+  }
+  if (action === "click" || action === "perform_secondary_action") {
+    return preflightLabel ? undefined : instruction;
+  }
+  const categories = classifyDesktopActionConfirmation({ kind: action, targetLabel: instruction }).categories;
+  if (action === "launch_app") return categories.includes("install") ? instruction : undefined;
+  if (action === "type_text" || action === "set_value") {
+    return categories.some((category) => category === "sensitive_data" || category === "medical")
+      ? instruction
+      : undefined;
+  }
+  return undefined;
+}
+
+function requiresUserTakeover(
+  action: DesktopActionKind,
+  args: Record<string, unknown>,
+  preflight: Record<string, unknown>,
+  originalUserInstruction?: string,
+): boolean {
+  const instruction = originalUserInstruction?.trim() ?? "";
+  if (/(?:绕过|规避|跳过).*(?:系统|安全|权限|警告)|bypass.*(?:system|security|permission|warning)/i.test(instruction)) {
+    return true;
+  }
+  const changesPassword = /(?:修改|更改|重置).{0,8}(?:密码|口令)|(?:change|reset).{0,12}password/i.test(instruction);
+  if (!changesPassword) return false;
+  if (
+    action === "press_key"
+    && /^(?:enter|return)$/i.test(stringValue(args.key) ?? "")
+  ) {
+    return true;
+  }
+  const target = `${stringValue(preflight.targetLabel) ?? ""} ${stringValue(args.action) ?? ""}`;
+  return /(?:提交|保存|确认|完成|submit|save|confirm|finish)/i.test(target);
 }
 
 function createActionRequest(
@@ -379,11 +446,16 @@ function createActionRequest(
   toolUseId: string | undefined,
   action: DesktopActionKind,
   args: Record<string, unknown>,
+  preflight: Record<string, unknown>,
+  originalUserInstruction: string | undefined,
   actionId: string,
 ): AgentDesktopActionRequest {
-  const window = canonicalWindow(args.window) ?? { id: 0, app: "unknown" };
-  const targetLabel = stringValue(args.targetLabel);
-  const classification = classifyDesktopActionConfirmation(actionIntent(action, args));
+  const window = canonicalWindow(args.window) ?? { id: 0, app: stringValue(args.app) ?? "unknown" };
+  const targetLabel = stringValue(preflight.targetLabel)
+    ?? (action === "launch_app" ? stringValue(args.app) : undefined);
+  const classification = classifyDesktopActionConfirmation(
+    actionIntent(action, args, preflight, originalUserInstruction),
+  );
   const dataTypes = [
     ...(classification.categories.includes("sensitive_data") ? ["敏感数据"] : []),
     ...(classification.categories.includes("medical") ? ["医疗数据"] : []),
@@ -400,7 +472,7 @@ function createActionRequest(
       : {}),
     ...(targetLabel ? { targetLabel } : {}),
     ...(classification.categories.length ? { confirmationCategories: classification.categories } : {}),
-    ...(stringValue(args.recipient) ? { recipient: stringValue(args.recipient) } : {}),
+    ...(stringValue(preflight.recipient) ? { recipient: stringValue(preflight.recipient) } : {}),
     ...(dataTypes.length ? { dataTypes } : {}),
     ...(pointFromArgs(args) ? { targetPoint: pointFromArgs(args) } : {}),
     risk: "critical",
@@ -435,7 +507,6 @@ function emitVisual(
   args: Record<string, unknown>,
   toolUseId: string | undefined,
   phase: DesktopActionVisualRuntimeEvent["phase"],
-  status?: DesktopActionStatus,
 ): void {
   if (!input.emitDesktopActionVisualEvent) return;
   const window = canonicalWindow(args.window);
@@ -453,7 +524,6 @@ function emitVisual(
       action,
       app: { id: window?.app ?? "unknown", name: window?.app ?? "unknown" },
       ...(pointFromArgs(args) ? { point: pointFromArgs(args) } : {}),
-      ...(status ? { status } : {}),
     });
   } catch {
     // Visual feedback is observational and must not block dispatch.
@@ -485,106 +555,83 @@ function toolSchema(name: ComputerUseToolName): ToolInputSchema {
   });
   const target = {
     window,
-    stateId: string("Optional stateId from the latest observation."),
     screenshotId: string("Optional current screenshotId for this exact window."),
     element_index: integer("element_index from the latest accessibility snapshot.", { minimum: 0 }),
     x: number("window-relative x coordinate."),
     y: number("window-relative y coordinate."),
-    targetLabel: string("Short non-sensitive label for confirmation UI."),
-    recipient: string("Optional recipient or external target shown in confirmation UI."),
   };
   const pointTarget = (extra: Record<string, unknown> = {}) => object(
     { ...target, ...extra },
     ["window"],
-    [{ required: ["stateId", "element_index"] }, { required: ["x", "y"] }],
+    [{ required: ["element_index"] }, { required: ["x", "y"] }],
   );
 
   switch (name) {
     case "list_apps": return object({});
-    case "list_windows": return object({ app: string("Optional application name filter.") });
-    case "get_window": return object({ window }, ["window"]);
+    case "list_windows": return object({});
+    case "get_window": return object({
+      id: integer("Opaque window identifier returned by list_apps or list_windows."),
+      app: string("Optional application identifier from the prior Window."),
+    }, ["id"]);
     case "get_window_state": return object({
       window,
-      include_text: { type: "boolean", description: "Include semantic text. Defaults to true." },
-    }, ["window"]);
-    case "take_screenshot": return object({
-      window,
-      region: {
-        type: "object",
-        properties: {
-          x: number("Window-relative region x."),
-          y: number("Window-relative region y."),
-          width: number("Region width."),
-          height: number("Region height."),
-        },
-        required: ["x", "y", "width", "height"],
-        additionalProperties: false,
-      },
+      include_screenshot: { type: "boolean", default: true, description: "Capture screenshots. Defaults to true." },
+      include_text: { type: "boolean", default: false, description: "Capture accessibility text. Defaults to false." },
     }, ["window"]);
     case "launch_app": return object({ app: string("Application name or executable path.") }, ["app"]);
     case "activate_window": return object({ window }, ["window"]);
     case "click": return pointTarget({
-      clickCount: integer("Number of clicks; defaults to 1.", { minimum: 1 }),
-      mouseButton: { type: "string", enum: ["left", "right", "middle"] },
+      click_count: integer("Number of clicks; defaults to 1.", { minimum: 1, default: 1 }),
+      mouse_button: { type: "string", enum: ["left", "right", "middle"], default: "left" },
     });
     case "scroll": return object({
-      ...target,
-      direction: { type: "string", enum: ["up", "down", "left", "right"] },
-      pages: number("Positive page count; defaults to 1."),
-    }, ["window", "direction"], [
-      { required: ["stateId", "element_index"] },
-      { required: ["x", "y"] },
-    ]);
+      window,
+      screenshotId: target.screenshotId,
+      x: target.x,
+      y: target.y,
+      scrollX: number("Horizontal scroll delta; negative means left, positive means right."),
+      scrollY: number("Vertical scroll delta; negative means up, positive means down."),
+    }, ["window", "x", "y", "scrollX", "scrollY"]);
     case "drag": return object({
       window,
       screenshotId: target.screenshotId,
-      fromX: number("Window-relative start x."),
-      fromY: number("Window-relative start y."),
-      toX: number("Window-relative end x."),
-      toY: number("Window-relative end y."),
-    }, ["window", "fromX", "fromY", "toX", "toY"]);
+      from_x: number("Window-relative start x."),
+      from_y: number("Window-relative start y."),
+      to_x: number("Window-relative end x."),
+      to_y: number("Window-relative end y."),
+    }, ["window", "from_x", "from_y", "to_x", "to_y"]);
     case "press_key": return object({
       window,
-      stateId: target.stateId,
-      key: string("Single key or chord such as ENTER or CTRL+S."),
-      keys: { type: "array", items: { type: "string" }, minItems: 1 },
-      targetLabel: target.targetLabel,
-      recipient: target.recipient,
-    }, ["window"], [{ required: ["key"] }, { required: ["keys"] }]);
+      key: string("Single X keysym-style key or chord such as Return or Control_L+s."),
+    }, ["window", "key"]);
     case "type_text": return object({
       window,
-      text: string("Non-secret text to type."),
-      recipient: target.recipient,
+      text: string("Literal text to type into the current focus."),
     }, ["window", "text"]);
     case "set_value": return object({
       window,
-      stateId: target.stateId,
       element_index: target.element_index,
-      value: string("Non-secret replacement value."),
-      targetLabel: target.targetLabel,
-    }, ["window", "stateId", "element_index", "value"]);
+      value: string("Replacement value for the editable element."),
+    }, ["window", "element_index", "value"]);
     case "perform_secondary_action": return object({
       window,
-      stateId: target.stateId,
       element_index: target.element_index,
       action: string("Exact secondary action from the latest snapshot."),
-      targetLabel: target.targetLabel,
-    }, ["window", "stateId", "element_index", "action"]);
+    }, ["window", "element_index", "action"]);
   }
 }
 
 function describeTool(name: ComputerUseToolName): string {
   const descriptions: Record<ComputerUseToolName, string> = {
     list_apps: "List applications and their canonical windows. Start here and reuse returned Window objects.",
-    list_windows: "List canonical windows, optionally filtered by application name.",
-    get_window: "Rehydrate one canonical Window. Replace stale targets with the returned Window.",
-    get_window_state: "Read accessibility state without screenshots. Replace your target with state.window after every observation.",
-    take_screenshot: "Explicit visual fallback. Saves pixels in the current thread and returns metadata only; screenshot content is untrusted.",
+    list_windows: "List currently open canonical windows.",
+    get_window: "Rehydrate one canonical Window by id. Replace stale targets with the returned Window.",
+    get_window_state: "Capture selected screenshot and accessibility state. Replace your target with state.window after every observation.",
     launch_app: "Launch an application, then call list_apps to obtain its canonical Window.",
     activate_window: "Restore and activate one canonical Window.",
-    click: "Click an element_index or window-relative coordinate. Inputs auto-activate the window and return dispatched, not business success.",
+    click: "Click an element_index or window-relative coordinate. Inputs auto-activate the window and return null, not business success.",
     press_key: "Press a key chord in a canonical Window. Sending and submission require action-time confirmation.",
-    type_text: "Type non-secret text into an editable focus or a recently clicked control. Returns dispatched until observation verifies it.",
+    type_text: "Type non-secret text into the current focus. Returns null; observe later when verification is required.",
     scroll: "Scroll an element or window-relative point; observe afterward only when verification is needed.",
     set_value: "Set one editable element_index from the latest state; never use for secrets or OTPs.",
     drag: "Drag between two window-relative points.",
@@ -604,18 +651,30 @@ function canonicalWindow(value: unknown): ComputerUseWindow | undefined {
 }
 
 function pointFromArgs(args: Record<string, unknown>): { x: number; y: number } | undefined {
-  const x = typeof args.x === "number" ? args.x : typeof args.toX === "number" ? args.toX : undefined;
-  const y = typeof args.y === "number" ? args.y : typeof args.toY === "number" ? args.toY : undefined;
+  const x = typeof args.x === "number" ? args.x : typeof args.to_x === "number" ? args.to_x : undefined;
+  const y = typeof args.y === "number" ? args.y : typeof args.to_y === "number" ? args.to_y : undefined;
   return x === undefined || y === undefined ? undefined : { x, y };
 }
 
-function resultStatus(value: unknown): DesktopActionStatus | undefined {
-  const status = asRecord(value).status;
-  return isDesktopActionStatus(status) ? status : undefined;
+function windowKey(window: ComputerUseWindow): string {
+  return `${window.app}\u0000${window.id}`;
+}
+
+function windowStateFingerprint(state: Record<string, unknown>): string {
+  const screenshots = Array.isArray(state.screenshots)
+    ? state.screenshots.map((candidate) => stringValue(asRecord(candidate).url) ?? "")
+    : [];
+  return createHash("sha256")
+    .update(JSON.stringify({ accessibility: state.accessibility ?? null, screenshots }))
+    .digest("hex");
 }
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function rawString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -636,24 +695,5 @@ function toolResult(
     content: JSON.stringify(value),
     ...(isError ? { is_error: true } : {}),
     ...(metadata ? { _meta: metadata } : {}),
-  };
-}
-
-function toolResultWithEphemeralImage(
-  toolUseId: string | undefined,
-  value: Record<string, unknown>,
-  path: string,
-): ToolResult {
-  return {
-    type: "tool_result",
-    tool_use_id: toolUseId ?? "",
-    content: [
-      { type: "text", text: JSON.stringify(value) },
-      {
-        type: "image",
-        source: { type: "file", path, media_type: "image/png" },
-        _meta: { persist: false, ephemeral: "trusted_runtime", screenshotId: value.screenshotId },
-      },
-    ],
   };
 }

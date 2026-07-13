@@ -29,6 +29,7 @@ export function DesktopActionBanner({
     financial: '金融操作',
     sensitive_data: '敏感数据传输',
     medical: '医疗操作',
+    install: '安装或卸载',
   })[category]) ?? []
 
   const respond = async (decision: AgentDesktopActionResponseInput['decision']) => {

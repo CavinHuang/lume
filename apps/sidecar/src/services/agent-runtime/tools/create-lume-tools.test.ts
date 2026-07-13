@@ -50,7 +50,6 @@ describe("create-lume-tools", () => {
       "list_windows",
       "get_window",
       "get_window_state",
-      "take_screenshot",
       "launch_app",
       "activate_window",
       "click",
@@ -64,7 +63,7 @@ describe("create-lume-tools", () => {
       expect(toolNames).toContain(`mcp__computer_use__${name}`);
       expect(result.availableToolNames).toContain(`mcp__computer_use__${name}`);
     }
-    for (const removed of ["move_pointer", "current_context", "search_context", "wait_for_state"] ) {
+    for (const removed of ["take_screenshot", "move_pointer", "current_context", "search_context", "wait_for_state"] ) {
       expect(toolNames).not.toContain(`mcp__computer_use__${removed}`);
     }
   });

@@ -15,17 +15,15 @@ function jsonResult(value: Awaited<ReturnType<ReturnType<typeof createComputerUs
   return JSON.parse(value.content as string) as Record<string, unknown>;
 }
 
-describe("createComputerUseMcpTools v2", () => {
-  test("publishes only the canonical tools plus explicit screenshot fallback", () => {
+describe("createComputerUseMcpTools Window2 v3", () => {
+  test("publishes exactly the Codex Window2 tools", () => {
     const tools = createComputerUseMcpTools();
     expect(tools.map((tool) => tool.name)).toEqual([
-      "mcp__computer_use__list_apps",
       "mcp__computer_use__list_windows",
       "mcp__computer_use__get_window",
-      "mcp__computer_use__get_window_state",
-      "mcp__computer_use__take_screenshot",
+      "mcp__computer_use__list_apps",
       "mcp__computer_use__launch_app",
-      "mcp__computer_use__activate_window",
+      "mcp__computer_use__get_window_state",
       "mcp__computer_use__click",
       "mcp__computer_use__press_key",
       "mcp__computer_use__type_text",
@@ -33,12 +31,13 @@ describe("createComputerUseMcpTools v2", () => {
       "mcp__computer_use__set_value",
       "mcp__computer_use__drag",
       "mcp__computer_use__perform_secondary_action",
+      "mcp__computer_use__activate_window",
     ]);
   });
 
-  test("accepts one canonical Window and rejects legacy targeting fields", () => {
+  test("matches the Codex Window2 input parameter names", () => {
     const tools = createComputerUseMcpTools();
-    for (const name of ["get_window", "get_window_state", "take_screenshot", "activate_window", "click", "type_text"]) {
+    for (const name of ["get_window_state", "activate_window", "click", "type_text"]) {
       const schema = toolByName(tools, name).inputSchema as Record<string, any>;
       expect(schema.required).toContain("window");
       expect(schema.properties.window).toMatchObject({
@@ -49,25 +48,45 @@ describe("createComputerUseMcpTools v2", () => {
       expect(schema.properties.windowId).toBeUndefined();
       expect(schema.properties.appId).toBeUndefined();
       expect(schema.properties.elementId).toBeUndefined();
+      expect(schema.properties.stateId).toBeUndefined();
+      expect(schema.properties.targetLabel).toBeUndefined();
+      expect(schema.properties.recipient).toBeUndefined();
     }
+    const listWindows = toolByName(tools, "list_windows").inputSchema as Record<string, any>;
+    expect(listWindows.properties).toEqual({});
+    const getWindow = toolByName(tools, "get_window").inputSchema as Record<string, any>;
+    expect(getWindow.required).toEqual(["id"]);
+    expect(getWindow.properties.window).toBeUndefined();
+    expect(getWindow.properties).toMatchObject({ id: { type: "integer" }, app: { type: "string" } });
     const click = toolByName(tools, "click").inputSchema as Record<string, any>;
     expect(click.properties.element_index).toMatchObject({ type: "integer", minimum: 0 });
-    expect(click.anyOf).toContainEqual({ required: ["stateId", "element_index"] });
+    expect(click.properties.click_count).toBeDefined();
+    expect(click.properties.mouse_button).toBeDefined();
+    expect(click.properties.clickCount).toBeUndefined();
+    expect(click.properties.mouseButton).toBeUndefined();
+    expect(click.anyOf).toContainEqual({ required: ["element_index"] });
     expect(click.properties.x.description).toContain("window-relative");
+    const scroll = toolByName(tools, "scroll").inputSchema as Record<string, any>;
+    expect(scroll.required).toEqual(["window", "x", "y", "scrollX", "scrollY"]);
+    expect(scroll.properties.direction).toBeUndefined();
+    expect(scroll.properties.pages).toBeUndefined();
+    const drag = toolByName(tools, "drag").inputSchema as Record<string, any>;
+    expect(drag.required).toEqual(["window", "from_x", "from_y", "to_x", "to_y"]);
+    expect(drag.properties.fromX).toBeUndefined();
+    const pressKey = toolByName(tools, "press_key").inputSchema as Record<string, any>;
+    expect(pressKey.required).toEqual(["window", "key"]);
+    expect(pressKey.properties.keys).toBeUndefined();
   });
 
-  test("observes accessibility state without requesting pixels", async () => {
+  test("defaults to screenshot observation without accessibility text", async () => {
     const calls: unknown[] = [];
     const tools = createComputerUseMcpTools({
       invoke: async (method, args) => {
         calls.push({ method, args });
         return {
-          status: "ok",
-          stateId: "state-1",
           window: WECHAT,
-          focused: true,
-          capturedAt: 1,
-          accessibility: { tree: [], document_text: "真实聊天" },
+          accessibility: null,
+          screenshots: [],
         };
       },
     });
@@ -75,18 +94,20 @@ describe("createComputerUseMcpTools v2", () => {
       { window: WECHAT },
       { toolUseId: "state" } as never,
     );
-    expect(calls).toEqual([{ method: "get_window_state", args: { window: WECHAT, include_text: true } }]);
-    expect(jsonResult(result).stateId).toBe("state-1");
+    expect(calls).toEqual([{
+      method: "get_window_state",
+      args: { window: WECHAT, include_screenshot: true, include_text: false },
+    }]);
+    expect(jsonResult(result)).toEqual({ window: WECHAT, accessibility: null, screenshots: [] });
   });
 
-  test("auto-activates inputs and reports dispatch rather than success", async () => {
+  test("dispatches each input as one atomic host call and returns public null", async () => {
     const calls: unknown[] = [];
     const tools = createComputerUseMcpTools({
       threadId: "thread-1",
       invoke: async (method, args) => {
         calls.push({ method, args });
-        if (method === "activate_window") return { status: "ok", window: WECHAT };
-        return { status: "ok" };
+        return null;
       },
     });
     const result = await toolByName(tools, "click").call(
@@ -94,68 +115,96 @@ describe("createComputerUseMcpTools v2", () => {
       { toolUseId: "click-1" } as never,
     );
     expect(calls).toEqual([
-      { method: "activate_window", args: { window: WECHAT } },
+      { method: "desktop_context.preflight_action", args: { action: "click", window: WECHAT, x: 120, y: 80 } },
       { method: "click", args: { window: WECHAT, x: 120, y: 80 } },
-      { method: "get_window_state", args: { window: WECHAT, include_text: true } },
     ]);
-    expect(jsonResult(result)).toMatchObject({ status: "dispatched" });
-    expect(jsonResult(result).actionId).toBeString();
+    expect(result.content).toBe("null");
+    expect((result as any)._meta.computerUseAction).toMatchObject({ action: "click", phase: "dispatched" });
   });
 
-  test("blocks type_text without editable focus or a real same-window focus event", async () => {
+  test("does not pre-observe or use a separate activation RPC before type_text", async () => {
     const calls: unknown[] = [];
     const tools = createComputerUseMcpTools({
       threadId: "thread-1",
       invoke: async (method, args) => {
         calls.push({ method, args });
-        return {
-          status: "ok",
-          stateId: "state-1",
-          window: WECHAT,
-          focused: true,
-          capturedAt: 1,
-          accessibility: { tree: [], focused_element: { element_index: 3, role: "text", editable: false } },
-        };
+        return method === "desktop_context.preflight_action" ? {} : null;
       },
     });
     const result = await toolByName(tools, "type_text").call(
-      { window: WECHAT, text: "不会发送" },
+      { window: WECHAT, text: "你好" },
       { toolUseId: "type-1" } as never,
     );
-    expect(jsonResult(result)).toMatchObject({ status: "blocked" });
-    expect(calls).toEqual([{ method: "get_window_state", args: { window: WECHAT, include_text: true } }]);
+    expect(result.content).toBe("null");
+    expect(calls).toEqual([
+      { method: "desktop_context.preflight_action", args: { action: "type_text", window: WECHAT } },
+      { method: "type_text", args: { window: WECHAT, text: "你好" } },
+    ]);
   });
 
-  test("permits type_text after a dispatched click in the same window", async () => {
-    const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
+  test("advances hidden action facts only on a later explicit observation", async () => {
+    let observed = false;
     const tools = createComputerUseMcpTools({
-      threadId: "thread-1",
-      invoke: async (method, args) => {
-        calls.push({ method, args });
+      threadId: "thread-observe",
+      invoke: async (method) => {
+        if (method === "desktop_context.preflight_action") return {};
+        if (method === "type_text") return null;
         if (method === "get_window_state") {
+          observed = true;
           return {
-            status: "ok",
-            stateId: "state-2",
             window: WECHAT,
-            focused: true,
-            capturedAt: 2,
-            accessibility: { tree: [] },
+            accessibility: { tree: "0 edit 你好 (focused)" },
+            screenshots: [],
           };
         }
-        return { status: "ok", window: WECHAT };
+        return null;
+      },
+    });
+    const dispatched = await toolByName(tools, "type_text").call(
+      { window: WECHAT, text: "你好" },
+      { toolUseId: "type-observe" } as never,
+    );
+    expect(observed).toBeFalse();
+    expect((dispatched as any)._meta.computerUseAction.phase).toBe("dispatched");
+
+    const state = await toolByName(tools, "get_window_state").call(
+      { window: WECHAT, include_screenshot: false, include_text: true },
+      { toolUseId: "observe" } as never,
+    );
+    expect((state as any)._meta.computerUseAction).toMatchObject({
+      action: "type_text",
+      phase: "verified",
+    });
+  });
+
+  test("reports every batched action advanced by one explicit observation", async () => {
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-batch-observe",
+      invoke: async (method) => {
+        if (method === "desktop_context.preflight_action") return {};
+        if (method === "get_window_state") {
+          return { window: WECHAT, accessibility: { tree: "0 edit 批量输入" }, screenshots: [] };
+        }
+        return null;
       },
     });
     await toolByName(tools, "click").call(
-      { window: WECHAT, x: 20, y: 20 },
-      { toolUseId: "click-2" } as never,
+      { window: WECHAT, x: 10, y: 10 },
+      { toolUseId: "batch-click" } as never,
     );
-    const result = await toolByName(tools, "type_text").call(
-      { window: WECHAT, text: "你好" },
-      { toolUseId: "type-2" } as never,
+    await toolByName(tools, "type_text").call(
+      { window: WECHAT, text: "批量输入" },
+      { toolUseId: "batch-type" } as never,
     );
-    expect(jsonResult(result)).toMatchObject({ status: "dispatched" });
-    expect(calls).toContainEqual({ method: "type_text", args: { window: WECHAT, text: "你好" } });
-    expect(calls.at(-1)).toEqual({ method: "get_window_state", args: { window: WECHAT, include_text: true } });
+
+    const state = await toolByName(tools, "get_window_state").call(
+      { window: WECHAT, include_screenshot: false, include_text: true },
+      { toolUseId: "batch-observe" } as never,
+    );
+    expect((state as any)._meta.computerUseActions).toMatchObject([
+      { action: "click", phase: "observed" },
+      { action: "type_text", phase: "verified" },
+    ]);
   });
 
   test("returns a file reference for one verified vision request without persisting base64", async () => {
@@ -167,14 +216,14 @@ describe("createComputerUseMcpTools v2", () => {
         workspaceSlug: "demo",
         threadId: "thread-1",
         invoke: async () => ({
-          status: "ok",
           window: WECHAT,
+          accessibility: null,
           screenshots: [{
             id: "screenshot:42:1:1",
-            mimeType: "image/png",
             width: 2,
             height: 1,
-            dataUrl: `data:image/png;base64,${Buffer.from("png").toString("base64")}`,
+            zIndex: 0,
+            url: `data:image/png;base64,${Buffer.from("png").toString("base64")}`,
           }],
         }),
         routeScreenshot: async (path) => {
@@ -182,8 +231,8 @@ describe("createComputerUseMcpTools v2", () => {
           return { status: "image_ready" };
         },
       });
-      const result = await toolByName(tools, "take_screenshot").call(
-        { window: WECHAT },
+      const result = await toolByName(tools, "get_window_state").call(
+        { window: WECHAT, include_screenshot: true },
         { toolUseId: "shot-1" } as never,
       );
       expect(Array.isArray(result.content)).toBeTrue();
@@ -203,17 +252,17 @@ describe("createComputerUseMcpTools v2", () => {
   test("confirms sending at action time with target and data classification", async () => {
     const calls: string[] = [];
     const requests: any[] = [];
-    const tools = createComputerUseMcpTools({
+      const tools = createComputerUseMcpTools({
       threadId: "thread-send",
       invoke: async (method) => {
         calls.push(method);
-        return method === "get_window_state"
-          ? { status: "ok", stateId: "after", window: WECHAT, focused: true, accessibility: { tree: [] } }
-          : { status: "ok" };
+        return method === "desktop_context.preflight_action"
+          ? { targetLabel: "发送消息", recipient: "小树懒" }
+          : null;
       },
       emitDesktopActionRequest: (request) => {
         requests.push(request);
-        expect(calls).toEqual([]);
+        expect(calls).toEqual(["desktop_context.preflight_action"]);
         submitDesktopActionDecision({
           threadId: request.threadId,
           requestId: request.requestId,
@@ -221,20 +270,135 @@ describe("createComputerUseMcpTools v2", () => {
         });
       },
     });
-    const result = await toolByName(tools, "click").call({
-      window: WECHAT,
-      x: 10,
-      y: 10,
-      targetLabel: "发送消息",
-      recipient: "小树懒",
-    }, { toolUseId: "send-1" } as never);
+    const result = await toolByName(tools, "click").call(
+      { window: WECHAT, x: 10, y: 10 },
+      { toolUseId: "send-1" } as never,
+    );
 
-    expect(jsonResult(result).status).toBe("dispatched");
+    expect(result.content).toBe("null");
     expect(requests[0]).toMatchObject({
       window: WECHAT,
       recipient: "小树懒",
       confirmationCategories: ["send_message"],
     });
-    expect(calls).toEqual(["activate_window", "click", "get_window_state"]);
+    expect(calls).toEqual(["desktop_context.preflight_action", "click"]);
+  });
+
+  test("uses only the original user instruction to raise confirmation when preflight has no label", async () => {
+    const requests: any[] = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-original-intent",
+      originalUserInstruction: "在微信回复一句你好",
+      invoke: async (method) => method === "desktop_context.preflight_action" ? {} : null,
+      emitDesktopActionRequest: (request) => {
+        requests.push(request);
+        submitDesktopActionDecision({
+          threadId: request.threadId,
+          requestId: request.requestId,
+          decision: "allow_once",
+        });
+      },
+    });
+
+    const result = await toolByName(tools, "press_key").call(
+      { window: WECHAT, key: "Return" },
+      { toolUseId: "original-intent-send" } as never,
+    );
+
+    expect(result.content).toBe("null");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].confirmationCategories).toContain("send_message");
+    expect(requests[0].targetLabel).toBeUndefined();
+  });
+
+  test("does not confirm harmless navigation just because the overall task is consequential", async () => {
+    const requests: any[] = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-navigation",
+      originalUserInstruction: "删除这条消息",
+      invoke: async (method) => method === "desktop_context.preflight_action" ? {} : null,
+      emitDesktopActionRequest: (request) => requests.push(request),
+    });
+
+    const result = await toolByName(tools, "activate_window").call(
+      { window: WECHAT },
+      { toolUseId: "activate-for-delete" } as never,
+    );
+
+    expect(result.content).toBe("null");
+    expect(requests).toEqual([]);
+  });
+
+  test("verifies a confirmed submit only after a later observation changes the interface", async () => {
+    let state = "0 edit 你好";
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-submit-observation",
+      originalUserInstruction: "把这条消息发送出去",
+      invoke: async (method) => {
+        if (method === "desktop_context.preflight_action") return {};
+        if (method === "press_key") return null;
+        if (method === "get_window_state") {
+          return {
+            window: WECHAT,
+            accessibility: { tree: state },
+            screenshots: [],
+          };
+        }
+        return null;
+      },
+      emitDesktopActionRequest: (request) => {
+        submitDesktopActionDecision({
+          threadId: request.threadId,
+          requestId: request.requestId,
+          decision: "allow_once",
+        });
+      },
+    });
+
+    await toolByName(tools, "get_window_state").call(
+      { window: WECHAT, include_screenshot: false, include_text: true },
+      { toolUseId: "submit-before" } as never,
+    );
+    const dispatched = await toolByName(tools, "press_key").call(
+      { window: WECHAT, key: "Return" },
+      { toolUseId: "submit-key" } as never,
+    );
+    expect((dispatched as any)._meta.computerUseAction.phase).toBe("dispatched");
+
+    state = "0 listitem 你好 1 edit";
+    const observed = await toolByName(tools, "get_window_state").call(
+      { window: WECHAT, include_screenshot: false, include_text: true },
+      { toolUseId: "submit-after" } as never,
+    );
+    expect((observed as any)._meta.computerUseAction).toMatchObject({
+      action: "press_key",
+      phase: "verified",
+    });
+  });
+
+  test("requires user takeover for password-change submission", async () => {
+    const calls: string[] = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-password-change",
+      originalUserInstruction: "修改密码并提交",
+      invoke: async (method) => {
+        calls.push(method);
+        return method === "desktop_context.preflight_action"
+          ? { targetLabel: "保存新密码" }
+          : null;
+      },
+      emitDesktopActionRequest: () => {
+        throw new Error("takeover actions must not offer an allow button");
+      },
+    });
+
+    const result = await toolByName(tools, "click").call(
+      { window: WECHAT, x: 10, y: 10 },
+      { toolUseId: "password-submit" } as never,
+    );
+
+    expect((result as any).is_error).toBeTrue();
+    expect(jsonResult(result).error).toContain("user_takeover_required");
+    expect(calls).toEqual(["desktop_context.preflight_action"]);
   });
 });

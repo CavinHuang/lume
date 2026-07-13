@@ -26,6 +26,7 @@ describe("ComputerUseActionLedger", () => {
       action: "type_text",
       window: { id: 42, app: "微信" },
       text: "不能写入账本的消息",
+      sensitive: true,
     });
     ledger.confirm(entry.actionId);
     ledger.dispatch(entry.actionId);
@@ -47,6 +48,7 @@ describe("ComputerUseActionLedger", () => {
       "planned", "confirmed", "dispatched", "observed", "verified",
     ]);
     expect(lines[0].textLength).toBe("不能写入账本的消息".length);
+    expect(lines[0].sensitive).toBeTrue();
     expect(readFileSync(path, "utf8")).not.toContain("不能写入账本的消息");
 
     const restored = new ComputerUseActionLedger({ workspaceSlug: "demo", threadId: "thread-1" });
