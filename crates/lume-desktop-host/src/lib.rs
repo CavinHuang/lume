@@ -2,7 +2,9 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::path::Path;
 
+mod computer_use_adapter;
 pub mod desktop_events;
+pub use computer_use_adapter::ComputerUseProtocolAdapter;
 #[cfg(target_os = "macos")]
 pub mod macos_backend;
 #[cfg(debug_assertions)]
@@ -162,6 +164,7 @@ pub struct DesktopSession<B> {
     expected_token: String,
     authenticated: bool,
     backend: B,
+    computer_use: ComputerUseProtocolAdapter,
 }
 
 impl<B: DesktopBackend> DesktopSession<B> {
@@ -170,6 +173,7 @@ impl<B: DesktopBackend> DesktopSession<B> {
             expected_token: expected_token.into(),
             authenticated: false,
             backend,
+            computer_use: ComputerUseProtocolAdapter::new(),
         }
     }
 
@@ -213,7 +217,7 @@ impl<B: DesktopBackend> DesktopSession<B> {
             );
         }
 
-        match self.backend.invoke(method, &params) {
+        match self.computer_use.invoke(&self.backend, method, &params) {
             Ok(result) => rpc_result(id, result),
             Err(error) => rpc_error(id, -32000, &format!("{error:#}")),
         }

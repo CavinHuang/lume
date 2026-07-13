@@ -7,8 +7,8 @@ use lume_desktop_host::macos_snapshot::{
     macos_pointer_input_mode, macos_preferred_click_actions, macos_related_transient_windows,
     macos_resolve_action_point, macos_set_value_attribute_is_settable,
     macos_text_target_is_sensitive, macos_visible_pointer_enabled_from, macos_visible_pointer_mode,
-    macos_visible_pointer_motion_points, macos_wait_for_state_result, MacOSDiscoveredApp,
-    MacOSElementInfo, MacOSWindowInfo, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
+    macos_visible_pointer_motion_points, MacOSDiscoveredApp, MacOSElementInfo, MacOSWindowInfo,
+    MACOS_NON_SETTABLE_SET_VALUE_ERROR,
 };
 use serde_json::json;
 
@@ -235,13 +235,12 @@ fn maps_frontmost_window_to_context_snapshot_without_screenshot_pixels() {
 }
 
 #[test]
-fn maps_window_state_with_stable_revision_and_accessibility_fallback() {
+fn maps_window_state_with_accessibility_fallback() {
     let window = &sample_windows()[1];
     let result = macos_get_window_state_result(window, true);
 
     assert_eq!(result["status"], "ok");
     assert_eq!(result["window"]["id"], "macos:77");
-    assert_eq!(result["revision"], "macos:77:周报.rtf:200:80:640:480");
     assert_eq!(result["accessibility"]["documentText"], "周报.rtf");
     assert_eq!(result["screenshots"][0]["mimeType"], "image/png");
     assert!(result["screenshots"][0].get("dataUrl").is_none());
@@ -454,57 +453,6 @@ fn matches_macos_secondary_actions_case_insensitively() {
         Some("AXShowMenu")
     );
     assert_eq!(macos_matching_secondary_action(&actions, "AXRaise"), None);
-}
-
-#[test]
-fn waits_for_matching_macos_window_state_predicates() {
-    let mut window = sample_windows()[0].clone();
-    window.document_text = Some("项目群\nA: 今天可以发版吗？".into());
-
-    let result = macos_wait_for_state_result(
-        Some(window),
-        &json!({
-            "titleContains": "发版",
-            "focused": true,
-            "revisionNot": "macos:42:old:10:20:900:700",
-            "includeScreenshot": false,
-        }),
-    );
-
-    assert_eq!(result["status"], "ok");
-    assert_eq!(result["window"]["id"], "macos:42");
-    assert_eq!(result["window"]["focused"], true);
-    assert_eq!(
-        result["accessibility"]["documentText"],
-        "项目群\nA: 今天可以发版吗？"
-    );
-    assert_ne!(result["revision"], "macos:42:old:10:20:900:700");
-}
-
-#[test]
-fn returns_timeout_when_macos_window_state_predicates_do_not_match() {
-    let result = macos_wait_for_state_result(
-        Some(sample_windows()[1].clone()),
-        &json!({
-            "titleContains": "项目群",
-            "focused": true,
-            "revisionNot": "macos:77:周报.rtf:200:80:640:480",
-        }),
-    );
-
-    assert_eq!(result["status"], "timeout");
-    assert_eq!(
-        result["message"],
-        "desktop window state did not match before timeout"
-    );
-}
-
-#[test]
-fn returns_stale_target_when_waiting_for_missing_macos_window() {
-    let result = macos_wait_for_state_result(None, &json!({ "titleContains": "项目群" }));
-
-    assert_eq!(result["status"], "stale_target");
-    assert_eq!(result["message"], "target window is unavailable");
 }
 
 #[test]

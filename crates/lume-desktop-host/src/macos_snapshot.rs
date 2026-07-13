@@ -262,7 +262,6 @@ pub fn macos_get_window_state_result_with_related(
     let mut state = json!({
         "status": "ok",
         "window": window_json(window),
-        "revision": window_revision(window),
         "capturedAt": now_millis(),
         "screenshots": screenshot_refs(window, related_windows, include_screenshot),
         "accessibility": {
@@ -280,23 +279,6 @@ pub fn macos_get_window_state_result_with_related(
         state["fallbackReason"] = Value::String(reason);
     }
     state
-}
-
-pub fn macos_wait_for_state_result(window: Option<MacOSWindowInfo>, params: &Value) -> Value {
-    let Some(window) = window else {
-        return stale_target();
-    };
-    let state = macos_get_window_state_result(
-        &window,
-        params.get("includeScreenshot").and_then(Value::as_bool) == Some(true),
-    );
-    if macos_state_matches(&state, params) {
-        return state;
-    }
-    json!({
-        "status": "timeout",
-        "message": "desktop window state did not match before timeout"
-    })
 }
 
 pub fn macos_resolve_action_point(
@@ -706,7 +688,7 @@ fn window_json(window: &MacOSWindowInfo) -> Value {
         "id": window_id(window),
         "appId": app_id(window),
         "appName": window.owner_name,
-        "title": context_visible_text(window),
+        "title": window.title,
         "bounds": {
             "x": rounded(window.x),
             "y": rounded(window.y),
@@ -991,32 +973,6 @@ fn macos_key_code(key: &str) -> Option<u16> {
     Some(code)
 }
 
-fn macos_state_matches(state: &Value, params: &Value) -> bool {
-    if state.get("status").and_then(Value::as_str) != Some("ok") {
-        return false;
-    }
-    if let Some(title) = params.get("titleContains").and_then(Value::as_str) {
-        if !state["window"]["title"]
-            .as_str()
-            .unwrap_or_default()
-            .contains(title)
-        {
-            return false;
-        }
-    }
-    if let Some(previous) = params.get("revisionNot").and_then(Value::as_str) {
-        if state.get("revision").and_then(Value::as_str) == Some(previous) {
-            return false;
-        }
-    }
-    if let Some(focused) = params.get("focused").and_then(Value::as_bool) {
-        if state["window"]["focused"].as_bool() != Some(focused) {
-            return false;
-        }
-    }
-    true
-}
-
 fn element_document_text(elements: &[MacOSElementInfo]) -> String {
     let mut lines = Vec::<String>::new();
     collect_element_text(elements, &mut lines);
@@ -1081,23 +1037,7 @@ fn window_id(window: &MacOSWindowInfo) -> String {
 }
 
 fn screenshot_id(window: &MacOSWindowInfo) -> String {
-    format!(
-        "screenshot:{}:{}",
-        window_id(window),
-        window_revision(window)
-    )
-}
-
-fn window_revision(window: &MacOSWindowInfo) -> String {
-    format!(
-        "{}:{}:{}:{}:{}:{}",
-        window_id(window),
-        context_visible_text(window),
-        rounded(window.x),
-        rounded(window.y),
-        rounded(window.width),
-        rounded(window.height),
-    )
+    format!("screenshot:{}:{}", window_id(window), now_millis())
 }
 
 fn rounded(value: f64) -> i64 {

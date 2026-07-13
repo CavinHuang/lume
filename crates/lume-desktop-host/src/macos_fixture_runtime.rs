@@ -2,7 +2,7 @@ use crate::{
     macos_fixture_protocol::{fixture_command, fixture_window, MacOSFixtureState},
     macos_snapshot::{
         macos_current_context_result, macos_get_window_result, macos_get_window_state_result,
-        macos_list_apps_result, macos_list_windows_result, macos_wait_for_state_result,
+        macos_list_apps_result, macos_list_windows_result,
     },
 };
 use anyhow::{Context, Result};
@@ -10,8 +10,7 @@ use serde_json::{json, Value};
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const STATE_PATH_ENV: &str = "LUME_COMPUTER_USE_FIXTURE_STATE_PATH";
@@ -57,7 +56,6 @@ pub fn invoke(method: &str, params: &Value) -> Result<Option<Value>> {
                 stale_target()
             }
         }
-        "wait_for_state" => return Ok(Some(wait_for_state(&paths, params)?)),
         "activate_window"
         | "move_pointer"
         | "click"
@@ -119,25 +117,6 @@ fn write_command(path: &Path, method: &str, params: &Value) -> Result<()> {
     fs::rename(&temporary, path)
         .with_context(|| format!("publish macOS fixture command to {}", path.display()))?;
     Ok(())
-}
-
-fn wait_for_state(paths: &FixturePaths, params: &Value) -> Result<Value> {
-    let timeout = params
-        .get("timeoutMs")
-        .and_then(Value::as_u64)
-        .unwrap_or(5_000)
-        .min(30_000);
-    let deadline = Instant::now() + Duration::from_millis(timeout);
-    loop {
-        let state = read_state(&paths.state)?;
-        let result = macos_wait_for_state_result(Some(fixture_window(&state)), params);
-        if result.get("status").and_then(Value::as_str) != Some("timeout")
-            || Instant::now() >= deadline
-        {
-            return Ok(result);
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
 }
 
 fn valid_optional_window(params: &Value) -> bool {

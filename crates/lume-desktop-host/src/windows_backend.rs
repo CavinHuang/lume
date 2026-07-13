@@ -95,7 +95,6 @@ impl DesktopBackend for WindowsDesktopBackend {
             "list_apps" => list_apps(),
             "get_window" => get_window(params),
             "get_window_state" => get_window_state(params),
-            "wait_for_state" => wait_for_state(params),
             "current_context" => current_context(params),
             "launch_app" => launch_app(params),
             "activate_window" => with_window(params, |hwnd| activate(hwnd)),
@@ -116,53 +115,6 @@ impl DesktopBackend for WindowsDesktopBackend {
             ),
         }
     }
-}
-
-fn wait_for_state(params: &Value) -> Result<Value> {
-    let timeout_ms = params
-        .get("timeoutMs")
-        .and_then(Value::as_u64)
-        .unwrap_or(5_000)
-        .min(30_000);
-    let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
-    loop {
-        let state = get_window_state(params)?;
-        if state_matches(&state, params) {
-            return Ok(state);
-        }
-        if std::time::Instant::now() >= deadline {
-            return Ok(
-                json!({ "status": "timeout", "message": "desktop window state did not match before timeout" }),
-            );
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-}
-
-fn state_matches(state: &Value, params: &Value) -> bool {
-    if state.get("status").and_then(Value::as_str) != Some("ok") {
-        return false;
-    }
-    if let Some(title) = params.get("titleContains").and_then(Value::as_str) {
-        if !state["window"]["title"]
-            .as_str()
-            .unwrap_or_default()
-            .contains(title)
-        {
-            return false;
-        }
-    }
-    if let Some(previous) = params.get("revisionNot").and_then(Value::as_str) {
-        if state.get("revision").and_then(Value::as_str) == Some(previous) {
-            return false;
-        }
-    }
-    if let Some(focused) = params.get("focused").and_then(Value::as_bool) {
-        if state["window"]["focused"].as_bool() != Some(focused) {
-            return false;
-        }
-    }
-    true
 }
 
 fn guarded_text_action(params: &Value, action: fn(&Value) -> Result<Value>) -> Result<Value> {
@@ -384,7 +336,6 @@ fn get_window_state(params: &Value) -> Result<Value> {
         return Ok(stale_target());
     };
     let title = window["title"].as_str().unwrap_or_default();
-    let revision = window_revision(&window);
     let screenshots = screenshot_refs(
         hwnd,
         &window,
@@ -396,7 +347,6 @@ fn get_window_state(params: &Value) -> Result<Value> {
     let mut state = json!({
         "status": "ok",
         "window": window,
-        "revision": revision,
         "capturedAt": now_millis(),
         "screenshots": screenshots,
         "accessibility": accessibility,
@@ -428,31 +378,7 @@ fn validate_action_target(params: &Value) -> Result<Option<Value>> {
     if params.get("elementId").is_some() && resolve_element_bounds(params)?.is_none() {
         return Ok(Some(stale_target()));
     }
-    let Some(expected_revision) = params.get("windowRevision").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    let Some(hwnd) = target_window(params) else {
-        return Ok(Some(stale_target()));
-    };
-    let Some(window) = window_json(hwnd) else {
-        return Ok(Some(stale_target()));
-    };
-    if window_revision(&window) != expected_revision {
-        return Ok(Some(stale_target()));
-    }
     Ok(None)
-}
-
-fn window_revision(window: &Value) -> String {
-    format!(
-        "{}:{}:{}:{}:{}:{}",
-        window["id"].as_str().unwrap_or_default(),
-        window["title"].as_str().unwrap_or_default(),
-        window["bounds"]["x"],
-        window["bounds"]["y"],
-        window["bounds"]["width"],
-        window["bounds"]["height"],
-    )
 }
 
 fn current_context(params: &Value) -> Result<Value> {
@@ -679,7 +605,7 @@ fn screenshot_id(window: &Value) -> String {
     format!(
         "screenshot:{}:{}",
         window["id"].as_str().unwrap_or_default(),
-        window_revision(window)
+        now_millis()
     )
 }
 

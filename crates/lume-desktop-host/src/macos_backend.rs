@@ -18,10 +18,10 @@ use crate::{
         macos_screen_capture_helper_path, macos_scroll_action_name, macos_scroll_wheel_deltas,
         macos_set_value_attribute_is_settable, macos_should_prefer_containing_web_row,
         macos_text_target_is_sensitive, macos_visible_pointer_enabled_from,
-        macos_visible_pointer_mode, macos_visible_pointer_motion_points,
-        macos_wait_for_state_result, MacOSDiscoveredApp, MacOSElementInfo, MacOSWindowInfo,
-        MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV, MACOS_LUME_VISUAL_POINTER_ENV,
-        MACOS_NON_SETTABLE_SET_VALUE_ERROR, MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
+        macos_visible_pointer_mode, macos_visible_pointer_motion_points, MacOSDiscoveredApp,
+        MacOSElementInfo, MacOSWindowInfo, MACOS_LUME_GLOBAL_POINTER_FALLBACK_ENV,
+        MACOS_LUME_VISUAL_POINTER_ENV, MACOS_NON_SETTABLE_SET_VALUE_ERROR,
+        MACOS_OPEN_COMPUTER_USE_GLOBAL_POINTER_FALLBACK_ENV,
         MACOS_OPEN_COMPUTER_USE_VISUAL_POINTER_ENV,
     },
     DesktopBackend, DesktopClickOptions, DesktopMouseButton, DesktopPermissionClientRecord,
@@ -41,7 +41,7 @@ use std::{
     ptr,
     sync::{Mutex, OnceLock},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub struct MacOSDesktopBackend;
@@ -83,9 +83,6 @@ impl DesktopBackend for MacOSDesktopBackend {
                     current_computer_use_permission_app_bundle_name()
                 )),
             ));
-        }
-        if method == "wait_for_state" {
-            return wait_for_state(params);
         }
         let windows = system_windows()?;
         match method {
@@ -873,37 +870,6 @@ fn set_accessibility_value(
         CFRelease(root as CFTypeRef);
         CFRelease(app as CFTypeRef);
         Ok(Some(result))
-    }
-}
-
-fn wait_for_state(params: &Value) -> Result<Value> {
-    let timeout_ms = params
-        .get("timeoutMs")
-        .and_then(Value::as_u64)
-        .unwrap_or(5_000)
-        .min(30_000);
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    loop {
-        let windows = system_windows()?;
-        let window = match params.get("windowId").and_then(Value::as_str) {
-            Some(window_id) => find_macos_window(&windows, window_id),
-            None => first_visible_user_window(&windows),
-        };
-        let Some(mut window) = window else {
-            return Ok(stale_target());
-        };
-        enrich_accessibility_text(&mut window);
-        let include_screenshot =
-            params.get("includeScreenshot").and_then(Value::as_bool) == Some(true);
-        capture_screenshot_if_requested(&mut window, include_screenshot);
-        let state = macos_wait_for_state_result(Some(window), params);
-        if state.get("status").and_then(Value::as_str) != Some("timeout") {
-            return Ok(state);
-        }
-        if Instant::now() >= deadline {
-            return Ok(state);
-        }
-        thread::sleep(Duration::from_millis(100));
     }
 }
 

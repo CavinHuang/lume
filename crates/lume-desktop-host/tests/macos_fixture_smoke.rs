@@ -146,18 +146,6 @@ fn drives_the_macos_backend_through_a_deterministic_appkit_fixture() {
         .as_str()
         .unwrap_or_default()
         .contains("set-value-ok-typed"));
-    let waited = backend
-        .invoke(
-            "wait_for_state",
-            &json!({
-                "windowId": window_id,
-                "titleContains": "set-value-ok-typed",
-                "timeoutMs": 500,
-            }),
-        )
-        .unwrap();
-    assert_eq!(waited["status"], "ok");
-
     fixture.stop();
 }
 
