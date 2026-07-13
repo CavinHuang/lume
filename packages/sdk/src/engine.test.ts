@@ -953,7 +953,15 @@ describe("QueryEngine structured tool results", () => {
             { type: "text", text: "ready" },
             { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
           ],
-          _meta: { traceId: "t-1" },
+          _meta: {
+            traceId: "t-1",
+            computerUseAction: {
+              actionId: "action-1",
+              action: "click",
+              phase: "observed",
+              window: { id: 42, app: "微信" },
+            },
+          },
         };
       },
     };
@@ -993,7 +1001,10 @@ describe("QueryEngine structured tool results", () => {
       { type: "text", text: "ready" },
       { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
     ]);
-    expect((toolResultMessage!.content as any[])[0]._meta).toEqual({ traceId: "t-1" });
+    expect((toolResultMessage!.content as any[])[0]._meta).toMatchObject({ traceId: "t-1" });
+    expect((engine as any).provider.requests[1].system).toContain(
+      "action-1: click on 微信#42; phase=observed; not verified complete",
+    );
     const streamedToolResult = events.find((event: any) => event.type === "tool_result") as any;
     expect(streamedToolResult.result.output).not.toContain("ZmFrZQ==");
     expect(streamedToolResult.result.output).toContain("[Image: image/png]");

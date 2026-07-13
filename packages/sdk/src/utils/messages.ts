@@ -118,6 +118,30 @@ export function collectInternalContextBlocks(
     : [])
 }
 
+export function renderComputerUseActionFacts(messages: Array<{ role: string; content: any }>): string {
+  const facts = new Map<string, string>()
+  const visit = (value: any): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    const fact = value._meta?.computerUseAction
+    if (fact && typeof fact.actionId === 'string' && typeof fact.phase === 'string') {
+      const app = typeof fact.window?.app === 'string' ? fact.window.app : 'unknown app'
+      const windowId = typeof fact.window?.id === 'number' ? `#${fact.window.id}` : ''
+      const action = typeof fact.action === 'string' ? fact.action : 'action'
+      const suffix = fact.phase === 'verified' ? 'verified complete' : 'not verified complete'
+      facts.set(fact.actionId, `${fact.actionId}: ${action} on ${app}${windowId}; phase=${fact.phase}; ${suffix}`)
+    }
+    Object.values(value).forEach(visit)
+  }
+  messages.forEach(visit)
+  return facts.size > 0
+    ? `[Authoritative Computer Use action facts]\n${Array.from(facts.values()).join('\n')}`
+    : ''
+}
+
 export function stripInternalContextBlocks(
   messages: Array<{ role: string; content: any }>,
 ): Array<{ role: string; content: any }> {

@@ -67,6 +67,7 @@ import {
   collectInternalContextBlocks,
   normalizeMessagesForAPI,
   releaseEphemeralImageReferences,
+  renderComputerUseActionFacts,
   stripInternalContextBlocks,
 } from './utils/messages.js'
 import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
@@ -907,6 +908,7 @@ export class QueryEngine {
 
       // Micro-compact: truncate large tool results
       const internalContextBlocks = collectInternalContextBlocks(this.messages as any[])
+      const computerUseActionFacts = renderComputerUseActionFacts(this.messages as any[])
       const conversationMessages = stripInternalContextBlocks(this.messages as any[])
       const hydratedMessages = await hydrateEphemeralImageReferences(conversationMessages)
       const apiMessages = await this.microCompactForProvider(
@@ -926,6 +928,9 @@ export class QueryEngine {
           systemPrompt,
           internalContextBlocks.length > 0
             ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
+            : '',
+          computerUseActionFacts
+            ? `<internal_context type="computer_use_action_ledger">\n${computerUseActionFacts}\n</internal_context>`
             : '',
         ].filter(Boolean).join('\n\n'),
         messages: apiMessages,

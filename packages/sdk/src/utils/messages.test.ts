@@ -4,6 +4,7 @@ import {
   releaseEphemeralImageReferences,
   collectInternalContextBlocks,
   stripInternalContextBlocks,
+  renderComputerUseActionFacts,
 } from "./messages.js";
 
 describe("ephemeral image references", () => {
@@ -57,5 +58,22 @@ describe("ephemeral image references", () => {
       role: "user",
       content: [{ type: "text", text: "普通消息" }],
     }]);
+  });
+
+  test("renders action completion only from immutable tool metadata", () => {
+    const messages = [{ role: "user", content: [{
+      type: "tool_result",
+      tool_use_id: "action",
+      content: '{"status":"dispatched"}',
+      _meta: { computerUseAction: {
+        actionId: "action-1",
+        action: "type_text",
+        phase: "verified",
+        window: { id: 42, app: "微信" },
+      } },
+    }] }];
+    expect(renderComputerUseActionFacts(messages)).toContain(
+      "action-1: type_text on 微信#42; phase=verified; verified complete",
+    );
   });
 });
