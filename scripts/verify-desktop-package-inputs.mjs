@@ -35,8 +35,8 @@ if (pkg.build?.artifactName !== "${productName}-${version}-${arch}.${ext}") {
 if (pkg.devDependencies?.electron !== "42.5.1") {
   fail(`desktop electron version must be 42.5.1, got ${JSON.stringify(pkg.devDependencies?.electron)}`);
 }
-if (pkg.dependencies?.["electron-log"] !== "5.4.4") {
-  fail(`desktop runtime must depend on electron-log 5.4.4, got ${JSON.stringify(pkg.dependencies?.["electron-log"])}`);
+if (pkg.devDependencies?.["electron-log"] !== "5.4.4") {
+  fail(`desktop must bundle electron-log 5.4.4 from devDependencies, got ${JSON.stringify(pkg.devDependencies?.["electron-log"])}`);
 }
 if (sidecarPkg.dependencies?.["electron-log"] !== "5.4.4") {
   fail(`sidecar runtime must depend on electron-log 5.4.4, got ${JSON.stringify(sidecarPkg.dependencies?.["electron-log"])}`);
