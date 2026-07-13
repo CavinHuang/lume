@@ -4,7 +4,7 @@ type TransformersModule = {
   pipeline: (
     task: "feature-extraction",
     model: string,
-    options: { quantized: boolean; revision: string }
+    options: { dtype: "q8"; revision: string }
   ) => Promise<(
     texts: string | string[],
     options: { pooling: "mean"; normalize: boolean }
@@ -27,13 +27,13 @@ const DEFAULT_MAX_INPUT_LENGTH = 512;
 let embedder: Awaited<ReturnType<TransformersModule["pipeline"]>> | undefined;
 
 async function initialize(): Promise<void> {
-  const { pipeline, env } = await import("@xenova/transformers") as unknown as TransformersModule;
+  const { pipeline, env } = await import("@huggingface/transformers") as unknown as TransformersModule;
   const data = workerData as { cacheDir?: string; modelId?: string };
   if (data.cacheDir) env.cacheDir = data.cacheDir;
   env.allowLocalModels = true;
   env.allowRemoteModels = true;
   embedder = await pipeline("feature-extraction", data.modelId ?? "Xenova/bge-small-zh-v1.5", {
-    quantized: true,
+    dtype: "q8",
     revision: "main"
   });
 }
