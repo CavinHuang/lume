@@ -66,15 +66,20 @@ export class ComputerUseVisionRouter {
   async #supportsVision(attempt: ComputerUseVisionAttempt): Promise<boolean> {
     const cached = probeCache.get(attempt.key);
     if (cached && cached.expiresAt > this.#now()) return cached.supported;
-    let supported = false;
     try {
-      supported = await attempt.probe();
-    } catch {
-      supported = false;
+      const supported = await attempt.probe();
+      probeCache.set(attempt.key, { supported, expiresAt: this.#now() + PROBE_TTL_MS });
+      log.info("vision probe", { modelKey: attempt.key, supported, ttlMs: PROBE_TTL_MS });
+      return supported;
+    } catch (error) {
+      log.info("vision probe incomplete", {
+        modelKey: attempt.key,
+        reason: error instanceof Error && error.message === "vision_probe_incomplete:max_tokens"
+          ? "max_tokens"
+          : "probe_error",
+      });
+      return false;
     }
-    probeCache.set(attempt.key, { supported, expiresAt: this.#now() + PROBE_TTL_MS });
-    log.info("vision probe", { modelKey: attempt.key, supported, ttlMs: PROBE_TTL_MS });
-    return supported;
   }
 }
 
@@ -107,10 +112,10 @@ export function createComputerUseVisionRouter(input: {
   return new ComputerUseVisionRouter({ attempts });
 }
 
-async function probeVision(provider: LLMProvider, model: string): Promise<boolean> {
+export async function probeVision(provider: LLMProvider, model: string): Promise<boolean> {
   const response = await provider.createMessage({
     model,
-    maxTokens: 40,
+    maxTokens: 300,
     system: "Inspect the fixed test image. Return only the four vertical band colors from left to right as uppercase English color names separated by hyphens.",
     messages: [{
       role: "user",
@@ -120,6 +125,9 @@ async function probeVision(provider: LLMProvider, model: string): Promise<boolea
       }],
     }],
   });
+  if (response.stopReason === "max_tokens") {
+    throw new Error("vision_probe_incomplete:max_tokens");
+  }
   return responseText(response).trim().toUpperCase() === "RED-BLUE-GREEN-YELLOW";
 }
 

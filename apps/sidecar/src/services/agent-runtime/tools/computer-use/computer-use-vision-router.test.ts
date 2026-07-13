@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { LLMProvider } from "@lume/agent-sdk";
 import { ComputerUseVisionRouter } from "./computer-use-vision-router";
 
 describe("ComputerUseVisionRouter", () => {
@@ -16,6 +17,46 @@ describe("ComputerUseVisionRouter", () => {
     expect(await router.route("C:/thread/shot.png")).toEqual({ status: "image_ready" });
     expect(await router.route("C:/thread/shot-2.png")).toEqual({ status: "image_ready" });
     expect(probes).toBe(1);
+  });
+
+  test("does not cache an incomplete probe as unsupported", async () => {
+    let probes = 0;
+    const router = new ComputerUseVisionRouter({
+      attempts: [{
+        key: "reasoning-model",
+        current: true,
+        probe: async () => {
+          probes += 1;
+          if (probes === 1) throw new Error("vision_probe_incomplete:max_tokens");
+          return true;
+        },
+        analyze: async () => undefined,
+      }],
+    });
+
+    expect(await router.route("C:/thread/shot-1.png")).toEqual({ status: "vision_unavailable" });
+    expect(await router.route("C:/thread/shot-2.png")).toEqual({ status: "image_ready" });
+    expect(probes).toBe(2);
+  });
+
+  test("treats a max_tokens probe response as incomplete", async () => {
+    const visionModule = await import("./computer-use-vision-router");
+    const probe = (visionModule as Record<string, unknown>).probeVision;
+    expect(probe).toBeFunction();
+    const probeFunction = probe as (provider: LLMProvider, model: string) => Promise<boolean>;
+
+    let maxTokens = 0;
+    const provider = {
+      createMessage: async (request: { maxTokens: number }) => {
+        maxTokens = request.maxTokens;
+        return { stopReason: "max_tokens", content: [] };
+      },
+    } as unknown as LLMProvider;
+
+    await expect(probeFunction(provider, "step-3.7-flash")).rejects.toThrow(
+      "vision_probe_incomplete:max_tokens",
+    );
+    expect(maxTokens).toBe(300);
   });
 
   test("falls back to a verified independent vision model", async () => {
