@@ -75,6 +75,7 @@ export function createComputerUseMcpTools(input: {
     threadId: input.threadId ?? "computer-use",
   });
   const lastObservationByWindow = new Map<string, string>();
+  const latestCanonicalWindowById = new Map<number, ComputerUseWindow>();
 
   return COMPUTER_USE_TOOL_NAMES.map((name) => {
     const readOnly = READ_ONLY_TOOLS.has(name);
@@ -102,7 +103,11 @@ export function createComputerUseMcpTools(input: {
       },
       async call(rawArgs, context) {
         try {
-          const args = asRecord(rawArgs);
+          const args = restoreCanonicalWindowArgs(
+            name,
+            asRecord(rawArgs),
+            latestCanonicalWindowById,
+          );
           if (name === "click") validateClickTarget(args);
           if (name === "get_window_state") {
             const state = await invoke(name, {
@@ -110,6 +115,7 @@ export function createComputerUseMcpTools(input: {
               include_screenshot: args.include_screenshot !== false,
               include_text: args.include_text === true,
             });
+            rememberCanonicalWindows(name, state, latestCanonicalWindowById);
             return handleWindowState({
               state,
               toolUseId: context.toolUseId,
@@ -121,7 +127,9 @@ export function createComputerUseMcpTools(input: {
             });
           }
           if (!INPUT_TOOLS.has(name)) {
-            return toolResult(context.toolUseId, await invoke(name, args));
+            const result = await invoke(name, args);
+            rememberCanonicalWindows(name, result, latestCanonicalWindowById);
+            return toolResult(context.toolUseId, result);
           }
           const actionEntry = await dispatchAction({
             invoke,
@@ -689,6 +697,50 @@ function canonicalWindow(value: unknown): ComputerUseWindow | undefined {
     app: record.app.trim(),
     ...(typeof record.title === "string" && record.title.trim() ? { title: record.title.trim() } : {}),
   };
+}
+
+function restoreCanonicalWindowArgs(
+  name: ComputerUseToolName,
+  args: Record<string, unknown>,
+  windows: Map<number, ComputerUseWindow>,
+): Record<string, unknown> {
+  if (name === "get_window") {
+    const id = Number.isInteger(args.id) ? args.id as number : undefined;
+    const cached = id === undefined ? undefined : windows.get(id);
+    return cached ? { ...args, app: cached.app } : args;
+  }
+  const requested = canonicalWindow(args.window);
+  const cached = requested ? windows.get(requested.id) : undefined;
+  return cached ? { ...args, window: cached } : args;
+}
+
+function rememberCanonicalWindows(
+  name: ComputerUseToolName,
+  value: unknown,
+  windows: Map<number, ComputerUseWindow>,
+): void {
+  const remember = (candidate: unknown) => {
+    const window = canonicalWindow(candidate);
+    if (window) windows.set(window.id, window);
+  };
+  if (name === "list_windows") {
+    if (Array.isArray(value)) value.forEach(remember);
+    return;
+  }
+  if (name === "list_apps") {
+    if (Array.isArray(value)) {
+      for (const candidate of value) {
+        const app = asRecord(candidate);
+        if (Array.isArray(app.windows)) app.windows.forEach(remember);
+      }
+    }
+    return;
+  }
+  if (name === "get_window") {
+    remember(value);
+    return;
+  }
+  if (name === "get_window_state") remember(asRecord(value).window);
 }
 
 function pointFromArgs(args: Record<string, unknown>): { x: number; y: number } | undefined {

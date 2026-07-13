@@ -6,6 +6,12 @@ import { join } from "node:path";
 import { submitDesktopActionDecision } from "../../interruption/desktop-action-session";
 
 const WECHAT = { id: 42, app: "微信", title: "小树懒" };
+const HISTORICAL_WECHAT = { id: 42, app: "Weixin.exe", title: "小树懒" };
+const CANONICAL_WECHAT = {
+  id: 42,
+  app: "D:\\software\\Tencent\\Weixin\\Weixin.exe",
+  title: "小树懒",
+};
 
 function toolByName(tools: ReturnType<typeof createComputerUseMcpTools>, name: string) {
   return tools.find((tool) => tool.name === `mcp__computer_use__${name}`)!;
@@ -109,6 +115,127 @@ describe("createComputerUseMcpTools Window2 v3", () => {
       args: { window: WECHAT, include_screenshot: true, include_text: false },
     }]);
     expect(jsonResult(result)).toEqual({ window: WECHAT, accessibility: null, screenshots: [] });
+  });
+
+  test("reuses the canonical Window returned by observation when the model repeats a legacy app", async () => {
+    const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-canonical-window",
+      invoke: async (method, args) => {
+        calls.push({ method, args });
+        if (method === "get_window_state") {
+          return { window: CANONICAL_WECHAT, accessibility: null, screenshots: [] };
+        }
+        return method === "desktop_context.preflight_action" ? {} : null;
+      },
+    });
+
+    await toolByName(tools, "get_window_state").call(
+      { window: HISTORICAL_WECHAT, include_screenshot: false },
+      { toolUseId: "canonical-state" } as never,
+    );
+    const result = await toolByName(tools, "click").call(
+      { window: HISTORICAL_WECHAT, x: 518, y: 833 },
+      { toolUseId: "canonical-click" } as never,
+    );
+
+    expect(calls.slice(1)).toEqual([
+      {
+        method: "desktop_context.preflight_action",
+        args: { action: "click", window: CANONICAL_WECHAT, x: 518, y: 833 },
+      },
+      { method: "click", args: { window: CANONICAL_WECHAT, x: 518, y: 833 } },
+    ]);
+    expect((result as any)._meta.computerUseAction.window).toEqual(CANONICAL_WECHAT);
+  });
+
+  test("learns canonical windows from every successful Window2 read result", async () => {
+    const readCases = [
+      { name: "list_windows", args: {}, result: [CANONICAL_WECHAT] },
+      {
+        name: "list_apps",
+        args: {},
+        result: [{ id: CANONICAL_WECHAT.app, windows: [CANONICAL_WECHAT] }],
+      },
+      {
+        name: "get_window",
+        args: { id: 42, app: HISTORICAL_WECHAT.app },
+        result: CANONICAL_WECHAT,
+      },
+      {
+        name: "get_window_state",
+        args: { window: HISTORICAL_WECHAT, include_screenshot: false },
+        result: { window: CANONICAL_WECHAT, accessibility: null, screenshots: [] },
+      },
+    ] as const;
+
+    for (const read of readCases) {
+      const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
+      const tools = createComputerUseMcpTools({
+        invoke: async (method, args) => {
+          calls.push({ method, args });
+          if (method === read.name) return read.result;
+          return method === "desktop_context.preflight_action" ? {} : null;
+        },
+      });
+      await toolByName(tools, read.name).call(
+        read.args,
+        { toolUseId: `read-${read.name}` } as never,
+      );
+      await toolByName(tools, "click").call(
+        { window: HISTORICAL_WECHAT, x: 10, y: 20 },
+        { toolUseId: `click-${read.name}` } as never,
+      );
+
+      expect(calls.find((call) => call.method === "desktop_context.preflight_action")?.args.window)
+        .toEqual(CANONICAL_WECHAT);
+    }
+  });
+
+  test("rehydrates get_window with the cached canonical app", async () => {
+    const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, args) => {
+        calls.push({ method, args });
+        if (method === "get_window_state") {
+          return { window: CANONICAL_WECHAT, accessibility: null, screenshots: [] };
+        }
+        if (method === "get_window") return CANONICAL_WECHAT;
+        return null;
+      },
+    });
+    await toolByName(tools, "get_window_state").call(
+      { window: HISTORICAL_WECHAT, include_screenshot: false },
+      { toolUseId: "state-before-rehydrate" } as never,
+    );
+    await toolByName(tools, "get_window").call(
+      { id: 42, app: HISTORICAL_WECHAT.app },
+      { toolUseId: "rehydrate-canonical" } as never,
+    );
+
+    expect(calls.at(-1)).toEqual({
+      method: "get_window",
+      args: { id: 42, app: CANONICAL_WECHAT.app },
+    });
+  });
+
+  test("does not learn a canonical identity from model input alone", async () => {
+    const calls: Array<{ method: string; args: Record<string, unknown> }> = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method, args) => {
+        calls.push({ method, args });
+        throw new Error("stale_target: use the latest state.window");
+      },
+    });
+    await toolByName(tools, "click").call(
+      { window: HISTORICAL_WECHAT, x: 10, y: 20 },
+      { toolUseId: "uncached-click" } as never,
+    );
+
+    expect(calls).toEqual([{
+      method: "desktop_context.preflight_action",
+      args: { action: "click", window: HISTORICAL_WECHAT, x: 10, y: 20 },
+    }]);
   });
 
   test("dispatches each input as one atomic host call and returns public null", async () => {
