@@ -48,7 +48,7 @@ describe("DesktopHostRpcClient", () => {
     }
     expect(connection.sent()).toHaveLength(1);
     expect(attempts).toBe(3);
-    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 1 } });
+    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 2 } });
 
     await expect(start).resolves.toBeUndefined();
   });
@@ -88,7 +88,7 @@ describe("DesktopHostRpcClient", () => {
     expect(connection.sent()).toEqual([
       { id: 1, method: "system.handshake", params: { token: "session-secret" } },
     ]);
-    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 1 } });
+    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 2 } });
     await start;
 
     const call = client.call("list_apps", { includeBackground: false });
@@ -109,7 +109,7 @@ describe("DesktopHostRpcClient", () => {
     client.onNotification((method, params) => events.push({ method, params }));
     const start = client.start();
     await Promise.resolve();
-    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 1 } });
+    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 2 } });
     await start;
 
     connection.receive({ method: "context.event", params: { id: "event-1" } });
@@ -121,8 +121,17 @@ describe("DesktopHostRpcClient", () => {
     const client = new DesktopHostRpcClient({ token: "token", connect: async () => connection, timeoutMs: 5 });
     const start = client.start();
     await Promise.resolve();
-    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 1 } });
+    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 2 } });
     await start;
     await expect(client.call("list_windows", {})).rejects.toThrow("timed out");
+  });
+
+  test("rejects an incompatible desktop host protocol version", async () => {
+    const connection = new FakeConnection();
+    const client = new DesktopHostRpcClient({ token: "token", connect: async () => connection, timeoutMs: 100 });
+    const start = client.start();
+    await Promise.resolve();
+    connection.receive({ id: 1, result: { status: "ok", protocolVersion: 1 } });
+    await expect(start).rejects.toThrow("protocol version mismatch: expected 2, received 1");
   });
 });

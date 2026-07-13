@@ -1,6 +1,8 @@
 export const DESKTOP_ACTION_STATUSES = [
   "ok",
+  "dispatched",
   "unavailable",
+  "vision_unavailable",
   "permission_denied",
   "stale_target",
   "blocked",
@@ -16,6 +18,86 @@ export interface DesktopBounds {
   y: number;
   width: number;
   height: number;
+}
+
+/** Canonical Computer Use window. Native platform handles never cross this boundary. */
+export interface Window {
+  id: number;
+  app: string;
+  title?: string;
+}
+
+export interface AccessibilityElement {
+  element_index: number;
+  role: string;
+  name?: string;
+  value?: string;
+  bounds?: DesktopBounds;
+  enabled?: boolean;
+  focused?: boolean;
+  editable?: boolean;
+  sensitive?: boolean;
+  actions?: string[];
+  children?: AccessibilityElement[];
+}
+
+export interface AccessibilityState {
+  tree: AccessibilityElement[];
+  focused_element?: AccessibilityElement;
+  selected_text?: string;
+  selected_elements?: AccessibilityElement[];
+  document_text?: string;
+  visible_text?: string;
+  truncated?: boolean;
+}
+
+export interface WindowState {
+  status: DesktopActionStatus;
+  stateId: string;
+  window: Window;
+  focused: boolean;
+  capturedAt: number;
+  accessibility: AccessibilityState;
+  textSource?: DesktopContextTextSource;
+  completeness?: DesktopContextCompleteness;
+  fallbackReason?: string;
+}
+
+export interface Screenshot {
+  screenshotId: string;
+  window: Window;
+  threadPath: string;
+  width: number;
+  height: number;
+  capturedAt: number;
+  region?: DesktopBounds;
+}
+
+export const DESKTOP_ACTION_PHASES = [
+  "planned",
+  "confirmed",
+  "dispatched",
+  "observed",
+  "verified",
+  "failed",
+] as const;
+
+export type DesktopActionPhase = (typeof DESKTOP_ACTION_PHASES)[number];
+
+export interface DesktopActionLedgerEntry {
+  actionId: string;
+  threadId: string;
+  action: DesktopActionKind;
+  window: Window;
+  phase: DesktopActionPhase;
+  createdAt: number;
+  updatedAt: number;
+  stateId?: string;
+  screenshotId?: string;
+  point?: { x: number; y: number };
+  textLength?: number;
+  sensitive?: boolean;
+  failureReason?: string;
 }
 
 export interface DesktopAppRef {

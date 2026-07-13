@@ -1,6 +1,8 @@
 import { createConnection, type Socket } from "node:net";
 import { DesktopHostFrameDecoder, encodeDesktopHostFrame } from "./desktop-host-protocol";
 
+export const DESKTOP_HOST_PROTOCOL_VERSION = 2;
+
 export interface DesktopHostConnection {
   write(data: Buffer): void;
   onData(listener: (chunk: Buffer) => void): void;
@@ -83,9 +85,18 @@ export class DesktopHostRpcClient {
     connection.onError((error) => this.#onDisconnect(error));
     const result = await this.#request("system.handshake", { token: this.options.token });
     const handshake = asRecord(result);
-    if (handshake.status !== "ok" || handshake.protocolVersion !== 1) {
+    if (handshake.status !== "ok") {
       this.close();
       throw new Error("desktop host handshake rejected");
+    }
+    if (handshake.protocolVersion !== DESKTOP_HOST_PROTOCOL_VERSION) {
+      const received = typeof handshake.protocolVersion === "number"
+        ? handshake.protocolVersion
+        : "unknown";
+      this.close();
+      throw new Error(
+        `desktop host protocol version mismatch: expected ${DESKTOP_HOST_PROTOCOL_VERSION}, received ${received}`,
+      );
     }
   }
 

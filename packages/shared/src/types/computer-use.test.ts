@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DESKTOP_ACTION_STATUSES,
+  DESKTOP_ACTION_PHASES,
   desktopProposalSuggestedAction,
   isDesktopActionStatus,
   requiresDesktopActionConfirmation,
@@ -10,7 +11,9 @@ describe("computer-use shared contracts", () => {
   test("accepts only stable desktop action statuses", () => {
     expect(DESKTOP_ACTION_STATUSES).toEqual([
       "ok",
+      "dispatched",
       "unavailable",
+      "vision_unavailable",
       "permission_denied",
       "stale_target",
       "blocked",
@@ -20,6 +23,17 @@ describe("computer-use shared contracts", () => {
     ]);
     expect(isDesktopActionStatus("stale_target")).toBeTrue();
     expect(isDesktopActionStatus("silently_ignored")).toBeFalse();
+  });
+
+  test("defines the immutable action ledger lifecycle", () => {
+    expect(DESKTOP_ACTION_PHASES).toEqual([
+      "planned",
+      "confirmed",
+      "dispatched",
+      "observed",
+      "verified",
+      "failed",
+    ]);
   });
 
   test("always confirms externally consequential actions", () => {
