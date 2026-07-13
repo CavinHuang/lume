@@ -103,6 +103,7 @@ export function createComputerUseMcpTools(input: {
       async call(rawArgs, context) {
         try {
           const args = asRecord(rawArgs);
+          if (name === "click") validateClickTarget(args);
           if (name === "get_window_state") {
             const state = await invoke(name, {
               ...args,
@@ -175,7 +176,26 @@ async function dispatchAction(input: {
     throw new Error("canonical window is required");
   }
 
-  const preflight = await preflightAction(input.invoke, input.action, input.args);
+  let preflight: Record<string, unknown>;
+  try {
+    preflight = await preflightAction(input.invoke, input.action, input.args);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const failed = input.ledger.plan({
+      action: input.action,
+      window: window ?? { id: 0, app: stringValue(input.args.app) ?? "unknown" },
+      screenshotId: stringValue(input.args.screenshotId),
+      point: pointFromArgs(input.args),
+      text: input.action === "type_text"
+        ? rawString(input.args.text)
+        : input.action === "set_value"
+          ? rawString(input.args.value)
+          : undefined,
+      sensitive: false,
+    });
+    input.ledger.fail(failed.actionId, message);
+    throw error;
+  }
   const intent = actionIntent(
     input.action,
     input.args,
@@ -244,7 +264,10 @@ async function dispatchAction(input: {
   try {
     const result = await input.invoke(input.action as ComputerUseHostMethod, input.args);
     if (result !== null) {
-      throw new Error("Computer Use v3 input methods must return null");
+      throw new Error(
+        stringValue(asRecord(result).message)
+          ?? "Computer Use v3 input methods must return null",
+      );
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -268,10 +291,15 @@ async function preflightAction(
     if (args[key] !== undefined) request[key] = args[key];
   }
   if (action === "perform_secondary_action") request.secondaryAction = args.action;
-  try {
-    return asRecord(await invoke("desktop_context.preflight_action", request));
-  } catch {
-    return {};
+  return asRecord(await invoke("desktop_context.preflight_action", request));
+}
+
+function validateClickTarget(args: Record<string, unknown>): void {
+  const hasElement = args.element_index !== undefined;
+  const hasX = args.x !== undefined;
+  const hasY = args.y !== undefined;
+  if (hasX !== hasY || hasElement === (hasX && hasY)) {
+    throw new Error("click requires exactly one target: element_index or x/y");
   }
 }
 
@@ -546,11 +574,15 @@ function toolSchema(name: ComputerUseToolName): ToolInputSchema {
     required: ["id", "app"],
     additionalProperties: false,
   };
-  const object = (properties: Record<string, unknown>, required: string[] = [], anyOf?: Array<{ required: string[] }>) => ({
+  const object = (
+    properties: Record<string, unknown>,
+    required: string[] = [],
+    oneOf?: Array<Record<string, unknown>>,
+  ) => ({
     type: "object" as const,
     properties,
     ...(required.length ? { required } : {}),
-    ...(anyOf ? { anyOf } : {}),
+    ...(oneOf ? { oneOf } : {}),
     additionalProperties: false,
   });
   const target = {
@@ -563,7 +595,16 @@ function toolSchema(name: ComputerUseToolName): ToolInputSchema {
   const pointTarget = (extra: Record<string, unknown> = {}) => object(
     { ...target, ...extra },
     ["window"],
-    [{ required: ["element_index"] }, { required: ["x", "y"] }],
+    [
+      {
+        required: ["element_index"],
+        not: { anyOf: [{ required: ["x"] }, { required: ["y"] }] },
+      },
+      {
+        required: ["x", "y"],
+        not: { required: ["element_index"] },
+      },
+    ],
   );
 
   switch (name) {

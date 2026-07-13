@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createComputerUseMcpTools } from "./create-computer-use-tools";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { submitDesktopActionDecision } from "../../interruption/desktop-action-session";
@@ -64,7 +64,17 @@ describe("createComputerUseMcpTools Window2 v3", () => {
     expect(click.properties.mouse_button).toBeDefined();
     expect(click.properties.clickCount).toBeUndefined();
     expect(click.properties.mouseButton).toBeUndefined();
-    expect(click.anyOf).toContainEqual({ required: ["element_index"] });
+    expect(click.oneOf).toEqual([
+      {
+        required: ["element_index"],
+        not: { anyOf: [{ required: ["x"] }, { required: ["y"] }] },
+      },
+      {
+        required: ["x", "y"],
+        not: { required: ["element_index"] },
+      },
+    ]);
+    expect(click.anyOf).toBeUndefined();
     expect(click.properties.x.description).toContain("window-relative");
     const scroll = toolByName(tools, "scroll").inputSchema as Record<string, any>;
     expect(scroll.required).toEqual(["window", "x", "y", "scrollX", "scrollY"]);
@@ -120,6 +130,91 @@ describe("createComputerUseMcpTools Window2 v3", () => {
     ]);
     expect(result.content).toBe("null");
     expect((result as any)._meta.computerUseAction).toMatchObject({ action: "click", phase: "dispatched" });
+  });
+
+  test("stops stale preflight before confirmation or input dispatch", async () => {
+    const previous = process.env.LUME_CONFIG_DIR;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-stale-window-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    try {
+      const calls: string[] = [];
+      const requests: unknown[] = [];
+      const tools = createComputerUseMcpTools({
+        workspaceSlug: "demo",
+        threadId: "thread-stale",
+        invoke: async (method) => {
+          calls.push(method);
+          if (method === "desktop_context.preflight_action") {
+            throw new Error("stale_target: use the latest state.window");
+          }
+          return null;
+        },
+        emitDesktopActionRequest: (request) => requests.push(request),
+      });
+
+      const result = await toolByName(tools, "click").call(
+        { window: WECHAT, x: 10, y: 10 },
+        { toolUseId: "stale-click" } as never,
+      );
+      expect((result as any).is_error).toBeTrue();
+      expect(jsonResult(result).error).toBe("stale_target: use the latest state.window");
+      expect(calls).toEqual(["desktop_context.preflight_action"]);
+      expect(requests).toEqual([]);
+
+      const ledgerPath = join(
+        configDir,
+        "agent-workspaces",
+        "demo",
+        "threads",
+        "thread-stale",
+        "files",
+        "computer-use",
+        "action-ledger.jsonl",
+      );
+      const entries = readFileSync(ledgerPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(entries.map((entry) => entry.phase)).toEqual(["planned", "failed"]);
+      expect(entries.at(-1).failureReason).toBe("stale_target: use the latest state.window");
+    } finally {
+      if (previous === undefined) delete process.env.LUME_CONFIG_DIR;
+      else process.env.LUME_CONFIG_DIR = previous;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves an explicit host action error instead of replacing it with the null contract", async () => {
+    const tools = createComputerUseMcpTools({
+      threadId: "thread-host-error",
+      invoke: async (method) => method === "desktop_context.preflight_action"
+        ? {}
+        : { status: "stale_target", message: "stale_target: use the latest state.window" },
+    });
+
+    const result = await toolByName(tools, "click").call(
+      { window: WECHAT, x: 10, y: 10 },
+      { toolUseId: "host-error" } as never,
+    );
+    expect((result as any).is_error).toBeTrue();
+    expect(jsonResult(result).error).toBe("stale_target: use the latest state.window");
+  });
+
+  test("rejects ambiguous click targets before preflight", async () => {
+    const calls: string[] = [];
+    const tools = createComputerUseMcpTools({
+      invoke: async (method) => {
+        calls.push(method);
+        return null;
+      },
+    });
+    const result = await toolByName(tools, "click").call(
+      { window: WECHAT, element_index: 0, x: 10, y: 10 },
+      { toolUseId: "ambiguous-click" } as never,
+    );
+    expect((result as any).is_error).toBeTrue();
+    expect(jsonResult(result).error).toContain("element_index or x/y");
+    expect(calls).toEqual([]);
   });
 
   test("does not pre-observe or use a separate activation RPC before type_text", async () => {
