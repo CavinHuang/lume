@@ -382,6 +382,7 @@ describe("createComputerUseMcpTools", () => {
       }]);
       const content = result.content as Array<Record<string, any>>;
       const metadata = JSON.parse(content[0]!.text);
+      const threadPath = metadata.savedScreenshots[0].threadPath as string;
       expect(metadata).toMatchObject({
         status: "ok",
         screenshots: [{
@@ -401,7 +402,7 @@ describe("createComputerUseMcpTools", () => {
       });
       expect(existsSync(join(
         getAgentThreadFilesPath("demo", "thread-1"),
-        metadata.savedScreenshots[0].threadPath.replace(/^files\//, ""),
+        threadPath.replace(/^files\//, ""),
       ))).toBe(true);
       expect(content[1]).toEqual({
         type: "image",
