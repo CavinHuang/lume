@@ -339,3 +339,59 @@ fn resolves_private_action_preflight_without_public_target_labels() {
     assert_eq!(call.1["x"], 113);
     assert_eq!(call.1["y"], 75);
 }
+
+#[test]
+fn stale_window_can_observe_but_must_use_the_returned_canonical_window_for_preflight() {
+    let backend = FakeBackend::new();
+    let mut adapter = ComputerUseProtocolAdapter::new();
+    let stale_window = json!({ "id": 42, "app": "Weixin.exe", "title": "小树懒" });
+
+    let state = adapter
+        .invoke(
+            &backend,
+            "get_window_state",
+            &json!({ "window": stale_window, "include_screenshot": false }),
+        )
+        .unwrap();
+    assert_eq!(state["window"], window());
+
+    let error = adapter
+        .invoke(
+            &backend,
+            "desktop_context.preflight_action",
+            &json!({ "action": "click", "window": stale_window, "x": 10, "y": 20 }),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "stale_target: window identity changed before action preflight; use the latest state.window"
+    );
+}
+
+#[test]
+fn stale_window_dispatch_fails_until_the_returned_canonical_window_is_used() {
+    let backend = FakeBackend::new();
+    let mut adapter = ComputerUseProtocolAdapter::new();
+    let stale_window = json!({ "id": 42, "app": "Weixin.exe", "title": "小树懒" });
+
+    let error = adapter
+        .invoke(
+            &backend,
+            "click",
+            &json!({ "window": stale_window, "x": 10, "y": 20 }),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "stale_target: window identity changed before dispatch; use the latest state.window"
+    );
+
+    let result = adapter
+        .invoke(
+            &backend,
+            "click",
+            &json!({ "window": window(), "x": 10, "y": 20 }),
+        )
+        .unwrap();
+    assert!(result.is_null());
+}

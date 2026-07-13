@@ -144,7 +144,7 @@ impl ComputerUseProtocolAdapter {
             .ok_or_else(|| anyhow!("platform window could not be rehydrated"))?;
         if let Some(expected_app) = params.get("app").and_then(Value::as_str) {
             if window["app"].as_str() != Some(expected_app) {
-                return Err(anyhow!("window app changed before rehydration"));
+                return Err(stale_window_identity("rehydration"));
             }
         }
         Ok(window)
@@ -348,7 +348,7 @@ impl ComputerUseProtocolAdapter {
             &json!({ "windowId": platform_window_id(window_id) }),
         )?)?;
         if !window_matches(&window_result["window"], &params["window"]) {
-            return Err(anyhow!("window identity changed before action preflight"));
+            return Err(stale_window_identity("action preflight"));
         }
         let mut legacy = params.as_object().cloned().unwrap_or_default();
         legacy.remove("window");
@@ -411,7 +411,7 @@ impl ComputerUseProtocolAdapter {
             &json!({ "windowId": platform_window_id(window_id) }),
         )?)?;
         if !window_matches(&window_result["window"], &params["window"]) {
-            return Err(anyhow!("window identity changed before dispatch"));
+            return Err(stale_window_identity("dispatch"));
         }
         let mut screenshot_transform = None;
         if let Some(screenshot_id) = params.get("screenshotId").and_then(Value::as_str) {
@@ -725,6 +725,12 @@ fn window_matches(platform: &Value, canonical: &Value) -> bool {
         .get("title")
         .and_then(Value::as_str)
         .is_none_or(|title| actual.get("title").and_then(Value::as_str) == Some(title))
+}
+
+fn stale_window_identity(stage: &str) -> anyhow::Error {
+    anyhow!(
+        "stale_target: window identity changed before {stage}; use the latest state.window"
+    )
 }
 
 fn find_platform_element<'a>(elements: &'a [Value], platform_id: &str) -> Option<&'a Value> {
