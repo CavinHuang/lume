@@ -65,7 +65,9 @@ try {
 } catch (error) {
   log.info("vision probe incomplete", {
     modelKey: attempt.key,
-    reason: error instanceof Error ? error.message : "unknown",
+    reason: error instanceof Error && error.message === "vision_probe_incomplete:max_tokens"
+      ? "max_tokens"
+      : "probe_error",
   });
   return false;
 }
