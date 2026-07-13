@@ -367,10 +367,17 @@ impl ComputerUseProtocolAdapter {
                 "includeText": true,
             }),
         )?)?;
-        if let (Some(x), Some(y)) = (
-            legacy.get("x").and_then(Value::as_i64),
-            legacy.get("y").and_then(Value::as_i64),
-        ) {
+        let x = legacy.get("x").and_then(Value::as_i64);
+        let y = legacy.get("y").and_then(Value::as_i64);
+        if x.is_none() && y.is_none() {
+            let focused = &current_state["accessibility"]["focusedElement"];
+            let mut output = json!({});
+            copy_optional_string(&mut output, "role", focused, "role");
+            copy_optional_string(&mut output, "targetLabel", focused, "name");
+            copy_optional_bool(&mut output, "sensitive", focused, "sensitive");
+            return Ok(output);
+        }
+        if let (Some(x), Some(y)) = (x, y) {
             if let Some(element) = find_platform_element_at_point(
                 current_state["accessibility"]["tree"]
                     .as_array()

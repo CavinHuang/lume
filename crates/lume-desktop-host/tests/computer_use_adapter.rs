@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use lume_desktop_host::{ComputerUseProtocolAdapter, DesktopBackend};
 use serde_json::{json, Value};
 use std::sync::Mutex;
@@ -79,12 +79,20 @@ impl DesktopBackend for FakeBackend {
                     "dataUrl": "data:image/png;base64,ZmFrZQ=="
                 }]
             })),
-            "preflight_action" => Ok(json!({
-                "status": "ok",
-                "role": "button",
-                "name": "发送消息",
-                "sensitive": false
-            })),
+            "preflight_action" => {
+                if params.get("x").and_then(Value::as_i64).is_none() {
+                    return Err(anyhow!("x is required"));
+                }
+                if params.get("y").and_then(Value::as_i64).is_none() {
+                    return Err(anyhow!("y is required"));
+                }
+                Ok(json!({
+                    "status": "ok",
+                    "role": "button",
+                    "name": "发送消息",
+                    "sensitive": false
+                }))
+            }
             _ => Ok(json!({ "status": "ok" })),
         }
     }
@@ -338,6 +346,28 @@ fn resolves_private_action_preflight_without_public_target_labels() {
     assert_eq!(call.0, "preflight_action");
     assert_eq!(call.1["x"], 113);
     assert_eq!(call.1["y"], 75);
+}
+
+#[test]
+fn non_point_actions_do_not_enter_the_platform_point_preflight() {
+    let backend = FakeBackend::new();
+    let mut adapter = ComputerUseProtocolAdapter::new();
+
+    for action in ["activate_window", "type_text", "press_key"] {
+        adapter
+            .invoke(
+                &backend,
+                "desktop_context.preflight_action",
+                &json!({ "action": action, "window": window() }),
+            )
+            .unwrap();
+    }
+
+    assert!(backend.calls().iter().all(|(method, params)| {
+        method != "preflight_action"
+            || (params.get("x").and_then(Value::as_i64).is_some()
+                && params.get("y").and_then(Value::as_i64).is_some())
+    }));
 }
 
 #[test]
