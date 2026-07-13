@@ -10,6 +10,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { invokeComputerUse } from "../../../desktop-context/desktop-context-runtime";
 import { waitForDesktopActionDecision } from "../../interruption/desktop-action-session";
+import { saveComputerUseScreenshots } from "./computer-use-screenshot-output";
 
 export const COMPUTER_USE_MCP_SERVER_ID = "computer_use";
 const WRAPPER_PREFIX = `mcp__${COMPUTER_USE_MCP_SERVER_ID}__`;
@@ -80,6 +81,7 @@ const WINDOW_SCOPED_TOOLS = new Set<ComputerUseToolName>([
 
 export function createComputerUseMcpTools(input: {
   invoke?: ComputerUseInvoke;
+  workspaceSlug?: string;
   threadId?: string;
   runId?: string;
   boundDesktopContextSnapshotId?: string;
@@ -207,7 +209,10 @@ export function createComputerUseMcpTools(input: {
             ? { ...desktopInvocationArgs(args), includeScreenshot: true }
             : desktopInvocationArgs(args);
           const rawResult = await invoke(invocationName, invocationArgs);
-          const result = await attachPostActionVerification(invoke, name, args, rawResult);
+          const persistedResult = name === "take_screenshot"
+            ? persistExplicitScreenshots(rawResult, input.workspaceSlug, input.threadId)
+            : rawResult;
+          const result = await attachPostActionVerification(invoke, name, args, persistedResult);
           if (!readOnly && !NON_DESKTOP_ACTION_TOOLS.has(name)) {
             const status = resultStatus(result);
             emitDesktopActionVisualEvent(input, {
@@ -237,6 +242,21 @@ export function createComputerUseMcpTools(input: {
       },
     } satisfies ToolDefinition;
   });
+}
+
+function persistExplicitScreenshots(
+  value: unknown,
+  workspaceSlug: string | undefined,
+  threadId: string | undefined,
+): Record<string, unknown> {
+  if (!workspaceSlug || !threadId) {
+    throw new Error("computer-use screenshot requires a workspace-bound thread");
+  }
+  const result = asRecord(value);
+  const screenshots = Array.isArray(result.screenshots) ? result.screenshots : [];
+  const savedScreenshots = saveComputerUseScreenshots({ workspaceSlug, threadId, screenshots })
+    .map(({ absPath: _, ...metadata }) => metadata);
+  return { ...result, savedScreenshots };
 }
 
 async function revalidateDesktopActionTarget(
@@ -745,7 +765,7 @@ function describeTool(
     list_windows: "List visible windows, optionally filtered by appId. Save the returned window id and use it for every later action.",
     get_window: "Read safe metadata and screen bounds for one exact windowId. Use it to rehydrate a stale window target instead of guessing or reconstructing an id.",
     get_window_state: "Passively read the current revision, accessibility tree, focused element, and visible semantic text for one exact window without capturing pixels; this does not activate or focus the window. Re-run it before consequential actions and after a logical action batch to verify the result.",
-    take_screenshot: "Capture one exact window as the final visual fallback when accessibility completeness is minimal, the requested content is inherently visual, or structured state cannot verify the result.",
+    take_screenshot: "Capture one exact window as the final visual fallback when accessibility completeness is minimal, the requested content is inherently visual, or structured state cannot verify the result. The captured image is saved under the current thread's files/computer-use folder and returned as threadPath metadata.",
     launch_app: "Launch an application by executable/app name or absolute path, then poll list_apps until the application exposes a targetable windowId.",
     activate_window: "Bring one exact windowId to the foreground. Verify with get_window_state after activation.",
     move_pointer: "Move the visible agent pointer in one window. Prefer accessibility elementId, then targeted window coordinates before screenshot coordinates from take_screenshot.",

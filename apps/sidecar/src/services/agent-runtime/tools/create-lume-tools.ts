@@ -109,6 +109,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   });
   const boundDesktopWindow = desktopWindowBindingFromMessageMetadata(input.messageMetadata);
   const computerUseTools = createComputerUseMcpTools({
+    workspaceSlug: input.workspaceSlug,
     threadId: input.threadId,
     runId: input.runId,
     ...(typeof input.messageMetadata?.desktopContextSnapshotId === "string"

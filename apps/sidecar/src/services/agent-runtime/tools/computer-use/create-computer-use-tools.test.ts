@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentDesktopActionRequest } from "@lume/shared";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createComputerUseMcpTools } from "./create-computer-use-tools";
 import { submitDesktopActionDecision } from "../../interruption/desktop-action-session";
+import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 
 describe("createComputerUseMcpTools", () => {
   test("publishes concrete schemas for desktop targeting and safe text entry", () => {
@@ -342,8 +346,13 @@ describe("createComputerUseMcpTools", () => {
   });
 
   test("captures screenshots only through the explicit fallback tool", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    const tempConfigDir = mkdtempSync(join(tmpdir(), "lume-computer-use-tool-"));
+    process.env.LUME_CONFIG_DIR = tempConfigDir;
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const tools = createComputerUseMcpTools({
+      workspaceSlug: "demo",
+      threadId: "thread-1",
       invoke: async (method, input) => {
         calls.push({ method, input });
         return {
@@ -361,35 +370,49 @@ describe("createComputerUseMcpTools", () => {
     });
     const screenshot = tools.find((tool) => tool.name === "mcp__computer_use__take_screenshot")!;
 
-    const result = await screenshot.call(
-      { windowId: "win:wechat" },
-      { toolUseId: "tool-explicit-screenshot" } as never,
-    );
+    try {
+      const result = await screenshot.call(
+        { windowId: "win:wechat" },
+        { toolUseId: "tool-explicit-screenshot" } as never,
+      );
 
-    expect(calls).toEqual([{
-      method: "get_window_state",
-      input: { windowId: "win:wechat", includeScreenshot: true },
-    }]);
-    expect(result.content).toEqual([
-      {
-        type: "text",
-        text: JSON.stringify({
-          status: "ok",
-          screenshots: [{
-            id: "shot-explicit",
-            width: 320,
-            height: 200,
-            origin: { x: 10, y: 20 },
-            mimeType: "image/png",
-          }],
-        }),
-      },
-      {
+      expect(calls).toEqual([{
+        method: "get_window_state",
+        input: { windowId: "win:wechat", includeScreenshot: true },
+      }]);
+      const content = result.content as Array<Record<string, any>>;
+      const metadata = JSON.parse(content[0]!.text);
+      expect(metadata).toMatchObject({
+        status: "ok",
+        screenshots: [{
+          id: "shot-explicit",
+          width: 320,
+          height: 200,
+          origin: { x: 10, y: 20 },
+          mimeType: "image/png",
+        }],
+        savedScreenshots: [{
+          screenshotId: "shot-explicit",
+          threadPath: expect.stringMatching(/^files\/computer-use\/.+\.png$/),
+          mediaType: "image/png",
+          width: 320,
+          height: 200,
+        }],
+      });
+      expect(existsSync(join(
+        getAgentThreadFilesPath("demo", "thread-1"),
+        metadata.savedScreenshots[0].threadPath.replace(/^files\//, ""),
+      ))).toBe(true);
+      expect(content[1]).toEqual({
         type: "image",
         source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" },
         _meta: { screenshotId: "shot-explicit", persist: false },
-      },
-    ]);
+      });
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+      else process.env.LUME_CONFIG_DIR = previousConfigDir;
+      rmSync(tempConfigDir, { recursive: true, force: true });
+    }
   });
 
   test("extracts screenshots nested under retained desktop context snapshots", async () => {
