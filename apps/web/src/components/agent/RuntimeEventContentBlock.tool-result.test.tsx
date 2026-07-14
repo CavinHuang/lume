@@ -15,12 +15,16 @@ mock.module('@ant-design/x-markdown', () => ({
 
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
+  copyFile: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
   localFilePreviewUrl: (path: string) => `asset://${path}`,
   openInSystem: async () => undefined,
+  revealPathInSystem: async () => undefined,
+  saveFilePathDialog: async () => ({ path: null }),
   saveTextFileDialog: async () => undefined,
   sidecarCall: async () => undefined,
   statFilePaths: async () => ({ files: [] }),
+  writeClipboardText: async () => undefined,
 }))
 
 mock.module('./tool-result-renderers', () => ({
@@ -104,5 +108,28 @@ describe('RuntimeEventContentBlock user attachments', () => {
     expect(markup.indexOf('data-agent-attachment-grid="true"')).toBeLessThan(markup.indexOf('请看附件'))
     expect(markup).toContain('data-agent-attachment-kind="image"')
     expect(markup).toContain('data-agent-attachment-kind="file"')
+  })
+})
+
+describe('RuntimeEventContentBlock user message editing', () => {
+  const message: RuntimeMessageView = {
+    id: 'user-editable',
+    type: 'user',
+    text: '需要修改的消息',
+    createdAt: '2026-06-01T00:00:00.000Z',
+    messageId: 'persisted-user-message',
+  }
+
+  test('disables editing for historical user messages', () => {
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock
+        message={message}
+        threadId="thread-1"
+        canEditUserMessage={false}
+      />,
+    )
+
+    expect(markup).toContain('title="仅支持编辑最后一条消息"')
+    expect(markup).toContain('disabled=""')
   })
 })

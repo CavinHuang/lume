@@ -31,6 +31,7 @@ interface RuntimeEventContentBlockProps {
   animate?: boolean
   streaming?: boolean
   showAssistantAvatar?: boolean
+  canEditUserMessage?: boolean
   threadId: string
   onOpenThreadFile?: (path: string) => void
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
@@ -54,6 +55,7 @@ export function areRuntimeEventContentBlockPropsEqual(
   if (prev.streaming !== next.streaming) return false
   if (prev.animate !== next.animate) return false
   if (prev.showAssistantAvatar !== next.showAssistantAvatar) return false
+  if (prev.canEditUserMessage !== next.canEditUserMessage) return false
   if (prev.threadId !== next.threadId) return false
   return prev.message === next.message
 }
@@ -98,6 +100,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   animate,
   streaming,
   showAssistantAvatar = true,
+  canEditUserMessage = false,
   threadId,
   onOpenThreadFile,
   onOpenThreadImage,
@@ -112,6 +115,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
         message={message}
         threadId={threadId}
         className={cls}
+        canEdit={canEditUserMessage}
         onOpenThreadFile={onOpenThreadFile}
         onOpenThreadImage={onOpenThreadImage}
       />
@@ -312,12 +316,14 @@ function UserMessageBlock({
   message,
   threadId,
   className,
+  canEdit,
   onOpenThreadFile,
   onOpenThreadImage,
 }: {
   message: Extract<RuntimeMessageView, { type: 'user' }>
   threadId: string
   className: string
+  canEdit: boolean
   onOpenThreadFile?: (path: string) => void
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
 }) {
@@ -327,7 +333,7 @@ function UserMessageBlock({
   const [versions, setVersions] = useState<AgentMessage[]>([])
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-  const canEdit = Boolean(message.messageId)
+  const editEnabled = canEdit && Boolean(message.messageId)
   const canShowVersions = Boolean(message.versionGroupId && (message.versionCount ?? 0) > 1)
   const agentInvocation = parseAgentRoleInstructionMessage(message.text)
   const visibleMessageText = agentInvocation?.task || message.text
@@ -442,13 +448,13 @@ function UserMessageBlock({
             <Button
                 variant="ghost"
               type="button"
-              disabled={!canEdit}
+              disabled={!editEnabled}
               onClick={() => {
                 setDraft(message.text)
                 setEditing(true)
               }}
               className="rounded-md p-1 transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)] disabled:cursor-not-allowed disabled:opacity-40"
-              title={canEdit ? '编辑并重新发送' : '旧消息暂不支持编辑'}
+              title={editEnabled ? '编辑并重新发送' : canEdit ? '旧消息暂不支持编辑' : '仅支持编辑最后一条消息'}
             >
               <Edit3 size={14} />
             </Button>

@@ -358,6 +358,13 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   }, [runtimeEvents])
 
   const items: React.ReactNode[] = []
+  let latestUserMessageIndex = -1
+  for (let i = liveMessages.length - 1; i >= 0; i -= 1) {
+    if (liveMessages[i]?.type === 'user') {
+      latestUserMessageIndex = i
+      break
+    }
+  }
   for (let i = 0; i < liveMessages.length; i++) {
     const msg = liveMessages[i]
     const activeStreamingMessage = streaming && i === liveMessages.length - 1
@@ -367,6 +374,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           message={msg}
           animate={activeStreamingMessage && newMessageIds.has(msg.id)}
           streaming={activeStreamingMessage}
+          canEditUserMessage={i === latestUserMessageIndex}
           threadId={threadId}
           onOpenThreadFile={onOpenThreadFile}
           onOpenThreadImage={onOpenThreadImage}

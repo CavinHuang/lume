@@ -189,6 +189,14 @@ export function SubagentHeader({
   avatarSrc?: string
   onClick: () => void
 }) {
+  let latestUserMessageIndex = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.type === 'user') {
+      latestUserMessageIndex = index
+      break
+    }
+  }
+
   return (
     <Button
                 variant="ghost"
@@ -333,6 +341,7 @@ function SubagentExpandedContent({
             message={message}
             threadId={childThreadId}
             streaming={isRunning && index === messages.length - 1}
+            canEditUserMessage={index === latestUserMessageIndex}
             showAssistantAvatar={false}
             onUserResizeStart={onUserResizeStart}
           />

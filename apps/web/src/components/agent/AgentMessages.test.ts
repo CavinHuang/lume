@@ -683,6 +683,12 @@ describe('areRuntimeEventContentBlockPropsEqual', () => {
     const next = { message: baseAssistantMessage, threadId: 't1', showAssistantAvatar: false }
     expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
   })
+
+  test('detects user message edit permission change', () => {
+    const prev = { message: baseAssistantMessage, threadId: 't1', canEditUserMessage: false }
+    const next = { message: baseAssistantMessage, threadId: 't1', canEditUserMessage: true }
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
+  })
 })
 
 describe('stabilizeRuntimeMessages', () => {
