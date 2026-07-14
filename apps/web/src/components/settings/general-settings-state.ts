@@ -72,6 +72,18 @@ export const THEME_PALETTE_OPTIONS: ThemePaletteOption[] = [
     desc: '克制的深海蓝与清透青色',
     colors: ['#0B1420', '#132337', '#2879FF', '#35C4D8'],
   },
+  {
+    value: 'sakura',
+    label: '樱雾',
+    desc: '轻盈的瓷粉、莓红与柔和樱色',
+    colors: ['#FFF8FA', '#F7E8EE', '#D94F70', '#F29AB2'],
+  },
+  {
+    value: 'ember',
+    label: '石墨余烬',
+    desc: '克制的石墨黑与明亮余烬橙',
+    colors: ['#141414', '#202020', '#F06A3C', '#FFB15C'],
+  },
 ]
 
 export const PROXY_MODE_OPTIONS: ProxyModeOption[] = [

@@ -172,6 +172,14 @@ describe("general-settings-service", () => {
     expect(raw.generalSettings?.themePalette).toBe("iris");
   });
 
+  test("樱雾和石墨余烬配色可以持久化后重新读取", () => {
+    updatePersistedGeneralSettings({ themePalette: "sakura" });
+    expect(getPersistedGeneralSettings().themePalette).toBe("sakura");
+
+    updatePersistedGeneralSettings({ themePalette: "ember" });
+    expect(getPersistedGeneralSettings().themePalette).toBe("ember");
+  });
+
   test("更新 generalSettings 时保留既有 uiState", () => {
     const settingsPath = getSettingsPath();
     writeFileSync(settingsPath, JSON.stringify({

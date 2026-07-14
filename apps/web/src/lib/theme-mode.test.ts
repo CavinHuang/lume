@@ -93,6 +93,14 @@ describe('theme palette runtime', () => {
     expect(readStoredThemePalette()).toBe('mint')
   })
 
+  test('accepts the sakura and ember palettes', () => {
+    localStorageMock.setItem('lume:theme-palette', 'sakura')
+    expect(readStoredThemePalette()).toBe('sakura')
+
+    localStorageMock.setItem('lume:theme-palette', 'ember')
+    expect(readStoredThemePalette()).toBe('ember')
+  })
+
   test('stores and applies the selected palette', () => {
     setThemePalette('clay')
 

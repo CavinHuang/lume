@@ -17,12 +17,14 @@ describe('general settings state', () => {
     ])
   })
 
-  test('theme palette options expose all four approved palettes', () => {
+  test('theme palette options expose all approved palettes', () => {
     expect(THEME_PALETTE_OPTIONS.map((option) => option.value)).toEqual([
       'mint',
       'iris',
       'clay',
       'ocean',
+      'sakura',
+      'ember',
     ])
   })
 

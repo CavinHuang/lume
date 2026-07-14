@@ -55,7 +55,12 @@ function isThemeMode(value: unknown): value is ThemeMode {
 }
 
 function isThemePalette(value: unknown): value is ThemePalette {
-  return value === "mint" || value === "iris" || value === "clay" || value === "ocean";
+  return value === "mint"
+    || value === "iris"
+    || value === "clay"
+    || value === "ocean"
+    || value === "sakura"
+    || value === "ember";
 }
 
 function isAgentMessageDisplayMode(value: unknown): value is AgentMessageDisplayMode {

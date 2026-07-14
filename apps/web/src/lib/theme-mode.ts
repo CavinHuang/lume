@@ -83,7 +83,12 @@ export function readStoredThemePalette(): ThemePalette {
   }
 
   const value = window.localStorage.getItem(THEME_PALETTE_STORAGE_KEY)
-  return value === 'mint' || value === 'iris' || value === 'clay' || value === 'ocean'
+  return value === 'mint'
+    || value === 'iris'
+    || value === 'clay'
+    || value === 'ocean'
+    || value === 'sakura'
+    || value === 'ember'
     ? value
     : GENERAL_SETTINGS_DEFAULTS.themePalette
 }

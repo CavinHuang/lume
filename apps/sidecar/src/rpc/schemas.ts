@@ -1317,7 +1317,7 @@ export const updateUiStateInputSchema = z.object({
 
 export const updateGeneralSettingsInputSchema = z.object({
   themeMode: z.enum(["system", "light", "dark"]).optional(),
-  themePalette: z.enum(["mint", "iris", "clay", "ocean"]).optional(),
+  themePalette: z.enum(["mint", "iris", "clay", "ocean", "sakura", "ember"]).optional(),
   windowBehavior: z.object({
     minimizeToTray: z.boolean().optional(),
     closeToTray: z.boolean().optional()
