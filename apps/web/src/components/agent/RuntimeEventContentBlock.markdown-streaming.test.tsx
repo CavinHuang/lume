@@ -67,11 +67,14 @@ const { MarkdownPre, RuntimeEventContentBlock } = await import('./RuntimeEventCo
 function renderAssistantText(options: {
   messageStatus: RuntimeMessageView['status']
   streaming?: boolean
+  text?: string
+  showExpressionActions?: boolean
 }): string {
+  const text = options.text ?? 'hello'
   const message: RuntimeMessageView = {
     id: 'assistant-1',
     type: 'assistant',
-    text: 'hello',
+    text,
     thinking: '',
     status: options.messageStatus,
     toolCalls: [],
@@ -79,7 +82,7 @@ function renderAssistantText(options: {
       {
         type: 'text',
         id: 'text-1',
-        text: 'hello',
+        text,
       },
     ],
   }
@@ -88,12 +91,34 @@ function renderAssistantText(options: {
     <RuntimeEventContentBlock
       message={message}
       streaming={options.streaming}
+      showExpressionActions={options.showExpressionActions}
       threadId="thread-1"
     />,
   )
 }
 
 describe('RuntimeEventContentBlock markdown streaming config', () => {
+  test('shows contextual expression actions for the selected completed answer', () => {
+    const markup = renderAssistantText({
+      messageStatus: 'completed',
+      showExpressionActions: true,
+      text: '这个系统架构包含入口、服务和存储之间的依赖关系。'.padEnd(240, '详'),
+    })
+
+    expect(markup).toContain('data-expression-actions="true"')
+    expect(markup).toContain('画成图')
+  })
+
+  test('hides contextual expression actions when the message is not selected', () => {
+    const markup = renderAssistantText({
+      messageStatus: 'completed',
+      showExpressionActions: false,
+      text: '这个系统架构包含入口、服务和存储之间的依赖关系。'.padEnd(240, '详'),
+    })
+
+    expect(markup).not.toContain('data-expression-actions')
+  })
+
   test('renders Mermaid pre blocks through the shared diagram component', () => {
     const markup = renderToStaticMarkup(
       <MarkdownPre

@@ -689,6 +689,13 @@ describe('areRuntimeEventContentBlockPropsEqual', () => {
     const next = { message: baseAssistantMessage, threadId: 't1', canEditUserMessage: true }
     expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
   })
+
+  test('detects expression action visibility change', () => {
+    const prev = { message: baseAssistantMessage, threadId: 't1', showExpressionActions: false }
+    const next = { message: baseAssistantMessage, threadId: 't1', showExpressionActions: true }
+
+    expect(areRuntimeEventContentBlockPropsEqual(prev, next)).toBe(false)
+  })
 })
 
 describe('stabilizeRuntimeMessages', () => {
