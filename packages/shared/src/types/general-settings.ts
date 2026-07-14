@@ -1,5 +1,7 @@
 export type ThemeMode = "system" | "light" | "dark"
 
+export type ThemePalette = "mint" | "iris" | "clay" | "ocean"
+
 export type AgentMessageDisplayMode = "minimal" | "verbose"
 
 export interface GeneralSettingsWindowBehavior {
@@ -17,6 +19,7 @@ export interface GeneralSettingsUpdateSettings {
 
 export interface GeneralSettings {
   themeMode: ThemeMode
+  themePalette: ThemePalette
   windowBehavior: GeneralSettingsWindowBehavior
   updateSettings: GeneralSettingsUpdateSettings
   agentMessageDisplayMode: AgentMessageDisplayMode
@@ -24,6 +27,7 @@ export interface GeneralSettings {
 
 export interface UpdateGeneralSettingsInput {
   themeMode?: ThemeMode
+  themePalette?: ThemePalette
   windowBehavior?: Partial<GeneralSettingsWindowBehavior>
   updateSettings?: Partial<GeneralSettingsUpdateSettings>
   agentMessageDisplayMode?: AgentMessageDisplayMode
@@ -100,6 +104,7 @@ export interface TestSearchBackendResult {
 
 export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   themeMode: "system",
+  themePalette: "mint",
   windowBehavior: {
     minimizeToTray: false,
     closeToTray: false,

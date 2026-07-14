@@ -43,6 +43,7 @@ describe("general-settings-service", () => {
   test("缺少 settings.json 时返回默认常规设置", () => {
     expect(getPersistedGeneralSettings()).toEqual({
       themeMode: "system",
+      themePalette: "mint",
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: false,
@@ -71,6 +72,7 @@ describe("general-settings-service", () => {
 
     expect(first).toEqual({
       themeMode: "dark",
+      themePalette: "mint",
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
@@ -93,6 +95,7 @@ describe("general-settings-service", () => {
 
     expect(second).toEqual({
       themeMode: "dark",
+      themePalette: "mint",
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
@@ -111,6 +114,7 @@ describe("general-settings-service", () => {
       proxy?: { enabled?: boolean };
       generalSettings?: {
         themeMode?: string;
+        themePalette?: string;
         agentMessageDisplayMode?: string;
         windowBehavior?: {
           minimizeToTray?: boolean;
@@ -128,6 +132,7 @@ describe("general-settings-service", () => {
     expect(raw.proxy?.enabled).toBeTrue();
     expect(raw.generalSettings).toEqual({
       themeMode: "dark",
+      themePalette: "mint",
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: true,
@@ -143,6 +148,28 @@ describe("general-settings-service", () => {
     });
     expect(existsSync(join(tempConfigDir, "settings.json.tmp"))).toBeFalse();
     expect(existsSync(join(tempConfigDir, "settings.json.bak"))).toBeFalse();
+  });
+
+  test("主题配色会校验、持久化并在局部更新后保留", () => {
+    const settingsPath = getSettingsPath();
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ generalSettings: { themePalette: "neon" } }, null, 2),
+      "utf-8",
+    );
+
+    expect(getPersistedGeneralSettings().themePalette).toBe("mint");
+
+    const first = updatePersistedGeneralSettings({ themePalette: "iris" });
+    expect(first.themePalette).toBe("iris");
+
+    const second = updatePersistedGeneralSettings({ themeMode: "light" });
+    expect(second.themePalette).toBe("iris");
+
+    const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
+      generalSettings?: { themePalette?: string };
+    };
+    expect(raw.generalSettings?.themePalette).toBe("iris");
   });
 
   test("更新 generalSettings 时保留既有 uiState", () => {
@@ -191,6 +218,7 @@ describe("general-settings-service", () => {
 
     expect(getPersistedGeneralSettings()).toEqual({
       themeMode: "system",
+      themePalette: "mint",
       agentMessageDisplayMode: "minimal",
       windowBehavior: {
         minimizeToTray: false,

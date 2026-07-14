@@ -13,6 +13,7 @@ import {
   type GeneralSettings,
   type PersistedUiState,
   type ThemeMode,
+  type ThemePalette,
   type UpdateGeneralSettingsInput
 } from "@lume/shared";
 import {
@@ -53,6 +54,10 @@ function isThemeMode(value: unknown): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
 }
 
+function isThemePalette(value: unknown): value is ThemePalette {
+  return value === "mint" || value === "iris" || value === "clay" || value === "ocean";
+}
+
 function isAgentMessageDisplayMode(value: unknown): value is AgentMessageDisplayMode {
   return value === "minimal" || value === "verbose";
 }
@@ -78,6 +83,9 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
 
   return {
     themeMode: isThemeMode(value.themeMode) ? value.themeMode : GENERAL_SETTINGS_DEFAULTS.themeMode,
+    themePalette: isThemePalette(value.themePalette)
+      ? value.themePalette
+      : GENERAL_SETTINGS_DEFAULTS.themePalette,
     agentMessageDisplayMode: isAgentMessageDisplayMode(value.agentMessageDisplayMode)
       ? value.agentMessageDisplayMode
       : GENERAL_SETTINGS_DEFAULTS.agentMessageDisplayMode,
@@ -215,6 +223,7 @@ export function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput
   const current = sanitizeGeneralSettings(settings.generalSettings);
   const next: GeneralSettings = {
     themeMode: input.themeMode ?? current.themeMode,
+    themePalette: input.themePalette ?? current.themePalette,
     agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
     windowBehavior: {
       minimizeToTray: input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray,
