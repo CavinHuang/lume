@@ -3,10 +3,7 @@ import { useAtom, useSetAtom } from 'jotai'
 import {
   FileCog,
   Loader2,
-  Monitor,
-  Moon,
   Network,
-  Sun,
   Trash2,
   type LucideIcon,
 } from 'lucide-react'
@@ -16,7 +13,6 @@ import type {
   AgentProxySettings,
   AgentProxyStatus,
   GeneralSettings as GeneralSettingsModel,
-  ThemeMode,
   UpdateGeneralSettingsInput,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
@@ -25,23 +21,15 @@ import { Switch } from '@/components/ui/switch'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom } from '@/atoms'
 import { openLumeConfigSourceFile } from '@/lib/desktop-api/lume-config'
 import { getGeneralSettings, getProxySettings, saveProxySettings, updateGeneralSettings } from '@/lib/desktop-api'
-import { setThemeMode } from '@/lib/theme-mode'
 import { cn } from '@/lib/utils'
 import {
   GENERAL_SETTINGS_DEFAULTS,
   PROXY_MODE_OPTIONS,
-  THEME_MODE_OPTIONS,
   mergeGeneralSettings,
   normalizeProxyDraft,
 } from './general-settings-state'
 
 import { Input } from '@/components/ui/input'
-const THEME_ICONS: Record<ThemeMode, LucideIcon> = {
-  system: Monitor,
-  light: Sun,
-  dark: Moon,
-}
-
 const DEFAULT_PROXY_SETTINGS: AgentProxySettings = {
   version: 1,
   enabled: false,
@@ -100,9 +88,6 @@ export function GeneralSettings() {
     try {
       const saved = await updateGeneralSettings(updates)
       setSettings(saved)
-      if (updates.themeMode) {
-        setThemeMode(saved.themeMode)
-      }
       toast.success(successMessage)
     } catch (error) {
       console.error('[GeneralSettings] save FAILED:', error)
@@ -111,11 +96,6 @@ export function GeneralSettings() {
     } finally {
       setSaving(false)
     }
-  }
-
-  const handleThemeChange = (themeMode: ThemeMode) => {
-    if (themeMode === settings.themeMode || saving) return
-    void persistSettings({ themeMode }, '外观设置已保存')
   }
 
   const handleProxyModeChange = (mode: AgentProxyMode) => {
@@ -185,34 +165,6 @@ export function GeneralSettings() {
                 ))}
               </SelectContent>
             </Select>
-          </SettingsRow>
-        </SettingsCard>
-
-        <SettingsCard title="外观">
-          <SettingsRow label="主题">
-            <div className="lume-segmented grid w-[306px] grid-cols-3">
-              {THEME_MODE_OPTIONS.map((option) => {
-                const Icon = THEME_ICONS[option.value]
-                return (
-                  <Button
-                variant="ghost"
-                    key={option.value}
-                    type="button"
-                    onClick={() => handleThemeChange(option.value)}
-                    disabled={saving}
-                    className={cn(
-                      'lume-segmented-item disabled:opacity-60',
-                      settings.themeMode === option.value
-                        ? 'lume-segmented-item-active'
-                        : ''
-                    )}
-                  >
-                    <Icon size={14} />
-                    {option.label}
-                  </Button>
-                )
-              })}
-            </div>
           </SettingsRow>
         </SettingsCard>
 

@@ -3,6 +3,7 @@ import {
   GENERAL_SETTINGS_DEFAULTS,
   PROXY_MODE_OPTIONS,
   THEME_MODE_OPTIONS,
+  THEME_PALETTE_OPTIONS,
   normalizeProxyDraft,
   mergeGeneralSettings,
 } from './general-settings-state'
@@ -13,6 +14,15 @@ describe('general settings state', () => {
       'system',
       'light',
       'dark',
+    ])
+  })
+
+  test('theme palette options expose all four approved palettes', () => {
+    expect(THEME_PALETTE_OPTIONS.map((option) => option.value)).toEqual([
+      'mint',
+      'iris',
+      'clay',
+      'ocean',
     ])
   })
 
@@ -27,10 +37,12 @@ describe('general settings state', () => {
   test('general settings defaults stay app-wide and conservative', () => {
     expect(GENERAL_SETTINGS_DEFAULTS).toEqual({
       themeMode: 'system',
+      themePalette: 'mint',
       agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false,
+        showTray: true,
       },
       updateSettings: {
         autoCheckUpdates: true,
@@ -48,10 +60,12 @@ describe('general settings state', () => {
       },
     })).toEqual({
       themeMode: 'system',
+      themePalette: 'mint',
       agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: true,
+        showTray: true,
       },
       updateSettings: {
         autoCheckUpdates: true,
@@ -65,9 +79,12 @@ describe('general settings state', () => {
   test('mergeGeneralSettings preserves window behavior when only theme changes', () => {
     expect(mergeGeneralSettings({
       themeMode: 'dark',
+      themePalette: 'iris',
+      agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false,
+        showTray: true,
       },
       updateSettings: {
         autoCheckUpdates: true,
@@ -79,9 +96,12 @@ describe('general settings state', () => {
       themeMode: 'light',
     })).toEqual({
       themeMode: 'light',
+      themePalette: 'iris',
+      agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false,
+        showTray: true,
       },
       updateSettings: {
         autoCheckUpdates: true,
@@ -90,6 +110,15 @@ describe('general settings state', () => {
         lastUpdateCheckAt: null,
       },
     })
+  })
+
+  test('mergeGeneralSettings updates palette without changing theme mode', () => {
+    const merged = mergeGeneralSettings(GENERAL_SETTINGS_DEFAULTS, {
+      themePalette: 'ocean',
+    })
+
+    expect(merged.themeMode).toBe('system')
+    expect(merged.themePalette).toBe('ocean')
   })
 
   test('mergeGeneralSettings applies partial update settings without losing sibling flags', () => {
