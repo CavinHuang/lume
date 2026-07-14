@@ -59,6 +59,14 @@
         "to": "sidecar"
       },
       {
+        "from": "resources/data",
+        "to": "data"
+      },
+      {
+        "from": "resources/package.json",
+        "to": "package.json"
+      },
+      {
         "from": "resources/natives",
         "to": "natives"
       },

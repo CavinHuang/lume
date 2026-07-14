@@ -177,10 +177,19 @@ fn excludes_the_visual_cursor_window_from_agent_visible_app_lists() {
 
 fn activate_test_window(backend: &WindowsDesktopBackend) -> String {
     let windows = backend.invoke("list_windows", &json!({})).unwrap();
-    for window_id in windows["windows"]
+    let mut candidates = windows["windows"]
         .as_array()
         .into_iter()
         .flatten()
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|window| {
+        let focused = window["focused"].as_bool() == Some(true);
+        let normal_sized = window["bounds"]["width"].as_i64().unwrap_or_default() >= 200
+            && window["bounds"]["height"].as_i64().unwrap_or_default() >= 100;
+        (!focused, !normal_sized)
+    });
+    for window_id in candidates
+        .into_iter()
         .filter_map(|window| window["id"].as_str())
     {
         if backend

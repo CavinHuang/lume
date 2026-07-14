@@ -79,6 +79,23 @@ test('desktop package includes bundled capability plugins', () => {
   assert.match(main, /'apps', 'sidecar', 'bundled-plugins'/)
 })
 
+test('desktop package includes sidecar runtime data', () => {
+  assert.deepEqual(
+    pkg.build.extraResources.find((entry) => entry.to === 'data'),
+    {
+      from: 'resources/data',
+      to: 'data',
+    },
+  )
+  assert.deepEqual(
+    pkg.build.extraResources.find((entry) => entry.to === 'package.json'),
+    {
+      from: 'resources/package.json',
+      to: 'package.json',
+    },
+  )
+})
+
 test('desktop package includes the optional desktop-host resource', () => {
   assert.deepEqual(
     pkg.build.extraResources.find((entry) => entry.to === 'desktop-host'),
