@@ -38,6 +38,10 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
     },
     async call(rawInput, context) {
       const startedAt = Date.now();
+      const computerUseTool = descriptor.name.startsWith("mcp__computer_use__");
+      const inputSummary = computerUseTool
+        ? summarizeToolInput(rawInput, true)
+        : createDiagnosticLogSummary(rawInput);
       log.info("tool call started", {
         threadId: input.threadId,
         toolName: tool.name,
@@ -46,7 +50,7 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
         capability: descriptor.metadata.capability,
         riskLevel: descriptor.metadata.riskLevel,
         toolUseId: context.toolUseId,
-        inputSummary: createDiagnosticLogSummary(rawInput)
+        inputSummary
       });
       const payloadGuard = enforcePayloadPolicy(descriptor, rawInput, context.toolUseId);
       if (payloadGuard) {
@@ -107,7 +111,7 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
         risk_level: descriptor.metadata.riskLevel,
         tool_name: tool.name,
         tool_use_id: context.toolUseId ?? "",
-        input_summary: summarizeToolInput(rawInput),
+        input_summary: computerUseTool ? inputSummary : summarizeToolInput(rawInput),
         session_id: context.sessionId ?? input.threadId
       } as any);
 
@@ -181,11 +185,28 @@ function requestsBackgroundExecution(input: unknown): boolean {
   return record.run_in_background === true || record.isolation === "remote";
 }
 
-function summarizeToolInput(input: unknown): string {
-  const redacted = redactSensitiveValues(input);
+function summarizeToolInput(input: unknown, computerUse = false): string {
+  const redacted = computerUse
+    ? redactComputerUseInput(input)
+    : redactSensitiveValues(input);
   const text = stringifyInput(redacted);
   const maxChars = 500;
   return text.length > maxChars ? `${text.slice(0, maxChars)}...(truncated)` : text;
+}
+
+function redactComputerUseInput(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return redactSensitiveValues(input);
+  }
+  const redacted: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if ((key === "text" || key === "value") && typeof value === "string") {
+      redacted[`${key}Length`] = value.length;
+      continue;
+    }
+    redacted[key] = redactSensitiveValues(value);
+  }
+  return redacted;
 }
 
 function redactSensitiveValues(input: unknown): unknown {

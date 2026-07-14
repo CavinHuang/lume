@@ -1,15 +1,21 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import type {
   JsExecInput,
   NodeReplBrowserAuthRequest,
+  NodeReplComputerUseResult,
   NodeReplContentBlock,
   NodeReplExecutionResult,
   NodeReplRuntimeClient,
   NodeReplRuntimeExecOptions,
   RuntimeFactoryInput
 } from "./node-repl-types";
+import {
+  mergeComputerUseExecutionResult,
+  parseComputerUseHostCall,
+} from "./node-repl-computer-use-bridge";
 
 const DEFAULT_CALL_TIMEOUT_MS = 35_000;
 const MAX_STDERR_CHARS = 16_000;
@@ -53,6 +59,7 @@ interface PendingCall {
 interface ActiveExec {
   options?: NodeReplRuntimeExecOptions;
   abortController: AbortController;
+  computerUseResults: NodeReplComputerUseResult[];
 }
 
 interface JsonlNodeReplRuntimeClientOptions {
@@ -86,7 +93,8 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
   async exec(input: JsExecInput, options?: NodeReplRuntimeExecOptions): Promise<NodeReplExecutionResult> {
     const execId = `node-repl-exec-${Date.now()}-${this.nextId++}`;
     const abortController = new AbortController();
-    this.activeExecs.set(execId, { options, abortController });
+    const active: ActiveExec = { options, abortController, computerUseResults: [] };
+    this.activeExecs.set(execId, active);
     try {
       const value = await this.call("exec", {
         id: execId,
@@ -94,7 +102,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
         ...(input.timeout_ms ? { timeout_ms: input.timeout_ms } : {}),
         ...(input._meta ? { request_meta: input._meta } : {})
       }, callTimeoutMs(input.timeout_ms));
-      return mapExecutionValue(value);
+      return mergeComputerUseExecutionResult(mapExecutionValue(value), active.computerUseResults);
     } finally {
       abortController.abort();
       this.activeExecs.delete(execId);
@@ -165,7 +173,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
     ], {
       cwd: this.options.cwd,
       env: {
-        ...process.env,
+        ...buildNodeReplChildEnv(process.env),
         ELECTRON_RUN_AS_NODE: "1",
         NODE_REPL_HOST_PATH: this.options.hostPath,
         NODE_REPL_KERNEL_PATH: this.options.kernelPath,
@@ -230,6 +238,26 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
 
   private async handleRuntimeHostCall(message: RuntimeHostCall): Promise<void> {
     const active = this.activeExecs.get(message.exec_id);
+    if (message.method === "computer.request") {
+      if (!active?.options?.emitComputerUseRequest) {
+        this.writeHostResult(message.id, false, undefined, "Computer Use bridge is unavailable");
+        return;
+      }
+      try {
+        const request = parseComputerUseHostCall(message.args);
+        const result = await active.options.emitComputerUseRequest(request, active.abortController.signal);
+        active.computerUseResults.push(result);
+        this.writeHostResult(message.id, true, result.value);
+      } catch (error) {
+        this.writeHostResult(
+          message.id,
+          false,
+          undefined,
+          error instanceof Error ? error.message : "Computer Use request failed",
+        );
+      }
+      return;
+    }
     if (message.method !== "browserAuth.request" || !active?.options?.emitBrowserAuthRequest) {
       this.writeHostResult(message.id, true, { status: "unavailable" });
       return;
@@ -260,6 +288,65 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       }
     })}\n`, "utf8");
   }
+}
+
+export function buildNodeReplChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...base };
+  const bundledRoot = base.LUME_BUNDLED_PLUGINS_DIR?.trim();
+  if (!bundledRoot) return withoutComputerUsePermission(env);
+  const clientPath = join(
+    bundledRoot,
+    "computer-use",
+    "scripts",
+    "computer-use-client.mjs",
+  );
+  if (!existsSync(clientPath)) return withoutComputerUsePermission(env);
+
+  const manifest = readRuntimeManifest(base.LUME_CUA_RUNTIME_MANIFEST);
+  const permissions = uniqueStrings([
+    ...readStringArray(manifest.permissions),
+    "computerUse",
+  ]);
+  env.LUME_CUA_RUNTIME_MANIFEST = JSON.stringify({
+    ...manifest,
+    name: typeof manifest.name === "string" && manifest.name.trim()
+      ? manifest.name
+      : "lume-computer-use",
+    permissions,
+  });
+  env.NODE_REPL_TRUSTED_CODE_PATHS = uniqueStrings([
+    ...(base.NODE_REPL_TRUSTED_CODE_PATHS?.split(delimiter) ?? []),
+    clientPath,
+  ]).join(delimiter);
+  return env;
+}
+
+function withoutComputerUsePermission(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!env.LUME_CUA_RUNTIME_MANIFEST) return env;
+  const manifest = readRuntimeManifest(env.LUME_CUA_RUNTIME_MANIFEST);
+  const permissions = readStringArray(manifest.permissions).filter((permission) => permission !== "computerUse");
+  env.LUME_CUA_RUNTIME_MANIFEST = JSON.stringify({ ...manifest, permissions });
+  return env;
+}
+
+function readRuntimeManifest(value: string | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function mapExecutionValue(value: unknown): NodeReplExecutionResult {

@@ -9,8 +9,13 @@ export interface JsExecInput {
 }
 
 export type NodeReplContentBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string; _meta?: Record<string, unknown> };
+  | { type: "text"; text: string; _meta?: Record<string, unknown> }
+  | { type: "image"; data: string; mimeType: string; _meta?: Record<string, unknown> }
+  | {
+    type: "image";
+    source: { type: "file"; path: string; media_type: string };
+    _meta?: Record<string, unknown>;
+  };
 
 export interface NodeReplExecutionResult {
   content: NodeReplContentBlock[];
@@ -42,8 +47,20 @@ export interface NodeReplBrowserAuthResult {
   values?: Record<string, string>;
 }
 
+export interface NodeReplComputerUseRequest {
+  method: string;
+  params: Record<string, unknown>;
+}
+
+export interface NodeReplComputerUseResult {
+  value: unknown;
+  content?: NodeReplContentBlock[];
+  meta?: Record<string, unknown>;
+}
+
 export interface NodeReplRuntimeExecOptions {
   emitBrowserAuthRequest?: (request: NodeReplBrowserAuthRequest, signal: AbortSignal) => Promise<NodeReplBrowserAuthResult>;
+  emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
 }
 
 export interface NodeReplRuntimeClient {

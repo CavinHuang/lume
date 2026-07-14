@@ -7,6 +7,8 @@ import {
   type JsExecInput,
   type NodeReplBrowserAuthRequest,
   type NodeReplBrowserAuthResult,
+  type NodeReplComputerUseRequest,
+  type NodeReplComputerUseResult,
   type NodeReplRuntimeRegistry
 } from "./node-repl-types";
 import { waitForBrowserAuthResponse } from "../../interruption/browser-auth-session";
@@ -20,6 +22,7 @@ export function createNodeReplTools(input: {
   cwd: string;
   workspaceSlug?: string;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
+  emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
   registry?: NodeReplRuntimeRegistry;
 }): ToolDefinition[] {
   const registry = input.registry ?? getNodeReplRuntimeRegistry();
@@ -75,7 +78,8 @@ export function createNodeReplTools(input: {
               toolUseId: context.toolUseId,
               emit: input.emitBrowserAuthRequest!,
             })
-            : undefined
+            : undefined,
+          emitComputerUseRequest: input.emitComputerUseRequest,
         });
         return {
           type: "tool_result",
@@ -148,6 +152,7 @@ export function createNodeReplMcpTools(input: {
   cwd: string;
   workspaceSlug?: string;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
+  emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
   registry?: NodeReplRuntimeRegistry;
 }): ToolDefinition[] {
   return createNodeReplTools(input).map((tool) => ({
