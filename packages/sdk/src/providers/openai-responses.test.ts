@@ -410,4 +410,48 @@ describe("OpenAIResponsesProvider", () => {
       ],
     })
   })
+
+  test("empty tool_result array still becomes function_call_output", async () => {
+    let requestBody: Record<string, any> | undefined
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({
+        id: "resp_123",
+        object: "response",
+        status: "completed",
+        output: [{
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "ok" }],
+        }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      baseURL: "https://api.openai.com/v1",
+      retryConfig: fastRetry,
+    })
+
+    await provider.createMessage({
+      model: "gpt-4o",
+      maxTokens: 1024,
+      system: "",
+      messages: [{
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "call_empty",
+          content: [{ type: "text", text: "" }],
+        }],
+      }],
+    })
+
+    expect(requestBody?.input).toContainEqual({
+      type: "function_call_output",
+      call_id: "call_empty",
+      output: "",
+    })
+  })
 })

@@ -417,12 +417,10 @@ export class OpenAIResponsesProvider implements LLMProvider {
             .filter((item) => item.type === 'text')
             .map((item) => item.text)
             .join('\n')
-          if (text) {
-            toolResults.push({
-              tool_use_id: block.tool_use_id,
-              content: text,
-            })
-          }
+          toolResults.push({
+            tool_use_id: block.tool_use_id,
+            content: text,
+          })
           for (const item of block.content) {
             if (item.type !== 'image') continue
             const url = toolResultImageToUrl(item)
