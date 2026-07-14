@@ -65,6 +65,7 @@ describe('model provider settings state', () => {
       models: [{ id: 'gpt-local', name: 'GPT Local', enabled: true }],
       defaultModelId: 'gpt-local',
       fallbackModelIds: ['gpt-fallback'],
+      openaiApiMode: 'responses',
       enabled: true,
       createdAt: 1,
       updatedAt: 2,
@@ -78,6 +79,7 @@ describe('model provider settings state', () => {
       models: channel.models,
       defaultModelId: 'gpt-local',
       fallbackModelIds: ['gpt-fallback'],
+      openaiApiMode: 'responses',
       enabled: true,
     })
   })

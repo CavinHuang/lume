@@ -4,6 +4,7 @@ import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runner/types";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import { getRuntimeCoreAgentDir } from "./session-store";
+import type { OpenAiApiMode } from "@lume/shared";
 
 export interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -11,6 +12,7 @@ export interface PreparedRuntimeCoreAttempt {
   workspaceName?: string;
   workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
+  openaiApiMode?: OpenAiApiMode;
   apiKey: string;
 }
 
@@ -62,6 +64,7 @@ export async function prepareRuntimeCoreAttempt(
     workspaceName,
     workspaceSlug,
     modelResolution,
+    openaiApiMode: channel.openaiApiMode,
     apiKey
   };
 }

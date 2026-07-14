@@ -1,5 +1,5 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
-import type { LumeConfigHooksInternalSection, SDKMessage } from "@lume/shared";
+import type { LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
 import { resolveAgentThinkingLevel } from "./model-capabilities";
@@ -50,6 +50,7 @@ interface PreparedRuntimeCoreAttempt {
   workspaceName?: string;
   workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
+  openaiApiMode?: OpenAiApiMode;
   apiKey: string;
 }
 
@@ -286,6 +287,7 @@ export class LumeRunner {
       agentDir: prepared.agentDir,
       userMessage: input.userMessage,
       provider: prepared.modelResolution.provider,
+      openaiApiMode: prepared.openaiApiMode,
       modelRef: runtime.modelRef,
       resolvedModelId: prepared.modelResolution.resolvedModelId,
       resolvedModel: {

@@ -14,6 +14,7 @@ import {
   type CreateRuntimeCoreSessionInput
 } from "./run";
 import { runRuntimeCoreAttempt } from "./attempt";
+import { prepareRuntimeCoreAttempt } from "./prepare-attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
@@ -932,6 +933,57 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
+  test("OpenAI Responses 渠道应创建 responses provider", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-responses-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "responses-model-session",
+      cwd,
+      agentDir,
+      provider: "openai",
+      openaiApiMode: "responses",
+      resolvedModelId: "gpt-custom",
+      apiKey: "test-key",
+      permissionMode: "plan"
+    });
+
+    expect(result.agent.getApiType()).toBe("openai-responses");
+    result.session.dispose();
+  });
+
+  test("prepareRuntimeCoreAttempt 应保留渠道的 OpenAI API 模式", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-responses-config-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    const channel = createChannel({
+      name: "responses-provider",
+      provider: "openai",
+      baseUrl: "https://example.invalid/v1",
+      apiKey: "test-key",
+      openaiApiMode: "responses",
+      enabled: true,
+      models: [{ id: "gpt-custom", name: "GPT Custom", enabled: true, capabilities: { chat: true } }]
+    });
+
+    const prepared = await prepareRuntimeCoreAttempt({
+      input: {
+        threadId: "responses-thread",
+        userMessage: "hello",
+        permissionMode: "default",
+        chatType: "direct"
+      },
+      runtime: {
+        sessionId: "responses-thread",
+        channelId: channel.id,
+        resolvedModelId: "gpt-custom",
+        threadType: "main"
+      }
+    });
+
+    expect("status" in prepared ? undefined : prepared.openaiApiMode).toBe("responses");
+  });
+
   test("resolveSubagentModelOverride 应优先显式 model，其次使用子 Agent 默认模型，否则继承父对话模型", () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-subagent-model-config-"));
     process.env.LUME_CONFIG_DIR = configDir;
@@ -952,6 +1004,7 @@ describe("runtime-core run", () => {
       provider: "openai",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "openai-key",
+      openaiApiMode: "responses",
       enabled: true,
       defaultModelId: "gpt-5.4-mini",
       models: [
@@ -979,7 +1032,7 @@ describe("runtime-core run", () => {
     });
     expect(configured.source).toBe("config");
     expect(configured.resolvedModelId).toBe("gpt-5.4-mini");
-    expect(configured.apiType).toBe("openai-completions");
+    expect(configured.apiType).toBe("openai-responses");
 
     updateLumeConfigSection({
       source: "system",

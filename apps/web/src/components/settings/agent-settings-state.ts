@@ -195,6 +195,7 @@ export function getModelProviderFormInitialValue(
     models: existing.models,
     defaultModelId: existing.defaultModelId,
     fallbackModelIds: existing.fallbackModelIds,
+    openaiApiMode: existing.openaiApiMode,
     enabled: existing.enabled,
   }
 }

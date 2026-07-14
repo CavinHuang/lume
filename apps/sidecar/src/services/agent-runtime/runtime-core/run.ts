@@ -38,6 +38,7 @@ import type {
   AgentDesktopActionRequest,
   AgentSendInput,
   AgentToolPermissionRequest,
+  OpenAiApiMode,
   LumeRuntimeEvent,
   SubagentTaskReport,
   SubagentTask,
@@ -131,6 +132,7 @@ export interface CreateRuntimeCoreSessionInput {
   agentDir: string;
   userMessage?: string;
   provider: string;
+  openaiApiMode?: OpenAiApiMode;
   modelRef?: string;
   resolvedModelId: string;
   resolvedModel?: RuntimeCoreResolvedModel;
@@ -266,7 +268,11 @@ export function resolveSubagentModelOverride(input: {
     modelRef: candidate,
     channelId: binding.channel.id,
     resolvedModelId: binding.modelId,
-    apiType: binding.family === "anthropic" ? "anthropic-messages" : "openai-completions",
+    apiType: binding.family === "anthropic"
+      ? "anthropic-messages"
+      : binding.channel.openaiApiMode === "responses"
+        ? "openai-responses"
+        : "openai-completions",
     baseUrl: binding.channel.baseUrl,
     apiKey: decryptApiKey(binding.channel.id)
   };
@@ -1160,13 +1166,16 @@ function buildRuntimeCoreTools(input: {
   });
 }
 
-function resolveSdkApiType(provider: string): ApiType {
+function resolveSdkApiType(provider: string, openaiApiMode?: OpenAiApiMode): ApiType {
   const normalized = provider.trim().toLowerCase();
   if (normalized === "anthropic" || normalized === "anthropic-compatible") {
     return "anthropic-messages";
   }
   if (normalized === "deepseek") {
     return "deepseek-chat-completions";
+  }
+  if (openaiApiMode === "responses") {
+    return "openai-responses";
   }
   return "openai-completions";
 }
@@ -1573,7 +1582,7 @@ export async function createRuntimeCoreSession(
   const context = sessionManager.buildSessionContext();
 
   const agentOptions: AgentOptions = {
-    apiType: resolveSdkApiType(input.provider),
+    apiType: resolveSdkApiType(input.provider, input.openaiApiMode),
     apiKey: input.apiKey,
     ...(input.resolvedModel?.baseUrl ? { baseURL: input.resolvedModel.baseUrl } : {}),
     model: input.resolvedModel?.id ?? input.resolvedModelId,

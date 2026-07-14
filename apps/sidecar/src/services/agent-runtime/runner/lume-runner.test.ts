@@ -40,6 +40,7 @@ function createPrepared(agentDir: string) {
         provider: "openai"
       }
     },
+    openaiApiMode: "responses",
     apiKey: "test-key"
   } as Parameters<typeof LumeRunner.create>[0]["prepared"];
 }
@@ -985,6 +986,7 @@ describe("LumeRunner", () => {
       createCanUseTool: () => async () => ({ behavior: "allow" }),
       createRuntimeSession: async (input) => {
         expect(input.trace?.traceId).toBeString();
+        expect(input.openaiApiMode).toBe("responses");
         input.emitSdkMessage?.({
           type: "assistant",
           message: {
