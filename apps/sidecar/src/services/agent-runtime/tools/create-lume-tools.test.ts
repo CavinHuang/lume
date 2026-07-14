@@ -67,4 +67,15 @@ describe("create-lume-tools", () => {
       expect(toolNames).not.toContain(`mcp__computer_use__${removed}`);
     }
   });
+
+  test("exposes only node_repl for the sky Computer Use surface", () => {
+    const result = createLumeRuntimeTools({ ...baseInput(), computerUseSurface: "sky" });
+    const toolNames = result.customTools.map((tool) => tool.name);
+
+    expect(toolNames).toContain("mcp__node_repl__js");
+    expect(toolNames).not.toContain("mcp__node_repl__js_reset");
+    expect(toolNames).not.toContain("mcp__node_repl__js_add_node_module_dir");
+    expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
+    expect(result.availableToolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
+  });
 });

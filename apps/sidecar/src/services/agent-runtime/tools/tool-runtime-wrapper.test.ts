@@ -414,6 +414,33 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     });
   });
 
+  test("does not log Computer Use input text", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const definition: ToolDefinition = {
+      name: "mcp__computer_use__type_text",
+      description: "type text",
+      inputSchema: { type: "object", properties: {} },
+      async call() {
+        return { type: "tool_result", tool_use_id: "tool-1", content: "null" };
+      },
+    };
+    const tool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor(definition.name, definition, { capability: "mcp" }),
+      threadId: "thread-1",
+      cwd: "/tmp",
+      fileLedger: createFileAccessLedger(),
+    });
+
+    await tool.call(
+      { window: { id: 42, app: "微信" }, text: "private message", value: "secret value" },
+      { cwd: "/tmp", toolUseId: "tool-1", emitEvent: (event) => events.push(event as unknown as Record<string, unknown>) },
+    );
+
+    expect(events[0]?.input_summary).toBe("{\"window\":{\"id\":42,\"app\":\"微信\"},\"textLength\":15,\"valueLength\":12}");
+    expect(JSON.stringify(events)).not.toContain("private message");
+    expect(JSON.stringify(events)).not.toContain("secret value");
+  });
+
   test("converts thrown tool errors into governed tool results", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });

@@ -65,6 +65,20 @@ test('desktop package includes node-repl resources', () => {
   assertContainsBefore(pkg.scripts.package, 'build-node-repl-resources.mjs', 'run-electron-builder.mjs')
 })
 
+test('desktop package includes bundled capability plugins', () => {
+  assert.deepEqual(
+    pkg.build.extraResources.find((entry) => entry.to === 'bundled-plugins'),
+    {
+      from: '../sidecar/bundled-plugins',
+      to: 'bundled-plugins',
+    },
+  )
+  const main = readFileSync(resolve(DESKTOP_ROOT, 'src/main.ts'), 'utf8')
+  assert.match(main, /LUME_BUNDLED_PLUGINS_DIR/)
+  assert.match(main, /process\.resourcesPath, 'bundled-plugins'/)
+  assert.match(main, /'apps', 'sidecar', 'bundled-plugins'/)
+})
+
 test('desktop package includes the optional desktop-host resource', () => {
   assert.deepEqual(
     pkg.build.extraResources.find((entry) => entry.to === 'desktop-host'),

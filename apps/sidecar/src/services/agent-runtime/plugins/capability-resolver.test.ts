@@ -106,6 +106,39 @@ describe("resolvePluginCapabilities — skills", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test("expands PLUGIN_DIR placeholders in skill prompts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-resolver-"));
+    try {
+      const pluginRoot = join(root, "acme");
+      const skillFile = join(pluginRoot, "skills", "greet", "SKILL.md");
+      await mkdir(dirname(skillFile), { recursive: true });
+      await writeFile(
+        skillFile,
+        "---\nname: greet\ndescription: Greet the user\n---\nImport ${PLUGIN_DIR}/scripts/client.mjs\n",
+        "utf-8",
+      );
+      const plugin = makePlugin(pluginRoot, {
+        capabilities: {
+          skills: [{ pluginId: "acme", version: "1.0.0", root: "./skills" }],
+          commandTools: [],
+        },
+      });
+
+      const result = await resolvePluginCapabilities([plugin]);
+      const prompt = await result.capabilities[0]!.skills[0]!.definition.getPrompt("", {
+        cwd: pluginRoot,
+        sessionId: "test-session",
+      });
+
+      expect(prompt).toEqual([{
+        type: "text",
+        text: `Import ${pluginRoot.replaceAll("\\", "/")}/scripts/client.mjs`,
+      }]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 async function writeJson(path: string, value: unknown) {

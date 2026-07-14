@@ -11,6 +11,39 @@ async function writeJson(path: string, value: unknown) {
 }
 
 describe("PluginRegistry", () => {
+  test("loads bundled plugins without review and prevents workspace shadowing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-plugin-registry-"));
+    try {
+      await writeJson(join(root, "bundled", "computer-use", ".lume-plugin", "plugin.json"), {
+        schema: "lume-plugin/v1",
+        name: "computer-use",
+        version: "1.0.0",
+        skills: ["./skills"],
+      });
+      await writeJson(join(root, "workspace", "computer-use", "lume-plugin.json"), {
+        schema: "lume-plugin/v1",
+        name: "computer-use",
+        version: "99.0.0",
+      });
+
+      const registry = new PluginRegistry({
+        installedRoot: join(root, "installed"),
+        legacyGlobalRoot: join(root, "legacy"),
+        workspaceRoot: join(root, "workspace"),
+        bundledRoots: [join(root, "bundled")],
+        stateStore: new FilePluginStateStore(join(root, "state.json")),
+      });
+      const result = await registry.list({ enabled: ["some-other-plugin"], disabled: [], directories: [] });
+      const plugin = result.plugins.find((candidate) => candidate.pluginId === "computer-use");
+
+      expect(plugin?.root).toContain("bundled");
+      expect(plugin?.builtin).toBe(true);
+      expect(plugin?.permissionState).toEqual({ state: "loaded", reason: "bundled-plugin" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("discovers Lume, Codex, and legacy plugin manifests", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-plugin-registry-"));
     try {

@@ -10,6 +10,33 @@ async function writeJson(path: string, value: unknown) {
 }
 
 describe("SidecarPluginManager compatibility wrapper", () => {
+  test("discovers trusted bundled plugins independently from the install store", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-plugin-manager-"));
+    try {
+      await writeJson(join(root, "bundled", "computer-use", ".lume-plugin", "plugin.json"), {
+        schema: "lume-plugin/v1",
+        name: "computer-use",
+        version: "1.0.0",
+      });
+      const manager = new SidecarPluginManager(
+        join(root, "installed"),
+        join(root, "state.json"),
+        [join(root, "bundled")],
+      );
+
+      const plugins = await manager.listRegistered({ enabled: [], directories: [] });
+
+      expect(plugins).toHaveLength(1);
+      expect(plugins[0]).toMatchObject({
+        pluginId: "computer-use",
+        builtin: true,
+        permissionState: { state: "loaded", reason: "bundled-plugin" },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("resolveEnabled delegates to PluginRegistry and preserves legacy shape", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-plugin-manager-"));
     try {

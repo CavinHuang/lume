@@ -7,6 +7,21 @@ import { createFileBackedLumeTraceStore } from "../trace/trace-store";
 import { ContextAssembler } from "./context-assembler";
 
 describe("ContextAssembler", () => {
+  test("includes compact canonical Window guidance for the MCP surface without desktop context", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "computer-use-mcp-thread",
+      runId: "computer-use-mcp-run",
+      userMessage: "打开微信",
+      resolvedModelId: "test-model",
+      availableTools: ["mcp__computer_use__list_apps", "mcp__computer_use__get_window_state"],
+      tokenBudget: 8_000,
+    });
+
+    expect(result.systemPrompt).toContain("Use list_apps, choose one unique Window, call get_window");
+    expect(result.systemPrompt).toContain("replace the prior target with state.window");
+    expect(result.systemPrompt).not.toContain("historical app/title hint");
+  });
+
   test("injects desktop context as explicitly untrusted user data", async () => {
     const result = await new ContextAssembler().assemble({
       threadId: "desktop-thread",

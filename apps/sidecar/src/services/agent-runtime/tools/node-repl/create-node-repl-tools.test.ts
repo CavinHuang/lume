@@ -85,6 +85,40 @@ describe("createNodeReplTools", () => {
     expect((result as any)._meta).toEqual({ traceId: "t-1" });
   });
 
+  test("js forwards the trusted Computer Use bridge for the active execution", async () => {
+    let bridged: unknown;
+    const tools = createNodeReplTools({
+      sessionId: "thread-1",
+      cwd: "D:/repo",
+      emitComputerUseRequest: async (request) => ({
+        value: { echoed: request.method },
+        content: [{ type: "text", text: "visual observation" }],
+        meta: { computerUseSurface: "sky" },
+      }),
+      registry: {
+        async exec(_threadId, _input, options) {
+          bridged = await options?.emitComputerUseRequest?.(
+            { method: "list_windows", params: {} },
+            new AbortController().signal,
+          );
+          return { content: [{ type: "text", text: "ready" }] };
+        },
+        async addModuleDir() { return true; },
+        async reset() {},
+        async shutdown() {},
+        debugSnapshot() { return null; },
+      },
+    });
+
+    await tools.find((tool) => tool.name === "js")!.call({ code: "await sky.list_windows()" }, makeToolContext());
+
+    expect(bridged).toEqual({
+      value: { echoed: "list_windows" },
+      content: [{ type: "text", text: "visual observation" }],
+      meta: { computerUseSurface: "sky" },
+    });
+  });
+
   test("MCP wrapper exposes node_repl tools with MCP names and metadata", async () => {
     const tools = createNodeReplMcpTools({
       sessionId: "thread-1",

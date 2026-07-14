@@ -86,6 +86,24 @@ describe("lume-config-service", () => {
     });
   });
 
+  test("应规范化 Computer Use 的 agent surface 和 sky 模型列表", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "models.computerUse",
+      value: {
+        agentSurface: "sky",
+        skyModelRefs: ["openai/gpt-5", " openai/gpt-5 ", ""],
+        visionModelRefs: ["google/gemini-2.5-flash"],
+      },
+    });
+
+    expect(getEffectiveLumeConfig("default").models?.computerUse).toEqual({
+      agentSurface: "sky",
+      skyModelRefs: ["openai/gpt-5"],
+      visionModelRefs: ["google/gemini-2.5-flash"],
+    });
+  });
+
   test("应识别 guanlan 搜索后端并同步启用顺序到环境变量", () => {
     const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
     const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;

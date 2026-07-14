@@ -44,6 +44,8 @@ describe("system-config-service", () => {
           defaultModelRef: "openai/text-embedding-3-small"
         },
         computerUse: {
+          agentSurface: "mcp",
+          skyModelRefs: ["openai/gpt-4.1"],
           visionModelRefs: ["openai/gpt-4.1-mini"]
         }
       }
@@ -59,6 +61,9 @@ describe("system-config-service", () => {
       "  embedding:",
       "    defaultModelRef: google/gemini-embedding-001",
       "  computerUse:",
+      "    agentSurface: sky",
+      "    skyModelRefs:",
+      "      - openai/gpt-5.4-mini",
       "    visionModelRefs:",
       "      - google/gemini-2.5-flash"
     ].join("\n"), "utf-8");
@@ -67,6 +72,8 @@ describe("system-config-service", () => {
     expect(effective.models?.chat?.defaultModelRef).toBe("anthropic/claude-sonnet-4-5");
     expect(effective.models?.agent?.defaultModelRef).toBe("openai/gpt-5.4-mini");
     expect(effective.models?.embedding?.defaultModelRef).toBe("google/gemini-embedding-001");
+    expect(effective.models?.computerUse?.agentSurface).toBe("sky");
+    expect(effective.models?.computerUse?.skyModelRefs).toEqual(["openai/gpt-5.4-mini"]);
     expect(effective.models?.computerUse?.visionModelRefs).toEqual(["google/gemini-2.5-flash"]);
   });
 });
