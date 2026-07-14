@@ -5,6 +5,7 @@ import type { RuntimeMessageView } from './runtime-message-view'
 
 mock.module('@lume/ui', () => ({
   useSmoothStream: ({ content }: { content: string }) => ({ displayedContent: content }),
+  MermaidBlock: ({ code }: { code: string }) => <section data-mermaid-block="true">{code}</section>,
 }))
 
 mock.module('@ant-design/x-markdown', () => ({

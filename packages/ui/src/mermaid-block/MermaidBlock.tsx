@@ -27,6 +27,8 @@ import type { RenderOptions } from 'beautiful-mermaid'
 interface MermaidBlockProps {
   /** mermaid 源码 */
   code: string
+  /** 由宿主注入剪贴板写入，避免共享组件绕过桌面 IPC */
+  onCopy: (code: string) => Promise<void>
 }
 
 /** 防抖间隔（ms） */
@@ -92,7 +94,14 @@ const INITIAL_TRANSFORM: ViewTransform = { scale: 1, translateX: 0, translateY: 
 
 // ===== 主组件 =====
 
-export function MermaidBlock({ code }: MermaidBlockProps): React.ReactElement {
+export async function copyMermaidCode(
+  code: string,
+  onCopy: (code: string) => Promise<void>,
+): Promise<void> {
+  await onCopy(code)
+}
+
+export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactElement {
   const [svgHtml, setSvgHtml] = React.useState<string | null>(null)
   const [svgVisible, setSvgVisible] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
@@ -112,6 +121,9 @@ export function MermaidBlock({ code }: MermaidBlockProps): React.ReactElement {
     // 每次 code 变化递增 generation，作废所有旧的异步渲染
     generationRef.current++
     const currentGen = generationRef.current
+    setSvgHtml(null)
+    setSvgVisible(false)
+    setTransform(INITIAL_TRANSFORM)
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
@@ -201,13 +213,13 @@ export function MermaidBlock({ code }: MermaidBlockProps): React.ReactElement {
 
   const handleCopy = React.useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(code)
+      await copyMermaidCode(code, onCopy)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (error) {
       console.error('[MermaidBlock] 复制失败:', error)
     }
-  }, [code])
+  }, [code, onCopy])
 
   const zoomPercent = Math.round(transform.scale * 100)
 
@@ -243,10 +255,10 @@ export function MermaidBlock({ code }: MermaidBlockProps): React.ReactElement {
         SVG 层：永远 absolute（不影响布局）
         两层只通过 opacity 交叉淡入淡出
       */}
-      <div className="relative overflow-hidden">
+      <div className="relative h-[clamp(280px,45vw,520px)] overflow-hidden">
         {/* 源码层 —— 始终在文档流中，流式输出时自然增长 */}
         <pre
-          className="overflow-x-auto p-4 m-0 text-[13px] leading-[1.6] bg-muted/30 text-foreground/80"
+          className="h-full overflow-auto p-4 m-0 text-[13px] leading-[1.6] bg-muted/30 text-foreground/80"
           style={{
             opacity: svgVisible ? 0 : 1,
             transition: `opacity ${FADE_MS}ms ease`,
@@ -269,13 +281,13 @@ export function MermaidBlock({ code }: MermaidBlockProps): React.ReactElement {
             onMouseDown={svgVisible ? handleMouseDown : undefined}
           >
             <div
-              className="flex justify-center items-center p-4 min-h-full origin-center"
+              className="flex h-full justify-center items-center p-4 origin-center"
               style={{
                 transform: `translate(${transform.translateX}px, ${transform.translateY}px) scale(${transform.scale})`,
               }}
             >
               <div
-                className="mermaid-svg [&>svg]:max-w-full [&>svg]:h-auto"
+                className="mermaid-svg flex h-full w-full items-center justify-center [&>svg]:max-h-full [&>svg]:max-w-full [&>svg]:h-auto [&>svg]:w-auto"
                 dangerouslySetInnerHTML={{ __html: svgHtml }}
               />
             </div>

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 mock.module('@lume/ui', () => ({
   useSmoothStream: ({ content }: { content: string }) => ({ displayedContent: content }),
+  MermaidBlock: ({ code }: { code: string }) => <section data-mermaid-block="true">{code}</section>,
 }))
 
 mock.module('@ant-design/x-markdown', () => ({
@@ -22,6 +23,7 @@ mock.module('@/lib/desktop-api', () => ({
   saveFilePathDialog: async () => undefined,
   copyFile: async () => undefined,
   sidecarCall: async () => undefined,
+  writeClipboardText: async () => undefined,
 }))
 
 mock.module('./tool-result-renderers', () => ({

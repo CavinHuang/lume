@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
 import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Puzzle, Sparkles, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
-import { useSmoothStream } from '@lume/ui'
+import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -21,6 +21,7 @@ import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsi
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
 import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
+import { getMermaidCodeFromPreNode, isMermaidPreStreaming } from './markdown-mermaid'
 
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -1255,6 +1256,7 @@ const SmoothText = memo(function SmoothText({
     incompleteMarkdownComponentMap: MARKDOWN_INCOMPLETE_COMPONENTS,
   }), [isStreaming])
   const markdownComponents = useMemo(() => ({
+    pre: (props: MarkdownPreProps) => <MarkdownPre {...props} />,
     code: (props: MarkdownCodeProps) => (
       <MarkdownCode
         {...props}
@@ -1428,6 +1430,7 @@ const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
 }) {
   const isDark = useIsDark()
   const components = useMemo(() => ({
+    pre: (props: MarkdownPreProps) => <MarkdownPre {...props} />,
     code: (props: MarkdownCodeProps) => (
       <MarkdownCode
         {...props}
@@ -1454,6 +1457,39 @@ type MarkdownCodeProps = HTMLAttributes<HTMLElement> & {
   lang?: string
   domNode?: unknown
   streamStatus?: unknown
+}
+
+type MarkdownPreProps = HTMLAttributes<HTMLPreElement> & {
+  children?: ReactNode
+  domNode?: unknown
+  streamStatus?: unknown
+}
+
+async function copyMermaidToClipboard(code: string): Promise<void> {
+  try {
+    await writeClipboardText(code)
+  } catch (error) {
+    console.error('[MarkdownPre] 复制 Mermaid 源码失败:', error)
+    toast.error('复制失败')
+    throw error
+  }
+}
+
+export function MarkdownPre({
+  children,
+  domNode,
+  streamStatus,
+  ...rest
+}: MarkdownPreProps) {
+  const mermaidCode = getMermaidCodeFromPreNode(domNode)
+  if (mermaidCode !== null) {
+    if (streamStatus === 'loading' || isMermaidPreStreaming(domNode)) {
+      return <pre {...rest}>{children}</pre>
+    }
+    return <MermaidBlock code={mermaidCode} onCopy={copyMermaidToClipboard} />
+  }
+
+  return <pre {...rest}>{children}</pre>
 }
 
 export function MarkdownCode({
