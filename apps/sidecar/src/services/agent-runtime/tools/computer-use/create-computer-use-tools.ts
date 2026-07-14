@@ -13,6 +13,13 @@ import { waitForDesktopActionDecision } from "../../interruption/desktop-action-
 import { ComputerUseActionLedger } from "./computer-use-action-ledger";
 import { saveComputerUseScreenshots } from "./computer-use-screenshot-output";
 import type { ComputerUseVisionRouteResult } from "./computer-use-vision-router";
+import {
+  ComputerUseSession,
+  type ComputerUseSessionExecutionContext,
+  type ComputerUseSessionRegistry,
+  type ComputerUseSessionRequest,
+  type ComputerUseSessionResult,
+} from "./computer-use-session";
 
 export const COMPUTER_USE_MCP_SERVER_ID = "computer_use";
 const WRAPPER_PREFIX = `mcp__${COMPUTER_USE_MCP_SERVER_ID}__`;
@@ -59,6 +66,16 @@ const INPUT_TOOLS = new Set<ComputerUseToolName>([
   "perform_secondary_action",
 ]);
 
+interface ComputerUseToolExecutionContext extends ComputerUseSessionExecutionContext {
+  toolUseId?: string;
+  abortSignal?: AbortSignal;
+  runId?: string;
+  routeScreenshot?: (path: string) => Promise<ComputerUseVisionRouteResult>;
+  originalUserInstruction?: string;
+  emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
+}
+
 export function createComputerUseMcpTools(input: {
   invoke?: ComputerUseInvoke;
   workspaceSlug?: string;
@@ -68,14 +85,95 @@ export function createComputerUseMcpTools(input: {
   originalUserInstruction?: string;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
+  sessionRegistry?: ComputerUseSessionRegistry;
 } = {}): ToolDefinition[] {
   const invoke = input.invoke ?? invokeComputerUse;
-  const ledger = new ComputerUseActionLedger({
-    workspaceSlug: input.workspaceSlug,
-    threadId: input.threadId ?? "computer-use",
-  });
-  const lastObservationByWindow = new Map<string, string>();
-  const latestCanonicalWindowById = new Map<number, ComputerUseWindow>();
+  const createExecutor = () => {
+    const ledger = new ComputerUseActionLedger({
+      workspaceSlug: input.workspaceSlug,
+      threadId: input.threadId ?? "computer-use",
+    });
+    const lastObservationByWindow = new Map<string, string>();
+    const latestCanonicalWindowById = new Map<number, ComputerUseWindow>();
+    return async (request: ComputerUseSessionRequest): Promise<ComputerUseSessionResult> => {
+      const name = request.method as ComputerUseToolName;
+      const context = request.context as ComputerUseToolExecutionContext;
+      try {
+        const args = restoreCanonicalWindowArgs(
+          name,
+          request.params,
+          latestCanonicalWindowById,
+        );
+        if (name === "click") validateClickTarget(args);
+        if (name === "get_window_state") {
+          const state = await invoke(name, {
+            ...args,
+            include_screenshot: args.include_screenshot !== false,
+            include_text: args.include_text === true,
+          });
+          rememberCanonicalWindows(name, state, latestCanonicalWindowById);
+          return {
+            value: await handleWindowState({
+              state,
+              toolUseId: context.toolUseId,
+              workspaceSlug: input.workspaceSlug,
+              threadId: input.threadId,
+              routeScreenshot: context.routeScreenshot,
+              ledger,
+              lastObservationByWindow,
+            }),
+          };
+        }
+        if (!INPUT_TOOLS.has(name)) {
+          const result = await invoke(name, args);
+          rememberCanonicalWindows(name, result, latestCanonicalWindowById);
+          return { value: toolResult(context.toolUseId, result) };
+        }
+        const actionEntry = await dispatchAction({
+          invoke,
+          ledger,
+          input: {
+            workspaceSlug: input.workspaceSlug,
+            threadId: input.threadId,
+            runId: context.runId,
+            originalUserInstruction: context.originalUserInstruction,
+            emitDesktopActionRequest: context.emitDesktopActionRequest,
+            emitDesktopActionVisualEvent: context.emitDesktopActionVisualEvent,
+          },
+          action: name as DesktopActionKind,
+          args,
+          toolUseId: context.toolUseId,
+          abortSignal: context.abortSignal,
+          lastObservationByWindow,
+        });
+        return {
+          value: toolResult(context.toolUseId, null, false, {
+            computerUseAction: {
+              actionId: actionEntry.actionId,
+              action: actionEntry.action,
+              phase: actionEntry.phase,
+              window: actionEntry.window,
+              ...(actionEntry.screenshotId ? { screenshotId: actionEntry.screenshotId } : {}),
+            },
+          }),
+        };
+      } catch (error) {
+        return {
+          value: toolResult(
+            context.toolUseId,
+            { error: error instanceof Error ? error.message : String(error) },
+            true,
+          ),
+        };
+      }
+    };
+  };
+  const session = input.sessionRegistry
+    ? input.sessionRegistry.getOrCreate({
+      threadId: input.threadId ?? "computer-use",
+      createExecutor,
+    })
+    : new ComputerUseSession(createExecutor());
 
   return COMPUTER_USE_TOOL_NAMES.map((name) => {
     const readOnly = READ_ONLY_TOOLS.has(name);
@@ -102,61 +200,20 @@ export function createComputerUseMcpTools(input: {
         builtin: true,
       },
       async call(rawArgs, context) {
-        try {
-          const args = restoreCanonicalWindowArgs(
-            name,
-            asRecord(rawArgs),
-            latestCanonicalWindowById,
-          );
-          if (name === "click") validateClickTarget(args);
-          if (name === "get_window_state") {
-            const state = await invoke(name, {
-              ...args,
-              include_screenshot: args.include_screenshot !== false,
-              include_text: args.include_text === true,
-            });
-            rememberCanonicalWindows(name, state, latestCanonicalWindowById);
-            return handleWindowState({
-              state,
-              toolUseId: context.toolUseId,
-              workspaceSlug: input.workspaceSlug,
-              threadId: input.threadId,
-              routeScreenshot: input.routeScreenshot,
-              ledger,
-              lastObservationByWindow,
-            });
-          }
-          if (!INPUT_TOOLS.has(name)) {
-            const result = await invoke(name, args);
-            rememberCanonicalWindows(name, result, latestCanonicalWindowById);
-            return toolResult(context.toolUseId, result);
-          }
-          const actionEntry = await dispatchAction({
-            invoke,
-            ledger,
-            input,
-            action: name as DesktopActionKind,
-            args,
+        const result = await session.request({
+          method: name,
+          params: asRecord(rawArgs),
+          context: {
             toolUseId: context.toolUseId,
             abortSignal: context.abortSignal,
-            lastObservationByWindow,
-          });
-          return toolResult(context.toolUseId, null, false, {
-            computerUseAction: {
-              actionId: actionEntry.actionId,
-              action: actionEntry.action,
-              phase: actionEntry.phase,
-              window: actionEntry.window,
-              ...(actionEntry.screenshotId ? { screenshotId: actionEntry.screenshotId } : {}),
-            },
-          });
-        } catch (error) {
-          return toolResult(
-            context.toolUseId,
-            { error: error instanceof Error ? error.message : String(error) },
-            true,
-          );
-        }
+            runId: input.runId,
+            routeScreenshot: input.routeScreenshot,
+            originalUserInstruction: input.originalUserInstruction,
+            emitDesktopActionRequest: input.emitDesktopActionRequest,
+            emitDesktopActionVisualEvent: input.emitDesktopActionVisualEvent,
+          },
+        });
+        return result.value as ToolResult;
       },
     } satisfies ToolDefinition;
   });
