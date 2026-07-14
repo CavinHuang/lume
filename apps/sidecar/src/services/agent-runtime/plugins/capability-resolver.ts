@@ -105,12 +105,23 @@ async function resolveSkills(
     }
     for (const skill of skills) {
       const namespaced = `${plugin.pluginId}:${skill.name}`;
+      const getPrompt = skill.getPrompt;
       resolved.push({
         pluginId: plugin.pluginId,
         name: namespaced,
         originalName: skill.name,
         sourcePath: skill.sourcePath ?? skillsRoot,
-        definition: { ...skill, name: namespaced },
+        definition: {
+          ...skill,
+          name: namespaced,
+          async getPrompt(args, context) {
+            const blocks = await getPrompt(args, context);
+            const pluginRoot = plugin.root.replaceAll("\\", "/");
+            return blocks.map((block) => block.type === "text"
+              ? { ...block, text: block.text.replaceAll("${PLUGIN_DIR}", pluginRoot) }
+              : block);
+          },
+        },
       });
     }
   }

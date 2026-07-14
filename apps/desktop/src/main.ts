@@ -447,6 +447,13 @@ function getDefaultSkillsDirPath() {
   return resolve(REPO_ROOT, 'apps', 'sidecar', 'default-skills')
 }
 
+function getBundledPluginsDirPath() {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'bundled-plugins')
+  }
+  return resolve(REPO_ROOT, 'apps', 'sidecar', 'bundled-plugins')
+}
+
 function handleTrayAction(action) {
   switch (action) {
     case 'toggle-window':
@@ -919,6 +926,11 @@ function createSidecarHost({ onNotification }) {
     const defaultSkillsDir = getDefaultSkillsDirPath()
     if (existsSync(defaultSkillsDir)) {
       env.LUME_DEFAULT_SKILLS_DIR = defaultSkillsDir
+    }
+
+    const bundledPluginsDir = getBundledPluginsDirPath()
+    if (existsSync(bundledPluginsDir)) {
+      env.LUME_BUNDLED_PLUGINS_DIR = bundledPluginsDir
     }
 
     const sidecarScriptPath = getSidecarScriptPath({

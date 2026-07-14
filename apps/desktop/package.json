@@ -51,6 +51,10 @@
         "to": "default-skills.tar"
       },
       {
+        "from": "../sidecar/bundled-plugins",
+        "to": "bundled-plugins"
+      },
+      {
         "from": "resources/sidecar",
         "to": "sidecar"
       },

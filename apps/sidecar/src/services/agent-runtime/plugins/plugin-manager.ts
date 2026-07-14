@@ -17,6 +17,7 @@ export class SidecarPluginManager {
   constructor(
     private readonly pluginRoot = join(homedir(), ".lume", "plugins"),
     private readonly statePath = DEFAULT_PLUGIN_STATE_PATH,
+    private readonly bundledRoots = bundledPluginRoots(),
   ) {}
 
   async resolveEnabled(config: {
@@ -26,6 +27,7 @@ export class SidecarPluginManager {
     const registry = new PluginRegistry({
       installedRoot: this.pluginRoot,
       legacyGlobalRoot: this.pluginRoot,
+      bundledRoots: this.bundledRoots,
       stateStore: new FilePluginStateStore(this.statePath),
     });
     const result = await registry.list({
@@ -68,6 +70,7 @@ export class SidecarPluginManager {
     const registry = new PluginRegistry({
       installedRoot: this.pluginRoot,
       legacyGlobalRoot: this.pluginRoot,
+      bundledRoots: this.bundledRoots,
       stateStore: new FilePluginStateStore(this.statePath),
     });
     const result = await registry.list({
@@ -89,4 +92,9 @@ export class SidecarPluginManager {
       permissions: (plugin.manifest.permissions ?? {}) as unknown as Record<string, unknown>,
     }));
   }
+}
+
+function bundledPluginRoots(): string[] {
+  const root = process.env.LUME_BUNDLED_PLUGINS_DIR?.trim();
+  return root ? [root] : [];
 }

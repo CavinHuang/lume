@@ -1,0 +1,16 @@
+{
+  "schema": "lume-plugin/v1",
+  "name": "computer-use",
+  "version": "1.0.0",
+  "description": "Control desktop applications through Lume Computer Use.",
+  "displayName": "Computer Use",
+  "category": "Productivity",
+  "skills": ["./skills"],
+  "permissions": {
+    "filesystem": { "read": ["./**"], "write": [] },
+    "network": { "outbound": [] },
+    "mcpServers": { "register": false },
+    "shell": { "allow": false },
+    "tools": { "allow": ["mcp__node_repl__js"], "deny": ["Bash"] }
+  }
+}

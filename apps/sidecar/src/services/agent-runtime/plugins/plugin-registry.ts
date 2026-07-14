@@ -15,6 +15,7 @@ export interface PluginRegistryConfig {
   installedRoot: string;
   legacyGlobalRoot: string;
   workspaceRoot?: string;
+  bundledRoots?: string[];
   stateStore: FilePluginStateStore;
 }
 
@@ -31,6 +32,7 @@ export interface PluginRegistryState {
 }
 
 export interface RegisteredPlugin extends NormalizedPlugin {
+  builtin?: boolean;
   state?: PluginRegistryState;
   permissionState?: { state: "loaded" | "needs-review" | "not-loaded"; reason: string };
 }
@@ -49,7 +51,7 @@ interface Candidate {
 interface ScanSource {
   root: string;
   bucket: number;
-  kind: "directory" | "pluginRoot";
+  kind: "directory" | "pluginRoot" | "bundledDirectory";
 }
 
 export class PluginRegistry {
@@ -58,6 +60,11 @@ export class PluginRegistry {
   async list(input: PluginRegistryListInput): Promise<PluginRegistryListResult> {
     const state = await this.config.stateStore.read();
     const sources: ScanSource[] = [
+      ...(this.config.bundledRoots ?? []).map((root, index) => ({
+        root: resolve(root),
+        bucket: -100 + index,
+        kind: "bundledDirectory" as const,
+      })),
       ...(this.config.workspaceRoot
         ? [{ root: this.config.workspaceRoot, bucket: 0, kind: "directory" as const }]
         : []),
@@ -79,8 +86,11 @@ export class PluginRegistry {
     let scanOrder = 0;
     for (const source of sources) {
       for (const plugin of scanSource(source, diagnostics)) {
+        const registered = source.kind === "bundledDirectory"
+          ? { ...plugin, builtin: true }
+          : plugin;
         candidates.push({
-          plugin: attachState(plugin, state),
+          plugin: attachState(registered, state),
           bucket: source.bucket,
           scanOrder: scanOrder++,
         });
@@ -91,6 +101,7 @@ export class PluginRegistry {
     const enabled = new Set(input.enabled);
     const disabled = new Set(input.disabled);
     const filtered = selected.filter((plugin) => {
+      if (plugin.builtin) return true;
       if (disabled.has(plugin.pluginId)) return false;
       if (enabled.size === 0) return true;
       return enabled.has(plugin.pluginId);
@@ -179,7 +190,7 @@ function installedCandidateRoots(state: PluginStateFile, installedRoot: string):
   return roots;
 }
 
-function attachState(plugin: NormalizedPlugin, state: PluginStateFile): RegisteredPlugin {
+function attachState(plugin: RegisteredPlugin, state: PluginStateFile): RegisteredPlugin {
   const record = state.plugins[plugin.pluginId];
   if (!record) return plugin;
 
@@ -255,6 +266,10 @@ async function attachPermissionState(
 ): Promise<void> {
   const runtime = new PluginPermissionRuntime({ stateStore });
   for (const plugin of plugins) {
+    if (plugin.builtin) {
+      plugin.permissionState = { state: "loaded", reason: "bundled-plugin" };
+      continue;
+    }
     // Legacy plugin.json command-only plugins have no install record by design
     // (spec §14.3: "legacy command plugin 仍可运行"). Treat them as loaded so the
     // capability resolver's only-loaded gate does not skip them.
