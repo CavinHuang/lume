@@ -16,6 +16,9 @@ import { createImageGenTools } from "./image-gen/create-image-gen-tools";
 import { createNodeReplMcpTools } from "./node-repl/create-node-repl-tools";
 import { createComputerUseMcpTools } from "./computer-use/create-computer-use-tools";
 import { createComputerUseVisionRouter } from "./computer-use/computer-use-vision-router";
+import { getComputerUseSessionRegistry } from "./computer-use/computer-use-session";
+import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-surface";
+import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -37,6 +40,7 @@ export interface CreateLumeRuntimeToolsInput {
   permissionMode?: AgentSendInput["permissionMode"];
   messageMetadata?: Record<string, unknown>;
   originalUserInstruction?: string;
+  computerUseSurface?: ResolvedComputerUseSurface;
   memoryToolPolicy?: MemoryToolPolicy;
   includeCitations: boolean;
   automationExecution?: boolean;
@@ -86,12 +90,8 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     threadId: input.threadId,
     workspaceSlug: input.workspaceSlug,
   });
-  const nodeReplTools = createNodeReplMcpTools({
-    sessionId: input.threadId,
-    cwd: input.cwd ?? process.cwd(),
-    workspaceSlug: input.workspaceSlug,
-    emitBrowserAuthRequest: input.emitBrowserAuthRequest,
-  });
+  const cwd = input.cwd ?? process.cwd();
+  const computerUseSurface = input.computerUseSurface ?? "mcp";
   const computerUseVisionRouter = createComputerUseVisionRouter({
     currentModelRef: input.modelRef,
     workspaceSlug: input.workspaceSlug,
@@ -104,7 +104,24 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     emitDesktopActionVisualEvent: input.emitDesktopActionVisualEvent,
     routeScreenshot: (path) => computerUseVisionRouter.route(path),
     originalUserInstruction: input.originalUserInstruction,
+    sessionRegistry: getComputerUseSessionRegistry(),
   });
+  const allNodeReplTools = createNodeReplMcpTools({
+    sessionId: input.threadId,
+    cwd,
+    workspaceSlug: input.workspaceSlug,
+    emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+    emitComputerUseRequest: computerUseSurface === "sky"
+      ? createComputerUseRequestBridge({
+        tools: computerUseTools,
+        threadId: input.threadId,
+        cwd,
+      })
+      : undefined,
+  });
+  const nodeReplTools = computerUseSurface === "sky"
+    ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
+    : allNodeReplTools;
   const customTools = [
     ...memoryTools,
     ...cronTools,
@@ -117,7 +134,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...routineTools,
     ...imageGenTools,
     ...nodeReplTools,
-    ...computerUseTools,
+    ...(computerUseSurface === "mcp" ? computerUseTools : []),
   ];
   const customToolNames = customTools.map((tool) => tool.name);
 

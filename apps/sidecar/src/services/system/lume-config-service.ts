@@ -150,10 +150,20 @@ function normalizeImageGenerationStrategy(value: unknown): { priorityModelRefs?:
   };
 }
 
-function normalizeComputerUseStrategy(value: unknown): { visionModelRefs?: string[] } {
+function normalizeComputerUseStrategy(value: unknown): {
+  agentSurface?: "auto" | "sky" | "mcp";
+  skyModelRefs?: string[];
+  visionModelRefs?: string[];
+} {
   if (!isPlainObject(value)) return {};
+  const agentSurface = value.agentSurface === "auto" || value.agentSurface === "sky" || value.agentSurface === "mcp"
+    ? value.agentSurface
+    : undefined;
+  const skyModelRefs = normalizeUniqueStringArray(value.skyModelRefs);
   const visionModelRefs = normalizeUniqueStringArray(value.visionModelRefs);
   return {
+    ...(agentSurface ? { agentSurface } : {}),
+    ...(skyModelRefs.length > 0 ? { skyModelRefs } : {}),
     ...(visionModelRefs.length > 0 ? { visionModelRefs } : {})
   };
 }

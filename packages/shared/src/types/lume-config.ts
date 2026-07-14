@@ -24,7 +24,11 @@ export interface LumeConfigImageGenerationStrategy {
   priorityModelRefs?: string[]
 }
 
+export type ComputerUseAgentSurface = "auto" | "sky" | "mcp"
+
 export interface LumeConfigComputerUseStrategy {
+  agentSurface?: ComputerUseAgentSurface
+  skyModelRefs?: string[]
   visionModelRefs?: string[]
 }
 

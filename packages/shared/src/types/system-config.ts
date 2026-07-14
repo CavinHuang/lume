@@ -11,6 +11,8 @@ export interface LumeSystemModelsConfig {
   agent?: LumeSystemModelSelectionConfig
   embedding?: LumeSystemEmbeddingConfig
   computerUse?: {
+    agentSurface?: "auto" | "sky" | "mcp"
+    skyModelRefs?: string[]
     visionModelRefs?: string[]
   }
 }

@@ -102,6 +102,13 @@ import {
 } from "../tools/tool-descriptor-session";
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
 import { getNodeReplRuntimeRegistry } from "../tools/node-repl/node-repl-runtime-registry";
+import { getComputerUseSessionRegistry } from "../tools/computer-use/computer-use-session";
+import {
+  filterComputerUseSkills,
+  resolveComputerUseSurface,
+  type ResolvedComputerUseSurface,
+} from "../tools/computer-use/computer-use-surface";
+import { withDesktopAutomationFallbackGuard } from "../tools/computer-use/desktop-automation-fallback-guard";
 import {
   createPluginAwareMcpResourceTools,
   replaceMcpResourceTools,
@@ -728,6 +735,7 @@ function buildRuntimeCoreTools(input: {
   channelId?: string;
   modelRef?: string;
   provider?: string;
+  computerUseSurface?: ResolvedComputerUseSurface;
   chatType?: AgentSendInput["chatType"];
   threadType?: AgentSendInput["threadType"];
   permissionMode?: AgentSendInput["permissionMode"];
@@ -764,7 +772,12 @@ function buildRuntimeCoreTools(input: {
     includeAskUserQuestion: automationExecution !== true,
     workspaceSlug: input.workspaceSlug,
     renderClient: input.renderClient
-  });
+  }).map((tool) => tool.name === "Bash" && input.computerUseSurface === "sky"
+    ? withDesktopAutomationFallbackGuard(tool, {
+      computerUseActive: () => getComputerUseSessionRegistry().isActive(input.sessionId),
+      originalUserInstruction: input.originalUserInstruction,
+    })
+    : tool);
   const planWriteTool = createTaskContractWriteTool({
     sessionDir: getRuntimeCoreSessionDir(input.sessionId),
     threadId: input.sessionId,
@@ -791,6 +804,7 @@ function buildRuntimeCoreTools(input: {
     permissionMode,
     messageMetadata: input.messageMetadata,
     originalUserInstruction: input.originalUserInstruction,
+    computerUseSurface: input.computerUseSurface,
     memoryToolPolicy: memoryRuntimeConfig.toolPolicy,
     includeCitations,
     automationExecution,
@@ -1382,6 +1396,16 @@ export async function createRuntimeCoreSession(
   // PluginRuntimeBridge now; the SDK's loadPlugins path is no longer used (no
   // agentOptions.plugins). Plugin hooks are wired below (Phase 3d, buildPluginAgentHooks).
   const pluginConfig = getEffectivePluginRuntimeConfig(input.workspaceSlug);
+  const computerUseConfig = getEffectiveLumeConfig(input.workspaceSlug).models?.computerUse;
+  const channelProvider = input.modelRef
+    ? resolveChannelModelBinding(input.modelRef, "chat")?.channel.provider ?? input.provider
+    : input.provider;
+  const computerUseSurface = resolveComputerUseSurface({
+    agentSurface: computerUseConfig?.agentSurface,
+    modelRef: input.modelRef,
+    skyModelRefs: computerUseConfig?.skyModelRefs,
+    channelProvider,
+  });
   const pluginManager = new SidecarPluginManager();
   const registeredPlugins = await pluginManager.listRegistered({
     enabled: pluginConfig.enabled,
@@ -1389,7 +1413,18 @@ export async function createRuntimeCoreSession(
     // root is covered by SidecarPluginManager's default pluginRoot.
     directories: [join(input.cwd, ".lume", "plugins"), ...pluginConfig.directories],
   });
+  const computerUsePlugin = registeredPlugins.find((plugin) => plugin.pluginId === "computer-use");
+  log.info("Computer Use capability selected", {
+    sessionId: input.lumeSessionId,
+    computerUseSurface,
+    pluginVersion: computerUsePlugin?.version,
+    modelRef: input.modelRef,
+  });
   const pluginAssembly = await assemblePluginRuntime(registeredPlugins);
+  const runtimePluginAssembly: PluginRuntimeAssembly = {
+    ...pluginAssembly,
+    skills: filterComputerUseSkills(pluginAssembly.skills, computerUseSurface),
+  };
 
   // Phase 3d: build agentOptions.hooks from resolved plugin hooks. Shell-command hooks
   // are gate-aware (§8.1): checkSensitiveCapability(hook:event:matcher) before spawn.
@@ -1404,7 +1439,7 @@ export async function createRuntimeCoreSession(
 
   // Register plugin skills (resolver already namespaced skill.name as `${pluginId}:${original}`).
   const registeredPluginSkillNames = new Set<string>();
-  for (const skill of pluginAssembly.skills) {
+  for (const skill of runtimePluginAssembly.skills) {
     if (hasSkill(skill.name)) {
       log.warn(`[plugin] skill "${skill.name}" already registered, skipping duplicate`);
       continue;
@@ -1449,7 +1484,7 @@ export async function createRuntimeCoreSession(
         reason: error instanceof Error ? error.message : String(error),
       }],
     }));
-  const enabledPlugins = buildEnabledPluginContext(registeredPlugins, pluginAssembly);
+  const enabledPlugins = buildEnabledPluginContext(registeredPlugins, runtimePluginAssembly);
   const workspaceMcpRuntime = input.workspaceSlug
     ? await workspaceMcpManager.createRuntimeTools(input.workspaceSlug).catch((error) => ({
       tools: [],
@@ -1476,6 +1511,7 @@ export async function createRuntimeCoreSession(
     channelId: input.channelId,
     modelRef: input.modelRef,
     provider: input.provider,
+    computerUseSurface,
     threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
@@ -1656,6 +1692,7 @@ export async function createRuntimeCoreSession(
     async dispose() {
       await agent.close();
       await getNodeReplRuntimeRegistry().shutdown(input.lumeSessionId);
+      getComputerUseSessionRegistry().clear(input.lumeSessionId);
       try {
         await pluginMcpManager.disposeWorkspace(PLUGIN_MCP_WORKSPACE_SLUG);
       } catch (error) {

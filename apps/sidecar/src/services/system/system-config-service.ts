@@ -13,7 +13,7 @@ function createDefaultSystemConfig(): LumeSystemConfig {
       chat: {},
       agent: {},
       embedding: {},
-      computerUse: { visionModelRefs: [] }
+      computerUse: { agentSurface: "auto", skyModelRefs: [], visionModelRefs: [] }
     },
     memory: {},
     agent: {},
@@ -90,6 +90,14 @@ function normalizeSystemConfig(input: unknown): LumeSystemConfig {
           : {})
       },
       computerUse: {
+        agentSurface: computerUse.agentSurface === "auto"
+          || computerUse.agentSurface === "sky"
+          || computerUse.agentSurface === "mcp"
+          ? computerUse.agentSurface
+          : "auto",
+        skyModelRefs: Array.isArray(computerUse.skyModelRefs)
+          ? computerUse.skyModelRefs.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          : [],
         visionModelRefs: Array.isArray(computerUse.visionModelRefs)
           ? computerUse.visionModelRefs.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
           : []
@@ -167,6 +175,14 @@ export function getEffectiveSystemConfig(workspaceSlug?: string): EffectiveSyste
       },
       computerUse: {
         ...primary.models?.computerUse,
+        ...(overrideComputerUse.agentSurface === "auto"
+          || overrideComputerUse.agentSurface === "sky"
+          || overrideComputerUse.agentSurface === "mcp"
+          ? { agentSurface: overrideComputerUse.agentSurface }
+          : {}),
+        ...(Array.isArray(overrideComputerUse.skyModelRefs)
+          ? { skyModelRefs: overrideComputerUse.skyModelRefs.filter((value): value is string => typeof value === "string" && value.trim().length > 0) }
+          : {}),
         ...(Array.isArray(overrideComputerUse.visionModelRefs)
           ? { visionModelRefs: overrideComputerUse.visionModelRefs.filter((value): value is string => typeof value === "string" && value.trim().length > 0) }
           : {})
