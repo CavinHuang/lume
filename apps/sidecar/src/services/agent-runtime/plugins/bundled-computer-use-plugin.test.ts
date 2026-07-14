@@ -26,5 +26,12 @@ describe("bundled computer-use plugin", () => {
     expect(skill).toContain("setupComputerUseRuntime");
     expect(skill).toContain('sky.documentation("guidance")');
     expect(skill).toContain('sky.documentation("confirmations")');
+    expect(skill).toContain("nodeRepl.write");
+    expect(skill).toContain("list_apps");
+    expect(skill).toContain("targetApp.windows[0]");
+    expect(skill).toContain("state.screenshots[0]");
+    expect(skill).toContain("sky.click({ window: targetWindow");
+    expect(skill).toContain("Window is plain data and has no methods");
+    expect(skill).toContain("nodeRepl.write(JSON.stringify");
   });
 });

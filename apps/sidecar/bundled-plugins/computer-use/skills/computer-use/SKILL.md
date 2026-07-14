@@ -18,14 +18,47 @@ if (!globalThis.sky) {
 }
 ```
 
-Then read the runtime guidance and confirmation policy once:
+Then read the runtime guidance, exact API, and confirmation policy once:
 
 ```js
-await sky.documentation("guidance")
-await sky.documentation("confirmations")
+globalThis.computerUseGuidance = await sky.documentation("guidance")
+globalThis.computerUseApi = await sky.documentation("api")
+globalThis.computerUseConfirmations = await sky.documentation("confirmations")
+nodeRepl.write(`${computerUseGuidance}\n\n${computerUseApi}\n\n${computerUseConfirmations}`)
 ```
 
-Use `await sky.documentation("api")` when an exact method signature is needed.
+The Node tool only returns string values passed to `nodeRepl.write`. Bare final expressions are invisible; use `nodeRepl.write(JSON.stringify(value))` for structured output.
+
+Use the exact snake_case Window2 methods from the API. Start discovery with `await sky.list_apps()`; do not translate method names to `listApplications`, `focusApplication`, or `observe`.
+
+`list_apps()` returns application descriptors, not Windows. Select a Window from an application's `windows` array before calling `get_window`. Window is plain data and has no methods; every action is a `sky.*` call. `WindowState` uses `accessibility` and plural `screenshots`, never `text` or singular `screenshot`:
+
+```js
+globalThis.apps = await sky.list_apps()
+// Replace this exact matcher with the application requested by the user.
+globalThis.targetApp = apps.find(app => app.displayName === "微信" && app.windows.length === 1)
+if (!targetApp || targetApp.windows.length !== 1) {
+  nodeRepl.write(JSON.stringify({
+    error: "Select one unique application window",
+    candidates: apps.filter(app => /微信|wechat|weixin/i.test(`${app.displayName ?? ""} ${app.id}`))
+  }))
+} else {
+  globalThis.targetWindow = targetApp.windows[0]
+  targetWindow = await sky.get_window({ id: targetWindow.id, app: targetWindow.app })
+  globalThis.state = await sky.get_window_state({ window: targetWindow })
+  targetWindow = state.window
+  globalThis.screenshot = state.screenshots[0]
+}
+```
+
+For a coordinate action, call the client directly and pass the current Window and screenshot ID:
+
+```js
+await sky.click({ window: targetWindow, x, y, screenshotId: state.screenshots[0].id })
+await sky.type_text({ window: targetWindow, text })
+state = await sky.get_window_state({ window: targetWindow })
+targetWindow = state.window
+```
 
 Keep reusable top-level bindings such as `apps`, `targetWindow`, and `state`. After every observation, replace the old target with `targetWindow = state.window`. Never invent or reconstruct a window ID.
 

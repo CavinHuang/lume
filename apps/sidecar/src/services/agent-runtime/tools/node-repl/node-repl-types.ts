@@ -1,5 +1,5 @@
 export const NODE_REPL_MCP_INSTRUCTIONS =
-  "Use `js` to run JavaScript in the persistent Node-backed kernel. Top-level bindings persist across calls until `js_reset`.";
+  "Use `js` to run JavaScript in the persistent Node-backed kernel. Top-level bindings persist across calls until `js_reset`. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values.";
 
 export interface JsExecInput {
   title?: string;

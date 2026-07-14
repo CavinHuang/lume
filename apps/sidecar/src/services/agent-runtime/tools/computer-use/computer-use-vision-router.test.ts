@@ -46,9 +46,15 @@ describe("ComputerUseVisionRouter", () => {
     const probeFunction = probe as (provider: LLMProvider, model: string) => Promise<boolean>;
 
     let maxTokens = 0;
+    let probeDimensions = { width: 0, height: 0 };
     const provider = {
-      createMessage: async (request: { maxTokens: number }) => {
+      createMessage: async (request: {
+        maxTokens: number;
+        messages: Array<{ content: Array<{ source?: { data?: string } }> }>;
+      }) => {
         maxTokens = request.maxTokens;
+        const png = Buffer.from(request.messages[0]?.content[0]?.source?.data ?? "", "base64");
+        probeDimensions = { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
         return { stopReason: "max_tokens", content: [] };
       },
     } as unknown as LLMProvider;
@@ -57,6 +63,23 @@ describe("ComputerUseVisionRouter", () => {
       "vision_probe_incomplete:max_tokens",
     );
     expect(maxTokens).toBe(300);
+    expect(probeDimensions.width).toBeGreaterThanOrEqual(512);
+    expect(probeDimensions.height).toBeGreaterThanOrEqual(256);
+  });
+
+  test("accepts the expected colors when a visual model adds prose or punctuation", async () => {
+    const visionModule = await import("./computer-use-vision-router");
+    const probe = (visionModule as Record<string, unknown>).probeVision;
+    expect(probe).toBeFunction();
+    const probeFunction = probe as (provider: LLMProvider, model: string) => Promise<boolean>;
+    const provider = {
+      createMessage: async () => ({
+        stopReason: "end_turn",
+        content: [{ type: "text", text: "The colors are RED, BLUE, GREEN, and YELLOW." }],
+      }),
+    } as unknown as LLMProvider;
+
+    expect(await probeFunction(provider, "visual-model")).toBe(true);
   });
 
   test("falls back to a verified independent vision model", async () => {

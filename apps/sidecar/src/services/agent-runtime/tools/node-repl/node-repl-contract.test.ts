@@ -47,6 +47,14 @@ function makeToolContext() {
 }
 
 describe("node_repl tool contract", () => {
+  test("js instructions require explicit output", () => {
+    const js = createContractTools().find((tool) => tool.name === "js")!;
+
+    expect(js.description).toContain("nodeRepl.write");
+    expect(js.description).toContain("Bare final expressions are not returned");
+    expect(js.description).toContain("JSON.stringify");
+  });
+
   test("persistent bindings survive js calls until reset", async () => {
     const tools = createContractTools();
     const js = tools.find((tool) => tool.name === "js")!;

@@ -1,10 +1,12 @@
 # Computer Use Guidance
 
-Start with `list_apps()`, select one unique application window, refresh it with `get_window({ id, app })`, and then observe it with `get_window_state`.
+Start with `list_apps()`. It returns application descriptors whose `windows` arrays contain the canonical Windows. Select one unique Window, refresh it with `get_window({ id, app })`, and then observe it with `get_window_state`.
 
 Passive observation does not foreground the application. Input methods restore and activate their target window atomically. Call `activate_window` only when foregrounding is itself required.
 
 `get_window_state` includes screenshots by default. Request `{ include_screenshot: false, include_text: true }` when accessibility text or element indices are needed without an image. Always replace a cached Window with `state.window` after observing.
+
+Window is plain data and has no methods. Invoke actions through `sky.click`, `sky.type_text`, and the other documented functions. WindowState fields are `accessibility` and plural `screenshots`; legacy `text` and singular `screenshot` fields do not exist.
 
 Prefer an `element_index` action when the accessibility snapshot exposes the intended control. Otherwise use coordinates relative to the most recent screenshot and pass its `screenshotId`.
 
