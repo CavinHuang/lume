@@ -189,14 +189,6 @@ export function SubagentHeader({
   avatarSrc?: string
   onClick: () => void
 }) {
-  let latestUserMessageIndex = -1
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index]?.type === 'user') {
-      latestUserMessageIndex = index
-      break
-    }
-  }
-
   return (
     <Button
                 variant="ghost"
@@ -290,6 +282,14 @@ function SubagentExpandedContent({
   report?: SubagentTaskReport
   onUserResizeStart?: () => void
 }) {
+  let latestUserMessageIndex = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.type === 'user') {
+      latestUserMessageIndex = index
+      break
+    }
+  }
+
   return (
     <div className={cn(depth > 0 && depth < 3 && 'ml-3 border-l-2 border-l-foreground/15')}>
       {/* Subagent 详情区域 */}
