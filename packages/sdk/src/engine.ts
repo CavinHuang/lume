@@ -99,6 +99,7 @@ function toProviderTool(tool: ToolDefinition): NormalizedTool {
 interface ToolUseBlock {
   type: 'tool_use'
   id: string
+  response_item_id?: string
   name: string
   input: any
 }
@@ -1199,6 +1200,8 @@ export class QueryEngine {
             tool_use_id: result.tool_use_id,
             tool_name: result.tool_name || '',
             output: formatToolResultOutput(result.content),
+            content: result.content,
+            is_error: result.is_error === true,
           },
         }
       }

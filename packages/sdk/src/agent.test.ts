@@ -503,6 +503,186 @@ describe("Agent session persistence", () => {
     await agent.close()
   })
 
+  test("resumes canonical tool results when event transcript omits them", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-tool-result-resume-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `tool-result-resume-${crypto.randomUUID()}`
+    const toolUse = {
+      type: "tool_use" as const,
+      id: "call_001",
+      response_item_id: "fc_001",
+      name: "Read",
+      input: {},
+    }
+
+    await saveSession(sessionId, [
+      { role: "user", content: "read" },
+      { role: "assistant", content: [toolUse] },
+      {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "call_001", content: "file contents" }],
+      },
+    ], {
+      cwd: tempDir,
+      model: "test-model",
+      sessionMessages: [
+        {
+          uuid: "user-1",
+          role: "user",
+          timestamp: new Date().toISOString(),
+          content: "read",
+        },
+        {
+          uuid: "assistant-1",
+          role: "assistant",
+          timestamp: new Date().toISOString(),
+          content: { role: "assistant", content: [toolUse] },
+        },
+      ],
+      checkpoints: {},
+    })
+
+    const agent = createAgent({ resume: sessionId, persistSession: false, tools: [], cwd: tempDir })
+    await agent.getInitializationResult()
+    const provider = new CapturingProvider()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("continue")) {
+      // drain query
+    }
+
+    const requestBlocks = provider.requests[0]?.messages.flatMap((message) =>
+      Array.isArray(message.content) ? message.content : []
+    )
+    expect(requestBlocks).toContainEqual({
+      type: "tool_result",
+      tool_use_id: "call_001",
+      content: "file contents",
+    })
+    await agent.close()
+  })
+
+  test("repairs legacy missing tool results from completed tool events", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-tool-result-repair-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `tool-result-repair-${crypto.randomUUID()}`
+    const toolUse = {
+      type: "tool_use" as const,
+      id: "call_legacy",
+      response_item_id: "fc_legacy",
+      name: "Read",
+      input: {},
+    }
+
+    await saveSession(sessionId, [
+      { role: "user", content: "read" },
+      { role: "assistant", content: [toolUse] },
+    ], {
+      cwd: tempDir,
+      model: "test-model",
+      sessionMessages: [
+        {
+          uuid: "user-1",
+          role: "user",
+          timestamp: new Date().toISOString(),
+          content: "read",
+        },
+        {
+          uuid: "assistant-1",
+          role: "assistant",
+          timestamp: new Date().toISOString(),
+          content: { role: "assistant", content: [toolUse] },
+        },
+        {
+          uuid: "tool-completed-1",
+          role: "system",
+          timestamp: new Date().toISOString(),
+          content: {
+            type: "system",
+            subtype: "tool_completed",
+            tool_use_id: "call_legacy",
+            tool_name: "Read",
+            output_summary: "legacy file contents",
+            is_error: false,
+          },
+        },
+      ],
+      checkpoints: {},
+    })
+
+    const agent = createAgent({ resume: sessionId, persistSession: false, tools: [], cwd: tempDir })
+    await agent.getInitializationResult()
+    const provider = new CapturingProvider()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("continue")) {
+      // drain query
+    }
+
+    const requestBlocks = provider.requests[0]?.messages.flatMap((message) =>
+      Array.isArray(message.content) ? message.content : []
+    )
+    expect(requestBlocks).toContainEqual({
+      type: "tool_result",
+      tool_use_id: "call_legacy",
+      content: "legacy file contents",
+      is_error: false,
+    })
+    await agent.close()
+  })
+
+  test("persists executed tool results in the resumable event transcript", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-tool-result-persist-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `tool-result-persist-${crypto.randomUUID()}`
+    let requestCount = 0
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage() {
+        requestCount += 1
+        return requestCount === 1
+          ? {
+              content: [{ type: "tool_use", id: "call_persist", name: "Read", input: {} }],
+              stopReason: "tool_use",
+              usage: { input_tokens: 1, output_tokens: 1 },
+            }
+          : {
+              content: [{ type: "text", text: "done" }],
+              stopReason: "end_turn",
+              usage: { input_tokens: 1, output_tokens: 1 },
+            }
+      },
+    }
+    const agent = createAgent({
+      sessionId,
+      persistSession: true,
+      tools: [tool("Read")],
+      cwd: tempDir,
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("read")) {
+      // drain query
+    }
+
+    const messages = await getSessionMessages(sessionId, { dir: tempDir })
+    expect(messages).toContainEqual(expect.objectContaining({
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "call_persist",
+        tool_name: "Read",
+        content: "ok",
+        is_error: false,
+      }],
+    }))
+    await agent.close()
+  })
+
   test("persists session when query stream consumer stops after max turns", async () => {
     const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-early-close-"))
     tempDirs.push(tempDir)

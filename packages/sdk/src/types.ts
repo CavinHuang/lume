@@ -10,12 +10,12 @@ export type ToolResultContentBlock =
 export type ContentBlockParam =
   | { type: 'text'; text: string }
   | { type: 'image'; source: any; _meta?: Record<string, unknown> }
-  | { type: 'tool_use'; id: string; name: string; input: any }
+  | { type: 'tool_use'; id: string; response_item_id?: string; name: string; input: any }
   | { type: 'tool_result'; tool_use_id: string; content: string | ToolResultContentBlock[]; is_error?: boolean; _meta?: Record<string, unknown> }
 
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: any }
+  | { type: 'tool_use'; id: string; response_item_id?: string; name: string; input: any }
   | { type: 'thinking'; thinking: string }
 
 // --------------------------------------------------------------------------
@@ -121,6 +121,8 @@ export interface SDKToolResultMessage {
     tool_use_id: string
     tool_name: string
     output: string
+    content?: string | ToolResultContentBlock[]
+    is_error?: boolean
   }
 }
 

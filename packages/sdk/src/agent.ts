@@ -212,6 +212,73 @@ function normalizeHistoryFromSessionMessages(
     }))
 }
 
+function restoreMissingToolResults(
+  history: NormalizedMessageParam[],
+  storedMessages: NormalizedMessageParam[],
+  sessionMessages: SessionMessage[],
+): NormalizedMessageParam[] {
+  const existingResultIds = new Set<string>()
+  const restorableResults = new Map<string, Record<string, unknown>>()
+
+  const collectToolResults = (
+    messages: NormalizedMessageParam[],
+    onResult: (id: string, block: Record<string, unknown>) => void,
+  ): void => {
+    for (const message of messages) {
+      if (message.role !== 'user' || !Array.isArray(message.content)) continue
+      for (const block of message.content) {
+        if (block.type !== 'tool_result') continue
+        onResult(block.tool_use_id, block as unknown as Record<string, unknown>)
+      }
+    }
+  }
+
+  collectToolResults(history, (id) => existingResultIds.add(id))
+  collectToolResults(storedMessages, (id, block) => restorableResults.set(id, block))
+
+  for (const message of sessionMessages) {
+    if (message.role !== 'system' || !message.content || typeof message.content !== 'object') continue
+    const event = message.content as Record<string, unknown>
+    if (
+      event.type !== 'system'
+      || event.subtype !== 'tool_completed'
+      || typeof event.tool_use_id !== 'string'
+      || typeof event.output_summary !== 'string'
+      || restorableResults.has(event.tool_use_id)
+    ) {
+      continue
+    }
+    restorableResults.set(event.tool_use_id, {
+      type: 'tool_result',
+      tool_use_id: event.tool_use_id,
+      content: event.output_summary,
+      is_error: event.is_error === true,
+    })
+  }
+
+  if (restorableResults.size === 0) return history
+
+  const restored: NormalizedMessageParam[] = []
+  for (const message of history) {
+    restored.push(message)
+    if (message.role !== 'assistant' || !Array.isArray(message.content)) continue
+    const missingResults = message.content.flatMap((block) => {
+      if (block.type !== 'tool_use' || existingResultIds.has(block.id)) return []
+      const result = restorableResults.get(block.id)
+      if (!result) return []
+      existingResultIds.add(block.id)
+      return [result]
+    })
+    if (missingResults.length > 0) {
+      restored.push({
+        role: 'user',
+        content: missingResults as ContentBlockParam[],
+      })
+    }
+  }
+  return restored
+}
+
 function normalizeSessionMessageContent(
   message: SessionMessage & { role: 'user' | 'assistant' },
 ): NormalizedMessageParam['content'] {
@@ -643,9 +710,14 @@ export class Agent {
       this.cfg.resumeSessionAt,
     )
 
-    this.history = resumedSessionMessages.length > 0
+    const resumedHistory = resumedSessionMessages.length > 0
       ? normalizeHistoryFromSessionMessages(resumedSessionMessages)
       : sessionData.messages
+    this.history = restoreMissingToolResults(
+      resumedHistory,
+      sessionData.messages,
+      resumedSessionMessages,
+    )
     this.sessionMessages = resumedSessionMessages.length > 0
       ? resumedSessionMessages
       : (sessionData.sessionMessages || [])
@@ -1068,6 +1140,14 @@ export class Agent {
             uuid: assistantMessage.uuid,
             timestamp: assistantMessage.timestamp,
           })
+        } else if (event.type === 'tool_result') {
+          this.sessionMessages.push(toSessionMessage('user', [{
+            type: 'tool_result',
+            tool_use_id: event.result.tool_use_id,
+            tool_name: event.result.tool_name,
+            content: event.result.content ?? event.result.output,
+            is_error: event.result.is_error === true,
+          }]))
         } else if (event.type === 'system') {
           this.sessionMessages.push(toSessionMessage('system', event))
           if (event.subtype === 'compact_boundary') {
