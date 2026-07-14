@@ -1,5 +1,10 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
-import { readStoredThemeMode, resolveShouldUseDark } from './theme-mode'
+import {
+  readStoredThemeMode,
+  readStoredThemePalette,
+  resolveShouldUseDark,
+  setThemePalette,
+} from './theme-mode'
 
 const storage = new Map<string, string>()
 const localStorageMock = {
@@ -17,12 +22,20 @@ const localStorageMock = {
   },
 }
 const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window
+const originalDocument = (globalThis as typeof globalThis & { document?: unknown }).document
+const dataset: Record<string, string> = {}
 
 beforeAll(() => {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: {
       localStorage: localStorageMock,
+    },
+  })
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      documentElement: { dataset },
     },
   })
 })
@@ -44,12 +57,18 @@ describe('resolveShouldUseDark', () => {
 
 afterEach(() => {
   localStorageMock.removeItem('lume:theme-mode')
+  localStorageMock.removeItem('lume:theme-palette')
+  delete dataset.themePalette
 })
 
 afterAll(() => {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: originalWindow,
+  })
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: originalDocument,
   })
 })
 
@@ -62,5 +81,22 @@ describe('readStoredThemeMode', () => {
   test('falls back to system for invalid storage values', () => {
     localStorageMock.setItem('lume:theme-mode', 'unexpected')
     expect(readStoredThemeMode()).toBe('system')
+  })
+})
+
+describe('theme palette runtime', () => {
+  test('returns a stored palette and falls back to mint for invalid values', () => {
+    localStorageMock.setItem('lume:theme-palette', 'ocean')
+    expect(readStoredThemePalette()).toBe('ocean')
+
+    localStorageMock.setItem('lume:theme-palette', 'unexpected')
+    expect(readStoredThemePalette()).toBe('mint')
+  })
+
+  test('stores and applies the selected palette', () => {
+    setThemePalette('clay')
+
+    expect(localStorageMock.getItem('lume:theme-palette')).toBe('clay')
+    expect(dataset.themePalette).toBe('clay')
   })
 })
