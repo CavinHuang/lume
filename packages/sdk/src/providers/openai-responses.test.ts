@@ -117,11 +117,112 @@ describe("OpenAIResponsesProvider", () => {
       {
         type: "tool_use",
         id: "call_001",
+        response_item_id: "fc_001",
         name: "get_weather",
         input: { location: "Tokyo" },
       },
     ])
     expect(result.stopReason).toBe("tool_use")
+  })
+
+  test("normalizes invalid tool names and restores the original response name", async () => {
+    let requestBody: Record<string, any> | undefined
+    globalThis.fetch = (async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(
+        JSON.stringify({
+          id: "resp_memory",
+          object: "response",
+          status: "completed",
+          output: [
+            {
+              type: "function_call",
+              id: "fc_memory",
+              call_id: "call_memory",
+              name: requestBody?.tools?.[0]?.name,
+              arguments: '{"query":"notes"}',
+              status: "completed",
+            },
+          ],
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }) as typeof fetch
+
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      baseURL: "https://api.openai.com/v1",
+      retryConfig: fastRetry,
+    })
+
+    const result = await provider.createMessage({
+      model: "gpt-4o",
+      maxTokens: 1024,
+      system: "",
+      messages: [{ role: "user", content: "Find my notes" }],
+      tools: [{
+        name: "memory.search",
+        description: "Search memory",
+        input_schema: { type: "object", properties: {} },
+      }],
+    })
+
+    expect(requestBody?.tools?.[0]?.name).toMatch(/^[a-zA-Z0-9_-]+$/)
+    expect(requestBody?.tools?.[0]?.name).not.toBe("memory.search")
+    expect(result.content).toContainEqual({
+      type: "tool_use",
+      id: "call_memory",
+      response_item_id: "fc_memory",
+      name: "memory.search",
+      input: { query: "notes" },
+    })
+  })
+
+  test("restores original tool names from streaming function calls", async () => {
+    let requestBody: Record<string, any> | undefined
+    globalThis.fetch = (async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      const wireName = requestBody?.tools?.[0]?.name
+      const frames = [
+        { type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "fc_memory", call_id: "call_memory", name: wireName } },
+        { type: "response.function_call_arguments.delta", output_index: 0, delta: '{"query":"notes"}' },
+        { type: "response.completed", response: { id: "resp_memory", object: "response", status: "completed", output: [], usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
+      ]
+      return new Response(
+        frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(""),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      )
+    }) as typeof fetch
+
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      baseURL: "https://api.openai.com/v1",
+      retryConfig: fastRetry,
+    })
+    const stream = provider.createMessageStream({
+      model: "gpt-4o",
+      maxTokens: 1024,
+      system: "",
+      messages: [{ role: "user", content: "Find my notes" }],
+      tools: [{
+        name: "memory.search",
+        description: "Search memory",
+        input_schema: { type: "object", properties: {} },
+      }],
+    })
+
+    let step = await stream.next()
+    while (!step.done) step = await stream.next()
+
+    expect(requestBody?.tools?.[0]?.name).toMatch(/^[a-zA-Z0-9_-]+$/)
+    expect(step.value.content).toContainEqual({
+      type: "tool_use",
+      id: "call_memory",
+      response_item_id: "fc_memory",
+      name: "memory.search",
+      input: { query: "notes" },
+    })
   })
 
   test("should convert tool_result to function_call_output", async () => {
@@ -188,10 +289,67 @@ describe("OpenAIResponsesProvider", () => {
     const functionCallOutput = requestBody?.input?.find(
       (item: any) => item.type === "function_call_output",
     )
+    const functionCall = requestBody?.input?.find(
+      (item: any) => item.type === "function_call",
+    )
+    expect(functionCall).toEqual({
+      type: "function_call",
+      call_id: "call_001",
+      name: "get_weather",
+      arguments: '{"location":"Tokyo"}',
+    })
     expect(functionCallOutput).toEqual({
       type: "function_call_output",
       call_id: "call_001",
       output: "Sunny, 25°C",
+    })
+  })
+
+  test("replays preserved Responses function call item IDs", async () => {
+    let requestBody: Record<string, any> | undefined
+    globalThis.fetch = (async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({
+        id: "resp_123",
+        object: "response",
+        status: "completed",
+        output: [{
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "ok" }],
+        }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      baseURL: "https://api.openai.com/v1",
+      retryConfig: fastRetry,
+    })
+
+    await provider.createMessage({
+      model: "gpt-4o",
+      maxTokens: 1024,
+      system: "",
+      messages: [{
+        role: "assistant",
+        content: [{
+          type: "tool_use",
+          id: "call_001",
+          response_item_id: "fc_001",
+          name: "get_weather",
+          input: { location: "Tokyo" },
+        }],
+      }],
+    })
+
+    expect(requestBody?.input).toContainEqual({
+      type: "function_call",
+      id: "fc_001",
+      call_id: "call_001",
+      name: "get_weather",
+      arguments: '{"location":"Tokyo"}',
     })
   })
 

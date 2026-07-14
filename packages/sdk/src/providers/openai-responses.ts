@@ -24,7 +24,7 @@ import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from '../utils/retr
 
 type ResponsesInputItem =
   | { role: 'user'; content: ResponsesInputContent[]; type: 'message' }
-  | { type: 'function_call'; id: string; call_id: string; name: string; arguments: string }
+  | { type: 'function_call'; id?: string; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string }
 
 type ResponsesInputContent =
@@ -39,6 +39,11 @@ interface ResponsesFunctionTool {
   name: string
   description: string
   parameters: Record<string, unknown>
+}
+
+interface ResponsesToolNames {
+  originalToWire: Map<string, string>
+  wireToOriginal: Map<string, string>
 }
 
 interface ResponsesApiResponse {
@@ -109,6 +114,34 @@ function toolResultImageToUrl(item: { source?: unknown; data?: unknown; mimeType
   return null
 }
 
+function buildResponsesToolNames(tools: NormalizedTool[] | undefined): ResponsesToolNames {
+  const originalToWire = new Map<string, string>()
+  const wireToOriginal = new Map<string, string>()
+  const reservedNames = new Set(
+    (tools ?? []).map((tool) => tool.name).filter((name) => /^[a-zA-Z0-9_-]+$/.test(name)),
+  )
+
+  for (const tool of tools ?? []) {
+    let wireName = tool.name
+    if (!/^[a-zA-Z0-9_-]+$/.test(wireName)) {
+      const baseName = wireName
+        .replace(/[^a-zA-Z0-9_-]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'tool'
+      wireName = baseName
+      let suffix = 2
+      while (reservedNames.has(wireName)) {
+        wireName = `${baseName}_${suffix}`
+        suffix += 1
+      }
+      reservedNames.add(wireName)
+    }
+    originalToWire.set(tool.name, wireName)
+    wireToOriginal.set(wireName, tool.name)
+  }
+
+  return { originalToWire, wireToOriginal }
+}
+
 // --------------------------------------------------------------------------
 // Provider
 // --------------------------------------------------------------------------
@@ -126,7 +159,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
   }
 
   async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
-    const { input, tools, instructions } = this.buildRequestParts(params)
+    const { input, tools, instructions, toolNames } = this.buildRequestParts(params)
 
     const body: Record<string, unknown> = {
       model: params.model,
@@ -142,13 +175,13 @@ export class OpenAIResponsesProvider implements LLMProvider {
 
     const response = await this.fetchResponse(body)
     const data = (await response.json()) as ResponsesApiResponse
-    return this.convertResponse(data)
+    return this.convertResponse(data, toolNames)
   }
 
   async *createMessageStream(
     params: CreateMessageParams,
   ): AsyncGenerator<CreateMessageStreamEvent, CreateMessageResponse> {
-    const { input, tools, instructions } = this.buildRequestParts(params)
+    const { input, tools, instructions, toolNames } = this.buildRequestParts(params)
 
     const body: Record<string, unknown> = {
       model: params.model,
@@ -202,7 +235,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
             functionCalls.set(event.output_index ?? functionCalls.size, {
               id: item.id ?? '',
               call_id: item.call_id ?? '',
-              name: item.name ?? '',
+              name: toolNames.wireToOriginal.get(item.name ?? '') ?? item.name ?? '',
               arguments: '',
             })
           }
@@ -293,6 +326,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       content.push({
         type: 'tool_use',
         id: fc.call_id || fc.id,
+        ...(fc.id ? { response_item_id: fc.id } : {}),
         name: fc.name,
         input,
       })
@@ -328,20 +362,22 @@ export class OpenAIResponsesProvider implements LLMProvider {
     input: ResponsesInputItem[]
     tools: ResponsesFunctionTool[] | undefined
     instructions: string | undefined
+    toolNames: ResponsesToolNames
   } {
-    const input = this.convertInput(params.messages)
-    const tools = params.tools ? this.convertTools(params.tools) : undefined
-    return { input, tools, instructions: params.system || undefined }
+    const toolNames = buildResponsesToolNames(params.tools)
+    const input = this.convertInput(params.messages, toolNames)
+    const tools = params.tools ? this.convertTools(params.tools, toolNames) : undefined
+    return { input, tools, instructions: params.system || undefined, toolNames }
   }
 
-  private convertInput(messages: NormalizedMessageParam[]): ResponsesInputItem[] {
+  private convertInput(messages: NormalizedMessageParam[], toolNames: ResponsesToolNames): ResponsesInputItem[] {
     const items: ResponsesInputItem[] = []
 
     for (const msg of messages) {
       if (msg.role === 'user') {
         this.convertUserMessage(msg, items)
       } else if (msg.role === 'assistant') {
-        this.convertAssistantMessage(msg, items)
+        this.convertAssistantMessage(msg, items, toolNames)
       }
     }
 
@@ -421,7 +457,11 @@ export class OpenAIResponsesProvider implements LLMProvider {
     }
   }
 
-  private convertAssistantMessage(msg: NormalizedMessageParam, items: ResponsesInputItem[]): void {
+  private convertAssistantMessage(
+    msg: NormalizedMessageParam,
+    items: ResponsesInputItem[],
+    toolNames: ResponsesToolNames,
+  ): void {
     if (typeof msg.content === 'string') {
       // Responses API doesn't have assistant role in input.
       // For multi-turn context, we skip pure text assistant messages
@@ -438,9 +478,11 @@ export class OpenAIResponsesProvider implements LLMProvider {
       } else if (block.type === 'tool_use') {
         items.push({
           type: 'function_call',
-          id: block.id,
+          ...(block.response_item_id?.startsWith('fc')
+            ? { id: block.response_item_id }
+            : {}),
           call_id: block.id,
-          name: block.name,
+          name: toolNames.originalToWire.get(block.name) ?? block.name,
           arguments: typeof block.input === 'string' ? block.input : JSON.stringify(block.input),
         })
       }
@@ -448,10 +490,10 @@ export class OpenAIResponsesProvider implements LLMProvider {
     }
   }
 
-  private convertTools(tools: NormalizedTool[]): ResponsesFunctionTool[] {
+  private convertTools(tools: NormalizedTool[], toolNames: ResponsesToolNames): ResponsesFunctionTool[] {
     return tools.map((t) => ({
       type: 'function' as const,
-      name: t.name,
+      name: toolNames.originalToWire.get(t.name) ?? t.name,
       description: t.description,
       parameters: t.input_schema as Record<string, unknown>,
     }))
@@ -461,7 +503,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
   // Response conversion
   // --------------------------------------------------------------------------
 
-  private convertResponse(data: ResponsesApiResponse): CreateMessageResponse {
+  private convertResponse(data: ResponsesApiResponse, toolNames: ResponsesToolNames): CreateMessageResponse {
     const content: NormalizedResponseBlock[] = []
 
     if (data.error) {
@@ -489,7 +531,8 @@ export class OpenAIResponsesProvider implements LLMProvider {
         content.push({
           type: 'tool_use',
           id: item.call_id || item.id,
-          name: item.name,
+          response_item_id: item.id,
+          name: toolNames.wireToOriginal.get(item.name) ?? item.name,
           input,
         })
       }

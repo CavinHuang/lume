@@ -45,7 +45,7 @@ export interface NormalizedMessageParam {
 
 export type NormalizedContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: any }
+  | { type: 'tool_use'; id: string; response_item_id?: string; name: string; input: any }
   | { type: 'tool_result'; tool_use_id: string; content: string | ToolResultContentBlock[]; is_error?: boolean; _meta?: Record<string, unknown> }
   | { type: 'image'; source: any }
   | { type: 'thinking'; thinking: string }
@@ -77,7 +77,7 @@ export interface CreateMessageResponse {
 
 export type NormalizedResponseBlock =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; input: any }
+  | { type: 'tool_use'; id: string; response_item_id?: string; name: string; input: any }
   | { type: 'thinking'; thinking: string }
 
 export type CreateMessageStreamEvent =
