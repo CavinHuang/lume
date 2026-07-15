@@ -584,6 +584,73 @@ describe("QueryEngine auto compaction usage", () => {
 });
 
 describe("QueryEngine skill allowed tools", () => {
+  test("preserves runtime-required tools when Skill.allowedTools narrows visibility", async () => {
+    const observedTools: string[][] = [];
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "skill-1", name: "Skill", input: { skill: "demo" } }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }
+    ]);
+    const originalCreateMessage = provider.createMessage.bind(provider);
+    provider.createMessage = async (params) => {
+      observedTools.push((params.tools ?? []).map((tool) => tool.name).sort());
+      return originalCreateMessage(params);
+    };
+    const skillTool = {
+      name: "Skill",
+      description: "load skill",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return {
+          type: "tool_result" as const,
+          tool_use_id: "",
+          content: JSON.stringify({ success: true, allowedTools: ["Read"] })
+        };
+      }
+    };
+    const readTool = {
+      name: "Read",
+      description: "read",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "read" };
+      }
+    };
+    const taskReportTool = {
+      name: "TaskReport",
+      description: "report",
+      inputSchema: { type: "object" as const, properties: {} },
+      runtimeMetadata: { requiredDuringSkillScope: true },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "reported" };
+      }
+    };
+
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [skillTool, readTool, taskReportTool],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    await collectResult(engine);
+
+    expect(observedTools[0]).toEqual(["Read", "Skill", "TaskReport"]);
+    expect(observedTools[1]).toEqual(["Read", "Skill", "TaskReport"]);
+  });
+
   test("applies Skill.allowedTools to subsequent provider turns in the same run", async () => {
     const observedTools: string[][] = [];
     const provider = new StaticProvider([

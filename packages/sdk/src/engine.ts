@@ -1822,7 +1822,9 @@ function applySkillAllowedTools(
     const allowed = parsed.allowedTools.filter((item): item is string => typeof item === 'string')
     if (allowed.length === 0) return
     config.tools = config.tools.filter((tool) =>
-      tool.name === 'Skill' || matchesAnyToolPattern(tool.name, allowed)
+      tool.name === 'Skill'
+      || tool.runtimeMetadata?.requiredDuringSkillScope === true
+      || matchesAnyToolPattern(tool.name, allowed)
     )
   } catch {
     // Non-JSON skill output does not alter tool visibility.

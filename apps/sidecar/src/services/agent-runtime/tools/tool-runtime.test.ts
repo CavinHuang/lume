@@ -66,6 +66,7 @@ describe("ToolRuntime", () => {
       context: { threadId: sessionId, cwd: "/tmp" }
     })).resolves.toMatchObject({ status: "allow" });
     expect((tools[1] as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata).toMatchObject({
+      requiredDuringSkillScope: true,
       runtimeWrapped: true
     });
   });

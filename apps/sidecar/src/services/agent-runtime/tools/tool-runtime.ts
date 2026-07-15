@@ -92,10 +92,12 @@ export class ToolRuntime {
       groups: [{ source: "sdk", tools: input.tools }]
     });
     const descriptorsByCanonicalName = new Map(descriptors.map((descriptor) => [descriptor.canonicalName, descriptor]));
+    const requiredToolNames = new Set<string>();
     if (input.requiredTools?.length) {
       const requiredRegistry = new ToolRegistry();
       requiredRegistry.registerMany(createToolDescriptorsFromDefinitions(input.requiredTools, "task"));
       for (const descriptor of requiredRegistry.list()) {
+        requiredToolNames.add(descriptor.name);
         descriptorsByCanonicalName.set(descriptor.canonicalName, {
           ...descriptor,
           metadata: {
@@ -111,7 +113,13 @@ export class ToolRuntime {
       descriptors: resolvedDescriptors,
       threadId: input.sessionId,
       cwd: input.cwd
-    });
+    }).map((tool) => requiredToolNames.has(tool.name) ? {
+      ...tool,
+      runtimeMetadata: {
+        ...tool.runtimeMetadata,
+        requiredDuringSkillScope: true
+      }
+    } : tool);
   }
 }
 
