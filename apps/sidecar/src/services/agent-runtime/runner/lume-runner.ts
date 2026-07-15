@@ -21,6 +21,7 @@ import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
 import { appendDaily, appendRunArchive } from "../../memory-v2/markdown-store";
 import { resolveMemoryRuntimeConfig } from "../../memory-v2/policy";
+import { memoryFileRefForPath } from "../../memory-v2/source-files";
 import { extractMemoryCandidatesWithLlm } from "../../memory-v2/extraction";
 import { smartAddMemoryV2Candidate } from "../../memory-v2/smart-add";
 import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
@@ -467,6 +468,14 @@ export class LumeRunner {
         scope: item.scope,
         status: item.status,
         citation: item.citation,
+        ...(() => {
+          const fileRef = memoryFileRefForPath({
+            scope: item.scope,
+            workspaceSlug: this.observer.getWorkspaceSlug(),
+            path: item.citation
+          });
+          return fileRef ? { fileRef } : {};
+        })(),
         reason: item.reason,
         ...(item.claim ? { claim: item.claim } : {})
       })),

@@ -1,3 +1,5 @@
+import type { FileRef } from "./agent";
+
 export type MemoryScope =
   | "global"
   | "workspace";
@@ -94,6 +96,7 @@ export interface MemorySearchResult {
   endLine?: number;
   snippet: string;
   citation?: string;
+  fileRef?: FileRef;
   score: number;
   kind?: MemoryKind;
   scope?: MemoryScope;
@@ -116,6 +119,7 @@ export interface MemoryReadToolResult {
   text: string;
   metadata?: Partial<MemoryItem>;
   citation?: string;
+  fileRef?: FileRef;
 }
 
 export interface MemorySearchToolInput extends MemorySearchInput {
@@ -500,6 +504,23 @@ export interface MemoryOpenSourceInput {
   path: string;
 }
 
+export interface MemorySourceFile {
+  ref: FileRef;
+  size?: number;
+  modifiedAt?: string;
+}
+
+export interface MemoryListSourceFilesInput {
+  workspaceSlug: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface MemorySourceFilesPage {
+  entries: MemorySourceFile[];
+  nextCursor?: string;
+}
+
 export const MEMORY_IPC_CHANNELS = {
   SEARCH: "memory:search",
   READ: "memory:read",
@@ -510,6 +531,8 @@ export const MEMORY_IPC_CHANNELS = {
   GET_ORGANIZE_JOB: "memory:get-organize-job",
   INGEST_SOURCES: "memory:ingest-sources",
   GET_INGEST_JOB: "memory:get-ingest-job",
+  LIST_SOURCE_FILES: "memory:list-source-files",
+  SOURCE_FILES_CHANGED: "memory:source-files-changed",
   OPEN_SOURCE: "memory:open-source",
   UPDATE_ENTRY: "memory:update-entry",
   DELETE_ENTRY: "memory:delete-entry",

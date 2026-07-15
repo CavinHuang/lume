@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, resolve, sep } from "node:path";
@@ -19,6 +19,16 @@ import {
   validateRendererEventChannel,
   validateRendererInvokeCommand,
 } from "../src/electron-security.ts";
+import {
+  createPreviewProtocolResponse,
+  createPreviewScopeRegistry,
+  injectHtmlNavigationBridge,
+  isAllowedPreviewFrameNavigation,
+  parseSingleRange,
+  PREVIEW_PROTOCOL_MAX_MEDIA_BYTES,
+  previewScopeUrl,
+  resolvePreviewProtocolRequest,
+} from "../src/file-protocol.ts";
 import {
   computeDesktopActionHudBounds,
   createDesktopActionHudHtml,
@@ -47,6 +57,146 @@ test("renderer IPC commands are explicitly allowlisted", () => {
     () => validateRendererInvokeCommand("write_log_file"),
     /unsupported desktop command/,
   );
+});
+
+test("preview scopes bind unguessable tokens to one webContents owner and expire", () => {
+  let now = 1_000;
+  const registry = createPreviewScopeRegistry({ now: () => now });
+  const root = mkdtempSync(join(tmpdir(), "lume-preview-owner-"));
+  const entry = join(root, "index.html");
+  writeFileSync(entry, "<h1>ok</h1>");
+  const scope = registry.create({ kind: "html-directory", ownerWebContentsId: 7, absolutePath: entry, ttlMs: 100 });
+
+  assert.match(scope.token, /^[a-f0-9]{64}$/);
+  assert.equal(registry.owns(scope.token, 7), true);
+  assert.equal(registry.owns(scope.token, 8), false);
+  now = 1_101;
+  assert.equal(registry.owns(scope.token, 7), false);
+});
+
+test("HTML preview resolution stays inside its directory and static allowlist", () => {
+  const root = mkdtempSync(join(tmpdir(), "lume-preview-html-"));
+  const child = join(root, "assets");
+  mkdirSync(child);
+  writeFileSync(join(root, "index.html"), "<script src='./app.js'></script>");
+  writeFileSync(join(root, "app.js"), "globalThis.loaded = true");
+  writeFileSync(join(child, "style.css"), "body{}");
+  writeFileSync(join(root, ".env"), "SECRET=1");
+  const registry = createPreviewScopeRegistry();
+  const scope = registry.create({
+    kind: "html-directory",
+    ownerWebContentsId: 1,
+    absolutePath: join(root, "index.html"),
+  });
+
+  const allowed = resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/assets/style.css`, "GET");
+  assert.equal(allowed.kind, "ok");
+  if (allowed.kind === "ok") {
+    assert.equal(allowed.headers["Cache-Control"], "no-store");
+    assert.equal(allowed.headers["X-Content-Type-Options"], "nosniff");
+    assert.equal(allowed.headers["Access-Control-Allow-Origin"], "*");
+    assert.equal("Access-Control-Allow-Credentials" in allowed.headers, false);
+  }
+  assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/../secret.txt`, "GET").kind, "forbidden");
+  assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/.env`, "GET").kind, "forbidden");
+  assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/README`, "GET").kind, "forbidden");
+});
+
+test("HTML navigation bridge leaves fragments local and emits only typed link messages", () => {
+  const injected = injectHtmlNavigationBridge("<html><head></head><body></body></html>");
+  assert.match(injected, /href\.startsWith\('#'\)/);
+  assert.match(injected, /type:'lume-preview-link'/);
+  assert.match(injected, /kind,href/);
+  assert.equal(injected.includes("allow-same-origin"), false);
+});
+
+test("preview subframes may stay on the entry URL or its fragment only", () => {
+  const root = mkdtempSync(join(tmpdir(), "lume-preview-navigation-"));
+  const entry = join(root, "index.html");
+  writeFileSync(entry, "<h1>entry</h1>");
+  writeFileSync(join(root, "other.html"), "<h1>other</h1>");
+  const registry = createPreviewScopeRegistry();
+  const scope = registry.create({ kind: "html-directory", ownerWebContentsId: 9, absolutePath: entry });
+  const url = previewScopeUrl(scope);
+
+  assert.equal(isAllowedPreviewFrameNavigation(registry, url, 9), true);
+  assert.equal(isAllowedPreviewFrameNavigation(registry, `${url}#section`, 9), true);
+  assert.equal(isAllowedPreviewFrameNavigation(registry, url.replace("index.html", "other.html"), 9), false);
+  assert.equal(isAllowedPreviewFrameNavigation(registry, url, 10), false);
+  assert.equal(isAllowedPreviewFrameNavigation(registry, "https://example.com", 9), false);
+});
+
+test("media scopes authorize one image file and validate single byte ranges", () => {
+  const root = mkdtempSync(join(tmpdir(), "lume-preview-media-"));
+  const image = join(root, "image.png");
+  const other = join(root, "other.png");
+  writeFileSync(image, Buffer.alloc(20));
+  writeFileSync(other, Buffer.alloc(20));
+  const registry = createPreviewScopeRegistry();
+  const scope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: image });
+
+  assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/image.png`, "HEAD").kind, "ok");
+  assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/other.png`, "GET").kind, "forbidden");
+  assert.deepEqual(parseSingleRange("bytes=3-8", 20), { start: 3, end: 8 });
+  assert.deepEqual(parseSingleRange("bytes=-5", 20), { start: 15, end: 19 });
+  assert.equal(parseSingleRange("bytes=1-2,4-5", 20), null);
+  assert.equal(parseSingleRange("bytes=30-40", 20), null);
+});
+
+test("preview protocol responses implement media HEAD and single-range semantics", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lume-preview-response-"));
+  const image = join(root, "image.png");
+  writeFileSync(image, Buffer.from("0123456789"));
+  const registry = createPreviewScopeRegistry();
+  const scope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: image });
+  const url = previewScopeUrl(scope);
+
+  const partial = await createPreviewProtocolResponse(registry, new Request(url, { headers: { Range: "bytes=2-5" } }));
+  assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get("content-range"), "bytes 2-5/10");
+  assert.equal(await partial.text(), "2345");
+  const invalid = await createPreviewProtocolResponse(registry, new Request(url, { headers: { Range: "bytes=20-30" } }));
+  assert.equal(invalid.status, 416);
+  const head = await createPreviewProtocolResponse(registry, new Request(url, { method: "HEAD" }));
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get("accept-ranges"), "bytes");
+  assert.equal(head.headers.get("x-content-type-options"), "nosniff");
+
+  const oversized = join(root, "oversized.png");
+  writeFileSync(oversized, "x");
+  truncateSync(oversized, PREVIEW_PROTOCOL_MAX_MEDIA_BYTES + 1);
+  const oversizedScope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: oversized });
+  assert.equal(resolvePreviewProtocolRequest(registry, previewScopeUrl(oversizedScope), "GET").kind, "too-large");
+
+  const growing = join(root, "growing.png");
+  writeFileSync(growing, "0123456789");
+  const growingScope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: growing });
+  const growingResponse = await createPreviewProtocolResponse(registry, new Request(previewScopeUrl(growingScope)));
+  truncateSync(growing, PREVIEW_PROTOCOL_MAX_MEDIA_BYTES + 1);
+  await assert.rejects(() => growingResponse.arrayBuffer(), /byte limit|terminated|aborted/i);
+
+  const entry = join(root, "index.html");
+  const emptyScript = join(root, "empty.js");
+  writeFileSync(entry, "<html></html>");
+  writeFileSync(emptyScript, "");
+  const htmlScope = registry.create({ kind: "html-directory", ownerWebContentsId: 4, absolutePath: entry });
+  const emptyResponse = await createPreviewProtocolResponse(
+    registry,
+    new Request(`lume-file://preview/${htmlScope.token}/empty.js`),
+  );
+  assert.equal(emptyResponse.status, 200);
+  assert.equal(await emptyResponse.text(), "");
+});
+
+test("main installs one owner gate and enables CORS only on the preview protocol", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.equal((mainSource.match(/webRequest\.onBeforeRequest/g) ?? []).length, 1);
+  assert.match(mainSource, /previewScopes\.owns\(token, details\.webContentsId\)/);
+  const schemeRegistrations = mainSource.slice(
+    mainSource.indexOf("protocol.registerSchemesAsPrivileged"),
+    mainSource.indexOf("const sidecarHost"),
+  );
+  assert.equal((schemeRegistrations.match(/corsEnabled:\s*true/g) ?? []).length, 1);
 });
 
 test("renderer event subscriptions are explicitly allowlisted", () => {

@@ -1,6 +1,7 @@
-import { convertFileSrc, invoke } from '@/lib/desktop-runtime/core'
+import { convertFileSrc, invoke, isDesktopRuntime } from '@/lib/desktop-runtime/core'
 import { relaunch } from '@/lib/desktop-runtime/process'
 import { check, type DownloadEvent, type Update } from '@/lib/desktop-runtime/updater'
+import type { FileRef } from '@lume/shared'
 
 export interface DesktopUpdateInfo {
   currentVersion: string
@@ -48,6 +49,15 @@ export const openInSystem = (path: string) =>
   invoke<void>('open_in_system', { path })
 export const revealPathInSystem = (path: string) =>
   invoke<void>('reveal_path_in_system', { path })
+export const openFileRefInSystem = (ref: FileRef) =>
+  invoke<void>('open_file_ref', { ref })
+export const revealFileRefInSystem = (ref: FileRef) =>
+  invoke<void>('reveal_file_ref', { ref })
+export const createFilePreviewScope = (input: { ref: FileRef; kind: 'html-directory' | 'media-file'; generation?: number }) =>
+  invoke<{ token: string; url: string; expiresAt: number }>('create_file_preview_scope', input)
+export const revokeFilePreviewScope = (token: string) =>
+  invoke<void>('revoke_file_preview_scope', { token })
+export { isDesktopRuntime }
 export const writeClipboardText = (text: string) =>
   invoke<void>('write_clipboard_text', { text })
 export const localFilePreviewUrl = (path: string) => convertFileSrc(path)

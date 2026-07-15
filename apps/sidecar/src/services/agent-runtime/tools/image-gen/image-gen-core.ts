@@ -126,6 +126,7 @@ export async function generateImage(
           filename: saved.filename,
           mediaType: saved.mediaType,
           size: saved.size,
+          ...(saved.fileRef ? { fileRef: saved.fileRef } : {}),
         }],
         modelUsed: modelRef,
         mode,

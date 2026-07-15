@@ -14,6 +14,7 @@ import { smartAddMemoryV2Candidate } from "./smart-add";
 import { extractExplicitMemoryCandidates } from "./extraction";
 import { claimFromEntry, inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
 import type { MemoryV2Candidate, MemoryV2Kind, MemoryV2Scope } from "./types";
+import { memoryFileRefForPath } from "./source-files";
 
 export const MEMORY_V2_TOOL_NAMES = [
   "memory.search",
@@ -33,6 +34,7 @@ export async function searchMemoryTool(input: MemorySearchToolInput): Promise<Me
     path: item.path,
     snippet: item.statement,
     citation: item.citation,
+    ...fileRefField(item.scope, input.workspaceSlug, item.citation),
     score: item.score,
     kind: fromMemoryV2Kind(item.kind),
     scope: item.scope,
@@ -63,7 +65,8 @@ export async function readMemoryTool(input: MemoryReadToolInput): Promise<Memory
         confidence: confidenceNumber(entry.frontmatter.confidence),
         claim: claimFromEntry(entry)
       },
-      citation: entry.path
+      citation: entry.path,
+      ...fileRefField(entry.frontmatter.scope, input.workspaceSlug, entry.path)
     };
   }
   if (!input.path) {
@@ -78,8 +81,19 @@ export async function readMemoryTool(input: MemoryReadToolInput): Promise<Memory
   return {
     path: input.path,
     text,
-    citation: input.from ? `${input.path}#L${input.from}` : input.path
+    citation: input.from ? `${input.path}#L${input.from}` : input.path,
+    ...fileRefFieldForAnyScope(input.workspaceSlug, input.path)
   };
+}
+
+function fileRefField(scope: "workspace" | "global", workspaceSlug: string, path: string) {
+  const fileRef = memoryFileRefForPath({ scope, workspaceSlug, path });
+  return fileRef ? { fileRef } : {};
+}
+
+function fileRefFieldForAnyScope(workspaceSlug: string, path: string) {
+  const workspace = fileRefField("workspace", workspaceSlug, path);
+  return workspace.fileRef ? workspace : fileRefField("global", workspaceSlug, path);
 }
 
 export async function rememberMemoryTool(input: MemoryRememberToolInput): Promise<MemoryToolWriteResult> {

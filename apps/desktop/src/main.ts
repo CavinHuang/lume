@@ -12,6 +12,7 @@ import {
   powerMonitor,
   safeStorage,
   screen,
+  session,
   shell,
   utilityProcess,
 } from 'electron'
@@ -77,6 +78,13 @@ import {
   validateRendererInvokeCommand,
 } from './electron-security'
 import {
+  createPreviewScopeRegistry,
+  createPreviewProtocolResponse,
+  isAllowedPreviewFrameNavigation,
+  previewScopeUrl,
+  previewTokenFromUrl,
+} from './file-protocol'
+import {
   createUtilityProcessSidecarForkConfig,
   getDesktopHostBinaryPath,
   getNativeBinaryPath,
@@ -107,6 +115,8 @@ const DESKTOP_CONTEXT_UNLOCK_METHOD = 'desktop-context:unlock'
 const DESKTOP_CONTEXT_SET_SUSPENDED_METHOD = 'desktop-context:set-suspended'
 const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
 const DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD = 'desktop-context:get-foreground-target'
+const previewScopes = createPreviewScopeRegistry()
+let previewOwnershipGateRegistered = false
 const DESKTOP_CONTEXT_CAPTURE_WINDOW_METHOD = 'desktop-context:capture-window'
 const DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD = 'desktop-context:proposal-created'
 const DESKTOP_CONTEXT_PROPOSAL_OPEN_REQUEST_METHOD = 'desktop-context:proposal-open-request'
@@ -191,6 +201,7 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       stream: true,
+      corsEnabled: true,
     },
   },
 ])
@@ -412,7 +423,20 @@ function registerAppProtocol() {
 }
 
 function registerFileProtocol() {
+  if (!previewOwnershipGateRegistered) {
+    previewOwnershipGateRegistered = true
+    session.defaultSession.webRequest.onBeforeRequest(
+      { urls: [`${FILE_PROTOCOL}://preview/*`] },
+      (details, callback) => {
+        const token = previewTokenFromUrl(details.url)
+        callback({ cancel: !token || !previewScopes.owns(token, details.webContentsId) })
+      },
+    )
+  }
   protocol.handle(FILE_PROTOCOL, async (request) => {
+    if (request.url.startsWith(`${FILE_PROTOCOL}://preview/`)) {
+      return createPreviewProtocolResponse(previewScopes, request)
+    }
     const workspacesRoot = join(resolveConfigDir(), 'agent-workspaces')
     const resolved = resolveFileProtocolPath(request.url, workspacesRoot)
     if (resolved.kind === 'forbidden') return new Response('Forbidden', { status: 403 })
@@ -555,6 +579,7 @@ function attachWindowBehavior(win) {
 }
 
 export function attachWebContentsSecurity(win, { allowNavigation }) {
+  const ownerWebContentsId = win.webContents.id
   win.webContents.on('will-navigate', (event, url) => {
     if (allowNavigation(url)) return
     event.preventDefault()
@@ -569,6 +594,13 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
     }
     return { action: result.action }
   })
+
+  win.webContents.on('will-frame-navigate', (event, url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) return
+    if (isAllowedPreviewFrameNavigation(previewScopes, url, win.webContents.id)) return
+    event.preventDefault()
+  })
+  win.webContents.once('destroyed', () => previewScopes.revokeOwner(ownerWebContentsId))
 
   win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false)
@@ -703,7 +735,7 @@ async function toggleQuickInput() {
   quickInputWindow.focus()
 }
 
-async function dispatchCommand(command, payload: Record<string, any> = {}) {
+async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
     case 'healthcheck': {
       await sidecarHost.call('healthcheck', null)
@@ -813,6 +845,32 @@ async function dispatchCommand(command, payload: Record<string, any> = {}) {
     }
     case 'reveal_path_in_system':
       shell.showItemInFolder(resolveExistingPath(payload.path))
+      return null
+    case 'open_file_ref': {
+      const resolved = await sidecarHost.call('agent:resolve-file-ref', { ref: payload.ref }) as { path: string }
+      const error = await shell.openPath(resolved.path)
+      if (error) throw new Error(error)
+      return null
+    }
+    case 'reveal_file_ref': {
+      const resolved = await sidecarHost.call('agent:resolve-file-ref', { ref: payload.ref }) as { path: string }
+      shell.showItemInFolder(resolved.path)
+      return null
+    }
+    case 'create_file_preview_scope': {
+      if (!context.ownerWebContentsId) throw new Error('preview scope owner is missing')
+      const resolved = await sidecarHost.call('agent:resolve-file-ref', { ref: payload.ref }) as { path: string }
+      const scope = previewScopes.create({
+        kind: payload.kind,
+        ownerWebContentsId: context.ownerWebContentsId,
+        entryRef: payload.ref,
+        absolutePath: resolved.path,
+        generation: payload.generation,
+      })
+      return { token: scope.token, url: previewScopeUrl(scope), expiresAt: scope.expiresAt }
+    }
+    case 'revoke_file_preview_scope':
+      previewScopes.revoke(String(payload.token ?? ''))
       return null
     case 'open_weread_key_webview': {
       const targetUrl = validateWereadUrl(payload.url)
@@ -1149,7 +1207,7 @@ function createSidecarHost({ onNotification }) {
 
 ipcMain.handle('lume:invoke', async (event, command, payload) => {
   validateIpcSender(event, getTrustedWindows())
-  return dispatchCommand(validateRendererInvokeCommand(command), payload)
+  return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId: event.sender.id })
 })
 ipcMain.handle('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。

@@ -1,6 +1,20 @@
-import { ClipboardCheck, FolderOpen, Globe, Plus, Terminal, X, type LucideIcon } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { ClipboardCheck, FolderOpen, Globe, List, Plus, Terminal, X, type LucideIcon } from 'lucide-react'
+import { useEffect, useMemo, useRef } from 'react'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { cn } from '@/lib/utils'
+import {
+  disambiguateFileTabLabels,
+  type RightPanelActiveItem,
+  type RightPanelFileTab,
+} from './right-panel-files-state'
 import {
   RIGHT_PANEL_FUNCTION_ORDER,
   getAvailableRightPanelFunctions,
@@ -8,132 +22,158 @@ import {
   type ThreadRightPanelWorkspace,
 } from './right-panel-state'
 
-import { Button } from '@/components/ui/button'
-interface RightPanelTabBarProps {
-  workspace: ThreadRightPanelWorkspace
-  onActivate: (type: RightPanelFunction) => void
-  onClose: (type: RightPanelFunction) => void
-  onOpen: (type: RightPanelFunction) => void
-}
+export type RightPanelTabItem =
+  | { kind: 'function'; id: string; type: RightPanelFunction; label: string }
+  | { kind: 'file'; id: string; tab: RightPanelFileTab; label: string }
 
-const FUNCTION_META: Record<RightPanelFunction, {
-  label: string
-  Icon: LucideIcon
-  shortcut?: string
-}> = {
+const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: LucideIcon; shortcut?: string }> = {
   review: { label: '审查', Icon: ClipboardCheck, shortcut: '^⇧G' },
   terminal: { label: '终端', Icon: Terminal },
   browser: { label: '浏览器', Icon: Globe, shortcut: '⌘T' },
   files: { label: '文件', Icon: FolderOpen, shortcut: '⌘P' },
 }
 
-export function RightPanelTabBar({
-  workspace,
-  onActivate,
-  onClose,
-  onOpen,
-}: RightPanelTabBarProps) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement | null>(null)
-  const availableFunctions = getAvailableRightPanelFunctions(workspace)
-  const openedFunctions = RIGHT_PANEL_FUNCTION_ORDER.filter((type) => workspace.tabs[type])
-
-  const openFunction = (type: RightPanelFunction) => {
-    onOpen(type)
-    setMenuOpen(false)
+export function buildRightPanelTabItems(
+  workspace: ThreadRightPanelWorkspace,
+  fileTabs: RightPanelFileTab[],
+): RightPanelTabItem[] {
+  const labels = disambiguateFileTabLabels(fileTabs)
+  const result: RightPanelTabItem[] = []
+  for (const type of RIGHT_PANEL_FUNCTION_ORDER) {
+    if (!workspace.tabs[type]) continue
+    result.push({ kind: 'function', id: `function:${type}`, type, label: FUNCTION_META[type].label })
+    if (type === 'files') {
+      result.push(...fileTabs.map((tab) => ({ kind: 'file' as const, id: tab.id, tab, label: labels[tab.id]! })))
+    }
   }
+  if (!workspace.tabs.files) {
+    result.push(...fileTabs.map((tab) => ({ kind: 'file' as const, id: tab.id, tab, label: labels[tab.id]! })))
+  }
+  return result
+}
+
+interface RightPanelTabBarProps {
+  workspace: ThreadRightPanelWorkspace
+  fileTabs: RightPanelFileTab[]
+  activeItem: RightPanelActiveItem | null
+  onActivateFunction: (type: RightPanelFunction) => void
+  onActivateFile: (tabId: string) => void
+  onCloseFunction: (type: RightPanelFunction) => void
+  onCloseFile: (tabId: string) => void
+  onOpenFunction: (type: RightPanelFunction) => void
+}
+
+export function RightPanelTabBar(props: RightPanelTabBarProps) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const activeRef = useRef<HTMLDivElement | null>(null)
+  const items = useMemo(
+    () => buildRightPanelTabItems(props.workspace, props.fileTabs),
+    [props.workspace, props.fileTabs],
+  )
+  const availableFunctions = getAvailableRightPanelFunctions(props.workspace)
 
   useEffect(() => {
-    if (!menuOpen) return
+    activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [props.activeItem])
 
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!shouldCloseRightPanelFunctionMenuForTarget(menuRef.current, event.target as Node)) return
-      setMenuOpen(false)
-    }
+  const isActive = (item: RightPanelTabItem) => item.kind === 'function'
+    ? props.activeItem?.kind === 'function' && props.activeItem.type === item.type
+    : props.activeItem?.kind === 'file' && props.activeItem.tabId === item.id
 
-    window.addEventListener('pointerdown', handlePointerDown)
-    return () => window.removeEventListener('pointerdown', handlePointerDown)
-  }, [menuOpen])
+  const activate = (item: RightPanelTabItem) => item.kind === 'function'
+    ? props.onActivateFunction(item.type)
+    : props.onActivateFile(item.id)
+
+  const close = (item: RightPanelTabItem) => item.kind === 'function'
+    ? props.onCloseFunction(item.type)
+    : props.onCloseFile(item.id)
 
   return (
-    <div className="relative flex h-11 shrink-0 items-center gap-1 border-b border-[var(--lume-border-subtle)] px-3">
-      <div className="flex min-w-0 items-center gap-1">
-        {openedFunctions.map((type) => {
-          const { label, Icon } = FUNCTION_META[type]
-          const active = workspace.activeTab === type
-
+    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-[var(--lume-border-subtle)] px-1.5">
+      <div
+        ref={scrollerRef}
+        className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        onWheel={(event) => {
+          if (!scrollerRef.current || event.deltaY === 0) return
+          scrollerRef.current.scrollLeft += event.deltaY
+        }}
+      >
+        {items.map((item) => {
+          const active = isActive(item)
+          const Icon = item.kind === 'function' ? FUNCTION_META[item.type].Icon : null
+          const title = item.kind === 'file'
+            ? `${item.tab.ref.source}: ${item.tab.ref.relativePath}`
+            : item.label
           return (
             <div
-              key={type}
+              key={item.id}
+              ref={active ? activeRef : undefined}
+              onMouseDown={(event) => {
+                if (!shouldCloseTabForMouseButton(event.button)) return
+                event.preventDefault()
+                close(item)
+              }}
               className={cn(
-                'group flex h-8 min-w-0 items-center rounded-[8px] border border-transparent text-[13px] font-medium transition-colors',
+                'group flex h-7 shrink-0 items-center rounded-md border border-transparent text-[12px] transition-colors',
                 active
-                  ? 'border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border))] bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                  ? 'border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]'
                   : 'text-[var(--lume-text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--lume-text-secondary)]',
               )}
+              title={title}
             >
-              <Button
-                variant="ghost"
-                type="button"
-                onClick={() => onActivate(type)}
-                className="flex h-full min-w-0 items-center gap-2 rounded-l-[8px] pl-2.5 pr-1"
-                title={label}
-              >
-                <Icon size={15} className="shrink-0" />
-                <span className="min-w-0 max-w-[128px] truncate">{label}</span>
+              <Button variant="ghost" type="button" onClick={() => activate(item)} className="h-full gap-1.5 rounded-md px-2">
+                {Icon ? <Icon size={14} /> : item.kind === 'file' ? <FileTypeIcon filename={item.tab.ref.relativePath} size={14} /> : null}
+                <span className="max-w-[132px] truncate">{item.label}</span>
               </Button>
               <Button
                 variant="ghost"
                 type="button"
-                onClick={() => onClose(type)}
-                className="mr-1 flex size-5 shrink-0 items-center justify-center rounded text-foreground/42 opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground group-hover:opacity-100"
-                title={`关闭${label}`}
+                onClick={() => close(item)}
+                className={cn('mr-0.5 size-5 p-0 opacity-0 group-hover:opacity-100', active && 'opacity-100')}
+                title={`关闭${item.label}`}
               >
-                <X size={12} />
+                <X size={11} />
               </Button>
             </div>
           )
         })}
-
-        <div className="relative shrink-0" ref={menuRef}>
-          <Button
-                variant="ghost"
-            type="button"
-            disabled={availableFunctions.length === 0}
-            onClick={() => setMenuOpen((open) => !open)}
-            className={cn(
-              'flex size-8 items-center justify-center rounded-[8px] border border-transparent text-foreground/55 transition-colors',
-              availableFunctions.length === 0
-                ? 'cursor-not-allowed opacity-40'
-                : 'hover:border-[var(--border)] hover:bg-[var(--surface-2)] hover:text-foreground',
-            )}
-            title={availableFunctions.length === 0 ? '全部功能已打开' : '打开功能'}
-          >
-            <Plus size={17} />
-          </Button>
-
-          {menuOpen && availableFunctions.length > 0 && (
-            <div className="absolute left-0 top-10 z-20 min-w-[240px] rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_18px_55px_-32px_hsl(var(--lume-shadow-panel)/0.62)] backdrop-blur">
-              {availableFunctions.map((type) => {
-                const { label, Icon, shortcut } = FUNCTION_META[type]
-                return (
-                  <Button
-                variant="ghost"
-                    key={type}
-                    type="button"
-                    onClick={() => openFunction(type)}
-                    className="flex h-9 w-full items-center gap-2 rounded-[7px] px-2.5 text-left text-[13px] font-medium text-[var(--lume-text-primary)] transition-colors hover:bg-[var(--lume-accent-soft)]"
-                  >
-                    <Icon size={16} className="shrink-0 text-foreground/58" />
-                    <span className="min-w-0 flex-1 truncate">{label}</span>
-                    {shortcut && <span className="text-[12px] text-foreground/42">{shortcut}</span>}
-                  </Button>
-                )
-              })}
-            </div>
-          )}
-        </div>
       </div>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" className="size-7 p-0" title="打开功能" />}>
+          <Plus size={15} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent>
+          {availableFunctions.map((type) => {
+            const { Icon, label, shortcut } = FUNCTION_META[type]
+            return (
+              <DropdownMenuItem key={type} onSelect={() => props.onOpenFunction(type)}>
+                <Icon size={14} />
+                <span className="flex-1">{label}</span>
+                {shortcut && <span className="text-foreground/40">{shortcut}</span>}
+              </DropdownMenuItem>
+            )
+          })}
+          {availableFunctions.length === 0 && <DropdownMenuItem disabled>全部功能已打开</DropdownMenuItem>}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" className="size-7 p-0" title="全部 Tab" />}>
+          <List size={14} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="max-h-80 min-w-56 overflow-y-auto">
+          {items.map((item, index) => (
+            <DropdownMenuItem key={item.id} onSelect={() => activate(item)}>
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              <Button variant="ghost" className="size-5 p-0" onClick={(event) => closeAllTabsMenuItem(event, () => close(item))}><X size={11} /></Button>
+              {index === items.length - 1 ? null : undefined}
+            </DropdownMenuItem>
+          ))}
+          {items.length > 0 && <DropdownMenuSeparator />}
+          {items.length === 0 && <DropdownMenuItem disabled>暂无 Tab</DropdownMenuItem>}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
@@ -143,4 +183,17 @@ export function shouldCloseRightPanelFunctionMenuForTarget(
   target: Node,
 ): boolean {
   return !menu?.contains(target)
+}
+
+export function shouldCloseTabForMouseButton(button: number): boolean {
+  return button === 1
+}
+
+export function closeAllTabsMenuItem(
+  event: Pick<Event, 'preventDefault' | 'stopPropagation'>,
+  close: () => void,
+): void {
+  event.preventDefault()
+  event.stopPropagation()
+  close()
 }

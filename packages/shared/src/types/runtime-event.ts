@@ -1,4 +1,4 @@
-import type { AgentMessageAttachmentInput } from "./agent";
+import type { AgentMessageAttachmentInput, FileRef } from "./agent";
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
@@ -304,6 +304,7 @@ export interface MemoryContextUsedRuntimeEvent extends RuntimeEventBase {
     scope: "global" | "workspace";
     status: "active" | "suspected_stale";
     citation: string;
+    fileRef?: FileRef;
     reason: string;
     claim?: MemoryClaim;
   }>;

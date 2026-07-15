@@ -18,6 +18,9 @@ test("web shell declares an Electron-compatible CSP without inline scripts", () 
   assert.match(csp, /default-src 'self'/);
   assert.match(csp, /script-src 'self' 'wasm-unsafe-eval'/);
   assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /frame-src 'self' https: http: lume-file:/);
+  assert.doesNotMatch(csp, /script-src[^;]*lume-file:/);
+  assert.doesNotMatch(csp, /connect-src[^;]*lume-file:/);
   assert.doesNotMatch(csp, /script-src[^;]*'unsafe-inline'/);
   assert.doesNotMatch(indexHtml, /<script>([\s\S]*?)<\/script>/i);
   assert.match(indexHtml, /<script\s+src="\/boot-theme\.js"><\/script>/);

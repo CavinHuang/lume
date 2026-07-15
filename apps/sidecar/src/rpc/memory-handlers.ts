@@ -22,6 +22,7 @@ import {
 } from "../services/memory-v2/tools";
 import { getMemoryV2SettingsSnapshot } from "../services/memory-v2/settings-snapshot";
 import { openMemoryV2Source } from "../services/memory-v2/source-open";
+import { listMemorySourceFiles } from "../services/memory-v2/source-files";
 import { organizeMemoryHistory } from "../services/memory-v2/history-organizer";
 import { organizeMemoryEntries } from "../services/memory-v2/entry-organizer";
 import { ingestExternalMemorySources } from "../services/memory-v2/ingestion";
@@ -39,6 +40,7 @@ import {
   memoryOrganizeJobInputSchema,
   memoryOrganizeHistoryInputSchema,
   memoryOpenSourceInputSchema,
+  memoryListSourceFilesInputSchema,
   memoryReadToolInputSchema,
   memoryRememberToolInputSchema,
   memoryResolvePendingInputSchema,
@@ -118,6 +120,11 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
     [MEMORY_IPC_CHANNELS.OPEN_SOURCE]: async (params) => {
       return openMemoryV2Source(
         validateInput(memoryOpenSourceInputSchema, params, MEMORY_IPC_CHANNELS.OPEN_SOURCE)
+      );
+    },
+    [MEMORY_IPC_CHANNELS.LIST_SOURCE_FILES]: async (params) => {
+      return listMemorySourceFiles(
+        validateInput(memoryListSourceFilesInputSchema, params, MEMORY_IPC_CHANNELS.LIST_SOURCE_FILES)
       );
     },
     [MEMORY_IPC_CHANNELS.UPDATE_ENTRY]: async (params) => {
