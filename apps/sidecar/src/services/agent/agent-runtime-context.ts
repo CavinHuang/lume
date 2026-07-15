@@ -10,6 +10,8 @@ interface ResolveAgentDynamicContextInput {
   workspaceName?: string;
   workspaceSlug?: string;
   agentCwd?: string;
+  lumeWorkDir?: string;
+  projectRoot?: string;
   availableTools?: string[];
   threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
@@ -41,6 +43,8 @@ export function resolveAgentDynamicContextInput(
     workspaceName: input.workspaceName,
     workspaceSlug: input.workspaceSlug,
     agentCwd: input.agentCwd,
+    lumeWorkDir: input.lumeWorkDir,
+    projectRoot: input.projectRoot,
     availableTools: input.availableTools,
     userMessage: input.userMessage,
     enabledPlugins: input.enabledPlugins

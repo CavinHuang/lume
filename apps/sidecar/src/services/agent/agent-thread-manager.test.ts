@@ -26,7 +26,7 @@ import {
   listTrashedThreads
 } from "./agent-thread-manager";
 import { createAgentWorkspace } from "./agent-workspace-manager";
-import { getAgentThreadArtifactsPath, getAgentThreadFilesPath, getAgentThreadPlansPath, getAgentThreadRootPath, getAgentWorkspacePath } from "../infra/config-paths";
+import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDirPath
@@ -55,6 +55,12 @@ describe("agent-thread-manager advanced ops", () => {
     }
   });
 
+  function projectPath(name: string): string {
+    const path = join(tempConfigDir, "projects", name);
+    mkdirSync(path, { recursive: true });
+    return path;
+  }
+
   test("toggleAgentThreadPin 应可在置顶和取消置顶之间切换", () => {
     const created = createAgentThread("测试会话");
     const pinned = toggleAgentThreadPin(created.id);
@@ -78,27 +84,42 @@ describe("agent-thread-manager advanced ops", () => {
   });
 
   test("createAgentThread 应创建 files plans artifacts 与 .context 子目录，且不再创建 .claude", () => {
-    const workspace = createAgentWorkspace("结构工作区");
+    const workspace = createAgentWorkspace("结构工作区", { projectPath: projectPath("structure") });
     const created = createAgentThread("结构线程", undefined, workspace.id);
 
-    const threadRoot = getAgentThreadRootPath(workspace.slug, created.id);
+    const resolved = resolveAgentThreadWorkdir(created.id);
+    const threadRoot = resolved.lumeWorkDir;
 
     expect(existsSync(threadRoot)).toBeTrue();
-    expect(existsSync(getAgentThreadFilesPath(workspace.slug, created.id))).toBeTrue();
-    expect(existsSync(getAgentThreadPlansPath(workspace.slug, created.id))).toBeTrue();
-    expect(existsSync(getAgentThreadArtifactsPath(workspace.slug, created.id))).toBeTrue();
+    expect(resolved.agentCwd).toBe(workspace.projectPath!);
+    expect(existsSync(resolved.filesRoot)).toBeTrue();
+    expect(existsSync(resolved.plansRoot)).toBeTrue();
+    expect(existsSync(resolved.artifactsRoot)).toBeTrue();
     expect(existsSync(join(threadRoot, ".context"))).toBeTrue();
     expect(existsSync(join(threadRoot, ".claude"))).toBeFalse();
   });
 
-  test("moveAgentThreadToWorkspace 应迁移 session 工作目录并更新 workspaceId", () => {
-    const sourceWorkspace = createAgentWorkspace("源工作区");
-    const targetWorkspace = createAgentWorkspace("目标工作区");
+  test("resolveAgentThreadWorkdir 应惰性迁移旧线程工作目录", () => {
+    const workspace = createAgentWorkspace("旧项目", { projectPath: projectPath("legacy") });
+    const created = createAgentThread("旧线程", undefined, workspace.id);
+    const legacyRoot = join(tempConfigDir, "agent-workspaces", workspace.slug, "threads", created.id);
+    const legacyFiles = join(legacyRoot, "files");
+    mkdirSync(legacyFiles, { recursive: true });
+    writeFileSync(join(legacyFiles, "legacy.txt"), "legacy", "utf-8");
+
+    const resolved = resolveAgentThreadWorkdir(created.id);
+
+    expect(readFileSync(join(resolved.filesRoot, "legacy.txt"), "utf-8")).toBe("legacy");
+    expect(existsSync(join(resolved.lumeWorkDir, ".migration-v1.json"))).toBeTrue();
+    expect(existsSync(legacyRoot)).toBeFalse();
+  });
+  test("moveAgentThreadToWorkspace 应保留 file context 并更新 workspaceId", () => {
+    const sourceWorkspace = createAgentWorkspace("源工作区", { projectPath: projectPath("source") });
+    const targetWorkspace = createAgentWorkspace("目标工作区", { projectPath: projectPath("target") });
     const created = createAgentThread("迁移会话", undefined, sourceWorkspace.id);
 
-    const sourceSessionDir = getAgentThreadRootPath(sourceWorkspace.slug, created.id);
-    const targetSessionDir = getAgentThreadRootPath(targetWorkspace.slug, created.id);
-    writeFileSync(join(sourceSessionDir, "note.txt"), "hello", "utf-8");
+    const sourceWorkdir = resolveAgentThreadWorkdir(created.id);
+    writeFileSync(join(sourceWorkdir.lumeWorkDir, "note.txt"), "hello", "utf-8");
     updateAgentThreadMeta(created.id, {
       sdkThreadId: "sdk-session",
       runtimeThreadId: "pi-session"
@@ -109,40 +130,42 @@ describe("agent-thread-manager advanced ops", () => {
     expect(moved.workspaceId).toBe(targetWorkspace.id);
     expect(moved.sdkThreadId).toBeUndefined();
     expect(moved.runtimeThreadId).toBeUndefined();
-    expect(existsSync(sourceSessionDir)).toBeFalse();
-    expect(existsSync(targetSessionDir)).toBeTrue();
-    expect(readFileSync(join(targetSessionDir, "note.txt"), "utf-8")).toBe("hello");
+    const movedWorkdir = resolveAgentThreadWorkdir(created.id);
+    expect(movedWorkdir.fileContextId).toBe(sourceWorkdir.fileContextId);
+    expect(movedWorkdir.lumeWorkDir).toBe(sourceWorkdir.lumeWorkDir);
+    expect(movedWorkdir.agentCwd).toBe(targetWorkspace.projectPath!);
+    expect(readFileSync(join(movedWorkdir.lumeWorkDir, "note.txt"), "utf-8")).toBe("hello");
   });
 
-  test("moveAgentThreadToWorkspace 在无源工作目录时也应创建目标目录", () => {
-    const targetWorkspace = createAgentWorkspace("目标工作区");
+  test("moveAgentThreadToWorkspace 在无源工作目录时也应确保 file context 可用", () => {
+    const targetWorkspace = createAgentWorkspace("目标工作区", { projectPath: projectPath("empty-target") });
     const created = createAgentThread("新会话");
 
     const moved = moveAgentThreadToWorkspace(created.id, targetWorkspace.id);
-    const targetSessionDir = getAgentThreadRootPath(targetWorkspace.slug, created.id);
+    const movedWorkdir = resolveAgentThreadWorkdir(created.id);
 
     expect(moved.workspaceId).toBe(targetWorkspace.id);
-    expect(existsSync(targetSessionDir)).toBeTrue();
+    expect(existsSync(movedWorkdir.lumeWorkDir)).toBeTrue();
+    expect(movedWorkdir.agentCwd).toBe(targetWorkspace.projectPath!);
     expect(getAgentThreadMeta(created.id)?.workspaceId).toBe(targetWorkspace.id);
   });
 
-  test("moveAgentThreadToWorkspace 当目标目录已存在时应以源目录覆盖", () => {
-    const sourceWorkspace = createAgentWorkspace("源工作区");
-    const targetWorkspace = createAgentWorkspace("目标工作区");
+  test("moveAgentThreadToWorkspace 不应覆盖既有 file context 文件", () => {
+    const sourceWorkspace = createAgentWorkspace("源工作区", { projectPath: projectPath("overwrite-source") });
+    const targetWorkspace = createAgentWorkspace("目标工作区", { projectPath: projectPath("overwrite-target") });
     const created = createAgentThread("覆盖迁移会话", undefined, sourceWorkspace.id);
 
-    const sourceSessionDir = getAgentThreadRootPath(sourceWorkspace.slug, created.id);
-    const targetSessionDir = getAgentThreadRootPath(targetWorkspace.slug, created.id);
-    writeFileSync(join(sourceSessionDir, "source.txt"), "source", "utf-8");
-    mkdirSync(targetSessionDir, { recursive: true });
-    writeFileSync(join(targetSessionDir, "target.txt"), "target", "utf-8");
+    const workdir = resolveAgentThreadWorkdir(created.id);
+    writeFileSync(join(workdir.lumeWorkDir, "source.txt"), "source", "utf-8");
+    writeFileSync(join(workdir.lumeWorkDir, "target.txt"), "target", "utf-8");
 
     const moved = moveAgentThreadToWorkspace(created.id, targetWorkspace.id);
+    const movedWorkdir = resolveAgentThreadWorkdir(created.id);
 
     expect(moved.workspaceId).toBe(targetWorkspace.id);
-    expect(existsSync(join(targetSessionDir, "source.txt"))).toBeTrue();
-    expect(existsSync(join(targetSessionDir, "target.txt"))).toBeFalse();
-    expect(existsSync(sourceSessionDir)).toBeFalse();
+    expect(movedWorkdir.lumeWorkDir).toBe(workdir.lumeWorkDir);
+    expect(existsSync(join(movedWorkdir.lumeWorkDir, "source.txt"))).toBeTrue();
+    expect(existsSync(join(movedWorkdir.lumeWorkDir, "target.txt"))).toBeTrue();
   });
 
   test("JSONL 缺失时应回退到 runtime-core transcript 消息", () => {

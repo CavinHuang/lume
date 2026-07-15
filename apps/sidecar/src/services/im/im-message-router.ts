@@ -49,7 +49,11 @@ export interface InboundImRouteMessage {
 }
 
 export interface ImMessageRouterDeps {
-  createThread?: (title: string, workspaceId?: string) => { id: string } | Promise<{ id: string }>;
+  createThread?: (
+    title: string,
+    workspaceId?: string,
+    options?: { fileContextMode: "newRoot" }
+  ) => { id: string } | Promise<{ id: string }>;
   updateThreadMeta?: (threadId: string, patch: Pick<AgentThreadMeta, "source">) => void | Promise<void>;
   sendMessage?: (input: AgentSendInput) => void | Promise<void>;
   submitToolPermission?: (input: AgentToolPermissionResponseInput) => { ok: true };
@@ -490,9 +494,11 @@ export async function routeInboundImMessage(
   }
   const thread = existing
     ? { id: existing.threadId }
-    : await (deps.createThread ?? ((title: string, workspaceId?: string) => createAgentThread(title, undefined, workspaceId)))(
+    : await (deps.createThread ?? ((title: string, workspaceId?: string, options?: { fileContextMode: "newRoot" }) =>
+      createAgentThread(title, undefined, workspaceId, undefined, undefined, options)))(
       titleForMessage(message),
-      message.workspaceId
+      message.workspaceId,
+      { fileContextMode: "newRoot" }
     );
 
   const binding = upsertImThreadBinding({

@@ -23,13 +23,14 @@ export interface ImageGenResult {
 }
 
 export interface ImageGenParams {
-  workspaceSlug: string;
+  workspaceSlug?: string;
   threadId: string;
   prompt: string;
   size?: string;
   referenceImage?: string;
   maskImage?: string;
   model?: string;
+  filesRoot?: string;
   abortSignal?: AbortSignal;
 }
 
@@ -38,7 +39,7 @@ export interface ImageGenDeps {
   decryptKey: (channelId: string) => string;
   callHttp: typeof callImageHttp;
   readModelRefs: (workspaceSlug?: string) => string[];
-  resolveRef: (workspaceSlug: string, threadId: string, threadPath: string) => string;
+  resolveRef: (workspaceSlug: string | undefined, threadId: string, threadPath: string) => string;
   saveOutput: typeof saveImageOutput;
 }
 
@@ -115,6 +116,7 @@ export async function generateImage(
         url: httpResult.url,
         b64: httpResult.b64,
         ext: httpResult.ext,
+        filesRoot: params.filesRoot,
         abortSignal: params.abortSignal,
       });
       log.info("图像生成成功", { modelRef, mode, threadPath: saved.threadPath });

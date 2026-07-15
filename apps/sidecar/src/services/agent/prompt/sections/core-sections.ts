@@ -37,8 +37,8 @@ export function buildWorkspaceRulesSection(ctx: Pick<CorePromptContext, "workspa
 
 - 工作区名称: ${ctx.workspaceName}
 - 系统配置入口: ~/.lume/lume.yaml
-- 工作区级 \`~/.lume/agent-workspaces/${ctx.workspaceSlug}/.context/\`：跨线程共享的持久文档
-- 线程目录: \`~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/\`
+- 当前工作目录由 runtime context 提供；项目会话中它是用户选择的真实本地目录
+- Lume 管理文件目录由 runtime context 提供，用于线程文件、计划和产物
 - 当前任务临时信息写线程级 \`.context/\`；跨线程规则、命令、架构决策写工作区上下文或 AGENTS.md`;
 }
 

@@ -7,6 +7,7 @@ import { generateImage } from "./image-gen-core";
 export interface CreateImageGenToolsInput {
   threadId: string;
   workspaceSlug?: string;
+  filesRoot?: string;
 }
 
 export function createImageGenTools(input: CreateImageGenToolsInput): ToolDefinition[] {
@@ -34,9 +35,6 @@ reference_image and mask_image accept a threadPath (relative to the current thre
       },
       async call(args, ctx) {
         const workspaceSlug = input.workspaceSlug;
-        if (!workspaceSlug) {
-          throw new Error("image_gen 需要工作区上下文");
-        }
         const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
         if (!prompt) {
           throw new Error("prompt 必填");
@@ -57,6 +55,7 @@ reference_image and mask_image accept a threadPath (relative to the current thre
           referenceImage,
           maskImage,
           model,
+          filesRoot: input.filesRoot,
           abortSignal: ctx.abortSignal,
         });
       },

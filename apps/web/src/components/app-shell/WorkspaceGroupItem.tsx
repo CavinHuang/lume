@@ -190,7 +190,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
               </Button>
             }
           />
-          <TooltipContent side="top">在此工作区新建会话</TooltipContent>
+          <TooltipContent side="top">在此项目中新建会话</TooltipContent>
         </Tooltip>
 
         <DropdownMenu>
@@ -199,7 +199,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
               <Button
                 variant="ghost"
                 type="button"
-                aria-label="工作区菜单"
+                aria-label="项目菜单"
                 className="absolute right-2 top-1/2 size-6 -translate-y-1/2 rounded-md p-0 text-[var(--lume-text-secondary)] opacity-0 transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)] group-hover/workspace:opacity-100"
               >
                 <MoreHorizontal size={13} />
@@ -218,7 +218,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
             <DropdownMenuSeparator />
             <DropdownMenuItem destructive onSelect={() => onDeleteWorkspace(id)}>
               <Trash2 size={14} />
-              删除工作区
+              移除项目
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

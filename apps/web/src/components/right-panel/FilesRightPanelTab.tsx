@@ -21,7 +21,7 @@ import { openMemorySource, readMemory } from '@/lib/desktop-api/memory'
 import { cn } from '@/lib/utils'
 import { isImageFile, lumeFileUrl } from './file-preview-utils'
 import { FILE_TREE_DEFAULT_WIDTH, getRightPanelFileTreeDragWidth } from './right-panel-layout'
-import type { FilesTabState } from './right-panel-state'
+import { switchFilesSource, type FilesTabState } from './right-panel-state'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -49,12 +49,15 @@ export function FilesRightPanelTab({
   const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [imageSrc, setImageSrc] = useState<string | null>(null)
+  const [hasLegacyFiles, setHasLegacyFiles] = useState(false)
+  const [legacyChecked, setLegacyChecked] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [treeResizing, setTreeResizing] = useState(false)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const selectedPath = state.selectedPath
-  const source: FilesSource = state.source === 'workspace' && !workspaceSlug ? 'thread' : state.source
+  const source: FilesSource = !workspaceSlug && state.source !== 'lume' ? 'lume' : state.source
   const canShowTree = source !== 'memory'
   const isMarkdown = /\.(md|mdx|markdown)$/i.test(selectedPath ?? '')
   const isImage = isImageFile(selectedPath ?? '')
@@ -63,9 +66,43 @@ export function FilesRightPanelTab({
     onChange({ ...state, ...patch })
   }, [onChange, state])
 
+  const selectSource = useCallback((nextSource: FilesSource) => {
+    onChange(switchFilesSource(state, nextSource))
+  }, [onChange, state])
+
+  useEffect(() => {
+    if (!workspaceSlug) {
+      setHasLegacyFiles(false)
+      setLegacyChecked(true)
+      return
+    }
+    setLegacyChecked(false)
+    void sidecarCall<unknown>(AGENT_IPC_CHANNELS.LIST_WORKSPACE_DIRECTORY, { workspaceSlug })
+      .then((result) => {
+        const entries = Array.isArray(result)
+          ? result
+          : result && typeof result === 'object' && 'entries' in result
+            ? (result as { entries?: unknown[] }).entries ?? []
+            : []
+        setHasLegacyFiles(entries.length > 0)
+        setLegacyChecked(true)
+      })
+      .catch(() => {
+        setHasLegacyFiles(false)
+        setLegacyChecked(true)
+      })
+  }, [workspaceSlug])
+
+  useEffect(() => {
+    if (legacyChecked && state.source === 'legacy' && !hasLegacyFiles) {
+      onChange(switchFilesSource(state, workspaceSlug ? 'project' : 'lume'))
+    }
+  }, [hasLegacyFiles, legacyChecked, onChange, state, workspaceSlug])
+
   const loadPreview = useCallback(async () => {
     if (!selectedPath) {
       setContent('')
+      setImageSrc(null)
       setTruncated(false)
       setError(null)
       return
@@ -75,8 +112,29 @@ export function FilesRightPanelTab({
       setContent('')
       setTruncated(false)
       setError(null)
+      if (source === 'project' || source === 'legacy') {
+        setLoading(true)
+        try {
+          const result = await sidecarCall<{ data: string }>(
+            source === 'project'
+              ? AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA
+              : AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE_DATA,
+            { workspaceSlug, path: selectedPath },
+          )
+          setImageSrc(`data:${imageMediaType(selectedPath)};base64,${result.data}`)
+        } catch (nextError) {
+          setImageSrc(null)
+          setError(nextError instanceof Error ? nextError.message : '加载图片失败')
+        } finally {
+          setLoading(false)
+        }
+      } else {
+        setImageSrc(lumeFileUrl(selectedPath))
+      }
       return
     }
+
+    setImageSrc(null)
 
     setLoading(true)
     setError(null)
@@ -87,7 +145,12 @@ export function FilesRightPanelTab({
           const memory = await readMemory({ workspaceSlug, path: selectedPath })
           return { content: memory.text, truncated: false }
         })()
-        : source === 'workspace'
+        : source === 'project'
+          ? await sidecarCall<PreviewPayload>(AGENT_IPC_CHANNELS.READ_PROJECT_FILE, {
+          workspaceSlug,
+          path: selectedPath,
+        })
+          : source === 'legacy'
           ? await sidecarCall<PreviewPayload>(AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE, {
           workspaceSlug,
           path: selectedPath,
@@ -129,7 +192,10 @@ export function FilesRightPanelTab({
   const openSelectedFile = useCallback(async () => {
     if (!selectedPath) return
     try {
-      if (source === 'workspace') {
+      if (source === 'project') {
+        if (!workspaceSlug) return
+        await sidecarCall(AGENT_IPC_CHANNELS.OPEN_PROJECT_FILE, { workspaceSlug, path: selectedPath })
+      } else if (source === 'legacy') {
         if (!workspaceSlug) return
         await sidecarCall(AGENT_IPC_CHANNELS.OPEN_WORKSPACE_FILE, { workspaceSlug, path: selectedPath })
       } else if (source === 'memory') {
@@ -148,6 +214,20 @@ export function FilesRightPanelTab({
     }
   }, [selectedPath, source, threadId, workspaceSlug])
 
+  const exportLegacyResource = useCallback(async () => {
+    if (!selectedPath || !workspaceSlug) return
+    try {
+      await sidecarCall(AGENT_IPC_CHANNELS.EXPORT_LEGACY_RESOURCE_TO_PROJECT, {
+        workspaceSlug,
+        path: selectedPath,
+        conflict: 'error',
+      })
+      toast.success('已导出到项目目录')
+      setMenuOpen(false)
+    } catch (nextError) {
+      toast.error(nextError instanceof Error ? nextError.message : '导出失败')
+    }
+  }, [selectedPath, workspaceSlug])
   const copySelectedPath = useCallback(async () => {
     if (!selectedPath) return
     await writeClipboardText(selectedPath)
@@ -251,6 +331,11 @@ export function FilesRightPanelTab({
           </Button>
           {menuOpen && (
             <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-56 rounded-[10px] border border-border/80 bg-background/98 p-2 shadow-[0_18px_55px_-32px_hsl(var(--lume-shadow-panel)/0.62)] backdrop-blur">
+              {source === 'legacy' && (
+                <MenuButton disabled={!selectedPath} icon={<FolderOpen size={15} />} onClick={() => void exportLegacyResource()}>
+                  导出到项目（不覆盖）
+                </MenuButton>
+              )}
               <MenuButton disabled={!selectedPath} icon={<Copy size={15} />} onClick={copySelectedPath}>
                 复制路径
               </MenuButton>
@@ -301,7 +386,7 @@ export function FilesRightPanelTab({
               )}
               {isImage ? (
                 <img
-                  src={lumeFileUrl(selectedPath)}
+                  src={imageSrc ?? ''}
                   alt={basename(selectedPath)}
                   className="max-h-[72vh] w-auto max-w-full rounded-[8px] border border-border/60 bg-foreground/[0.02] object-contain"
                   onError={(event) => {
@@ -345,13 +430,18 @@ export function FilesRightPanelTab({
             >
               <div className="border-b border-border/60 px-3 py-3">
                 {workspaceSlug && (
-                  <div className="lume-segmented mb-2 grid grid-cols-2">
-                    <SourceButton active={source === 'thread'} onClick={() => update({ source: 'thread', selectedPath: null })}>
-                      线程文件
+                  <div className={cn('lume-segmented mb-2 grid', hasLegacyFiles ? 'grid-cols-3' : 'grid-cols-2')}>
+                    <SourceButton active={source === 'project'} onClick={() => selectSource('project')}>
+                      项目目录
                     </SourceButton>
-                    <SourceButton active={source === 'workspace'} onClick={() => update({ source: 'workspace', selectedPath: null })}>
-                      工作区文件
+                    <SourceButton active={source === 'lume'} onClick={() => selectSource('lume')}>
+                      Lume 工作目录
                     </SourceButton>
+                    {hasLegacyFiles && (
+                      <SourceButton active={source === 'legacy'} onClick={() => selectSource('legacy')}>
+                        旧版资源
+                      </SourceButton>
+                    )}
                   </div>
                 )}
                 <label className="flex h-9 items-center gap-2 rounded-[8px] border border-border/70 bg-background px-3 text-foreground/52">
@@ -365,13 +455,26 @@ export function FilesRightPanelTab({
                 </label>
               </div>
               <div className="min-h-0 flex-1">
-                {source === 'workspace' ? (
+                {source === 'project' ? (
+                  <WorkspaceFileBrowser
+                    workspaceSlug={workspaceSlug}
+                    listChannel={AGENT_IPC_CHANNELS.LIST_PROJECT_DIRECTORY}
+                    selectedPath={selectedPath ?? undefined}
+                    onOpenFile={(path) => update({ selectedPath: path })}
+                    showHeader={false}
+                    searchQuery={state.searchQuery}
+                    readOnly
+                    label="项目目录"
+                  />
+                ) : source === 'legacy' ? (
                   <WorkspaceFileBrowser
                     workspaceSlug={workspaceSlug}
                     selectedPath={selectedPath ?? undefined}
                     onOpenFile={(path) => update({ selectedPath: path })}
                     showHeader={false}
                     searchQuery={state.searchQuery}
+                    readOnly
+                    label="旧版资源"
                   />
                 ) : (
                   <FileBrowser
@@ -390,6 +493,15 @@ export function FilesRightPanelTab({
       </div>
     </div>
   )
+}
+
+function imageMediaType(path: string): string {
+  const extension = path.split('.').at(-1)?.toLowerCase()
+  if (extension === 'svg') return 'image/svg+xml'
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg'
+  if (extension === 'gif') return 'image/gif'
+  if (extension === 'webp') return 'image/webp'
+  return 'image/png'
 }
 
 function MenuButton({

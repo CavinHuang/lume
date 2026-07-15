@@ -9,6 +9,8 @@ const workspaceSchema = z.object({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
+  projectPath: z.string().optional(),
+  realpathKey: z.string().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
 })
@@ -40,12 +42,14 @@ export function registerWorkspaceCommands(options: RegisterWorkspacesCommandsOpt
   })
 
   options.app
-    .command("workspace create <name>", "Create a workspace")
+    .command("workspace create <projectPath>", "Create or select a project bound to a local directory")
+    .option("--name <name>", "Optional display name")
     .option("--slug <slug>", "Optional workspace slug")
-    .action(async (name: string, commandOptions: { slug?: string }) => {
+    .action(async (projectPath: string, commandOptions: { name?: string; slug?: string }) => {
       const context = await options.resolveContext()
       const workspace = await requireContextMethod(context.createWorkspace, "workspace create")({
-        name,
+        projectPath,
+        name: commandOptions.name,
         slug: commandOptions.slug,
       })
 

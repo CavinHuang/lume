@@ -6,6 +6,7 @@ import type {
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import { createLogger } from "../../../infra/logger";
 
@@ -18,12 +19,13 @@ export class ComputerUseActionLedger {
   readonly #path?: string;
   readonly #log;
 
-  constructor(input: { workspaceSlug?: string; threadId: string }) {
+  constructor(input: { workspaceSlug?: string; threadId: string; filesRoot?: string }) {
     this.#threadId = input.threadId;
     this.#log = createLogger("computer-use-action", input.threadId);
     if (input.workspaceSlug) {
+      const filesRoot = input.filesRoot ?? resolveFilesRoot(input.workspaceSlug, input.threadId);
       this.#path = join(
-        getAgentThreadFilesPath(input.workspaceSlug, input.threadId),
+        filesRoot,
         "computer-use",
         "action-ledger.jsonl",
       );
@@ -167,6 +169,14 @@ export class ComputerUseActionLedger {
     } catch {
       this.#log.warn("ignored unreadable action ledger", { path: this.#path });
     }
+  }
+}
+
+function resolveFilesRoot(workspaceSlug: string, threadId: string): string {
+  try {
+    return resolveAgentThreadWorkdir(threadId).filesRoot;
+  } catch {
+    return getAgentThreadFilesPath(workspaceSlug, threadId);
   }
 }
 

@@ -10,6 +10,7 @@ import {
   openFileInRightPanel,
   openRightPanelTab,
   sanitizeRightPanelWorkspace,
+  switchFilesSource,
 } from './right-panel-state'
 
 describe('right-panel-state', () => {
@@ -116,7 +117,7 @@ describe('right-panel-state', () => {
     expect(workspace.activeTab).toBe('files')
     expect(workspace.tabs.files).toMatchObject({
       type: 'files',
-      source: 'thread',
+      source: 'lume',
       selectedPath: 'README.md',
     })
 
@@ -132,7 +133,7 @@ describe('right-panel-state', () => {
       tabs: {
         files: {
           type: 'files',
-          source: 'thread',
+          source: 'lume',
           selectedPath: 'README.md',
           treeVisible: false,
           searchQuery: 'src',
@@ -144,7 +145,7 @@ describe('right-panel-state', () => {
     const next = openFileInRightPanel(workspace, 'package.json')
 
     expect(next.tabs.files).toMatchObject({
-      source: 'thread',
+      source: 'lume',
       selectedPath: 'package.json',
       treeVisible: false,
       searchQuery: 'src',
@@ -163,7 +164,22 @@ describe('right-panel-state', () => {
     })
   })
 
-  test('sanitize defaults missing files source to thread', () => {
+  test('switching project and Lume directories clears stale selection and search', () => {
+    expect(switchFilesSource({
+      type: 'files',
+      source: 'project',
+      selectedPath: 'README.md',
+      treeVisible: true,
+      searchQuery: 'readme',
+      enhancedView: true,
+    }, 'lume')).toMatchObject({
+      source: 'lume',
+      selectedPath: null,
+      searchQuery: '',
+    })
+  })
+
+  test('sanitize defaults missing files source to Lume work directory', () => {
     const workspace = sanitizeRightPanelWorkspace({
       activeTab: 'files',
       tabs: {
@@ -177,7 +193,7 @@ describe('right-panel-state', () => {
       },
     })
 
-    expect(workspace.tabs.files).toMatchObject({ source: 'thread' })
+    expect(workspace.tabs.files).toMatchObject({ source: 'lume' })
   })
 
   test('sanitize keeps valid file tree width and drops malformed width', () => {
@@ -186,7 +202,7 @@ describe('right-panel-state', () => {
       tabs: {
         files: {
           type: 'files',
-          source: 'thread',
+          source: 'lume',
           selectedPath: null,
           treeVisible: true,
           searchQuery: '',
@@ -201,7 +217,7 @@ describe('right-panel-state', () => {
       tabs: {
         files: {
           type: 'files',
-          source: 'thread',
+          source: 'lume',
           selectedPath: null,
           treeVisible: true,
           searchQuery: '',

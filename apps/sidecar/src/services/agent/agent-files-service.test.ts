@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getWorkspaceResourcesPath } from "../infra/config-paths";
@@ -8,13 +8,11 @@ import {
   copyFolderToWorkspace,
   deleteAgentFile,
   deleteWorkspaceFile,
+  exportLegacyResourceToProject,
   getAgentSessionPath,
-  listAttachedDirectory,
   listAgentDirectory,
   listWorkspaceRootDirectory,
   listWorkspaceDirectory,
-  moveAttachedPath,
-  renameAttachedPath,
   moveAgentFile,
   moveWorkspaceFile,
   renameAgentFile,
@@ -29,6 +27,7 @@ import {
   searchAgentWorkspaceFiles,
   toThreadRelativePath
 } from "./agent-files-service";
+import { createAgentWorkspace } from "./agent-workspace-manager";
 
 const createdDirs: string[] = [];
 const originalConfigDir = process.env.LUME_CONFIG_DIR;
@@ -48,6 +47,25 @@ afterEach(() => {
 });
 
 describe("agent-files-service file ops", () => {
+  test("旧版资源只读导出到项目且拒绝覆盖和符号链接", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("project", { projectPath });
+    const resources = getWorkspaceResourcesPath(workspace.slug);
+    writeFileSync(join(resources, "legacy.txt"), "legacy", "utf-8");
+
+    const exported = exportLegacyResourceToProject(workspace.slug, "legacy.txt", "error");
+    expect(existsSync(exported.path)).toBeTrue();
+    expect(() => exportLegacyResourceToProject(workspace.slug, "legacy.txt", "error")).toThrow("未覆盖");
+
+    const outside = join(configDir, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "secret.txt"), "secret", "utf-8");
+    symlinkSync(outside, join(resources, "outside-link"), "junction");
+    expect(() => exportLegacyResourceToProject(workspace.slug, "outside-link", "error")).toThrow("符号链接");
+  });
+
   test("应通过 threads/<threadId> 新目录结构解析 workspace slug", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-thread-root";
@@ -139,32 +157,6 @@ describe("agent-files-service file ops", () => {
       .toThrow("附件文件不存在");
     expect(() => toThreadRelativePath(workspaceSlug, sessionId, join(tmpdir(), "outside.md")))
       .toThrow("附件路径不在当前线程目录内");
-  });
-
-  test("应支持附加目录列出/重命名/移动", () => {
-    createTempConfigDir();
-    const tempRoot = mkdtempSync(join(tmpdir(), "lume-attached-"));
-    createdDirs.push(tempRoot);
-    const docsDir = join(tempRoot, "docs");
-    const movedDir = join(tempRoot, "moved");
-    mkdirSync(docsDir, { recursive: true });
-    mkdirSync(movedDir, { recursive: true });
-    const sourceFile = join(docsDir, "todo.txt");
-    writeFileSync(sourceFile, "todo", "utf-8");
-
-    const listed = listAttachedDirectory(docsDir);
-    expect(listed.length).toBe(1);
-    expect(listed[0]?.name).toBe("todo.txt");
-
-    const renamed = renameAttachedPath(sourceFile, "tasks.txt");
-    expect(renamed.ok).toBeTrue();
-    expect(existsSync(renamed.path)).toBeTrue();
-    expect(existsSync(sourceFile)).toBeFalse();
-
-    const moved = moveAttachedPath(renamed.path, movedDir);
-    expect(moved.ok).toBeTrue();
-    expect(existsSync(moved.path)).toBeTrue();
-    expect(existsSync(renamed.path)).toBeFalse();
   });
 
   test("saveFilesToAgentSession 应记录外部附加元信息并反映到列表", () => {

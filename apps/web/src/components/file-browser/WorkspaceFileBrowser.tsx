@@ -17,6 +17,8 @@ interface WorkspaceFileBrowserProps {
   onOpenFile?: (path: string) => void
   showHeader?: boolean
   searchQuery?: string
+  readOnly?: boolean
+  label?: string
 }
 
 export function WorkspaceFileBrowser({
@@ -27,6 +29,8 @@ export function WorkspaceFileBrowser({
   onOpenFile,
   showHeader = true,
   searchQuery = '',
+  readOnly = false,
+  label = '工作区共享',
 }: WorkspaceFileBrowserProps) {
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -61,7 +65,7 @@ export function WorkspaceFileBrowser({
       <div className="flex flex-col h-full">
         {showHeader && (
           <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-2.5">
-            <span className="text-[12px] font-medium text-[var(--text-3)]">工作区共享</span>
+            <span className="text-[12px] font-medium text-[var(--text-3)]">{label}</span>
           </div>
         )}
         <p className="px-3 py-6 text-center text-[11px] text-[var(--text-3)]">请先选择工作区</p>
@@ -73,7 +77,7 @@ export function WorkspaceFileBrowser({
     <div className="flex flex-col h-full">
       {showHeader && (
         <div className="flex items-center justify-between border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-3 py-2.5">
-          <span className="text-[12px] font-medium text-[var(--text-3)]">工作区共享</span>
+          <span className="text-[12px] font-medium text-[var(--text-3)]">{label}</span>
           <Button
                 variant="ghost"
             onClick={handleRefresh}
@@ -98,6 +102,7 @@ export function WorkspaceFileBrowser({
               onOpenFile={onOpenFile}
               searchQuery={searchQuery}
               largeRows={!showHeader}
+              readOnly={readOnly}
             />
           ))}
           {!loading && entries.length === 0 && (
@@ -119,6 +124,7 @@ function WorkspaceFileTreeItem({
   onOpenFile,
   searchQuery,
   largeRows,
+  readOnly,
 }: {
   entry: FileEntry
   depth: number
@@ -129,6 +135,7 @@ function WorkspaceFileTreeItem({
   onOpenFile?: (path: string) => void
   searchQuery: string
   largeRows: boolean
+  readOnly: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [children, setChildren] = useState<FileEntry[]>([])
@@ -189,7 +196,7 @@ function WorkspaceFileTreeItem({
 
   return (
     <div>
-      {entry.isDirectory
+      {entry.isDirectory || readOnly
         ? rowButton
         : (
           <FileLinkContextMenu
@@ -211,6 +218,7 @@ function WorkspaceFileTreeItem({
           onOpenFile={onOpenFile}
           searchQuery={searchQuery}
           largeRows={largeRows}
+          readOnly={readOnly}
         />
       ))}
     </div>

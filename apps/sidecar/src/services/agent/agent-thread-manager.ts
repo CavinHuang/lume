@@ -1,9 +1,7 @@
 
 import {
   appendFileSync,
-  cpSync,
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -21,17 +19,17 @@ import type {
 } from "@lume/shared";
 import {
   getAgentSessionDataDir,
-  getAgentThreadArtifactsPath,
-  getAgentThreadFilesPath,
+  getAgentFileContextArtifactsPath,
+  getAgentFileContextFilesPath,
+  getAgentFileContextPlansPath,
+  getAgentFileContextRootPath,
+  getAgentFileContextSystemContextPath,
   getAgentThreadMessagesPath,
-  getAgentThreadPlansPath,
-  getAgentThreadRootPath,
-  getAgentThreadSystemContextPath,
   getAgentWorkspacesDir,
   getAgentWorkspacePath,
-  getAgentSessionWorkspacePath,
   getAgentSessionsIndexPath
 } from "../infra/config-paths";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import {
   getVisibleAgentMessages,
@@ -53,6 +51,13 @@ interface AgentThreadsIndex {
 }
 
 const INDEX_VERSION = 1;
+
+type FileContextMode = "newRoot" | "inherit" | "fork";
+
+interface CreateAgentThreadOptions {
+  fileContextMode?: FileContextMode;
+  fileContextId?: string;
+}
 
 function buildModelRef(channelId?: string, modelId?: string): string | undefined {
   const trimmedChannelId = channelId?.trim();
@@ -151,10 +156,56 @@ function writeIndex(index: AgentThreadsIndex): void {
   }
 }
 
+function threadIndexLockPath(): string {
+  return `${getAgentSessionsIndexPath()}.lock`;
+}
+
+function withThreadIndexMutation<T>(fn: (index: AgentThreadsIndex) => T): T {
+  return withIndexMutationLock(threadIndexLockPath(), () => fn(readIndex()));
+}
+
+function resolveFileContextId(input: {
+  threadId: string;
+  parentThreadId?: string;
+  mode?: FileContextMode;
+  explicitFileContextId?: string;
+  index: AgentThreadsIndex;
+}): string {
+  if (input.explicitFileContextId?.trim()) {
+    return input.explicitFileContextId.trim();
+  }
+  if (input.mode === "inherit") {
+    if (!input.parentThreadId) {
+      throw new Error("fileContextMode=inherit 需要 parentThreadId");
+    }
+    const parent = input.index.threads.find((thread) => thread.id === input.parentThreadId);
+    if (!parent) {
+      throw new Error(`父线程不存在: ${input.parentThreadId}`);
+    }
+    return parent.fileContextId?.trim() || parent.id;
+  }
+  if (input.mode === "fork") {
+    return randomUUID();
+  }
+  return input.threadId;
+}
+
+function ensureLumeFileContext(fileContextId: string): void {
+  getAgentFileContextRootPath(fileContextId);
+  getAgentFileContextFilesPath(fileContextId);
+  getAgentFileContextPlansPath(fileContextId);
+  getAgentFileContextArtifactsPath(fileContextId);
+  getAgentFileContextSystemContextPath(fileContextId);
+}
+
 export function listAgentThreads(): AgentThreadMeta[] {
   return readIndex().threads
     .filter((t) => !t.status || t.status === "active")
     .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function listAllAgentThreads(): AgentThreadMeta[] {
+  return readIndex().threads.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 // ─── Thread list change notification (pub/sub) ───
@@ -190,9 +241,14 @@ export function createAgentThread(
   channelId?: string,
   workspaceId?: string,
   parentThreadId?: string,
-  modelId?: string
+  modelId?: string,
+  options?: CreateAgentThreadOptions
 ): AgentThreadMeta {
-  return createAgentThreadWithModelRef(title, undefined, channelId, workspaceId, parentThreadId, modelId);
+  return createAgentThreadWithModelRef(title, undefined, channelId, workspaceId, parentThreadId, modelId, options);
+}
+
+export function broadcastAgentThreadListChanged(): void {
+  notifyThreadListChanged();
 }
 
 export function createAgentThreadWithModelRef(
@@ -201,49 +257,54 @@ export function createAgentThreadWithModelRef(
   channelId?: string,
   workspaceId?: string,
   parentThreadId?: string,
-  modelId?: string
+  modelId?: string,
+  options?: CreateAgentThreadOptions
 ): AgentThreadMeta {
-  const index = readIndex();
-  const now = Date.now();
-  const explicitSelectionProvided = [modelRef, channelId, modelId]
-    .some((value) => typeof value === "string" && value.trim().length > 0);
-  const inheritedSelection = explicitSelectionProvided
-    ? null
-    : resolveInheritedThreadSelection(workspaceId);
+  const meta = withThreadIndexMutation((index) => {
+    const now = Date.now();
+    const id = randomUUID();
+    const explicitSelectionProvided = [modelRef, channelId, modelId]
+      .some((value) => typeof value === "string" && value.trim().length > 0);
+    const inheritedSelection = explicitSelectionProvided
+      ? null
+      : resolveInheritedThreadSelection(workspaceId);
+    const fileContextId = resolveFileContextId({
+      threadId: id,
+      parentThreadId,
+      mode: options?.fileContextMode ?? "newRoot",
+      explicitFileContextId: options?.fileContextId,
+      index
+    });
 
-  const meta: AgentThreadMeta = {
-    id: randomUUID(),
-    title: title || "新 Agent 线程",
-    modelRef: explicitSelectionProvided
-      ? modelRef ?? buildModelRef(channelId, modelId)
-      : inheritedSelection?.modelRef,
-    channelId: explicitSelectionProvided
-      ? channelId
-      : inheritedSelection?.channelId,
-    modelId,
-    modelSelectionSource: explicitSelectionProvided ? "thread-override" : "inherited",
-    workspaceId,
-    parentThreadId,
-    pinned: false,
-    createdAt: now,
-    updatedAt: now
-  };
+    const next: AgentThreadMeta = {
+      id,
+      title: title || "新 Agent 线程",
+      modelRef: explicitSelectionProvided
+        ? modelRef ?? buildModelRef(channelId, modelId)
+        : inheritedSelection?.modelRef,
+      channelId: explicitSelectionProvided
+        ? channelId
+        : inheritedSelection?.channelId,
+      modelId,
+      modelSelectionSource: explicitSelectionProvided ? "thread-override" : "inherited",
+      workspaceId,
+      fileContextId,
+      parentThreadId,
+      pinned: false,
+      createdAt: now,
+      updatedAt: now
+    };
 
-  index.threads.push(meta);
-  writeIndex(index);
+    index.threads.push(next);
+    writeIndex(index);
+    return next;
+  });
 
+  ensureLumeFileContext(meta.fileContextId ?? meta.id);
   if (workspaceId) {
     const workspace = getAgentWorkspace(workspaceId);
     if (workspace) {
       ensureWorkspaceAgentAssets(workspace.slug, workspace.name);
-      const threadRoot = getAgentThreadRootPath(workspace.slug, meta.id);
-      getAgentThreadFilesPath(workspace.slug, meta.id);
-      getAgentThreadPlansPath(workspace.slug, meta.id);
-      getAgentThreadArtifactsPath(workspace.slug, meta.id);
-      getAgentThreadSystemContextPath(workspace.slug, meta.id);
-      if (!existsSync(threadRoot)) {
-        mkdirSync(threadRoot, { recursive: true });
-      }
     }
   }
 
@@ -396,7 +457,7 @@ export function appendAgentTranscriptMessage(
 type AgentThreadMetaUpdates = Partial<
   Pick<
     AgentThreadMeta,
-    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
+    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
   >
 > & {
   modelRef?: string | null;
@@ -415,42 +476,43 @@ export function tryUpdateAgentThreadMeta(
   id: string,
   updates: AgentThreadMetaUpdates
 ): AgentThreadMeta | null {
-  const index = readIndex();
-  const idx = index.threads.findIndex((thread) => thread.id === id);
-  if (idx === -1) {
-    return null;
-  }
+  return withThreadIndexMutation((index) => {
+    const idx = index.threads.findIndex((thread) => thread.id === id);
+    if (idx === -1) {
+      return null;
+    }
 
-  const existing = index.threads[idx] as AgentThreadMeta;
-  const nextChannelId = hasOwn(updates, "channelId")
-    ? updates.channelId ?? undefined
-    : existing.channelId;
-  const nextModelId = hasOwn(updates, "modelId")
-    ? updates.modelId ?? undefined
-    : existing.modelId;
-  const touchedSelection = hasOwn(updates, "modelRef") || hasOwn(updates, "channelId") || hasOwn(updates, "modelId");
-  const nextModelRef = touchedSelection
-    ? hasOwn(updates, "modelRef")
-      ? updates.modelRef ?? undefined
-      : buildModelRef(nextChannelId, nextModelId)
-    : existing.modelRef;
-  const updated: AgentThreadMeta = {
-    ...existing,
-    ...updates,
-    channelId: nextChannelId,
-    modelId: nextModelId,
-    modelRef: nextModelRef,
-    modelSelectionSource: hasOwn(updates, "modelSelectionSource")
-      ? updates.modelSelectionSource ?? undefined
-      : existing.modelSelectionSource,
-    updatedAt: Date.now()
-  };
+    const existing = index.threads[idx] as AgentThreadMeta;
+    const nextChannelId = hasOwn(updates, "channelId")
+      ? updates.channelId ?? undefined
+      : existing.channelId;
+    const nextModelId = hasOwn(updates, "modelId")
+      ? updates.modelId ?? undefined
+      : existing.modelId;
+    const touchedSelection = hasOwn(updates, "modelRef") || hasOwn(updates, "channelId") || hasOwn(updates, "modelId");
+    const nextModelRef = touchedSelection
+      ? hasOwn(updates, "modelRef")
+        ? updates.modelRef ?? undefined
+        : buildModelRef(nextChannelId, nextModelId)
+      : existing.modelRef;
+    const updated: AgentThreadMeta = {
+      ...existing,
+      ...updates,
+      channelId: nextChannelId,
+      modelId: nextModelId,
+      modelRef: nextModelRef,
+      modelSelectionSource: hasOwn(updates, "modelSelectionSource")
+        ? updates.modelSelectionSource ?? undefined
+        : existing.modelSelectionSource,
+      updatedAt: Date.now()
+    };
 
-  index.threads[idx] = updated;
-  writeIndex(index);
+    index.threads[idx] = updated;
+    writeIndex(index);
 
-  console.log(`[Agent 线程] 已更新线程: ${updated.title} (${updated.id})`);
-  return updated;
+    console.log(`[Agent 线程] 已更新线程: ${updated.title} (${updated.id})`);
+    return updated;
+  });
 }
 
 export function updateAgentThreadMeta(
@@ -472,45 +534,6 @@ export function toggleAgentThreadPin(id: string): AgentThreadMeta {
   return updateAgentThreadMeta(id, { pinned: !meta.pinned });
 }
 
-function moveThreadDir(sourceDir: string, targetDir: string): void {
-  if (!existsSync(sourceDir)) return;
-  if (existsSync(targetDir)) {
-    rmSync(targetDir, { recursive: true, force: true });
-  }
-  try {
-    renameSync(sourceDir, targetDir);
-  } catch (error) {
-    const errorCode = (error as NodeJS.ErrnoException).code;
-    if (errorCode !== "EXDEV") {
-      throw error;
-    }
-    cpSync(sourceDir, targetDir, { recursive: true });
-    rmSync(sourceDir, { recursive: true, force: true });
-  }
-}
-
-function resolveExistingThreadDir(threadId: string, preferredWorkspaceSlug?: string): string | null {
-  if (preferredWorkspaceSlug) {
-    const preferredRootPath = getAgentThreadRootPath(preferredWorkspaceSlug, threadId);
-    if (existsSync(preferredRootPath)) return preferredRootPath;
-    const legacyPreferredPath = join(getAgentWorkspacePath(preferredWorkspaceSlug), threadId);
-    if (existsSync(legacyPreferredPath)) return legacyPreferredPath;
-  }
-  const workspacesDir = getAgentWorkspacesDir();
-  if (!existsSync(workspacesDir)) {
-    return null;
-  }
-  const entries = readdirSync(workspacesDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const candidate = join(workspacesDir, entry.name, "threads", threadId);
-    if (existsSync(candidate)) return candidate;
-    const legacyCandidate = join(workspacesDir, entry.name, threadId);
-    if (existsSync(legacyCandidate)) return legacyCandidate;
-  }
-  return null;
-}
-
 export function moveAgentThreadToWorkspace(id: string, workspaceId: string): AgentThreadMeta {
   const targetWorkspace = getAgentWorkspace(workspaceId);
   if (!targetWorkspace) {
@@ -521,18 +544,7 @@ export function moveAgentThreadToWorkspace(id: string, workspaceId: string): Age
   if (!currentMeta) {
     throw new Error(`Agent 线程不存在: ${id}`);
   }
-
-  const currentWorkspace = currentMeta.workspaceId
-    ? getAgentWorkspace(currentMeta.workspaceId)
-    : undefined;
-  const sourceDir = resolveExistingThreadDir(id, currentWorkspace?.slug);
-  const targetDir = getAgentThreadRootPath(targetWorkspace.slug, id);
-
-  if (sourceDir && sourceDir !== targetDir) {
-    moveThreadDir(sourceDir, targetDir);
-  } else if (!existsSync(targetDir)) {
-    mkdirSync(targetDir, { recursive: true });
-  }
+  ensureLumeFileContext(currentMeta.fileContextId ?? currentMeta.id);
 
   return updateAgentThreadMeta(id, {
     workspaceId: workspaceId,
@@ -542,14 +554,18 @@ export function moveAgentThreadToWorkspace(id: string, workspaceId: string): Age
 }
 
 export function deleteAgentThread(id: string): void {
-  const index = readIndex();
-  const idx = index.threads.findIndex((thread) => thread.id === id);
-  if (idx === -1) {
-    throw new Error(`Agent 线程不存在: ${id}`);
-  }
+  const { removed, fileContextId, deleteFileContext } = withThreadIndexMutation((index) => {
+    const idx = index.threads.findIndex((thread) => thread.id === id);
+    if (idx === -1) {
+      throw new Error(`Agent 线程不存在: ${id}`);
+    }
 
-  const removed = index.threads.splice(idx, 1)[0] as AgentThreadMeta;
-  writeIndex(index);
+    const removed = index.threads.splice(idx, 1)[0] as AgentThreadMeta;
+    const fileContextId = removed.fileContextId ?? removed.id;
+    const deleteFileContext = !index.threads.some((thread) => (thread.fileContextId ?? thread.id) === fileContextId);
+    writeIndex(index);
+    return { removed, fileContextId, deleteFileContext };
+  });
 
   try {
     const workspacesDir = getAgentWorkspacesDir();
@@ -585,7 +601,100 @@ export function deleteAgentThread(id: string): void {
     }
   }
 
+  if (deleteFileContext) {
+    withThreadIndexMutation((index) => {
+      const stillReferenced = index.threads.some((thread) => (thread.fileContextId ?? thread.id) === fileContextId);
+      if (stillReferenced) return;
+      const contextDir = getAgentFileContextRootPath(fileContextId);
+      if (existsSync(contextDir)) {
+        try {
+          rmSync(contextDir, { recursive: true, force: true });
+          console.log(`[Agent 线程] 已清理文件上下文目录: ${contextDir}`);
+        } catch (error) {
+          console.warn(`[Agent 线程] 清理文件上下文目录失败 (${fileContextId}):`, error);
+        }
+      }
+    });
+  }
+
   console.log(`[Agent 线程] 已删除线程: ${removed.title} (${removed.id})`);
+}
+
+export function listAgentThreadsForWorkspace(workspaceId: string): AgentThreadMeta[] {
+  return readIndex().threads.filter((thread) => thread.workspaceId === workspaceId);
+}
+
+export function invalidateAgentThreadRuntimeState(threadId: string): void {
+  const messages = getAgentThreadMessages(threadId);
+  const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(threadId);
+  if (existsSync(runtimeCoreSessionDir)) {
+    rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
+  }
+  resetAgentMessageVersionStore(threadId);
+  rebuildThreadSDKTranscript(threadId, messages);
+  syncVersionStoreFromMessages(threadId, messages);
+  updateAgentThreadMeta(threadId, {
+    sdkThreadId: undefined,
+    runtimeThreadId: undefined
+  });
+}
+
+export function clearWorkspaceFromAgentThreads(workspaceId: string): AgentThreadMeta[] {
+  const updated = withThreadIndexMutation((index) => {
+    const now = Date.now();
+    const changed: AgentThreadMeta[] = [];
+    for (let i = 0; i < index.threads.length; i += 1) {
+      const thread = index.threads[i] as AgentThreadMeta;
+      if (thread.workspaceId !== workspaceId) continue;
+      const next: AgentThreadMeta = {
+        ...thread,
+        workspaceId: undefined,
+        sdkThreadId: undefined,
+        runtimeThreadId: undefined,
+        updatedAt: now
+      };
+      index.threads[i] = next;
+      changed.push(next);
+    }
+    if (changed.length > 0) {
+      writeIndex(index);
+    }
+    return changed;
+  });
+  if (updated.length > 0) {
+    notifyThreadListChanged();
+  }
+  return updated;
+}
+
+export function trashAgentThreads(threadIds: Set<string>): AgentThreadMeta[] {
+  const trashed = withThreadIndexMutation((index) => {
+    const now = Date.now();
+    const changed: AgentThreadMeta[] = [];
+    for (let i = 0; i < index.threads.length; i += 1) {
+      const thread = index.threads[i] as AgentThreadMeta;
+      if (!threadIds.has(thread.id)) continue;
+      const next: AgentThreadMeta = {
+        ...thread,
+        status: "trashed",
+        trashedAt: now,
+        workspaceId: undefined,
+        sdkThreadId: undefined,
+        runtimeThreadId: undefined,
+        updatedAt: now
+      };
+      index.threads[i] = next;
+      changed.push(next);
+    }
+    if (changed.length > 0) {
+      writeIndex(index);
+    }
+    return changed;
+  });
+  if (trashed.length > 0) {
+    notifyThreadListChanged();
+  }
+  return trashed;
 }
 
 // ===== 归档与回收站 =====
@@ -629,7 +738,13 @@ export function trashAgentThread(id: string): AgentThreadMeta {
 }
 
 export function restoreAgentThreadFromTrash(id: string): AgentThreadMeta {
-  return updateAgentThreadMeta(id, { status: "archived", trashedAt: undefined });
+  const meta = getAgentThreadMeta(id);
+  const shouldClearWorkspace = Boolean(meta?.workspaceId && !getAgentWorkspace(meta.workspaceId));
+  return updateAgentThreadMeta(id, {
+    status: "archived",
+    trashedAt: undefined,
+    ...(shouldClearWorkspace ? { workspaceId: undefined, sdkThreadId: undefined, runtimeThreadId: undefined } : {})
+  });
 }
 
 export function permanentlyDeleteAgentThread(id: string): void {
@@ -722,7 +837,8 @@ export function forkAgentThread(
     sourceMeta?.channelId,
     sourceMeta?.workspaceId,
     sourceThreadId,
-    sourceMeta?.modelId
+    sourceMeta?.modelId,
+    { fileContextMode: "fork" }
   );
 
   replaceAgentThreadTranscript(newThread.id, forkedMessages);
@@ -1071,15 +1187,11 @@ function resolveRuntimeCoreMessageModel(message: RuntimeCoreContextMessage): str
 }
 
 function resolveAgentThreadCwd(threadId: string): string {
-  const meta = getAgentThreadMeta(threadId);
-  if (!meta?.workspaceId) {
+  try {
+    return getAgentFileContextRootPath(getAgentThreadMeta(threadId)?.fileContextId ?? threadId);
+  } catch {
     return process.cwd();
   }
-  const workspace = getAgentWorkspace(meta.workspaceId);
-  if (!workspace) {
-    return process.cwd();
-  }
-  return getAgentSessionWorkspacePath(workspace.slug, threadId);
 }
 
 function sliceRecentAgentMessages(messages: AgentMessage[], limit: number): AgentRecentMessagesResult {

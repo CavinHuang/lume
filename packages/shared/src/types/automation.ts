@@ -38,6 +38,8 @@ export interface AutomationJob {
   name: string
   /** 是否启用 */
   enabled: boolean
+  /** 禁用原因（项目移除等系统操作写入） */
+  disabledReason?: string
   /** 所属工作区（可选） */
   workspaceId?: string
   /** 调度配置 */
@@ -80,6 +82,7 @@ export interface AutomationJobsIndex {
 export interface AutomationCreateJobInput {
   name: string
   enabled?: boolean
+  disabledReason?: string
   workspaceId?: string
   threadId?: string
   schedule: AutomationSchedule
@@ -98,6 +101,7 @@ export interface AutomationUpdateJobInput {
   id: string
   name?: string
   enabled?: boolean
+  disabledReason?: string
   workspaceId?: string
   threadId?: string
   schedule?: AutomationSchedule

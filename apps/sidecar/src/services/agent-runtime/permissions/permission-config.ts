@@ -20,14 +20,19 @@ export function resolveConfiguredPermissionRules(
 
 export function resolveConfiguredPrivateWriteRoots(input: {
   agentCwd: string;
+  lumeWorkDir?: string;
+  filesRoot?: string;
+  plansRoot?: string;
+  artifactsRoot?: string;
   workspaceSlug?: string;
   configuredRoots?: string[];
 }): string[] {
+  const managedRoot = input.lumeWorkDir ?? input.agentCwd;
   const roots = [
-    join(input.agentCwd, ".lume"),
-    join(input.agentCwd, "plans"),
-    join(input.agentCwd, "artifacts"),
-    join(input.agentCwd, "files"),
+    join(managedRoot, ".lume"),
+    input.plansRoot ?? join(managedRoot, "plans"),
+    input.artifactsRoot ?? join(managedRoot, "artifacts"),
+    input.filesRoot ?? join(managedRoot, "files"),
     join(homedir(), ".lume", "plugins"),
     getDefaultSkillsDir(),
     getUserSkillsDir(),

@@ -1,11 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import { toThreadRelativePath } from "../../../agent/agent-files-service";
+import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
+import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 
 export interface ImageOutputInput {
-  workspaceSlug: string;
+  workspaceSlug?: string;
   threadId: string;
+  filesRoot?: string;
   url?: string;
   b64?: string;
   ext?: string;
@@ -31,7 +33,8 @@ function mediaTypeFor(ext: string): string {
 /** 下载 URL 或解码 base64，写入线程文件目录，返回 threadPath 等元信息 */
 export async function saveImageOutput(input: ImageOutputInput): Promise<ImageOutputResult> {
   const ext = (input.ext ?? "png").toLowerCase();
-  const dir = join(getAgentThreadFilesPath(input.workspaceSlug, input.threadId), "image-gen");
+  const filesRoot = input.filesRoot ?? resolveFilesRoot(input.workspaceSlug, input.threadId);
+  const dir = join(filesRoot, "image-gen");
   mkdirSync(dir, { recursive: true });
 
   const stamp = Date.now();
@@ -61,4 +64,15 @@ export async function saveImageOutput(input: ImageOutputInput): Promise<ImageOut
     size: buffer.length,
     absPath,
   };
+}
+
+function resolveFilesRoot(workspaceSlug: string | undefined, threadId: string): string {
+  try {
+    return resolveAgentThreadWorkdir(threadId).filesRoot;
+  } catch {
+    if (!workspaceSlug) {
+      throw new Error("无法解析普通会话文件目录");
+    }
+    return getAgentThreadFilesPath(workspaceSlug, threadId);
+  }
 }

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Box, ChevronDown, FolderOpen, Plus, Search } from 'lucide-react'
+import { Box, ChevronDown, FolderOpen, MessageCircle, Plus, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { AgentWorkspace } from '@lume/shared'
 
@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 interface WorkspaceSelectorProps {
   workspaces: AgentWorkspace[]
   selectedId: string | null
-  onSelect: (id: string) => void
+  onSelect: (id: string | null) => void
   onCreateWorkspaceClick: () => void
 }
 
@@ -49,11 +49,11 @@ export function WorkspaceSelector({
             ? 'border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))] text-[var(--text-1)]'
             : 'border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] text-[var(--text-2)] hover:border-[color:color-mix(in_oklab,var(--brand)_20%,var(--border-strong))] hover:text-[var(--text-1)]',
         )}
-        title="选择工作区"
+        title="选择项目或普通会话"
       >
         <Box size={15} className="shrink-0 text-[var(--text-2)]" />
-        <span className="shrink-0 text-[var(--text-2)]">工作区：</span>
-        <span className="min-w-0 flex-1 truncate font-semibold text-[var(--text-1)]">{selected?.name ?? '当前工作区'}</span>
+        <span className="shrink-0 text-[var(--text-2)]">项目：</span>
+        <span className="min-w-0 flex-1 truncate font-semibold text-[var(--text-1)]">{selected?.name ?? '普通会话'}</span>
         <ChevronDown size={13} className="shrink-0 text-[var(--text-3)]" />
       </Button>
 
@@ -65,13 +65,31 @@ export function WorkspaceSelector({
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索工作区..."
+                placeholder="搜索项目..."
                 className="flex-1 border-0 bg-transparent px-0 text-[12px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
                 autoFocus
               />
             </div>
           </div>
           <div className="max-h-[220px] overflow-y-auto p-2">
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => {
+                onSelect(null)
+                setOpen(false)
+                setSearch('')
+              }}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-[1rem] px-3 py-2.5 text-left text-[13px] transition-colors',
+                selectedId === null
+                  ? 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--text-1)]'
+                  : 'text-[var(--text-2)] hover:bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] hover:text-[var(--text-1)]'
+              )}
+            >
+              <MessageCircle size={13} className="shrink-0 text-[var(--text-3)]" />
+              <span className="truncate flex-1">普通会话</span>
+            </Button>
             {filtered.map((ws) => (
               <Button
                 variant="ghost"
@@ -94,7 +112,7 @@ export function WorkspaceSelector({
               </Button>
             ))}
             {filtered.length === 0 && (
-              <div className="px-3 py-6 text-center text-[12px] text-[var(--text-3)]">无匹配工作区</div>
+              <div className="px-3 py-6 text-center text-[12px] text-[var(--text-3)]">无匹配项目</div>
             )}
           </div>
           <div className="border-t border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] p-2">
@@ -109,7 +127,7 @@ export function WorkspaceSelector({
               className="flex w-full items-center gap-2 rounded-[1rem] px-3 py-2.5 text-left text-[13px] text-[var(--text-2)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] hover:text-[var(--text-1)]"
             >
               <Plus size={13} className="text-[var(--text-3)]" />
-              新建工作区
+              添加项目
             </Button>
           </div>
         </div>

@@ -23,7 +23,7 @@ export interface BrowserTabState {
 
 export interface FilesTabState {
   type: 'files'
-  source: 'thread' | 'workspace' | 'memory'
+  source: 'lume' | 'project' | 'legacy' | 'memory'
   selectedPath: string | null
   treeVisible: boolean
   treeWidth?: number
@@ -41,7 +41,7 @@ export function createDefaultRightPanelTab(type: RightPanelFunction): RightPanel
   }
 
   if (type === 'files') {
-    return { type, source: 'thread', selectedPath: null, treeVisible: true, searchQuery: '', enhancedView: true }
+    return { type, source: 'project', selectedPath: null, treeVisible: true, searchQuery: '', enhancedView: true }
   }
 
   return { type }
@@ -116,7 +116,7 @@ export function sanitizeRightPanelWorkspace(value: unknown): ThreadRightPanelWor
 export function openFileInRightPanel(
   workspace: ThreadRightPanelWorkspace,
   path: string,
-  source: 'thread' | 'memory' = 'thread',
+  source: 'lume' | 'memory' = 'lume',
 ): ThreadRightPanelWorkspace {
   const nextWorkspace = openRightPanelTab(workspace, 'files')
   const files = nextWorkspace.tabs.files
@@ -135,6 +135,14 @@ export function openFileInRightPanel(
       },
     },
   }
+}
+
+export function switchFilesSource(
+  state: FilesTabState,
+  source: FilesTabState['source'],
+): FilesTabState {
+  if (state.source === source) return state
+  return { ...state, source, selectedPath: null, searchQuery: '' }
 }
 
 export function migrateLegacyRightPanelHints(input: {
@@ -186,9 +194,16 @@ function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightP
   }
 
   if (type === 'files') {
+    const source = value.source === 'thread'
+      ? 'lume'
+      : value.source === 'workspace'
+        ? 'legacy'
+        : value.source === 'project' || value.source === 'legacy' || value.source === 'memory'
+          ? value.source
+          : 'lume'
     return {
       type,
-      source: value.source === 'workspace' || value.source === 'memory' ? value.source : 'thread',
+      source,
       selectedPath: value.selectedPath === null || typeof value.selectedPath === 'string'
         ? value.selectedPath
         : null,

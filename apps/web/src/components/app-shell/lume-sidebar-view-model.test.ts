@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
-import { buildLumeSidebarViewModel } from './lume-sidebar-view-model'
+import { buildLumeSidebarViewModel, UNASSIGNED_THREADS_WORKSPACE_ID } from './lume-sidebar-view-model'
 
 function createWorkspace(overrides: Partial<AgentWorkspace> = {}): AgentWorkspace {
   return {
@@ -28,6 +28,29 @@ function createThread(overrides: Partial<AgentThreadMeta> = {}): AgentThreadMeta
 }
 
 describe('buildLumeSidebarViewModel', () => {
+  test('null project selection keeps ordinary sessions selected instead of selecting the first project', () => {
+    const workspace = createWorkspace()
+    const model = buildLumeSidebarViewModel({
+      workspaces: [workspace],
+      threads: [{
+        id: 'ordinary-thread',
+        title: '普通对话',
+        pinned: false,
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+      currentWorkspaceId: null,
+      activeTabId: null,
+      expandedWorkspaceIds: [UNASSIGNED_THREADS_WORKSPACE_ID],
+      pinnedWorkspaceIds: [],
+    })
+
+    expect(model.workspaces.find((item) => item.id === workspace.id)?.isCurrent).toBeFalse()
+    expect(model.workspaces.find((item) => item.id === UNASSIGNED_THREADS_WORKSPACE_ID)).toMatchObject({
+      name: '普通会话',
+      isCurrent: true,
+    })
+  })
   test('returns the approved top action order', () => {
     const model = buildLumeSidebarViewModel({
       workspaces: [createWorkspace()],
@@ -201,13 +224,13 @@ describe('buildLumeSidebarViewModel', () => {
     expect(currentSecondWorkspace.workspaces.slice(0, 2).map((workspace) => workspace.count)).toEqual([0, 0])
     expect(firstUnassigned).toMatchObject({
       id: '__unassigned__',
-      name: '未分配',
+      name: '普通会话',
       count: 1,
       isCurrent: false,
     })
     expect(secondUnassigned).toMatchObject({
       id: '__unassigned__',
-      name: '未分配',
+      name: '普通会话',
       count: 1,
       isCurrent: false,
     })
@@ -228,7 +251,7 @@ describe('buildLumeSidebarViewModel', () => {
         expect.objectContaining({
           id: 'workspace:__unassigned__',
           workspaceId: '__unassigned__',
-          label: '未分配',
+          label: '普通会话',
         }),
       ]),
     )

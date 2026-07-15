@@ -136,6 +136,12 @@ interface RuntimeCoreResolvedModel {
 export interface CreateRuntimeCoreSessionInput {
   lumeSessionId: string;
   cwd: string;
+  lumeWorkDir?: string;
+  filesRoot?: string;
+  plansRoot?: string;
+  artifactsRoot?: string;
+  projectRoot?: string;
+  fileContextId?: string;
   agentDir: string;
   userMessage?: string;
   provider: string;
@@ -157,7 +163,6 @@ export interface CreateRuntimeCoreSessionInput {
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
   messageAttachments?: AgentSendInput["messageAttachments"];
-  attachedDirectories?: string[];
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -729,6 +734,9 @@ function createBaseSdkAlignedTools(
 
 function buildRuntimeCoreTools(input: {
   cwd: string;
+  filesRoot?: string;
+  plansRoot?: string;
+  artifactsRoot?: string;
   sessionId: string;
   workspaceId?: string;
   workspaceSlug?: string;
@@ -795,6 +803,7 @@ function buildRuntimeCoreTools(input: {
   const lumeTools = createLumeRuntimeTools({
     threadId: input.sessionId,
     cwd: input.cwd,
+    filesRoot: input.filesRoot,
     workspaceId: input.workspaceId,
     channelId: input.channelId,
     modelRef: input.modelRef,
@@ -868,7 +877,7 @@ function buildRuntimeCoreTools(input: {
           acceptanceCriteria: Array.isArray(toolInput.acceptance_criteria) ? toolInput.acceptance_criteria.filter((item: unknown): item is string => typeof item === "string") : undefined,
           expectedArtifacts: Array.isArray(toolInput.expected_artifacts) ? toolInput.expected_artifacts.filter((item: unknown): item is string => typeof item === "string") : undefined,
           createSession: ({ subagentId, title, agentType }) => {
-            const child = createAgentThreadWithModelRef(title, modelOverride.modelRef, modelOverride.channelId ?? input.channelId, input.workspaceId, parentThreadId, modelOverride.resolvedModelId ?? context.model)
+            const child = createAgentThreadWithModelRef(title, modelOverride.modelRef, modelOverride.channelId ?? input.channelId, input.workspaceId, parentThreadId, modelOverride.resolvedModelId ?? context.model, { fileContextMode: "inherit" })
             return { threadId: child.id, modelRef: modelOverride.modelRef }
           },
           execute: async ({ run, session, task, feedback, signal }) => {
@@ -1016,7 +1025,8 @@ function buildRuntimeCoreTools(input: {
         modelOverride.channelId ?? input.channelId,
         input.workspaceId,
         parentThreadId,
-        modelOverride.resolvedModelId ?? context.model
+        modelOverride.resolvedModelId ?? context.model,
+        { fileContextMode: "inherit" }
       );
       const subagentRun = buildSidecarSubagentRunContext({
         parentThreadId,
@@ -1409,9 +1419,8 @@ export async function createRuntimeCoreSession(
   const pluginManager = new SidecarPluginManager();
   const registeredPlugins = await pluginManager.listRegistered({
     enabled: pluginConfig.enabled,
-    // cwd-local root + configured extras as directories; the global ~/.lume/plugins
-    // root is covered by SidecarPluginManager's default pluginRoot.
-    directories: [join(input.cwd, ".lume", "plugins"), ...pluginConfig.directories],
+    // Do not auto-load project-local .lume/plugins just because the Agent cwd is a real project.
+    directories: pluginConfig.directories,
   });
   const computerUsePlugin = registeredPlugins.find((plugin) => plugin.pluginId === "computer-use");
   log.info("Computer Use capability selected", {
@@ -1505,6 +1514,9 @@ export async function createRuntimeCoreSession(
     : [];
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
+    filesRoot: input.filesRoot,
+    plansRoot: input.plansRoot,
+    artifactsRoot: input.artifactsRoot,
     sessionId: input.lumeSessionId,
     workspaceId: input.workspaceId,
     workspaceSlug: input.workspaceSlug,
@@ -1570,6 +1582,8 @@ export async function createRuntimeCoreSession(
     threadId: input.lumeSessionId,
     runId,
     cwd: input.cwd,
+    lumeWorkDir: input.lumeWorkDir,
+    projectRoot: input.projectRoot,
     modelRef: input.modelRef,
     resolvedModelId: input.resolvedModel?.id ?? input.resolvedModelId,
     workspaceName: input.workspaceName,
@@ -1586,7 +1600,6 @@ export async function createRuntimeCoreSession(
       : subagentDefinition?.prompt,
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
-    attachedDirectories: input.attachedDirectories,
     availableTools: toolset.availableToolNames,
     enabledPlugins,
     tokenBudget: contextTokenBudget,
@@ -1655,7 +1668,7 @@ export async function createRuntimeCoreSession(
       : input.runId
         ? { completionGuard: async () => getSubagentCoordinator().getCompletionBlocker(input.lumeSessionId, input.runId!) }
         : {}),
-    additionalDirectories: input.workspaceSlug ? [input.cwd, ...(input.attachedDirectories ?? [])] : input.attachedDirectories,
+    additionalDirectories: input.lumeWorkDir && input.lumeWorkDir !== input.cwd ? [input.lumeWorkDir] : undefined,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,

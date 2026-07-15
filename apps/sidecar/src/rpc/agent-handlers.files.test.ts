@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
@@ -7,7 +7,8 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 import { createAgentHandlers } from "./agent-handlers";
 import { createAgentWorkspace } from "../services/agent/agent-workspace-manager";
 import { createAgentThread } from "../services/agent/agent-thread-manager";
-import { getAgentSessionWorkspacePath, getWorkspaceResourcesPath } from "../services/infra/config-paths";
+import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
+import { getWorkspaceResourcesPath } from "../services/infra/config-paths";
 
 function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
   return {
@@ -15,6 +16,12 @@ function createTestPlanModePhaseTracker(): PlanModePhaseTracker {
     getPhase: () => "idle",
     clearSession: () => undefined,
   } as unknown as PlanModePhaseTracker;
+}
+
+function createProjectWorkspace(configDir: string) {
+  const projectPath = join(configDir, "project");
+  mkdirSync(projectPath, { recursive: true });
+  return createAgentWorkspace("Default", { projectPath });
 }
 
 describe("agent-handlers file operations", () => {
@@ -32,9 +39,9 @@ describe("agent-handlers file operations", () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-files-"));
     process.env.LUME_CONFIG_DIR = configDir;
 
-    const workspace = createAgentWorkspace("Default");
+    const workspace = createProjectWorkspace(configDir);
     const thread = createAgentThread("file tree thread", undefined, workspace.id);
-    const threadDir = getAgentSessionWorkspacePath(workspace.slug, thread.id);
+    const threadDir = resolveAgentThreadWorkdir(thread.id).lumeWorkDir;
     writeFileSync(join(threadDir, "scratch.txt"), "hello", "utf-8");
 
     const handlers = createAgentHandlers({
@@ -56,9 +63,9 @@ describe("agent-handlers file operations", () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-save-files-"));
     process.env.LUME_CONFIG_DIR = configDir;
 
-    const workspace = createAgentWorkspace("Default");
+    const workspace = createProjectWorkspace(configDir);
     const thread = createAgentThread("save files thread", undefined, workspace.id);
-    const threadDir = getAgentSessionWorkspacePath(workspace.slug, thread.id);
+    const threadDir = resolveAgentThreadWorkdir(thread.id).lumeWorkDir;
 
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
@@ -86,9 +93,9 @@ describe("agent-handlers file operations", () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-read-file-data-"));
     process.env.LUME_CONFIG_DIR = configDir;
 
-    const workspace = createAgentWorkspace("Default");
+    const workspace = createProjectWorkspace(configDir);
     const thread = createAgentThread("read file data thread", undefined, workspace.id);
-    const threadDir = getAgentSessionWorkspacePath(workspace.slug, thread.id);
+    const threadDir = resolveAgentThreadWorkdir(thread.id).lumeWorkDir;
     writeFileSync(join(threadDir, "screen.png"), "fake-image");
 
     const handlers = createAgentHandlers({
@@ -114,7 +121,7 @@ describe("agent-handlers file operations", () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-read-file-data-safe-"));
     process.env.LUME_CONFIG_DIR = configDir;
 
-    const workspace = createAgentWorkspace("Default");
+    const workspace = createProjectWorkspace(configDir);
     const thread = createAgentThread("read file data safe thread", undefined, workspace.id);
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
@@ -130,11 +137,79 @@ describe("agent-handlers file operations", () => {
     rmSync(configDir, { recursive: true, force: true });
   });
 
+  test("READ_WORKSPACE_FILE_DATA 应安全读取旧版资源的 base64 数据", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-legacy-file-data-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspace = createProjectWorkspace(configDir);
+    const resourcesDir = getWorkspaceResourcesPath(workspace.slug);
+    writeFileSync(join(resourcesDir, "legacy.png"), "legacy-image");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
+    });
+
+    const result = await handlers[AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE_DATA]!({
+      workspaceSlug: workspace.slug,
+      path: "legacy.png",
+    }) as { data: string; size: number };
+
+    expect(result).toEqual({
+      data: Buffer.from("legacy-image").toString("base64"),
+      size: Buffer.byteLength("legacy-image"),
+    });
+    await expect(handlers[AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE_DATA]!({
+      workspaceSlug: workspace.slug,
+      path: "../outside.png",
+    })).rejects.toThrow();
+
+    rmSync(configDir, { recursive: true, force: true });
+  });
+  test("项目目录文件 API 只读访问绑定目录并拒绝越界路径", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-project-files-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+
+    const workspace = createProjectWorkspace(configDir);
+    writeFileSync(join(workspace.projectPath!, "project.txt"), "project file", "utf-8");
+    const handlers = createAgentHandlers({
+      writeNotification: () => undefined,
+      planModePhaseTracker: createTestPlanModePhaseTracker(),
+      notifyPlanModePhaseChange: () => undefined,
+    });
+
+    const listed = await handlers[AGENT_IPC_CHANNELS.LIST_PROJECT_DIRECTORY]!({
+      workspaceSlug: workspace.slug,
+    }) as Array<{ name: string }>;
+    const read = await handlers[AGENT_IPC_CHANNELS.READ_PROJECT_FILE]!({
+      workspaceSlug: workspace.slug,
+      path: "project.txt",
+    }) as { content: string };
+
+    expect(listed.some((entry) => entry.name === "project.txt")).toBeTrue();
+    expect(read.content).toBe("project file");
+    await expect(handlers[AGENT_IPC_CHANNELS.READ_PROJECT_FILE]!({
+      workspaceSlug: workspace.slug,
+      path: "../outside.txt",
+    })).rejects.toThrow("项目目录");
+
+    const outsideDir = join(configDir, "outside");
+    mkdirSync(outsideDir);
+    writeFileSync(join(outsideDir, "secret.txt"), "secret", "utf-8");
+    symlinkSync(outsideDir, join(workspace.projectPath!, "outside-link"), "junction");
+    await expect(handlers[AGENT_IPC_CHANNELS.READ_PROJECT_FILE]!({
+      workspaceSlug: workspace.slug,
+      path: "outside-link/secret.txt",
+    })).rejects.toThrow("项目目录");
+
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
   test("LIST_DIRECTORY 和 LIST_WORKSPACE_DIRECTORY 应返回 externalAttachment 元信息", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-list-meta-"));
     process.env.LUME_CONFIG_DIR = configDir;
 
-    const workspace = createAgentWorkspace("Default");
+    const workspace = createProjectWorkspace(configDir);
     const thread = createAgentThread("meta thread", undefined, workspace.id);
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
@@ -175,7 +250,7 @@ describe("agent-handlers file operations", () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-attach-file-"));
     process.env.LUME_CONFIG_DIR = configDir;
 
-    const workspace = createAgentWorkspace("Default");
+    const workspace = createProjectWorkspace(configDir);
     const thread = createAgentThread("attach file thread", undefined, workspace.id);
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
@@ -194,7 +269,7 @@ describe("agent-handlers file operations", () => {
     }) as { ok: true; path: string };
 
     expect(result.ok).toBeTrue();
-    expect(result.path).toBe(join(getAgentSessionWorkspacePath(workspace.slug, thread.id), "brief.md"));
+    expect(result.path).toBe(join(resolveAgentThreadWorkdir(thread.id).lumeWorkDir, "brief.md"));
 
     rmSync(configDir, { recursive: true, force: true });
   });
@@ -203,7 +278,7 @@ describe("agent-handlers file operations", () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-agent-handlers-attach-folder-"));
     process.env.LUME_CONFIG_DIR = configDir;
 
-    const workspace = createAgentWorkspace("Default");
+    const workspace = createProjectWorkspace(configDir);
     const thread = createAgentThread("attach folder thread", undefined, workspace.id);
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
@@ -223,7 +298,7 @@ describe("agent-handlers file operations", () => {
     }) as { ok: true; path: string };
 
     expect(result.ok).toBeTrue();
-    expect(result.path).toBe(join(getAgentSessionWorkspacePath(workspace.slug, thread.id), "assets"));
+    expect(result.path).toBe(join(resolveAgentThreadWorkdir(thread.id).lumeWorkDir, "assets"));
 
     rmSync(configDir, { recursive: true, force: true });
   });

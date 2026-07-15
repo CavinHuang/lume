@@ -157,6 +157,10 @@ export function createCanUseToolHandler(
   const permissionRules = resolveConfiguredPermissionRules(config.permissions);
   const privateWriteRoots = resolveConfiguredPrivateWriteRoots({
     agentCwd: prepared.agentCwd,
+    lumeWorkDir: prepared.lumeWorkDir,
+    filesRoot: prepared.filesRoot,
+    plansRoot: prepared.plansRoot,
+    artifactsRoot: prepared.artifactsRoot,
     workspaceSlug: prepared.workspaceSlug,
     configuredRoots: config.permissions?.privateWriteRoots
   });

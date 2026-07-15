@@ -202,3 +202,30 @@ export function deleteImAccount(id: string): void {
   config.accounts.splice(index, 1);
   writeConfig(config);
 }
+
+export function listImAccountsForWorkspace(workspaceId: string): ImAccount[] {
+  return listImAccounts().filter((account) => account.workspaceId === workspaceId);
+}
+
+export function clearImAccountWorkspaceBindings(workspaceId: string): ImAccount[] {
+  const config = readConfig();
+  let changed = false;
+  const now = Date.now();
+  const affectedIds = new Set<string>();
+  const updatedAccounts = config.accounts.map((account) => {
+    if (account.workspaceId !== workspaceId) return account;
+    changed = true;
+    affectedIds.add(account.id);
+    return {
+      ...account,
+      workspaceId: undefined,
+      updatedAt: now
+    };
+  });
+  if (changed) {
+    writeConfig({ ...config, accounts: updatedAccounts });
+  }
+  return updatedAccounts
+    .filter((account) => affectedIds.has(account.id))
+    .map(toPublicAccount);
+}

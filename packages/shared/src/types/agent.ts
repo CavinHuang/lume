@@ -70,11 +70,41 @@ export interface AgentWorkspace {
   name: string
   /** URL-safe 目录名（创建后不可变） */
   slug: string
+  /** 绑定的真实项目目录；缺失表示迁移期未绑定目录的旧项目 */
+  projectPath?: string
+  /** 最后一次可访问时得到的 canonical realpath key，用于离线判重 */
+  realpathKey?: string
   /** 创建时间戳 */
   createdAt: number
   /** 更新时间戳 */
   updatedAt: number
 }
+
+export type AgentWorkspaceAvailability = 'available' | 'unbound' | 'unavailable'
+
+export interface AgentWorkspaceStatus {
+  workspaceId: string
+  availability: AgentWorkspaceAvailability
+  projectPath?: string
+  realpath?: string
+  message?: string
+}
+
+export type AgentWorkspaceRemoveMode = 'keepHistory' | 'deleteLumeData'
+
+export interface AgentWorkspaceRemovalImpact {
+  workspaceId: string
+  threads: number
+  automations: number
+  imAccounts: number
+  imThreadBindings: number
+}
+
+export interface AgentWorkspaceRemoveResult extends AgentWorkspaceRemovalImpact {
+  mode: AgentWorkspaceRemoveMode
+}
+
+export type AgentThreadFileContextMode = 'newRoot' | 'inherit' | 'fork'
 
 export type AgentRuntimePhase =
   | 'idle'
@@ -141,6 +171,8 @@ export interface AgentThreadMeta {
   runtimeThreadId?: string
   /** 所属工作区 ID */
   workspaceId?: string
+  /** 稳定文件上下文 ID：主/子 Agent 共享，用户分叉隔离 */
+  fileContextId?: string
   /** 外部来源，用于按 IM 渠道等入口分组展示 */
   source?: AgentThreadSource
   /** 父线程 ID（子任务线程归属） */
@@ -725,8 +757,6 @@ export interface AgentSendInput {
   thinkingLevel?: AgentThinkingLevel
   /** 已保存到线程文件区、并绑定到本轮用户消息的附件引用 */
   messageAttachments?: AgentMessageAttachmentInput[]
-  /** 用户附加的外部目录路径（不拷贝，agent 按需从原始位置读取） */
-  attachedDirectories?: string[]
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
   /** 重发目标消息 ID */
@@ -1482,7 +1512,15 @@ export const AGENT_IPC_CHANNELS = {
   CREATE_WORKSPACE: 'agent:create-workspace',
   /** 更新工作区 */
   UPDATE_WORKSPACE: 'agent:update-workspace',
-  /** 删除工作区 */
+  /** 获取项目目录可用状态 */
+  GET_WORKSPACE_STATUS: 'agent:get-workspace-status',
+  /** 为未绑定的旧项目绑定本地目录 */
+  BIND_WORKSPACE_DIRECTORY: 'agent:bind-workspace-directory',
+  /** 为目录不可用的项目重新定位 */
+  RELOCATE_WORKSPACE_DIRECTORY: 'agent:relocate-workspace-directory',
+  /** 获取移除项目影响范围 */
+  GET_WORKSPACE_REMOVAL_IMPACT: 'agent:get-workspace-removal-impact',
+  /** 移除项目（保留真实目录） */
   DELETE_WORKSPACE: 'agent:delete-workspace',
 
   // 标题生成
@@ -1670,16 +1708,6 @@ export const AGENT_IPC_CHANNELS = {
   RENAME_FILE: 'agent:rename-file',
   /** 移动文件/目录到目标目录 */
   MOVE_FILE: 'agent:move-file',
-  /** 列出附加目录内容（无工作区路径限制） */
-  LIST_ATTACHED_DIRECTORY: 'agent:list-attached-directory',
-  /** 用系统默认应用打开附加目录文件（无工作区路径限制） */
-  OPEN_ATTACHED_FILE: 'agent:open-attached-file',
-  /** 在文件管理器中显示附加目录文件（无工作区路径限制） */
-  SHOW_ATTACHED_IN_FOLDER: 'agent:show-attached-in-folder',
-  /** 重命名附加目录文件/目录（无工作区路径限制） */
-  RENAME_ATTACHED_FILE: 'agent:rename-attached-file',
-  /** 移动附加目录文件/目录（无工作区路径限制） */
-  MOVE_ATTACHED_FILE: 'agent:move-attached-file',
   /** 将当前任务文件提升到工作区共享文件层 */
   PROMOTE_FILE_TO_WORKSPACE: 'agent:promote-file-to-workspace',
   /** 获取工作区共享文件目录路径 */
@@ -1696,6 +1724,20 @@ export const AGENT_IPC_CHANNELS = {
   PREVIEW_WORKSPACE_FILE: 'agent:preview-workspace-file',
   /** 读取工作区共享文件内容用于内嵌预览 */
   READ_WORKSPACE_FILE: 'agent:read-workspace-file',
+  /** 读取旧版工作区共享文件二进制数据 */
+  READ_WORKSPACE_FILE_DATA: 'agent:read-workspace-file-data',
+  /** 只读列出项目绑定目录内容 */
+  LIST_PROJECT_DIRECTORY: 'agent:list-project-directory',
+  /** 只读读取项目绑定目录文件内容 */
+  READ_PROJECT_FILE: 'agent:read-project-file',
+  /** 只读读取项目绑定目录二进制文件 */
+  READ_PROJECT_FILE_DATA: 'agent:read-project-file-data',
+  /** 将旧版资源只读导出到项目根目录，不覆盖同名内容 */
+  EXPORT_LEGACY_RESOURCE_TO_PROJECT: 'agent:export-legacy-resource-to-project',
+  /** 用系统默认应用打开项目绑定目录文件 */
+  OPEN_PROJECT_FILE: 'agent:open-project-file',
+  /** 在系统文件管理器中显示项目绑定目录文件 */
+  SHOW_PROJECT_IN_FOLDER: 'agent:show-project-in-folder',
   /** 重命名工作区共享文件/目录 */
   RENAME_WORKSPACE_FILE: 'agent:rename-workspace-file',
   /** 移动工作区共享文件/目录 */

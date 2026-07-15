@@ -1,10 +1,10 @@
 import type { AgentWorkspace } from '@lume/shared'
 
 export async function createWorkspaceFromDraft(
-  draftName: string,
-  createWorkspace: (input: { name: string }) => Promise<AgentWorkspace>,
+  projectPath: string | null | undefined,
+  createWorkspace: (input: { projectPath: string }) => Promise<AgentWorkspace>,
 ): Promise<AgentWorkspace | null> {
-  const name = draftName.trim()
-  if (!name) return null
-  return createWorkspace({ name })
+  const trimmedPath = projectPath?.trim()
+  if (!trimmedPath) return null
+  return createWorkspace({ projectPath: trimmedPath })
 }

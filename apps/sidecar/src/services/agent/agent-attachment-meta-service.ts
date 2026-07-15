@@ -3,6 +3,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import type { ExternalAttachmentMeta } from "@lume/shared";
 import {
   getConfigDir,
+  getAgentFileContextRootPath,
 } from "../infra/config-paths";
 
 interface PersistedAttachmentRecord {
@@ -14,6 +15,7 @@ export interface ThreadAttachmentScope {
   kind: "thread";
   workspaceSlug: string;
   threadId: string;
+  fileContextId?: string;
 }
 
 export interface WorkspaceAttachmentScope {
@@ -59,6 +61,9 @@ function getWorkspaceRootPathUnsafe(workspaceSlug: string): string {
 }
 
 function getScopeRoot(scope: AttachmentScope): string {
+  if (scope.kind === "thread" && scope.fileContextId) {
+    return getAgentFileContextRootPath(scope.fileContextId);
+  }
   return scope.kind === "thread"
     ? join(
         getWorkspaceRootPathUnsafe(scope.workspaceSlug),
@@ -69,6 +74,9 @@ function getScopeRoot(scope: AttachmentScope): string {
 }
 
 function getMetadataPath(scope: AttachmentScope): string {
+  if (scope.kind === "thread" && scope.fileContextId) {
+    return join(getAgentFileContextRootPath(scope.fileContextId), ".context", "external-attachments.json");
+  }
   return scope.kind === "thread"
     ? join(
         getWorkspaceRootPathUnsafe(scope.workspaceSlug),
@@ -144,9 +152,13 @@ function toExternalAttachmentMeta(record: PersistedAttachmentRecord): ExternalAt
   };
 }
 
-export function readThreadAttachmentMeta(workspaceSlug: string, threadId: string): Record<string, ExternalAttachmentMeta> {
+export function readThreadAttachmentMeta(
+  workspaceSlug: string,
+  threadId: string,
+  fileContextId?: string
+): Record<string, ExternalAttachmentMeta> {
   try {
-    const persisted = readPersistedAttachmentMap({ kind: "thread", workspaceSlug, threadId });
+    const persisted = readPersistedAttachmentMap({ kind: "thread", workspaceSlug, threadId, fileContextId });
     return Object.fromEntries(
       Object.entries(persisted).map(([key, value]) => [key, toExternalAttachmentMeta(value)])
     );

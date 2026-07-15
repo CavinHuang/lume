@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { basename, join } from "node:path";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { getConfigDir, getLumeConfigYamlPath } from "../services/infra/config-paths";
 import {
@@ -78,12 +78,19 @@ describe("cli-runtime", () => {
     }
   });
 
+  function projectPath(name: string): string {
+    const path = join(tempSourceDir, name);
+    mkdirSync(path, { recursive: true });
+    return path;
+  }
+
   test("list/create workspace by slug", async () => {
     const runtime = await createRuntime();
 
     expect(await runtime.listWorkspaces()).toEqual([]);
 
     const created = await runtime.createWorkspace({
+      projectPath: projectPath("cli-workspace"),
       name: "CLI Workspace",
       slug: "  My_Custom Slug  "
     });
@@ -127,6 +134,7 @@ describe("cli-runtime", () => {
   test("create thread in workspace, add file, list file", async () => {
     const runtime = await createRuntime();
     const workspace = await runtime.createWorkspace({
+      projectPath: projectPath("files-workspace"),
       name: "Files Workspace",
       slug: "files-workspace"
     });
@@ -163,6 +171,7 @@ describe("cli-runtime", () => {
   test("listThreads preserves workspaceSlug via thread directory fallback", async () => {
     const runtime = await createRuntime();
     const workspace = await runtime.createWorkspace({
+      projectPath: projectPath("fallback-workspace"),
       name: "Fallback Workspace",
       slug: "fallback-workspace"
     });
@@ -183,6 +192,7 @@ describe("cli-runtime", () => {
   test("add workspace file and list workspace files by workspaceSlug", async () => {
     const runtime = await createRuntime();
     const workspace = await runtime.createWorkspace({
+      projectPath: projectPath("workspace-files"),
       name: "Workspace Files",
       slug: "workspace-files"
     });
@@ -208,6 +218,7 @@ describe("cli-runtime", () => {
   test("getThreadMessages accepts an input object and supports limit", async () => {
     const runtime = await createRuntime();
     const workspace = await runtime.createWorkspace({
+      projectPath: projectPath("messages-workspace"),
       name: "Messages Workspace",
       slug: "messages-workspace"
     });

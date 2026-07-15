@@ -29,9 +29,6 @@ describe('bootstrapWorkspaces', () => {
         currentWorkspaceId = workspaceB.id
         return [workspaceA, workspaceB]
       },
-      createWorkspace: async () => {
-        throw new Error('should not create workspace')
-      },
       getCurrentWorkspaceId: () => currentWorkspaceId,
       setWorkspaces: (workspaces) => {
         workspaceSets.push(workspaces)
@@ -47,21 +44,31 @@ describe('bootstrapWorkspaces', () => {
     expect(currentWorkspaceId).toBe(workspaceB.id)
   })
 
-  test('falls back to the first workspace when the current selection is invalid', async () => {
+  test('keeps ordinary-session selection when projects exist', async () => {
     const selectedIds: Array<string | null> = []
 
     await bootstrapWorkspaces({
       listWorkspaces: async () => [workspaceA, workspaceB],
-      createWorkspace: async () => {
-        throw new Error('should not create workspace')
-      },
-      getCurrentWorkspaceId: () => 'missing-workspace',
+      getCurrentWorkspaceId: () => null,
       setWorkspaces: () => {},
       setCurrentWorkspaceId: (workspaceId) => {
         selectedIds.push(workspaceId)
       },
     })
 
-    expect(selectedIds).toEqual([workspaceA.id])
+    expect(selectedIds).toEqual([])
+  })
+
+  test('falls back to ordinary session when the persisted project no longer exists', async () => {
+    const selectedIds: Array<string | null> = []
+
+    await bootstrapWorkspaces({
+      listWorkspaces: async () => [workspaceA, workspaceB],
+      getCurrentWorkspaceId: () => 'missing-workspace',
+      setWorkspaces: () => {},
+      setCurrentWorkspaceId: (workspaceId) => selectedIds.push(workspaceId),
+    })
+
+    expect(selectedIds).toEqual([null])
   })
 })

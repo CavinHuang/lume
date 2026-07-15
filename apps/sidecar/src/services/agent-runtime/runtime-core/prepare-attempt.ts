@@ -1,6 +1,6 @@
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
-import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
+import { resolveAgentThreadWorkdir, type ResolvedAgentWorkdir } from "../../agent/agent-workdir-resolver";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runner/types";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import { getRuntimeCoreAgentDir } from "./session-store";
@@ -8,6 +8,12 @@ import type { OpenAiApiMode } from "@lume/shared";
 
 export interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
+  lumeWorkDir: string;
+  filesRoot: string;
+  plansRoot: string;
+  artifactsRoot: string;
+  projectRoot?: string;
+  fileContextId: string;
   agentDir: string;
   workspaceName?: string;
   workspaceSlug?: string;
@@ -51,15 +57,31 @@ export async function prepareRuntimeCoreAttempt(
   let workspaceSlug: string | undefined;
   if (runtime.workspaceId) {
     const workspace = getAgentWorkspace(runtime.workspaceId);
-    if (workspace) {
-      workspaceName = workspace.name;
-      workspaceSlug = workspace.slug;
-      agentCwd = getAgentSessionWorkspacePath(workspace.slug, runtime.sessionId);
+    if (!workspace) {
+      return { status: "errored", errorMessage: `项目不存在或已移除: ${runtime.workspaceId}` };
     }
+    workspaceName = workspace.name;
+    workspaceSlug = workspace.slug;
+  }
+  let resolvedWorkdir: ResolvedAgentWorkdir;
+  try {
+    resolvedWorkdir = resolveAgentThreadWorkdir(runtime.sessionId);
+    agentCwd = resolvedWorkdir.agentCwd;
+  } catch (error) {
+    return {
+      status: "errored",
+      errorMessage: error instanceof Error ? error.message : String(error)
+    };
   }
 
   return {
     agentCwd,
+    lumeWorkDir: resolvedWorkdir.lumeWorkDir,
+    filesRoot: resolvedWorkdir.filesRoot,
+    plansRoot: resolvedWorkdir.plansRoot,
+    artifactsRoot: resolvedWorkdir.artifactsRoot,
+    ...(resolvedWorkdir.projectRoot ? { projectRoot: resolvedWorkdir.projectRoot } : {}),
+    fileContextId: resolvedWorkdir.fileContextId,
     agentDir: getRuntimeCoreAgentDir(),
     workspaceName,
     workspaceSlug,

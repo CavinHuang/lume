@@ -31,7 +31,6 @@ export const agentSendInputSchema = z.object({
   permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]).optional(),
   thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
-  attachedDirectories: z.array(z.string()).optional(),
   messageMetadata: z.record(z.string(), z.unknown()).optional(),
   resendFromMessageId: z.string().optional(),
   editFromMessageId: z.string().optional()
@@ -449,7 +448,15 @@ export const agentCreateThreadInputSchema = z.object({
   channelId: z.string().optional(),
   modelId: z.string().optional(),
   workspaceId: z.string().optional(),
-  parentThreadId: z.string().optional()
+  parentThreadId: z.string().optional(),
+  fileContextMode: z.enum(["newRoot", "inherit", "fork"]).optional()
+}).superRefine((input, ctx) => {
+  if (input.parentThreadId && input.fileContextMode !== "inherit") {
+    ctx.addIssue({ code: "custom", path: ["fileContextMode"], message: "带 parentThreadId 的子 Agent 必须显式使用 inherit" });
+  }
+  if (!input.parentThreadId && input.fileContextMode === "inherit") {
+    ctx.addIssue({ code: "custom", path: ["fileContextMode"], message: "inherit 需要 parentThreadId" });
+  }
 });
 
 export const agentThreadIdInputSchema = z.object({
@@ -720,6 +727,11 @@ export const workspacePathInputSchema = z.object({
   path: z.string().optional()
 });
 
+export const legacyResourceExportInputSchema = z.object({
+  workspaceSlug: idSchema,
+  path: idSchema,
+  conflict: z.literal("error")
+});
 export const workspaceRequiredPathInputSchema = z.object({
   workspaceSlug: idSchema,
   path: idSchema
@@ -738,7 +750,8 @@ export const workspaceMoveFileInputSchema = z.object({
 });
 
 export const workspaceCreateInputSchema = z.object({
-  name: z.string().min(1)
+  projectPath: z.string().trim().min(1),
+  name: z.string().min(1).optional()
 });
 
 export const workspaceUpdateInputSchema = z.object({
@@ -746,8 +759,18 @@ export const workspaceUpdateInputSchema = z.object({
   name: z.string().min(1)
 });
 
-export const workspaceDeleteInputSchema = z.object({
+export const workspaceIdInputSchema = z.object({
   id: idSchema
+});
+
+export const workspaceDirectoryInputSchema = z.object({
+  id: idSchema,
+  projectPath: z.string().trim().min(1)
+});
+
+export const workspaceDeleteInputSchema = z.object({
+  id: idSchema,
+  mode: z.enum(["keepHistory", "deleteLumeData"])
 });
 
 const mcpServerEntrySchema = z.object({

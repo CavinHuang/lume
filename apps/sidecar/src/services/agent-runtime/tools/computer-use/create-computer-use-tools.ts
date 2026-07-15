@@ -80,6 +80,7 @@ export function createComputerUseMcpTools(input: {
   invoke?: ComputerUseInvoke;
   workspaceSlug?: string;
   threadId?: string;
+  filesRoot?: string;
   runId?: string;
   routeScreenshot?: (path: string) => Promise<ComputerUseVisionRouteResult>;
   originalUserInstruction?: string;
@@ -92,6 +93,7 @@ export function createComputerUseMcpTools(input: {
     const ledger = new ComputerUseActionLedger({
       workspaceSlug: input.workspaceSlug,
       threadId: input.threadId ?? "computer-use",
+      filesRoot: input.filesRoot,
     });
     const lastObservationByWindow = new Map<string, string>();
     const latestCanonicalWindowById = new Map<number, ComputerUseWindow>();
@@ -118,6 +120,7 @@ export function createComputerUseMcpTools(input: {
               toolUseId: context.toolUseId,
               workspaceSlug: input.workspaceSlug,
               threadId: input.threadId,
+              filesRoot: input.filesRoot,
               routeScreenshot: context.routeScreenshot,
               ledger,
               lastObservationByWindow,
@@ -373,6 +376,7 @@ async function handleWindowState(input: {
   toolUseId?: string;
   workspaceSlug?: string;
   threadId?: string;
+  filesRoot?: string;
   routeScreenshot?: (path: string) => Promise<ComputerUseVisionRouteResult>;
   ledger: ComputerUseActionLedger;
   lastObservationByWindow: Map<string, string>;
@@ -405,12 +409,13 @@ async function handleWindowState(input: {
   if (screenshots.length === 0) return toolResult(input.toolUseId, result, false, metadata);
 
   const { workspaceSlug, threadId } = input;
-  if (!workspaceSlug || !threadId) {
-    throw new Error("computer-use screenshot requires a workspace-bound thread");
+  if (!threadId) {
+    throw new Error("computer-use screenshot requires a thread");
   }
   const saved = saveComputerUseScreenshots({
     workspaceSlug,
     threadId,
+    filesRoot: input.filesRoot,
     screenshots,
   });
   if (!input.routeScreenshot) throw new Error("vision_unavailable");

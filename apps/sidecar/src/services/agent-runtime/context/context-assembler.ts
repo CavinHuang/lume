@@ -20,7 +20,7 @@ import type { CollectedAppendContextEffect } from "../../workflow-hooks/hook-eff
 import { getPermissionDeniedSummary } from "../permissions/permission-denials";
 import type { TraceRecorder } from "../trace/trace-recorder";
 import { DEFAULT_CONTEXT_BUDGET, type ContextBudget } from "./context-budget";
-import { buildMessageAttachmentBrief, buildAttachedDirectoriesBrief } from "./message-attachments";
+import { buildMessageAttachmentBrief } from "./message-attachments";
 
 export interface ContextAssemblyInput {
   threadId: string;
@@ -36,7 +36,8 @@ export interface ContextAssemblyInput {
   permissionMode?: AgentSendInput["permissionMode"];
   agentSystemPrompt?: string;
   messageAttachments?: AgentMessageAttachmentInput[];
-  attachedDirectories?: string[];
+  lumeWorkDir?: string;
+  projectRoot?: string;
   availableTools: string[];
   enabledPlugins?: EnabledPluginContextItem[];
   tokenBudget: number;
@@ -139,6 +140,8 @@ export class ContextAssembler {
         workspaceName: input.workspaceName,
         workspaceSlug: input.workspaceSlug,
         agentCwd: input.cwd ?? process.cwd(),
+        lumeWorkDir: input.lumeWorkDir,
+        projectRoot: input.projectRoot,
         availableTools: input.availableTools,
         enabledPlugins: input.enabledPlugins,
         threadType: input.threadType,
@@ -236,7 +239,6 @@ export class ContextAssembler {
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
     const attachmentBrief = buildMessageAttachmentBrief(input.messageAttachments);
-    const directoryBrief = buildAttachedDirectoriesBrief(input.attachedDirectories);
     const desktopContextForPrompt = promptDesktopContext(input.desktopContext);
     const desktopContextBrief = desktopContextForPrompt
       ? `<desktop_context trust="untrusted">\n${JSON.stringify(desktopContextForPrompt)}\n</desktop_context>`
@@ -244,8 +246,7 @@ export class ContextAssembler {
     const userMessageForModel = [
       memoryContext.userMessageForModel,
       desktopContextBrief,
-      attachmentBrief,
-      directoryBrief
+      attachmentBrief
     ]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");

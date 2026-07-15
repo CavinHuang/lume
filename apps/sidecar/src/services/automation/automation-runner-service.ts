@@ -123,7 +123,8 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
         channelId,
         job.workspaceId,
         undefined,
-        modelId
+        modelId,
+        { fileContextMode: "newRoot" }
       );
       threadId = thread.id;
     }

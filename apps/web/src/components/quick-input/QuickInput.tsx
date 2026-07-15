@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
+import { useAtom, useSetAtom } from 'jotai'
+import { agentThreadsAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { createThread } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
@@ -25,8 +25,7 @@ import type { DesktopContextTarget } from '@lume/shared'
  */
 export function QuickInput() {
   useGlobalAgentListeners()
-  useWorkspaceBootstrap()
-  const workspaces = useAtomValue(agentWorkspacesAtom)
+  const workspacesReady = useWorkspaceBootstrap()
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
   const setAgentThreads = useSetAtom(agentThreadsAtom)
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -49,13 +48,12 @@ export function QuickInput() {
         toast.error('创建会话失败')
       })
 
-  // workspace 就绪后创建首个会话（useWorkspaceBootstrap 首次启动时异步创建默认 workspace）
+  // 项目列表就绪后按持久化选择创建首个会话；null 表示普通会话。
   useEffect(() => {
-    if (threadId || workspaces.length === 0) return
-    const seed = currentWorkspaceId ?? workspaces[0]?.id
-    createAndSetThread(seed ?? undefined)
+    if (!workspacesReady || threadId) return
+    createAndSetThread(currentWorkspaceId ?? undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaces.length])
+  }, [workspacesReady])
 
   useEffect(() => {
     let cancelled = false
@@ -86,14 +84,12 @@ export function QuickInput() {
   }, [])
 
   const handleNewThread = () => {
-    const seed = currentWorkspaceId ?? workspaces[0]?.id
-    createAndSetThread(seed ?? undefined)
+    createAndSetThread(currentWorkspaceId ?? undefined)
   }
 
-  const handleWorkspaceChange = (workspaceId: string) => {
+  const handleWorkspaceChange = (workspaceId: string | null) => {
     setCurrentWorkspaceId(workspaceId)
-    // 切换即新建：让选择器始终反映当前会话的 workspace
-    createAndSetThread(workspaceId)
+    createAndSetThread(workspaceId ?? undefined)
   }
 
   const handleSelectDesktopContextTarget = (target: DesktopContextTarget) => {

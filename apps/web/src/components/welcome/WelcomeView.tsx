@@ -5,7 +5,6 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
-import { Plus, X, Folder } from 'lucide-react'
 import {
   agentThreadsAtom,
   agentWorkspacesAtom,
@@ -17,7 +16,7 @@ import {
   agentPlanModePhaseAtom,
   welcomePromptSeedAtom,
 } from '@/atoms'
-import { sidecarCall, agentSend, getQuickInputContext, openFileDialog, openFolderDialog, onSidecarEvent } from '@/lib/desktop-api'
+import { sidecarCall, agentSend, getQuickInputContext, openFileDialog, onSidecarEvent } from '@/lib/desktop-api'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
@@ -51,7 +50,6 @@ import {
   refreshAgentInputDesktopContextState,
 } from '@/components/agent/agent-input-desktop-context'
 
-import { Button } from '@/components/ui/button'
 interface WelcomeViewProps {
   workspaceId?: string
   desktopContextTarget?: DesktopContextTarget
@@ -91,7 +89,6 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const [sending, setSending] = useState(false)
   const [editorText, setEditorText] = useState('')
   const [pendingFiles, setPendingFiles] = useState<WelcomePendingFile[]>([])
-  const [pendingFolders, setPendingFolders] = useState<{ id: string; path: string; name: string }[]>([])
   const [welcomeSuggestions, setWelcomeSuggestions] = useState<AgentWelcomeSuggestion[]>(DEFAULT_WELCOME_SUGGESTIONS)
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget>()
@@ -247,7 +244,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const handleSend = async () => {
     if (!editor || sending) return
     const rawText = editor.getText().trim()
-    if (!rawText && pendingFiles.length === 0 && pendingFolders.length === 0) return
+    if (!rawText && pendingFiles.length === 0) return
     const text = rawText || '请解读这些附件。'
 
     setSending(true)
@@ -336,13 +333,11 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         ...(desktopContextTargetForSend
           ? { messageMetadata: createDesktopContextMessageMetadata(desktopContextTargetForSend) }
           : {}),
-        ...(pendingFolders.length > 0 ? { attachedDirectories: pendingFolders.map((f) => f.path) } : {}),
         ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
       } as any)
       editor.commands.clearContent()
       setEditorText('')
       setPendingFiles([])
-      setPendingFolders([])
     } catch (err) {
       console.error('[WelcomeView] 发送失败:', err)
       toast.error('发送失败，请重试')
@@ -421,12 +416,12 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
     }
   }, [])
 
-  const handleSelectWorkspace = (wsId: string) => {
+  const handleSelectWorkspace = (wsId: string | null) => {
     setSelectedWorkspaceId(wsId)
     setCurrentWorkspaceId(wsId)
     setTabs((prev) =>
       prev.map((t) =>
-        t.id === '__welcome__' ? { ...t, workspaceId: wsId } : t
+        t.id === '__welcome__' ? { ...t, workspaceId: wsId ?? undefined } : t
       )
     )
   }
@@ -445,54 +440,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
     setPermissionMode(value)
   }
 
-  const hasText = editorText.trim().length > 0 || pendingFiles.length > 0 || pendingFolders.length > 0
-
-  const handleAttachFolder = async () => {
-    try {
-      const selection = await openFolderDialog()
-      if (!selection.path) return
-      const folderName = selection.path.split('/').filter(Boolean).pop() ?? 'folder'
-      setPendingFolders((prev) => [
-        ...prev,
-        { id: createWelcomePendingFileId(), path: selection.path!, name: folderName },
-      ])
-      toast.success(`已添加文件夹 ${folderName}`)
-    } catch (err) {
-      console.error('[WelcomeView] 文件夹选择失败:', err)
-      toast.error('文件夹选择失败')
-    }
-  }
-
-  const folderBar = (
-    <div className="flex items-center gap-1.5 overflow-x-auto">
-      {pendingFolders.map((folder) => (
-        <span
-          key={folder.id}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--surface-3)] px-2.5 py-1 text-[12px] text-[var(--text-2)]"
-        >
-          <Folder size={13} />
-          {folder.name}
-          <Button
-                variant="ghost"
-            type="button"
-            className="ml-0.5 text-[var(--text-3)] hover:text-[var(--text-1)]"
-            onClick={() => setPendingFolders((prev) => prev.filter((f) => f.id !== folder.id))}
-          >
-            <X size={12} />
-          </Button>
-        </span>
-      ))}
-      <Button
-                variant="ghost"
-        type="button"
-        className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[12px] text-[var(--text-3)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_50%,transparent)] hover:text-[var(--text-2)]"
-        onClick={handleAttachFolder}
-      >
-        <Plus size={13} />
-        选择附加的项目文件夹
-      </Button>
-    </div>
-  )
+  const hasText = editorText.trim().length > 0 || pendingFiles.length > 0
 
   return (
     <>
@@ -560,7 +508,6 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         onRemovePendingFile={(index) =>
           setPendingFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
         }
-        folderBar={folderBar}
       />
       <CreateWorkspaceDialog
         open={createWorkspaceOpen}

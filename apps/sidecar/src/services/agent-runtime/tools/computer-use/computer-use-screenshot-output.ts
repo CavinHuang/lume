@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { toThreadRelativePath } from "../../../agent/agent-files-service";
+import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 
 export interface SavedComputerUseScreenshot {
@@ -23,11 +24,13 @@ const EXTENSION_BY_MEDIA_TYPE: Record<string, string> = {
 };
 
 export function saveComputerUseScreenshots(input: {
-  workspaceSlug: string;
+  workspaceSlug?: string;
   threadId: string;
+  filesRoot?: string;
   screenshots: unknown[];
 }): SavedComputerUseScreenshot[] {
-  const dir = join(getAgentThreadFilesPath(input.workspaceSlug, input.threadId), "computer-use");
+  const filesRoot = input.filesRoot ?? resolveFilesRoot(input.workspaceSlug, input.threadId);
+  const dir = join(filesRoot, "computer-use");
   const saved: SavedComputerUseScreenshot[] = [];
 
   for (const candidate of input.screenshots) {
@@ -63,6 +66,17 @@ export function saveComputerUseScreenshots(input: {
 
   if (saved.length === 0) throw new Error("screenshot pixels unavailable");
   return saved;
+}
+
+function resolveFilesRoot(workspaceSlug: string | undefined, threadId: string): string {
+  try {
+    return resolveAgentThreadWorkdir(threadId).filesRoot;
+  } catch {
+    if (!workspaceSlug) {
+      throw new Error("无法解析普通会话文件目录");
+    }
+    return getAgentThreadFilesPath(workspaceSlug, threadId);
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

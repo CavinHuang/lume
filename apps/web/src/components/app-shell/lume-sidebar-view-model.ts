@@ -3,7 +3,7 @@ import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 export type LumeSidebarTopActionId = 'new-chat' | 'lume' | 'skills' | 'automations'
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
 export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
-const UNASSIGNED_THREADS_WORKSPACE_NAME = '未分配'
+const UNASSIGNED_THREADS_WORKSPACE_NAME = '普通会话'
 
 export interface BuildLumeSidebarViewModelInput {
   workspaces: AgentWorkspace[]
@@ -77,7 +77,7 @@ export function buildLumeSidebarViewModel({
   expandedWorkspaceIds,
   pinnedWorkspaceIds,
 }: BuildLumeSidebarViewModelInput): LumeSidebarViewModel {
-  const selectedWorkspaceId = currentWorkspaceId ?? workspaces[0]?.id ?? null
+  const selectedWorkspaceId = currentWorkspaceId
   const expandedSet = new Set(expandedWorkspaceIds)
   const pinnedSet = new Set(pinnedWorkspaceIds)
 
@@ -126,7 +126,7 @@ export function buildLumeSidebarViewModel({
       id: UNASSIGNED_THREADS_WORKSPACE_ID,
       name: UNASSIGNED_THREADS_WORKSPACE_NAME,
       count: unassignedThreads.length,
-      isCurrent: false,
+      isCurrent: currentWorkspaceId === null,
       isExpanded: expandedSet.has(UNASSIGNED_THREADS_WORKSPACE_ID),
       pinned: false,
       threads: buildThreadTree(unassignedThreads, activeTabId, UNASSIGNED_THREADS_WORKSPACE_NAME),

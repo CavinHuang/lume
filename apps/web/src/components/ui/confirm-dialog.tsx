@@ -13,12 +13,14 @@ export interface ConfirmDialogOptions {
   description: string
   confirmLabel?: string
   destructive?: boolean
+  secondaryLabel?: string
 }
 
 interface ConfirmDialogProps extends ConfirmDialogOptions {
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
+  onSecondary?: () => void
 }
 
 export function ConfirmDialog({
@@ -26,9 +28,11 @@ export function ConfirmDialog({
   description,
   confirmLabel = '确认',
   destructive = false,
+  secondaryLabel,
   open,
   onOpenChange,
   onConfirm,
+  onSecondary,
 }: ConfirmDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -41,6 +45,11 @@ export function ConfirmDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             取消
           </Button>
+          {secondaryLabel && onSecondary && (
+            <Button variant="outline" onClick={onSecondary}>
+              {secondaryLabel}
+            </Button>
+          )}
           <Button
             variant={destructive ? 'destructive' : 'default'}
             onClick={() => {

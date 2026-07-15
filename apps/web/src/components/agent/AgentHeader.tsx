@@ -1,8 +1,13 @@
-import { useAtomValue } from 'jotai'
+import { useEffect, useState } from 'react'
+import { useAtom, useAtomValue } from 'jotai'
+import { FolderOpen } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily, agentStreamingStatesFamily } from '@/atoms'
+import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily, agentStreamingStatesFamily, agentWorkspacesAtom } from '@/atoms'
 import { ThreadMoreActions } from './ThreadMoreActions'
-import type { AgentRuntimePhase } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentRuntimePhase, type AgentWorkspace, type AgentWorkspaceStatus } from '@lume/shared'
+import { openFolderDialog, sidecarCall } from '@/lib/desktop-api'
+import { Button } from '@/components/ui/button'
 
 interface AgentHeaderProps {
   threadId: string
@@ -21,14 +26,16 @@ const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text:
 
 export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
+  const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
   const thread = threads.find((t) => t.id === threadId)
+  const workspace = workspaces.find((item) => item.id === thread?.workspaceId)
   const runtimeStatus = useAtomValue(agentRuntimeStatusFamily(threadId))
   const runtimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId))?.events ?? []
-  // 回退：RUNTIME_STATUS_CHANGED 通道不稳时，用 RUNTIME_EVENT 流的 streamingState 保证徽章可见
   const isStreamingFallback = useAtomValue(agentStreamingStatesFamily(threadId)) === 'streaming'
+  const [workspaceStatus, setWorkspaceStatus] = useState<AgentWorkspaceStatus | null>(null)
+  const [ordinaryPath, setOrdinaryPath] = useState<string | null>(null)
 
   const runtimePhase = runtimeStatus?.phase
-  // runtime 有有效（非 idle）phase 时优先；否则 streaming 回退；其余隐藏
   const phase: AgentRuntimePhase | undefined =
     runtimePhase && runtimePhase !== 'idle'
       ? runtimePhase
@@ -36,11 +43,55 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
         ? 'streaming'
         : runtimePhase
   const phaseStyle = phase && phase !== 'idle' ? PHASE_STYLE[phase] : null
-
   const toolStepCount = runtimeEvents.filter((event) => event.type === 'tool.started').length
-
   const isStreaming = phase === 'streaming'
   const toolName = runtimeStatus?.toolName
+
+  useEffect(() => {
+    if (workspace) {
+      void sidecarCall<AgentWorkspaceStatus>(AGENT_IPC_CHANNELS.GET_WORKSPACE_STATUS, { id: workspace.id })
+        .then(setWorkspaceStatus)
+        .catch(() => setWorkspaceStatus(null))
+      setOrdinaryPath(null)
+      return
+    }
+    setWorkspaceStatus(null)
+    void sidecarCall<string>(AGENT_IPC_CHANNELS.GET_THREAD_PATH, { threadId })
+      .then(setOrdinaryPath)
+      .catch(() => setOrdinaryPath(null))
+  }, [threadId, workspace])
+
+  const handleWorkdirClick = async () => {
+    if (!workspace) {
+      if (!ordinaryPath) return
+      await sidecarCall(AGENT_IPC_CHANNELS.OPEN_FILE, { threadId, path: ordinaryPath })
+      return
+    }
+    if (workspaceStatus?.availability === 'available' && workspaceStatus.projectPath) {
+      await sidecarCall(AGENT_IPC_CHANNELS.SHOW_PROJECT_IN_FOLDER, {
+        workspaceSlug: workspace.slug,
+        path: workspaceStatus.projectPath,
+      })
+      return
+    }
+    const selection = await openFolderDialog()
+    if (!selection.path) return
+    const channel = workspaceStatus?.availability === 'unavailable'
+      ? AGENT_IPC_CHANNELS.RELOCATE_WORKSPACE_DIRECTORY
+      : AGENT_IPC_CHANNELS.BIND_WORKSPACE_DIRECTORY
+    const updated = await sidecarCall<AgentWorkspace>(channel, { id: workspace.id, projectPath: selection.path })
+    setWorkspaces((current) => current.map((item) => item.id === updated.id ? updated : item))
+    setWorkspaceStatus(await sidecarCall<AgentWorkspaceStatus>(AGENT_IPC_CHANNELS.GET_WORKSPACE_STATUS, { id: workspace.id }))
+    toast.success('项目目录已绑定')
+  }
+
+  const workdirLabel = workspace
+    ? workspaceStatus?.availability === 'available'
+      ? workspaceStatus.projectPath
+      : workspaceStatus?.availability === 'unavailable'
+        ? '项目目录不可用，点击重新定位'
+        : '项目尚未绑定目录，点击选择'
+    : ordinaryPath ?? 'Lume 工作目录'
 
   return (
     <div className="flex items-center gap-3 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] px-4 py-3">
@@ -49,6 +100,20 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
           {thread?.title ?? '新会话'}
         </span>
         <ThreadMoreActions threadId={threadId} readOnly={readOnly} />
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => void handleWorkdirClick().catch(() => toast.error('打开工作目录失败'))}
+          className="h-7 min-w-0 max-w-[360px] justify-start gap-1.5 px-2 text-[11px] text-muted-foreground"
+          title={workdirLabel ?? undefined}
+        >
+          <FolderOpen size={13} className="shrink-0" />
+          <span className="truncate">
+            {workspace
+              ? `${workspace.name} · ${workdirLabel}`
+              : `普通会话 · Lume 工作目录${ordinaryPath ? ` · ${ordinaryPath}` : ''}`}
+          </span>
+        </Button>
         {phaseStyle && (
           <span
             className={cn(

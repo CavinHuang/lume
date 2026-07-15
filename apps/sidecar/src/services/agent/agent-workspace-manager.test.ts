@@ -1,20 +1,24 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   getAliceUserSkillsDir,
+  getAgentWorkspacePath,
   getLumeConfigYamlPath,
   getUserSkillsDir,
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
 import {
+  bindLegacyAgentWorkspace,
   createAgentWorkspace,
+  getAgentWorkspaceStatus,
   getAgentWorkspaceBySlug,
   listAgentWorkspaces,
   getWorkspaceMcpConfig,
   getRuntimeSkills,
+  relocateUnavailableAgentWorkspace,
   saveWorkspaceMcpConfig,
   getWorkspaceSkills
 } from "./agent-workspace-manager";
@@ -57,6 +61,16 @@ describe("agent-workspace-manager lume.yaml integration", () => {
   afterEach(() => {
     restoreEnv?.();
     restoreEnv = null;
+  });
+
+  test("新建项目不再创建旧版 resources 目录", () => {
+    restoreEnv = withTempConfigDir();
+    const projectPath = join(process.env.LUME_CONFIG_DIR!, "project");
+    mkdirSync(projectPath, { recursive: true });
+
+    const workspace = createAgentWorkspace("Project", { projectPath });
+
+    expect(existsSync(join(getAgentWorkspacePath(workspace.slug), "resources"))).toBeFalse();
   });
 
   test("getWorkspaceMcpConfig 应叠加 lume.yaml 的 effective mcp", () => {
@@ -395,6 +409,36 @@ describe("agent-workspace-manager workspace creation", () => {
     expect(listAgentWorkspaces().map((item) => item.slug)).toEqual(["my-custom-slug"]);
   });
 
+  test("项目名称取目录名且同一真实目录只创建一个项目", () => {
+    restoreEnv = withTempConfigDir();
+    const projectPath = join(process.env.LUME_CONFIG_DIR!, "projects", "folder-name");
+    mkdirSync(projectPath, { recursive: true });
+
+    const first = createAgentWorkspace("ignored", { projectPath });
+    const second = createAgentWorkspace("also ignored", { projectPath: join(projectPath, ".") });
+
+    expect(first.name).toBe("folder-name");
+    expect(second.id).toBe(first.id);
+    expect(first.realpathKey).toBeTruthy();
+  });
+
+  test("旧项目只能首次绑定；已绑定项目仅在原目录不可用时重新定位", () => {
+    restoreEnv = withTempConfigDir();
+    const legacy = createAgentWorkspace("legacy", { slug: "legacy" });
+    const firstPath = join(process.env.LUME_CONFIG_DIR!, "projects", "first");
+    const nextPath = join(process.env.LUME_CONFIG_DIR!, "projects", "next");
+    mkdirSync(firstPath, { recursive: true });
+    mkdirSync(nextPath, { recursive: true });
+
+    const bound = bindLegacyAgentWorkspace(legacy.id, firstPath);
+    expect(getAgentWorkspaceStatus(bound.id).availability).toBe("available");
+    expect(() => relocateUnavailableAgentWorkspace(bound.id, nextPath)).toThrow("仍可访问");
+
+    rmSync(firstPath, { recursive: true, force: true });
+    const relocated = relocateUnavailableAgentWorkspace(bound.id, nextPath);
+    expect(relocated.projectPath).toBe(nextPath);
+    expect(getAgentWorkspaceStatus(bound.id).availability).toBe("available");
+  });
   test("createAgentWorkspace 应拒绝重复的显式 slug", () => {
     restoreEnv = withTempConfigDir();
 

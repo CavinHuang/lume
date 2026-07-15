@@ -6,6 +6,7 @@ import { getAliceUserSkillsDir, getDefaultSkillsDir, getUserSkillsDir, getWorksp
 import { listWorkspaceSkillVersions } from "./skill-evolution-service";
 import { saveLocalInstalledSkillMetadata } from "./skills-market-metadata";
 import { parseSkillFrontmatter } from "./skill-frontmatter";
+import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 import {
   deleteEditableSkill,
   getEditableSkill,
@@ -102,6 +103,8 @@ describe("workspace-skill-editor-service", () => {
   test("manages Alice-compatible project skills under cwd .alice/skills", async () => {
     cleanup = withTempConfigDir();
     const projectDir = join(tmpdir(), `lume-project-skill-editor-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(projectDir, { recursive: true });
+    createAgentWorkspace("Demo", { slug: "demo", projectPath: projectDir });
 
     try {
       await saveWorkspaceSkill({
@@ -154,6 +157,8 @@ describe("workspace-skill-editor-service", () => {
   test("manages legacy Lume project skills when no Alice project copy exists", async () => {
     cleanup = withTempConfigDir();
     const projectDir = join(tmpdir(), `lume-legacy-project-skill-editor-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    mkdirSync(projectDir, { recursive: true });
+    createAgentWorkspace("Demo", { slug: "demo", projectPath: projectDir });
     const legacySkillDir = join(projectDir, ".lume", "skills", "project-legacy");
     const legacySkillPath = join(legacySkillDir, "SKILL.md");
     const aliceSkillPath = join(projectDir, ".alice", "skills", "project-legacy", "SKILL.md");

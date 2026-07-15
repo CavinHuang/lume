@@ -207,7 +207,7 @@ export function LumeSidebar({
       <div className="flex items-center justify-between px-3 py-2">
         <div className="flex items-center gap-2">
           <span className="text-[12px] font-semibold leading-none text-[var(--lume-text-muted)]">
-            工作区
+            项目
           </span>
         </div>
         <div className="flex items-center gap-2 pr-1">
@@ -223,7 +223,7 @@ export function LumeSidebar({
           <Button
                 variant="ghost"
             type="button"
-            title="新建工作区"
+            title="添加项目"
             onClick={onCreateWorkspace}
             className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
           >

@@ -2,9 +2,11 @@ import {
   cpSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   type Dirent,
   renameSync,
   readFileSync,
+  realpathSync,
   mkdirSync,
   readdirSync,
   rmSync,
@@ -12,6 +14,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AttachWorkspaceResourceToThreadInput,
@@ -26,11 +29,12 @@ import type {
   WorkspaceSaveFilesInput
 } from "@lume/shared";
 import {
+  getAgentThreadRootPath,
   getAgentWorkspacePath,
-  getAgentSessionWorkspacePath,
-  getAgentWorkspacesDir,
-  getWorkspaceResourcesPath
+  getAgentWorkspacesDir
 } from "../infra/config-paths";
+import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { getAgentWorkspaceBySlug } from "./agent-workspace-manager";
 import {
   assertAttachmentMetadataHealthy,
   deleteAttachmentMeta,
@@ -39,7 +43,8 @@ import {
   readThreadAttachmentMeta,
   readWorkspaceAttachmentMeta,
   upsertAttachmentMeta,
-  type AttachmentScope
+  type AttachmentScope,
+  type ThreadAttachmentScope
 } from "./agent-attachment-meta-service";
 
 function validatePathSegment(value: string, label: string): void {
@@ -59,15 +64,20 @@ function isWithin(basePath: string, targetPath: string): boolean {
   return target === base || target.startsWith(`${base}${sep}`);
 }
 
-function resolveSessionDir(workspaceSlug: string, sessionId: string): string {
-  validatePathSegment(workspaceSlug, "workspaceSlug");
+function resolveSessionDir(workspaceSlug: string | undefined, sessionId: string): string {
   validatePathSegment(sessionId, "sessionId");
-  return getAgentSessionWorkspacePath(workspaceSlug, sessionId);
+  try {
+    return resolveAgentThreadWorkdir(sessionId).lumeWorkDir;
+  } catch (error) {
+    if (!workspaceSlug) throw error;
+    validatePathSegment(workspaceSlug, "workspaceSlug");
+    return getAgentThreadRootPath(workspaceSlug, sessionId);
+  }
 }
 
 function resolveWorkspaceResourcesDir(workspaceSlug: string): string {
   validatePathSegment(workspaceSlug, "workspaceSlug");
-  return getWorkspaceResourcesPath(workspaceSlug);
+  return join(getAgentWorkspacePath(workspaceSlug), "resources");
 }
 
 function resolveWorkspaceRootDir(workspaceSlug: string): string {
@@ -75,15 +85,48 @@ function resolveWorkspaceRootDir(workspaceSlug: string): string {
   return getAgentWorkspacePath(workspaceSlug);
 }
 
-function getThreadAttachmentScope(workspaceSlug: string, sessionId: string): AttachmentScope {
-  return { kind: "thread", workspaceSlug, threadId: sessionId };
+function getThreadAttachmentScope(workspaceSlug: string | undefined, sessionId: string): ThreadAttachmentScope {
+  try {
+    const resolved = resolveAgentThreadWorkdir(sessionId);
+    return {
+      kind: "thread",
+      workspaceSlug: workspaceSlug ?? resolved.fileContextId,
+      threadId: sessionId,
+      fileContextId: resolved.fileContextId
+    };
+  } catch (error) {
+    if (!workspaceSlug) throw error;
+    return { kind: "thread", workspaceSlug, threadId: sessionId };
+  }
+}
+
+function resolveExistingProjectTarget(workspaceSlug: string, targetPath?: string): string {
+  validatePathSegment(workspaceSlug, "workspaceSlug");
+  const workspace = getAgentWorkspaceBySlug(workspaceSlug);
+  if (!workspace?.projectPath) {
+    throw new Error("项目尚未绑定本地目录");
+  }
+  const projectRoot = realpathSync(workspace.projectPath);
+  const candidate = resolveSafePathWithin(projectRoot, targetPath, "目标路径超出项目目录");
+  if (!existsSync(candidate)) {
+    throw new Error("目标不存在");
+  }
+  const realTarget = realpathSync(candidate);
+  if (!isWithin(projectRoot, realTarget)) {
+    throw new Error("目标路径超出项目目录");
+  }
+  return realTarget;
 }
 
 function getWorkspaceAttachmentScope(workspaceSlug: string): AttachmentScope {
   return { kind: "workspace", workspaceSlug };
 }
 
-function isExternalSourcePath(workspaceSlug: string, sourcePath: string): boolean {
+function isExternalSourcePath(workspaceSlug: string | undefined, sourcePath: string, threadId?: string): boolean {
+  if (threadId) {
+    return !isWithin(resolveSessionDir(workspaceSlug, threadId), resolve(sourcePath));
+  }
+  if (!workspaceSlug) return true;
   const workspaceRoot = resolve(getAgentWorkspacePath(workspaceSlug));
   return !isWithin(workspaceRoot, resolve(sourcePath));
 }
@@ -119,17 +162,9 @@ export function resolveWorkspaceSlugBySessionId(sessionId: string): string | nul
 
 export const resolveWorkspaceSlugByThreadId = resolveWorkspaceSlugBySessionId;
 
-function resolveSafeTarget(workspaceSlug: string, sessionId: string, targetPath?: string): string {
+function resolveSafeTarget(workspaceSlug: string | undefined, sessionId: string, targetPath?: string): string {
   const sessionDir = resolveSessionDir(workspaceSlug, sessionId);
   return resolveSafePathWithin(sessionDir, targetPath, "目标路径超出线程工作目录");
-}
-
-function resolveAttachedTarget(targetPath: string): string {
-  const trimmed = targetPath.trim();
-  if (!trimmed) {
-    throw new Error("缺少目标路径");
-  }
-  return resolve(trimmed);
 }
 
 function resolveSafePath(basePath: string, targetPath?: string, errorMessage = "目标路径超出允许范围"): string {
@@ -182,13 +217,13 @@ function movePathWithFallback(sourcePath: string, targetPath: string): void {
   }
 }
 
-export function getAgentSessionPath(workspaceSlug: string, sessionId: string): string {
+export function getAgentSessionPath(workspaceSlug: string | undefined, sessionId: string): string {
   return resolveSessionDir(workspaceSlug, sessionId);
 }
 
 export const getAgentThreadPath = getAgentSessionPath;
 
-export function toThreadRelativePath(workspaceSlug: string, sessionId: string, targetPath: string): string {
+export function toThreadRelativePath(workspaceSlug: string | undefined, sessionId: string, targetPath: string): string {
   const sessionDir = resolveSessionDir(workspaceSlug, sessionId);
   const resolved = resolve(targetPath);
   if (!isWithin(sessionDir, resolved)) {
@@ -197,7 +232,7 @@ export function toThreadRelativePath(workspaceSlug: string, sessionId: string, t
   return relative(sessionDir, resolved).split(sep).join("/");
 }
 
-export function resolveThreadAttachmentPath(workspaceSlug: string, sessionId: string, threadPath: string): string {
+export function resolveThreadAttachmentPath(workspaceSlug: string | undefined, sessionId: string, threadPath: string): string {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, threadPath);
   if (!existsSync(resolved) || !statSync(resolved).isFile()) {
     throw new Error("附件文件不存在");
@@ -210,14 +245,15 @@ export function getWorkspaceResourcesDirectory(workspaceSlug: string): string {
 }
 
 export function listAgentDirectory(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath?: string
 ): FileEntry[] {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   if (!existsSync(resolved)) return [];
   const sessionRoot = resolveSessionDir(workspaceSlug, sessionId);
-  const attachmentMeta = readThreadAttachmentMeta(workspaceSlug, sessionId);
+  const threadScope = getThreadAttachmentScope(workspaceSlug, sessionId);
+  const attachmentMeta = readThreadAttachmentMeta(threadScope.workspaceSlug, sessionId, threadScope.fileContextId);
 
   const items = readdirSync(resolved, { withFileTypes: true }).map((entry) => {
     const fullPath = join(resolved, entry.name);
@@ -262,6 +298,74 @@ export function listWorkspaceDirectory(
   return enrichEntriesWithAttachmentMeta(items, resourcesDir, attachmentMeta);
 }
 
+export function listProjectDirectory(workspaceSlug: string, targetPath?: string): FileEntry[] {
+  const resolved = resolveExistingProjectTarget(workspaceSlug, targetPath);
+  if (!statSync(resolved).isDirectory()) {
+    throw new Error("目标不是目录");
+  }
+  const items = readdirSync(resolved, { withFileTypes: true }).map((entry) => ({
+    name: entry.name,
+    path: join(resolved, entry.name),
+    isDirectory: entry.isDirectory()
+  } satisfies FileEntry));
+  items.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+    return a.name.localeCompare(b.name, "en");
+  });
+  return items;
+}
+
+function assertLegacyExportSourceSafe(path: string): void {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) {
+    throw new Error("旧版资源导出不允许符号链接或 junction");
+  }
+  if (!stat.isDirectory()) return;
+  for (const entry of readdirSync(path)) {
+    assertLegacyExportSourceSafe(join(path, entry));
+  }
+}
+
+export function exportLegacyResourceToProject(
+  workspaceSlug: string,
+  targetPath: string,
+  conflict: "error"
+): { ok: true; path: string } {
+  if (conflict !== "error") {
+    throw new Error("旧版资源导出必须显式使用不覆盖策略");
+  }
+  const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
+  const lexicalSource = resolveSafePathWithin(resourcesDir, targetPath, "源路径超出旧版资源目录");
+  if (!existsSync(lexicalSource)) throw new Error("旧版资源不存在");
+  assertLegacyExportSourceSafe(lexicalSource);
+  const source = realpathSync(lexicalSource);
+  if (!isWithin(realpathSync(resourcesDir), source)) throw new Error("源路径超出旧版资源目录");
+
+  const projectRoot = resolveExistingProjectTarget(workspaceSlug);
+  const destination = join(projectRoot, basename(source));
+  if (existsSync(destination)) {
+    throw new Error("项目目录已存在同名文件，未覆盖任何内容");
+  }
+  const staging = join(projectRoot, `.lume-export-${randomUUID()}`);
+  try {
+    cpSync(source, staging, {
+      recursive: statSync(source).isDirectory(),
+      errorOnExist: true,
+      filter: (sourcePath) => {
+        assertLegacyExportSourceSafe(sourcePath);
+        return true;
+      }
+    });
+    if (!isWithin(projectRoot, realpathSync(staging))) {
+      throw new Error("导出目标超出项目目录");
+    }
+    renameSync(staging, destination);
+    return { ok: true, path: destination };
+  } catch (error) {
+    rmSync(staging, { recursive: true, force: true });
+    throw error;
+  }
+}
 export function listWorkspaceRootDirectory(
   workspaceSlug: string,
   targetPath?: string
@@ -288,7 +392,7 @@ export function listWorkspaceRootDirectory(
 }
 
 export function deleteAgentFile(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string
 ): { ok: true } {
@@ -353,7 +457,7 @@ export function deleteWorkspaceRootFile(
 }
 
 export function renameAgentFile(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string,
   newName: string
@@ -433,7 +537,7 @@ export function renameWorkspaceRootFile(
 }
 
 export function moveAgentFile(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string,
   targetDir: string
@@ -572,7 +676,7 @@ function showInSystemFolder(resolvedPath: string): void {
 }
 
 export function openAgentPath(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string
 ): { ok: true } {
@@ -611,7 +715,7 @@ export function openWorkspaceRootPath(
 }
 
 export function previewAgentPath(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string
 ): { ok: true } {
@@ -651,7 +755,7 @@ function readPreviewableText(resolvedPath: string): { content: string; truncated
 }
 
 export function readAgentPath(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string
 ): { content: string; truncated: boolean } {
@@ -663,7 +767,7 @@ export function readAgentPath(
 }
 
 export function readAgentFileData(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string
 ): { data: string; size: number } {
@@ -690,6 +794,52 @@ export function readWorkspacePath(
   return readPreviewableText(resolved);
 }
 
+export function readWorkspaceFileData(
+  workspaceSlug: string,
+  targetPath: string
+): { data: string; size: number } {
+  const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
+  const resolved = resolveSafePath(resourcesDir, targetPath, "目标路径超出工作区共享目录");
+  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+    throw new Error("目标不存在");
+  }
+  const bytes = readFileSync(resolved);
+  return { data: bytes.toString("base64"), size: bytes.byteLength };
+}
+
+export function readProjectPath(
+  workspaceSlug: string,
+  targetPath: string
+): { content: string; truncated: boolean } {
+  const resolved = resolveExistingProjectTarget(workspaceSlug, targetPath);
+  if (!statSync(resolved).isFile()) {
+    throw new Error("目标不是文件");
+  }
+  return readPreviewableText(resolved);
+}
+
+export function readProjectFileData(
+  workspaceSlug: string,
+  targetPath: string
+): { data: string; size: number } {
+  const resolved = resolveExistingProjectTarget(workspaceSlug, targetPath);
+  if (!statSync(resolved).isFile()) {
+    throw new Error("目标不是文件");
+  }
+  const bytes = readFileSync(resolved);
+  return { data: bytes.toString("base64"), size: bytes.byteLength };
+}
+
+export function openProjectPath(workspaceSlug: string, targetPath: string): { ok: true } {
+  openInSystem(resolveExistingProjectTarget(workspaceSlug, targetPath));
+  return { ok: true };
+}
+
+export function showProjectPathInFolder(workspaceSlug: string, targetPath: string): { ok: true } {
+  showInSystemFolder(resolveExistingProjectTarget(workspaceSlug, targetPath));
+  return { ok: true };
+}
+
 export function readWorkspaceRootPath(
   workspaceSlug: string,
   targetPath: string
@@ -703,7 +853,7 @@ export function readWorkspaceRootPath(
 }
 
 export function showAgentPathInFolder(
-  workspaceSlug: string,
+  workspaceSlug: string | undefined,
   sessionId: string,
   targetPath: string
 ): { ok: true } {
@@ -804,82 +954,6 @@ export function searchAgentWorkspaceFiles(
   return scanWorkspaceFiles(root, query, safeLimit);
 }
 
-export function listAttachedDirectory(path: string): FileEntry[] {
-  const resolved = resolveAttachedTarget(path);
-  if (!existsSync(resolved)) {
-    return [];
-  }
-  const directoryStat = statSync(resolved);
-  if (!directoryStat.isDirectory()) {
-    throw new Error("附加目录不存在");
-  }
-  const items = readdirSync(resolved, { withFileTypes: true })
-    .filter((item) => !item.name.startsWith("."))
-    .map((item) => ({
-      name: item.name,
-      path: join(resolved, item.name),
-      isDirectory: item.isDirectory()
-    } satisfies FileEntry));
-
-  items.sort((a, b) => {
-    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-    return a.name.localeCompare(b.name, "en");
-  });
-  return items;
-}
-
-export function openAttachedPath(targetPath: string): { ok: true } {
-  const resolved = resolveAttachedTarget(targetPath);
-  if (!existsSync(resolved)) {
-    throw new Error("目标不存在");
-  }
-  openInSystem(resolved);
-  return { ok: true };
-}
-
-export function showAttachedPathInFolder(targetPath: string): { ok: true } {
-  const resolved = resolveAttachedTarget(targetPath);
-  if (!existsSync(resolved)) {
-    throw new Error("目标不存在");
-  }
-  showInSystemFolder(resolved);
-  return { ok: true };
-}
-
-export function renameAttachedPath(targetPath: string, newName: string): { ok: true; path: string } {
-  const resolved = resolveAttachedTarget(targetPath);
-  if (!existsSync(resolved)) {
-    throw new Error("目标不存在");
-  }
-  const safeName = validateNewName(newName);
-  const nextPath = join(dirname(resolved), safeName);
-  if (existsSync(nextPath)) {
-    throw new Error("目标名称已存在");
-  }
-  movePathWithFallback(resolved, nextPath);
-  return { ok: true, path: nextPath };
-}
-
-export function moveAttachedPath(targetPath: string, targetDir: string): { ok: true; path: string } {
-  const resolved = resolveAttachedTarget(targetPath);
-  const resolvedTargetDir = resolveAttachedTarget(targetDir);
-  if (!existsSync(resolved)) {
-    throw new Error("目标不存在");
-  }
-  if (!existsSync(resolvedTargetDir) || !statSync(resolvedTargetDir).isDirectory()) {
-    throw new Error("目标目录不存在");
-  }
-  const nextPath = join(resolvedTargetDir, basename(resolved));
-  if (resolve(nextPath) === resolve(resolved)) {
-    return { ok: true, path: nextPath };
-  }
-  if (existsSync(nextPath)) {
-    throw new Error("目标路径已存在同名文件");
-  }
-  movePathWithFallback(resolved, nextPath);
-  return { ok: true, path: nextPath };
-}
-
 export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedFile[] {
   const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
   const results: AgentSavedFile[] = [];
@@ -909,7 +983,7 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
       targetPath,
       threadPath: toThreadRelativePath(input.workspaceSlug, input.threadId, targetPath)
     });
-    if (file.sourcePath && file.sourcePath.trim() && isExternalSourcePath(input.workspaceSlug, file.sourcePath)) {
+    if (file.sourcePath && file.sourcePath.trim() && isExternalSourcePath(input.workspaceSlug, file.sourcePath, input.threadId)) {
       upsertAttachmentMeta(scope, targetPath, {
         label: "外部附加",
         absoluteSourcePath: resolve(file.sourcePath)
@@ -1009,7 +1083,7 @@ export function copyFolderToSession(input: AgentCopyFolderInput): AgentSavedFile
 
   assertAttachmentMetadataHealthy(getThreadAttachmentScope(input.workspaceSlug, input.threadId));
   cpSync(sourcePath, targetDir, { recursive: true });
-  if (isExternalSourcePath(input.workspaceSlug, sourcePath)) {
+  if (isExternalSourcePath(input.workspaceSlug, sourcePath, input.threadId)) {
     upsertAttachmentMeta(getThreadAttachmentScope(input.workspaceSlug, input.threadId), targetDir, {
       label: "外部附加",
       absoluteSourcePath: sourcePath

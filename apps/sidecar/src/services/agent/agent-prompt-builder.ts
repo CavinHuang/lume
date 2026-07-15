@@ -278,13 +278,9 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
   lines.push(
     "",
     "## Workspace",
-    ctx.workspaceSlug
-      ? `Primary workspace: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/`
-      : "Primary workspace is provided by runtime context."
+    "Primary workspace is provided by runtime context."
   );
-  if (ctx.workspaceSlug) {
-    lines.push(`Session path: ~/.lume/agent-workspaces/${ctx.workspaceSlug}/${ctx.sessionId}/`);
-  }
+  lines.push("Session managed files are provided by the Lume working directory in runtime context.");
   lines.push("System config entry: ~/.lume/lume.yaml");
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
@@ -413,6 +409,8 @@ export interface DynamicContext {
   workspaceName?: string;
   workspaceSlug?: string;
   agentCwd?: string;
+  lumeWorkDir?: string;
+  projectRoot?: string;
   availableTools?: string[];
   userMessage?: string;
   enabledPlugins?: EnabledPluginContextItem[];
@@ -517,6 +515,11 @@ export function buildDynamicContext(ctx: DynamicContext): string {
 
   if (ctx.agentCwd) {
     sections.push(`<working_directory>${ctx.agentCwd}</working_directory>`);
+  }
+  if (ctx.lumeWorkDir && ctx.lumeWorkDir !== ctx.agentCwd) {
+    sections.push(`<lume_working_directory>${ctx.lumeWorkDir}</lume_working_directory>`);
+  } else if (ctx.lumeWorkDir) {
+    sections.push(`<lume_working_directory ordinary_session="true">${ctx.lumeWorkDir}</lume_working_directory>`);
   }
 
   return sections.join("\n\n");

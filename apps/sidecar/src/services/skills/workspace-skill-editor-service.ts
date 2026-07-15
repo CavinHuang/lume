@@ -15,6 +15,8 @@ import type {
 } from "@lume/shared";
 import YAML from "yaml";
 import { getAliceUserSkillsDir, getDefaultSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
+import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
+import { assertExistingDirectory } from "../agent/agent-workdir-resolver";
 import { parseSkillFrontmatter } from "./skill-frontmatter";
 import { getInstalledSkillSourceMetadata, type InstalledSkillSourceMeta } from "./skills-market-metadata";
 
@@ -57,27 +59,27 @@ function resolveUserSkillPath(skillSlug: string): string {
   return existsSync(legacyPath) ? legacyPath : alicePath;
 }
 
-function resolveAliceProjectSkillsDir(cwd: string | undefined): string {
-  const trimmed = cwd?.trim();
-  if (!trimmed) {
-    throw new Error("项目目录不能为空");
+function resolveProjectRootFromWorkspace(workspaceSlug: string): string {
+  const workspace = getAgentWorkspaceBySlug(workspaceSlug);
+  if (!workspace?.projectPath?.trim()) {
+    throw new Error("项目未绑定本地目录，不能管理项目 Skill");
   }
-  return join(resolve(trimmed), ".alice", "skills");
+  return assertExistingDirectory(workspace.projectPath);
 }
 
-function resolveLegacyProjectSkillsDir(cwd: string | undefined): string {
-  const trimmed = cwd?.trim();
-  if (!trimmed) {
-    throw new Error("项目目录不能为空");
-  }
-  return join(resolve(trimmed), ".lume", "skills");
+function resolveAliceProjectSkillsDir(workspaceSlug: string): string {
+  return join(resolveProjectRootFromWorkspace(workspaceSlug), ".alice", "skills");
 }
 
-function resolveProjectSkillPath(cwd: string | undefined, skillSlug: string): string {
-  const alicePath = resolveSkillPath(resolveAliceProjectSkillsDir(cwd), skillSlug);
+function resolveLegacyProjectSkillsDir(workspaceSlug: string): string {
+  return join(resolveProjectRootFromWorkspace(workspaceSlug), ".lume", "skills");
+}
+
+function resolveProjectSkillPath(workspaceSlug: string, skillSlug: string): string {
+  const alicePath = resolveSkillPath(resolveAliceProjectSkillsDir(workspaceSlug), skillSlug);
   if (existsSync(alicePath)) return alicePath;
 
-  const legacyPath = resolveSkillPath(resolveLegacyProjectSkillsDir(cwd), skillSlug);
+  const legacyPath = resolveSkillPath(resolveLegacyProjectSkillsDir(workspaceSlug), skillSlug);
   return existsSync(legacyPath) ? legacyPath : alicePath;
 }
 
@@ -107,7 +109,7 @@ function resolveEditableSkillPath(input: {
     return resolveUserSkillPath(skillSlug);
   }
   if (input.storageScope === "project") {
-    return resolveProjectSkillPath(input.cwd, skillSlug);
+    return resolveProjectSkillPath(input.workspaceSlug, skillSlug);
   }
   return resolveWorkspaceSkillPath(input.workspaceSlug, skillSlug);
 }
@@ -202,12 +204,12 @@ function readUserEditableSkills(): EditableSkillMeta[] {
   return Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
 }
 
-function readProjectEditableSkills(cwd: string): EditableSkillMeta[] {
+function readProjectEditableSkills(workspaceSlug: string): EditableSkillMeta[] {
   const bySlug = new Map<string, EditableSkillMeta>();
-  for (const skill of readEditableSkillsFromDir(resolveLegacyProjectSkillsDir(cwd), "project")) {
+  for (const skill of readEditableSkillsFromDir(resolveLegacyProjectSkillsDir(workspaceSlug), "project")) {
     bySlug.set(skill.slug, skill);
   }
-  for (const skill of readEditableSkillsFromDir(resolveAliceProjectSkillsDir(cwd), "project")) {
+  for (const skill of readEditableSkillsFromDir(resolveAliceProjectSkillsDir(workspaceSlug), "project")) {
     bySlug.set(skill.slug, skill);
   }
   return Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
@@ -372,7 +374,7 @@ export function listEditableSkills(input: ListEditableSkillsInput): EditableSkil
 
   return [
     ...readUserEditableSkills(),
-    ...(input.cwd ? readProjectEditableSkills(input.cwd) : []),
+    ...(getAgentWorkspaceBySlug(input.workspaceSlug)?.projectPath ? readProjectEditableSkills(input.workspaceSlug) : []),
     ...readEditableSkillsFromDir(getWorkspaceSkillsDir(input.workspaceSlug), "workspace", {
       installedSources,
       builtInSkillSlugs

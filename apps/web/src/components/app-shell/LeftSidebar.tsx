@@ -16,7 +16,7 @@ import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDia
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { sidecarCall } from '@/lib/desktop-api'
 import type { Tab } from '@/atoms/tab-atoms'
-import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
+import type { AgentThreadMeta, AgentWorkspace, AgentWorkspaceRemovalImpact, AgentWorkspaceRemoveMode } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { LumeSidebar } from './LumeSidebar'
 import {
@@ -49,8 +49,10 @@ export function LeftSidebar() {
     title: string
     description: string
     confirmLabel: string
+    secondaryLabel?: string
     destructive: boolean
     onConfirm: () => void
+    onSecondary?: () => void
   }>({ open: false, title: '', description: '', confirmLabel: '确认', destructive: false, onConfirm: () => {} })
 
   const hasUnassignedThreads = threads.some((thread) => thread.workspaceId == null)
@@ -251,26 +253,45 @@ export function LeftSidebar() {
     const ws = workspaces.find((w) => w.id === workspaceId)
     if (!ws) return
 
-    setConfirmState({
-      open: true,
-      title: '删除工作区',
-      description: `确认删除工作区「${ws.name}」？其下所有会话也将被删除，此操作不可撤销。`,
-      confirmLabel: '删除',
-      destructive: true,
-      onConfirm: async () => {
-        try {
-          await sidecarCall(AGENT_IPC_CHANNELS.DELETE_WORKSPACE, { id: workspaceId })
-          setWorkspaces((previous) => previous.filter((w) => w.id !== workspaceId))
-          if (currentWorkspaceId === workspaceId) {
-            setCurrentWorkspaceId(workspaces.find((w) => w.id !== workspaceId)?.id ?? null)
-          }
-          toast.success('已删除')
-        } catch (error) {
-          console.error('[LeftSidebar] 删除工作区失败:', error)
-          toast.error('删除失败')
-        }
-      },
-    })
+    const remove = async (mode: AgentWorkspaceRemoveMode) => {
+      try {
+        await sidecarCall(AGENT_IPC_CHANNELS.DELETE_WORKSPACE, { id: workspaceId, mode })
+        setWorkspaces((previous) => previous.filter((w) => w.id !== workspaceId))
+        setCurrentWorkspaceId((current) => current === workspaceId ? null : current)
+        const nextThreads = await sidecarCall<AgentThreadMeta[]>(AGENT_IPC_CHANNELS.LIST_THREADS, {})
+        setThreads(Array.isArray(nextThreads) ? nextThreads : [])
+        toast.success(mode === 'keepHistory' ? '已移除项目，会话已转为普通会话' : '已移除项目并将 Lume 用户数据移入回收站')
+      } catch (error) {
+        console.error('[LeftSidebar] 移除项目失败:', error)
+        toast.error(error instanceof Error ? error.message : '移除项目失败')
+      }
+    }
+
+    sidecarCall<AgentWorkspaceRemovalImpact>(AGENT_IPC_CHANNELS.GET_WORKSPACE_REMOVAL_IMPACT, { id: workspaceId })
+      .then((impact) => {
+        const impactText = `${impact.threads} 个会话、${impact.automations} 个自动化、${impact.imAccounts} 个 IM 账号、${impact.imThreadBindings} 个 IM 会话绑定会受影响。真实项目目录不会被删除或修改。`
+        setConfirmState({
+          open: true,
+          title: `移除项目「${ws.name}」？`,
+          description: `${impactText} 仅移除项目会保留历史与 Lume 工作目录，并把会话转为普通会话。`,
+          confirmLabel: '仅移除项目',
+          secondaryLabel: '同时删除 Lume 用户数据',
+          destructive: false,
+          onConfirm: () => void remove('keepHistory'),
+          onSecondary: () => setConfirmState({
+            open: true,
+            title: '是否删除 Lume 用户数据？',
+            description: `${impactText} 会话将进入回收站，项目级记忆、技能和 MCP 等 Lume 内部数据会被移除；真实项目目录仍不会被删除。`,
+            confirmLabel: '删除 Lume 用户数据',
+            destructive: true,
+            onConfirm: () => void remove('deleteLumeData'),
+          }),
+        })
+      })
+      .catch((error) => {
+        console.error('[LeftSidebar] 获取项目移除影响失败:', error)
+        toast.error('无法获取项目引用信息')
+      })
   }
 
   const handleTopAction = (actionId: LumeSidebarTopActionId) => {
@@ -370,7 +391,9 @@ export function LeftSidebar() {
         description={confirmState.description}
         confirmLabel={confirmState.confirmLabel}
         destructive={confirmState.destructive}
+        secondaryLabel={confirmState.secondaryLabel}
         onConfirm={confirmState.onConfirm}
+        onSecondary={confirmState.onSecondary}
       />
     </>
   )

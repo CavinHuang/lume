@@ -19,7 +19,7 @@ export interface CliCommandContext {
   status?: () => Promise<unknown>
   health?: () => Promise<unknown>
   listWorkspaces(): Promise<AgentWorkspace[]>
-  createWorkspace?: (input: { name: string; slug?: string }) => Promise<AgentWorkspace>
+  createWorkspace?: (input: { projectPath: string; name?: string; slug?: string }) => Promise<AgentWorkspace>
   listThreads?: (input: { workspaceSlug?: string; limit?: number }) => Promise<AgentThreadMeta[]>
   createThread?: (input: { title?: string; workspaceSlug?: string }) => Promise<AgentThreadMeta>
   sendThreadMessage?: (input: { threadId: string; text: string }) => Promise<{

@@ -26,8 +26,8 @@ import {
   saveFilesToAgentThread,
   saveFilesToWorkspace
 } from "../services/agent/agent-files-service";
+import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
 import {
-  getAgentThreadFilesPath,
   getAgentWorkspacePath,
   getConfigDir,
   getLumeConfigYamlPath,
@@ -63,7 +63,8 @@ export interface CliRuntimeHealth {
 }
 
 export interface CreateCliWorkspaceInput {
-  name: string;
+  projectPath: string;
+  name?: string;
   slug?: string;
 }
 
@@ -196,9 +197,8 @@ function toCliFileEntry(entry: FileEntry, rootPath: string): CliRuntimeFileEntry
 
 function resolveFilesRoot(input: ListCliFilesInput): { entries: FileEntry[]; rootPath: string } {
   if (input.threadId) {
-    const workspace = requireWorkspaceForThread(input.threadId);
-    const rootPath = getAgentThreadFilesPath(workspace.slug, input.threadId);
-    const entries = listAgentDirectory(workspace.slug, input.threadId, rootPath);
+    const rootPath = resolveAgentThreadWorkdir(input.threadId).lumeWorkDir;
+    const entries = listAgentDirectory(undefined, input.threadId, rootPath);
     return { entries, rootPath };
   }
 
@@ -298,7 +298,10 @@ export function createCliRuntime(): CliRuntime {
     },
 
     async createWorkspace(input) {
-      return toCliWorkspace(createAgentWorkspace(input.name, { slug: input.slug }));
+      return toCliWorkspace(createAgentWorkspace(input.name ?? input.projectPath, {
+        slug: input.slug,
+        projectPath: input.projectPath
+      }));
     },
 
     async listThreads(input = {}) {
@@ -322,7 +325,10 @@ export function createCliRuntime(): CliRuntime {
         createAgentThread(
           input.title,
           undefined,
-          workspaceId
+          workspaceId,
+          undefined,
+          undefined,
+          { fileContextMode: "newRoot" }
         )
       );
     },

@@ -1,4 +1,4 @@
-import { FolderOpen, ChevronDown } from 'lucide-react'
+import { FolderOpen, ChevronDown, MessageCircle } from 'lucide-react'
 import { useAtom } from 'jotai'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
 import { useState, useEffect, useRef } from 'react'
 
 interface Props {
-  onChange: (workspaceId: string) => void
+  onChange: (workspaceId: string | null) => void
 }
 
 /**
@@ -18,7 +18,7 @@ export function QuickInputWorkspaceSelector({ onChange }: Props) {
   const [currentId, setCurrentId] = useAtom(currentWorkspaceIdAtom)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0]
+  const current = workspaces.find((w) => w.id === currentId)
 
   useEffect(() => {
     if (!open) return
@@ -37,11 +37,26 @@ export function QuickInputWorkspaceSelector({ onChange }: Props) {
         className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-foreground/70 hover:bg-foreground/[0.06]"
       >
         <FolderOpen size={13} className="text-foreground/50" />
-        <span className="max-w-[120px] truncate">{current?.name ?? '工作区'}</span>
+        <span className="max-w-[120px] truncate">{current?.name ?? '普通会话'}</span>
         <ChevronDown size={11} className={cn('text-foreground/40 transition-transform', open && 'rotate-180')} />
       </Button>
       {open && (
         <div className="absolute left-0 top-full mt-1 z-50 min-w-[160px] rounded-lg border border-border/60 bg-popover shadow-lg py-1">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setCurrentId(null)
+              onChange(null)
+              setOpen(false)
+            }}
+            className={cn(
+              'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] justify-start',
+              currentId === null ? 'bg-foreground/[0.08] text-foreground' : 'text-foreground/70 hover:bg-foreground/[0.04]',
+            )}
+          >
+            <MessageCircle size={12} className="text-foreground/40" />
+            <span>普通会话</span>
+          </Button>
           {workspaces.map((ws) => (
             <Button
               key={ws.id}

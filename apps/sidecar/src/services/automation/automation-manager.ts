@@ -147,6 +147,7 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
     ...existing,
     ...(input.name !== undefined ? { name: normalizeName(input.name) } : {}),
     enabled,
+    ...(input.disabledReason !== undefined ? { disabledReason: input.disabledReason.trim() || undefined } : {}),
     ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId.trim() || undefined } : {}),
     ...(input.threadId !== undefined ? { threadId: input.threadId.trim() || undefined } : {}),
     schedule,
@@ -191,4 +192,46 @@ export function recordAutomationJobRun(input: { id: string; startedAt: number })
   index.jobs[targetIndex] = updated;
   writeIndex(index);
   return updated;
+}
+
+export function listAutomationJobsReferencingProject(input: {
+  workspaceId: string;
+  threadIds?: Set<string>;
+}): AutomationJob[] {
+  const threadIds = input.threadIds ?? new Set<string>();
+  return readIndex().jobs.filter((job) =>
+    job.workspaceId === input.workspaceId
+    || (typeof job.threadId === "string" && threadIds.has(job.threadId))
+  );
+}
+
+export function disableAutomationJobsReferencingProject(input: {
+  workspaceId: string;
+  threadIds?: Set<string>;
+  reason: string;
+}): AutomationJob[] {
+  const threadIds = input.threadIds ?? new Set<string>();
+  const index = readIndex();
+  const now = Date.now();
+  let changed = false;
+  const updatedJobs = index.jobs.map((job) => {
+    const affected = job.workspaceId === input.workspaceId
+      || (typeof job.threadId === "string" && threadIds.has(job.threadId));
+    if (!affected) return job;
+    changed = true;
+    return {
+      ...job,
+      enabled: false,
+      disabledReason: input.reason,
+      nextRunAt: null,
+      updatedAt: now
+    } satisfies AutomationJob;
+  });
+  if (changed) {
+    writeIndex({ ...index, jobs: updatedJobs });
+  }
+  return updatedJobs.filter((job) =>
+    job.workspaceId === input.workspaceId
+    || (typeof job.threadId === "string" && threadIds.has(job.threadId))
+  );
 }

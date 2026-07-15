@@ -124,7 +124,7 @@ export function AgentView({
       [threadId]: openFileInRightPanel(
         sanitizeRightPanelWorkspace(prev[threadId] ?? createEmptyRightPanelWorkspace()),
         path,
-        'thread',
+        'lume',
       ),
     }))
     reopenRightPanel()

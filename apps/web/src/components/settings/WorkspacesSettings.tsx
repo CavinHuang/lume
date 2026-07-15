@@ -134,7 +134,7 @@ export function WorkspacesSettings() {
 
     const nextName = workspaceName.trim()
     if (!nextName) {
-      toast.error('工作区名称不能为空')
+      toast.error('项目名称不能为空')
       return
     }
 
@@ -144,7 +144,7 @@ export function WorkspacesSettings() {
         name: nextName,
       })
       setWorkspaces((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
-      toast.success('已保存工作区设置')
+      toast.success('已保存项目设置')
     } catch (error) {
       console.error('[WorkspacesSettings] 保存工作区失败:', error)
       toast.error('保存失败')
@@ -154,26 +154,21 @@ export function WorkspacesSettings() {
   const handleDelete = async () => {
     if (!selectedWorkspace) return
 
-    if (workspaces.length <= 1) {
-      toast.error('至少保留一个工作区')
-      return
-    }
-
-    if (!confirm(`确认删除工作区「${selectedWorkspace.name}」？`)) return
+    if (!confirm(`确认移除项目「${selectedWorkspace.name}」？真实项目目录不会被删除。`)) return
 
     try {
-      await sidecarCall(AGENT_IPC_CHANNELS.DELETE_WORKSPACE, { id: selectedWorkspace.id })
+      await sidecarCall(AGENT_IPC_CHANNELS.DELETE_WORKSPACE, { id: selectedWorkspace.id, mode: 'keepHistory' })
       const nextWorkspaces = workspaces.filter((item) => item.id !== selectedWorkspace.id)
       const nextSelected = nextWorkspaces[0] ?? null
       setWorkspaces(nextWorkspaces)
       setSelectedWorkspaceId(nextSelected?.id ?? null)
       if (currentWorkspaceId === selectedWorkspace.id) {
-        setCurrentWorkspaceId(nextSelected?.id ?? null)
+        setCurrentWorkspaceId(null)
       }
-      toast.success('已删除工作区')
+      toast.success('已移除项目，会话已转为普通会话')
     } catch (error) {
-      console.error('[WorkspacesSettings] 删除工作区失败:', error)
-      toast.error('删除失败')
+      console.error('[WorkspacesSettings] 移除项目失败:', error)
+      toast.error('移除失败')
     }
   }
 
@@ -197,8 +192,8 @@ export function WorkspacesSettings() {
         <div className="mx-auto flex size-12 items-center justify-center rounded-[12px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]">
           <Box size={22} />
         </div>
-        <h3 className="mt-4 text-[16px] font-semibold text-[var(--text-1)]">暂无工作区</h3>
-        <p className="mt-2 text-[13px] text-[var(--text-2)]">创建工作区后即可管理本地目录、默认行为和工作流边界。</p>
+        <h3 className="mt-4 text-[16px] font-semibold text-[var(--text-1)]">暂无项目</h3>
+        <p className="mt-2 text-[13px] text-[var(--text-2)]">添加项目后即可管理本地目录、默认行为和工作流边界。</p>
         <Button
                 variant="ghost"
           type="button"
@@ -206,7 +201,7 @@ export function WorkspacesSettings() {
           className="mt-5 inline-flex h-9 items-center gap-2 rounded-[8px] bg-[var(--brand)] px-4 text-[13px] font-medium text-[var(--brand-foreground)]"
         >
           <Plus size={15} />
-          新建工作区
+          添加项目
         </Button>
         <CreateWorkspaceDialog
           open={createWorkspaceOpen}
@@ -349,7 +344,7 @@ function WorkspaceOverviewPanel({
         <div className="space-y-4">
           <section className="lume-panel p-4">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-[17px] font-semibold leading-6 text-[var(--text-1)]">工作区列表</h3>
+              <h3 className="text-[17px] font-semibold leading-6 text-[var(--text-1)]">项目列表</h3>
               <div className="flex items-center gap-2">
                 <Button
                 variant="ghost"
@@ -358,13 +353,13 @@ function WorkspaceOverviewPanel({
                   className="lume-action-tile h-8 gap-1.5 px-3 text-[12px] shadow-none"
                 >
                   <Plus size={14} />
-                  新建工作区
+                  添加项目
                 </Button>
                 <Button
                 variant="ghost"
                   type="button"
                   className="lume-action-tile flex size-8 items-center justify-center p-0 shadow-none"
-                  aria-label="更多工作区操作"
+                  aria-label="更多项目操作"
                 >
                   <MoreHorizontal size={16} />
                 </Button>
@@ -376,7 +371,7 @@ function WorkspaceOverviewPanel({
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索工作区"
+                placeholder="搜索项目"
                 className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
               />
             </label>
@@ -435,7 +430,7 @@ function WorkspaceOverviewPanel({
         </div>
 
         <section className="lume-panel p-5">
-          <h3 className="mb-5 text-[17px] font-semibold leading-6 text-[var(--text-1)]">工作区概览</h3>
+          <h3 className="mb-5 text-[17px] font-semibold leading-6 text-[var(--text-1)]">项目概览</h3>
           <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-6">
             <div className="space-y-4">
               <div className="flex size-[106px] items-center justify-center rounded-[12px] bg-gradient-to-br from-[#6d5cff] to-[#9b84ff] text-white shadow-[0_12px_28px_rgba(98,91,255,0.24)]">
@@ -451,7 +446,7 @@ function WorkspaceOverviewPanel({
             </div>
 
             <div className="space-y-4">
-              <WorkspaceField label="工作区名称">
+              <WorkspaceField label="项目名称">
                 <Input
                   value={workspaceName}
                   onChange={(event) => setWorkspaceName(event.target.value)}
@@ -547,7 +542,7 @@ function WorkspaceOverviewPanel({
                 onClick={() => void handleDelete()}
                 className="h-8 min-w-[120px] rounded-[6px] border border-[color:color-mix(in_oklab,var(--lume-danger)_38%,var(--border))] px-5 text-[12px] font-medium text-[var(--lume-danger)] hover:bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--surface-1))]"
               >
-                删除工作区
+                移除项目
               </Button>
               <Button
                 variant="ghost"

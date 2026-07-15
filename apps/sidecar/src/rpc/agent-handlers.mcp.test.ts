@@ -155,7 +155,7 @@ describe("agent-handlers MCP RPC", () => {
     const handlers = await createHandlers();
     const workspace = await handlers[AGENT_IPC_CHANNELS.CREATE_WORKSPACE]!({ name: "Demo Workspace" }) as { id: string; slug: string };
 
-    await handlers[AGENT_IPC_CHANNELS.DELETE_WORKSPACE]!({ id: workspace.id });
+    await handlers[AGENT_IPC_CHANNELS.DELETE_WORKSPACE]!({ id: workspace.id, mode: "keepHistory" });
 
     expect(disposeWorkspaceMock).toHaveBeenCalledWith(workspace.slug);
   });

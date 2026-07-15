@@ -94,3 +94,16 @@ export function deleteImThreadBindingsForAccount(accountId: string): void {
   if (nextBindings.length === config.bindings.length) return;
   writeConfig({ ...config, bindings: nextBindings });
 }
+
+export function listImThreadBindingsForThreadIds(threadIds: Set<string>): ImThreadBinding[] {
+  return readConfig().bindings.filter((binding) => threadIds.has(binding.threadId));
+}
+
+export function deleteImThreadBindingsForThreadIds(threadIds: Set<string>): ImThreadBinding[] {
+  const config = readConfig();
+  const removed = config.bindings.filter((binding) => threadIds.has(binding.threadId));
+  if (removed.length === 0) return [];
+  const nextBindings = config.bindings.filter((binding) => !threadIds.has(binding.threadId));
+  writeConfig({ ...config, bindings: nextBindings });
+  return removed;
+}

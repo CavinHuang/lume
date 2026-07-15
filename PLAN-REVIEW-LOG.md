@@ -145,3 +145,47 @@ The user approved Claude's final amendment after Round 5:
 - Deleted project metadata is not recreated during restore.
 
 The plan is user-approved after the bounded review deadlock. No additional Codex review round was run because `MAX_ROUNDS=5` had been reached.
+
+## Act 3 — Build
+
+### Round 1 — Codex build
+
+Codex implemented the project-backed cwd and file-context foundation, removed the homepage attached-folder send path, routed managed image/computer-use outputs to the Lume file context, tightened project Skill path resolution, updated CLI project creation, and brought the selected proof command to a reported 129 passing tests plus four passing module typechecks.
+
+Codex explicitly reported that this was only a coherent buildable slice. Its own deviation list retained the real-project file APIs/right-panel source model, full project removal lifecycle, runtime drain/invalidation, Automation/IM cleanup, legacy migration, unavailable/rebind UI, Agent path display, and explicit root creation modes.
+
+### Claude's verdict
+
+REJECTED for completion; continue in the same Codex thread.
+
+The full diff review confirmed the reported gaps and found additional correctness issues:
+
+- Project removal still uses the legacy delete RPC and silently converts threads without the required two-mode confirmation, runtime drain, Automation/IM cleanup, trash/restore semantics, or metadata lifecycle.
+- The right panel still exposes `thread/workspace/memory` and mutable internal workspace roots instead of read-only `项目目录 / Lume 工作目录` with legacy resources export.
+- Project availability, first bind/rebind, Agent header path visibility, ordinary-session selection persistence, and project terminology remain incomplete.
+- Legacy thread directories are not migrated or compatibility-read through a per-file-context migration protocol.
+- Index locking lacks an ownership token and process-local serialization; a stale-lock recovery race can remove another process's newly acquired lock.
+- `createAgentThread` still defaults silently to `newRoot`; Automation and IM call sites are not explicit, while some file-context cleanup and runtime transcript paths still use compatibility fallbacks.
+
+The next fix round must satisfy the frozen plan rather than merely preserve buildability.
+### Round 2 — Main implementation completion
+
+The remaining frozen-plan work was implemented and reviewed in the main session after the delegated Codex build stalled. The completed slice includes:
+
+- project-backed Agent cwd plus an independent `fileContextId`-backed Lume work directory;
+- explicit `newRoot / inherit / fork` file-context modes, with main/subagent sharing and user-fork isolation;
+- canonical project-path binding, duplicate-path prevention, unavailable/rebind handling, and project-path visibility in the Agent header;
+- two-mode project removal with runtime drain, Automation/IM impact handling, trash/restore semantics, and preservation of the real project directory;
+- legacy Lume work-directory migration before project metadata removal;
+- read-only project/legacy file sources in the right panel, bounded binary image reads, and non-overwriting legacy export;
+- removal of the homepage attached-folder path and its unrooted IPC/runtime plumbing;
+- ordinary-session selection persistence and project/ordinary terminology across the active creation and sidebar surfaces.
+
+### Verification evidence
+
+- Fresh module typechecks: shared, sidecar, web, and CLI all exited 0.
+- The final selected 15-file regression suite passed after all changes: 171 pass, 0 fail, 478 expectations.
+- `git diff --check` exited 0 (line-ending conversion warnings only).
+- An earlier sandboxed retry hit module-loading `EPERM` errors under `node_modules/.bun`; rerunning after the environment permission profile was lifted passed without dependency or ACL changes.
+
+The implementation remains uncommitted for the required human diff gate. Manual Electron interaction testing is still pending.

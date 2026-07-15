@@ -31,6 +31,7 @@ export interface CreateLumeRuntimeToolsInput {
   threadId: string;
   runId?: string;
   cwd?: string;
+  filesRoot?: string;
   workspaceId?: string;
   channelId?: string;
   modelRef?: string;
@@ -89,6 +90,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const imageGenTools = createImageGenTools({
     threadId: input.threadId,
     workspaceSlug: input.workspaceSlug,
+    filesRoot: input.filesRoot,
   });
   const cwd = input.cwd ?? process.cwd();
   const computerUseSurface = input.computerUseSurface ?? "mcp";
@@ -99,6 +101,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const computerUseTools = createComputerUseMcpTools({
     workspaceSlug: input.workspaceSlug,
     threadId: input.threadId,
+    filesRoot: input.filesRoot,
     runId: input.runId,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitDesktopActionVisualEvent,

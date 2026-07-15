@@ -3,6 +3,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  realpathSync,
   renameSync,
   readFileSync,
   readdirSync,
@@ -10,9 +11,10 @@ import {
   writeFileSync
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type {
   AgentWorkspace,
+  AgentWorkspaceStatus,
   McpServerEntry,
   SkillMeta,
   WorkspaceCapabilities,
@@ -27,9 +29,9 @@ import {
   getUserSkillsDir,
   getWorkspaceMetaPath,
   getWorkspaceMcpPath,
-  getWorkspaceResourcesPath,
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { seedDefaultSkills } from "../skills/default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
@@ -43,6 +45,56 @@ interface AgentWorkspacesIndex {
 
 const INDEX_VERSION = 1;
 const log = createLogger("agent-workspace-manager");
+
+function normalizeRealpathKey(path: string): string {
+  const resolved = realpathSync(path);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+
+function getWorkspaceStatusForRecord(workspace: AgentWorkspace): AgentWorkspaceStatus {
+  if (!workspace.projectPath?.trim()) {
+    return {
+      workspaceId: workspace.id,
+      availability: "unbound",
+      message: "项目尚未绑定本地目录"
+    };
+  }
+  try {
+    const resolved = assertExistingDirectory(workspace.projectPath);
+    return {
+      workspaceId: workspace.id,
+      availability: "available",
+      projectPath: workspace.projectPath,
+      realpath: realpathSync(resolved)
+    };
+  } catch (error) {
+    return {
+      workspaceId: workspace.id,
+      availability: "unavailable",
+      projectPath: workspace.projectPath,
+      message: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+function assertExistingDirectory(path: string): string {
+  const resolved = resolve(path);
+  if (!existsSync(resolved)) {
+    throw new Error(`项目目录不存在: ${resolved}`);
+  }
+  if (!readDirectoryStat(resolved)) {
+    throw new Error(`项目目录不是目录: ${resolved}`);
+  }
+  return resolved;
+}
+
+function readDirectoryStat(path: string): boolean {
+  try {
+    return existsSync(path) && readdirSync(path, { withFileTypes: true }) !== undefined;
+  } catch {
+    return false;
+  }
+}
 
 function writeJsonAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -84,6 +136,14 @@ function writeIndex(index: AgentWorkspacesIndex): void {
     console.error("[Agent 工作区] 写入索引文件失败:", error);
     throw new Error("写入 Agent 工作区索引失败");
   }
+}
+
+function workspaceIndexLockPath(): string {
+  return `${getAgentWorkspacesIndexPath()}.lock`;
+}
+
+function withWorkspaceIndexMutation<T>(fn: (index: AgentWorkspacesIndex) => T): T {
+  return withIndexMutationLock(workspaceIndexLockPath(), () => fn(readIndex()));
 }
 
 function slugify(name: string, existingSlugs: Set<string>): string {
@@ -292,7 +352,6 @@ function shouldKeepSkill(
 }
 
 export function ensureWorkspaceAgentAssets(workspaceSlug: string, workspaceName?: string): void {
-  getWorkspaceResourcesPath(workspaceSlug);
   getWorkspaceMetaPath(workspaceSlug);
   copyDefaultSkills(workspaceSlug);
 }
@@ -319,104 +378,182 @@ export function getAgentWorkspaceBySlug(slug: string): AgentWorkspace | undefine
   return readIndex().workspaces.find((workspace) => workspace.slug === slug);
 }
 
-export function createAgentWorkspace(name: string, options?: { slug?: string }): AgentWorkspace {
-  const index = readIndex();
-  const existingSlugs = new Set(index.workspaces.map((workspace) => workspace.slug));
-  const explicitSlug = normalizeRequestedSlug(options?.slug);
-
-  if (explicitSlug && existingSlugs.has(explicitSlug)) {
-    throw new Error("workspace slug 已存在");
+export function getAgentWorkspaceStatus(id: string): AgentWorkspaceStatus {
+  const workspace = getAgentWorkspace(id);
+  if (!workspace) {
+    throw new Error(`Agent 工作区不存在: ${id}`);
   }
+  return getWorkspaceStatusForRecord(workspace);
+}
 
-  const slug = explicitSlug || slugify(name, existingSlugs);
-  const now = Date.now();
+export function createAgentWorkspace(name: string, options?: { slug?: string; projectPath?: string }): AgentWorkspace {
+  return withWorkspaceIndexMutation((index) => {
+    const projectPath = options?.projectPath?.trim();
+    let resolvedProjectPath: string | undefined;
+    let realpathKey: string | undefined;
+    if (projectPath) {
+      resolvedProjectPath = assertExistingDirectory(projectPath);
+      realpathKey = normalizeRealpathKey(resolvedProjectPath);
+      const existing = index.workspaces.find((workspace) => workspace.realpathKey === realpathKey);
+      if (existing) {
+        return existing;
+      }
+    }
 
-  const workspace: AgentWorkspace = {
-    id: randomUUID(),
-    name,
-    slug,
-    createdAt: now,
-    updatedAt: now
-  };
+    const existingSlugs = new Set(index.workspaces.map((workspace) => workspace.slug));
+    const explicitSlug = normalizeRequestedSlug(options?.slug);
 
-  getAgentWorkspacePath(slug);
-  ensureWorkspaceAgentAssets(slug, name);
+    if (explicitSlug && existingSlugs.has(explicitSlug)) {
+      throw new Error("workspace slug 已存在");
+    }
 
-  // 创建 Bootstrap 文件
-  ensureBootstrapFiles(slug);
+    const displayName = resolvedProjectPath ? basename(resolvedProjectPath) || name : name;
+    const slug = explicitSlug || slugify(displayName, existingSlugs);
+    const now = Date.now();
 
-  index.workspaces.push(workspace);
-  writeIndex(index);
+    const workspace: AgentWorkspace = {
+      id: randomUUID(),
+      name: displayName,
+      slug,
+      ...(resolvedProjectPath ? { projectPath: resolvedProjectPath } : {}),
+      ...(realpathKey ? { realpathKey } : {}),
+      createdAt: now,
+      updatedAt: now
+    };
 
-  console.log(`[Agent 工作区] 已创建工作区: ${name} (slug: ${slug})`);
-  return workspace;
+    getAgentWorkspacePath(slug);
+    ensureWorkspaceAgentAssets(slug, displayName);
+
+    // 创建 Bootstrap 文件
+    ensureBootstrapFiles(slug);
+
+    index.workspaces.push(workspace);
+    writeIndex(index);
+
+    console.log(`[Agent 工作区] 已创建工作区: ${displayName} (slug: ${slug})`);
+    return workspace;
+  });
 }
 
 export function updateAgentWorkspace(id: string, updates: { name: string }): AgentWorkspace {
-  const index = readIndex();
-  const idx = index.workspaces.findIndex((workspace) => workspace.id === id);
-  if (idx === -1) {
-    throw new Error(`Agent 工作区不存在: ${id}`);
-  }
+  return withWorkspaceIndexMutation((index) => {
+    const idx = index.workspaces.findIndex((workspace) => workspace.id === id);
+    if (idx === -1) {
+      throw new Error(`Agent 工作区不存在: ${id}`);
+    }
 
-  const existing = index.workspaces[idx] as AgentWorkspace;
-  const updated: AgentWorkspace = {
-    ...existing,
-    name: updates.name,
-    updatedAt: Date.now()
-  };
+    const existing = index.workspaces[idx] as AgentWorkspace;
+    const updated: AgentWorkspace = {
+      ...existing,
+      name: updates.name,
+      updatedAt: Date.now()
+    };
 
-  index.workspaces[idx] = updated;
-  writeIndex(index);
+    index.workspaces[idx] = updated;
+    writeIndex(index);
 
-  console.log(`[Agent 工作区] 已更新工作区: ${updated.name} (${updated.id})`);
-  return updated;
+    console.log(`[Agent 工作区] 已更新工作区: ${updated.name} (${updated.id})`);
+    return updated;
+  });
+}
+
+export function bindLegacyAgentWorkspace(id: string, projectPath: string): AgentWorkspace {
+  return withWorkspaceIndexMutation((index) => {
+    const idx = index.workspaces.findIndex((workspace) => workspace.id === id);
+    if (idx === -1) {
+      throw new Error(`Agent 工作区不存在: ${id}`);
+    }
+    const existing = index.workspaces[idx] as AgentWorkspace;
+    if (existing.projectPath?.trim()) {
+      throw new Error("项目已绑定本地目录，不能执行首次绑定");
+    }
+
+    const resolvedProjectPath = assertExistingDirectory(projectPath);
+    const realpathKey = normalizeRealpathKey(resolvedProjectPath);
+    const duplicate = index.workspaces.find((workspace) =>
+      workspace.id !== id && workspace.realpathKey === realpathKey
+    );
+    if (duplicate) {
+      throw new Error(`该目录已绑定到项目: ${duplicate.name}`);
+    }
+
+    const updated: AgentWorkspace = {
+      ...existing,
+      projectPath: resolvedProjectPath,
+      realpathKey,
+      updatedAt: Date.now()
+    };
+    index.workspaces[idx] = updated;
+    writeIndex(index);
+    initializedWorkspaceSlugs.delete(updated.slug);
+    return updated;
+  });
+}
+
+export function relocateUnavailableAgentWorkspace(id: string, projectPath: string): AgentWorkspace {
+  return withWorkspaceIndexMutation((index) => {
+    const idx = index.workspaces.findIndex((workspace) => workspace.id === id);
+    if (idx === -1) {
+      throw new Error(`Agent 工作区不存在: ${id}`);
+    }
+    const existing = index.workspaces[idx] as AgentWorkspace;
+    if (!existing.projectPath?.trim()) {
+      throw new Error("项目尚未绑定本地目录，请先执行首次绑定");
+    }
+    if (getWorkspaceStatusForRecord(existing).availability === "available") {
+      throw new Error("项目目录仍可访问，不能迁移到其他目录");
+    }
+
+    const resolvedProjectPath = assertExistingDirectory(projectPath);
+    const realpathKey = normalizeRealpathKey(resolvedProjectPath);
+    const duplicate = index.workspaces.find((workspace) =>
+      workspace.id !== id && workspace.realpathKey === realpathKey
+    );
+    if (duplicate) {
+      throw new Error(`该目录已绑定到项目: ${duplicate.name}`);
+    }
+
+    const updated: AgentWorkspace = {
+      ...existing,
+      projectPath: resolvedProjectPath,
+      realpathKey,
+      updatedAt: Date.now()
+    };
+    index.workspaces[idx] = updated;
+    writeIndex(index);
+    initializedWorkspaceSlugs.delete(updated.slug);
+    return updated;
+  });
 }
 
 export function deleteAgentWorkspace(id: string): void {
-  const index = readIndex();
-  const idx = index.workspaces.findIndex((workspace) => workspace.id === id);
-  if (idx === -1) {
-    throw new Error(`Agent 工作区不存在: ${id}`);
-  }
+  withWorkspaceIndexMutation((index) => {
+    const idx = index.workspaces.findIndex((workspace) => workspace.id === id);
+    if (idx === -1) {
+      throw new Error(`Agent 工作区不存在: ${id}`);
+    }
 
-  const removed = index.workspaces.splice(idx, 1)[0] as AgentWorkspace;
-  writeIndex(index);
+    const removed = index.workspaces.splice(idx, 1)[0] as AgentWorkspace;
+    writeIndex(index);
 
-  console.log(`[Agent 工作区] 已删除工作区索引: ${removed.name} (slug: ${removed.slug}，目录已保留)`);
+    console.log(`[Agent 工作区] 已删除项目索引: ${removed.name} (slug: ${removed.slug}，真实目录已保留)`);
+  });
+}
+
+export function deleteAgentWorkspaceInternalData(slug: string): void {
+  const workspaceDir = getAgentWorkspacePath(slug);
+  rmSync(workspaceDir, { recursive: true, force: true });
 }
 
 export function ensureDefaultWorkspace(): AgentWorkspace {
   const index = readIndex();
   const existing = index.workspaces.find((workspace) => workspace.slug === "default");
-
-  if (existing) {
-    ensureWorkspaceAgentAssets(existing.slug, existing.name);
-    // 确保 Bootstrap 文件存在（幂等操作）
-    ensureBootstrapFiles(existing.slug);
-    return existing;
+  if (!existing) {
+    throw new Error("默认工作区已停用；请选择项目目录或创建普通会话");
   }
-
-  const now = Date.now();
-  const workspace: AgentWorkspace = {
-    id: randomUUID(),
-    name: "默认工作区",
-    slug: "default",
-    createdAt: now,
-    updatedAt: now
-  };
-
-  getAgentWorkspacePath("default");
-  ensureWorkspaceAgentAssets("default", "默认工作区");
-
-  // 创建 Bootstrap 文件
-  ensureBootstrapFiles("default");
-
-  index.workspaces.push(workspace);
-  writeIndex(index);
-
-  console.log("[Agent 工作区] 已创建默认工作区");
-  return workspace;
+  ensureWorkspaceAgentAssets(existing.slug, existing.name);
+  ensureBootstrapFiles(existing.slug);
+  return existing;
 }
 
 export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig {

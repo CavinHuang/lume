@@ -152,6 +152,31 @@ export function getAgentWorkspacesDir(): string {
   return ensureDir(join(getConfigDir(), "agent-workspaces"), "Agent 工作区目录");
 }
 
+export function getAgentFileContextsDir(): string {
+  return ensureDir(join(getConfigDir(), "agent-file-contexts"), "Agent 文件上下文目录");
+}
+
+export function getAgentFileContextRootPath(fileContextId: string): string {
+  const safeFileContextId = assertSafeSegment(fileContextId, "file context id");
+  return ensureDir(join(getAgentFileContextsDir(), safeFileContextId), "Agent 文件上下文目录");
+}
+
+export function getAgentFileContextFilesPath(fileContextId: string): string {
+  return ensureDir(join(getAgentFileContextRootPath(fileContextId), "files"), "Agent 文件目录");
+}
+
+export function getAgentFileContextPlansPath(fileContextId: string): string {
+  return ensureDir(join(getAgentFileContextRootPath(fileContextId), "plans"), "Agent 计划目录");
+}
+
+export function getAgentFileContextArtifactsPath(fileContextId: string): string {
+  return ensureDir(join(getAgentFileContextRootPath(fileContextId), "artifacts"), "Agent 产物目录");
+}
+
+export function getAgentFileContextSystemContextPath(fileContextId: string): string {
+  return ensureDir(join(getAgentFileContextRootPath(fileContextId), ".context"), "Agent 上下文目录");
+}
+
 export function getAgentWorkspacePath(slug: string): string {
   const safeSlug = assertSafeSegment(slug, "workspace slug");
   return ensureDir(join(getAgentWorkspacesDir(), safeSlug), "Agent 工作区");

@@ -46,6 +46,12 @@ import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
+  lumeWorkDir: string;
+  filesRoot: string;
+  plansRoot: string;
+  artifactsRoot: string;
+  projectRoot?: string;
+  fileContextId: string;
   agentDir: string;
   workspaceName?: string;
   workspaceSlug?: string;
@@ -284,6 +290,12 @@ export class LumeRunner {
     const runtimeSession = await createRuntimeSession({
       lumeSessionId: runtime.sessionId,
       cwd: prepared.agentCwd,
+      lumeWorkDir: prepared.lumeWorkDir,
+      filesRoot: prepared.filesRoot,
+      plansRoot: prepared.plansRoot,
+      artifactsRoot: prepared.artifactsRoot,
+      projectRoot: prepared.projectRoot,
+      fileContextId: prepared.fileContextId,
       agentDir: prepared.agentDir,
       userMessage: input.userMessage,
       provider: prepared.modelResolution.provider,
@@ -311,7 +323,6 @@ export class LumeRunner {
       chatType: input.chatType,
       permissionMode: input.permissionMode,
       messageAttachments: input.messageAttachments,
-      attachedDirectories: input.attachedDirectories,
       messageMetadata: input.messageMetadata,
       emitSdkMessage: this.emit.onSdkMessage,
       emitRuntimeEvent: this.emit.onRuntimeEvent,

@@ -18,6 +18,7 @@ import {
   getAgentThreadMeta,
   getAgentThreadMessages,
   getRecentAgentThreadMessages,
+  listAllAgentThreads,
   listAgentThreads,
   moveAgentThreadToWorkspace,
   toggleAgentThreadPin,
@@ -57,43 +58,44 @@ import {
   deleteAgentFile,
   deleteWorkspaceFile,
   deleteWorkspaceRootFile,
+  exportLegacyResourceToProject,
   getAgentThreadPath,
   getWorkspaceResourcesDirectory,
   listAgentDirectory,
-  listAttachedDirectory,
+  listProjectDirectory,
   listWorkspaceDirectory,
   listWorkspaceRootDirectory,
   moveAgentFile,
   moveWorkspaceFile,
   moveWorkspaceRootFile,
-  moveAttachedPath,
   openAgentPath,
-  openAttachedPath,
+  openProjectPath,
   openWorkspacePath,
   openWorkspaceRootPath,
   previewAgentPath,
   readAgentFileData,
   readAgentPath,
+  readProjectFileData,
+  readProjectPath,
   previewWorkspacePath,
   readWorkspacePath,
+  readWorkspaceFileData,
   readWorkspaceRootPath,
   renameAgentFile,
   renameWorkspaceFile,
   renameWorkspaceRootFile,
-  renameAttachedPath,
   resolveWorkspaceSlugByThreadId,
   saveFilesToAgentThread,
   saveFilesToWorkspace,
   saveFilesToWorkspaceRoot,
   searchAgentWorkspaceFiles,
   showAgentPathInFolder,
+  showProjectPathInFolder,
   showWorkspacePathInFolder,
-  showAttachedPathInFolder
 } from "../services/agent/agent-files-service";
 import { promoteFileToWorkspace } from "../services/agent/agent-file-promotion-service";
 import {
   createAgentWorkspace,
-  deleteAgentWorkspace,
   deleteWorkspaceSkill,
   ensureDefaultWorkspace,
   getAgentWorkspace,
@@ -104,6 +106,13 @@ import {
   saveWorkspaceMcpConfig,
   updateAgentWorkspace
 } from "../services/agent/agent-workspace-manager";
+import {
+  bindUnboundLegacyProject,
+  getProjectAvailability,
+  getProjectRemovalImpact,
+  relocateUnavailableProject,
+  removeProject
+} from "../services/agent/agent-project-lifecycle-service";
 import { getWorkspaceMcpManager } from "../services/mcp/workspace-mcp-manager";
 import { appendBuiltinMcpStatuses } from "../services/mcp/builtin-mcp-status";
 import {
@@ -196,7 +205,6 @@ import {
   inspectMarketSourceInputSchema,
   installMarketItemInputSchema,
   attachWorkspaceResourceToThreadInputSchema,
-  attachedPathInputSchema,
   copyFolderToThreadInputSchema,
   deleteSkillInputSchema,
   editableSkillInputSchema,
@@ -204,11 +212,11 @@ import {
   importLocalSkillDirectoryInputSchema,
   installGitHubSkillInputSchema,
   installSkillMarketItemInputSchema,
+  legacyResourceExportInputSchema,
   listEditableSkillsInputSchema,
   listDirectoryInputSchema,
   marketCatalogInputSchema,
   marketDetailInputSchema,
-  moveAttachedFileInputSchema,
   moveFileInputSchema,
   pendingInteractiveInputSchema,
   pathFileInputSchema,
@@ -221,7 +229,6 @@ import {
   mcpReadResourceInputSchema,
   mcpStatusInputSchema,
   mcpTestServerInputSchema,
-  renameAttachedFileInputSchema,
   renameFileInputSchema,
   resumeRunInputSchema,
   runTraceInputSchema,
@@ -247,6 +254,8 @@ import {
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
   workspaceDeleteInputSchema,
+  workspaceDirectoryInputSchema,
+  workspaceIdInputSchema,
   workspaceMoveFileInputSchema,
   workspaceMcpConfigInputSchema,
   workspacePathInputSchema,
@@ -313,10 +322,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
 
   const resolveRequiredWorkspaceSlug = (threadId: string, workspaceSlug?: string) => {
     const resolvedWorkspaceSlug = workspaceSlug ?? resolveWorkspaceSlugByThreadId(threadId);
-    if (!resolvedWorkspaceSlug) {
-      throw new Error("未找到线程对应的 workspace");
-    }
-    return resolvedWorkspaceSlug;
+    if (resolvedWorkspaceSlug) return resolvedWorkspaceSlug;
+    return getAgentThreadMeta(threadId)?.fileContextId ?? threadId;
   };
 
   const resolveRuntimeSessionDir = (threadId: string) => getRuntimeCoreSessionDir(threadId);
@@ -624,7 +631,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         input.channelId,
         input.workspaceId,
         input.parentThreadId,
-        input.modelId
+        input.modelId,
+        { fileContextMode: input.fileContextMode ?? "newRoot" }
       );
     },
     [AGENT_IPC_CHANNELS.GET_THREAD_MESSAGES]: async (params) => {
@@ -929,25 +937,48 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.LIST_WORKSPACES]: async () => listAgentWorkspaces(),
     [AGENT_IPC_CHANNELS.CREATE_WORKSPACE]: async (params) => {
       const input = validateInput(workspaceCreateInputSchema, params, AGENT_IPC_CHANNELS.CREATE_WORKSPACE);
-      const result = createAgentWorkspace(input.name);
-      log.info("[Agent 工作区] 创建", { name: input.name });
+      const result = createAgentWorkspace(input.name ?? input.projectPath, { projectPath: input.projectPath });
+      log.info("[Agent 项目] 创建或复用", { name: result.name, projectPath: result.projectPath });
       return result;
     },
     [AGENT_IPC_CHANNELS.UPDATE_WORKSPACE]: async (params) => {
       const input = validateInput(workspaceUpdateInputSchema, params, AGENT_IPC_CHANNELS.UPDATE_WORKSPACE);
       const result = updateAgentWorkspace(input.id, { name: input.name });
-      log.info("[Agent 工作区] 更新", { id: input.id, name: input.name });
+      log.info("[Agent 项目] 重命名", { id: input.id, name: input.name });
       return result;
+    },
+    [AGENT_IPC_CHANNELS.GET_WORKSPACE_STATUS]: async (params) => {
+      const input = validateInput(workspaceIdInputSchema, params, AGENT_IPC_CHANNELS.GET_WORKSPACE_STATUS);
+      return getProjectAvailability(input.id);
+    },
+    [AGENT_IPC_CHANNELS.BIND_WORKSPACE_DIRECTORY]: async (params) => {
+      const input = validateInput(
+        workspaceDirectoryInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.BIND_WORKSPACE_DIRECTORY
+      );
+      return bindUnboundLegacyProject(input.id, input.projectPath);
+    },
+    [AGENT_IPC_CHANNELS.RELOCATE_WORKSPACE_DIRECTORY]: async (params) => {
+      const input = validateInput(
+        workspaceDirectoryInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.RELOCATE_WORKSPACE_DIRECTORY
+      );
+      return relocateUnavailableProject(input.id, input.projectPath);
+    },
+    [AGENT_IPC_CHANNELS.GET_WORKSPACE_REMOVAL_IMPACT]: async (params) => {
+      const input = validateInput(
+        workspaceIdInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_WORKSPACE_REMOVAL_IMPACT
+      );
+      return getProjectRemovalImpact(input.id);
     },
     [AGENT_IPC_CHANNELS.DELETE_WORKSPACE]: async (params) => {
       const input = validateInput(workspaceDeleteInputSchema, params, AGENT_IPC_CHANNELS.DELETE_WORKSPACE);
-      const workspace = getAgentWorkspace(input.id);
-      log.info("[Agent 工作区] 删除", { id: input.id });
-      deleteAgentWorkspace(input.id);
-      if (workspace) {
-        await getWorkspaceMcpManager().disposeWorkspace(workspace.slug);
-      }
-      return { ok: true };
+      log.info("[Agent 项目] 移除", { id: input.id, mode: input.mode });
+      return removeProject({ workspaceId: input.id, mode: input.mode });
     },
     [AGENT_IPC_CHANNELS.GET_CAPABILITIES]: async (params) => {
       const input = validateInput(workspaceSlugInputSchema, params, AGENT_IPC_CHANNELS.GET_CAPABILITIES);
@@ -1252,7 +1283,18 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       return listWorkspaceDirectory(input.workspaceSlug, input.path);
     },
-    [AGENT_IPC_CHANNELS.LIST_WORKSPACE_ROOT_DIRECTORY]: async (params) => {
+    [AGENT_IPC_CHANNELS.LIST_PROJECT_DIRECTORY]: async (params) => {
+      const input = validateInput(workspacePathInputSchema, params, AGENT_IPC_CHANNELS.LIST_PROJECT_DIRECTORY);
+      return listProjectDirectory(input.workspaceSlug, input.path);
+    },
+    [AGENT_IPC_CHANNELS.EXPORT_LEGACY_RESOURCE_TO_PROJECT]: async (params) => {
+      const input = validateInput(
+        legacyResourceExportInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.EXPORT_LEGACY_RESOURCE_TO_PROJECT
+      );
+      return exportLegacyResourceToProject(input.workspaceSlug, input.path, input.conflict);
+    },    [AGENT_IPC_CHANNELS.LIST_WORKSPACE_ROOT_DIRECTORY]: async (params) => {
       const input = validateInput(
         workspacePathInputSchema,
         params,
@@ -1300,6 +1342,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       return openWorkspacePath(input.workspaceSlug, input.path);
     },
+    [AGENT_IPC_CHANNELS.OPEN_PROJECT_FILE]: async (params) => {
+      const input = validateInput(workspaceRequiredPathInputSchema, params, AGENT_IPC_CHANNELS.OPEN_PROJECT_FILE);
+      return openProjectPath(input.workspaceSlug, input.path);
+    },
     [AGENT_IPC_CHANNELS.OPEN_WORKSPACE_ROOT_FILE]: async (params) => {
       const input = validateInput(
         workspaceRequiredPathInputSchema,
@@ -1323,6 +1369,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.SHOW_WORKSPACE_IN_FOLDER
       );
       return showWorkspacePathInFolder(input.workspaceSlug, input.path);
+    },
+    [AGENT_IPC_CHANNELS.SHOW_PROJECT_IN_FOLDER]: async (params) => {
+      const input = validateInput(workspaceRequiredPathInputSchema, params, AGENT_IPC_CHANNELS.SHOW_PROJECT_IN_FOLDER);
+      return showProjectPathInFolder(input.workspaceSlug, input.path);
     },
     [AGENT_IPC_CHANNELS.PREVIEW_FILE]: async (params) => {
       const input = validateInput(pathFileInputSchema, params, AGENT_IPC_CHANNELS.PREVIEW_FILE);
@@ -1363,6 +1413,22 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE
       );
       return readWorkspacePath(input.workspaceSlug, input.path);
+    },
+    [AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE_DATA]: async (params) => {
+      const input = validateInput(
+        workspaceRequiredPathInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE_DATA
+      );
+      return readWorkspaceFileData(input.workspaceSlug, input.path);
+    },
+    [AGENT_IPC_CHANNELS.READ_PROJECT_FILE]: async (params) => {
+      const input = validateInput(workspaceRequiredPathInputSchema, params, AGENT_IPC_CHANNELS.READ_PROJECT_FILE);
+      return readProjectPath(input.workspaceSlug, input.path);
+    },
+    [AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA]: async (params) => {
+      const input = validateInput(workspaceRequiredPathInputSchema, params, AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA);
+      return readProjectFileData(input.workspaceSlug, input.path);
     },
     [AGENT_IPC_CHANNELS.READ_WORKSPACE_ROOT_FILE]: async (params) => {
       const input = validateInput(
@@ -1421,30 +1487,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.MOVE_WORKSPACE_ROOT_FILE
       );
       return moveWorkspaceRootFile(input.workspaceSlug, input.path, input.targetDir);
-    },
-    [AGENT_IPC_CHANNELS.LIST_ATTACHED_DIRECTORY]: async (params) => {
-      const input = validateInput(attachedPathInputSchema, params, AGENT_IPC_CHANNELS.LIST_ATTACHED_DIRECTORY);
-      return listAttachedDirectory(input.path);
-    },
-    [AGENT_IPC_CHANNELS.OPEN_ATTACHED_FILE]: async (params) => {
-      const input = validateInput(attachedPathInputSchema, params, AGENT_IPC_CHANNELS.OPEN_ATTACHED_FILE);
-      return openAttachedPath(input.path);
-    },
-    [AGENT_IPC_CHANNELS.SHOW_ATTACHED_IN_FOLDER]: async (params) => {
-      const input = validateInput(attachedPathInputSchema, params, AGENT_IPC_CHANNELS.SHOW_ATTACHED_IN_FOLDER);
-      return showAttachedPathInFolder(input.path);
-    },
-    [AGENT_IPC_CHANNELS.RENAME_ATTACHED_FILE]: async (params) => {
-      const input = validateInput(
-        renameAttachedFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.RENAME_ATTACHED_FILE
-      );
-      return renameAttachedPath(input.path, input.newName);
-    },
-    [AGENT_IPC_CHANNELS.MOVE_ATTACHED_FILE]: async (params) => {
-      const input = validateInput(moveAttachedFileInputSchema, params, AGENT_IPC_CHANNELS.MOVE_ATTACHED_FILE);
-      return moveAttachedPath(input.path, input.targetDir);
     },
     [AGENT_IPC_CHANNELS.PROMOTE_FILE_TO_WORKSPACE]: async (params) =>
       promoteFileToWorkspace(

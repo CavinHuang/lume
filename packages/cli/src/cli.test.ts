@@ -143,7 +143,7 @@ describe("createCliApp", () => {
 
   test("workspace create calls runtime and writes returned object JSON", async () => {
     const lines: string[] = []
-    const calls: Array<{ name: string; slug?: string }> = []
+    const calls: Array<{ projectPath: string; name?: string; slug?: string }> = []
     const app = createCliApp(
       {
         async status() {
@@ -164,8 +164,9 @@ describe("createCliApp", () => {
           calls.push(input)
           return {
             id: "ws_new",
-            name: input.name,
+            name: input.name ?? "New Space",
             slug: input.slug ?? "new-space",
+            projectPath: input.projectPath,
             createdAt: 10,
             updatedAt: 10,
           }
@@ -198,16 +199,17 @@ describe("createCliApp", () => {
       },
     )
 
-    app.parse(["node", "lume", "workspace", "create", "New Space", "--slug", "new-space"], { run: false })
+    app.parse(["node", "lume", "workspace", "create", "C:\\projects\\new-space", "--name", "New Space", "--slug", "new-space"], { run: false })
     expect(app.matchedCommand?.name).toBe("workspace create")
     await app.runMatchedCommand()
 
-    expect(calls).toEqual([{ name: "New Space", slug: "new-space" }])
+    expect(calls).toEqual([{ projectPath: "C:\\projects\\new-space", name: "New Space", slug: "new-space" }])
     expect(lines).toEqual([
       JSON.stringify({
         id: "ws_new",
         name: "New Space",
         slug: "new-space",
+        projectPath: "C:\\projects\\new-space",
         createdAt: 10,
         updatedAt: 10,
       }),
@@ -829,7 +831,7 @@ describe("main", () => {
     try {
       const result = Bun.spawnSync({
         cmd: ["bun", "run", "src/bin.ts", "workspaces"],
-        cwd: process.cwd(),
+        cwd: join(import.meta.dir, ".."),
         env: {
           ...process.env,
           LUME_CONFIG_DIR: tempConfigDir,
