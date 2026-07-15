@@ -180,6 +180,13 @@ describe("general-settings-service", () => {
     expect(getPersistedGeneralSettings().themePalette).toBe("ember");
   });
 
+  test("纸墨、薰衣草灰和橄榄工作室配色可以持久化后重新读取", () => {
+    for (const themePalette of ["mono", "lavender", "olive"] as const) {
+      updatePersistedGeneralSettings({ themePalette });
+      expect(getPersistedGeneralSettings().themePalette).toBe(themePalette);
+    }
+  });
+
   test("更新 generalSettings 时保留既有 uiState", () => {
     const settingsPath = getSettingsPath();
     writeFileSync(settingsPath, JSON.stringify({

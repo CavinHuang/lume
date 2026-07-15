@@ -84,6 +84,24 @@ export const THEME_PALETTE_OPTIONS: ThemePaletteOption[] = [
     desc: '克制的石墨黑与明亮余烬橙',
     colors: ['#141414', '#202020', '#F06A3C', '#FFB15C'],
   },
+  {
+    value: 'mono',
+    label: '纸墨极简',
+    desc: '近乎无彩色，以留白和层级构成界面',
+    colors: ['#FCFCFB', '#F0F0EE', '#D8D8D4', '#222222'],
+  },
+  {
+    value: 'lavender',
+    label: '薰衣草灰',
+    desc: '低饱和的灰紫与柔和长春花色',
+    colors: ['#FAF9FC', '#ECE9F1', '#77709B', '#AAA3C4'],
+  },
+  {
+    value: 'olive',
+    label: '橄榄工作室',
+    desc: '骨白底色搭配植物橄榄与卡其色',
+    colors: ['#FBFAF4', '#EBE9DA', '#777D43', '#AEB27A'],
+  },
 ]
 
 export const PROXY_MODE_OPTIONS: ProxyModeOption[] = [

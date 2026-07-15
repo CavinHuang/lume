@@ -628,6 +628,144 @@
   --input: rgb(255 255 255 / 14%);
 }
 
+:root[data-theme-palette='mono'] {
+  --lume-bg-app: #fcfcfb;
+  --lume-bg-rail: #f0f0ee;
+  --lume-bg-panel: #ffffff;
+  --lume-bg-elevated: #ffffff;
+  --lume-border-subtle: #e2e2de;
+  --lume-border-strong: #c8c8c2;
+  --lume-text-primary: #222222;
+  --lume-text-secondary: #555551;
+  --lume-text-muted: #85857f;
+  --lume-accent: #222222;
+  --lume-accent-2: #73736e;
+  --lume-accent-soft: #ececea;
+  --lume-accent-foreground: #ffffff;
+  --lume-focus-ring: rgb(34 34 34 / 28%);
+  --card: var(--lume-bg-panel);
+  --popover: var(--lume-bg-elevated);
+  --secondary: #f0f0ee;
+  --muted: #f0f0ee;
+  --accent: #ececea;
+  --input: #e2e2de;
+}
+
+.dark[data-theme-palette='mono'] {
+  --lume-bg-app: #111111;
+  --lume-bg-rail: #171717;
+  --lume-bg-panel: #1c1c1c;
+  --lume-bg-elevated: #242424;
+  --lume-border-subtle: rgb(52 52 52 / 80%);
+  --lume-border-strong: #4a4a4a;
+  --lume-text-primary: #f4f4f1;
+  --lume-text-secondary: #cfcfc9;
+  --lume-text-muted: #92928c;
+  --lume-accent: #f4f4f1;
+  --lume-accent-2: #bdbdb7;
+  --lume-accent-soft: rgb(255 255 255 / 10%);
+  --lume-accent-foreground: #171717;
+  --lume-focus-ring: rgb(244 244 241 / 32%);
+  --card: var(--lume-bg-panel);
+  --popover: var(--lume-bg-elevated);
+  --secondary: #242424;
+  --muted: #242424;
+  --accent: #303030;
+  --input: rgb(255 255 255 / 14%);
+}
+
+:root[data-theme-palette='lavender'] {
+  --lume-bg-app: #faf9fc;
+  --lume-bg-rail: #ece9f1;
+  --lume-bg-panel: #fdfcff;
+  --lume-bg-elevated: #ffffff;
+  --lume-border-subtle: #ded9e8;
+  --lume-border-strong: #c3bbd2;
+  --lume-text-primary: #2d2935;
+  --lume-text-secondary: #5b5568;
+  --lume-text-muted: #81798f;
+  --lume-accent: #77709b;
+  --lume-accent-2: #aaa3c4;
+  --lume-accent-soft: #ece8f5;
+  --lume-accent-foreground: #ffffff;
+  --lume-focus-ring: rgb(119 112 155 / 40%);
+  --card: var(--lume-bg-panel);
+  --popover: var(--lume-bg-elevated);
+  --secondary: #efecf3;
+  --muted: #efecf3;
+  --accent: #ece8f5;
+  --input: #ded9e8;
+}
+
+.dark[data-theme-palette='lavender'] {
+  --lume-bg-app: #16141b;
+  --lume-bg-rail: #1c1923;
+  --lume-bg-panel: #24212c;
+  --lume-bg-elevated: #2e2a39;
+  --lume-border-subtle: rgb(70 64 85 / 76%);
+  --lume-border-strong: #5d566e;
+  --lume-text-primary: #f3f0f7;
+  --lume-text-secondary: #cec7d9;
+  --lume-text-muted: #938aa3;
+  --lume-accent: #a79ed2;
+  --lume-accent-2: #c4bddb;
+  --lume-accent-soft: rgb(119 112 155 / 28%);
+  --lume-accent-foreground: #18151e;
+  --lume-focus-ring: rgb(167 158 210 / 42%);
+  --card: var(--lume-bg-panel);
+  --popover: var(--lume-bg-elevated);
+  --secondary: #2e2a39;
+  --muted: #2e2a39;
+  --accent: #39334a;
+  --input: rgb(255 255 255 / 14%);
+}
+
+:root[data-theme-palette='olive'] {
+  --lume-bg-app: #fbfaf4;
+  --lume-bg-rail: #ebe9da;
+  --lume-bg-panel: #fffdf7;
+  --lume-bg-elevated: #ffffff;
+  --lume-border-subtle: #dcd8bf;
+  --lume-border-strong: #bdb88f;
+  --lume-text-primary: #292b20;
+  --lume-text-secondary: #565941;
+  --lume-text-muted: #7c7e61;
+  --lume-accent: #777d43;
+  --lume-accent-2: #aeb27a;
+  --lume-accent-soft: #eeefd9;
+  --lume-accent-foreground: #ffffff;
+  --lume-focus-ring: rgb(119 125 67 / 40%);
+  --card: var(--lume-bg-panel);
+  --popover: var(--lume-bg-elevated);
+  --secondary: #efedde;
+  --muted: #efedde;
+  --accent: #eeefd9;
+  --input: #dcd8bf;
+}
+
+.dark[data-theme-palette='olive'] {
+  --lume-bg-app: #16170f;
+  --lume-bg-rail: #1c1e14;
+  --lume-bg-panel: #24261a;
+  --lume-bg-elevated: #2e3120;
+  --lume-border-subtle: rgb(75 79 50 / 78%);
+  --lume-border-strong: #626742;
+  --lume-text-primary: #f2f1e5;
+  --lume-text-secondary: #d0d1af;
+  --lume-text-muted: #969a74;
+  --lume-accent: #aeb85a;
+  --lume-accent-2: #d1d68a;
+  --lume-accent-soft: rgb(119 125 67 / 28%);
+  --lume-accent-foreground: #17190d;
+  --lume-focus-ring: rgb(174 184 90 / 42%);
+  --card: var(--lume-bg-panel);
+  --popover: var(--lume-bg-elevated);
+  --secondary: #2e3120;
+  --muted: #2e3120;
+  --accent: #393d24;
+  --input: rgb(255 255 255 / 14%);
+}
+
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }

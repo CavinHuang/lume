@@ -60,7 +60,10 @@ function isThemePalette(value: unknown): value is ThemePalette {
     || value === "clay"
     || value === "ocean"
     || value === "sakura"
-    || value === "ember";
+    || value === "ember"
+    || value === "mono"
+    || value === "lavender"
+    || value === "olive";
 }
 
 function isAgentMessageDisplayMode(value: unknown): value is AgentMessageDisplayMode {

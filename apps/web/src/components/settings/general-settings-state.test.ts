@@ -25,6 +25,9 @@ describe('general settings state', () => {
       'ocean',
       'sakura',
       'ember',
+      'mono',
+      'lavender',
+      'olive',
     ])
   })
 

@@ -1,6 +1,6 @@
 export type ThemeMode = "system" | "light" | "dark"
 
-export type ThemePalette = "mint" | "iris" | "clay" | "ocean" | "sakura" | "ember"
+export type ThemePalette = "mint" | "iris" | "clay" | "ocean" | "sakura" | "ember" | "mono" | "lavender" | "olive"
 
 export type AgentMessageDisplayMode = "minimal" | "verbose"
 

@@ -8,7 +8,7 @@
       document.documentElement.classList.add('dark')
     }
     var palette = localStorage.getItem('lume:theme-palette')
-    if (palette !== 'mint' && palette !== 'iris' && palette !== 'clay' && palette !== 'ocean' && palette !== 'sakura' && palette !== 'ember') {
+    if (palette !== 'mint' && palette !== 'iris' && palette !== 'clay' && palette !== 'ocean' && palette !== 'sakura' && palette !== 'ember' && palette !== 'mono' && palette !== 'lavender' && palette !== 'olive') {
       palette = 'mint'
     }
     document.documentElement.dataset.themePalette = palette

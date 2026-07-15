@@ -89,6 +89,9 @@ export function readStoredThemePalette(): ThemePalette {
     || value === 'ocean'
     || value === 'sakura'
     || value === 'ember'
+    || value === 'mono'
+    || value === 'lavender'
+    || value === 'olive'
     ? value
     : GENERAL_SETTINGS_DEFAULTS.themePalette
 }

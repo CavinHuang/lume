@@ -101,6 +101,13 @@ describe('theme palette runtime', () => {
     expect(readStoredThemePalette()).toBe('ember')
   })
 
+  test('accepts the mono, lavender, and olive palettes', () => {
+    for (const palette of ['mono', 'lavender', 'olive'] as const) {
+      localStorageMock.setItem('lume:theme-palette', palette)
+      expect(readStoredThemePalette()).toBe(palette)
+    }
+  })
+
   test('stores and applies the selected palette', () => {
     setThemePalette('clay')
 
