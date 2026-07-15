@@ -50,6 +50,28 @@ describe('SubagentCoordinator', () => {
     expect(order.filter((item) => item.startsWith('end:')).length).toBe(3)
   })
 
+  test('treats blank subagent IDs as omitted and keeps new sessions isolated', async () => {
+    const coordinator = createCoordinator()
+    const executedThreads: string[] = []
+    let createdSessions = 0
+    const makeInput = () => ({
+      ...baseInput(coordinator, ''),
+      createSession: () => ({ threadId: `child:${++createdSessions}` }),
+      execute: async ({ run, session }: any) => {
+        executedThreads.push(session.threadId)
+        coordinator.submitReport({ runId: run.runId, report: { status: 'submitted', summary: 'done' } })
+        return {}
+      },
+    })
+
+    const first = await coordinator.runAgentTask(makeInput())
+    const second = await coordinator.runAgentTask(makeInput())
+
+    expect(first.subagentId).not.toBe('')
+    expect(second.subagentId).not.toBe(first.subagentId)
+    expect(executedThreads).toEqual([first.childThreadId, second.childThreadId])
+  })
+
   test('blocks parent completion while a task awaits review and keeps an idle session reusable', async () => {
     const coordinator = createCoordinator()
     const result = await coordinator.runAgentTask(baseInput(coordinator, 'developer-01'))

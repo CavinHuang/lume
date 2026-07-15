@@ -173,8 +173,9 @@ export class SubagentCoordinator {
   private createWork(input: RunAgentTaskInput, prompt: string): { session: SubagentSession; task: SubagentTask; run: SubagentRun } {
     return this.mutate((state) => {
       const now = Date.now()
+      const requestedSubagentId = input.subagentId?.trim() || undefined
       let task = input.taskId ? state.tasks.find((item) => item.taskId === input.taskId) : undefined
-      let session = input.subagentId ? state.sessions.find((item) => item.subagentId === input.subagentId) : undefined
+      let session = requestedSubagentId ? state.sessions.find((item) => item.subagentId === requestedSubagentId) : undefined
       if (task) {
         if (task.parentThreadId !== input.parentThreadId) throw new Error('task_id 不属于当前父会话')
         if (session && session.subagentId !== task.subagentId) {
@@ -183,7 +184,7 @@ export class SubagentCoordinator {
         } else session = state.sessions.find((item) => item.subagentId === task!.subagentId)
       }
       if (!session) {
-        const subagentId = input.subagentId ?? randomUUID()
+        const subagentId = requestedSubagentId ?? randomUUID()
         const created = input.createSession({ subagentId, title: `${input.subagentType ?? 'general-purpose'} · ${input.description || prompt.slice(0, 48)}`, agentType: input.subagentType ?? 'general-purpose' })
         session = { subagentId, threadId: created.threadId, parentThreadId: input.parentThreadId, agentType: input.subagentType ?? 'general-purpose', ...(created.modelRef ? { modelRef: created.modelRef } : {}), title: `${input.subagentType ?? 'general-purpose'} · ${input.description || prompt.slice(0, 48)}`, status: 'idle', createdAt: now, lastUsedAt: now }
         state.sessions.push(session)
