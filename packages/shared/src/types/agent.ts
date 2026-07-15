@@ -1293,12 +1293,27 @@ export interface AgentSubagentCompletionEvent {
 
 // ===== 文件浏览器 =====
 
+export type FileSource = 'project' | 'session' | 'memory' | 'legacy'
+
+/** Renderer-safe opaque file identity. Absolute paths never cross this boundary. */
+export interface FileRef {
+  source: FileSource
+  scopeId: string
+  relativePath: string
+}
+
 /** 文件/目录条目（用于文件浏览器树形视图） */
 export interface FileEntry {
   /** 文件/目录名称 */
   name: string
   /** 完整路径 */
   path: string
+  /** 新文件工作区使用的不透明引用。 */
+  ref?: FileRef
+  /** 文件大小；无法读取 metadata 时省略。 */
+  size?: number
+  /** ISO 修改时间；无法读取 metadata 时省略。 */
+  modifiedAt?: string
   /** 是否为目录 */
   isDirectory: boolean
   /** 外部附加来源信息（仅外部附加项有值） */
@@ -1315,12 +1330,15 @@ export interface FileIndexEntry {
   path: string
   /** 条目类型 */
   type: 'file' | 'dir'
+  ref?: FileRef
 }
 
 /** 文件搜索结果 */
 export interface FileSearchResult {
   entries: FileIndexEntry[]
   total: number
+  truncated?: boolean
+  scanned?: number
 }
 
 // ===== Agent 附件 =====
@@ -1343,6 +1361,8 @@ export interface AgentMessageAttachmentInput {
   mediaType: string
   size: number
   threadPath: string
+  /** New records carry the server-issued reference; threadPath remains for legacy records/runtime input. */
+  fileRef?: FileRef
 }
 
 /** Agent 文件保存到 thread 的输入 */
@@ -1357,6 +1377,7 @@ export interface AgentSavedFile {
   filename: string
   targetPath: string
   threadPath?: string
+  ref?: FileRef
 }
 
 /** 读取线程文件二进制数据的输入 */
@@ -1762,6 +1783,16 @@ export const AGENT_IPC_CHANNELS = {
   ATTACH_WORKSPACE_RESOURCE_TO_THREAD: 'agent:attach-workspace-resource-to-thread',
   /** 搜索工作区文件（用于 @ 引用） */
   SEARCH_WORKSPACE_FILES: 'agent:search-workspace-files',
+  /** New right-panel FileRef-only operations. */
+  LIST_FILE_REF_DIRECTORY: 'agent:list-file-ref-directory',
+  STAT_FILE_REF: 'agent:stat-file-ref',
+  READ_FILE_REF: 'agent:read-file-ref',
+  SEARCH_FILE_REFS: 'agent:search-file-refs',
+  RESOLVE_FILE_REF: 'agent:resolve-file-ref',
+  RENAME_FILE_REF: 'agent:rename-file-ref',
+  MOVE_FILE_REF: 'agent:move-file-ref',
+  DELETE_FILE_REF: 'agent:delete-file-ref',
+  CONVERT_LEGACY_FILE_REF: 'agent:convert-legacy-file-ref',
 
   // 标题自动生成通知（主进程 → 渲染进程推送）
   /** 标题已更新（首次对话完成后自动生成） */

@@ -10,25 +10,28 @@ import {
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
   rightPanelLayoutAtom,
+  rightPanelFileWorkspacesAtom,
   rightPanelWorkspacesAtom,
   tabsAtom,
 } from '@/atoms'
-import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type FileRef } from '@lume/shared'
 
 mock.restore()
 
 let latestAgentMessagesProps: {
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
   onOpenThreadImage?: (attachment: {
     id: string
     filename: string
     mediaType: string
     size: number
     threadPath: string
+    fileRef?: FileRef
   }) => void
-  onOpenMemorySource?: (path: string) => void
+  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
 } | null = null
 let latestAgentInputProps: Record<string, unknown> | null = null
+const toastErrorMock = mock((_message: string) => undefined)
 
 const sidecarCallMock = mock(async (channel: string, payload?: Record<string, unknown>) => {
   if (channel === AGENT_IPC_CHANNELS.READ_FILE) {
@@ -43,12 +46,18 @@ const sidecarCallMock = mock(async (channel: string, payload?: Record<string, un
   if (channel === AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD) {
     return undefined
   }
+  if (channel === AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF) {
+    if (payload?.recordKind === 'memory-source') {
+      return { source: 'memory', scopeId: 'workspace:workspace', relativePath: payload.legacyRelativePath }
+    }
+    return { source: 'session', scopeId: 'thread-1', relativePath: payload?.legacyRelativePath }
+  }
   throw new Error(`Unexpected sidecarCall: ${channel} ${JSON.stringify(payload)}`)
 })
 
 mock.module('sonner', () => ({
   toast: {
-    error: () => {},
+    error: toastErrorMock,
     success: () => {},
   },
 }))
@@ -352,6 +361,7 @@ describe('AgentView plan approval tab behavior', () => {
     latestAgentMessagesProps = null
     ;(globalThis as any).__lumeDesktopSidecarCall = sidecarCallMock
     sidecarCallMock.mockClear()
+    toastErrorMock.mockClear()
   })
 
   afterEach(async () => {
@@ -393,6 +403,7 @@ describe('AgentView plan approval tab behavior', () => {
     store.set(currentWorkspaceIdAtom, 'workspace-1')
     store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
     store.set(rightPanelWorkspacesAtom, {})
+    store.set(rightPanelFileWorkspacesAtom, {})
     store.set(rightPanelLayoutAtom, { open: false, mode: 'compact' })
     store.set(agentPendingInteractiveAtom, {
       'thread-1': {
@@ -442,15 +453,10 @@ describe('AgentView plan approval tab behavior', () => {
 
       expect(store.get(activeTabIdAtom)).toBe('thread-1')
       expect(store.get(rightPanelLayoutAtom)).toEqual({ open: true, mode: 'normal' })
-      expect(store.get(rightPanelWorkspacesAtom)['thread-1']).toMatchObject({
-        activeTab: 'files',
-        tabs: {
-          files: {
-            type: 'files',
-            source: 'thread',
-            selectedPath: 'files/research-notes.md',
-          },
-        },
+      expect(store.get(rightPanelWorkspacesAtom)['thread-1']).toBeUndefined()
+      expect(store.get(rightPanelFileWorkspacesAtom)['thread-1']).toMatchObject({
+        activeItem: { kind: 'file' },
+        openTabs: [{ ref: { source: 'session', scopeId: 'thread-1', relativePath: 'files/research-notes.md' } }],
       })
       expect(sidecarCallMock.mock.calls.some(([channel, payload]) => (
         channel === AGENT_IPC_CHANNELS.READ_FILE &&
@@ -465,16 +471,47 @@ describe('AgentView plan approval tab behavior', () => {
       })
 
       expect(store.get(rightPanelLayoutAtom)).toEqual({ open: true, mode: 'expanded' })
-      expect(store.get(rightPanelWorkspacesAtom)['thread-1']).toMatchObject({
-        activeTab: 'files',
-        tabs: {
-          files: {
-            type: 'files',
-            source: 'memory',
-            selectedPath: 'memories/profile.md',
-          },
-        },
+      expect(store.get(rightPanelWorkspacesAtom)['thread-1']).toBeUndefined()
+      expect(store.get(rightPanelFileWorkspacesAtom)['thread-1']).toMatchObject({
+        activeItem: { kind: 'file' },
+        openTabs: [
+          { ref: { source: 'session', relativePath: 'files/research-notes.md' } },
+          { ref: { source: 'memory', relativePath: 'memories/profile.md' } },
+        ],
       })
+
+      const conversionCount = sidecarCallMock.mock.calls.filter(([channel]) => channel === AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF).length
+      await act(async () => {
+        latestAgentMessagesProps?.onOpenThreadFile?.('ignored-legacy-path.md', {
+          source: 'session', scopeId: 'thread-1', relativePath: 'files/signed.md',
+        })
+        await flush()
+      })
+      expect(sidecarCallMock.mock.calls.filter(([channel]) => channel === AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF)).toHaveLength(conversionCount)
+      expect(store.get(rightPanelFileWorkspacesAtom)['thread-1'].openTabs.at(-1)?.ref).toEqual({
+        source: 'session', scopeId: 'thread-1', relativePath: 'files/signed.md',
+      })
+
+      await act(async () => {
+        latestAgentMessagesProps?.onOpenMemorySource?.('ignored-memory-citation.md', {
+          source: 'memory', scopeId: 'global', relativePath: 'entries/signed.md',
+        })
+        await flush()
+      })
+      expect(sidecarCallMock.mock.calls.filter(([channel]) => channel === AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF)).toHaveLength(conversionCount)
+      expect(store.get(rightPanelFileWorkspacesAtom)['thread-1'].openTabs.at(-1)?.ref).toEqual({
+        source: 'memory', scopeId: 'global', relativePath: 'entries/signed.md',
+      })
+
+      ;(globalThis as any).__lumeDesktopSidecarCall = async (channel: string) => {
+        if (channel === AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF) throw new Error('legacy conversion failed')
+        return sidecarCallMock(channel)
+      }
+      await act(async () => {
+        latestAgentMessagesProps?.onOpenThreadFile?.('missing-legacy.md')
+        await flush()
+      })
+      expect(toastErrorMock).toHaveBeenCalledWith('legacy conversion failed')
     } finally {
       await act(async () => {
         root?.unmount()
@@ -519,6 +556,7 @@ describe('AgentView plan approval tab behavior', () => {
     store.set(currentWorkspaceIdAtom, 'workspace-1')
     store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
     store.set(rightPanelWorkspacesAtom, {})
+    store.set(rightPanelFileWorkspacesAtom, {})
     store.set(agentPendingInteractiveAtom, {})
 
     let root: Root | null = createRoot(container as never)
@@ -546,19 +584,11 @@ describe('AgentView plan approval tab behavior', () => {
         await flush()
       })
 
-      expect(container.textContent).toContain('screen.png')
-      expect(sidecarCallMock.mock.calls.some(([channel, payload]) => (
-        channel === AGENT_IPC_CHANNELS.GET_THREAD_PATH &&
-        (payload as Record<string, unknown>).threadId === 'thread-1'
-      ))).toBe(true)
-      // FakeDOM 未实现 innerHTML，遍历 attributes Map 收集所有 src（react-dom setAttribute 写入）
-      const srcAttrs: string[] = []
-      const walkDom = (node: any) => {
-        if (node?.attributes?.has?.('src')) srcAttrs.push(node.attributes.get('src'))
-        for (const child of node?.childNodes ?? []) walkDom(child)
-      }
-      walkDom(container)
-      expect(srcAttrs.some((s) => s.startsWith('lume-file://file/'))).toBe(true)
+      expect(store.get(rightPanelFileWorkspacesAtom)['thread-1']).toMatchObject({
+        activeItem: { kind: 'file' },
+        openTabs: [{ ref: { source: 'session', relativePath: 'screen.png' } }],
+      })
+      expect(sidecarCallMock.mock.calls.some(([channel]) => channel === AGENT_IPC_CHANNELS.GET_THREAD_PATH)).toBe(false)
     } finally {
       await act(async () => {
         root?.unmount()

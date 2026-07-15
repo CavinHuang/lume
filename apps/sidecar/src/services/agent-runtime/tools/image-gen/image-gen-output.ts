@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { toThreadRelativePath } from "../../../agent/agent-files-service";
 import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
+import type { FileRef } from "@lume/shared";
 
 export interface ImageOutputInput {
   workspaceSlug?: string;
@@ -21,6 +22,7 @@ export interface ImageOutputResult {
   mediaType: string;
   size: number;
   absPath: string;
+  fileRef?: FileRef;
 }
 
 function mediaTypeFor(ext: string): string {
@@ -57,12 +59,19 @@ export async function saveImageOutput(input: ImageOutputInput): Promise<ImageOut
 
   writeFileSync(absPath, buffer);
   const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, absPath);
+  let fileRef: FileRef | undefined;
+  try {
+    fileRef = { source: "session", scopeId: resolveAgentThreadWorkdir(input.threadId).fileContextId, relativePath: threadPath };
+  } catch {
+    // Legacy/headless callers retain threadPath and use authorized conversion on demand.
+  }
   return {
     threadPath,
     filename,
     mediaType: mediaTypeFor(ext),
     size: buffer.length,
     absPath,
+    ...(fileRef ? { fileRef } : {}),
   };
 }
 

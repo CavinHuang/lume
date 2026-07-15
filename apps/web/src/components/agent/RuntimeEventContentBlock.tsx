@@ -16,7 +16,7 @@ import { resolveAbsolutePath } from '@/components/agent/file-link-actions'
 import { lumeFileUrl } from '@/components/right-panel/file-preview-utils'
 import { useThreadFileEnv } from './thread-file-env'
 import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
-import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
@@ -41,9 +41,9 @@ interface RuntimeEventContentBlockProps {
   canEditUserMessage?: boolean
   showExpressionActions?: boolean
   threadId: string
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
-  onOpenMemorySource?: (path: string) => void
+  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
   onUserResizeStart?: () => void
 }
 
@@ -402,7 +402,7 @@ function UserMessageBlock({
   threadId: string
   className: string
   canEdit: boolean
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -462,7 +462,7 @@ function UserMessageBlock({
             attachments={message.attachments}
             align="right"
             imageSrcById={imageSrcById}
-            onOpenFile={(attachment) => onOpenThreadFile?.(attachment.threadPath)}
+            onOpenFile={(attachment) => onOpenThreadFile?.(attachment.threadPath, attachment.fileRef)}
             onOpenImage={(attachment) => onOpenThreadImage?.(attachment)}
           />
         )}
@@ -702,7 +702,7 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
 }: {
   block: RuntimeAssistantBlock
   threadId: string
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
   isStreaming: boolean
   isActiveThinking: boolean
   onUserResizeStart?: () => void
@@ -1087,7 +1087,7 @@ function MinimalAssistantContent({
   threadId: string
   isStreamingMessage: boolean
   activeStreamingTextBlockId: string | null
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
   onUserResizeStart?: () => void
 }) {
   const segments = useMemo(() => groupAssistantBlocksForMinimal(blocks), [blocks])
@@ -1318,7 +1318,7 @@ const SmoothText = memo(function SmoothText({
 }: {
   text: string
   isStreaming: boolean
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
 }) {
   const { displayedContent } = useSmoothStream({
     content: text,
@@ -1399,7 +1399,7 @@ export function PlanPreviewCard({
   onOpenThreadFile,
 }: {
   preview: PlanPreviewView
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -1503,7 +1503,7 @@ const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
   onOpenThreadFile,
 }: {
   markdown: string
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
 }) {
   const isDark = useIsDark()
   const components = useMemo(() => ({
@@ -1577,7 +1577,7 @@ export function MarkdownCode({
   streamStatus: _streamStatus,
   onOpenThreadFile,
   ...rest
-}: MarkdownCodeProps & { onOpenThreadFile?: (path: string) => void }) {
+}: MarkdownCodeProps & { onOpenThreadFile?: (path: string, fileRef?: FileRef) => void }) {
   const env = useThreadFileEnv()
   const text = flattenText(children)
   const filePath = !block ? normalizeThreadFilePathCandidate(text) : null
@@ -1785,7 +1785,7 @@ function FooterMemoryNotice({
   onOpenMemorySource,
 }: {
   events: MemoryContextUsedViewEvent[]
-  onOpenMemorySource?: (path: string) => void
+  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const totalCount = events.reduce((sum, e) => sum + e.items.length, 0)
@@ -1831,7 +1831,7 @@ function FooterMemoryNotice({
                         <Button
                 variant="ghost"
                           type="button"
-                          onClick={() => onOpenMemorySource(sourcePath)}
+                          onClick={() => onOpenMemorySource(sourcePath, item.fileRef)}
                           className="inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
                           title={item.citation}
                         >
@@ -1871,7 +1871,7 @@ function AssistantMessageFooter({
   tokenUsage?: RuntimeAssistantTokenUsageView
   completedAt?: string
   memoryEvents?: MemoryContextUsedViewEvent[]
-  onOpenMemorySource?: (path: string) => void
+  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
 }) {
   const setThreads = useSetAtom(agentThreadsAtom)
   const setTabs = useSetAtom(tabsAtom)

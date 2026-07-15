@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react"
+import { useSetAtom } from "jotai"
+import { AGENT_IPC_CHANNELS, type FileRef } from "@lume/shared"
+import { rightPanelLayoutAtom, rightPanelWorkspaceActionAtom } from "@/atoms"
+import { Button } from "@/components/ui/button"
+import { sidecarCall } from "@/lib/desktop-api"
 import { resolveAbsolutePath } from "@/components/agent/file-link-actions"
 import { lumeFileUrl } from "@/components/right-panel/file-preview-utils"
 import { useThreadFileEnv } from "../thread-file-env"
+import { toast } from "sonner"
 
 interface ImageGenImage {
   threadPath: string
   filename: string
   mediaType: string
   size: number
+  fileRef?: FileRef
 }
 
 interface ImageGenResultData {
@@ -68,6 +75,28 @@ export function ImageGenResult({ result }: Props) {
   const env = useThreadFileEnv()
   const images = data.images ?? []
   const srcByPath = useImageSrcs(env.threadId, images, env.workspaceSlug)
+  const dispatchRightPanel = useSetAtom(rightPanelWorkspaceActionAtom)
+  const setRightPanelLayout = useSetAtom(rightPanelLayoutAtom)
+
+  const openImage = async (image: ImageGenImage) => {
+    if (!env.threadId) return
+    let ref = image.fileRef
+    if (!ref) {
+      try {
+        ref = await sidecarCall<FileRef>(AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF, {
+          recordKind: 'thread-attachment',
+          threadId: env.threadId,
+          ...(env.workspaceSlug ? { workspaceSlug: env.workspaceSlug } : {}),
+          legacyRelativePath: image.threadPath,
+        })
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : '无法打开旧版图片引用')
+        return
+      }
+    }
+    dispatchRightPanel({ type: 'open-file', threadId: env.threadId, ref, binding: { fileContextId: ref.scopeId } })
+    setRightPanelLayout((current) => ({ ...current, open: true, mode: current.mode === 'expanded' ? 'expanded' : 'normal' }))
+  }
 
   if (images.length === 0) {
     const text = JSON.stringify(data, null, 2)
@@ -84,8 +113,10 @@ export function ImageGenResult({ result }: Props) {
         {images.map((img) => {
           const src = srcByPath[img.threadPath]
           return (
-            <div
+            <Button
               key={img.threadPath}
+              variant="ghost"
+              onClick={() => void openImage(img)}
               className="flex max-h-[256px] max-w-[320px] items-center justify-center overflow-hidden rounded-md bg-muted/40"
             >
               {src ? (
@@ -99,7 +130,7 @@ export function ImageGenResult({ result }: Props) {
                   加载图片…
                 </div>
               )}
-            </div>
+            </Button>
           )
         })}
       </div>

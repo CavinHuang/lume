@@ -427,7 +427,11 @@ async function handleWindowState(input: {
       screenshots: screenshots.map((candidate, index) => {
         const screenshot = asRecord(candidate);
         const { url: _url, ...metadata } = screenshot;
-        return { ...metadata, url: saved[index]?.threadPath };
+        return {
+          ...metadata,
+          url: saved[index]?.threadPath,
+          ...(saved[index]?.fileRef ? { fileRef: saved[index]?.fileRef } : {}),
+        };
       }),
     }),
   }];

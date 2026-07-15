@@ -759,6 +759,7 @@ export function AgentInput({
             mediaType: attachment.mediaType,
             size: attachment.size,
             threadPath: saved?.threadPath ?? attachment.filename,
+            ...(saved?.ref ? { fileRef: saved.ref } : {}),
           }
         })
       }

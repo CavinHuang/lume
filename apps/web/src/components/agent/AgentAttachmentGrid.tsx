@@ -5,12 +5,14 @@ import { useThreadFileEnv } from './thread-file-env'
 import { cn } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
+import type { FileRef } from '@lume/shared'
 export interface AgentAttachmentGridItem {
   id: string
   filename: string
   mediaType: string
   size: number
   threadPath?: string
+  fileRef?: FileRef
   previewUrl?: string
 }
 

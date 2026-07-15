@@ -383,11 +383,19 @@ function normalizeMemoryContextUsedItems(value: unknown): MemoryContextUsedItem[
         scope: record.scope,
         status: record.status,
         citation: record.citation,
+        ...(isMemoryFileRef(record.fileRef) ? { fileRef: record.fileRef } : {}),
         reason: record.reason,
         ...(isMemoryClaim(record.claim) ? { claim: record.claim } : {})
       };
     })
     .filter((item): item is MemoryContextUsedItem => item !== null);
+}
+
+function isMemoryFileRef(value: unknown): value is NonNullable<MemoryContextUsedItem["fileRef"]> {
+  const record = asRecord(value);
+  return record.source === "memory"
+    && typeof record.scopeId === "string"
+    && typeof record.relativePath === "string";
 }
 
 function isMemoryClaim(value: unknown): value is MemoryContextUsedItem["claim"] {

@@ -1,8 +1,8 @@
 
 import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
-import { AGENT_IPC_CHANNELS, LUME_CONFIG_IPC_CHANNELS } from "@lume/shared";
-import { getAgentWorkspacesDir, getConfigDir, getLumeConfigYamlPath } from "../infra/config-paths";
+import { AGENT_IPC_CHANNELS, LUME_CONFIG_IPC_CHANNELS, MEMORY_IPC_CHANNELS } from "@lume/shared";
+import { getAgentWorkspacesDir, getConfigDir, getLumeConfigYamlPath, getStructuredMemoryDir } from "../infra/config-paths";
 
 type NotificationEmitter = (method: string, params: unknown) => void;
 
@@ -11,6 +11,7 @@ const DEBOUNCE_MS = 500;
 let watchers: FSWatcher[] = [];
 let capabilitiesTimer: ReturnType<typeof setTimeout> | null = null;
 let filesTimer: ReturnType<typeof setTimeout> | null = null;
+let memoryTimer: ReturnType<typeof setTimeout> | null = null;
 let lumeConfigTimer: ReturnType<typeof setTimeout> | null = null;
 
 function clearTimers(): void {
@@ -21,6 +22,10 @@ function clearTimers(): void {
   if (filesTimer) {
     clearTimeout(filesTimer);
     filesTimer = null;
+  }
+  if (memoryTimer) {
+    clearTimeout(memoryTimer);
+    memoryTimer = null;
   }
   if (lumeConfigTimer) {
     clearTimeout(lumeConfigTimer);
@@ -33,6 +38,10 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
   const onWorkspaceChanged = (_eventType: string, filename: string | Buffer | null): void => {
     if (!filename) return;
     const normalized = String(filename).replace(/\\/g, "/");
+    if (normalized === "memory" || normalized.startsWith("memory/") || normalized.includes("/memory/")) {
+      emitMemoryChanged();
+      return;
+    }
     const isCapabilitiesChange =
       normalized.endsWith("/mcp.json") || normalized.includes("/skills/");
 
@@ -49,6 +58,14 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
     filesTimer = setTimeout(() => {
       emit(AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED, {});
       filesTimer = null;
+    }, DEBOUNCE_MS);
+  };
+
+  const emitMemoryChanged = (): void => {
+    if (memoryTimer) clearTimeout(memoryTimer);
+    memoryTimer = setTimeout(() => {
+      emit(MEMORY_IPC_CHANNELS.SOURCE_FILES_CHANGED, {});
+      memoryTimer = null;
     }, DEBOUNCE_MS);
   };
 
@@ -87,6 +104,7 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
   };
 
   safeWatch(watchDir, { recursive: true }, onWorkspaceChanged, "Lume 工作区");
+  safeWatch(getStructuredMemoryDir(), { recursive: true }, () => emitMemoryChanged(), "Lume 全局记忆目录");
   safeWatch(getConfigDir(), { recursive: false }, (_eventType, filename) => {
     if (!filename) return;
     const normalized = String(filename).replace(/\\/g, "/").toLowerCase();

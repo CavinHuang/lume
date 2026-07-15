@@ -68,7 +68,7 @@ function spawnDetached(command: string, args: string[]): void {
 
 function openInSystem(path: string): void {
   if (process.platform === "win32") {
-    spawnDetached("cmd", ["/c", "start", "", path]);
+    spawnDetached("explorer.exe", [path]);
     return;
   }
   if (process.platform === "darwin") {

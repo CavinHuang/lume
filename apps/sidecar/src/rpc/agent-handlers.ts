@@ -55,17 +55,21 @@ import { resolveAgentDefaultStrategy } from "../services/channel/model-selection
 import {
   attachWorkspaceResourceToThread,
   copyFolderToSession,
+  convertLegacyFileRef,
   deleteAgentFile,
+  deleteAuthorizedFileRef,
   deleteWorkspaceFile,
   deleteWorkspaceRootFile,
   exportLegacyResourceToProject,
   getAgentThreadPath,
   getWorkspaceResourcesDirectory,
   listAgentDirectory,
+  listAuthorizedFileRefDirectory,
   listProjectDirectory,
   listWorkspaceDirectory,
   listWorkspaceRootDirectory,
   moveAgentFile,
+  moveAuthorizedFileRef,
   moveWorkspaceFile,
   moveWorkspaceRootFile,
   openAgentPath,
@@ -75,6 +79,8 @@ import {
   previewAgentPath,
   readAgentFileData,
   readAgentPath,
+  readAuthorizedFileRef,
+  statAuthorizedFileRef,
   readProjectFileData,
   readProjectPath,
   previewWorkspacePath,
@@ -82,6 +88,8 @@ import {
   readWorkspaceFileData,
   readWorkspaceRootPath,
   renameAgentFile,
+  renameAuthorizedFileRef,
+  resolveAuthorizedFileRef,
   renameWorkspaceFile,
   renameWorkspaceRootFile,
   resolveWorkspaceSlugByThreadId,
@@ -89,6 +97,7 @@ import {
   saveFilesToWorkspace,
   saveFilesToWorkspaceRoot,
   searchAgentWorkspaceFiles,
+  searchAuthorizedFiles,
   showAgentPathInFolder,
   showProjectPathInFolder,
   showWorkspacePathInFolder,
@@ -208,11 +217,16 @@ import {
   copyFolderToThreadInputSchema,
   deleteSkillInputSchema,
   editableSkillInputSchema,
+  fileRefInputSchema,
+  fileRefMoveInputSchema,
+  fileRefRenameInputSchema,
+  fileRefSearchInputSchema,
   githubSkillReviewInputSchema,
   importLocalSkillDirectoryInputSchema,
   installGitHubSkillInputSchema,
   installSkillMarketItemInputSchema,
   legacyResourceExportInputSchema,
+  legacyFileRefConversionInputSchema,
   listEditableSkillsInputSchema,
   listDirectoryInputSchema,
   marketCatalogInputSchema,
@@ -272,6 +286,7 @@ import { asObject, asString, validateInput } from "./validation";
 import { trimSdkMessagesForTransport } from "./message-payload-trim";
 
 const log = createLogger("agent-handlers");
+const activeFileSearches = new Map<string, AbortController>();
 
 /** Re-scan plugin directories and normalize into the LIST_PLUGINS/RELOAD_PLUGINS result shape. */
 async function buildAgentPluginList(): Promise<{
@@ -1506,6 +1521,55 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         input.limit ?? 20,
         input.rootPath
       );
+    },
+    [AGENT_IPC_CHANNELS.LIST_FILE_REF_DIRECTORY]: async (params) => {
+      const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.LIST_FILE_REF_DIRECTORY);
+      return listAuthorizedFileRefDirectory(input.ref);
+    },
+    [AGENT_IPC_CHANNELS.READ_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.READ_FILE_REF);
+      return readAuthorizedFileRef(input.ref);
+    },
+    [AGENT_IPC_CHANNELS.STAT_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.STAT_FILE_REF);
+      return statAuthorizedFileRef(input.ref);
+    },
+    [AGENT_IPC_CHANNELS.SEARCH_FILE_REFS]: async (params) => {
+      const input = validateInput(fileRefSearchInputSchema, params, AGENT_IPC_CHANNELS.SEARCH_FILE_REFS);
+      const key = `${input.ref.source}:${input.ref.scopeId}`;
+      activeFileSearches.get(key)?.abort();
+      const controller = new AbortController();
+      activeFileSearches.set(key, controller);
+      try {
+        return await searchAuthorizedFiles(input.ref, input.query, {
+          includeExcluded: input.includeExcluded,
+          limit: input.limit,
+          signal: controller.signal
+        });
+      } finally {
+        if (activeFileSearches.get(key) === controller) activeFileSearches.delete(key);
+      }
+    },
+    [AGENT_IPC_CHANNELS.RESOLVE_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.RESOLVE_FILE_REF);
+      const resolved = resolveAuthorizedFileRef(input.ref);
+      return { path: resolved.absolutePath, relativePath: resolved.relativePath };
+    },
+    [AGENT_IPC_CHANNELS.RENAME_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefRenameInputSchema, params, AGENT_IPC_CHANNELS.RENAME_FILE_REF);
+      return renameAuthorizedFileRef(input.ref, input.newName);
+    },
+    [AGENT_IPC_CHANNELS.MOVE_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefMoveInputSchema, params, AGENT_IPC_CHANNELS.MOVE_FILE_REF);
+      return moveAuthorizedFileRef(input.ref, input.targetDirectory);
+    },
+    [AGENT_IPC_CHANNELS.DELETE_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.DELETE_FILE_REF);
+      return deleteAuthorizedFileRef(input.ref);
+    },
+    [AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF]: async (params) => {
+      const input = validateInput(legacyFileRefConversionInputSchema, params, AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF);
+      return convertLegacyFileRef(input);
     },
     [AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]: async (params) =>
       saveFilesToAgentThread(

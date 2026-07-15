@@ -21,6 +21,15 @@ afterEach(() => {
 });
 
 describe("memory-v2 source open", () => {
+  test("returns an authorized FileRef instead of launching a shell command", () => {
+    const file = createMemoryV2Store().ensureMemoryFile("workspace", "demo");
+
+    expect(openMemoryV2Source({ workspaceSlug: "demo", path: file })).toEqual({
+      ok: true,
+      ref: { source: "memory", scopeId: "workspace:demo", relativePath: "MEMORY.md" }
+    });
+  });
+
   test("rejects missing memory source paths", () => {
     expect(() => openMemoryV2Source({
       workspaceSlug: "demo",

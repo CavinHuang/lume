@@ -7,7 +7,7 @@ import {
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
   rightPanelLayoutAtom,
-  rightPanelWorkspacesAtom,
+  rightPanelWorkspaceActionAtom,
 } from '@/atoms'
 import { AgentHeader } from './AgentHeader'
 import { AgentMessages } from './AgentMessages'
@@ -19,24 +19,16 @@ import { DesktopActionBanner } from './DesktopActionBanner'
 import { PlanApprovalOverlay } from './PlanApprovalOverlay'
 import { ErrorBanner } from './ErrorBanner'
 import { ThreadFileEnvProvider } from './thread-file-env'
-import { Loader2, Upload, X } from 'lucide-react'
+import { Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { type AgentMessageAttachmentInput, type DesktopContextTarget } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentMessageAttachmentInput, type DesktopContextTarget, type FileRef } from '@lume/shared'
 import {
   createPendingAttachmentsFromSourcePaths,
   isFileDragPayload,
   type DragDropPayload,
 } from './agent-file-drop'
-import {
-  createEmptyRightPanelWorkspace,
-  openFileInRightPanel,
-  sanitizeRightPanelWorkspace,
-} from '@/components/right-panel'
-import { resolveAbsolutePath } from '@/components/agent/file-link-actions'
-import { lumeFileUrl } from '@/components/right-panel/file-preview-utils'
-
-import { Button } from '@/components/ui/button'
+import { sidecarCall } from '@/lib/desktop-api'
 interface AgentViewProps {
   threadId: string
   readOnly?: boolean
@@ -80,23 +72,24 @@ export function AgentView({
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWsId = useAtomValue(currentWorkspaceIdAtom)
-  const setRightPanelWorkspaces = useSetAtom(rightPanelWorkspacesAtom)
+  const dispatchRightPanel = useSetAtom(rightPanelWorkspaceActionAtom)
   const setRightPanelLayout = useSetAtom(rightPanelLayoutAtom)
   const workspaceSlug = useMemo(() => {
     const thread = threads.find((t) => t.id === threadId)
     const targetId = thread?.workspaceId ?? currentWsId
     return workspaces.find((w) => w.id === targetId)?.slug
   }, [threads, workspaces, currentWsId, threadId])
+  const rightPanelBinding = useMemo(() => {
+    const thread = threads.find((item) => item.id === threadId)
+    return {
+      workspaceId: thread?.workspaceId ?? currentWsId ?? undefined,
+      fileContextId: thread?.fileContextId ?? thread?.id,
+    }
+  }, [currentWsId, threadId, threads])
 
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([])
-  const [imagePreview, setImagePreview] = useState<{
-    attachment: AgentMessageAttachmentInput
-    src?: string
-    loading: boolean
-    error?: string
-  } | null>(null)
 
   const addPendingAttachments = useCallback((attachments: PendingMessageAttachment[]) => {
     if (attachments.length === 0) return
@@ -118,65 +111,40 @@ export function AgentView({
     }))
   }, [setRightPanelLayout])
 
-  const openThreadFilePreview = useCallback((path: string) => {
-    setRightPanelWorkspaces((prev) => ({
-      ...prev,
-      [threadId]: openFileInRightPanel(
-        sanitizeRightPanelWorkspace(prev[threadId] ?? createEmptyRightPanelWorkspace()),
-        path,
-        'lume',
-      ),
-    }))
-    reopenRightPanel()
-  }, [reopenRightPanel, setRightPanelWorkspaces, threadId])
+  const openThreadFilePreview = useCallback((path: string, signedRef?: FileRef) => {
+    if (signedRef) {
+      dispatchRightPanel({ type: 'open-file', threadId, ref: signedRef, binding: rightPanelBinding })
+      reopenRightPanel()
+      return
+    }
+    void sidecarCall<FileRef>(AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF, {
+      recordKind: 'thread-attachment', threadId, ...(workspaceSlug ? { workspaceSlug } : {}), legacyRelativePath: path,
+    }).then((ref) => {
+      dispatchRightPanel({ type: 'open-file', threadId, ref, binding: rightPanelBinding })
+      reopenRightPanel()
+    }).catch((error) => toast.error(error instanceof Error ? error.message : '无法打开旧版文件引用'))
+  }, [dispatchRightPanel, reopenRightPanel, rightPanelBinding, threadId, workspaceSlug])
 
-  const openMemoryFilePreview = useCallback((path: string) => {
-    setRightPanelWorkspaces((prev) => ({
-      ...prev,
-      [threadId]: openFileInRightPanel(
-        sanitizeRightPanelWorkspace(prev[threadId] ?? createEmptyRightPanelWorkspace()),
-        path,
-        'memory',
-      ),
-    }))
-    reopenRightPanel()
-  }, [reopenRightPanel, setRightPanelWorkspaces, threadId])
+  const openMemoryFilePreview = useCallback((path: string, signedRef?: FileRef) => {
+    if (signedRef) {
+      dispatchRightPanel({ type: 'open-file', threadId, ref: signedRef, binding: rightPanelBinding })
+      reopenRightPanel()
+      return
+    }
+    if (!workspaceSlug) return
+    void sidecarCall<FileRef>(AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF, {
+      recordKind: 'memory-source', workspaceSlug, legacyRelativePath: path,
+    }).then((ref) => {
+      dispatchRightPanel({ type: 'open-file', threadId, ref, binding: rightPanelBinding })
+      reopenRightPanel()
+    }).catch((error) => toast.error(error instanceof Error ? error.message : '无法打开旧版记忆引用'))
+  }, [dispatchRightPanel, reopenRightPanel, rightPanelBinding, threadId, workspaceSlug])
 
   const openThreadImagePreview = useCallback((attachment: AgentMessageAttachmentInput) => {
-    setImagePreview({ attachment, loading: true })
-    resolveAbsolutePath({
-      source: 'thread',
-      relPath: attachment.threadPath,
-      threadId,
-      ...(workspaceSlug ? { workspaceSlug } : {}),
-    })
-      .then((abs) => {
-        setImagePreview((current) => (
-          current?.attachment.id === attachment.id
-            ? {
-                attachment,
-                src: lumeFileUrl(abs),
-                loading: false,
-              }
-            : current
-        ))
-      })
-      .catch((error) => {
-        console.error('[AgentView] 加载图片预览失败:', error)
-        setImagePreview((current) => (
-          current?.attachment.id === attachment.id
-            ? {
-                attachment,
-                loading: false,
-                error: error instanceof Error ? error.message : '图片预览失败',
-              }
-            : current
-        ))
-      })
-  }, [threadId, workspaceSlug])
+    openThreadFilePreview(attachment.threadPath, attachment.fileRef)
+  }, [openThreadFilePreview])
 
   useEffect(() => {
-    setImagePreview(null)
     setPendingAttachments([])
   }, [threadId])
 
@@ -307,73 +275,6 @@ export function AgentView({
         </div>
       )}
 
-      {imagePreview && (
-        <ThreadImagePreviewDialog
-          preview={imagePreview}
-          onClose={() => setImagePreview(null)}
-        />
-      )}
-    </div>
-  )
-}
-
-function ThreadImagePreviewDialog({
-  preview,
-  onClose,
-}: {
-  preview: {
-    attachment: AgentMessageAttachmentInput
-    src?: string
-    loading: boolean
-    error?: string
-  }
-  onClose: () => void
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/72 px-6 py-8 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label={preview.attachment.filename}
-      onClick={onClose}
-    >
-      <div
-        className="relative flex max-h-full max-w-[min(1080px,92vw)] flex-col overflow-hidden rounded-[10px] bg-[#111318] text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4">
-          <div className="min-w-0 truncate text-[13px] font-medium text-white/82">
-            {preview.attachment.filename}
-          </div>
-          <Button
-                variant="ghost"
-            type="button"
-            onClick={onClose}
-            className="flex size-7 items-center justify-center rounded-md text-white/65 transition-colors hover:bg-white/10 hover:text-white"
-            title="关闭预览"
-          >
-            <X size={16} />
-          </Button>
-        </div>
-        <div className="flex min-h-[320px] min-w-[320px] items-center justify-center bg-black/24 p-4">
-          {preview.loading ? (
-            <div className="flex items-center gap-2 text-[13px] text-white/70">
-              <Loader2 size={16} className="animate-spin" />
-              正在加载图片
-            </div>
-          ) : preview.error ? (
-            <div className="max-w-[420px] rounded-[8px] border border-white/10 bg-white/6 px-4 py-3 text-center text-[13px] leading-6 text-white/72">
-              {preview.error}
-            </div>
-          ) : preview.src ? (
-            <img
-              src={preview.src}
-              alt={preview.attachment.filename}
-              className="max-h-[calc(100vh-160px)] max-w-[calc(92vw-32px)] object-contain"
-            />
-          ) : null}
-        </div>
-      </div>
     </div>
   )
 }

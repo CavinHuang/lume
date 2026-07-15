@@ -8,6 +8,7 @@ import {
   type AgentListSubagentRunsResult,
   type AgentMessageAttachmentInput,
   type AgentMessage,
+  type FileRef,
 } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { hydrateRuntimeEvents } from '@/hooks/runtime-event-state'
@@ -43,9 +44,9 @@ import { Button } from '@/components/ui/button'
 interface AgentMessagesProps {
   threadId: string
   streaming: boolean
-  onOpenThreadFile?: (path: string) => void
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
-  onOpenMemorySource?: (path: string) => void
+  onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
 }
 
 export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThreadImage, onOpenMemorySource }: AgentMessagesProps) {

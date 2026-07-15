@@ -3,7 +3,6 @@ export type RightPanelFunction = 'review' | 'terminal' | 'browser' | 'files'
 export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['review', 'terminal', 'browser', 'files']
 
 export interface ThreadRightPanelWorkspace {
-  activeTab: RightPanelFunction | null
   tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>
 }
 
@@ -23,16 +22,10 @@ export interface BrowserTabState {
 
 export interface FilesTabState {
   type: 'files'
-  source: 'lume' | 'project' | 'legacy' | 'memory'
-  selectedPath: string | null
-  treeVisible: boolean
-  treeWidth?: number
-  searchQuery: string
-  enhancedView: boolean
 }
 
 export function createEmptyRightPanelWorkspace(): ThreadRightPanelWorkspace {
-  return { activeTab: null, tabs: {} }
+  return { tabs: {} }
 }
 
 export function createDefaultRightPanelTab(type: RightPanelFunction): RightPanelTabState {
@@ -41,7 +34,7 @@ export function createDefaultRightPanelTab(type: RightPanelFunction): RightPanel
   }
 
   if (type === 'files') {
-    return { type, source: 'project', selectedPath: null, treeVisible: true, searchQuery: '', enhancedView: true }
+    return { type }
   }
 
   return { type }
@@ -52,7 +45,6 @@ export function openRightPanelTab(
   type: RightPanelFunction,
 ): ThreadRightPanelWorkspace {
   return {
-    activeTab: type,
     tabs: {
       ...workspace.tabs,
       [type]: workspace.tabs[type] ?? createDefaultRightPanelTab(type),
@@ -70,6 +62,12 @@ export function firstOpenRightPanelTab(
   return RIGHT_PANEL_FUNCTION_ORDER.find((type) => tabs[type]) ?? null
 }
 
+export function getOpenRightPanelFunctions(
+  tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>,
+): RightPanelFunction[] {
+  return RIGHT_PANEL_FUNCTION_ORDER.filter((type) => Boolean(tabs[type]))
+}
+
 export function closeRightPanelTab(
   workspace: ThreadRightPanelWorkspace,
   type: RightPanelFunction,
@@ -77,18 +75,7 @@ export function closeRightPanelTab(
   const tabs = { ...workspace.tabs }
   delete tabs[type]
 
-  if (workspace.activeTab !== type) {
-    return {
-      activeTab: workspace.activeTab && tabs[workspace.activeTab] ? workspace.activeTab : firstOpenRightPanelTab(tabs),
-      tabs,
-    }
-  }
-
-  const closedIndex = RIGHT_PANEL_FUNCTION_ORDER.indexOf(type)
-  const nextTabs = RIGHT_PANEL_FUNCTION_ORDER.slice(closedIndex + 1).concat(RIGHT_PANEL_FUNCTION_ORDER.slice(0, closedIndex))
-  const activeTab = nextTabs.find((candidate) => tabs[candidate]) ?? null
-
-  return { activeTab, tabs }
+  return { tabs }
 }
 
 export function sanitizeRightPanelWorkspace(value: unknown): ThreadRightPanelWorkspace {
@@ -106,43 +93,7 @@ export function sanitizeRightPanelWorkspace(value: unknown): ThreadRightPanelWor
     }
   }
 
-  const activeTab = isRightPanelFunction(value.activeTab) && tabs[value.activeTab]
-    ? value.activeTab
-    : firstOpenRightPanelTab(tabs)
-
-  return { activeTab, tabs }
-}
-
-export function openFileInRightPanel(
-  workspace: ThreadRightPanelWorkspace,
-  path: string,
-  source: 'lume' | 'memory' = 'lume',
-): ThreadRightPanelWorkspace {
-  const nextWorkspace = openRightPanelTab(workspace, 'files')
-  const files = nextWorkspace.tabs.files
-  if (!files || files.type !== 'files') {
-    return nextWorkspace
-  }
-
-  return {
-    activeTab: 'files',
-    tabs: {
-      ...nextWorkspace.tabs,
-      files: {
-        ...files,
-        source,
-        selectedPath: path,
-      },
-    },
-  }
-}
-
-export function switchFilesSource(
-  state: FilesTabState,
-  source: FilesTabState['source'],
-): FilesTabState {
-  if (state.source === source) return state
-  return { ...state, source, selectedPath: null, searchQuery: '' }
+  return { tabs }
 }
 
 export function migrateLegacyRightPanelHints(input: {
@@ -153,25 +104,7 @@ export function migrateLegacyRightPanelHints(input: {
     return createEmptyRightPanelWorkspace()
   }
 
-  const workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'files')
-  const files = workspace.tabs.files
-  if (!files || files.type !== 'files') {
-    return workspace
-  }
-
-  return {
-    activeTab: 'files',
-    tabs: {
-      files: {
-        ...files,
-        treeVisible: typeof input.fileTreeOpen === 'boolean' ? input.fileTreeOpen : files.treeVisible,
-      },
-    },
-  }
-}
-
-function isRightPanelFunction(value: unknown): value is RightPanelFunction {
-  return typeof value === 'string' && RIGHT_PANEL_FUNCTION_ORDER.includes(value as RightPanelFunction)
+  return openRightPanelTab(createEmptyRightPanelWorkspace(), 'files')
 }
 
 function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightPanelTabState | null {
@@ -194,26 +127,7 @@ function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightP
   }
 
   if (type === 'files') {
-    const source = value.source === 'thread'
-      ? 'lume'
-      : value.source === 'workspace'
-        ? 'legacy'
-        : value.source === 'project' || value.source === 'legacy' || value.source === 'memory'
-          ? value.source
-          : 'lume'
-    return {
-      type,
-      source,
-      selectedPath: value.selectedPath === null || typeof value.selectedPath === 'string'
-        ? value.selectedPath
-        : null,
-      treeVisible: typeof value.treeVisible === 'boolean' ? value.treeVisible : true,
-      ...(typeof value.treeWidth === 'number' && Number.isFinite(value.treeWidth)
-        ? { treeWidth: Math.min(520, Math.max(240, Math.round(value.treeWidth))) }
-        : {}),
-      searchQuery: typeof value.searchQuery === 'string' ? value.searchQuery : '',
-      enhancedView: typeof value.enhancedView === 'boolean' ? value.enhancedView : true,
-    }
+    return { type }
   }
 
   return { type }

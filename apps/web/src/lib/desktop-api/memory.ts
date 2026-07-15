@@ -18,10 +18,14 @@ import type {
   MemorySettingsSnapshot,
   MemoryToolWriteResult,
   MemoryUpdateEntryInput,
+  FileRef,
+  MemoryListSourceFilesInput,
+  MemorySourceFilesPage,
   UpdateMemoryRuntimeConfigInput,
 } from '@lume/shared'
 import { MEMORY_IPC_CHANNELS } from '@lume/shared'
 import { sidecarCall } from './system'
+import { openFileRefInSystem } from './native'
 
 export const readMemory = (input: MemoryReadToolInput) =>
   sidecarCall<MemoryReadToolResult>(MEMORY_IPC_CHANNELS.READ, input)
@@ -47,8 +51,13 @@ export const ingestMemorySources = (input: MemoryIngestSourcesInput) =>
 export const getMemoryIngestJob = (input: MemoryIngestSourcesJobInput) =>
   sidecarCall<MemoryIngestSourcesJob>(MEMORY_IPC_CHANNELS.GET_INGEST_JOB, input)
 
-export const openMemorySource = (input: { workspaceSlug: string; path: string }) =>
-  sidecarCall<{ ok: true }>(MEMORY_IPC_CHANNELS.OPEN_SOURCE, input)
+export const listMemorySourceFiles = (input: MemoryListSourceFilesInput) =>
+  sidecarCall<MemorySourceFilesPage>(MEMORY_IPC_CHANNELS.LIST_SOURCE_FILES, input)
+
+export const openMemorySource = async (input: { workspaceSlug: string; path: string }) => {
+  const result = await sidecarCall<{ ok: true; ref: FileRef }>(MEMORY_IPC_CHANNELS.OPEN_SOURCE, input)
+  await openFileRefInSystem(result.ref)
+}
 
 export const updateMemoryEntry = (input: MemoryUpdateEntryInput) =>
   sidecarCall<MemoryMutationResult>(MEMORY_IPC_CHANNELS.UPDATE_ENTRY, input)

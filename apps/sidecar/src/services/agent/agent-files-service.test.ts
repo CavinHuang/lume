@@ -6,28 +6,41 @@ import { getWorkspaceResourcesPath } from "../infra/config-paths";
 import {
   copyFolderToSession,
   copyFolderToWorkspace,
+  convertLegacyFileRef,
   deleteAgentFile,
   deleteWorkspaceFile,
   exportLegacyResourceToProject,
   getAgentSessionPath,
   listAgentDirectory,
+  listProjectDirectory,
   listWorkspaceRootDirectory,
   listWorkspaceDirectory,
+  moveAuthorizedFileRef,
   moveAgentFile,
   moveWorkspaceFile,
   renameAgentFile,
   renameWorkspaceFile,
   readAgentPath,
   readWorkspaceRootPath,
+  renameAuthorizedFileRef,
+  resolveAuthorizedFileRef,
   resolveThreadAttachmentPath,
   resolveWorkspaceSlugBySessionId,
   saveFilesToAgentSession,
   saveFilesToWorkspaceRoot,
   saveFilesToWorkspace,
   searchAgentWorkspaceFiles,
+  searchAuthorizedFiles,
+  statAuthorizedFileRef,
   toThreadRelativePath
 } from "./agent-files-service";
 import { createAgentWorkspace } from "./agent-workspace-manager";
+import { createAgentThread } from "./agent-thread-manager";
+import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { listMemorySourceFiles, memoryFileRefForPath } from "../memory-v2/source-files";
+import { getMemoryV2ScopePaths } from "../memory-v2/paths";
+import { startWorkspaceWatcher, stopWorkspaceWatcher } from "../system/workspace-watcher";
+import { MEMORY_IPC_CHANNELS } from "@lume/shared";
 
 const createdDirs: string[] = [];
 const originalConfigDir = process.env.LUME_CONFIG_DIR;
@@ -40,6 +53,7 @@ function createTempConfigDir(): string {
 }
 
 afterEach(() => {
+  stopWorkspaceWatcher();
   for (const dir of createdDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -47,6 +61,196 @@ afterEach(() => {
 });
 
 describe("agent-files-service file ops", () => {
+  test("emits the memory-specific change event for the global memory root", async () => {
+    createTempConfigDir();
+    const global = getMemoryV2ScopePaths({ scope: "global" });
+    let resolveChanged!: () => void;
+    const changed = new Promise<void>((resolve) => { resolveChanged = resolve; });
+    startWorkspaceWatcher((method) => {
+      if (method === MEMORY_IPC_CHANNELS.SOURCE_FILES_CHANGED) resolveChanged();
+    });
+    writeFileSync(join(global.dailyDir, "watch.md"), "changed", "utf-8");
+    const result = await Promise.race([
+      changed.then(() => "changed" as const),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 3_000)),
+    ]);
+    expect(result).toBe("changed");
+  });
+
+  test("paginates the complete workspace and global memory source file list", () => {
+    createTempConfigDir();
+    const workspace = getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: "demo" });
+    const global = getMemoryV2ScopePaths({ scope: "global" });
+    writeFileSync(workspace.memoryMd, "workspace", "utf-8");
+    writeFileSync(join(workspace.dailyDir, "2026-07-15.md"), "daily", "utf-8");
+    writeFileSync(join(workspace.runsDir!, "run.md"), "run", "utf-8");
+    writeFileSync(global.memoryMd, "global", "utf-8");
+
+    const first = listMemorySourceFiles({ workspaceSlug: "demo", limit: 2 });
+    const second = listMemorySourceFiles({ workspaceSlug: "demo", cursor: first.nextCursor, limit: 2 });
+
+    expect(first.entries).toHaveLength(2);
+    expect(second.entries).toHaveLength(2);
+    expect([...first.entries, ...second.entries].map((entry) => entry.ref)).toEqual(expect.arrayContaining([
+      { source: "memory", scopeId: "workspace:demo", relativePath: "MEMORY.md" },
+      { source: "memory", scopeId: "workspace:demo", relativePath: "daily/2026-07-15.md" },
+      { source: "memory", scopeId: "workspace:demo", relativePath: "runs/run.md" },
+      { source: "memory", scopeId: "global", relativePath: "MEMORY.md" },
+    ]));
+    expect(first.entries.every((entry) => typeof entry.modifiedAt === "string")).toBe(true);
+    expect(second.nextCursor).toBeUndefined();
+    expect(memoryFileRefForPath({ scope: "workspace", workspaceSlug: "demo", path: `${workspace.memoryMd}#L1` })).toEqual({
+      source: "memory", scopeId: "workspace:demo", relativePath: "MEMORY.md",
+    });
+    expect(memoryFileRefForPath({ scope: "global", path: global.memoryMd })).toEqual({
+      source: "memory", scopeId: "global", relativePath: "MEMORY.md",
+    });
+  });
+
+  test("FileRef resolver normalizes paths, returns metadata, and rejects symlink escape", async () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-ref");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("project-ref", { projectPath });
+    writeFileSync(join(projectPath, ".visible.md"), "dot", "utf-8");
+    mkdirSync(join(projectPath, "node_modules"));
+    writeFileSync(join(projectPath, "node_modules", "hidden.md"), "hidden", "utf-8");
+
+    const resolved = resolveAuthorizedFileRef({ source: "project", scopeId: workspace.slug, relativePath: "./.visible.md" });
+    expect(resolved.relativePath).toBe(".visible.md");
+    expect(resolved.absolutePath).toBe(join(projectPath, ".visible.md"));
+
+    const listed = listProjectDirectory(workspace.slug);
+    expect(listed.find((entry) => entry.name === ".visible.md")).toMatchObject({
+      ref: { source: "project", scopeId: workspace.slug, relativePath: ".visible.md" },
+      size: 3,
+    });
+    expect(listed.find((entry) => entry.name === ".visible.md")?.modifiedAt).toBeString();
+    expect(statAuthorizedFileRef({ source: "project", scopeId: workspace.slug, relativePath: ".visible.md" })).toMatchObject({
+      name: ".visible.md",
+      path: ".visible.md",
+      size: 3,
+      modifiedAt: expect.any(String),
+    });
+
+    const search = await searchAuthorizedFiles(
+      { source: "project", scopeId: workspace.slug, relativePath: "" },
+      ".visible",
+      { limit: 200 },
+    );
+    expect(search.entries.map((entry) => entry.path)).toContain(".visible.md");
+    expect(search.entries.map((entry) => entry.path)).not.toContain("node_modules/hidden.md");
+    const included = await searchAuthorizedFiles(
+      { source: "project", scopeId: workspace.slug, relativePath: "" },
+      "hidden",
+      { includeExcluded: true },
+    );
+    expect(included.entries.map((entry) => entry.path)).toContain("node_modules/hidden.md");
+
+    const manyDir = join(projectPath, "many");
+    mkdirSync(manyDir);
+    for (let index = 0; index < 205; index += 1) writeFileSync(join(manyDir, `match-${index}.txt`), "x", "utf-8");
+    const capped = await searchAuthorizedFiles(
+      { source: "project", scopeId: workspace.slug, relativePath: "" },
+      "match-",
+      { limit: 200 },
+    );
+    expect(capped.entries).toHaveLength(200);
+    expect(capped.truncated).toBe(true);
+    const budgeted = await searchAuthorizedFiles(
+      { source: "project", scopeId: workspace.slug, relativePath: "" },
+      "match-",
+      { limit: 1, maxEntries: 1 },
+    );
+    expect(budgeted.truncated).toBe(true);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(searchAuthorizedFiles(
+      { source: "project", scopeId: workspace.slug, relativePath: "" },
+      "visible",
+      { signal: controller.signal },
+    )).rejects.toHaveProperty("name", "AbortError");
+
+    const outside = join(configDir, "outside-ref");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "secret.txt"), "secret", "utf-8");
+    symlinkSync(outside, join(projectPath, "escape"), "junction");
+    const escapedSearch = await searchAuthorizedFiles(
+      { source: "project", scopeId: workspace.slug, relativePath: "" },
+      "secret",
+    );
+    expect(escapedSearch.entries.map((entry) => entry.path)).not.toContain("escape/secret.txt");
+    expect(() => resolveAuthorizedFileRef({ source: "project", scopeId: workspace.slug, relativePath: "escape/secret.txt" }))
+      .toThrow("符号链接");
+    expect(() => resolveAuthorizedFileRef({ source: "project", scopeId: workspace.slug, relativePath: "../secret.txt" }))
+      .toThrow("FileRef");
+  });
+
+  test("session FileRefs are rooted at the file context and convert legacy thread paths once", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("session-ref", { projectPath });
+    const thread = createAgentThread("session ref", undefined, workspace.id);
+    const workdir = resolveAgentThreadWorkdir(thread.id);
+    writeFileSync(join(workdir.filesRoot, "brief.md"), "brief", "utf-8");
+
+    const converted = convertLegacyFileRef({
+      recordKind: "thread-attachment",
+      threadId: thread.id,
+      workspaceSlug: workspace.slug,
+      legacyRelativePath: "files/brief.md",
+    });
+
+    expect(converted).toEqual({ source: "session", scopeId: workdir.fileContextId, relativePath: "files/brief.md" });
+    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(join(workdir.filesRoot, "brief.md"));
+  });
+
+  test("legacy thread conversion rejects an in-root junction that escapes the file context", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-legacy-escape");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("legacy escape", { projectPath });
+    const thread = createAgentThread("legacy escape", undefined, workspace.id);
+    const workdir = resolveAgentThreadWorkdir(thread.id);
+    const outside = join(configDir, "outside-legacy-escape");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "secret.txt"), "secret", "utf-8");
+    try {
+      symlinkSync(outside, join(workdir.filesRoot, "escape"), "junction");
+    } catch (error) {
+      if (["EACCES", "ENOSYS", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return;
+      throw error;
+    }
+
+    expect(() => convertLegacyFileRef({
+      recordKind: "thread-attachment",
+      threadId: thread.id,
+      workspaceSlug: workspace.slug,
+      legacyRelativePath: "files/escape/secret.txt",
+    })).toThrow("符号链接");
+  });
+
+  test("authorized mutations reject the session root and moving a directory into itself", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-mutation-guards");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("mutation guards", { projectPath });
+    const thread = createAgentThread("mutation guards", undefined, workspace.id);
+    const workdir = resolveAgentThreadWorkdir(thread.id);
+    mkdirSync(join(workdir.filesRoot, "parent", "child"), { recursive: true });
+    const root = { source: "session", scopeId: workdir.fileContextId, relativePath: "" } as const;
+    const files = { ...root, relativePath: "files" };
+    const parent = { ...root, relativePath: "files/parent" };
+    const child = { ...root, relativePath: "files/parent/child" };
+
+    expect(() => renameAuthorizedFileRef(root, "renamed")).toThrow("根目录");
+    expect(() => moveAuthorizedFileRef(root, files)).toThrow("根目录");
+    expect(() => moveAuthorizedFileRef(parent, parent)).toThrow("自身");
+    expect(() => moveAuthorizedFileRef(parent, child)).toThrow("自身");
+    expect(existsSync(join(workdir.filesRoot, "parent", "child"))).toBeTrue();
+  });
   test("旧版资源只读导出到项目且拒绝覆盖和符号链接", () => {
     const configDir = createTempConfigDir();
     const projectPath = join(configDir, "project");

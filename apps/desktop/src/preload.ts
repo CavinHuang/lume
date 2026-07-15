@@ -21,6 +21,10 @@ const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'copy_file',
   'open_in_system',
   'reveal_path_in_system',
+  'open_file_ref',
+  'reveal_file_ref',
+  'create_file_preview_scope',
+  'revoke_file_preview_scope',
   'open_weread_key_webview',
   'quick_input_hide', // Alt+L 快速输入子窗口：隐藏子窗口
   'quick_input_get_context',

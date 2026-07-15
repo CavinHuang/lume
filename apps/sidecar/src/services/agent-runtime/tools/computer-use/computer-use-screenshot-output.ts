@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { toThreadRelativePath } from "../../../agent/agent-files-service";
 import { resolveAgentThreadWorkdir } from "../../../agent/agent-workdir-resolver";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
+import type { FileRef } from "@lume/shared";
 
 export interface SavedComputerUseScreenshot {
   screenshotId: string;
@@ -15,6 +16,7 @@ export interface SavedComputerUseScreenshot {
   width?: number;
   height?: number;
   absPath: string;
+  fileRef?: FileRef;
 }
 
 const EXTENSION_BY_MEDIA_TYPE: Record<string, string> = {
@@ -51,16 +53,28 @@ export function saveComputerUseScreenshots(input: {
     const filename = `${capturedAt}-${randomUUID().slice(0, 8)}.${extension}`;
     const absPath = join(dir, filename);
     writeFileSync(absPath, bytes);
+    const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, absPath);
+    let fileRef: FileRef | undefined;
+    try {
+      fileRef = {
+        source: "session",
+        scopeId: resolveAgentThreadWorkdir(input.threadId).fileContextId,
+        relativePath: threadPath,
+      };
+    } catch {
+      // Legacy/headless callers retain threadPath for authorized conversion.
+    }
     saved.push({
       screenshotId,
       capturedAt,
-      threadPath: toThreadRelativePath(input.workspaceSlug, input.threadId, absPath),
+      threadPath,
       filename,
       mediaType,
       size: bytes.length,
       ...(outputWidth !== undefined ? { width: outputWidth } : {}),
       ...(outputHeight !== undefined ? { height: outputHeight } : {}),
       absPath,
+      ...(fileRef ? { fileRef } : {}),
     });
   }
 

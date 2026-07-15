@@ -11,12 +11,19 @@ const relativeThreadPathSchema = z.string()
     message: "附件路径必须是线程内相对路径"
   });
 
+const rendererFileRefSchema = z.object({
+  source: z.enum(["project", "session", "memory", "legacy"]),
+  scopeId: z.string().trim().min(1),
+  relativePath: z.string()
+}).strict();
+
 const agentMessageAttachmentInputSchema = z.object({
   id: z.string().min(1),
   filename: z.string().min(1),
   mediaType: z.string().min(1),
   size: z.number().int().min(0),
-  threadPath: relativeThreadPathSchema
+  threadPath: relativeThreadPathSchema,
+  fileRef: rendererFileRefSchema.optional()
 });
 
 export const agentSendInputSchema = z.object({
@@ -392,6 +399,12 @@ export const memoryOpenSourceInputSchema = z.object({
   workspaceSlug: idSchema,
   path: z.string().min(1)
 });
+
+export const memoryListSourceFilesInputSchema = z.object({
+  workspaceSlug: idSchema,
+  cursor: z.string().optional(),
+  limit: z.number().int().min(1).max(200).optional()
+}).strict();
 
 const memoryEntryScopeSchema = z.enum(["global", "workspace"]);
 const memoryEntryConfidenceSchema = z.enum(["low", "medium", "high"]);
@@ -1078,6 +1091,22 @@ export const pathFileInputSchema = z.object({
   threadId: idSchema,
   path: idSchema
 });
+
+export const fileRefSchema = rendererFileRefSchema;
+
+export const fileRefInputSchema = z.object({ ref: fileRefSchema }).strict();
+export const fileRefSearchInputSchema = z.object({
+  ref: fileRefSchema,
+  query: z.string().default(""),
+  includeExcluded: z.boolean().optional(),
+  limit: z.number().int().min(1).max(200).optional()
+}).strict();
+export const fileRefRenameInputSchema = z.object({ ref: fileRefSchema, newName: z.string().min(1) }).strict();
+export const fileRefMoveInputSchema = z.object({ ref: fileRefSchema, targetDirectory: fileRefSchema }).strict();
+export const legacyFileRefConversionInputSchema = z.discriminatedUnion("recordKind", [
+  z.object({ recordKind: z.literal("thread-attachment"), threadId: idSchema, workspaceSlug: optionalIdSchema, legacyRelativePath: z.string().min(1) }).strict(),
+  z.object({ recordKind: z.literal("memory-source"), workspaceSlug: idSchema, legacyRelativePath: z.string().min(1) }).strict()
+]);
 
 export const renameFileInputSchema = z.object({
   workspaceSlug: optionalIdSchema,
