@@ -84,6 +84,7 @@ export function UnifiedFileTree({
   const mutationQueue = useRef(new SourceMutationQueue()).current
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const pendingScrollRestoreRef = useRef(workspace.scrollAnchor)
   const cacheRef = useRef(cache)
   const workspaceRef = useRef(workspace)
   const treeCacheIdentityRef = useRef(treeCacheIdentity)
@@ -111,6 +112,7 @@ export function UnifiedFileTree({
     setMoving(null)
     setMoveTarget('')
     searchSnapshotRef.current = null
+    pendingScrollRestoreRef.current = workspace.scrollAnchor
     previousSourceStatusRef.current = workspace.sourceStatus
   }, [treeCacheIdentity])
 
@@ -190,20 +192,24 @@ export function UnifiedFileTree({
   }, [workspace.sourceStatus])
 
   useEffect(() => {
-    if (query.trim() || !workspace.scrollAnchor) return
+    const anchor = pendingScrollRestoreRef.current
+    if (query.trim() || !anchor) return
     const frame = requestAnimationFrame(() => {
       const row = Array.from(scrollContainerRef.current?.querySelectorAll<HTMLElement>('[data-tree-row]') ?? [])
-        .find((candidate) => candidate.dataset.fileRefKey === workspace.scrollAnchor)
-      row?.scrollIntoView({ block: 'start' })
+        .find((candidate) => candidate.dataset.fileRefKey === anchor)
+      if (!row) return
+      pendingScrollRestoreRef.current = null
+      row.scrollIntoView({ block: 'start' })
     })
     return () => cancelAnimationFrame(frame)
-  }, [query, workspace.scrollAnchor, workspace.expandedKeys])
+  }, [cache, query, treeCacheIdentity, workspace.expandedKeys])
 
   useEffect(() => {
     const trimmed = query.trim()
     if (!trimmed) {
       const snapshot = searchSnapshotRef.current
       searchSnapshotRef.current = null
+      if (snapshot) pendingScrollRestoreRef.current = snapshot.scrollAnchor
       commitWorkspace({
         ...workspaceRef.current,
         ...(snapshot ?? {}),
@@ -428,7 +434,9 @@ export function UnifiedFileTree({
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title="搜索范围" />}><MoreHorizontal size={13} /></DropdownMenuTrigger>
           <DropdownMenuContent>
-            <DropdownMenuItem onSelect={() => [...new Set(roots.map((root) => root.source))].forEach((source) => void refreshSource(source))}>刷新全部来源</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => [...new Set(roots.map((root) => root.source))].forEach((source) => void refreshSource(source))}>
+              <Check size={12} className="opacity-0" aria-hidden />刷新全部来源
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => commitWorkspace({ ...workspaceRef.current, search: { ...workspaceRef.current.search, includeExcluded: !workspaceRef.current.search.includeExcluded } })}>
               <Check size={12} className={cn(!workspace.search.includeExcluded && 'opacity-0')} />包含高噪声目录
             </DropdownMenuItem>
@@ -439,7 +447,7 @@ export function UnifiedFileTree({
         </DropdownMenu>
       </div>
       {searchTruncated && <div className="border-b px-2 py-1 text-[11px] text-amber-600">扫描达到预算，当前结果不是精确总数。</div>}
-      <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto py-1" onScroll={(event) => {
+      <div ref={scrollContainerRef} className="file-tree-scrollbar min-h-0 flex-1 overflow-auto py-1" onScroll={(event) => {
         if (query.trim()) return
         const element = event.currentTarget
         const row = Array.from(element.querySelectorAll<HTMLElement>('[data-tree-row]'))

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { readFileSync } from 'node:fs'
 import {
   beginTreeSearch,
   createUnifiedFileTreeState,
@@ -16,6 +17,14 @@ import {
 } from './unified-file-tree-state'
 
 describe('unified-file-tree-state', () => {
+  test('does not feed live scroll anchor writes back into scroll restoration', () => {
+    const source = readFileSync(new URL('./UnifiedFileTree.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain('pendingScrollRestoreRef')
+    expect(source).toContain('if (snapshot) pendingScrollRestoreRef.current = snapshot.scrollAnchor')
+    expect(source).not.toContain('[query, workspace.scrollAnchor, workspace.expandedKeys]')
+  })
+
   test('uses fixed groups, defaults, and hides empty legacy', () => {
     const state = createUnifiedFileTreeState({ hasLegacy: false })
     expect(state.groups.map((group) => group.source)).toEqual(['project', 'session', 'memory'])
