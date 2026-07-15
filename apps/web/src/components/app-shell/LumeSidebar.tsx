@@ -158,7 +158,7 @@ export function LumeSidebar({
                 key={action.id}
                 type="button"
                 onClick={() => onTopAction(action.id)}
-                className="flex h-10 w-full items-center gap-3 rounded-xl bg-[var(--brand)] px-4 text-left text-[13px] font-medium text-[var(--brand-foreground)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]"
+                className="flex h-10 w-full items-center gap-3 rounded-xl bg-[var(--brand)] px-4 text-left text-[13px] font-medium text-[var(--brand-foreground)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))] hover:text-[var(--brand-foreground)]"
               >
                 <SquarePen size={17} />
                 <span className="flex-1">新建聊天</span>
