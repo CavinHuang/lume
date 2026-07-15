@@ -6,6 +6,7 @@ import type { RuntimeMessageView } from './runtime-message-view'
 
 mock.module('@lume/ui', () => ({
   useSmoothStream: ({ content }: { content: string }) => ({ displayedContent: content }),
+  MermaidBlock: ({ code }: { code: string }) => <section data-mermaid-block="true">{code}</section>,
 }))
 
 mock.module('@ant-design/x-markdown', () => ({
@@ -32,26 +33,48 @@ mock.module('@ant-design/x-markdown', () => ({
 
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
+  checkDesktopUpdate: async () => undefined,
+  copyFile: async () => undefined,
+  downloadDesktopUpdate: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
+  getThreadMessages: async () => [],
+  getThreadRuntimeEvents: async () => [],
+  healthcheck: async () => undefined,
+  installDesktopUpdateAndRelaunch: async () => undefined,
+  localFilePreviewUrl: (path: string) => `asset://${path}`,
+  openExternal: async () => undefined,
+  openFileDialog: async () => undefined,
+  openFolderDialog: async () => undefined,
   openInSystem: async () => undefined,
+  readTextFile: async () => '',
+  revealPathInSystem: async () => undefined,
+  saveFilePathDialog: async () => undefined,
   saveTextFileDialog: async () => undefined,
+  sidecarHealthcheck: async () => undefined,
   sidecarCall: async () => undefined,
+  statFilePaths: async () => ({ files: [] }),
+  submitTaskApproval: async () => undefined,
+  writeClipboardText: async () => undefined,
+  writeBinaryFile: async () => undefined,
 }))
 
 mock.module('./tool-result-renderers', () => ({
   ToolResultRenderer: () => null,
 }))
 
-const { RuntimeEventContentBlock } = await import('./RuntimeEventContentBlock')
+const { MarkdownPre, RuntimeEventContentBlock } = await import('./RuntimeEventContentBlock')
 
 function renderAssistantText(options: {
   messageStatus: RuntimeMessageView['status']
   streaming?: boolean
+  text?: string
+  showExpressionActions?: boolean
 }): string {
+  const text = options.text ?? 'hello'
   const message: RuntimeMessageView = {
     id: 'assistant-1',
     type: 'assistant',
-    text: 'hello',
+    text,
     thinking: '',
     status: options.messageStatus,
     toolCalls: [],
@@ -59,7 +82,7 @@ function renderAssistantText(options: {
       {
         type: 'text',
         id: 'text-1',
-        text: 'hello',
+        text,
       },
     ],
   }
@@ -68,12 +91,96 @@ function renderAssistantText(options: {
     <RuntimeEventContentBlock
       message={message}
       streaming={options.streaming}
+      showExpressionActions={options.showExpressionActions}
       threadId="thread-1"
     />,
   )
 }
 
 describe('RuntimeEventContentBlock markdown streaming config', () => {
+  test('shows contextual expression actions for the selected completed answer', () => {
+    const markup = renderAssistantText({
+      messageStatus: 'completed',
+      showExpressionActions: true,
+      text: '这个系统架构包含入口、服务和存储之间的依赖关系。'.padEnd(240, '详'),
+    })
+
+    expect(markup).toContain('data-expression-actions="true"')
+    expect(markup).toContain('画成图')
+  })
+
+  test('hides contextual expression actions when the message is not selected', () => {
+    const markup = renderAssistantText({
+      messageStatus: 'completed',
+      showExpressionActions: false,
+      text: '这个系统架构包含入口、服务和存储之间的依赖关系。'.padEnd(240, '详'),
+    })
+
+    expect(markup).not.toContain('data-expression-actions')
+  })
+
+  test('renders Mermaid pre blocks through the shared diagram component', () => {
+    const markup = renderToStaticMarkup(
+      <MarkdownPre
+        domNode={{
+          name: 'pre',
+          children: [{
+            name: 'code',
+            attribs: { 'data-lang': 'MerMaid theme=neutral' },
+            children: [{ type: 'text', data: 'flowchart LR\n  A --> B\n' }],
+          }],
+        }}
+      >
+        ignored parsed child
+      </MarkdownPre>,
+    )
+
+    expect(markup).toContain('data-mermaid-block="true"')
+    expect(markup).toContain('flowchart LR')
+  })
+
+  test('keeps Mermaid source visible while its fenced block is streaming', () => {
+    const markup = renderToStaticMarkup(
+      <MarkdownPre
+        domNode={{
+          name: 'pre',
+          children: [{
+            name: 'code',
+            attribs: { 'data-lang': 'mermaid', 'data-state': 'loading' },
+            children: [{ type: 'text', data: 'flowchart LR\n  A --' }],
+          }],
+        }}
+      >
+        <code>flowchart LR{`\n`}  A --</code>
+      </MarkdownPre>,
+    )
+
+    expect(markup).toContain('<pre>')
+    expect(markup).toContain('flowchart LR')
+    expect(markup).not.toContain('data-mermaid-block')
+  })
+
+  test('keeps ordinary pre blocks unchanged', () => {
+    const markup = renderToStaticMarkup(
+      <MarkdownPre
+        className="language-typescript"
+        domNode={{
+          name: 'pre',
+          children: [{
+            name: 'code',
+            attribs: { 'data-lang': 'typescript' },
+            children: [{ type: 'text', data: 'const answer = 42\n' }],
+          }],
+        }}
+      >
+        <code>const answer = 42</code>
+      </MarkdownPre>,
+    )
+
+    expect(markup).toContain('<pre class="language-typescript">')
+    expect(markup).not.toContain('data-mermaid-block')
+  })
+
   test('does not enable streaming animation for completed history messages', () => {
     const markup = renderAssistantText({ messageStatus: 'completed' })
 

@@ -16,6 +16,7 @@ import {
   type ProjectionRef,
 } from './runtime-event-message-projection'
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
+import { getExpressionActionMessageIndex } from './expression-actions'
 import { TodoPanel } from './TodoPanel'
 import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
 import { summarizeMessageForPreview } from '@/components/app-shell/ThreadMiniMapPopover'
@@ -358,6 +359,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   }, [runtimeEvents])
 
   const items: React.ReactNode[] = []
+  const expressionActionMessageIndex = getExpressionActionMessageIndex(liveMessages, streaming)
   let latestUserMessageIndex = -1
   for (let i = liveMessages.length - 1; i >= 0; i -= 1) {
     if (liveMessages[i]?.type === 'user') {
@@ -375,6 +377,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           animate={activeStreamingMessage && newMessageIds.has(msg.id)}
           streaming={activeStreamingMessage}
           canEditUserMessage={i === latestUserMessageIndex}
+          showExpressionActions={i === expressionActionMessageIndex}
           threadId={threadId}
           onOpenThreadFile={onOpenThreadFile}
           onOpenThreadImage={onOpenThreadImage}

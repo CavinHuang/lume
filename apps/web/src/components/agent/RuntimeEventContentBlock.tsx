@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, Loader2, Puzzle, Sparkles, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
+import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, ListChecks, ListCollapse, Loader2, Puzzle, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
-import { useSmoothStream } from '@lume/ui'
+import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -21,6 +21,13 @@ import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsi
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
 import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
+import { getMermaidCodeFromPreNode, isMermaidPreStreaming } from './markdown-mermaid'
+import {
+  buildExpressionActionSendInput,
+  deriveExpressionActions,
+  type ExpressionAction,
+  type ExpressionActionId,
+} from './expression-actions'
 
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -32,6 +39,7 @@ interface RuntimeEventContentBlockProps {
   streaming?: boolean
   showAssistantAvatar?: boolean
   canEditUserMessage?: boolean
+  showExpressionActions?: boolean
   threadId: string
   onOpenThreadFile?: (path: string) => void
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
@@ -56,6 +64,7 @@ export function areRuntimeEventContentBlockPropsEqual(
   if (prev.animate !== next.animate) return false
   if (prev.showAssistantAvatar !== next.showAssistantAvatar) return false
   if (prev.canEditUserMessage !== next.canEditUserMessage) return false
+  if (prev.showExpressionActions !== next.showExpressionActions) return false
   if (prev.threadId !== next.threadId) return false
   return prev.message === next.message
 }
@@ -101,6 +110,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   streaming,
   showAssistantAvatar = true,
   canEditUserMessage = false,
+  showExpressionActions = false,
   threadId,
   onOpenThreadFile,
   onOpenThreadImage,
@@ -155,6 +165,12 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
     streaming === true && message.status === 'streaming' && !latestTaskProgressBlock,
     activitySignature,
   )
+  const expressionActions = useMemo(
+    () => showExpressionActions
+      ? deriveExpressionActions(message.text, message.status === 'streaming')
+      : [],
+    [message.status, message.text, showExpressionActions],
+  )
 
   return (
     <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
@@ -203,6 +219,13 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
             {message.error}
           </p>
         )}
+        {expressionActions.length > 0 && (
+          <ExpressionActionBar
+            actions={expressionActions}
+            messageId={message.messageId}
+            threadId={threadId}
+          />
+        )}
         <AssistantMessageFooter
           threadId={threadId}
           messageId={message.messageId}
@@ -222,6 +245,61 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
     </div>
   )
 }, areRuntimeEventContentBlockPropsEqual)
+
+function ExpressionActionIcon({ id }: { id: ExpressionActionId }) {
+  if (id === 'diagram') return <Workflow size={14} strokeWidth={1.9} />
+  if (id === 'condense') return <ListCollapse size={14} strokeWidth={1.9} />
+  return <ListChecks size={14} strokeWidth={1.9} />
+}
+
+export function ExpressionActionBar({
+  actions,
+  messageId,
+  threadId,
+}: {
+  actions: ExpressionAction[]
+  messageId?: string
+  threadId: string
+}) {
+  const [sendingActionId, setSendingActionId] = useState<ExpressionActionId | null>(null)
+
+  const sendAction = async (action: ExpressionAction) => {
+    if (sendingActionId !== null) return
+    setSendingActionId(action.id)
+    try {
+      await agentSend(buildExpressionActionSendInput(threadId, messageId, action))
+    } catch (error) {
+      console.error('[ExpressionActionBar] 发送表达转换指令失败:', error)
+      toast.error('发送失败，请重试')
+    } finally {
+      setSendingActionId(null)
+    }
+  }
+
+  return (
+    <div
+      data-expression-actions="true"
+      className="flex flex-wrap items-center gap-2 pt-1"
+      aria-label="换种表达"
+    >
+      {actions.map((action) => (
+        <Button
+          key={action.id}
+          variant="outline"
+          type="button"
+          disabled={sendingActionId !== null}
+          onClick={() => void sendAction(action)}
+          className="h-7 rounded-full border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-2.5 text-[12px] font-medium text-[var(--lume-text-secondary)] shadow-none hover:border-[var(--lume-border-strong)] hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
+        >
+          {sendingActionId === action.id
+            ? <Loader2 size={14} className="animate-spin" strokeWidth={1.9} />
+            : <ExpressionActionIcon id={action.id} />}
+          <span>{action.label}</span>
+        </Button>
+      ))}
+    </div>
+  )
+}
 
 function findActiveStreamingTextBlockId(blocks: RuntimeAssistantBlock[]): string | null {
   const lastBlock = blocks.at(-1)
@@ -1255,6 +1333,7 @@ const SmoothText = memo(function SmoothText({
     incompleteMarkdownComponentMap: MARKDOWN_INCOMPLETE_COMPONENTS,
   }), [isStreaming])
   const markdownComponents = useMemo(() => ({
+    pre: (props: MarkdownPreProps) => <MarkdownPre {...props} />,
     code: (props: MarkdownCodeProps) => (
       <MarkdownCode
         {...props}
@@ -1428,6 +1507,7 @@ const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
 }) {
   const isDark = useIsDark()
   const components = useMemo(() => ({
+    pre: (props: MarkdownPreProps) => <MarkdownPre {...props} />,
     code: (props: MarkdownCodeProps) => (
       <MarkdownCode
         {...props}
@@ -1454,6 +1534,39 @@ type MarkdownCodeProps = HTMLAttributes<HTMLElement> & {
   lang?: string
   domNode?: unknown
   streamStatus?: unknown
+}
+
+type MarkdownPreProps = HTMLAttributes<HTMLPreElement> & {
+  children?: ReactNode
+  domNode?: unknown
+  streamStatus?: unknown
+}
+
+async function copyMermaidToClipboard(code: string): Promise<void> {
+  try {
+    await writeClipboardText(code)
+  } catch (error) {
+    console.error('[MarkdownPre] 复制 Mermaid 源码失败:', error)
+    toast.error('复制失败')
+    throw error
+  }
+}
+
+export function MarkdownPre({
+  children,
+  domNode,
+  streamStatus,
+  ...rest
+}: MarkdownPreProps) {
+  const mermaidCode = getMermaidCodeFromPreNode(domNode)
+  if (mermaidCode !== null) {
+    if (streamStatus === 'loading' || isMermaidPreStreaming(domNode)) {
+      return <pre {...rest}>{children}</pre>
+    }
+    return <MermaidBlock code={mermaidCode} onCopy={copyMermaidToClipboard} />
+  }
+
+  return <pre {...rest}>{children}</pre>
 }
 
 export function MarkdownCode({
