@@ -134,3 +134,70 @@ VERDICT: APPROVED
 - Act 2 converged after 3 completed Codex review rounds.
 - Final status: APPROVED.
 - No product code was modified; implementation still requires the user's explicit final sign-off.
+
+## Act 3 — Build
+
+### Round 1 — Codex build
+
+- Build thread: `019f657d-db82-7cf2-ba5e-0c1ceb58176e`.
+- Implemented the locked design in the isolated worktree `codex/right-panel-files-redesign`.
+- Replaced the old 572-line combined Files panel with a compact mixed Tab bar, shared four-source tree workspace, FileRef preview pipeline, desktop preview scopes, memory enumeration, and focused security/state tests.
+- The initial Codex proof report was advisory only; the primary reviewer read the full diff independently.
+
+### Primary review verdict — REVISE
+
+The first implementation had material edge cases despite its green report:
+
+- legacy attachment conversion could traverse an in-root symlink/junction before returning a ref;
+- FileRef rename/move did not reject the session scope root or descendant moves;
+- tree-local caches and pending loads could cross a workspace/file-context rebind;
+- stale-source refresh reread only the root while retaining stale expanded children;
+- missing/deleted preview behavior was inconsistent across text/image/HTML;
+- independently closing Files could be undone by a later file open, and hard-coded fallback could activate a closed Files function;
+- the all-tabs close button could also activate the item it had just closed;
+- legacy deep-link conversions could reject with unhandled promises.
+
+### Round 2 — Codex fix
+
+- The same Codex thread applied regression fixes and tests for the issues above.
+- The CLI process exited `1` before replacing its final report, but the patch was present in the isolated worktree.
+- Independent focused verification after the patch passed: Web `64/64`, Sidecar `34/34`, with `git diff --check` clean.
+
+### Primary review verdict — REVISE
+
+- A remaining roving-focus gap prevented a keyboard-only user from entering the tree reliably.
+- File Tab icons used the disambiguated label instead of the actual path, which could break extension detection.
+
+### Round 3 — Codex final fix
+
+- The same thread fixed the initial tree tab stop, focused rows after mouse selection, used real file paths for icons, and simplified deterministic fallback lookup.
+- Focused Web proof passed `65/65`; Web typecheck and the no-`cmd.exe` assertion passed.
+
+### Primary takeover
+
+- Final review found one collapsed-selection edge case: a selected child hidden by collapsing its parent could retain the only tab stop.
+- After the two delegated fix rounds were exhausted, the primary reviewer changed the tab-stop helper to choose the selected row only when it is visible, otherwise the first visible row, and added a regression assertion.
+
+### Final independent proof
+
+- Web focused suite: `64 pass, 0 fail, 153 assertions`.
+- Sidecar focused suite: `34 pass, 0 fail, 93 assertions`.
+- Desktop security suite: `43 pass, 0 fail`.
+- CSP regression: `2 pass, 0 fail`.
+- Real Electron hostile HTML fixture: `13 assertions passed`.
+- Shared, sidecar, web, and desktop typechecks: all exit `0`.
+- Exact `rg` for `spawnDetached("cmd", ["/c", "start"`: no output, exit `1` as expected.
+- `git diff --check`: exit `0`.
+- No dependencies, staging, commit, push, or history mutation.
+
+### Remaining compatibility and manual risk
+
+- General legacy Agent/workspace/settings OPEN/SHOW channels remain for existing callers outside the redesigned right panel. They no longer use `cmd.exe`; Windows uses direct `explorer.exe` spawning with `shell:false`. New right-panel operations use authorized `FileRef` desktop invokes.
+- The interactive desktop UX checklist was not performed in this non-interactive build run. Automated coverage includes the real Electron hostile protocol fixture, but visual density, resize feel, context menus, and keyboard traversal still benefit from a human desktop pass before merge.
+- The accepted HTML residual risk remains: auto-executed network-enabled HTML can exfiltrate data from its allowed preview directory and consume renderer CPU/memory despite the opaque-origin sandbox and scoped protocol.
+
+### Build resolution
+
+- Feature implementation was committed as `af500f47` and merged into the main worktree branch `codex/electron-final-cutover` as `6dc76c30`.
+- Post-merge focused tests, the real Electron fixture, four affected-package typechecks, and `git diff --check` all passed.
+- The isolated feature worktree and its merged branch were removed; the main worktree's pre-existing `AGENTS.md` and `README.md` edits were preserved byte-for-byte.
