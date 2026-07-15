@@ -27,4 +27,14 @@ describe("core prompt sections", () => {
     expect(section).toContain("先说明用途并请求确认");
     expect(section).toContain("用户明确指定的表达形式始终优先");
   });
+
+  test("requires rendered overviews instead of ASCII walls for complex architecture explanations", () => {
+    const section = buildConversationStyleSection();
+
+    expect(section).toContain("完整架构");
+    expect(section).toContain("先输出一张 Mermaid 总览图");
+    expect(section).toContain("再用表格说明模块职责");
+    expect(section).toContain("不要使用 ASCII 框图");
+    expect(section).toContain("避免用大量重复目录树或代码块堆满回答");
+  });
 });
