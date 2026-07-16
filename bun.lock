@@ -51,6 +51,7 @@
         "@ant-design/x-markdown": "^2.5.0",
         "@base-ui/react": "^1.4.0",
         "@fontsource-variable/geist": "^5.2.8",
+        "@fontsource/inter": "^5.2.8",
         "@lobehub/icons": "^5.4.0",
         "@lume/shared": "workspace:*",
         "@lume/ui": "workspace:*",
@@ -409,6 +410,8 @@
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "https://registry.npmmirror.com/@floating-ui/utils/-/utils-0.2.11.tgz", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
 
     "@fontsource-variable/geist": ["@fontsource-variable/geist@5.2.8", "https://registry.npmmirror.com/@fontsource-variable/geist/-/geist-5.2.8.tgz", {}, "sha512-cJ6m9e+8MQ5dCYJsLylfZrgBh6KkG4bOLckB35Tr9J/EqdkEM6QllH5PxqP1dhTvFup+HtMRPuz9xOjxXJggxw=="],
+
+    "@fontsource/inter": ["@fontsource/inter@5.2.8", "https://registry.npmmirror.com/@fontsource/inter/-/inter-5.2.8.tgz", {}, "sha512-P6r5WnJoKiNVV+zvW2xM13gNdFhAEpQ9dQJHt3naLvfg+LkF2ldgSLiF4T41lf1SQCM9QmkqPTn4TH568IRagg=="],
 
     "@giscus/react": ["@giscus/react@3.1.0", "https://registry.npmmirror.com/@giscus/react/-/react-3.1.0.tgz", { "dependencies": { "giscus": "^1.6.0" }, "peerDependencies": { "react": "^16 || ^17 || ^18 || ^19", "react-dom": "^16 || ^17 || ^18 || ^19" } }, "sha512-0TCO2TvL43+oOdyVVGHDItwxD1UMKP2ZYpT6gXmhFOqfAJtZxTzJ9hkn34iAF/b6YzyJ4Um89QIt9z/ajmAEeg=="],
 

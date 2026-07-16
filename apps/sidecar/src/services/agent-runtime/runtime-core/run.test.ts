@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
 import type { ToolContext, ToolDefinition } from "@lume/agent-sdk";
 import type { Model } from "../runner/model-types";
+import type { LumeRunState } from "../runner/run-state";
+import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
 import {
   buildSidecarSubagentExecutionInput,
   buildSidecarSubagentRunContext,
@@ -897,6 +899,73 @@ describe("runtime-core run", () => {
     expect(second.session.messages.some((message) => message.role === "user")).toBeTrue();
     expect(second.session.threadId).toBe(firstUpstreamSessionId);
     second.session.dispose();
+  });
+
+  test("重建 runtime 时应恢复 todo 工具状态并注入模型上下文", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-todo-restore-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+    const sessionDir = getRuntimeCoreSessionDir("todo-restore-session", agentDir);
+    const store = createFileBackedLumeRunStateStore(sessionDir);
+    const createdAt = "2026-07-16T00:00:00.000Z";
+    const previousRun: LumeRunState = {
+      version: 1,
+      runId: "previous-run",
+      threadId: "todo-restore-session",
+      rootAgentId: "root",
+      currentAgentId: "root",
+      status: "completed",
+      input: { userMessage: "start", permissionMode: "acceptEdits" },
+      generatedItems: [],
+      pendingInterruptions: [],
+      approvals: { alwaysAllowedTools: [] },
+      traceId: "trace-previous-run",
+      model: { provider: "anthropic", modelId: "claude-sonnet-4-5" },
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      createdAt,
+      updatedAt: createdAt
+    };
+    await store.create(previousRun);
+    await store.appendItem("previous-run", {
+      type: "todo_state",
+      id: "todo-before-restart",
+      todos: [
+        { content: "A", activeForm: "Doing A", status: "completed" },
+        { content: "B", activeForm: "Doing B", status: "completed" },
+        { content: "C", activeForm: "Doing C", status: "completed" },
+        { content: "D", activeForm: "Doing D", status: "in_progress" }
+      ],
+      currentActiveForm: "Doing D",
+      createdAt: "2026-07-16T00:00:01.000Z"
+    });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "todo-restore-session",
+      cwd,
+      agentDir,
+      userMessage: "继续",
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits"
+    });
+
+    expect(result.systemPrompt).toContain('<todo_state source="lume_runtime">');
+    expect(result.systemPrompt).toContain('"content":"D"');
+    expect(result.userMessageForModel).toBe("继续");
+    const todoTool = result.tools.find((tool) => tool.name === "TodoWrite");
+    expect(todoTool).toBeTruthy();
+    const update = await todoTool!.call({
+      todos: [
+        { content: "A", activeForm: "Doing A", status: "completed" },
+        { content: "B", activeForm: "Doing B", status: "completed" },
+        { content: "C", activeForm: "Doing C", status: "completed" },
+        { content: "D", activeForm: "Doing D", status: "completed" },
+        { content: "E", activeForm: "Doing E", status: "in_progress" }
+      ]
+    }, {} as any);
+    expect(update.content).not.toContain("verification");
+    await result.session.dispose();
   });
 
   test("应接受显式 resolvedModel，避免重新回退到 catalog 查询", async () => {

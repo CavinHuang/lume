@@ -25,6 +25,7 @@ import {
   type ToolContext,
   type ToolResult,
   type RenderClient,
+  type TodoState,
   SkillTool,
   createTodoTool,
   defineTool,
@@ -115,6 +116,7 @@ import {
 } from "./mcp-resource-router.js";
 import type { LumeToolDescriptor } from "../tools/tool-types";
 import type { TaskContractRecord } from "../plan/task-contract-record-types";
+import { readLatestTodoState } from "../runner/todo-state";
 import {
   collectAppendContextEffects,
   type LumeWorkflowHookExecutionResult
@@ -759,6 +761,7 @@ function buildRuntimeCoreTools(input: {
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
+  initialTodoState?: TodoState | null;
   runId?: string;
   renderClient?: RenderClient;
   pluginDiagnostics?: ToolRuntimeDiagnostic[];
@@ -798,6 +801,7 @@ function buildRuntimeCoreTools(input: {
     : createTaskReportTool({ sessionDir: getRuntimeCoreSessionDir(input.sessionId), threadId: input.sessionId });
   const todoTool = createTodoTool({
     threadId: input.sessionId,
+    initialTodos: input.initialTodoState?.todos,
     onTodoUpdated: input.emitTodoUpdated,
   });
   const lumeTools = createLumeRuntimeTools({
@@ -1399,6 +1403,11 @@ export async function createRuntimeCoreSession(
   const boundSubagentReportTool = boundSubagentIdentity
     ? createBoundSubagentTaskReportTool(boundSubagentIdentity)
     : undefined;
+  const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
+  const initialTodoState = await readLatestTodoState({
+    sessionDir,
+    threadId: input.lumeSessionId
+  });
   const sessionManager = createOrResumeRuntimeCoreSessionManager(input.cwd, input.lumeSessionId, input.agentDir);
   const agents = { ...buildBuiltinAgents(), ...loadCustomAgents(input.workspaceSlug) };
   const subagentDefinition = input.subagentType ? agents[input.subagentType] : undefined;
@@ -1539,6 +1548,7 @@ export async function createRuntimeCoreSession(
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
     emitTodoUpdated: input.emitTodoUpdated,
+    initialTodoState,
     runId: input.runId,
     renderClient: getSidecarRenderClient(),
     pluginDiagnostics: pluginAssembly.diagnostics.map((d) => ({
@@ -1605,6 +1615,7 @@ export async function createRuntimeCoreSession(
     tokenBudget: contextTokenBudget,
     workflowContext,
     desktopContext,
+    todoState: initialTodoState,
     trace: input.trace
   });
   const afterContextResult = await executeWorkflowHookSafely(input.workflowHooks, {

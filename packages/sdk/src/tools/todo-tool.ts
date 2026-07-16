@@ -102,12 +102,14 @@ export function createTodoStore() {
  */
 export function createTodoTool(opts: {
   threadId: string
+  initialTodos?: TodoItem[]
   onTodoUpdated?: (state: TodoState) => void | Promise<void>
 }) {
   if (!opts?.threadId) {
     throw new Error('createTodoTool requires a threadId')
   }
   const store = createTodoStore()
+  store.set(opts.initialTodos ?? [])
 
   return defineTool({
     name: 'TodoWrite',

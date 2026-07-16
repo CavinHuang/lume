@@ -64,6 +64,29 @@ describe('createTodoTool', () => {
     expect(res.content).toBe('[~] Run tests\n[ ] Write docs')
   })
 
+  test('initialTodos restores the previous session state', async () => {
+    const tool = createTodoTool({
+      threadId: 't1',
+      initialTodos: [
+        item('A', 'completed', 'Doing A'),
+        item('B', 'completed', 'Doing B'),
+        item('C', 'completed', 'Doing C'),
+        item('D', 'in_progress', 'Doing D'),
+      ],
+    })
+    const res = await tool.call({
+      todos: [
+        item('A', 'completed', 'Doing A'),
+        item('B', 'completed', 'Doing B'),
+        item('C', 'completed', 'Doing C'),
+        item('D', 'completed', 'Doing D'),
+        item('E', 'in_progress', 'Doing E'),
+      ],
+    })
+
+    expect(res.content).not.toContain('verification')
+  })
+
   test('batch-completing 3+ tasks triggers verification nudge', async () => {
     const tool = createTodoTool({ threadId: 't1' })
     // 先建立 5 个任务：1 in_progress + 4 pending

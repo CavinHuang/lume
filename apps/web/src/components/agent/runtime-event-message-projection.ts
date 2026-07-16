@@ -73,7 +73,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
 
   if (event.type === 'task.progress') {
     if (state.terminalClosed || !state.currentAssistant) {
-      state.currentAssistant = createAssistantMessage(`assistant:task:${event.taskRunId}`)
+      state.currentAssistant = createAssistantMessage(`assistant:task:${event.taskRunId}:${event.runId}`)
     }
     state.terminalClosed = false
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'task_progress')

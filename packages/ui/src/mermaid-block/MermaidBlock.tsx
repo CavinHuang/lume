@@ -101,6 +101,10 @@ export async function copyMermaidCode(
   await onCopy(code)
 }
 
+export function stripStylesheetImports(svg: string): string {
+  return svg.replace(/@import\s+url\((?:'[^']*'|"[^"]*"|[^)]*)\)\s*;?/gi, '')
+}
+
 export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactElement {
   const [svgHtml, setSvgHtml] = React.useState<string | null>(null)
   const [svgVisible, setSvgVisible] = React.useState(false)
@@ -128,7 +132,7 @@ export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactEl
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(async () => {
       try {
-        const svg = await renderMermaid(codeRef.current, getThemeOptions())
+        const svg = stripStylesheetImports(await renderMermaid(codeRef.current, getThemeOptions()))
         // 只有最新一代的结果才生效，旧的全部丢弃
         if (generationRef.current !== currentGen) return
         if (typeof svg === 'string' && svg.length > 0) {
@@ -151,7 +155,7 @@ export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactEl
       generationRef.current++
       const gen = generationRef.current
       try {
-        const svg = await renderMermaid(codeRef.current, getThemeOptions())
+        const svg = stripStylesheetImports(await renderMermaid(codeRef.current, getThemeOptions()))
         if (generationRef.current !== gen) return
         if (typeof svg === 'string' && svg.length > 0) {
           setSvgHtml(svg)

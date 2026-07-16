@@ -649,7 +649,7 @@ describe('runtime-event-message-projection', () => {
         status: 'completed',
       },
       {
-        id: 'assistant:task:taskrun-1',
+        id: 'assistant:task:taskrun-1:run-execute-1',
         type: 'assistant',
         text: '正在执行：Patch files',
         blocks: [{
@@ -663,6 +663,50 @@ describe('runtime-event-message-projection', () => {
         }],
         status: 'streaming',
       },
+    ])
+  })
+
+  test('keeps task status message ids unique when a task run continues across execution runs', () => {
+    const messages = projectRuntimeEventMessages([
+      event({
+        type: 'task.progress',
+        runId: 'run-execute-1',
+        taskRunId: 'taskrun-shared',
+        contractId: 'contract-1',
+        status: 'running',
+        currentTaskId: 'task-1',
+        tasks: [{
+          id: 'task-1',
+          title: 'First task',
+          status: 'running',
+          attemptCount: 1,
+        }],
+        message: '正在执行：First task',
+      }),
+      event({ type: 'run.completed', runId: 'run-execute-1' }),
+      event({
+        type: 'task.progress',
+        runId: 'run-execute-2',
+        taskRunId: 'taskrun-shared',
+        contractId: 'contract-1',
+        status: 'running',
+        currentTaskId: 'task-2',
+        tasks: [{
+          id: 'task-2',
+          title: 'Second task',
+          status: 'running',
+          attemptCount: 1,
+        }],
+        message: '正在执行：Second task',
+      }),
+      event({ type: 'run.completed', runId: 'run-execute-2' }),
+    ])
+    const ids = messages.map(message => message.id)
+
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toEqual([
+      'assistant:task:taskrun-shared:run-execute-1',
+      'assistant:task:taskrun-shared:run-execute-2',
     ])
   })
 

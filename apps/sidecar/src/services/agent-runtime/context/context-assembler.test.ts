@@ -47,6 +47,26 @@ describe("ContextAssembler", () => {
     expect(result.userMessageForModel).toContain("这个我要怎么回复？");
   });
 
+  test("injects the restored todo snapshot into model context", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "todo-thread",
+      runId: "todo-run",
+      userMessage: "继续",
+      resolvedModelId: "test-model",
+      availableTools: ["TodoWrite"],
+      tokenBudget: 8_000,
+      todoState: {
+        todos: [{ content: "Run tests", activeForm: "Running tests", status: "in_progress" }],
+        currentActiveForm: "Running tests"
+      }
+    });
+
+    expect(result.systemPrompt).toContain("authoritative current TodoWrite snapshot");
+    expect(result.systemPrompt).toContain('<todo_state source="lume_runtime">');
+    expect(result.systemPrompt).toContain('"content":"Run tests"');
+    expect(result.userMessageForModel).toBe("继续");
+  });
+
   test("guides the agent to use selected desktop context as the computer-use anchor", async () => {
     const result = await new ContextAssembler().assemble({
       threadId: "desktop-action-thread",

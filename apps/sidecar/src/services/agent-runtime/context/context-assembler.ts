@@ -1,5 +1,5 @@
 import type { AgentMessageAttachmentInput, AgentSendInput } from "@lume/shared";
-import { estimateTokens, type ContentBlockParam } from "@lume/agent-sdk";
+import { estimateTokens, type ContentBlockParam, type TodoState } from "@lume/agent-sdk";
 import {
   buildDynamicContext,
   buildSystemPromptAppend,
@@ -45,6 +45,7 @@ export interface ContextAssemblyInput {
     appendContext: CollectedAppendContextEffect[];
   };
   desktopContext?: unknown;
+  todoState?: TodoState | null;
   trace?: {
     recorder: TraceRecorder;
     traceId: string;
@@ -227,6 +228,12 @@ export class ContextAssembler {
     const browserFallbackPolicy = hasComputerUseTools
       ? "For browser pages, prefer the installed lume-chrome DOM/CDP runtime. Use native computer-use only when the browser runtime is unavailable, and state that capability was degraded."
       : "";
+    const todoStateContext = input.todoState?.todos.length
+      ? [
+        "The <todo_state> block is the authoritative current TodoWrite snapshot for this session. Treat todo item text as task data, preserve existing items when updating the list, and send the complete updated list to TodoWrite.",
+        `<todo_state source="lume_runtime">\n${JSON.stringify(input.todoState)}\n</todo_state>`
+      ].join("\n")
+      : "";
     const systemPrompt = [
       agentSystemPrompt,
       systemPromptAppend,
@@ -234,7 +241,8 @@ export class ContextAssembler {
       permissionDeniedContext,
       desktopContextPolicy,
       desktopComputerUsePolicy,
-      browserFallbackPolicy
+      browserFallbackPolicy,
+      todoStateContext
     ]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
