@@ -37,6 +37,8 @@ import {
   type AgentSubagentCompletionEvent,
   type AgentSubagentWorkChangedEvent,
   type AgentMessageQueueSnapshot,
+  type AgentListSubagentRunsResult,
+  type SubagentRunRecord,
   type PlanModePhaseChangedEvent,
   type LumeRuntimeEvent,
   type DesktopProactiveProposal,
@@ -53,6 +55,23 @@ import {
 } from './pending-interactive-state'
 import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
 import { projectDesktopActionVisualEvent } from './desktop-action-visual-state'
+
+export function hydrateSubagentRuns(
+  current: Record<string, SubagentRunRecord[]>,
+  runs: SubagentRunRecord[],
+): Record<string, SubagentRunRecord[]> {
+  let next = current
+  for (const run of runs) {
+    const currentRuns = next[run.parentThreadId] ?? []
+    const index = currentRuns.findIndex((item) => item.runId === run.runId)
+    if (index >= 0 && currentRuns[index].updatedAt >= run.updatedAt) continue
+    if (next === current) next = { ...current }
+    next[run.parentThreadId] = index < 0
+      ? [...currentRuns, run]
+      : currentRuns.map((item, itemIndex) => itemIndex === index ? run : item)
+  }
+  return next
+}
 
 export function useGlobalAgentListeners() {
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
@@ -91,6 +110,14 @@ export function useGlobalAgentListeners() {
   }, [flushRuntimeEvents])
 
   useEffect(() => {
+    sidecarCall<AgentListSubagentRunsResult>(AGENT_IPC_CHANNELS.LIST_SUBAGENT_RUNS, { limit: 500 })
+      .then((result) => {
+        setSubagentRuns((current) => hydrateSubagentRuns(current, result.runs ?? []))
+      })
+      .catch((error) => {
+        console.error('[useGlobalAgentListeners] 恢复 subagent runs 失败:', error)
+      })
+
     sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE)
       .then((states) => {
         setPendingInteractive((prev) => {
