@@ -569,8 +569,12 @@ function TreeEntryRow(props: {
         aria-expanded={entry.isDirectory ? open : undefined}
         className={cn('group flex h-7 items-center gap-1 pr-1 text-[12px] outline-none hover:bg-foreground/[0.05] focus-visible:ring-1 focus-visible:ring-inset', selected && 'bg-primary/10 text-primary')}
         style={{ paddingLeft: 6 + props.depth * 12 }}
-        onClick={(event) => { event.currentTarget.focus(); props.onSelect(entry.ref!) }}
-        onDoubleClick={() => entry.isDirectory ? void props.onToggle(entry.ref!) : props.onOpen(entry.ref!)}
+        onClick={(event) => {
+          event.currentTarget.focus()
+          props.onSelect(entry.ref!)
+          if (entry.isDirectory && event.detail === 1) void props.onToggle(entry.ref!)
+        }}
+        onDoubleClick={() => { if (!entry.isDirectory) props.onOpen(entry.ref!) }}
         onContextMenu={(event) => { event.preventDefault(); setMenuOpen(true) }}
       >
         <Button variant="ghost" size="icon-sm" className="size-5 shrink-0" onClick={(event) => { event.stopPropagation(); if (entry.isDirectory) void props.onToggle(entry.ref!) }}>

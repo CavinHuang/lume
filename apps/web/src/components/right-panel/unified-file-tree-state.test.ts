@@ -25,6 +25,14 @@ describe('unified-file-tree-state', () => {
     expect(source).not.toContain('[query, workspace.scrollAnchor, workspace.expandedKeys]')
   })
 
+  test('toggles folders from the whole row while keeping file double click open', () => {
+    const source = readFileSync(new URL('./UnifiedFileTree.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain('if (entry.isDirectory && event.detail === 1) void props.onToggle(entry.ref!)')
+    expect(source).toContain('if (!entry.isDirectory) props.onOpen(entry.ref!)')
+    expect(source).not.toContain('entry.isDirectory ? void props.onToggle(entry.ref!) : props.onOpen(entry.ref!)')
+  })
+
   test('uses fixed groups, defaults, and hides empty legacy', () => {
     const state = createUnifiedFileTreeState({ hasLegacy: false })
     expect(state.groups.map((group) => group.source)).toEqual(['project', 'session', 'memory'])
