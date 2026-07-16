@@ -226,12 +226,15 @@ jobs:
             Select-Object -First 1
           if (-not $installer) { throw "Missing Windows installer" }
           Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
-          $appPath = Join-Path $env:LOCALAPPDATA "Programs\Lume\Lume.exe"
-          if (-not (Test-Path $appPath)) { throw "Installed app not found: $appPath" }
+          $programsDir = Join-Path $env:LOCALAPPDATA "Programs"
+          $app = Get-ChildItem $programsDir -Filter "Lume.exe" -File -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $app) { throw "Installed app not found under: $programsDir" }
           $log = Join-Path $env:TEMP "lume-startup.log"
           Remove-Item $log -Force -ErrorAction SilentlyContinue
           $env:LUME_DESKTOP_STARTUP_LOG = $log
-          $proc = Start-Process -FilePath $appPath -PassThru
+          $proc = Start-Process -FilePath $app.FullName -PassThru
           try {
             for ($i = 0; $i -lt 90; $i++) {
               if ((Test-Path $log) -and (Select-String -Path $log -Pattern "sidecar ready" -Quiet)) {
@@ -244,9 +247,10 @@ jobs:
             throw "Installed app did not report sidecar ready"
           } finally {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            $uninstaller = Join-Path $env:LOCALAPPDATA "Programs\Lume\Uninstall Lume.exe"
-            if (Test-Path $uninstaller) {
-              Start-Process -FilePath $uninstaller -ArgumentList "/S" -Wait
+            $uninstaller = Get-ChildItem $app.DirectoryName -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+            if ($uninstaller) {
+              Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait
             }
           }
       - name: Upload release assets
