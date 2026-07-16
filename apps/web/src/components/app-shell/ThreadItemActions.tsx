@@ -32,13 +32,18 @@ function formatRelativeUpdatedAt(updatedAt: number, now: number): string {
   return `${Math.floor(diff / (365 * day))}年`
 }
 
+export function subscribeToRelativeTimeUpdates(onUpdate: () => void): () => void {
+  const timer = setInterval(onUpdate, 60_000)
+  return () => clearInterval(timer)
+}
+
 export function ThreadItemActions({
   updatedAt,
   menuItems,
   onMenuOpenChange,
 }: ThreadItemActionsProps) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const now = Date.now()
+  const [now, setNow] = useState(() => Date.now())
 
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -64,17 +69,19 @@ export function ThreadItemActions({
     }
   }, [])
 
+  useEffect(() => subscribeToRelativeTimeUpdates(() => setNow(Date.now())), [])
+
   const forceVisible = menuOpen
 
   return (
     <div
-      className="flex h-[18px] min-w-8 shrink-0 items-center justify-end"
+      className="flex h-[18px] min-w-[42px] shrink-0 items-center justify-end"
       onClick={(e) => e.stopPropagation()}
     >
       <span
         title={`最后更新：${new Date(updatedAt).toLocaleString('zh-CN')}`}
         className={cn(
-          'w-8 text-right text-[11px] leading-[18px] tabular-nums text-[var(--lume-text-muted)]',
+          'w-full whitespace-nowrap text-right text-[11px] leading-[18px] tabular-nums text-[var(--lume-text-muted)]',
           forceVisible ? 'hidden' : 'group-hover:hidden',
         )}
       >
