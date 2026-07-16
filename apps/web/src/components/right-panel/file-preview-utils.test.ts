@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import * as filePreviewUtils from "./file-preview-utils"
 import {
   classifyFilePreview,
   createLatestPreviewRequestGuard,
@@ -45,6 +46,28 @@ describe("lumeFileUrl", () => {
 })
 
 describe('preview classification and race guard', () => {
+  test('maps source files to Shiki languages and uses the highlighted source renderer', () => {
+    const getLanguage = (filePreviewUtils as typeof filePreviewUtils & {
+      getSourcePreviewLanguage?: (path: string) => string
+    }).getSourcePreviewLanguage
+
+    expect(getLanguage).toBeDefined()
+    if (!getLanguage) return
+    expect(getLanguage('src/App.tsx')).toBe('tsx')
+    expect(getLanguage('scripts/build.py')).toBe('python')
+    expect(getLanguage('Dockerfile')).toBe('docker')
+    expect(getLanguage('AGENTS.md')).toBe('markdown')
+    expect(getLanguage('notes.txt')).toBe('text')
+
+    const previewSource = readFileSync(resolve(import.meta.dir, 'RightPanelFilePreview.tsx'), 'utf8')
+    const sourceRenderer = readFileSync(resolve(import.meta.dir, 'RightPanelSourcePreview.tsx'), 'utf8')
+    expect(previewSource).toContain('RightPanelSourcePreview')
+    expect(previewSource).toContain("kind === 'text' || sourceMode ? 'h-full' : 'h-full p-4'")
+    expect(sourceRenderer).toContain('{lineIndex + 1}')
+    expect(sourceRenderer).toContain('select-none')
+    expect(sourceRenderer).not.toContain('rounded-md p-4')
+  })
+
   test.each([
     ['README.md', 'markdown'],
     ['index.html', 'html'],

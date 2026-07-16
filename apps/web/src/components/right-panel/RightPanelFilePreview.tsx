@@ -16,6 +16,7 @@ import {
 } from '@/lib/desktop-api'
 import { classifyFilePreview, isMissingFileError } from './file-preview-utils'
 import { RightPanelHtmlPreview } from './RightPanelHtmlPreview'
+import { RightPanelSourcePreview } from './RightPanelSourcePreview'
 
 interface PreviewPayload { content: string; truncated: boolean }
 
@@ -153,14 +154,14 @@ export function RightPanelFilePreview({
         ) : kind === 'image' ? (
           imageScope ? <img src={imageScope.url} alt={basename(fileRef.relativePath)} onError={() => setError('图片预览加载失败')} className={imageOriginalSize ? 'm-auto max-w-none' : 'm-auto max-h-full max-w-full object-contain'} /> : null
         ) : payload ? (
-          <div className="h-full p-4">
-            {payload.truncated && <p className="mb-3 text-[12px] text-amber-600">文件超过 512 KB，仅显示前 512 KB。</p>}
+          <div className={kind === 'text' || sourceMode ? 'h-full' : 'h-full p-4'}>
+            {payload.truncated && <p className={kind === 'text' || sourceMode ? 'm-0 px-3 py-2 text-[12px] text-amber-600' : 'mb-3 text-[12px] text-amber-600'}>文件超过 512 KB，仅显示前 512 KB。</p>}
             {kind === 'html' && !sourceMode ? (
               <RightPanelHtmlPreview fileRef={fileRef} source={payload.content} onOpenFile={onOpenFile} onMissing={onMissing} onPreviewScopeChange={onPreviewScopeChange} />
             ) : kind === 'markdown' && !sourceMode ? (
               <XMarkdown className="x-markdown text-[13px] leading-6">{payload.content}</XMarkdown>
             ) : (
-              <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-5">{payload.content}</pre>
+              <RightPanelSourcePreview content={payload.content} filePath={fileRef.relativePath} />
             )}
           </div>
         ) : null}

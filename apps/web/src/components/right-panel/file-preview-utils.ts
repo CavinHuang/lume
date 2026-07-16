@@ -20,6 +20,40 @@ const TEXT_EXTENSIONS = new Set([
   'sh', 'bash', 'zsh', 'ps1', 'sql', 'graphql', 'env.example',
 ])
 
+const SOURCE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  js: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
+  ts: 'typescript',
+  py: 'python',
+  sh: 'shellscript',
+  bash: 'shellscript',
+  zsh: 'shellscript',
+  md: 'markdown',
+  mdx: 'markdown',
+  markdown: 'markdown',
+  yml: 'yaml',
+  jsonl: 'json',
+  txt: 'text',
+  log: 'text',
+  csv: 'text',
+}
+
+const SOURCE_LANGUAGE_BY_FILENAME: Record<string, string> = {
+  dockerfile: 'docker',
+  makefile: 'makefile',
+  readme: 'markdown',
+  license: 'text',
+}
+
+export function getSourcePreviewLanguage(filePath: string): string {
+  const filename = filePath.replace(/\\/g, '/').split('/').at(-1)?.toLowerCase() ?? ''
+  const byFilename = SOURCE_LANGUAGE_BY_FILENAME[filename]
+  if (byFilename) return byFilename
+  const extension = imageExt(filename)
+  return extension ? SOURCE_LANGUAGE_BY_EXTENSION[extension] ?? extension : 'text'
+}
+
 export function classifyFilePreview(filePath: string): FilePreviewKind {
   const extension = imageExt(filePath)
   if (extension && IMAGE_EXTENSIONS.has(extension)) return 'image'
