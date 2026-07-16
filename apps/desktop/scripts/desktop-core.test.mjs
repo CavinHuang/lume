@@ -231,7 +231,7 @@ test('WeRead auth window only accepts the expected weread skills URL', () => {
   assert.match(createWereadTipScript(), /lume-weread-key-tip/)
 })
 
-test('storage stats skip configured derived subdirectories without changing config layout', () => {
+test('storage stats skip configured derived subdirectories without changing config layout', async () => {
   const dir = makeTempDir('lume-desktop-stats-')
   try {
     mkdirSync(join(dir, 'memory', 'index'), { recursive: true })
@@ -241,7 +241,7 @@ test('storage stats skip configured derived subdirectories without changing conf
     writeFileSync(join(dir, 'memory', 'entries', 'e.md'), 'yyy')
     writeFileSync(join(dir, 'logs', 'l.ndjson'), 'zz')
 
-    assert.deepEqual(computeStorageStats(dir, [
+    assert.deepEqual(await computeStorageStats(dir, [
       { key: 'core', scanPaths: ['memory'], skipSubdirs: ['memory/index'] },
       { key: 'derived', scanPaths: ['memory/index', 'logs'], skipSubdirs: [] },
     ]), {
@@ -257,7 +257,31 @@ test('storage stats skip configured derived subdirectories without changing conf
   }
 })
 
-test('storage stats do not descend into per-thread lume config snapshots', () => {
+test('storage stats async scanner yields before returning the same result', async () => {
+  const dir = makeTempDir('lume-desktop-stats-async-')
+  try {
+    mkdirSync(join(dir, 'agent', 'runtime-core'), { recursive: true })
+    writeFileSync(join(dir, 'agent', 'runtime-core', 'run.jsonl'), 'runtime')
+
+    const pending = computeStorageStats(dir, [
+      { key: 'core', scanPaths: ['agent/runtime-core'], skipSubdirs: [] },
+    ])
+    const order = []
+    queueMicrotask(() => order.push('renderer-can-continue'))
+
+    assert.ok(pending instanceof Promise)
+    assert.deepEqual(await pending, {
+      total: 7,
+      configDir: dir,
+      categories: [{ key: 'core', bytes: 7 }],
+    })
+    assert.deepEqual(order, ['renderer-can-continue'])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('storage stats do not descend into per-thread lume config snapshots', async () => {
   const dir = makeTempDir('lume-desktop-stats-nested-config-')
   try {
     const threadRoot = join(dir, 'agent-workspaces', 'default', 'threads', 'thread-a')
@@ -271,7 +295,7 @@ test('storage stats do not descend into per-thread lume config snapshots', () =>
     writeFileSync(join(nestedThreadRoot, 'message.jsonl'), 'nested')
     writeFileSync(join(nestedSnapshotRoot, 'settings.json'), 'deeper')
 
-    assert.deepEqual(computeStorageStats(dir, [
+    assert.deepEqual(await computeStorageStats(dir, [
       {
         key: 'core',
         scanPaths: ['agent-workspaces/*/threads'],

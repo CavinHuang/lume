@@ -8,6 +8,11 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
+import {
+  readdir as readdirAsync,
+  realpath as realpathAsync,
+  stat as statAsync,
+} from 'node:fs/promises'
 import { extname, isAbsolute, join, relative, resolve, dirname } from 'node:path'
 import { zipSync } from 'fflate'
 import type { OpenDialogOptions } from 'electron'
@@ -568,33 +573,67 @@ export function walkFiles(
   })
 }
 
-export function computeStorageStats(configDir, categories) {
-  const stats = categories.map((category) => {
+async function walkFileSizesAsync(path, state) {
+  if (shouldSkipWalkPath(path, state.skipPaths)) return 0
+
+  let stats
+  try {
+    stats = await statAsync(path)
+  } catch {
+    return 0
+  }
+
+  let realPath
+  try {
+    realPath = await realpathAsync(path)
+  } catch {
+    realPath = resolve(path)
+  }
+
+  if (stats.isFile()) {
+    if (state.visitedFiles.has(realPath)) return 0
+    state.visitedFiles.add(realPath)
+    return stats.size
+  }
+  if (!stats.isDirectory() || state.visitedDirectories.has(realPath)) return 0
+  state.visitedDirectories.add(realPath)
+
+  let entries
+  try {
+    entries = await readdirAsync(path, { withFileTypes: true })
+  } catch {
+    return 0
+  }
+
+  let bytes = 0
+  for (const entry of entries) {
+    bytes += await walkFileSizesAsync(join(path, entry.name), state)
+  }
+  return bytes
+}
+
+export async function computeStorageStats(configDir, categories) {
+  const categoryStats = []
+
+  for (const category of categories) {
     const skipPaths = category.skipSubdirs.flatMap((pattern) => expandRelativePattern(configDir, pattern))
-    const visitedFiles = new Set()
-    const visitedDirectories = new Set<string>()
+    const state = {
+      skipPaths,
+      visitedFiles: new Set(),
+      visitedDirectories: new Set(),
+    }
     let bytes = 0
 
     for (const scanPath of category.scanPaths.flatMap((pattern) => expandRelativePattern(configDir, pattern))) {
-      walkFiles(scanPath, (filePath, fileStats) => {
-        const fileKey = safeRealpath(filePath)
-        if (visitedFiles.has(fileKey)) return
-        visitedFiles.add(fileKey)
-        bytes += fileStats.size
-      }, {
-        skipPaths,
-        visitedDirectories,
-        ignoreErrors: true,
-      })
+      bytes += await walkFileSizesAsync(scanPath, state)
     }
-
-    return { key: category.key, bytes }
-  })
+    categoryStats.push({ key: category.key, bytes })
+  }
 
   return {
-    total: stats.reduce((sum, item) => sum + item.bytes, 0),
+    total: categoryStats.reduce((sum, item) => sum + item.bytes, 0),
     configDir,
-    categories: stats,
+    categories: categoryStats,
   }
 }
 
