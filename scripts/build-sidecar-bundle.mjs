@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -35,7 +35,25 @@ console.error(`[sidecar-bundle] wrote ${OUT_FILE}`);
 // 的包名 require）。补齐两类未 inline 资源。
 
 const sidecarRequire = createRequire(resolve(REPO_ROOT, "apps", "sidecar", "package.json"));
-const bundleSrc = readFileSync(OUT_FILE, "utf8");
+let bundleSrc = readFileSync(OUT_FILE, "utf8");
+
+// jsdom 用 CommonJS __dirname 读取默认样式表。bun 会把这个 __dirname 固化为构建机的
+// 绝对路径，导致安装后启动即 ENOENT。样式表是静态数据，构建时直接嵌入产物。
+const jsdomDirnamePattern = /^  var __dirname = ".*node_modules.*jsdom.*living.*css.*helpers";\r?\n/m;
+const jsdomStyleReadPattern = /  var defaultStyleSheet = fs\.readFileSync\(path\d*\.resolve\(__dirname, "\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css"\), \{ encoding: "utf-8" \}\);/;
+if (!jsdomDirnamePattern.test(bundleSrc) || !jsdomStyleReadPattern.test(bundleSrc)) {
+  console.error("[sidecar-bundle] jsdom stylesheet read pattern not found");
+  process.exit(1);
+}
+const sdkRequire = createRequire(resolve(REPO_ROOT, "packages", "sdk", "package.json"));
+const jsdomEntry = sdkRequire.resolve("jsdom");
+const jsdomStylePath = resolve(dirname(jsdomEntry), "jsdom", "browser", "default-stylesheet.css");
+const jsdomStyle = readFileSync(jsdomStylePath, "utf8");
+bundleSrc = bundleSrc
+  .replace(jsdomDirnamePattern, "")
+  .replace(jsdomStyleReadPattern, `  var defaultStyleSheet = ${JSON.stringify(jsdomStyle)};`);
+writeFileSync(OUT_FILE, bundleSrc);
+console.error("[sidecar-bundle] embedded jsdom default stylesheet");
 
 // (a) 相对路径 require（基准=本 bundle = resources/sidecar/）:
 //     css-tree 的 ../data/patch.json -> resources/data/patch.json

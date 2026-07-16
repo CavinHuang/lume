@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +18,11 @@ const nativeSmokeEntry = resolve(DESKTOP_DIR, "scripts", "smoke-utility-natives.
 
 for (const file of [sidecarPath, skillsArchive, nativeBinary, sidecarSmokeEntry, nativeSmokeEntry]) {
   if (!existsSync(file)) fail(`missing smoke input: ${file}`);
+}
+
+const sidecarSource = readFileSync(sidecarPath, "utf8");
+if (sidecarSource.includes("default-stylesheet.css")) {
+  fail("sidecar bundle still reads jsdom's default stylesheet from the build machine");
 }
 
 const electronPackageRoot = resolveElectronPackageRoot(pathToFileURL(sidecarSmokeEntry).href);
