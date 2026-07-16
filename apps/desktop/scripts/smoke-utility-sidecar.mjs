@@ -1,15 +1,20 @@
 import { app, utilityProcess } from 'electron'
+import { Worker } from 'node:worker_threads'
 import { dirname } from 'node:path'
 
 const sidecarPath = process.env.LUME_SIDECAR_BUNDLE
-if (!sidecarPath) {
-  console.error('[smoke-utility-sidecar] missing LUME_SIDECAR_BUNDLE')
+const xhrWorkerPath = process.env.LUME_XHR_SYNC_WORKER
+if (!sidecarPath || !xhrWorkerPath) {
+  console.error('[smoke-utility-sidecar] missing sidecar bundle or XHR worker')
   process.exit(1)
 }
 
 let child = null
+let xhrWorker = null
 let settled = false
 let timeout = null
+let sidecarHealthy = false
+let xhrWorkerHealthy = false
 
 function finish(code, message) {
   if (settled) return
@@ -17,10 +22,29 @@ function finish(code, message) {
   if (timeout) clearTimeout(timeout)
   if (message) console.error(message)
   child?.kill()
+  xhrWorker?.terminate()
   setImmediate(() => app.exit(code))
 }
 
+function finishWhenHealthy() {
+  if (sidecarHealthy && xhrWorkerHealthy) finish(0, '[smoke-utility-sidecar] sidecar and XHR worker ok')
+}
+
 app.whenReady().then(() => {
+  xhrWorker = new Worker(xhrWorkerPath)
+  xhrWorker.once('error', (error) => {
+    finish(1, `[smoke-utility-sidecar] XHR worker failed: ${error.stack ?? error}`)
+  })
+  xhrWorker.once('exit', (code) => {
+    if (settled) return
+    if (code !== 0) {
+      finish(1, `[smoke-utility-sidecar] XHR worker exited with code ${code}`)
+      return
+    }
+    xhrWorkerHealthy = true
+    finishWhenHealthy()
+  })
+
   child = utilityProcess.fork(sidecarPath, [], {
     cwd: dirname(sidecarPath),
     env: process.env,
@@ -57,7 +81,8 @@ app.whenReady().then(() => {
       finish(1, `[smoke-utility-sidecar] native unavailable: ${JSON.stringify(payload.result)}\n${stderr}`)
       return
     }
-    finish(0, '[smoke-utility-sidecar] ok')
+    sidecarHealthy = true
+    finishWhenHealthy()
   })
   child.once('spawn', () => {
     console.error(`[smoke-utility-sidecar] utility process spawned (pid=${child.pid})`)
@@ -70,7 +95,7 @@ app.whenReady().then(() => {
   })
   timeout = setTimeout(() => {
     finish(1, `[smoke-utility-sidecar] healthcheck timed out\n${stderr}`)
-  }, 15_000)
+  }, 20_000)
 }).catch((error) => {
   finish(1, `[smoke-utility-sidecar] Electron startup failed: ${error.stack ?? error}`)
 })

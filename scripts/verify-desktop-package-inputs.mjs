@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DESKTOP_DIR = resolve(REPO_ROOT, "apps", "desktop");
 const sidecarBundle = resolve(DESKTOP_DIR, "resources", "sidecar", "index.mjs");
+const xhrWorkerBundle = resolve(DESKTOP_DIR, "resources", "sidecar", "xhr-sync-worker.mjs");
 const nativeBinary = resolve(DESKTOP_DIR, "resources", "natives", currentNativeTargetId(), "lume-natives.node");
 const desktopMain = resolve(DESKTOP_DIR, "dist", "main", "main.mjs");
 const desktopPreload = resolve(DESKTOP_DIR, "dist", "preload", "preload.cjs");
@@ -16,6 +17,7 @@ const requiredFiles = [
   resolve(DESKTOP_DIR, "assets", "icon.icns"),
   resolve(DESKTOP_DIR, "resources", "default-skills.tar"),
   sidecarBundle,
+  xhrWorkerBundle,
   nativeBinary,
   resolve(REPO_ROOT, "apps", "web", "dist", "index.html"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot-theme.js"),

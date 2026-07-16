@@ -8,26 +8,29 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SIDECAR_ENTRY = resolve(REPO_ROOT, "apps", "sidecar", "src", "index.ts");
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "sidecar");
 const OUT_FILE = resolve(OUT_DIR, "index.mjs");
+const XHR_WORKER_OUT_FILE = resolve(OUT_DIR, "xhr-sync-worker.mjs");
+const sdkRequire = createRequire(resolve(REPO_ROOT, "packages", "sdk", "package.json"));
+const jsdomEntry = sdkRequire.resolve("jsdom");
+const jsdomLibDir = dirname(jsdomEntry);
+const XHR_WORKER_ENTRY = resolve(jsdomLibDir, "jsdom", "living", "xhr", "xhr-sync-worker.js");
 
 rmSync(OUT_DIR, { recursive: true, force: true });
 mkdirSync(OUT_DIR, { recursive: true });
 
-const args = [
-  "build",
-  SIDECAR_ENTRY,
-  "--target=node",
-  "--format=esm",
-  `--outfile=${OUT_FILE}`,
-];
-
-console.error(`[sidecar-bundle] bun ${args.join(" ")}`);
-const result = spawnSync("bun", args, { cwd: REPO_ROOT, stdio: "inherit" });
-if (result.status !== 0) process.exit(result.status ?? 1);
-if (!existsSync(OUT_FILE)) {
-  console.error(`[sidecar-bundle] expected output not created: ${OUT_FILE}`);
-  process.exit(1);
+for (const [entry, outfile] of [
+  [SIDECAR_ENTRY, OUT_FILE],
+  [XHR_WORKER_ENTRY, XHR_WORKER_OUT_FILE],
+]) {
+  const args = ["build", entry, "--target=node", "--format=esm", `--outfile=${outfile}`];
+  console.error(`[sidecar-bundle] bun ${args.join(" ")}`);
+  const result = spawnSync("bun", args, { cwd: REPO_ROOT, stdio: "inherit" });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (!existsSync(outfile)) {
+    console.error(`[sidecar-bundle] expected output not created: ${outfile}`);
+    process.exit(1);
+  }
+  console.error(`[sidecar-bundle] wrote ${outfile}`);
 }
-console.error(`[sidecar-bundle] wrote ${OUT_FILE}`);
 
 // bun build 把 CommonJS require（JSON 数据文件 + 动态 JS）转成 createRequire(import.meta.url)
 // 运行时 require，路径相对本 bundle 解析。standalone bundle 没有这些文件/包，运行时报
@@ -36,24 +39,47 @@ console.error(`[sidecar-bundle] wrote ${OUT_FILE}`);
 
 const sidecarRequire = createRequire(resolve(REPO_ROOT, "apps", "sidecar", "package.json"));
 let bundleSrc = readFileSync(OUT_FILE, "utf8");
+let xhrWorkerSrc = readFileSync(XHR_WORKER_OUT_FILE, "utf8");
 
-// jsdom 用 CommonJS __dirname 读取默认样式表。bun 会把这个 __dirname 固化为构建机的
-// 绝对路径，导致安装后启动即 ENOENT。样式表是静态数据，构建时直接嵌入产物。
+// bun 会把 CommonJS __dirname/__filename 和 require.resolve 固化为构建机绝对路径。
+// 内嵌 jsdom 静态样式表、随包提供同步 XHR worker，并删除仅用于错误栈的 undici 文件名。
 const jsdomDirnamePattern = /^  var __dirname = ".*node_modules.*jsdom.*living.*css.*helpers";\r?\n/m;
 const jsdomStyleReadPattern = /  var defaultStyleSheet = fs\.readFileSync\(path\d*\.resolve\(__dirname, "\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css"\), \{ encoding: "utf-8" \}\);/;
-if (!jsdomDirnamePattern.test(bundleSrc) || !jsdomStyleReadPattern.test(bundleSrc)) {
-  console.error("[sidecar-bundle] jsdom stylesheet read pattern not found");
-  process.exit(1);
-}
-const sdkRequire = createRequire(resolve(REPO_ROOT, "packages", "sdk", "package.json"));
-const jsdomEntry = sdkRequire.resolve("jsdom");
-const jsdomStylePath = resolve(dirname(jsdomEntry), "jsdom", "browser", "default-stylesheet.css");
+const undiciFilenamePattern = /^  var __filename = ".*node_modules.*undici.*index\.js";\r?\n/m;
+const xhrWorkerResolvePattern = /  var syncWorkerFile = __require\.resolve\("[^"\r\n]*xhr-sync-worker\.js"\);/;
+const jsdomStylePath = resolve(jsdomLibDir, "jsdom", "browser", "default-stylesheet.css");
 const jsdomStyle = readFileSync(jsdomStylePath, "utf8");
-bundleSrc = bundleSrc
-  .replace(jsdomDirnamePattern, "")
-  .replace(jsdomStyleReadPattern, `  var defaultStyleSheet = ${JSON.stringify(jsdomStyle)};`);
+const makeRelocatable = (source, label) => {
+  for (const [pattern, description] of [
+    [jsdomDirnamePattern, "jsdom stylesheet __dirname"],
+    [jsdomStyleReadPattern, "jsdom stylesheet read"],
+    [undiciFilenamePattern, "undici __filename"],
+    [xhrWorkerResolvePattern, "jsdom sync worker resolve"],
+  ]) {
+    if (!pattern.test(source)) {
+      console.error(`[sidecar-bundle] ${label}: ${description} pattern not found`);
+      process.exit(1);
+    }
+  }
+  return source
+    .replace(jsdomDirnamePattern, "")
+    .replace(jsdomStyleReadPattern, `  var defaultStyleSheet = ${JSON.stringify(jsdomStyle)};`)
+    .replace(undiciFilenamePattern, "")
+    .replace(xhrWorkerResolvePattern, `  var syncWorkerFile = new URL("./xhr-sync-worker.mjs", import.meta.url);`);
+};
+bundleSrc = makeRelocatable(bundleSrc, "main");
+xhrWorkerSrc = makeRelocatable(xhrWorkerSrc, "xhr worker");
 writeFileSync(OUT_FILE, bundleSrc);
-console.error("[sidecar-bundle] embedded jsdom default stylesheet");
+writeFileSync(XHR_WORKER_OUT_FILE, xhrWorkerSrc);
+
+const escapedRepoRoot = JSON.stringify(REPO_ROOT).slice(1, -1).toLowerCase();
+for (const [label, source] of [["main", bundleSrc], ["xhr worker", xhrWorkerSrc]]) {
+  if (source.toLowerCase().includes(escapedRepoRoot)) {
+    console.error(`[sidecar-bundle] ${label} still contains the build workspace path`);
+    process.exit(1);
+  }
+}
+console.error("[sidecar-bundle] embedded jsdom stylesheet and packaged relocatable sync worker");
 
 // (a) 相对路径 require（基准=本 bundle = resources/sidecar/）:
 //     css-tree 的 ../data/patch.json -> resources/data/patch.json
@@ -85,7 +111,8 @@ const NODE_BUILTINS = new Set([
   "console", "v8", "sys", "node:test",
 ]);
 const reqsByPkg = new Map();
-for (const m of bundleSrc.matchAll(/require[0-9]?\("([^"]+)"\)/g)) {
+const runtimeBundleSrc = `${bundleSrc}\n${xhrWorkerSrc}`;
+for (const m of runtimeBundleSrc.matchAll(/require[0-9]?\("([^"]+)"\)/g)) {
   const req = m[1];
   if (req.startsWith(".") || req.startsWith("node:") || NODE_BUILTINS.has(req)) continue;
   const pkg = req.startsWith("@") ? req.split("/").slice(0, 2).join("/") : req.split("/")[0];

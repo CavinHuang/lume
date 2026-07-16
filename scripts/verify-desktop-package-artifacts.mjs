@@ -28,6 +28,7 @@ if (targetSpecific && !files.some((file) => targetSpecific.every((pattern) => pa
 }
 verifyPackagedApplications(files);
 verifyNativeResources(files, target);
+verifySidecarResources(files);
 
 writeSummary(`Local Electron package artifacts for ${target}`, files);
 console.error(`[verify-package-artifacts] ok for ${target}`);
@@ -117,6 +118,15 @@ function verifyNativeResources(files, desktopTarget) {
     const pattern = new RegExp(`/resources/natives/${nativeTarget}/lume-natives\\.node$`, "i");
     if (!files.some((file) => pattern.test(file))) {
       fail(`missing native resource for ${nativeTarget}`);
+    }
+  }
+}
+
+function verifySidecarResources(files) {
+  for (const name of ["index.mjs", "xhr-sync-worker.mjs"]) {
+    const pattern = new RegExp(`/resources/sidecar/${name.replace(".", "\\.")}$`, "i");
+    if (!files.some((file) => pattern.test(file))) {
+      fail(`missing packaged sidecar resource: ${name}`);
     }
   }
 }

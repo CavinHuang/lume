@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -11,18 +11,25 @@ import {
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DESKTOP_DIR = resolve(REPO_ROOT, "apps", "desktop");
 const sidecarPath = resolve(DESKTOP_DIR, "resources", "sidecar", "index.mjs");
+const xhrWorkerPath = resolve(DESKTOP_DIR, "resources", "sidecar", "xhr-sync-worker.mjs");
 const skillsArchive = resolve(DESKTOP_DIR, "resources", "default-skills.tar");
 const nativeBinary = resolve(DESKTOP_DIR, "resources", "natives", currentNativeTargetId(), "lume-natives.node");
 const sidecarSmokeEntry = resolve(DESKTOP_DIR, "scripts", "smoke-utility-sidecar.mjs");
 const nativeSmokeEntry = resolve(DESKTOP_DIR, "scripts", "smoke-utility-natives.mjs");
 
-for (const file of [sidecarPath, skillsArchive, nativeBinary, sidecarSmokeEntry, nativeSmokeEntry]) {
+for (const file of [sidecarPath, xhrWorkerPath, skillsArchive, nativeBinary, sidecarSmokeEntry, nativeSmokeEntry]) {
   if (!existsSync(file)) fail(`missing smoke input: ${file}`);
 }
 
-const sidecarSource = readFileSync(sidecarPath, "utf8");
-if (sidecarSource.includes("default-stylesheet.css")) {
-  fail("sidecar bundle still reads jsdom's default stylesheet from the build machine");
+const escapedRepoRoot = JSON.stringify(REPO_ROOT).slice(1, -1).toLowerCase();
+for (const file of [sidecarPath, xhrWorkerPath]) {
+  const source = readFileSync(file, "utf8");
+  if (source.toLowerCase().includes(escapedRepoRoot)) {
+    fail(`${file} contains the build workspace path`);
+  }
+  if (source.includes("default-stylesheet.css")) {
+    fail(`${file} still reads jsdom's default stylesheet from disk`);
+  }
 }
 
 const electronPackageRoot = resolveElectronPackageRoot(pathToFileURL(sidecarSmokeEntry).href);
@@ -32,22 +39,34 @@ const electronExecutable = await ensureElectronRuntimeInstalled({
 });
 const configHome = mkdtempSync(join(tmpdir(), "lume-sidecar-bundle-smoke-"));
 const smokeCwd = mkdtempSync(join(tmpdir(), "lume-sidecar-bundle-cwd-"));
+const relocatedRoot = mkdtempSync(join(tmpdir(), "lume-sidecar-relocated-"));
+const relocatedResourcesDir = resolve(relocatedRoot, "resources");
+const relocatedSidecarDir = resolve(relocatedResourcesDir, "sidecar");
+const relocatedNative = resolve(relocatedResourcesDir, "natives", currentNativeTargetId(), "lume-natives.node");
+mkdirSync(dirname(relocatedNative), { recursive: true });
+cpSync(dirname(sidecarPath), relocatedSidecarDir, { recursive: true });
+cpSync(resolve(DESKTOP_DIR, "resources", "data"), resolve(relocatedResourcesDir, "data"), { recursive: true });
+cpSync(resolve(DESKTOP_DIR, "resources", "package.json"), resolve(relocatedResourcesDir, "package.json"));
+cpSync(nativeBinary, relocatedNative);
+cpSync(skillsArchive, resolve(relocatedResourcesDir, "default-skills.tar"));
 
 try {
   runElectronSmoke("native utility", nativeSmokeEntry, {
-    LUME_NATIVES_PATH: nativeBinary,
+    LUME_NATIVES_PATH: relocatedNative,
   });
   runElectronSmoke("sidecar bundle", sidecarSmokeEntry, {
-    LUME_SIDECAR_BUNDLE: sidecarPath,
-    LUME_NATIVES_PATH: nativeBinary,
+    LUME_SIDECAR_BUNDLE: resolve(relocatedSidecarDir, "index.mjs"),
+    LUME_XHR_SYNC_WORKER: resolve(relocatedSidecarDir, "xhr-sync-worker.mjs"),
+    LUME_NATIVES_PATH: relocatedNative,
     LUME_CONFIG_DIR: configHome,
-    LUME_DEFAULT_SKILLS_ARCHIVE: skillsArchive,
+    LUME_DEFAULT_SKILLS_ARCHIVE: resolve(relocatedResourcesDir, "default-skills.tar"),
     LUME_LOG_CONSOLE: "true",
   });
   console.error("[smoke-sidecar-bundle] ok via Electron utilityProcess");
 } finally {
   rmSync(configHome, { recursive: true, force: true });
   rmSync(smokeCwd, { recursive: true, force: true });
+  rmSync(relocatedRoot, { recursive: true, force: true });
 }
 
 function runElectronSmoke(label, entry, extraEnv) {
