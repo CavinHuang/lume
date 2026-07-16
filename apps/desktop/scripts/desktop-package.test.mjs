@@ -51,6 +51,11 @@ test('desktop package uses Vite-built TypeScript runtime files', () => {
   }
 })
 
+test('Windows installer lets users choose the installation directory', () => {
+  assert.equal(pkg.build.nsis?.oneClick, false)
+  assert.equal(pkg.build.nsis?.allowToChangeInstallationDirectory, true)
+})
+
 test('desktop package includes node-repl resources', () => {
   assert.deepEqual(
     pkg.build.extraResources.find((entry) => entry.to === 'node-repl'),
