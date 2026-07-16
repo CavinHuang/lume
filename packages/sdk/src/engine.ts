@@ -376,6 +376,7 @@ export class QueryEngine {
   private recordProviderUsage(
     usage: CreateMessageResponse['usage'] | NormalizedProviderUsage,
     usageIdentity: UsageIdentity,
+    ttftMs?: number,
   ): BillingUsageRecord {
     const normalized = 'input_tokens' in usage
       ? normalizeProviderUsage(usage)
@@ -404,6 +405,7 @@ export class QueryEngine {
       model: this.config.model,
       costUSD,
       ...(usageIdentity.turn !== undefined ? { turn: usageIdentity.turn } : {}),
+      ...(ttftMs !== undefined ? { ttftMs: Math.max(0, Math.round(ttftMs)) } : {}),
     }
     this.usageRecords.push(record)
     return record
@@ -729,7 +731,13 @@ export class QueryEngine {
         turn: this.turnCount,
       }))
     }
-    this.messages = result.compactedMessages
+    const latestRuntimeMessage = [...this.messages]
+      .reverse()
+      .find((message) => message.role === 'runtime')
+    const compactedMessages = result.compactedMessages.filter((message) => message.role !== 'runtime')
+    this.messages = latestRuntimeMessage
+      ? [...compactedMessages, latestRuntimeMessage]
+      : compactedMessages
     this.compactState = result.state
     const boundary: AgentContextCompactionBoundary = {
       trigger,
@@ -849,6 +857,11 @@ export class QueryEngine {
       return
     }
 
+    // Runtime context is persisted in history but remains an internal message.
+    if (this.config.runtimeContext?.trim()) {
+      this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
+    }
+
     // Add user message
     this.messages.push({ role: 'user', content: prompt as any })
 
@@ -915,6 +928,17 @@ export class QueryEngine {
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
       )
+      const transientRuntimeContext = [
+        internalContextBlocks.length > 0
+          ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
+          : '',
+        computerUseActionFacts
+          ? `<internal_context type="computer_use_action_ledger">\n${computerUseActionFacts}\n</internal_context>`
+          : '',
+      ].filter(Boolean).join('\n\n')
+      if (transientRuntimeContext) {
+        apiMessages.push({ role: 'runtime', content: transientRuntimeContext })
+      }
 
       this.turnCount++
       turnsRemaining--
@@ -925,20 +949,13 @@ export class QueryEngine {
       const providerRequest: CreateMessageParams = {
         model: this.config.model,
         maxTokens: this.config.maxTokens,
-        system: [
-          systemPrompt,
-          internalContextBlocks.length > 0
-            ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
-            : '',
-          computerUseActionFacts
-            ? `<internal_context type="computer_use_action_ledger">\n${computerUseActionFacts}\n</internal_context>`
-            : '',
-        ].filter(Boolean).join('\n\n'),
+        system: systemPrompt,
         messages: apiMessages,
         tools: tools.length > 0 ? tools : undefined,
         jsonSchema: this.config.jsonSchema,
         outputFormat: this.config.outputFormat,
         effort: this.config.effort,
+        promptCache: this.config.promptCache,
         abortSignal: this.config.abortSignal,
         thinking:
           this.config.thinking?.type === 'enabled' &&
@@ -952,6 +969,7 @@ export class QueryEngine {
               : undefined,
       }
       const apiStart = performance.now()
+      let firstResponseAt: number | undefined
       try {
         if (this.config.includePartialMessages && this.provider.createMessageStream) {
           const stream = this.provider.createMessageStream(providerRequest)
@@ -965,6 +983,7 @@ export class QueryEngine {
             }
 
             const chunk = next.value as CreateMessageStreamEvent
+            firstResponseAt ??= performance.now()
             if (chunk.type === 'text_delta' && chunk.text) {
               // Official Claude Agent SDK format (stream_event)
               yield {
@@ -1075,7 +1094,8 @@ export class QueryEngine {
       this.messages = releaseEphemeralImageReferences(this.messages as any[]) as NormalizedMessageParam[]
 
       // Track API timing
-      this.apiTimeMs += performance.now() - apiStart
+      const apiEnd = performance.now()
+      this.apiTimeMs += apiEnd - apiStart
 
       const usageIdentity = this.createUsageIdentity('conversation', {
         callerLabel: `Turn ${this.turnCount}`,
@@ -1085,7 +1105,11 @@ export class QueryEngine {
 
       // Track usage (normalized by provider)
       if (response.usage) {
-        usageRecord = this.recordProviderUsage(response.usage, usageIdentity)
+        usageRecord = this.recordProviderUsage(
+          response.usage,
+          usageIdentity,
+          (firstResponseAt ?? apiEnd) - apiStart,
+        )
       }
 
       // Add assistant message to conversation

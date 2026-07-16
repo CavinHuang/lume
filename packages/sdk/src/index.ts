@@ -65,6 +65,7 @@ export {
 export type {
   ApiType,
   LLMProvider,
+  PromptCachePolicy,
   CreateMessageParams,
   CreateMessageResponse,
   NormalizedMessageParam,

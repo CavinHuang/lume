@@ -27,6 +27,9 @@ import {
   getAgentWorkspacePath,
 } from "../infra/config-paths";
 import { stripFrontMatter } from "./workspace-template-utils";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("workspace-bootstrap");
 
 // ===== 常量 =====
 
@@ -125,14 +128,14 @@ export function readTemplateContent(fileType: BootstrapFileType, devMode: boolea
   const templatePath = getTemplatePath(fileType, devMode);
 
   if (!existsSync(templatePath)) {
-    console.warn(`[Bootstrap] 模板文件不存在: ${templatePath}`);
+    log.warn("bootstrap template does not exist", { templatePath, fileType });
     return '';
   }
 
   try {
     return stripFrontMatter(readFileSync(templatePath, 'utf-8'));
   } catch (error) {
-    console.error(`[Bootstrap] 读取模板失败: ${templatePath}`, error);
+    log.error("failed to read bootstrap template", { error, templatePath, fileType });
     return '';
   }
 }
@@ -170,7 +173,7 @@ export function readBootstrapFile(workspaceSlug: string, fileType: BootstrapFile
   try {
     return stripFrontMatter(readFileSync(filePath, 'utf-8'));
   } catch (error) {
-    console.error(`[Bootstrap] 读取文件失败: ${filePath}`, error);
+    log.error("failed to read workspace bootstrap file", { error, filePath, workspaceSlug, fileType });
     return '';
   }
 }
@@ -198,7 +201,7 @@ export function writeBootstrapFile(
   }
 
   writeFileSync(filePath, content, 'utf-8');
-  console.log(`[Bootstrap] 已写入文件: ${filePath}`);
+  log.debug("wrote workspace bootstrap file", { filePath, workspaceSlug, fileType });
 }
 
 /**
@@ -213,7 +216,7 @@ export function deleteBootstrapFile(workspaceSlug: string, fileType: BootstrapFi
 
   if (existsSync(filePath)) {
     unlinkSync(filePath);
-    console.log(`[Bootstrap] 已删除文件: ${filePath}`);
+    log.debug("deleted workspace bootstrap file", { filePath, workspaceSlug, fileType });
   }
 }
 
@@ -268,10 +271,12 @@ export function ensureBootstrapFiles(
     }
   }
 
-  console.log(
-    `[Bootstrap] 工作区 ${workspaceSlug} Bootstrap 完成: ` +
-    `创建 ${result.created.length}, 跳过 ${result.skipped.length}, 失败 ${result.failed.length}`
-  );
+  log.info("workspace bootstrap completed", {
+    workspaceSlug,
+    created: result.created.length,
+    skipped: result.skipped.length,
+    failed: result.failed.length,
+  });
 
   return result;
 }
@@ -444,7 +449,7 @@ export function readDailyMemoryFiles(workspaceSlug: string, days: number = 2): s
           contents.push(`## ${dateStr}\n\n${content}`);
         }
       } catch (error) {
-        console.warn(`[Bootstrap] 读取每日记忆失败: ${filePath}`, error);
+        log.warn("failed to read daily memory during bootstrap", { error, filePath });
       }
     }
   }

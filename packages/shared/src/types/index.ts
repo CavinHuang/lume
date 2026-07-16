@@ -27,3 +27,4 @@ export * from "./model-meta";
 export * from "./plugin-audit";
 export * from "./plugin-market";
 export * from "./computer-use";
+export * from "./logging";

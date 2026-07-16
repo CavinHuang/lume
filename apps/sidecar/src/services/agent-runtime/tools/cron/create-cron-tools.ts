@@ -14,6 +14,9 @@ import {
   startAutomationRunner
 } from "../../../automation/automation-runner-service";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
+import { createLogger } from "../../../infra/logger";
+
+const log = createLogger("cron-tools");
 
 interface CreateAutomationToolsInput {
   workspaceId?: string;
@@ -206,7 +209,7 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
         }
         if (action === "run_now") {
           void runAutomationJobNow({ id: target.id }).catch((error) => {
-            console.error("[cron_set] run_now 触发失败:", error);
+            log.error("failed to trigger automation job immediately", { error, jobId: target.id });
           });
           return {
             ok: true,

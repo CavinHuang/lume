@@ -44,6 +44,7 @@ import {
   hasRuntimeCoreSessionTranscript
 } from "../agent-runtime/runtime-core/session-store";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { createLogger } from "../infra/logger";
 
 interface AgentThreadsIndex {
   version: number;
@@ -51,6 +52,7 @@ interface AgentThreadsIndex {
 }
 
 const INDEX_VERSION = 1;
+const log = createLogger("agent-thread-manager");
 
 type FileContextMode = "newRoot" | "inherit" | "fork";
 
@@ -111,9 +113,9 @@ function backupCorruptFile(filePath: string, label: string): void {
   const backupPath = `${filePath}.corrupt-${Date.now()}`;
   try {
     renameSync(filePath, backupPath);
-    console.warn(`[${label}] 检测到损坏文件，已备份: ${backupPath}`);
+    log.warn("backed up corrupt thread file", { label, backupPath });
   } catch (error) {
-    console.warn(`[${label}] 备份损坏文件失败:`, error);
+    log.warn("failed to back up corrupt thread file", { label, backupPath, error });
   }
 }
 
@@ -140,7 +142,7 @@ function readIndex(): AgentThreadsIndex {
         : []
     };
   } catch (error) {
-    console.error("[Agent 线程] 读取索引文件失败:", error);
+    log.error("failed to read thread index", { error, indexPath });
     backupCorruptFile(indexPath, "Agent 线程");
     return { version: INDEX_VERSION, threads: [] };
   }
@@ -151,7 +153,7 @@ function writeIndex(index: AgentThreadsIndex): void {
   try {
     writeTextAtomic(indexPath, JSON.stringify(index, null, 2));
   } catch (error) {
-    console.error("[Agent 线程] 写入索引文件失败:", error);
+    log.error("failed to write thread index", { error, indexPath });
     throw new Error("写入 Agent 线程索引失败");
   }
 }
@@ -308,7 +310,7 @@ export function createAgentThreadWithModelRef(
     }
   }
 
-  console.log(`[Agent 线程] 已创建线程: ${meta.title} (${meta.id})`);
+  log.info("created agent thread", { threadId: meta.id, workspaceId: meta.workspaceId });
   notifyThreadListChanged();
   return meta;
 }
@@ -374,7 +376,7 @@ export function getAgentThreadSDKMessages(id: string): SDKMessage[] {
         .filter(Boolean)
         .map((line) => JSON.parse(line) as SDKMessage);
     } catch (error) {
-      console.error(`[Agent 线程] 读取 SDKMessage 失败 (${id}):`, error);
+      log.error("failed to read SDK messages", { error, threadId: id });
     }
   }
   const visibleMessages = getAgentThreadMessages(id);
@@ -402,7 +404,7 @@ export function appendAgentThreadSDKMessages(id: string, messages: SDKMessage[])
     const payload = messages.map((message) => JSON.stringify(message)).join("\n") + "\n";
     appendFileSync(sdkMessagesPath, payload, "utf-8");
   } catch (error) {
-    console.error(`[Agent 线程] 追加 SDKMessage 失败 (${id}):`, error);
+    log.error("failed to append SDK message", { error, threadId: id });
     throw new Error("追加 Agent SDKMessage 失败");
   }
 }
@@ -449,7 +451,7 @@ export function appendAgentTranscriptMessage(
     const existingMessages = getAgentThreadMessages(id);
     replaceAgentThreadTranscript(id, [...existingMessages, message]);
   } catch (error) {
-    console.error(`[Agent 线程] 追加 transcript 消息失败 (${id}):`, error);
+    log.error("failed to append transcript message", { error, threadId: id });
     throw new Error("追加 Agent transcript 消息失败");
   }
 }
@@ -510,7 +512,7 @@ export function tryUpdateAgentThreadMeta(
     index.threads[idx] = updated;
     writeIndex(index);
 
-    console.log(`[Agent 线程] 已更新线程: ${updated.title} (${updated.id})`);
+    log.info("updated agent thread", { threadId: updated.id });
     return updated;
   });
 }
@@ -575,19 +577,19 @@ export function deleteAgentThread(id: string): void {
       const threadDir = join(workspacesDir, entry.name, id);
       if (!existsSync(threadDir)) continue;
       rmSync(threadDir, { recursive: true, force: true });
-      console.log(`[Agent 线程] 已清理线程工作目录: ${threadDir}`);
+      log.debug("removed thread working directory", { threadId: id, threadDir });
     }
   } catch (error) {
-    console.warn(`[Agent 线程] 清理线程工作目录失败 (${id}):`, error);
+    log.warn("failed to remove thread working directory", { error, threadId: id });
   }
 
   const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(id);
   if (existsSync(runtimeCoreSessionDir)) {
     try {
       rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
-      console.log(`[Agent 线程] 已清理 runtime-core transcript: ${runtimeCoreSessionDir}`);
+      log.debug("removed runtime-core transcript", { threadId: id, runtimeCoreSessionDir });
     } catch (error) {
-      console.warn(`[Agent 线程] 清理 runtime-core transcript 失败 (${id}):`, error);
+      log.warn("failed to remove runtime-core transcript", { error, threadId: id });
     }
   }
 
@@ -595,9 +597,9 @@ export function deleteAgentThread(id: string): void {
   if (existsSync(sessionDataDir)) {
     try {
       rmSync(sessionDataDir, { recursive: true, force: true });
-      console.log(`[Agent 线程] 已清理线程版本数据: ${sessionDataDir}`);
+      log.debug("removed thread version data", { threadId: id, sessionDataDir });
     } catch (error) {
-      console.warn(`[Agent 线程] 清理线程版本数据失败 (${id}):`, error);
+      log.warn("failed to remove thread version data", { error, threadId: id });
     }
   }
 
@@ -609,15 +611,15 @@ export function deleteAgentThread(id: string): void {
       if (existsSync(contextDir)) {
         try {
           rmSync(contextDir, { recursive: true, force: true });
-          console.log(`[Agent 线程] 已清理文件上下文目录: ${contextDir}`);
+          log.debug("removed file context directory", { threadId: id, fileContextId, contextDir });
         } catch (error) {
-          console.warn(`[Agent 线程] 清理文件上下文目录失败 (${fileContextId}):`, error);
+          log.warn("failed to remove file context directory", { error, threadId: id, fileContextId });
         }
       }
     });
   }
 
-  console.log(`[Agent 线程] 已删除线程: ${removed.title} (${removed.id})`);
+  log.info("deleted agent thread", { threadId: removed.id });
 }
 
 export function listAgentThreadsForWorkspace(workspaceId: string): AgentThreadMeta[] {
@@ -714,7 +716,7 @@ export function listTrashedThreads(): AgentThreadMeta[] {
 }
 
 export function archiveAgentThread(id: string): AgentThreadMeta {
-  console.log(`[Agent 线程] 归档 ${id.slice(0, 8)}`);
+  log.info("archived agent thread", { threadId: id });
   const archived = updateAgentThreadMeta(id, { status: "archived" });
 
   // ★ D8: 级联归档委托子会话（delegate 仅一级，无孙会话，递归调用自身安全）
@@ -728,12 +730,12 @@ export function archiveAgentThread(id: string): AgentThreadMeta {
 }
 
 export function restoreAgentThread(id: string): AgentThreadMeta {
-  console.log(`[Agent 线程] 从归档恢复 ${id.slice(0, 8)}`);
+  log.info("restored agent thread from archive", { threadId: id });
   return updateAgentThreadMeta(id, { status: undefined, trashedAt: undefined });
 }
 
 export function trashAgentThread(id: string): AgentThreadMeta {
-  console.log(`[Agent 线程] 移入回收站 ${id.slice(0, 8)}`);
+  log.info("moved agent thread to trash", { threadId: id });
   return updateAgentThreadMeta(id, { status: "trashed", trashedAt: Date.now() });
 }
 
@@ -764,7 +766,7 @@ export function cleanupExpiredTrash(): number {
   }
 
   if (toDelete.length > 0) {
-    console.log(`[Agent 线程] 已清理 ${toDelete.length} 个过期回收站条目`);
+    log.info("cleaned expired trashed threads", { count: toDelete.length });
   }
   return toDelete.length;
 }
@@ -779,7 +781,7 @@ export function emptyTrash(): number {
   }
 
   if (toDelete.length > 0) {
-    console.log(`[Agent 线程] 已清空回收站 ${toDelete.length} 个条目`);
+    log.info("emptied thread trash", { count: toDelete.length });
   }
   return toDelete.length;
 }
@@ -809,7 +811,7 @@ export async function clearAgentThreadMessages(threadId: string): Promise<{ ok: 
   stopAgent(threadId);
   const messages = getAgentThreadMessages(threadId);
   replaceAgentThreadTranscript(threadId, []);
-  console.log(`[Agent 线程] 已清空 ${threadId.slice(0, 8)} 的 ${messages.length} 条消息`);
+  log.info("cleared thread messages", { threadId, count: messages.length });
   return { ok: true, cleared: messages.length };
 }
 
@@ -843,7 +845,7 @@ export function forkAgentThread(
 
   replaceAgentThreadTranscript(newThread.id, forkedMessages);
 
-  console.log(`[Agent 线程] 已从 ${sourceThreadId.slice(0, 8)} 分叉到 ${newThread.id.slice(0, 8)}，包含 ${forkedMessages.length} 条消息`);
+  log.info("forked agent thread", { sourceThreadId, threadId: newThread.id, messageCount: forkedMessages.length });
   return { newThreadId: newThread.id };
 }
 

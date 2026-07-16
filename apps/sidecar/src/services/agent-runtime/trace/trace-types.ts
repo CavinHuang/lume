@@ -1,5 +1,9 @@
 export interface LumeTrace {
+  schemaVersion?: 2;
   id: string;
+  correlationTraceId?: string;
+  parentCorrelationTraceId?: string;
+  linkedCorrelationTraceId?: string;
   threadId: string;
   runId: string;
   workspaceId?: string;

@@ -16,7 +16,6 @@ import {
 import { extname, isAbsolute, join, relative, resolve, dirname } from 'node:path'
 import { zipSync } from 'fflate'
 import type { OpenDialogOptions } from 'electron'
-import electronLog from 'electron-log/node'
 
 export const WEREAD_KEY_PAGE_URL = 'https://weread.qq.com/r/weread-skills'
 
@@ -360,79 +359,6 @@ export function createUpdateDownloadProgressEvents(state, progress) {
 
 export function createUpdateFinishedEvent() {
   return { event: 'Finished', data: {} }
-}
-
-const desktopLogLevels = new Set(['trace', 'debug', 'info', 'warn', 'error', 'fatal'])
-const desktopLogSources = new Set(['main', 'sidecar', 'renderer'])
-const desktopElectronLogger = electronLog.create({ logId: 'lume-desktop-ndjson' })
-
-desktopElectronLogger.transports.console.level = false
-desktopElectronLogger.transports.file.format = '{text}'
-desktopElectronLogger.transports.file.maxSize = 0
-
-function normalizeLogTimestamp(value, fallbackDate) {
-  return typeof value === 'string' && value.trim() ? value : fallbackDate.toISOString()
-}
-
-function getRecordDateFromMessage(message) {
-  try {
-    const raw = message?.data?.[0]
-    if (typeof raw !== 'string') return new Date()
-    const parsed = JSON.parse(raw)
-    const value = parsed?.timestamp ?? parsed?.ts
-    return typeof value === 'string' ? new Date(value) : new Date()
-  } catch {
-    return new Date()
-  }
-}
-
-function configureDesktopLogFile(configDir) {
-  desktopElectronLogger.transports.file.resolvePathFn = (_variables, message) => {
-    const date = getRecordDateFromMessage(message)
-    return join(configDir, 'logs', `lume-${date.toISOString().slice(0, 10)}.ndjson`)
-  }
-}
-
-export function createDesktopLogRecord(input, date = new Date()) {
-  const level = input?.level ?? 'info'
-  if (!desktopLogLevels.has(level)) {
-    throw new Error(`invalid log level: ${level}`)
-  }
-
-  const source = input?.source ?? 'main'
-  if (!desktopLogSources.has(source)) {
-    throw new Error(`invalid log source: ${source}`)
-  }
-
-  const timestamp = normalizeLogTimestamp(input?.timestamp ?? input?.ts, date)
-  const data = input?.data == null ? undefined : redactValue(input.data)
-  return {
-    ts: timestamp,
-    timestamp,
-    level,
-    source,
-    context: input?.context ?? 'app',
-    message: input?.message ?? '',
-    ...(input?.sessionId ? { sessionId: input.sessionId } : {}),
-    ...(data == null ? {} : { data }),
-  }
-}
-
-export function writeDesktopLogRecord(configDir, input, date = new Date()) {
-  const record = createDesktopLogRecord(input, date)
-  configureDesktopLogFile(configDir)
-  desktopElectronLogger.info(JSON.stringify(record))
-  return record
-}
-
-export function writeWebLogRecord(configDir, input, date = new Date()) {
-  return writeDesktopLogRecord(configDir, {
-    level: input?.level,
-    source: 'renderer',
-    context: input?.context,
-    message: input?.message,
-    data: input?.data,
-  }, date)
 }
 
 function normalizeSensitiveKey(key) {

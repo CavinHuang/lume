@@ -675,6 +675,7 @@ export interface BillingUsageRecord extends NormalizedProviderUsage {
   model: string
   costUSD: number
   turn?: number
+  ttftMs?: number
 }
 
 export interface BillingUsageSummary {
@@ -730,6 +731,7 @@ export interface SDKUsageRecord {
   totalTokens?: number
   costUSD: number
   turn?: number
+  ttftMs?: number
 }
 
 // --------------------------------------------------------------------------
@@ -1164,7 +1166,7 @@ export interface ForkSessionResult {
 
 export interface SessionMessage {
   uuid: string
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'runtime'
   timestamp: string
   content: unknown
 }
@@ -1214,6 +1216,10 @@ export interface AgentOptions {
   cwd?: string
   /** System prompt override or preset */
   systemPrompt?: string | { type: 'preset'; preset: 'default'; append?: string }
+  /** Per-turn context placed after history and before the current user message. */
+  runtimeContext?: string
+  /** Provider prompt-cache policy selected by the host runtime. */
+  promptCache?: import('./providers/types.js').PromptCachePolicy
   /** Append to default system prompt */
   appendSystemPrompt?: string
   /** Available tools (ToolDefinition[] or string[] preset) */
@@ -1367,6 +1373,8 @@ export interface QueryEngineConfig {
   provider: import('./providers/types.js').LLMProvider
   tools: ToolDefinition[]
   systemPrompt?: string
+  runtimeContext?: string
+  promptCache?: import('./providers/types.js').PromptCachePolicy
   appendSystemPrompt?: string
   maxTurns: number
   maxBudgetUsd?: number

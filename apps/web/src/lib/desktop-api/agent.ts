@@ -1,5 +1,6 @@
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listen } from '@/lib/desktop-runtime/event'
+import { writeWebLogEvent } from './logger'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import type {
   AgentResumeRunInput,
@@ -18,6 +19,7 @@ import type {
   AgentGetMessageVersionsInput,
   AgentMessageVersionsResult,
   AgentMessage,
+  AgentMessageAppendedEvent,
   AgentRecentThreadMessagesResult,
   AgentThreadRuntimeEventsResult,
   AgentMessageQueueInput,
@@ -30,17 +32,75 @@ import type {
   AgentThreadMessageDispatchResult,
 } from '@lume/shared'
 
-export const agentSend = (input: AgentSendInput) =>
-  invoke<AgentThreadMessageDispatchResult>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE,
-    params: input,
+export const agentSend = async (input: AgentSendInput) => {
+  const submissionId = input.traceContext?.submissionId ?? crypto.randomUUID()
+  const clientEventId = input.traceContext?.clientEventId ?? crypto.randomUUID()
+  const traceContext = { ...input.traceContext, submissionId, clientEventId }
+  writeWebLogEvent({
+    level: 'info',
+    kind: 'trace',
+    context: 'agent.dispatch',
+    event: 'message.submitted',
+    message: 'agent message submitted by renderer',
+    submissionId,
+    threadId: input.threadId,
+    data: { messageLength: input.userMessage.length },
   })
+  const result = await invoke<AgentThreadMessageDispatchResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE,
+    params: { ...input, traceContext },
+  })
+  writeWebLogEvent({
+    level: 'info',
+    kind: 'trace',
+    context: 'agent.dispatch',
+    event: result.mode === 'queued' ? 'agent.queue.accepted' : 'agent.execution.accepted',
+    message: result.mode === 'queued' ? 'agent message queued' : 'agent execution accepted',
+    status: 'ok',
+    traceId: result.traceId,
+    submissionId,
+    threadId: input.threadId,
+    data: { mode: result.mode, queuedCount: result.queuedCount },
+  })
+  return result
+}
 
 export const onSidecarEvent = (
   cb: (method: string, params: unknown) => void
-) => listen<{ method: string; params: unknown }>('sidecar:event', (e) =>
-  cb(e.payload.method, e.payload.params)
-)
+) => listen<{ method: string; params: unknown }>('sidecar:event', (e) => {
+  const { method, params } = e.payload
+  const appended = method === AGENT_IPC_CHANNELS.MESSAGE_APPENDED
+    && params && typeof params === 'object'
+    && (params as AgentMessageAppendedEvent).message?.role === 'assistant'
+    && typeof (params as AgentMessageAppendedEvent).deliveryAttemptId === 'string'
+    ? params as AgentMessageAppendedEvent
+    : null
+  if (appended) {
+    writeWebLogEvent({
+      level: 'info',
+      kind: 'trace',
+      context: 'agent.delivery',
+      event: 'reply.received',
+      message: 'assistant reply received by renderer',
+      status: 'ok',
+      traceId: appended.traceId,
+      submissionId: appended.submissionId,
+      deliveryAttemptId: appended.deliveryAttemptId,
+      threadId: appended.threadId,
+      messageId: appended.message.id,
+    })
+  }
+  cb(method, params)
+})
+
+export const acknowledgeRendererDelivery = (event: AgentMessageAppendedEvent) => {
+  if (!event.deliveryAttemptId) return Promise.resolve({ ok: false })
+  return invoke<{ ok: boolean }>('ack_renderer_delivery', {
+    deliveryAttemptId: event.deliveryAttemptId,
+    threadId: event.threadId,
+    messageId: event.message.id,
+  })
+}
 
 export const listThreads = () =>
   invoke('sidecar_call', { method: AGENT_IPC_CHANNELS.LIST_THREADS, params: null })

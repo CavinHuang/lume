@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { createAgent } from "./agent.js"
 import type { ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
-import { getSessionMessages, saveSession } from "./session.js"
+import { forkSession, getSessionMessages, saveSession } from "./session.js"
 import { clearSkills } from "./skills/registry.js"
 
 function tool(name: string): ToolDefinition {
@@ -681,6 +681,77 @@ describe("Agent session persistence", () => {
       }],
     }))
     await agent.close()
+  })
+
+  test("persists runtime context, replays it before the user, and hides it from normal history", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-runtime-context-"))
+    tempDirs.push(tempDir)
+    process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    const sessionId = `runtime-context-${crypto.randomUUID()}`
+    let capturedMessages: CreateMessageParams["messages"] = []
+    const provider: LLMProvider = {
+      apiType: "openai-completions",
+      async createMessage(params) {
+        capturedMessages = params.messages
+        return {
+          content: [{ type: "text", text: "done" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }
+      },
+    }
+    const agent = createAgent({
+      sessionId,
+      persistSession: true,
+      tools: [],
+      cwd: tempDir,
+      runtimeContext: "current runtime",
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("hello")) {
+      // drain query
+    }
+
+    expect(capturedMessages.slice(-2)).toEqual([
+      { role: "runtime", content: "current runtime" },
+      { role: "user", content: "hello" },
+    ])
+    expect((await getSessionMessages(sessionId, { dir: tempDir })).some((message) => message.role === "runtime")).toBe(false)
+    expect((await getSessionMessages(sessionId, { dir: tempDir, includeSystemMessages: true }))).toContainEqual(
+      expect.objectContaining({ role: "runtime", content: "current runtime" }),
+    )
+    await agent.close()
+
+    const forkedSessionId = `runtime-context-fork-${crypto.randomUUID()}`
+    await forkSession(sessionId, forkedSessionId)
+    expect(await getSessionMessages(forkedSessionId, { dir: tempDir, includeSystemMessages: true })).toContainEqual(
+      expect.objectContaining({ role: "runtime", content: "current runtime" }),
+    )
+
+    const resumedAgent = createAgent({
+      sessionId,
+      resume: sessionId,
+      persistSession: true,
+      tools: [],
+      cwd: tempDir,
+      runtimeContext: "next runtime",
+    })
+    await resumedAgent.getInitializationResult()
+    ;(resumedAgent as any).provider = provider
+    for await (const _event of resumedAgent.query("again")) {
+      // drain resumed query
+    }
+    expect(capturedMessages.filter((message) => message.role === "runtime")).toEqual([
+      { role: "runtime", content: "current runtime" },
+      { role: "runtime", content: "next runtime" },
+    ])
+    expect(capturedMessages.slice(-2)).toEqual([
+      { role: "runtime", content: "next runtime" },
+      { role: "user", content: "again" },
+    ])
+    await resumedAgent.close()
   })
 
   test("persists session when query stream consumer stops after max turns", async () => {

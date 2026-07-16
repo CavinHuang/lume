@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AgentTraceContext,
   LumeRuntimeEvent,
   RuntimeBillingUsageSummary,
   RuntimeNormalizedUsage,
@@ -9,7 +10,7 @@ import type {
 import type { LumeInterruption } from "../interruption/interruption";
 import type { TaskContractPlanPreview } from "../plan/task-contract-write-tool";
 import type { ContextAssemblyInput } from "../context/context-assembler";
-import { TraceRecorder } from "../trace/trace-recorder";
+import { TraceRecorder, type TraceRecorderEvent } from "../trace/trace-recorder";
 import { redactTracePayload, summarizeTraceOutput } from "../trace/trace-redaction";
 import { createFileBackedLumeTraceStore } from "../trace/trace-store";
 import type { LumeTraceSpan } from "../trace/trace-types";
@@ -22,6 +23,7 @@ import type { LumeRunState, LumeRunStatus } from "./run-state";
 import { createFileBackedLumeRunStateStore, type LumeRunStateStore } from "./run-state-store";
 import { stripMemoryUserMessagePrefix } from "../../memory-v2/user-message-prefix";
 import type { LumeWorkflowTraceRecord } from "../../workflow-hooks/hook-effects";
+import { writeLogRecord } from "../../infra/logger";
 
 export interface CreateLumeRunObserverInput {
   sessionDir: string;
@@ -36,11 +38,86 @@ export interface CreateLumeRunObserverInput {
   rootAgentId?: string;
   currentAgentId?: string;
   model: LumeRunState["model"];
+  traceContext?: AgentTraceContext;
+}
+
+function publishTraceRecorderEvent(event: TraceRecorderEvent): void {
+  const correlationTraceId = event.trace.correlationTraceId;
+  if (!correlationTraceId) return;
+  if (event.type === "trace.started") {
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.runtime",
+      event: "agent.run.started",
+      message: "agent run started",
+      status: "started",
+      traceId: correlationTraceId,
+      parentTraceId: event.trace.parentCorrelationTraceId,
+      runId: event.trace.runId,
+      threadId: event.trace.threadId,
+      origin: typeof event.trace.metadata?.origin === "string" ? event.trace.metadata.origin : undefined,
+      data: { storeTraceId: event.trace.id }
+    });
+    return;
+  }
+  if (event.type === "trace.ended") {
+    const failed = event.trace.status === "failed";
+    writeLogRecord({
+      level: failed ? "error" : "info",
+      kind: "trace",
+      context: "agent.runtime",
+      event: failed ? "agent.run.failed" : "agent.run.completed",
+      message: failed ? "agent run failed" : "agent run completed",
+      status: failed ? "error" : event.trace.status === "cancelled" ? "cancelled" : "ok",
+      traceId: correlationTraceId,
+      runId: event.trace.runId,
+      threadId: event.trace.threadId,
+      data: { storeTraceId: event.trace.id }
+    });
+    return;
+  }
+  const span = event.span;
+  const suffix = event.type === "span.started"
+    ? "started"
+    : span.status === "failed" ? "failed" : "completed";
+  const eventName = span.type === "model_call"
+    ? `provider.request.${suffix}`
+    : span.type === "tool_call"
+      ? `tool.${suffix}`
+      : `agent.span.${suffix}`;
+  writeLogRecord({
+    level: span.status === "failed" ? "error" : "info",
+    kind: "trace",
+    context: `agent.runtime.${span.type}`,
+    event: eventName,
+    message: `${span.name} ${suffix}`,
+    status: event.type === "span.started" ? "started" : span.status === "failed" ? "error" : "ok",
+    durationMs: span.durationMs,
+    traceId: correlationTraceId,
+    spanId: span.id,
+    parentSpanId: span.parentId,
+    runId: event.trace.runId,
+    threadId: event.trace.threadId,
+    providerAttemptId: span.type === "model_call" ? span.id : undefined,
+    toolCallId: span.type === "tool_call" ? span.id : undefined,
+    data: {
+      storeTraceId: event.trace.id,
+      spanType: span.type,
+      spanName: span.name,
+      ...(span.metadata ? { metadata: span.metadata } : {}),
+      ...(span.type === "model_call" && span.output && typeof span.output === "object"
+        ? { usage: (span.output as { usage?: unknown }).usage }
+        : {}),
+      ...(span.error ? { error: span.error } : {})
+    }
+  });
 }
 
 export class LumeRunObserver {
   private queue: Promise<void> = Promise.resolve();
   private runSpan?: LumeTraceSpan;
+  private modelSpan?: LumeTraceSpan;
   private readonly toolSpanIds = new Map<string, string>();
   private readonly subagentSpanIds = new Map<string, string>();
   private readonly subagentParentToolCallIds = new Map<string, string>();
@@ -58,16 +135,21 @@ export class LumeRunObserver {
   static async create(input: CreateLumeRunObserverInput): Promise<LumeRunObserver> {
     const stateStore = createFileBackedLumeRunStateStore(input.sessionDir);
     const traceStore = createFileBackedLumeTraceStore(input.sessionDir);
-    const traceRecorder = new TraceRecorder(traceStore);
+    const traceRecorder = new TraceRecorder(traceStore, { onEvent: publishTraceRecorderEvent });
     const runId = randomUUID();
     const trace = await traceRecorder.startTrace({
       runId,
       threadId: input.threadId,
       workspaceId: input.workspaceId,
       name: "Lume agent run",
+      correlationTraceId: input.traceContext?.traceId,
+      parentCorrelationTraceId: input.traceContext?.parentTraceId,
+      linkedCorrelationTraceId: input.traceContext?.linkedTraceId,
       metadata: {
         workspaceSlug: input.workspaceSlug,
-        permissionMode: input.permissionMode
+        permissionMode: input.permissionMode,
+        origin: input.traceContext?.origin,
+        submissionId: input.traceContext?.submissionId
       }
     });
     const now = new Date().toISOString();
@@ -91,7 +173,8 @@ export class LumeRunObserver {
         permissionMode: input.permissionMode,
         threadType: input.threadType,
         chatType: input.chatType,
-        messageMetadata: input.messageMetadata
+        messageMetadata: input.messageMetadata,
+        traceContext: input.traceContext
       },
       generatedItems: [],
       pendingInterruptions: [],
@@ -117,6 +200,18 @@ export class LumeRunObserver {
       input: {
         userMessage: input.userMessage,
         permissionMode: input.permissionMode
+      }
+    });
+    observer.modelSpan = await traceRecorder.startSpan({
+      traceId: trace.id,
+      parentId: observer.runSpan.id,
+      type: "model_call",
+      name: `${input.model.provider}/${input.model.modelId}`,
+      metadata: {
+        provider: input.model.provider,
+        modelId: input.model.modelId,
+        modelRef: input.model.modelRef,
+        channelId: input.model.channelId
       }
     });
     return observer;
@@ -366,6 +461,17 @@ export class LumeRunObserver {
       };
     }
     await this.stateStore.update(this.state.runId, patch);
+    if (this.modelSpan) {
+      if (status === "failed") {
+        await this.traceRecorder.failSpan(this.modelSpan.id, error ?? "model call failed");
+      } else {
+        await this.traceRecorder.endSpan(this.modelSpan.id, {
+          status,
+          usage: (await this.stateStore.get(this.state.runId))?.usage
+        });
+      }
+      this.modelSpan = undefined;
+    }
     if (this.runSpan) {
       if (status === "failed") {
         await this.traceRecorder.failSpan(this.runSpan.id, error ?? "runtime failed");
@@ -742,6 +848,7 @@ function normalizeRuntimeBillingRecord(value: unknown): RuntimeBillingUsageSumma
         }
       : {}),
     ...usage,
+    ...(typeof record.ttftMs === "number" && Number.isFinite(record.ttftMs) ? { ttftMs: record.ttftMs } : {}),
     ...(typeof record.costUSD === "number" && Number.isFinite(record.costUSD) ? { costUSD: record.costUSD } : {})
   };
 }
@@ -752,9 +859,9 @@ function normalizeRuntimeUsage(value: unknown): RuntimeNormalizedUsage {
   const outputTokens = numberValue(record.outputTokens);
   const cacheReadInputTokens = numberValue(record.cacheReadInputTokens);
   const cacheCreationInputTokens = numberValue(record.cacheCreationInputTokens);
-  const splitCachedTokens = cacheReadInputTokens + cacheCreationInputTokens;
   const directCachedTokens = numberValue(record.cachedTokens);
-  const cachedTokens = splitCachedTokens > 0 ? splitCachedTokens : directCachedTokens;
+  const hasSplitCacheUsage = cacheReadInputTokens > 0 || cacheCreationInputTokens > 0;
+  const cachedTokens = hasSplitCacheUsage ? cacheReadInputTokens : directCachedTokens;
   const explicitTotalTokens = numberValue(record.totalTokens);
   return {
     inputTokens,
@@ -762,7 +869,9 @@ function normalizeRuntimeUsage(value: unknown): RuntimeNormalizedUsage {
     cacheReadInputTokens,
     cacheCreationInputTokens,
     cachedTokens,
-    totalTokens: explicitTotalTokens > 0 ? explicitTotalTokens : inputTokens + outputTokens + cachedTokens
+    totalTokens: explicitTotalTokens > 0
+      ? explicitTotalTokens
+      : inputTokens + outputTokens + cachedTokens + cacheCreationInputTokens
   };
 }
 

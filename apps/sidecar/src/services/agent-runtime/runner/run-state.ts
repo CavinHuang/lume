@@ -1,5 +1,6 @@
 import type {
   AgentMessageAttachmentInput,
+  AgentTraceContext,
   RuntimeBillingUsageSummary,
   RuntimeUsageContextSnapshot
 } from "@lume/shared";
@@ -47,6 +48,7 @@ export interface LumeRunInput {
   chatType?: string;
   messageAttachments?: AgentMessageAttachmentInput[];
   messageMetadata?: Record<string, unknown>;
+  traceContext?: AgentTraceContext;
 }
 
 export interface LumeApprovalState {

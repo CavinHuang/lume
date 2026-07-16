@@ -40,11 +40,11 @@ describe("ui-state-service", () => {
     });
   });
 
-  test("更新 UI 状态时应保留其他 settings 字段并原子写入", () => {
+  test("更新 UI 状态时应保留其他 settings 字段并原子写入", async () => {
     const settingsPath = getSettingsPath();
     writeFileSync(settingsPath, JSON.stringify({ proxy: { enabled: true } }, null, 2), "utf-8");
 
-    const result = updatePersistedUiState({
+    const result = await updatePersistedUiState({
       activeView: "settings",
       currentAgentThreadId: "thread-1",
       currentAgentWorkspaceId: "workspace-1",

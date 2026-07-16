@@ -1,3 +1,6 @@
+import type { LumeLoggingSettings } from "./logging"
+import { LUME_LOGGING_DEFAULTS } from "./logging"
+
 export type ThemeMode = "system" | "light" | "dark"
 
 export type ThemePalette = "mint" | "iris" | "clay" | "ocean" | "sakura" | "ember" | "mono" | "lavender" | "olive"
@@ -23,6 +26,7 @@ export interface GeneralSettings {
   windowBehavior: GeneralSettingsWindowBehavior
   updateSettings: GeneralSettingsUpdateSettings
   agentMessageDisplayMode: AgentMessageDisplayMode
+  logging: LumeLoggingSettings
 }
 
 export interface UpdateGeneralSettingsInput {
@@ -31,6 +35,7 @@ export interface UpdateGeneralSettingsInput {
   windowBehavior?: Partial<GeneralSettingsWindowBehavior>
   updateSettings?: Partial<GeneralSettingsUpdateSettings>
   agentMessageDisplayMode?: AgentMessageDisplayMode
+  logging?: Partial<LumeLoggingSettings>
 }
 
 export type LogViewerLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal"
@@ -64,15 +69,26 @@ export interface LogFileListResult {
 
 export interface LogLineEntry {
   lineNumber: number
+  /** Present when a query spans multiple log segments. */
+  fileName?: string
   level: LogViewerLevel
   text: string
+  rawJson?: string
+  event?: import("./logging").LumeLogEventV2
 }
 
 export interface ReadLogFileInput {
+  /** Use "*" to query all retained log segments. */
   fileName: string
   levels?: LogViewerLevel[]
   query?: string
   maxLines?: number
+  traceId?: string
+  source?: import("./logging").LumeLogSource
+  kind?: import("./logging").LumeLogKind
+  context?: string
+  event?: string
+  status?: import("./logging").LumeLogStatus
 }
 
 export interface ReadLogFileResult {
@@ -116,7 +132,8 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
     installOnlyWhenIdle: true,
     lastUpdateCheckAt: null
   },
-  agentMessageDisplayMode: "minimal"
+  agentMessageDisplayMode: "minimal",
+  logging: { ...LUME_LOGGING_DEFAULTS }
 }
 
 export const GENERAL_SETTINGS_IPC_CHANNELS = {

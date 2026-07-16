@@ -58,6 +58,7 @@ interface PreparedRuntimeCoreAttempt {
   workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   openaiApiMode?: OpenAiApiMode;
+  channelProvider: string;
   apiKey: string;
 }
 
@@ -130,6 +131,7 @@ export class LumeRunner {
       threadType: params.runtime.threadType,
       chatType: params.input.chatType,
       messageMetadata: params.input.messageMetadata,
+      traceContext: params.input.traceContext,
       model: {
         provider: prepared.modelResolution.provider,
         modelId: prepared.modelResolution.resolvedModelId,
@@ -300,6 +302,7 @@ export class LumeRunner {
       agentDir: prepared.agentDir,
       userMessage: input.userMessage,
       provider: prepared.modelResolution.provider,
+      channelProvider: prepared.channelProvider,
       openaiApiMode: prepared.openaiApiMode,
       modelRef: runtime.modelRef,
       resolvedModelId: prepared.modelResolution.resolvedModelId,

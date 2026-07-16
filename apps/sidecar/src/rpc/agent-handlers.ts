@@ -1,4 +1,5 @@
 import { AGENT_IPC_CHANNELS, type BootstrapFileType } from "@lume/shared";
+import { randomUUID } from "node:crypto";
 import type {
   AgentPendingInteractiveState,
   AgentGenerateTitleInput,
@@ -153,7 +154,7 @@ import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../serv
 import { createDefaultPluginMarketService } from "../services/plugins/plugin-market-service";
 import { createDefaultPluginBridgeService } from "../services/plugins/plugin-bridge-service";
 import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/config-paths";
-import { createLogger } from "../services/infra/logger";
+import { createLogger, writeLogRecord } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
 import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
@@ -380,6 +381,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         chatType: state.input.chatType as never,
         threadType: state.input.threadType as never,
         permissionMode: state.input.permissionMode,
+        traceContext: {
+          submissionId: randomUUID(),
+          traceId: randomUUID(),
+          origin: "resume",
+          ...(state.input.traceContext?.traceId ? { linkedTraceId: state.input.traceContext.traceId } : {})
+        },
         messageMetadata: {
           ...(state.input.messageMetadata ?? {}),
           runtimeContinuation: {
@@ -1700,7 +1707,32 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return { ok: true };
     },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
-      const input = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
+      const validated = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
+      const input: AgentSendInput = {
+        ...validated,
+        traceContext: {
+          submissionId: validated.traceContext?.submissionId ?? randomUUID(),
+          ...(validated.traceContext?.clientEventId ? { clientEventId: validated.traceContext.clientEventId } : {}),
+          traceId: validated.traceContext?.traceId ?? randomUUID(),
+          origin: (validated.traceContext?.origin ?? "main_window") as NonNullable<AgentSendInput["traceContext"]>["origin"],
+          ...(validated.traceContext?.parentTraceId ? { parentTraceId: validated.traceContext.parentTraceId } : {}),
+          ...(validated.traceContext?.parentSpanId ? { parentSpanId: validated.traceContext.parentSpanId } : {}),
+          ...(validated.traceContext?.linkedTraceId ? { linkedTraceId: validated.traceContext.linkedTraceId } : {})
+        }
+      };
+      writeLogRecord({
+        level: "info",
+        kind: "trace",
+        context: "agent.dispatch",
+        event: "message.validated",
+        message: "agent message validated by sidecar",
+        status: "ok",
+        traceId: input.traceContext?.traceId,
+        submissionId: input.traceContext?.submissionId,
+        threadId: input.threadId,
+        origin: input.traceContext?.origin,
+        data: { messageLength: input.userMessage.length }
+      });
       const approvalDispatch = await runtimeOrchestrator.dispatchPlanExecutionApproval(input);
       if (approvalDispatch) {
         return approvalDispatch;
@@ -1709,14 +1741,28 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       if (sendInput.permissionMode === "plan") {
         context.notifyPlanModePhaseChange(sendInput.threadId, "planning");
       }
-      return appendAgentMessageForContext(sendInput, createAgentStreamEmitter(sendInput.threadId, {
+      const result = appendAgentMessageForContext(sendInput, createAgentStreamEmitter(sendInput.threadId, {
         workspaceSlug: resolveWorkspaceSlugForThread(sendInput.threadId, sendInput.workspaceId)
       }), {
         onExecutionStarted: createExecutionStartCallback(sendInput)
       });
+      writeLogRecord({
+        level: "info",
+        kind: "trace",
+        context: "agent.dispatch",
+        event: result.mode === "queued" ? "agent.queue.accepted" : "agent.execution.started",
+        message: result.mode === "queued" ? "agent message queued" : "agent execution started",
+        status: "ok",
+        traceId: sendInput.traceContext?.traceId,
+        submissionId: sendInput.traceContext?.submissionId,
+        threadId: sendInput.threadId,
+        origin: sendInput.traceContext?.origin,
+        data: { mode: result.mode, queuedCount: result.queuedCount, queuedMessageId: result.queuedMessage?.id }
+      });
+      return result;
     },
     [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {
-      const input = validateInput(agentAppendInputSchema, params, AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE);
+      const input = validateInput(agentAppendInputSchema, params, AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE) as AgentSendInput;
       return appendAgentMessageForContext(input, createAgentStreamEmitter(input.threadId, {
         workspaceSlug: resolveWorkspaceSlugForThread(input.threadId, input.workspaceId)
       }), {

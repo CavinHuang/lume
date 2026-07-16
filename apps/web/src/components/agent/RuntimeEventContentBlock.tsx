@@ -2107,7 +2107,7 @@ function getFooterTokenUsage(
 ): FooterTokenUsage | null {
   const inputTokens = positiveInteger(usage?.inputTokens)
   const outputTokens = positiveInteger(usage?.outputTokens ?? tokenCount)
-  const cachedTokens = positiveInteger(usage?.cachedTokens ?? ((usage?.cacheReadInputTokens ?? 0) + (usage?.cacheCreationInputTokens ?? 0)))
+  const cachedTokens = positiveInteger(usage?.cachedTokens ?? usage?.cacheReadInputTokens)
   const contextPercent = percentInteger(usage?.contextPercent)
   if (inputTokens === undefined && outputTokens === undefined && cachedTokens === undefined && contextPercent === undefined) return null
 

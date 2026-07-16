@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { ImPeerRef, ImThreadBinding } from "@lume/shared";
 import { getImThreadBindingsPath } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
 
 const CONFIG_VERSION = 1;
+const log = createLogger("im-thread-bindings");
 
 interface ImThreadBindingConfig {
   version: number;
@@ -27,7 +29,7 @@ function readConfig(): ImThreadBindingConfig {
       bindings: Array.isArray(parsed.bindings) ? parsed.bindings : []
     };
   } catch (error) {
-    console.error("[IM] 读取会话绑定失败:", error);
+    log.error("failed to read IM thread bindings", { error });
     return { version: CONFIG_VERSION, bindings: [] };
   }
 }

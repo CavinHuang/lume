@@ -78,6 +78,61 @@
   overflow-x: auto;
 }
 
+.reading-note-markdown {
+  color: var(--text-1);
+  font-family: var(--reading-serif);
+  font-size: 12.5px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.reading-note-markdown p,
+.reading-note-markdown ul,
+.reading-note-markdown ol,
+.reading-note-markdown blockquote,
+.reading-note-markdown pre,
+.reading-note-markdown table {
+  margin: 0 0 8px;
+}
+
+.reading-note-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.reading-note-markdown h1,
+.reading-note-markdown h2,
+.reading-note-markdown h3,
+.reading-note-markdown h4 {
+  margin: 12px 0 5px;
+  color: var(--text-1);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.reading-note-markdown h1 { font-size: 16px; }
+.reading-note-markdown h2 { font-size: 15px; }
+.reading-note-markdown h3 { font-size: 14px; }
+.reading-note-markdown h4 { font-size: 13px; }
+
+.reading-note-markdown ul,
+.reading-note-markdown ol {
+  padding-left: 20px;
+}
+
+.reading-note-markdown ul { list-style: disc; }
+.reading-note-markdown ol { list-style: decimal; }
+
+.reading-note-markdown blockquote {
+  border-left: 2px solid var(--reading-border);
+  padding-left: 10px;
+  color: var(--text-2);
+}
+
+.reading-note-markdown code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
 .agent-message-markdown {
   color: var(--lume-text-primary);
   font-weight: 450;

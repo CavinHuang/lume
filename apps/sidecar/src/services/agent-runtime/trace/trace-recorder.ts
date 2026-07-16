@@ -8,6 +8,9 @@ export interface StartTraceInput {
   workspaceId?: string;
   name: string;
   metadata?: Record<string, unknown>;
+  correlationTraceId?: string;
+  parentCorrelationTraceId?: string;
+  linkedCorrelationTraceId?: string;
 }
 
 export interface StartSpanInput {
@@ -22,12 +25,20 @@ export interface StartSpanInput {
 interface TraceRecorderOptions {
   createId?: () => string;
   now?: () => string;
+  onEvent?: (event: TraceRecorderEvent) => void;
 }
+
+export type TraceRecorderEvent =
+  | { type: "trace.started"; trace: LumeTrace }
+  | { type: "trace.ended"; trace: LumeTrace }
+  | { type: "span.started"; trace: LumeTrace; span: LumeTraceSpan }
+  | { type: "span.ended"; trace: LumeTrace; span: LumeTraceSpan }
 
 export class TraceRecorder {
   private readonly createId: () => string;
   private readonly now: () => string;
   private readonly spanTraceIds = new Map<string, string>();
+  private readonly onEvent?: (event: TraceRecorderEvent) => void;
 
   constructor(
     private readonly store: LumeTraceStore,
@@ -35,11 +46,16 @@ export class TraceRecorder {
   ) {
     this.createId = options.createId ?? randomUUID;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.onEvent = options.onEvent;
   }
 
   async startTrace(input: StartTraceInput): Promise<LumeTrace> {
     const trace: LumeTrace = {
+      schemaVersion: 2,
       id: this.createId(),
+      correlationTraceId: input.correlationTraceId,
+      parentCorrelationTraceId: input.parentCorrelationTraceId,
+      linkedCorrelationTraceId: input.linkedCorrelationTraceId,
       threadId: input.threadId,
       runId: input.runId,
       workspaceId: input.workspaceId,
@@ -50,14 +66,18 @@ export class TraceRecorder {
       metadata: input.metadata
     };
     await this.store.create(trace);
+    this.onEvent?.({ type: "trace.started", trace });
     return trace;
   }
 
   async endTrace(traceId: string, status: LumeTrace["status"]): Promise<void> {
+    const trace = await this.store.get(traceId);
+    const endedAt = this.now();
     await this.store.update(traceId, {
       status,
-      endedAt: this.now()
+      endedAt
     });
+    if (trace) this.onEvent?.({ type: "trace.ended", trace: { ...trace, status, endedAt } });
   }
 
   async startSpan(input: StartSpanInput): Promise<LumeTraceSpan> {
@@ -74,6 +94,8 @@ export class TraceRecorder {
     };
     await this.store.appendSpan(input.traceId, span);
     this.spanTraceIds.set(span.id, input.traceId);
+    const trace = await this.store.get(input.traceId);
+    if (trace) this.onEvent?.({ type: "span.started", trace, span });
     return span;
   }
 
@@ -87,6 +109,12 @@ export class TraceRecorder {
       durationMs: calculateDurationMs(span.startedAt, endedAt),
       output
     });
+    const trace = await this.store.get(span.traceId);
+    if (trace) this.onEvent?.({
+      type: "span.ended",
+      trace,
+      span: { ...span, status: "completed", endedAt, durationMs: calculateDurationMs(span.startedAt, endedAt), output }
+    });
   }
 
   async failSpan(spanId: string, error: unknown): Promise<void> {
@@ -98,6 +126,18 @@ export class TraceRecorder {
       endedAt,
       durationMs: calculateDurationMs(span.startedAt, endedAt),
       error: normalizeError(error)
+    });
+    const trace = await this.store.get(span.traceId);
+    if (trace) this.onEvent?.({
+      type: "span.ended",
+      trace,
+      span: {
+        ...span,
+        status: "failed",
+        endedAt,
+        durationMs: calculateDurationMs(span.startedAt, endedAt),
+        error: normalizeError(error)
+      }
     });
   }
 

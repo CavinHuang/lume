@@ -84,6 +84,7 @@ export interface RuntimeCoreSessionManager {
     content: unknown;
     timestamp?: number;
     provider?: string;
+    channelProvider?: string;
     model?: string;
     toolCallId?: string;
     toolName?: string;
@@ -347,6 +348,7 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     content: unknown;
     timestamp?: number;
     provider?: string;
+    channelProvider?: string;
     model?: string;
     toolCallId?: string;
     toolName?: string;

@@ -14,8 +14,12 @@ const jsdomEntry = sdkRequire.resolve("jsdom");
 const jsdomLibDir = dirname(jsdomEntry);
 const XHR_WORKER_ENTRY = resolve(jsdomLibDir, "jsdom", "living", "xhr", "xhr-sync-worker.js");
 
-rmSync(OUT_DIR, { recursive: true, force: true });
 mkdirSync(OUT_DIR, { recursive: true });
+// Windows utilityProcess may keep the directory handle open briefly even after
+// files are released. Clear children without deleting the stable directory.
+for (const child of readdirSync(OUT_DIR)) {
+  rmSync(resolve(OUT_DIR, child), { recursive: true, force: true });
+}
 
 for (const [entry, outfile] of [
   [SIDECAR_ENTRY, OUT_FILE],

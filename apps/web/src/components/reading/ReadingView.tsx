@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
+import { XMarkdown } from '@ant-design/x-markdown'
 import { WEREAD_KEY_PAGE_URL, type ReadingAddBookInput, type ReadingLibrarySnapshot, type ReadingNoteSummary, type ReadingSearchResult, type ReadingSourceKind } from '@lume/shared'
 import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -636,7 +637,7 @@ export function ReadingView() {
                           </blockquote>
                         )}
 
-                        <div className="mt-4 whitespace-pre-wrap [font-family:var(--reading-serif)] text-[13.5px] leading-[1.85] text-[var(--text-1)]">{note.body}</div>
+                        <ReadingNoteBody body={note.body} className="mt-4" />
 
                         {note.tags.length > 0 && (
                           <div className="mt-4 flex flex-wrap gap-1.5">
@@ -942,7 +943,7 @@ function WereadBookPanel({
                       “{note.excerpt}”
                     </blockquote>
                   )}
-                  <div className="mt-3 whitespace-pre-wrap [font-family:var(--reading-serif)] text-[13px] leading-[1.85]">{note.body}</div>
+                  <ReadingNoteBody body={note.body} className="mt-3" />
                 </article>
                 <ReadingNoteActions
                   onChat={() => onChatWithNote(note)}
@@ -1095,6 +1096,14 @@ function ReadingNoteActions({ onChat, onSave }: { onChat: () => void; onSave: ()
         存为图片
       </Button>
     </div>
+  )
+}
+
+function ReadingNoteBody({ body, className }: { body: string; className?: string }) {
+  return (
+    <XMarkdown className={cn('reading-note-markdown x-markdown', className)}>
+      {body}
+    </XMarkdown>
   )
 }
 

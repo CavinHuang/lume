@@ -2,15 +2,17 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { createLogger } from "./logger";
 
 const CONFIG_DIR_NAME = ".lume";
 const ALICE_CONFIG_DIR_NAME = ".alice";
+const log = createLogger("config-paths");
 
 function ensureDir(path: string, logLabel?: string): string {
   if (!existsSync(path)) {
     mkdirSync(path, { recursive: true });
     if (logLabel) {
-      console.log(`[配置] 已创建${logLabel}: ${path}`);
+      log.debug("created configuration directory", { label: logLabel, path });
     }
   }
   return path;

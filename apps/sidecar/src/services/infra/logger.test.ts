@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import * as loggerModule from "./logger";
 import {
   createDiagnosticLogSummary,
+  acknowledgeLogBatch,
+  flushLogTransport,
   getCurrentLogFileName,
   redactDiagnosticLogData,
-  shouldWriteLogFile,
+  sanitizeBaseUrlForLog,
+  setLogBatchNotificationWriter,
   writeLogRecord
 } from "./logger";
 
@@ -43,20 +46,23 @@ describe("logger diagnostic helpers", () => {
     expect(summary).toContain("(truncated)");
   });
 
-  test("uses the shared daily log file and can disable sidecar file writes", () => {
+  test("uses the shared daily log file name while main owns persistence", () => {
     expect(getCurrentLogFileName(new Date("2026-05-29T08:00:00.000Z"))).toBe("lume-2026-05-29.ndjson");
-    expect(shouldWriteLogFile(undefined)).toBe(true);
-    expect(shouldWriteLogFile("true")).toBe(true);
-    expect(shouldWriteLogFile("false")).toBe(false);
-    expect(shouldWriteLogFile(" FALSE ")).toBe(false);
+    expect(loggerModule.shouldWriteLogFile()).toBe(false);
   });
 
-  test("emits structured sidecar records to the Electron host writer", () => {
-    const records: unknown[] = [];
-    expect(typeof loggerModule.setLogRecordNotificationWriter).toBe("function");
+  test("keeps the full base URL path while removing credentials, query, fragment, and token-like segments", () => {
+    expect(sanitizeBaseUrlForLog("https://user:pass@example.com/v1/accounts/token/abc123456789012345678901?api_key=secret#x"))
+      .toBe("https://example.com/v1/accounts/token/[redacted]");
+    expect(sanitizeBaseUrlForLog("https://example.com/openai/deployments/gpt-4/chat/completions"))
+      .toBe("https://example.com/openai/deployments/gpt-4/chat/completions");
+  });
 
-    loggerModule.setLogRecordNotificationWriter((record) => {
-      records.push(record);
+  test("emits structured sidecar batches to the Electron host writer", () => {
+    const batches: any[] = [];
+
+    setLogBatchNotificationWriter((batch) => {
+      batches.push(batch);
     });
     try {
       writeLogRecord({
@@ -65,18 +71,24 @@ describe("logger diagnostic helpers", () => {
         message: "booting",
         data: { apiKey: "secret", ok: true }
       });
+      flushLogTransport();
+      acknowledgeLogBatch(batches[0].batchId);
     } finally {
-      loggerModule.setLogRecordNotificationWriter(null);
+      setLogBatchNotificationWriter(null);
     }
 
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({
-      level: "info",
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toMatchObject({
+      schemaVersion: 2,
       source: "sidecar",
-      context: "console",
-      message: "booting",
-      data: { apiKey: "[redacted]", ok: true }
+      events: [{
+        level: "info",
+        source: "sidecar",
+        context: "console",
+        message: "booting",
+        data: { apiKey: "[redacted]", ok: true }
+      }]
     });
-    expect((records[0] as { timestamp?: unknown }).timestamp).toEqual(expect.any(String));
+    expect(batches[0].events[0].emittedAt).toEqual(expect.any(String));
   });
 });

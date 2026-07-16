@@ -2,6 +2,9 @@ import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk"
 import type { RoutineContext } from "@lume/shared"
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager"
 import { getEffectiveLumeConfig } from "../system/lume-config-service"
+import { createLogger } from "../infra/logger"
+
+const log = createLogger("routine-llm")
 
 export interface LlmRoutineEntry {
   activity: string
@@ -31,7 +34,7 @@ export async function generateRoutinePlanWithLlm(
     baseURL: binding.channel.baseUrl,
   })
 
-  console.log("[日程] LLM 生成日程...")
+  log.debug("generating routine plan with LLM", { provider: binding.channel.provider, modelId: binding.modelId })
 
   const response = await provider.createMessage({
     model: binding.modelId,

@@ -9,8 +9,10 @@ import {
 } from "@lume/shared";
 import { getImConfigPath } from "../infra/config-paths";
 import { decryptSecret, encryptSecret } from "../infra/secret-crypto";
+import { createLogger } from "../infra/logger";
 
 const CONFIG_VERSION = 1;
+const log = createLogger("im-config");
 const DEFAULT_WEIXIN_BASE_URL = "https://ilinkai.weixin.qq.com";
 
 interface StoredImAccount extends Omit<ImAccount, "hasToken"> {
@@ -47,7 +49,7 @@ function readConfig(): ImConfig {
       accounts: Array.isArray(parsed.accounts) ? parsed.accounts : []
     };
   } catch (error) {
-    console.error("[IM] 读取配置文件失败:", error);
+    log.error("failed to read IM configuration", { error });
     return { version: CONFIG_VERSION, accounts: [] };
   }
 }

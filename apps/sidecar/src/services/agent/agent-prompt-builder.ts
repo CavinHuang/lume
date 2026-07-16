@@ -8,6 +8,7 @@ import type { SessionType as ThreadType } from "@lume/shared";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { getAgentWorkspacePath, getAgentConfigDir } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
 import { renderSkillManifestLines } from "./prompt/context/skill-manifest-builder";
 import { buildMemorySections } from "./prompt/sections/memory-sections";
 import {
@@ -39,6 +40,7 @@ import {
 export const LUME_AGENT_IDENTITY_LINE =
   "You are Lume. You help the user think, build, organize, and move work forward in this local-first workspace.";
 export type SystemPromptMode = "full" | "minimal" | "none";
+const log = createLogger("agent-prompt-builder");
 
 const READ_ONLY_AGENT_TOOLS = ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Skill"];
 const RUNTIME_HANDWRITTEN_AGENT_IDS = new Set<string>(["explorer", "planner", "code-reviewer"]);
@@ -200,7 +202,7 @@ export function loadCustomAgents(workspaceSlug?: string): Record<string, AgentDe
   const result: Record<string, AgentDefinition> = {};
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
-    for (const file of readdirSync(dir)) {
+    for (const file of readdirSync(dir).sort((left, right) => left.localeCompare(right))) {
       if (!file.endsWith(".md")) continue;
       try {
         const content = readFileSync(join(dir, file), "utf-8");
@@ -387,7 +389,7 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
       }
     } catch (error) {
       // 读取失败不影响主流程
-      console.warn("[Agent Prompt] 读取 Soul/Memory 组件失败:", error);
+      log.warn("failed to read Soul/Memory prompt components", { error });
     }
   }
 

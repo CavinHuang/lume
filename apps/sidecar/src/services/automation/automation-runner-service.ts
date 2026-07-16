@@ -14,6 +14,7 @@ import { getAutomationRunsPath } from "../infra/config-paths";
 import { getEffectiveSystemConfig } from "../system/system-config-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { matchCronExpression } from "./automation-schedule";
+import { writeLogRecord } from "../infra/logger";
 
 type JobDisposer = () => void;
 
@@ -108,6 +109,11 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
 
   runningJobs.add(job.id);
   let threadId: string | undefined;
+  const traceContext = {
+    submissionId: randomUUID(),
+    traceId: randomUUID(),
+    origin: "automation" as const
+  };
   let runStatus: AutomationRun["status"] = "success";
   let runMessage = "任务执行完成";
 
@@ -143,6 +149,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
         channelId,
         modelId,
         permissionMode: "bypassPermissions",
+        traceContext,
         messageMetadata: {
           automationJobId: job.id,
           automationTrigger: trigger
@@ -214,6 +221,20 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     finishedAt: Date.now()
   };
   appendRun(run);
+  writeLogRecord({
+    level: run.status === "failed" ? "error" : "info",
+    kind: "trace",
+    context: "agent.delivery.automation",
+    event: "automation.result_persisted",
+    message: "automation run result persisted",
+    status: run.status === "failed" ? "error" : run.status === "waiting_for_approval" ? "unknown" : "ok",
+    traceId: traceContext.traceId,
+    submissionId: traceContext.submissionId,
+    threadId,
+    origin: traceContext.origin,
+    durationMs: run.finishedAt - run.startedAt,
+    data: { automationJobId: job.id, runId: run.id, trigger, runStatus: run.status }
+  });
   if (notificationWriter) {
     notificationWriter("automation:run-completed", {
       run,

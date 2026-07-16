@@ -1,8 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import type { AgentProxySettings, AgentProxyStatus } from "@lume/shared";
-import { getSettingsPath } from "../infra/config-paths";
+import { readPersistedSettings, writePersistedSettings } from "./settings-store";
+import { createLogger } from "../infra/logger";
 
 interface StoredSettings {
   version: 1;
@@ -12,6 +11,7 @@ interface StoredSettings {
 
 const SETTINGS_VERSION = 1;
 const PROXY_SETTINGS_VERSION = 1;
+const log = createLogger("proxy-settings");
 
 const DEFAULT_PROXY_SETTINGS: AgentProxySettings = {
   version: PROXY_SETTINGS_VERSION,
@@ -43,16 +43,8 @@ export interface ActiveProxyConfig {
 type SystemProxySnapshot = Pick<ActiveProxyConfig, "httpProxy" | "httpsProxy" | "noProxy">;
 
 function readStoredSettings(): StoredSettings {
-  const path = getSettingsPath();
-  if (!existsSync(path)) {
-    return {
-      version: SETTINGS_VERSION,
-      proxy: DEFAULT_PROXY_SETTINGS
-    };
-  }
   try {
-    const text = readFileSync(path, "utf8");
-    const parsed = JSON.parse(text) as Partial<StoredSettings>;
+    const parsed = readPersistedSettings() as Partial<StoredSettings>;
     const rawProxy = parsed.proxy ?? DEFAULT_PROXY_SETTINGS;
     return {
       ...parsed,
@@ -60,7 +52,7 @@ function readStoredSettings(): StoredSettings {
       proxy: normalizeProxySettings(rawProxy)
     };
   } catch (error) {
-    console.error("[代理配置] 读取 settings.json 失败，使用默认配置:", error);
+    log.error("failed to read proxy settings; using defaults", { error });
     return {
       version: SETTINGS_VERSION,
       proxy: DEFAULT_PROXY_SETTINGS
@@ -68,21 +60,14 @@ function readStoredSettings(): StoredSettings {
   }
 }
 
-function writeStoredSettings(proxy: AgentProxySettings): void {
-  const path = getSettingsPath();
+async function writeStoredSettings(proxy: AgentProxySettings): Promise<void> {
   const prev = readStoredSettings();
   const payload: StoredSettings = {
     ...prev,
     version: SETTINGS_VERSION,
     proxy
   };
-  const dir = dirname(path);
-  const tmpPath = `${path}.tmp-${Date.now()}`;
-  writeFileSync(tmpPath, JSON.stringify(payload, null, 2), "utf8");
-  renameSync(tmpPath, path);
-  if (!existsSync(dir)) {
-    throw new Error("settings 目录写入失败");
-  }
+  await writePersistedSettings(payload);
 }
 
 function pickProxyValue(value: string | undefined): string | undefined {
@@ -232,7 +217,7 @@ async function applyUndiciProxyDispatcher(mode: AgentProxySettings["mode"], prox
       undici.setGlobalDispatcher(new undici.EnvHttpProxyAgent());
     }
   } catch (error) {
-    console.error("[代理配置] undici dispatcher 设置失败（已忽略）:", error);
+    log.warn("failed to configure undici dispatcher; continuing without it", { error });
   }
 }
 
@@ -302,7 +287,7 @@ export function getActiveProxyConfig(): ActiveProxyConfig {
 
 export async function saveAgentProxySettings(input: AgentProxySettings): Promise<AgentProxyStatus> {
   const normalized = normalizeProxySettings(input);
-  writeStoredSettings(normalized);
+  await writeStoredSettings(normalized);
   await applyProxySettings(normalized);
   return getAgentProxyStatus();
 }

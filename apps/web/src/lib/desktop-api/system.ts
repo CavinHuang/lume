@@ -1,4 +1,5 @@
 import { invoke } from '@/lib/desktop-runtime/core'
+import { listen } from '@/lib/desktop-runtime/event'
 import { clearHighlightCache } from '@lume/ui'
 import {
   AGENT_IPC_CHANNELS,
@@ -15,6 +16,8 @@ import {
   type TestSearchBackendInput,
   type TestSearchBackendResult,
   type UpdateGeneralSettingsInput,
+  type LumeLogEventV2,
+  type LumeDiagnosticStatus,
 } from '@lume/shared'
 
 export const sidecarCall = <T = unknown>(method: string, params?: unknown) =>
@@ -94,7 +97,7 @@ export const getLatestGitHubRelease = () =>
   sidecarCall<GitHubRelease | null>(GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE, {})
 
 export const openLogsDir = () =>
-  sidecarCall<{ ok: boolean }>(GENERAL_SETTINGS_IPC_CHANNELS.OPEN_LOGS_DIR, {})
+  desktopCall<{ ok: boolean }>('desktop_open_logs_dir')
 
 export const listLogFiles = () =>
   desktopCall<LogFileListResult>('desktop_list_log_files')
@@ -105,10 +108,46 @@ export const readLogFile = (input: ReadLogFileInput) =>
     levels: input.levels,
     keyword: input.query,
     maxLines: input.maxLines,
+    traceId: input.traceId,
+    source: input.source,
+    kind: input.kind,
+    context: input.context,
+    event: input.event,
+    status: input.status,
   })
 
 export const exportLogs = () =>
-  sidecarCall<ExportLogsResult>(GENERAL_SETTINGS_IPC_CHANNELS.EXPORT_LOGS, {})
+  desktopCall<ExportLogsResult>('desktop_export_logs')
+
+export const deleteLogs = () =>
+  desktopCall<{ deleted: number }>('desktop_delete_logs')
+
+export const subscribeLiveLogs = async (listener: (events: LumeLogEventV2[]) => void) => {
+  const unlisten = await listen<{ events: LumeLogEventV2[] }>('logs:live', ({ payload }) => listener(payload.events))
+  await desktopCall('desktop_log_live_subscribe')
+  return async () => {
+    unlisten()
+    await desktopCall('desktop_log_live_unsubscribe').catch(() => {})
+  }
+}
+
+export const getDiagnosticStatus = () =>
+  desktopCall<LumeDiagnosticStatus>('desktop_diagnostic_status')
+
+export const startDiagnosticCapture = (input: { threadId?: string; traceId?: string; durationMinutes: number }) =>
+  desktopCall<LumeDiagnosticStatus>('desktop_diagnostic_start', input)
+
+export const stopDiagnosticCapture = (deleteContent = false) =>
+  desktopCall<LumeDiagnosticStatus>('desktop_diagnostic_stop', { deleteContent })
+
+export const decryptDiagnosticContent = (recordId: string) =>
+  desktopCall<{ content: string; captureType: string; threadId: string; traceId: string; messageId: string }>(
+    'desktop_diagnostic_decrypt',
+    { recordId },
+  )
+
+export const deleteDiagnosticContent = () =>
+  desktopCall<{ deleted: number }>('desktop_diagnostic_delete')
 
 export const testSearchBackend = (input: TestSearchBackendInput) =>
   sidecarCall<TestSearchBackendResult>(GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND, input)

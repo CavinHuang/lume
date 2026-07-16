@@ -1,4 +1,5 @@
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { resolveAgentThreadWorkdir, type ResolvedAgentWorkdir } from "../../agent/agent-workdir-resolver";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runner/types";
@@ -19,6 +20,7 @@ export interface PreparedRuntimeCoreAttempt {
   workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   openaiApiMode?: OpenAiApiMode;
+  channelProvider: string;
   apiKey: string;
 }
 
@@ -65,7 +67,12 @@ export async function prepareRuntimeCoreAttempt(
   }
   let resolvedWorkdir: ResolvedAgentWorkdir;
   try {
-    resolvedWorkdir = resolveAgentThreadWorkdir(runtime.sessionId);
+    const workdirThreadId = runtime.threadType === "subagent"
+      && runtime.deliveryThreadId
+      && !getAgentThreadMeta(runtime.sessionId)
+      ? runtime.deliveryThreadId
+      : runtime.sessionId;
+    resolvedWorkdir = resolveAgentThreadWorkdir(workdirThreadId);
     agentCwd = resolvedWorkdir.agentCwd;
   } catch (error) {
     return {
@@ -87,6 +94,7 @@ export async function prepareRuntimeCoreAttempt(
     workspaceSlug,
     modelResolution,
     openaiApiMode: channel.openaiApiMode,
+    channelProvider: channel.provider,
     apiKey
   };
 }

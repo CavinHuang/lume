@@ -16,7 +16,7 @@ const CONTEXT_THRESHOLDS = [
   { pct: '85%', label: 'Collapse', dotClassName: 'bg-destructive', textClassName: 'text-destructive' },
 ]
 
-const usageRecordGridClassName = 'grid grid-cols-[1fr_44px_44px_40px_44px_52px] border-t border-border/20 first:border-t-0'
+const usageRecordGridClassName = 'grid grid-cols-[1fr_40px_40px_40px_38px_40px_48px] border-t border-border/20 first:border-t-0'
 
 export function ContextWindowIndicator({ progress, defaultOpen = false }: ContextWindowIndicatorProps) {
   const [open, setOpen] = useState(defaultOpen)
@@ -123,12 +123,19 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
             <div className="border-t border-border/35 px-3 py-2">
               <div className="mb-2 text-[10px] font-medium text-foreground/65">Token 明细</div>
               <div className="space-y-1">
-                <UsageSummaryRow label="总输入" value={formatTokenNumber(progress.usage.inputTokens)} />
+                <UsageSummaryRow label="总输入（未缓存）" value={formatTokenNumber(progress.usage.inputTokens)} />
                 {progress.usage.cachedTokens > 0 && (
                   <UsageSummaryRow
                     label="缓存命中"
                     value={formatTokenNumber(progress.usage.cachedTokens)}
                     valueClassName="text-emerald-500"
+                  />
+                )}
+                {(progress.usage.cacheWriteTokens ?? 0) > 0 && (
+                  <UsageSummaryRow
+                    label="缓存写入"
+                    value={formatTokenNumber(progress.usage.cacheWriteTokens ?? 0)}
+                    valueClassName="text-amber-500"
                   />
                 )}
                 <UsageSummaryRow label="总输出" value={formatTokenNumber(progress.usage.outputTokens)} />
@@ -144,7 +151,7 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
               {progress.usage.records && progress.usage.records.length > 0 && (
                 <div className="mt-2 overflow-hidden rounded-md border border-border/30">
                   <div className={usageRecordGridClassName}>
-                    {['调用方', '↑输入', '↑缓存', '命中率', '↓输出', '费用'].map((label, index) => (
+                    {['调用方', '↑输入', '命中', '写入', '命中率', '↓输出', '费用'].map((label, index) => (
                       <span
                         key={label}
                         className={cn(
@@ -175,6 +182,12 @@ export function ContextWindowIndicator({ progress, defaultOpen = false }: Contex
                           record.cachedTokens > 0 ? 'text-emerald-500' : 'text-foreground/30',
                         )}>
                           {record.cachedTokens > 0 ? formatTokenNumber(record.cachedTokens) : '-'}
+                        </span>
+                        <span className={cn(
+                          'px-1.5 py-1 text-right font-mono text-[10px]',
+                          (record.cacheWriteTokens ?? 0) > 0 ? 'text-amber-500' : 'text-foreground/30',
+                        )}>
+                          {(record.cacheWriteTokens ?? 0) > 0 ? formatTokenNumber(record.cacheWriteTokens ?? 0) : '-'}
                         </span>
                         <span className={cn(
                           'px-1.5 py-1 text-right font-mono text-[10px]',

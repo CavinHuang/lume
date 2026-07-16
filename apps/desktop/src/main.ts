@@ -26,6 +26,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -64,9 +65,7 @@ import {
   validateExternalUrl,
   validateMigrationTarget,
   validateWereadUrl,
-  writeDesktopLogRecord,
   writeLauncherConfigAt,
-  writeWebLogRecord,
 } from './desktop-core'
 import {
   createSecureWebPreferences,
@@ -96,6 +95,11 @@ import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
 import { loadOrCreateDesktopContextKey } from './desktop-context-key'
+import { LoggingService } from './logging/logging-service'
+import { DiagnosticContentStore } from './logging/diagnostic-content-store'
+import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecure } from './logging/log-digest-policy'
+import { SettingsBroker } from './settings/settings-broker'
+import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
 
 const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -107,6 +111,20 @@ const APP_PROTOCOL_ORIGIN = `${APP_PROTOCOL}://${APP_PROTOCOL_HOST}`
 const HEALTHCHECK_TIMEOUT_MS = 45_000
 const SIDECAR_READY_METHOD = 'system.ready'
 const SIDECAR_LOG_METHOD = 'system.log'
+const SIDECAR_LOG_BATCH_METHOD = 'system.log-batch'
+const SIDECAR_LOG_ACK_METHOD = 'system.log-ack'
+const SIDECAR_SETTINGS_REPLACE_METHOD = 'system.settings-replace'
+const QUIET_SIDECAR_RPC_METHODS = new Set([
+  'healthcheck',
+  'general-settings:get',
+  'agent:list-threads',
+  'agent:list-subagent-runs',
+  'agent:get-pending-interactive',
+  'agent:list-workspaces',
+  'model-meta:get',
+])
+const SLOW_RPC_MS = 2_000
+const RENDERER_DELIVERY_ACK_TIMEOUT_MS = 10_000
 const TEXT_FILE_LIMIT = 512 * 1024
 const SIDE_CAR_EVENT_CHANNEL = 'sidecar:event'
 const DATA_MIGRATE_PROGRESS_CHANNEL = 'data:migrate-progress'
@@ -155,24 +173,104 @@ let rememberedQuickInputDesktopTarget: {
 } | null = null
 let desktopHostSupervisor: ReturnType<typeof createDesktopHostSupervisor> | null = null
 let desktopHostState: DesktopHostState = { available: false, reason: 'desktop host has not started' }
+let loggingService: LoggingService | null = null
+let settingsBroker: SettingsBroker | null = null
+let diagnosticContentStore: DiagnosticContentStore | null = null
+let sidecarLogDigestPolicy: LumeLogDigestPolicy | null = null
+const pendingRendererDeliveries = new Map()
+const rendererLogSubscriptions = new Map()
+
+function getLoggingService() {
+  if (!loggingService) {
+    const persisted = getSettingsBroker().read()
+    const logging = (persisted.generalSettings as { logging?: unknown } | undefined)?.logging
+    loggingService = new LoggingService({
+      configDir: resolveConfigDir(),
+      ...(logging && typeof logging === 'object' ? { settings: logging } : {}),
+    })
+  }
+  return loggingService
+}
+
+function getSettingsBroker() {
+  if (!settingsBroker) settingsBroker = new SettingsBroker(resolveConfigDir())
+  return settingsBroker
+}
+
+function getDiagnosticContentStore() {
+  if (!diagnosticContentStore) {
+    diagnosticContentStore = new DiagnosticContentStore(resolveConfigDir(), {
+      isAvailable: () => isSafeStorageSecure(safeStorage),
+      encrypt: (value) => safeStorage.encryptString(value),
+      decrypt: (value) => safeStorage.decryptString(value),
+    })
+  }
+  return diagnosticContentStore
+}
+
+function getSidecarLogDigestPolicy() {
+  if (!sidecarLogDigestPolicy) {
+    sidecarLogDigestPolicy = createSidecarLogDigestPolicy({
+      rootKeyPath: join(resolveConfigDir(), 'logging', 'digest-root.bin'),
+      safeStorage,
+      allowPersistentKey: isSafeStorageSecure(safeStorage),
+    })
+  }
+  return sidecarLogDigestPolicy
+}
+
+function getDiagnosticLease(): LumeDiagnosticCaptureSettings | null {
+  const settings = getSettingsBroker().read()
+  const logging = (settings.generalSettings as { logging?: { diagnosticCapture?: unknown } } | undefined)?.logging
+  if (!logging?.diagnosticCapture || typeof logging.diagnosticCapture !== 'object') return null
+  const lease = logging.diagnosticCapture as LumeDiagnosticCaptureSettings
+  return lease.enabled && lease.expiresAt && Date.parse(lease.expiresAt) <= Date.now()
+    ? { ...lease, enabled: false }
+    : lease
+}
+
+function writeMainLog(level, context, event, message, extra = {}) {
+  return getLoggingService().emit({
+    level,
+    source: 'main',
+    context,
+    event,
+    message,
+    ...extra,
+  })
+}
 
 /** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow 存在时纳入。 */
 function getTrustedWindows() {
   return [mainWindow, quickInputWindow].filter(Boolean)
 }
 
-function logDesktopStartup(message) {
-  console.error(`[desktop] ${message}`)
-  try {
-    writeDesktopLogRecord(resolveConfigDir(), {
-      level: 'info',
-      source: 'main',
-      context: 'startup',
-      message,
-    })
-  } catch {
-    // Startup diagnostics must never block application startup.
+function resolveRendererTraceOrigin(ownerWebContentsId) {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id === ownerWebContentsId) return 'main_window'
+  if (quickInputWindow && !quickInputWindow.isDestroyed() && quickInputWindow.webContents.id === ownerWebContentsId) return 'quick_input'
+  throw new Error('cannot derive trace origin from untrusted renderer')
+}
+
+function createSafeMessageLogSummary(value) {
+  const text = typeof value === 'string' ? value : ''
+  const digestPolicy = getSidecarLogDigestPolicy()
+  const preview = text
+    .replace(/\b(?:Bearer\s+)?[A-Za-z0-9_-]{32,}\b/gi, '[redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]+\b/gi, '[redacted]')
+    .slice(0, 256)
+  return {
+    length: text.length,
+    preview,
+    truncated: text.length > 256,
+    contentDigest: createLogContentDigest(digestPolicy, text, 'agent-content:user'),
+    contentDigestAlgorithm: digestPolicy.algorithm,
+    contentDigestKeyVersion: digestPolicy.keyVersion,
+    contentDigestScope: digestPolicy.scope,
   }
+}
+
+function logDesktopStartup(message, event = 'app.lifecycle', level = 'info') {
+  writeMainLog(level, 'desktop.lifecycle', event, message)
   const logPath = process.env.LUME_DESKTOP_STARTUP_LOG?.trim()
   if (!logPath) return
   try {
@@ -182,7 +280,7 @@ function logDesktopStartup(message) {
   }
 }
 
-logDesktopStartup('main module loaded')
+logDesktopStartup('main module loaded', 'app.started')
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -208,6 +306,30 @@ protocol.registerSchemesAsPrivileged([
 
 const sidecarHost = createSidecarHost({
   onNotification(method, params) {
+    if (method === 'system.diagnostic-content') {
+      const lease = getDiagnosticLease()
+      if (!lease) return
+      void getDiagnosticContentStore().capture(params, lease)
+        .then((recordId) => {
+          writeMainLog('info', 'logging.diagnostic', 'diagnostic.content_captured', 'encrypted diagnostic content captured', {
+            kind: 'trace',
+            status: 'ok',
+            traceId: params.traceId,
+            threadId: params.threadId,
+            messageId: params.messageId,
+            data: { recordId, captureType: params.captureType },
+          })
+        })
+        .catch((error) => {
+          writeMainLog('warn', 'logging.diagnostic', 'diagnostic.capture_rejected', 'diagnostic content capture rejected', {
+            traceId: params?.traceId,
+            threadId: params?.threadId,
+            messageId: params?.messageId,
+            data: { error },
+          })
+        })
+      return
+    }
     // render:request 是 reverse-RPC：sidecar 请求 main 渲染 URL。不转发给 renderer，
     // 而是交给 PageRenderer 处理，完成后经 render:result 把 html|error 回送 sidecar。
     if (method === 'render:request' && params && typeof params.reqId === 'string') {
@@ -303,7 +425,7 @@ function showDesktopActionHud(method, params) {
       win.showInactive()
     })
     .catch((error) => {
-      console.error(`[desktop] desktop action HUD failed: ${error instanceof Error ? error.message : String(error)}`)
+      writeMainLog('error', 'desktop.action_hud', 'hud.render_failed', 'desktop action HUD failed', { data: { error } })
     })
   actionHudHideTimer = setTimeout(() => {
     if (generation === actionHudGeneration && !win.isDestroyed()) win.hide()
@@ -327,19 +449,70 @@ function showDesktopProposalNotification(method, params) {
         params: openRequest,
       })
       void showMainWindow().catch((error) => {
-        console.error(`[desktop] show main window failed: ${error instanceof Error ? error.message : String(error)}`)
+        writeMainLog('error', 'desktop.window', 'window.show_failed', 'show main window failed', { data: { error } })
       })
     })
     desktopNotification.show()
   } catch (error) {
-    console.error(`[desktop] desktop proposal notification failed: ${error instanceof Error ? error.message : String(error)}`)
+    writeMainLog('error', 'desktop.notification', 'notification.show_failed', 'desktop proposal notification failed', { data: { error } })
   }
 }
 
 function emitRendererEvent(channel, payload) {
   for (const win of [mainWindow, quickInputWindow]) {
     if (win && !win.isDestroyed()) {
-      win.webContents.send(`lume:event:${channel}`, payload)
+      let deliveredPayload = payload
+      const appended = channel === SIDE_CAR_EVENT_CHANNEL
+        && payload?.method === 'agent:message-appended'
+        && payload?.params?.message?.role === 'assistant'
+        && typeof payload?.params?.traceId === 'string'
+        ? payload.params
+        : null
+      if (appended) {
+        const deliveryAttemptId = randomUUID()
+        const origin = resolveRendererTraceOrigin(win.webContents.id)
+        deliveredPayload = {
+          ...payload,
+          params: { ...appended, deliveryAttemptId },
+        }
+        const timeout = setTimeout(() => {
+          const pending = pendingRendererDeliveries.get(deliveryAttemptId)
+          if (!pending) return
+          pendingRendererDeliveries.delete(deliveryAttemptId)
+          writeMainLog('warn', 'agent.delivery', 'reply.delivery_unknown', 'renderer did not acknowledge committed reply', {
+            kind: 'trace',
+            status: 'unknown',
+            traceId: pending.traceId,
+            submissionId: pending.submissionId,
+            deliveryAttemptId,
+            threadId: pending.threadId,
+            messageId: pending.messageId,
+            origin: pending.origin,
+            data: { webContentsId: pending.webContentsId },
+          })
+        }, RENDERER_DELIVERY_ACK_TIMEOUT_MS)
+        pendingRendererDeliveries.set(deliveryAttemptId, {
+          timeout,
+          traceId: appended.traceId,
+          submissionId: appended.submissionId,
+          threadId: appended.threadId,
+          messageId: appended.message.id,
+          origin,
+          webContentsId: win.webContents.id,
+        })
+        writeMainLog('info', 'agent.delivery', 'reply.forwarded', 'assistant reply forwarded to renderer', {
+          kind: 'trace',
+          status: 'ok',
+          traceId: appended.traceId,
+          submissionId: appended.submissionId,
+          deliveryAttemptId,
+          threadId: appended.threadId,
+          messageId: appended.message.id,
+          origin,
+          data: { webContentsId: win.webContents.id },
+        })
+      }
+      win.webContents.send(`lume:event:${channel}`, deliveredPayload)
     }
   }
 }
@@ -484,7 +657,7 @@ function handleTrayAction(action) {
       toggleMainWindow()
       return
     case 'quick-input':
-      toggleQuickInput().catch((error) => console.error(`[desktop] quick input toggle failed: ${error.message}`))
+      toggleQuickInput().catch((error) => writeMainLog('error', 'desktop.quick_input', 'quick_input.toggle_failed', 'quick input toggle failed', { data: { error } }))
       return
     case 'new-note':
       showMainWindowThenSend({ action: 'new-note' })
@@ -513,7 +686,7 @@ function checkForUpdateNow() {
   if (!app.isPackaged) return
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
-  autoUpdater.checkForUpdates().catch((error) => console.error(`[desktop] update check failed: ${error.message}`))
+  autoUpdater.checkForUpdates().catch((error) => writeMainLog('warn', 'desktop.update', 'update.check_failed', 'update check failed', { data: { error } }))
 }
 
 function ensureTray() {
@@ -571,7 +744,7 @@ function attachWindowBehavior(win) {
   win.on('blur', () => {
     const timer = setTimeout(() => {
       rememberForegroundDesktopTarget().catch((error) => {
-        console.error(`[desktop] remember foreground desktop target failed: ${error.message}`)
+        writeMainLog('warn', 'desktop.context', 'desktop_target.remember_failed', 'remember foreground desktop target failed', { data: { error } })
       })
     }, 120)
     timer.unref?.()
@@ -589,7 +762,7 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
     const result = createWindowOpenAction(url)
     if (result.externalUrl) {
       shell.openExternal(result.externalUrl).catch((error) => {
-        console.error(`[desktop-security] failed to open external url: ${error.message}`)
+        writeMainLog('warn', 'desktop.security', 'external_url.open_failed', 'failed to open external URL', { data: { error } })
       })
     }
     return { action: result.action }
@@ -748,8 +921,36 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     }
     case 'sidecar_healthcheck':
       return sidecarHost.call('healthcheck', null)
-    case 'sidecar_call':
-      return sidecarHost.call(payload.method, payload.params ?? null)
+    case 'sidecar_call': {
+      if (payload.method !== 'agent:send-thread-message') {
+        return sidecarHost.call(payload.method, payload.params ?? null)
+      }
+      const origin = resolveRendererTraceOrigin(context.ownerWebContentsId)
+      const incoming = payload.params && typeof payload.params === 'object' ? payload.params : {}
+      const suppliedSubmissionId = incoming.traceContext?.submissionId
+      const submissionId = typeof suppliedSubmissionId === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(suppliedSubmissionId)
+        ? suppliedSubmissionId
+        : randomUUID()
+      const traceId = randomUUID()
+      const traceContext = {
+        submissionId,
+        ...(typeof incoming.traceContext?.clientEventId === 'string' ? { clientEventId: incoming.traceContext.clientEventId } : {}),
+        traceId,
+        origin,
+      }
+      writeMainLog('info', 'agent.dispatch', 'message.accepted', 'agent message accepted by desktop main', {
+        kind: 'trace',
+        status: 'ok',
+        traceId,
+        submissionId,
+        threadId: incoming.threadId,
+        origin,
+        data: createSafeMessageLogSummary(incoming.userMessage),
+      })
+      const result = await sidecarHost.call(payload.method, { ...incoming, traceContext }, traceContext)
+      return { ...(result && typeof result === 'object' ? result : {}), traceId, submissionId }
+    }
     case 'desktop_sync_window_behavior': {
       const previous = windowBehavior
       windowBehavior = payload.windowBehavior ?? windowBehavior
@@ -766,6 +967,25 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return null
     case 'quick_input_get_context':
       return prepareQuickInputContext()
+    case 'ack_renderer_delivery': {
+      const pending = pendingRendererDeliveries.get(payload.deliveryAttemptId)
+      if (!pending || pending.webContentsId !== context.ownerWebContentsId) return { ok: false }
+      if (pending.messageId !== payload.messageId || pending.threadId !== payload.threadId) return { ok: false }
+      clearTimeout(pending.timeout)
+      pendingRendererDeliveries.delete(payload.deliveryAttemptId)
+      writeMainLog('info', 'agent.delivery', 'reply.committed', 'assistant reply committed by renderer', {
+        kind: 'trace',
+        status: 'ok',
+        traceId: pending.traceId,
+        submissionId: pending.submissionId,
+        deliveryAttemptId: payload.deliveryAttemptId,
+        threadId: pending.threadId,
+        messageId: pending.messageId,
+        origin: pending.origin,
+        data: { webContentsId: pending.webContentsId },
+      })
+      return { ok: true }
+    }
     case 'open_file_dialog': {
       const result = await dialog.showOpenDialog(mainWindow, createOpenFileDialogOptions())
       return {
@@ -791,17 +1011,101 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       clipboard.writeText(payload.text ?? '')
       return null
     case 'write_web_log':
-      writeWebLogRecord(resolveConfigDir(), payload)
+      getLoggingService().emit({
+        level: payload.level ?? 'info',
+        source: 'renderer',
+        context: payload.context ?? 'app',
+        event: payload.event ?? 'log.message',
+        message: payload.message ?? '',
+        data: payload.data ?? undefined,
+      })
       return null
+    case 'write_web_log_batch':
+      return {
+        accepted: getLoggingService().ingestBatch(payload as any, 'renderer'),
+        batchId: payload.batchId,
+      }
     case 'desktop_list_log_files':
-      return sidecarHost.call('general-settings:list-log-files', null)
+      return getLoggingService().listFiles()
     case 'desktop_read_log_file':
-      return sidecarHost.call('general-settings:read-log-file', {
+      return getLoggingService().query({
         fileName: payload.fileName,
         levels: payload.levels,
         query: payload.keyword,
         maxLines: payload.maxLines,
+        traceId: payload.traceId,
+        source: payload.source,
+        kind: payload.kind,
+        context: payload.context,
+        event: payload.event,
+        status: payload.status,
       })
+    case 'desktop_open_logs_dir':
+      await shell.openPath(getLoggingService().logsDir)
+      return { ok: true }
+    case 'desktop_export_logs': {
+      const result = await getLoggingService().exportAll()
+      shell.showItemInFolder(join(getLoggingService().logsDir, 'exports', result.fileName))
+      return result
+    }
+    case 'desktop_delete_logs':
+      return { deleted: await getLoggingService().clear() }
+    case 'desktop_log_live_subscribe': {
+      rendererLogSubscriptions.get(context.ownerWebContentsId)?.()
+      const target = getTrustedWindows().find((win) => win.webContents.id === context.ownerWebContentsId)
+      if (!target) throw new Error('trusted renderer is unavailable')
+      const unsubscribe = getLoggingService().subscribe((events) => {
+        if (target.isDestroyed() || target.webContents.isDestroyed()) {
+          rendererLogSubscriptions.get(context.ownerWebContentsId)?.()
+          rendererLogSubscriptions.delete(context.ownerWebContentsId)
+          return
+        }
+        target.webContents.send('lume:event:logs:live', { events })
+      })
+      rendererLogSubscriptions.set(context.ownerWebContentsId, unsubscribe)
+      return { ok: true }
+    }
+    case 'desktop_log_live_unsubscribe':
+      rendererLogSubscriptions.get(context.ownerWebContentsId)?.()
+      rendererLogSubscriptions.delete(context.ownerWebContentsId)
+      return { ok: true }
+    case 'desktop_diagnostic_status':
+      return {
+        available: getDiagnosticContentStore().isAvailable(),
+        lease: getDiagnosticLease(),
+      }
+    case 'desktop_diagnostic_start': {
+      if (!getDiagnosticContentStore().isAvailable()) throw new Error('系统安全存储不可用，无法开启诊断正文捕获')
+      const threadId = typeof payload.threadId === 'string' ? payload.threadId : undefined
+      const traceId = typeof payload.traceId === 'string' ? payload.traceId : undefined
+      if (!threadId && !traceId) throw new Error('必须指定 threadId 或 traceId')
+      const durationMinutes = Math.max(1, Math.min(24 * 60, Number(payload.durationMinutes) || 60))
+      const current = getDiagnosticLease()
+      const diagnosticCapture = {
+        enabled: true,
+        configVersion: Math.max(1, Number(current?.configVersion) || 1) + 1,
+        expiresAt: new Date(Date.now() + durationMinutes * 60_000).toISOString(),
+        scope: { ...(threadId ? { threadId } : {}), ...(traceId ? { traceId } : {}) },
+      }
+      await sidecarHost.call('general-settings:update', { logging: { diagnosticCapture } })
+      return { available: true, lease: diagnosticCapture }
+    }
+    case 'desktop_diagnostic_stop': {
+      const current = getDiagnosticLease()
+      const diagnosticCapture = {
+        enabled: false,
+        configVersion: Math.max(1, Number(current?.configVersion) || 1) + 1,
+        expiresAt: null,
+        scope: null,
+      }
+      await sidecarHost.call('general-settings:update', { logging: { diagnosticCapture } })
+      const deleted = payload.deleteContent === true ? await getDiagnosticContentStore().clear() : 0
+      return { available: getDiagnosticContentStore().isAvailable(), lease: diagnosticCapture, deleted }
+    }
+    case 'desktop_diagnostic_decrypt':
+      return getDiagnosticContentStore().decrypt(payload.recordId)
+    case 'desktop_diagnostic_delete':
+      return { deleted: await getDiagnosticContentStore().clear() }
     case 'read_text_file': {
       const text = readFileSync(payload.path, 'utf8')
       const truncated = text.length > TEXT_FILE_LIMIT
@@ -954,6 +1258,7 @@ function createSidecarHost({ onNotification }) {
   let started = null
   let nextId = 1
   let pending = new Map()
+  let stopRequested = false
 
   function rejectAllPending(error) {
     for (const entry of pending.values()) {
@@ -1033,6 +1338,7 @@ function createSidecarHost({ onNotification }) {
     if (child?.pid !== undefined) return
 
     started = new Promise<void>((resolveStarted, rejectStarted) => {
+      stopRequested = false
       const forkConfig = createSpawnConfig()
       const runningChild = utilityProcess.fork(
         forkConfig.modulePath,
@@ -1042,7 +1348,7 @@ function createSidecarHost({ onNotification }) {
       let didReady = false
       let startSettled = false
       child = runningChild
-      logDesktopStartup(`starting sidecar utility process: ${forkConfig.modulePath}`)
+      logDesktopStartup(`starting sidecar utility process: ${forkConfig.modulePath}`, 'sidecar.starting')
       let readyTimeout: ReturnType<typeof setTimeout> | undefined
       const settleStart = (error?: Error) => {
         if (startSettled) return
@@ -1056,7 +1362,7 @@ function createSidecarHost({ onNotification }) {
       }
       readyTimeout = setTimeout(() => {
         const error = new Error(`sidecar ready timed out after ${HEALTHCHECK_TIMEOUT_MS}ms`)
-        logDesktopStartup(error.message)
+        logDesktopStartup(error.message, 'sidecar.ready_timeout', 'error')
         rejectAllPending(error)
         if (child === runningChild) {
           child = null
@@ -1079,14 +1385,82 @@ function createSidecarHost({ onNotification }) {
 
         if (payload && payload.method === SIDECAR_READY_METHOD && payload.id === undefined) {
           didReady = true
-          logDesktopStartup('sidecar reported system.ready')
+          try {
+            runningChild.postMessage(JSON.stringify({
+              method: 'system.logging-policy',
+              params: getSidecarLogDigestPolicy(),
+            }))
+          } catch (error) {
+            writeMainLog('warn', 'desktop.sidecar.logging', 'logging.policy_delivery_failed', 'failed to deliver log digest policy', {
+              data: { error },
+            })
+          }
+          logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
+          return
+        }
+
+        if (payload && payload.method === SIDECAR_LOG_BATCH_METHOD && payload.id === undefined) {
+          let accepted = 0
+          try {
+            accepted = getLoggingService().ingestBatch(payload.params, 'sidecar')
+          } catch (error) {
+            writeMainLog('warn', 'desktop.sidecar.logging', 'logging.batch_rejected', 'rejected sidecar log batch', {
+              data: { error },
+            })
+          } finally {
+            const batchId = payload.params?.batchId
+            if (typeof batchId === 'string') {
+              try {
+                runningChild.postMessage(JSON.stringify({
+                  method: SIDECAR_LOG_ACK_METHOD,
+                  params: { batchId, accepted },
+                }))
+              } catch {
+                // The sidecar retry timer handles a lost acknowledgement.
+              }
+            }
+          }
+          return
+        }
+
+        if (payload && payload.method === SIDECAR_SETTINGS_REPLACE_METHOD && payload.id === undefined) {
+          const mutationId = typeof payload.params?.mutationId === 'string' ? payload.params.mutationId : null
+          try {
+            const settings = getSettingsBroker().replace(mutationId ? payload.params.settings : payload.params)
+            const logging = (settings.generalSettings as { logging?: unknown } | undefined)?.logging
+            if (logging && typeof logging === 'object') getLoggingService().updateSettings(logging)
+            if (mutationId) {
+              runningChild.postMessage(JSON.stringify({
+                method: 'system.settings-ack',
+                params: { mutationId, ok: true },
+              }))
+            }
+          } catch (error) {
+            writeMainLog('error', 'desktop.settings', 'settings.persist_failed', 'failed to persist sidecar settings snapshot', {
+              data: { mutationId, error },
+            })
+            if (mutationId) {
+              try {
+                runningChild.postMessage(JSON.stringify({
+                  method: 'system.settings-ack',
+                  params: {
+                    mutationId,
+                    ok: false,
+                    error: error instanceof Error ? error.message : 'settings persistence failed',
+                  },
+                }))
+              } catch {
+                // The sidecar mutation timeout reports the failed acknowledgement.
+              }
+            }
+          }
           return
         }
 
         if (payload && payload.method === SIDECAR_LOG_METHOD && payload.id === undefined) {
           try {
-            writeDesktopLogRecord(resolveConfigDir(), payload.params)
+            getLoggingService().ingestLegacy(payload.params, 'sidecar')
           } catch {
             // Sidecar stderr remains the fallback for malformed or unwritable log events.
           }
@@ -1103,35 +1477,79 @@ function createSidecarHost({ onNotification }) {
           if (!request) return
           pending.delete(payload.id)
           clearTimeout(request.timeout)
+          const durationMs = performance.now() - request.startedAt
           if (payload.error) {
+            writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.failed', `sidecar RPC failed: ${request.method}`, {
+              status: 'error',
+              durationMs,
+              rpcRequestId: String(payload.id),
+              ...request.correlation,
+              data: { method: request.method, error: payload.error },
+            })
             request.reject(new Error(payload.error.message || 'sidecar rpc failed'))
           } else {
+            if (durationMs >= SLOW_RPC_MS) {
+              writeMainLog('warn', 'desktop.sidecar.rpc', 'rpc.slow', `slow sidecar RPC: ${request.method}`, {
+                durationMs,
+                rpcRequestId: String(payload.id),
+                ...request.correlation,
+                data: { method: request.method },
+              })
+            } else if (!QUIET_SIDECAR_RPC_METHODS.has(request.method)) {
+              writeMainLog('debug', 'desktop.sidecar.rpc', 'rpc.completed', `sidecar RPC completed: ${request.method}`, {
+                status: 'ok',
+                durationMs,
+                rpcRequestId: String(payload.id),
+                ...request.correlation,
+                data: { method: request.method },
+              })
+            }
             request.resolve(payload.result)
           }
         }
       })
 
-      runningChild.stdout?.on('data', (chunk) => {
-        process.stderr.write(chunk)
-      })
-      runningChild.stderr?.on('data', (chunk) => {
-        process.stderr.write(chunk)
-      })
+      let stdoutBuffer = ''
+      let stderrBuffer = ''
+      const ingestRawOutput = (stream, chunk) => {
+        const current = (stream === 'stdout' ? stdoutBuffer : stderrBuffer) + String(chunk)
+        const lines = current.split(/\r?\n/)
+        const remainder = lines.pop() ?? ''
+        if (stream === 'stdout') stdoutBuffer = remainder
+        else stderrBuffer = remainder
+        for (const line of lines) {
+          if (!line.trim()) continue
+          writeMainLog('warn', 'desktop.sidecar.process', 'process.raw_output', 'unstructured sidecar process output', {
+            data: { stream, line },
+          })
+        }
+      }
+      runningChild.stdout?.on('data', (chunk) => ingestRawOutput('stdout', chunk))
+      runningChild.stderr?.on('data', (chunk) => ingestRawOutput('stderr', chunk))
 
       runningChild.once('spawn', () => {
-        logDesktopStartup(`sidecar utility process spawned (pid=${runningChild.pid})`)
+        logDesktopStartup(`sidecar utility process spawned (pid=${runningChild.pid})`, 'sidecar.started')
       })
 
       runningChild.once('error', (type, location, report) => {
         const error = new Error(`sidecar utility process error: ${type} at ${location}\n${report}`)
-        logDesktopStartup(error.message)
+        logDesktopStartup(error.message, 'sidecar.process_error', 'error')
         rejectAllPending(error)
         settleStart(error)
       })
 
       runningChild.once('exit', (code) => {
         const error = new Error(`sidecar exited (code=${code})`)
-        logDesktopStartup(error.message)
+        if (stdoutBuffer.trim()) ingestRawOutput('stdout', '\n')
+        if (stderrBuffer.trim()) ingestRawOutput('stderr', '\n')
+        if (stopRequested && code === 0) {
+          writeMainLog('debug', 'desktop.sidecar.lifecycle', 'sidecar.stopped', error.message, { status: 'ok' })
+        } else {
+          writeMainLog(didReady ? 'warn' : 'error', 'desktop.sidecar.lifecycle', 'sidecar.exited', error.message, {
+            status: 'error',
+            data: { code, expected: stopRequested, ready: didReady },
+          })
+        }
         rejectAllPending(error)
         if (!didReady) settleStart(error)
         if (child === runningChild) {
@@ -1148,7 +1566,7 @@ function createSidecarHost({ onNotification }) {
     }
   }
 
-  async function call(method, params) {
+  async function call(method, params, correlation = {}) {
     await start()
     const requestId = nextId++
     const payload = JSON.stringify({
@@ -1160,6 +1578,13 @@ function createSidecarHost({ onNotification }) {
     return new Promise((resolveCall, rejectCall) => {
       const timeout = setTimeout(() => {
         pending.delete(requestId)
+        writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.timeout', `sidecar RPC timed out: ${method}`, {
+          status: 'error',
+          durationMs: HEALTHCHECK_TIMEOUT_MS,
+          rpcRequestId: String(requestId),
+          ...correlation,
+          data: { method },
+        })
         rejectCall(new Error(`sidecar request timed out: ${method}`))
       }, HEALTHCHECK_TIMEOUT_MS)
 
@@ -1167,6 +1592,9 @@ function createSidecarHost({ onNotification }) {
         resolve: resolveCall,
         reject: rejectCall,
         timeout,
+        method,
+        startedAt: performance.now(),
+        correlation,
       })
 
       try {
@@ -1181,6 +1609,7 @@ function createSidecarHost({ onNotification }) {
 
   async function stop() {
     if (!child || child.pid === undefined) return
+    stopRequested = true
     const runningChild = child
     child = null
     started = null
@@ -1290,7 +1719,7 @@ ipcMain.handle('lume:update:download', async (event) => {
 ipcMain.handle('lume:update:install', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
-  autoUpdater.quitAndInstall(false, true)
+  autoUpdater.quitAndInstall(true, true)
   return null
 })
 
@@ -1299,7 +1728,7 @@ ipcMain.handle('lume:update:install', async (event) => {
 app.setAppUserModelId(DESKTOP_APP_ID)
 
 app.whenReady().then(async () => {
-  logDesktopStartup('app ready')
+  logDesktopStartup('app ready', 'app.ready')
   registerAppProtocol()
   registerFileProtocol()
   const configDir = applyLauncherConfig()
@@ -1312,7 +1741,7 @@ app.whenReady().then(async () => {
   }
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
-  logDesktopStartup('sidecar ready')
+  logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
   await unlockDesktopContextStore()
   registerDesktopContextPowerEvents()
@@ -1322,25 +1751,14 @@ app.whenReady().then(async () => {
   // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
   const quickInputShortcutRegistered = globalShortcut.register('Alt+L', () => {
     toggleQuickInput().catch((error) => {
-      console.error(`[desktop] quick input toggle failed: ${error.message}`)
+      writeMainLog('error', 'desktop.quick_input', 'quick_input.toggle_failed', 'quick input toggle failed', { data: { error } })
     })
   })
   if (!quickInputShortcutRegistered) {
-    const message = '[desktop] globalShortcut Alt+L 注册失败（可能被其他程序占用）'
-    console.error(message)
-    try {
-      writeDesktopLogRecord(resolveConfigDir(), {
-        level: 'error',
-        source: 'main',
-        context: 'quick-input-shortcut',
-        message,
-      })
-    } catch {
-      // 日志写入失败不能阻断启动流程
-    }
+    writeMainLog('error', 'desktop.quick_input', 'shortcut.registration_failed', 'globalShortcut Alt+L 注册失败（可能被其他程序占用）')
   }
 }).catch((error) => {
-  logDesktopStartup(`startup failed: ${error.stack ?? error}`)
+  logDesktopStartup(`startup failed: ${error.stack ?? error}`, 'app.start_failed', 'fatal')
   app.exit(1)
 })
 
@@ -1366,6 +1784,9 @@ app.on('window-all-closed', () => {
 app.on('will-quit', async () => {
   desktopHostSupervisor?.stop()
   await sidecarHost.stop()
+  writeMainLog('info', 'desktop.lifecycle', 'app.stopping', 'app stopping')
+  await loggingService?.close()
+  settingsBroker?.close()
   globalShortcut.unregisterAll()
 })
 

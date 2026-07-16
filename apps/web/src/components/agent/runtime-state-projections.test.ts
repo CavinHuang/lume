@@ -182,7 +182,7 @@ describe('runtime-state projections', () => {
             cachedTokens: 40,
             outputTokens: 80,
             costUSD: 0.0123,
-            cacheHitRate: 6,
+            cacheHitRate: 5,
           },
         ],
       },

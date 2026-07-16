@@ -13,6 +13,9 @@ import {
   listReadingNotes
 } from "./reading-store";
 import { BookDataService } from "./sources/book-data-service";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("reading-quotes");
 
 export interface ReadingQuoteRecord {
   id: string;
@@ -138,7 +141,7 @@ function readQuoteBank(): ReadingQuoteRecord[] {
     const parsed = JSON.parse(readFileSync(getReadingQuotesPath(), "utf-8")) as unknown;
     return Array.isArray(parsed) ? parsed.filter(isQuoteRecord) : [];
   } catch (error) {
-    console.error("[读书] 读取引用库失败:", error);
+    log.error("failed to read reading quote bank", { error });
     return [];
   }
 }

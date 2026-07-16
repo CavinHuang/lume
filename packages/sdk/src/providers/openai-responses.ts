@@ -23,7 +23,7 @@ import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from '../utils/retr
 // --------------------------------------------------------------------------
 
 type ResponsesInputItem =
-  | { role: 'user'; content: ResponsesInputContent[]; type: 'message' }
+  | { role: 'developer' | 'user' | 'assistant'; content: ResponsesInputContent[]; type: 'message' }
   | { type: 'function_call'; id?: string; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string }
 
@@ -55,6 +55,10 @@ interface ResponsesApiResponse {
     input_tokens: number
     output_tokens: number
     total_tokens: number
+    input_tokens_details?: {
+      cached_tokens?: number
+      cache_write_tokens?: number
+    }
   }
   error?: { message: string }
 }
@@ -159,15 +163,15 @@ export class OpenAIResponsesProvider implements LLMProvider {
   }
 
   async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
-    const { input, tools, instructions, toolNames } = this.buildRequestParts(params)
+    const { input, tools, toolNames } = this.buildRequestParts(params)
 
     const body: Record<string, unknown> = {
       model: params.model,
       input,
-      ...(instructions ? { instructions } : {}),
       ...(tools && tools.length > 0 ? { tools } : {}),
       max_output_tokens: params.maxTokens,
     }
+    this.applyPromptCachePolicy(body, params)
 
     if (params.effort) {
       body.reasoning = { effort: params.effort }
@@ -181,16 +185,16 @@ export class OpenAIResponsesProvider implements LLMProvider {
   async *createMessageStream(
     params: CreateMessageParams,
   ): AsyncGenerator<CreateMessageStreamEvent, CreateMessageResponse> {
-    const { input, tools, instructions, toolNames } = this.buildRequestParts(params)
+    const { input, tools, toolNames } = this.buildRequestParts(params)
 
     const body: Record<string, unknown> = {
       model: params.model,
       input,
       stream: true,
-      ...(instructions ? { instructions } : {}),
       ...(tools && tools.length > 0 ? { tools } : {}),
       max_output_tokens: params.maxTokens,
     }
+    this.applyPromptCachePolicy(body, params)
 
     if (params.effort) {
       body.reasoning = { effort: params.effort }
@@ -341,16 +345,11 @@ export class OpenAIResponsesProvider implements LLMProvider {
       : functionCalls.size > 0 ? 'tool_use'
       : 'end_turn'
 
-    const usage = finalResponse?.usage
+    const usage = normalizeResponsesUsage(finalResponse?.usage)
     return {
       content,
       stopReason,
-      usage: {
-        input_tokens: usage?.input_tokens ?? 0,
-        output_tokens: usage?.output_tokens ?? 0,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-      },
+      usage,
     }
   }
 
@@ -361,23 +360,45 @@ export class OpenAIResponsesProvider implements LLMProvider {
   private buildRequestParts(params: CreateMessageParams): {
     input: ResponsesInputItem[]
     tools: ResponsesFunctionTool[] | undefined
-    instructions: string | undefined
     toolNames: ResponsesToolNames
   } {
     const toolNames = buildResponsesToolNames(params.tools)
-    const input = this.convertInput(params.messages, toolNames)
+    const input = this.convertInput(params, toolNames)
     const tools = params.tools ? this.convertTools(params.tools, toolNames) : undefined
-    return { input, tools, instructions: params.system || undefined, toolNames }
+    return { input, tools, toolNames }
   }
 
-  private convertInput(messages: NormalizedMessageParam[], toolNames: ResponsesToolNames): ResponsesInputItem[] {
+  private convertInput(params: CreateMessageParams, toolNames: ResponsesToolNames): ResponsesInputItem[] {
     const items: ResponsesInputItem[] = []
 
-    for (const msg of messages) {
+    if (params.system) {
+      items.push({
+        role: 'developer',
+        type: 'message',
+        content: [{ type: 'input_text', text: params.system }],
+      })
+    }
+
+    for (const msg of params.messages) {
       if (msg.role === 'user') {
         this.convertUserMessage(msg, items)
       } else if (msg.role === 'assistant') {
         this.convertAssistantMessage(msg, items, toolNames)
+      } else if (msg.role === 'runtime') {
+        const content = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n')
+        const role = params.promptCache?.runtimeRole === 'user' ? 'user' : 'developer'
+        items.push({
+          role,
+          type: 'message',
+          content: [{
+            type: 'input_text',
+            text: role === 'user'
+              ? `<lume_runtime_context>\n${content}\n</lume_runtime_context>`
+              : content,
+          }],
+        })
       }
     }
 
@@ -461,20 +482,22 @@ export class OpenAIResponsesProvider implements LLMProvider {
     toolNames: ResponsesToolNames,
   ): void {
     if (typeof msg.content === 'string') {
-      // Responses API doesn't have assistant role in input.
-      // For multi-turn context, we skip pure text assistant messages
-      // as the Responses API uses previous_response_id for conversation state.
-      // When we have full message history, we include it as context.
+      items.push({
+        role: 'assistant',
+        type: 'message',
+        content: [{ type: 'input_text', text: msg.content }],
+      })
       return
     }
 
     const textParts: string[] = []
+    const functionCallItems: ResponsesInputItem[] = []
 
     for (const block of normalizeContentBlocks(msg.content)) {
       if (block.type === 'text') {
         textParts.push(block.text)
       } else if (block.type === 'tool_use') {
-        items.push({
+        functionCallItems.push({
           type: 'function_call',
           ...(block.response_item_id?.startsWith('fc')
             ? { id: block.response_item_id }
@@ -486,6 +509,14 @@ export class OpenAIResponsesProvider implements LLMProvider {
       }
       // thinking blocks are not supported in Responses API input
     }
+    if (textParts.length > 0) {
+      items.push({
+        role: 'assistant',
+        type: 'message',
+        content: [{ type: 'input_text', text: textParts.join('\n') }],
+      })
+    }
+    items.push(...functionCallItems)
   }
 
   private convertTools(tools: NormalizedTool[], toolNames: ResponsesToolNames): ResponsesFunctionTool[] {
@@ -548,18 +579,23 @@ export class OpenAIResponsesProvider implements LLMProvider {
     return {
       content,
       stopReason,
-      usage: {
-        input_tokens: data.usage?.input_tokens ?? 0,
-        output_tokens: data.usage?.output_tokens ?? 0,
-        cache_read_input_tokens: 0,
-        cache_creation_input_tokens: 0,
-      },
+      usage: normalizeResponsesUsage(data.usage),
     }
   }
 
   // --------------------------------------------------------------------------
   // HTTP
   // --------------------------------------------------------------------------
+
+  private applyPromptCachePolicy(body: Record<string, unknown>, params: CreateMessageParams): void {
+    const routingKey = params.promptCache?.routingKey
+    if (!routingKey) return
+    if (params.promptCache?.strategy === 'openrouter-sticky') {
+      body.session_id = routingKey
+    } else {
+      body.prompt_cache_key = routingKey
+    }
+  }
 
   private async fetchResponse(body: Record<string, unknown>): Promise<Response> {
     return withRetry(async () => {
@@ -584,4 +620,22 @@ export class OpenAIResponsesProvider implements LLMProvider {
       return response
     }, this.retryConfig)
   }
+}
+
+function normalizeResponsesUsage(
+  usage: ResponsesApiResponse['usage'] | undefined,
+): CreateMessageResponse['usage'] {
+  const inputTokens = tokenValue(usage?.input_tokens)
+  const cacheReadInputTokens = tokenValue(usage?.input_tokens_details?.cached_tokens)
+  const cacheCreationInputTokens = tokenValue(usage?.input_tokens_details?.cache_write_tokens)
+  return {
+    input_tokens: Math.max(0, inputTokens - cacheReadInputTokens - cacheCreationInputTokens),
+    output_tokens: tokenValue(usage?.output_tokens),
+    cache_read_input_tokens: cacheReadInputTokens,
+    cache_creation_input_tokens: cacheCreationInputTokens,
+  }
+}
+
+function tokenValue(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0
 }

@@ -31,7 +31,6 @@ import {
   validateExternalUrl,
   validateMigrationTarget,
   validateWereadUrl,
-  writeWebLogRecord,
   resolveExistingPath,
   writeLauncherConfigAt,
   computeToggleAction,
@@ -356,35 +355,6 @@ test('data export zip does not include per-thread lume config snapshots', () => 
   } finally {
     rmSync(dir, { recursive: true, force: true })
     rmSync(zipPath, { force: true })
-  }
-})
-
-test('web logs are written to the existing lume log file format with webview source', () => {
-  const dir = makeTempDir('lume-desktop-web-log-')
-  try {
-    writeWebLogRecord(dir, {
-      level: 'warn',
-      source: 'sidecar',
-      context: 'renderer',
-      message: 'hello',
-      data: { ok: true },
-      path: join(dir, 'should-not-control-log-output.ndjson'),
-    }, new Date('2026-06-30T01:02:03.456Z'))
-
-    const line = readFileSync(join(dir, 'logs', 'lume-2026-06-30.ndjson'), 'utf8').trim()
-    assert.deepEqual(JSON.parse(line), {
-      ts: '2026-06-30T01:02:03.456Z',
-      timestamp: '2026-06-30T01:02:03.456Z',
-      level: 'warn',
-      source: 'renderer',
-      context: 'renderer',
-      message: 'hello',
-      data: { ok: true },
-    })
-    assert.equal(existsSync(join(dir, 'should-not-control-log-output.ndjson')), false)
-    assert.throws(() => writeWebLogRecord(dir, { level: 'verbose', context: 'renderer', message: 'bad' }), /invalid log level/)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
   }
 })
 

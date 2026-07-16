@@ -148,7 +148,7 @@ function buildCompactionPrompt(messages: any[]): string {
   const parts: string[] = ['Please summarize this conversation:\n']
 
   for (const msg of messages) {
-    const role = msg.role === 'user' ? 'User' : 'Assistant'
+    const role = msg.role === 'user' ? 'User' : msg.role === 'runtime' ? 'Runtime' : 'Assistant'
 
     if (typeof msg.content === 'string') {
       parts.push(`${role}: ${msg.content.slice(0, 5000)}`)

@@ -25,6 +25,7 @@ import {
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { getAgentThreadMeta } from "./agent-thread-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
+import { createLogger } from "../infra/logger";
 
 export interface ResolvedAgentWorkdir {
   agentCwd: string;
@@ -38,6 +39,7 @@ export interface ResolvedAgentWorkdir {
 
 const MIGRATION_MARKER = ".migration-v1.json";
 const EMPTY_CONTEXT_DIRS = new Set(["files", "plans", "artifacts", ".context"]);
+const log = createLogger("agent-workdir-resolver");
 
 export function normalizeRealpathKey(path: string): string {
   const resolved = realpathSync(path);
@@ -148,7 +150,7 @@ function migrateLegacyThreadRoot(thread: AgentThreadMeta, workspace?: AgentWorks
       }
     });
   } catch (error) {
-    console.warn(`[Agent 文件上下文] 迁移失败，继续使用旧目录 (${thread.id}):`, error);
+    log.warn("file context migration failed; continuing with legacy directory", { error, threadId: thread.id });
     return source;
   }
 }

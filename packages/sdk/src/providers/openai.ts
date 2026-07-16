@@ -25,7 +25,7 @@ import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from '../utils/retr
 // --------------------------------------------------------------------------
 
 interface OpenAIChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool'
+  role: 'system' | 'developer' | 'user' | 'assistant' | 'tool'
   content?: string | null | OpenAIContentPart[]
   reasoning_content?: string
   tool_calls?: OpenAIToolCall[]
@@ -33,7 +33,7 @@ interface OpenAIChatMessage {
 }
 
 type OpenAIContentPart =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral'; ttl: '5m' } }
   | { type: 'image_url'; image_url: { url: string } }
 
 const TOOL_RESULT_IMAGE_INSTRUCTION =
@@ -55,6 +55,11 @@ interface OpenAITool {
     description: string
     parameters: Record<string, any>
   }
+}
+
+interface OpenAIToolNames {
+  originalToWire: Map<string, string>
+  wireToOriginal: Map<string, string>
 }
 
 interface OpenAIChatResponse {
@@ -81,6 +86,7 @@ interface OpenAIChatResponse {
     output_tokens?: number
     input_tokens_details?: {
       cached_tokens?: number
+      cache_write_tokens?: number
     }
     prompt_cache_hit_tokens?: number
     prompt_cache_miss_tokens?: number
@@ -120,6 +126,7 @@ interface OpenAIStreamChunk {
     output_tokens?: number
     input_tokens_details?: {
       cached_tokens?: number
+      cache_write_tokens?: number
     }
     prompt_cache_hit_tokens?: number
     prompt_cache_miss_tokens?: number
@@ -134,6 +141,34 @@ function normalizeContentBlocks(content: unknown): NormalizedContentBlock[] {
     return [content as NormalizedContentBlock]
   }
   return []
+}
+
+function buildOpenAIToolNames(tools: NormalizedTool[] | undefined): OpenAIToolNames {
+  const originalToWire = new Map<string, string>()
+  const wireToOriginal = new Map<string, string>()
+  const reservedNames = new Set(
+    (tools ?? []).map((tool) => tool.name).filter((name) => /^[a-zA-Z0-9_-]+$/.test(name)),
+  )
+
+  for (const tool of tools ?? []) {
+    let wireName = tool.name
+    if (!/^[a-zA-Z0-9_-]+$/.test(wireName)) {
+      const baseName = wireName
+        .replace(/[^a-zA-Z0-9_-]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'tool'
+      wireName = baseName
+      let suffix = 2
+      while (reservedNames.has(wireName)) {
+        wireName = `${baseName}_${suffix}`
+        suffix += 1
+      }
+      reservedNames.add(wireName)
+    }
+    originalToWire.set(tool.name, wireName)
+    wireToOriginal.set(wireName, tool.name)
+  }
+
+  return { originalToWire, wireToOriginal }
 }
 
 // --------------------------------------------------------------------------
@@ -154,14 +189,16 @@ export class OpenAIProvider implements LLMProvider {
 
   async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
     // Convert to OpenAI format
-    const messages = this.convertMessages(params.system, params.messages)
-    const tools = params.tools ? this.convertTools(params.tools) : undefined
+    const toolNames = buildOpenAIToolNames(params.tools)
+    const messages = this.convertMessages(params, toolNames)
+    const tools = params.tools ? this.convertTools(params.tools, toolNames) : undefined
 
     const body: Record<string, any> = {
       model: params.model,
       max_tokens: params.maxTokens,
       messages,
     }
+    this.applyPromptCachePolicy(body, params)
 
     if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
       body.enable_thinking = true
@@ -198,14 +235,15 @@ export class OpenAIProvider implements LLMProvider {
     const data = (await response.json()) as OpenAIChatResponse
 
     // Convert response back to normalized format
-    return this.convertResponse(data, params.thinking?.type === 'disabled')
+    return this.convertResponse(data, params.thinking?.type === 'disabled', toolNames)
   }
 
   async *createMessageStream(
     params: CreateMessageParams,
   ): AsyncGenerator<CreateMessageStreamEvent, CreateMessageResponse> {
-    const messages = this.convertMessages(params.system, params.messages)
-    const tools = params.tools ? this.convertTools(params.tools) : undefined
+    const toolNames = buildOpenAIToolNames(params.tools)
+    const messages = this.convertMessages(params, toolNames)
+    const tools = params.tools ? this.convertTools(params.tools, toolNames) : undefined
 
     const body: Record<string, any> = {
       model: params.model,
@@ -214,6 +252,7 @@ export class OpenAIProvider implements LLMProvider {
       stream: true,
       stream_options: { include_usage: true },
     }
+    this.applyPromptCachePolicy(body, params)
 
     if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
       body.enable_thinking = true
@@ -404,7 +443,7 @@ export class OpenAIProvider implements LLMProvider {
       content.push({
         type: 'tool_use',
         id: toolCall.id,
-        name: toolCall.function.name,
+        name: toolNames.wireToOriginal.get(toolCall.function.name) ?? toolCall.function.name,
         input,
       })
     }
@@ -450,21 +489,45 @@ export class OpenAIProvider implements LLMProvider {
   // --------------------------------------------------------------------------
 
   private convertMessages(
-    system: string,
-    messages: NormalizedMessageParam[],
+    params: CreateMessageParams,
+    toolNames: OpenAIToolNames,
   ): OpenAIChatMessage[] {
     const result: OpenAIChatMessage[] = []
 
     // System prompt as first message
-    if (system) {
-      result.push({ role: 'system', content: system })
+    if (params.system) {
+      result.push({
+        role: 'system',
+        content: params.promptCache?.cacheStableSystem
+          ? [{
+              type: 'text',
+              text: params.system,
+              cache_control: { type: 'ephemeral', ttl: params.promptCache.ttl ?? '5m' },
+            }]
+          : params.system,
+      })
     }
 
-    for (const msg of messages) {
+    for (const msg of params.messages) {
       if (msg.role === 'user') {
         this.convertUserMessage(msg, result)
       } else if (msg.role === 'assistant') {
-        this.convertAssistantMessage(msg, result)
+        this.convertAssistantMessage(msg, result, toolNames)
+      } else if (msg.role === 'runtime') {
+        const content = typeof msg.content === 'string'
+          ? msg.content
+          : msg.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n')
+        const role = params.promptCache?.runtimeRole === 'developer'
+          ? 'developer'
+          : params.promptCache?.runtimeRole === 'system'
+            ? 'system'
+            : 'user'
+        result.push({
+          role,
+          content: role === 'user'
+            ? `<lume_runtime_context>\n${content}\n</lume_runtime_context>`
+            : content,
+        })
       }
     }
 
@@ -472,6 +535,16 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   protected prepareChatCompletionBody(_body: Record<string, any>): void {}
+
+  private applyPromptCachePolicy(body: Record<string, any>, params: CreateMessageParams): void {
+    const routingKey = params.promptCache?.routingKey
+    if (!routingKey) return
+    if (params.promptCache?.strategy === 'openrouter-sticky') {
+      body.session_id = routingKey
+    } else {
+      body.prompt_cache_key = routingKey
+    }
+  }
 
   private convertUserMessage(
     msg: NormalizedMessageParam,
@@ -549,6 +622,7 @@ export class OpenAIProvider implements LLMProvider {
   private convertAssistantMessage(
     msg: NormalizedMessageParam,
     result: OpenAIChatMessage[],
+    toolNames: OpenAIToolNames,
   ): void {
     if (typeof msg.content === 'string') {
       result.push({ role: 'assistant', content: msg.content })
@@ -570,7 +644,7 @@ export class OpenAIProvider implements LLMProvider {
           id: block.id,
           type: 'function',
           function: {
-            name: block.name,
+            name: toolNames.originalToWire.get(block.name) ?? block.name,
             arguments: typeof block.input === 'string'
               ? block.input
               : JSON.stringify(block.input),
@@ -599,11 +673,11 @@ export class OpenAIProvider implements LLMProvider {
   // Tool Conversion: Internal → OpenAI
   // --------------------------------------------------------------------------
 
-  private convertTools(tools: NormalizedTool[]): OpenAITool[] {
+  private convertTools(tools: NormalizedTool[], toolNames: OpenAIToolNames): OpenAITool[] {
     return tools.map((t) => ({
       type: 'function' as const,
       function: {
-        name: t.name,
+        name: toolNames.originalToWire.get(t.name) ?? t.name,
         description: t.description,
         parameters: t.input_schema,
       },
@@ -614,7 +688,11 @@ export class OpenAIProvider implements LLMProvider {
   // Response Conversion: OpenAI → Internal
   // --------------------------------------------------------------------------
 
-  private convertResponse(data: OpenAIChatResponse, thinkingDisabled = false): CreateMessageResponse {
+  private convertResponse(
+    data: OpenAIChatResponse,
+    thinkingDisabled: boolean,
+    toolNames: OpenAIToolNames,
+  ): CreateMessageResponse {
     const choice = data.choices[0]
     if (!choice) {
       return {
@@ -652,7 +730,7 @@ export class OpenAIProvider implements LLMProvider {
         content.push({
           type: 'tool_use',
           id: tc.id,
-          name: tc.function.name,
+          name: toolNames.wireToOriginal.get(tc.function.name) ?? tc.function.name,
           input,
         })
       }
@@ -698,11 +776,12 @@ function normalizeOpenAIUsage(usage: OpenAIUsage | OpenAIStreamChunk['usage'] | 
       ?? usage?.prompt_cache_hit_tokens,
   )
   const promptCacheMissTokens = numberOrUndefined(usage?.prompt_cache_miss_tokens)
+  const cacheCreationInputTokens = tokenValue(usage?.input_tokens_details?.cache_write_tokens)
   return {
-    input_tokens: promptCacheMissTokens ?? Math.max(0, promptTokens - cacheReadInputTokens),
+    input_tokens: promptCacheMissTokens ?? Math.max(0, promptTokens - cacheReadInputTokens - cacheCreationInputTokens),
     output_tokens: outputTokens,
     cache_read_input_tokens: cacheReadInputTokens,
-    cache_creation_input_tokens: 0,
+    cache_creation_input_tokens: cacheCreationInputTokens,
   }
 }
 
@@ -738,6 +817,7 @@ function mergeOpenAIUsage(
   }
   if (next.input_tokens_details) {
     const currentCachedTokens = current.input_tokens_details?.cached_tokens
+    const currentCacheWriteTokens = current.input_tokens_details?.cache_write_tokens
     merged.input_tokens_details = {
       ...current.input_tokens_details,
       ...next.input_tokens_details,
@@ -747,6 +827,12 @@ function mergeOpenAIUsage(
       && tokenValue(currentCachedTokens) > 0
     ) {
       merged.input_tokens_details.cached_tokens = currentCachedTokens
+    }
+    if (
+      tokenValue(next.input_tokens_details.cache_write_tokens) === 0
+      && tokenValue(currentCacheWriteTokens) > 0
+    ) {
+      merged.input_tokens_details.cache_write_tokens = currentCacheWriteTokens
     }
   }
 

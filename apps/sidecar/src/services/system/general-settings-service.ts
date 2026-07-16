@@ -11,6 +11,7 @@ import {
   GENERAL_SETTINGS_DEFAULTS,
   type AgentMessageDisplayMode,
   type GeneralSettings,
+  type LumeLogLevel,
   type PersistedUiState,
   type ThemeMode,
   type ThemePalette,
@@ -29,6 +30,9 @@ import {
   writePersistedSettings,
   type SidecarSettingsStore
 } from "./settings-store";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("general-settings");
 
 interface SidecarSettings extends SidecarSettingsStore {
   uiState?: PersistedUiState;
@@ -70,12 +74,62 @@ function isAgentMessageDisplayMode(value: unknown): value is AgentMessageDisplay
   return value === "minimal" || value === "verbose";
 }
 
+function isLogLevel(value: unknown): value is LumeLogLevel {
+  return value === "trace" || value === "debug" || value === "info"
+    || value === "warn" || value === "error" || value === "fatal";
+}
+
+function sanitizeLoggingSettings(input: unknown): GeneralSettings["logging"] {
+  const value = input && typeof input === "object"
+    ? input as Partial<GeneralSettings["logging"]>
+    : {};
+  return {
+    consoleLevel: isLogLevel(value.consoleLevel) ? value.consoleLevel : GENERAL_SETTINGS_DEFAULTS.logging.consoleLevel,
+    fileLevel: isLogLevel(value.fileLevel) ? value.fileLevel : GENERAL_SETTINGS_DEFAULTS.logging.fileLevel,
+    format: value.format === "json" || value.format === "pretty" ? value.format : GENERAL_SETTINGS_DEFAULTS.logging.format,
+    retentionDays: Number.isFinite(value.retentionDays)
+      ? Math.max(1, Math.min(365, Math.round(value.retentionDays!)))
+      : GENERAL_SETTINGS_DEFAULTS.logging.retentionDays,
+    maxSegmentMb: Number.isFinite(value.maxSegmentMb)
+      ? Math.max(1, Math.min(1024, Math.round(value.maxSegmentMb!)))
+      : GENERAL_SETTINGS_DEFAULTS.logging.maxSegmentMb,
+    maxTotalMb: Number.isFinite(value.maxTotalMb)
+      ? Math.max(10, Math.min(10_240, Math.round(value.maxTotalMb!)))
+      : GENERAL_SETTINGS_DEFAULTS.logging.maxTotalMb,
+    diagnosticCapture: sanitizeDiagnosticCapture(value.diagnosticCapture)
+  };
+}
+
+function sanitizeDiagnosticCapture(input: unknown): GeneralSettings["logging"]["diagnosticCapture"] {
+  const value = input && typeof input === "object"
+    ? input as Partial<GeneralSettings["logging"]["diagnosticCapture"]>
+    : {};
+  const scope = value.scope && typeof value.scope === "object"
+    ? {
+        ...(typeof value.scope.threadId === "string" ? { threadId: value.scope.threadId.slice(0, 128) } : {}),
+        ...(typeof value.scope.traceId === "string" ? { traceId: value.scope.traceId.slice(0, 128) } : {})
+      }
+    : null;
+  const expiresAt = typeof value.expiresAt === "string" && Number.isFinite(Date.parse(value.expiresAt))
+    ? value.expiresAt
+    : null;
+  return {
+    enabled: value.enabled === true && expiresAt !== null && Date.parse(expiresAt) > Date.now(),
+    configVersion: Number.isSafeInteger(value.configVersion) && value.configVersion! > 0
+      ? value.configVersion!
+      : GENERAL_SETTINGS_DEFAULTS.logging.diagnosticCapture.configVersion,
+    expiresAt,
+    scope
+  };
+}
+
 function sanitizeGeneralSettings(input: unknown): GeneralSettings {
   if (typeof input !== "object" || input === null) {
     return {
       ...GENERAL_SETTINGS_DEFAULTS,
       windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior },
-      updateSettings: { ...GENERAL_SETTINGS_DEFAULTS.updateSettings }
+      updateSettings: { ...GENERAL_SETTINGS_DEFAULTS.updateSettings },
+      logging: { ...GENERAL_SETTINGS_DEFAULTS.logging }
     };
   }
 
@@ -97,6 +151,7 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
     agentMessageDisplayMode: isAgentMessageDisplayMode(value.agentMessageDisplayMode)
       ? value.agentMessageDisplayMode
       : GENERAL_SETTINGS_DEFAULTS.agentMessageDisplayMode,
+    logging: sanitizeLoggingSettings(value.logging),
     windowBehavior: {
       minimizeToTray:
         typeof windowBehavior?.minimizeToTray === "boolean"
@@ -215,24 +270,26 @@ export function getPersistedGeneralSettings(): GeneralSettings {
     return sanitizeGeneralSettings(settings.generalSettings);
   } catch (error) {
     if (error instanceof PersistedSettingsReadError) {
-      console.warn("[General Settings] 读取 settings.json 失败，回退默认值:", error.cause ?? error);
+      log.warn("failed to read settings; using general defaults", { error: error.cause ?? error });
       return {
         ...GENERAL_SETTINGS_DEFAULTS,
         windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior },
-        updateSettings: { ...GENERAL_SETTINGS_DEFAULTS.updateSettings }
+        updateSettings: { ...GENERAL_SETTINGS_DEFAULTS.updateSettings },
+        logging: { ...GENERAL_SETTINGS_DEFAULTS.logging }
       };
     }
     throw error;
   }
 }
 
-export function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput): GeneralSettings {
+export async function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput): Promise<GeneralSettings> {
   const settings = readPersistedSettings() as SidecarSettings;
   const current = sanitizeGeneralSettings(settings.generalSettings);
   const next: GeneralSettings = {
     themeMode: input.themeMode ?? current.themeMode,
     themePalette: input.themePalette ?? current.themePalette,
     agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
+    logging: sanitizeLoggingSettings({ ...current.logging, ...(input.logging ?? {}) }),
     windowBehavior: {
       minimizeToTray: input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray,
       closeToTray: input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray,
@@ -249,7 +306,7 @@ export function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput
     }
   };
   settings.generalSettings = next;
-  writePersistedSettings(settings);
+  await writePersistedSettings(settings);
   return next;
 }
 

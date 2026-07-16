@@ -5,6 +5,9 @@ import {
   writePersistedSettings,
   type SidecarSettingsStore
 } from "./settings-store";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("ui-state");
 
 interface SidecarSettings extends SidecarSettingsStore {
   uiState?: PersistedUiState;
@@ -73,14 +76,14 @@ export function getPersistedUiState(): PersistedUiState {
     return sanitizeUiState(settings.uiState);
   } catch (error) {
     if (error instanceof PersistedSettingsReadError) {
-      console.warn("[UI State] 读取 settings.json 失败，回退默认值:", error.cause ?? error);
+      log.warn("failed to read settings; using default UI state", { error: error.cause ?? error });
       return DEFAULT_UI_STATE;
     }
     throw error;
   }
 }
 
-export function updatePersistedUiState(input: UpdateUiStateInput): PersistedUiState {
+export async function updatePersistedUiState(input: UpdateUiStateInput): Promise<PersistedUiState> {
   const settings = readPersistedSettings() as SidecarSettings;
   const current = sanitizeUiState(settings.uiState);
   const next: PersistedUiState = {
@@ -90,6 +93,6 @@ export function updatePersistedUiState(input: UpdateUiStateInput): PersistedUiSt
     updatedAt: Date.now()
   };
   settings.uiState = next;
-  writePersistedSettings(settings);
+  await writePersistedSettings(settings);
   return next;
 }

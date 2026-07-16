@@ -649,7 +649,7 @@ function normalizeAssistantTokenUsage(usage: RuntimeAssistantTokenUsageView): Ru
   assignFiniteUsageNumber(normalized, 'contextWindow', usage.contextWindow)
   assignFiniteUsageNumber(normalized, 'contextPercent', usage.contextPercent)
   if (normalized.cachedTokens === undefined) {
-    const cachedTokens = (normalized.cacheReadInputTokens ?? 0) + (normalized.cacheCreationInputTokens ?? 0)
+    const cachedTokens = normalized.cacheReadInputTokens ?? 0
     if (cachedTokens > 0) normalized.cachedTokens = cachedTokens
   }
   return Object.keys(normalized).length > 0 ? normalized : null

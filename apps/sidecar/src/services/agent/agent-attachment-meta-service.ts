@@ -5,6 +5,9 @@ import {
   getConfigDir,
   getAgentFileContextRootPath,
 } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
+
+const log = createLogger("agent-attachment-meta");
 
 interface PersistedAttachmentRecord {
   absoluteSourcePath: string;
@@ -164,7 +167,7 @@ export function readThreadAttachmentMeta(
     );
   } catch (error) {
     if (error instanceof AttachmentMetadataReadError) {
-      console.warn("[Attachment Meta] 读取线程附件元信息失败:", error.metadataPath, error.cause ?? error);
+      log.warn("failed to read thread attachment metadata", { metadataPath: error.metadataPath, error: error.cause ?? error });
       return {};
     }
     throw error;
@@ -179,7 +182,7 @@ export function readWorkspaceAttachmentMeta(workspaceSlug: string): Record<strin
     );
   } catch (error) {
     if (error instanceof AttachmentMetadataReadError) {
-      console.warn("[Attachment Meta] 读取工作区附件元信息失败:", error.metadataPath, error.cause ?? error);
+      log.warn("failed to read workspace attachment metadata", { metadataPath: error.metadataPath, error: error.cause ?? error });
       return {};
     }
     throw error;
@@ -243,7 +246,7 @@ export function getAttachmentMeta(scope: AttachmentScope, targetPath: string): E
     return record ? toExternalAttachmentMeta(record) : undefined;
   } catch (error) {
     if (error instanceof AttachmentMetadataReadError) {
-      console.warn("[Attachment Meta] 查询附件元信息失败:", error.metadataPath, error.cause ?? error);
+      log.warn("failed to query attachment metadata", { metadataPath: error.metadataPath, error: error.cause ?? error });
       return undefined;
     }
     throw error;

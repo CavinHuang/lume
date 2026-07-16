@@ -322,7 +322,7 @@ export async function getSessionMessages(
     : mapNormalizedToSessionMessages(data.messages)
   const filtered = options.includeSystemMessages
     ? messages
-    : messages.filter((message) => message.role !== 'system')
+    : messages.filter((message) => message.role !== 'system' && message.role !== 'runtime')
   const offset = options.offset || 0
   const limit = options.limit ?? filtered.length
   return filtered.slice(offset, offset + limit)

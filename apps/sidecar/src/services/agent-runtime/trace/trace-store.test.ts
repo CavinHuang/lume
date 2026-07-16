@@ -6,6 +6,25 @@ import { createFileBackedLumeTraceStore } from "./trace-store";
 import { TraceRecorder } from "./trace-recorder";
 
 describe("trace-store", () => {
+  test("keeps internal store trace ids separate from correlation trace ids", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-trace-correlation-"));
+    const store = createFileBackedLumeTraceStore(dir);
+    const recorder = new TraceRecorder(store, { createId: () => "internal-trace-id" });
+
+    const trace = await recorder.startTrace({
+      runId: "run-1",
+      threadId: "thread-1",
+      name: "Agent run",
+      correlationTraceId: "correlation-trace-id",
+      parentCorrelationTraceId: "parent-correlation-id"
+    });
+
+    expect(trace.id).toBe("internal-trace-id");
+    expect(trace.correlationTraceId).toBe("correlation-trace-id");
+    expect((await store.get("internal-trace-id"))?.parentCorrelationTraceId).toBe("parent-correlation-id");
+    expect(await store.get("correlation-trace-id")).toBeNull();
+  });
+
   test("records trace spans and final status", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-trace-store-"));
     const store = createFileBackedLumeTraceStore(dir);

@@ -1,4 +1,5 @@
-import { argv, stderr } from "node:process";
+import { argv } from "node:process";
+import { randomUUID } from "node:crypto";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
 import { initProxySettings } from "./services/system/proxy-settings-manager";
@@ -14,14 +15,28 @@ import { getSubagentCoordinator } from "./services/agent/subagents/subagent-coor
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
-import { formatConsoleArgs } from "./services/infra/log-format";
-import { setLogRecordNotificationWriter, writeLogRecord } from "./services/infra/logger";
+import {
+  acknowledgeLogBatch,
+  flushLogTransport,
+  setLogBatchNotificationWriter,
+  writeEmergencyLog,
+  writeLogRecord
+} from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport } from "./rpc/process-transport";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
+import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
+import { setLogDigestPolicy } from "./services/infra/log-digest";
+import type { LumeLogDigestPolicy } from "@lume/shared";
 
 const rpcTransport = createProcessRpcTransport();
+const SETTINGS_ACK_TIMEOUT_MS = 10_000;
+const pendingSettingsMutations = new Map<string, {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}>();
 
 function writeResponse(response: JsonRpcResponse): void {
   rpcTransport.send(JSON.stringify(response));
@@ -32,25 +47,34 @@ function writeNotification(method: string, params: unknown): void {
 }
 
 if ((process as typeof process & { parentPort?: unknown }).parentPort) {
-  setLogRecordNotificationWriter((record) => writeNotification("system.log", record));
+  setLogBatchNotificationWriter((batch) => writeNotification("system.log-batch", batch));
+  setPersistedSettingsMutationWriter((settings) => new Promise<void>((resolve, reject) => {
+    const mutationId = randomUUID();
+    const timeout = setTimeout(() => {
+      pendingSettingsMutations.delete(mutationId);
+      reject(new Error("desktop settings persistence acknowledgement timed out"));
+    }, SETTINGS_ACK_TIMEOUT_MS);
+    pendingSettingsMutations.set(mutationId, { resolve, reject, timeout });
+    try {
+      writeNotification("system.settings-replace", { mutationId, settings });
+    } catch (error) {
+      clearTimeout(timeout);
+      pendingSettingsMutations.delete(mutationId);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }));
 }
 
-// JSON-RPC 使用 Electron parentPort 或 stdio，业务日志统一输出到 stderr。
-for (const level of ["log", "info", "warn", "error", "debug"] as const) {
-  console[level] = (...args: unknown[]) => {
-    const line = formatConsoleArgs({
-      source: "sidecar",
-      context: "app",
-      args
-    });
-    stderr.write(`${line}\n`);
-    writeLogRecord({
-      level: level === "log" ? "info" : level,
-      context: "console",
-      message: line
-    });
-  };
-}
+const QUIET_RPC_METHODS = new Set([
+  "healthcheck",
+  "general-settings:get",
+  "agent:list-threads",
+  "agent:list-subagent-runs",
+  "agent:get-pending-interactive",
+  "agent:list-workspaces",
+  "model-meta:get"
+]);
+const SLOW_RPC_MS = 2_000;
 // Process-wide reverse-RPC render client. Bridges WebFetch JS-render requests
 // to the desktop PageRenderer. Fed into BOTH the RPC handlers (so render:result
 // resolves pending renders) and the agent runtime (so WebFetch can invoke it).
@@ -90,6 +114,29 @@ async function handleRpcLine(line: string): Promise<void> {
     return;
   }
 
+  if (method === "system.log-ack") {
+    const batchId = (payload.params as { batchId?: unknown } | null)?.batchId;
+    if (typeof batchId === "string") acknowledgeLogBatch(batchId);
+    return;
+  }
+
+  if (method === "system.logging-policy") {
+    setLogDigestPolicy(payload.params as LumeLogDigestPolicy);
+    return;
+  }
+
+  if (method === "system.settings-ack") {
+    const params = payload.params as { mutationId?: unknown; ok?: unknown; error?: unknown } | null;
+    const mutationId = typeof params?.mutationId === "string" ? params.mutationId : "";
+    const pending = pendingSettingsMutations.get(mutationId);
+    if (!pending) return;
+    clearTimeout(pending.timeout);
+    pendingSettingsMutations.delete(mutationId);
+    if (params?.ok === true) pending.resolve();
+    else pending.reject(new Error(typeof params?.error === "string" ? params.error : "desktop settings persistence failed"));
+    return;
+  }
+
   const handler = handlers[method];
   if (!handler) {
     writeResponse({
@@ -103,12 +150,42 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   try {
-    console.error(`[sidecar] rpc_in method=${method} id=${String(payload.id)}`);
+    const startedAt = performance.now();
     const result = await handler(payload.params);
-    console.error(`[sidecar] rpc_out ok method=${method} id=${String(payload.id)}`);
+    const durationMs = performance.now() - startedAt;
+    if (durationMs >= SLOW_RPC_MS) {
+      writeLogRecord({
+        level: "warn",
+        context: "rpc.server",
+        event: "rpc.slow",
+        message: `slow sidecar RPC: ${method}`,
+        durationMs,
+        rpcRequestId: String(payload.id),
+        data: { method }
+      });
+    } else if (!QUIET_RPC_METHODS.has(method)) {
+      writeLogRecord({
+        level: "debug",
+        context: "rpc.server",
+        event: "rpc.completed",
+        message: `sidecar RPC completed: ${method}`,
+        status: "ok",
+        durationMs,
+        rpcRequestId: String(payload.id),
+        data: { method }
+      });
+    }
     writeResponse({ id: payload.id, result });
   } catch (error) {
-    console.error(`[sidecar] rpc_out err method=${method} id=${String(payload.id)} error=${error instanceof Error ? error.message : String(error)}`);
+    writeLogRecord({
+      level: "error",
+      context: "rpc.server",
+      event: "rpc.failed",
+      message: `sidecar RPC failed: ${method}`,
+      status: "error",
+      rpcRequestId: String(payload.id),
+      data: { method, error }
+    });
     writeResponse({
       id: payload.id,
       error: {
@@ -126,25 +203,61 @@ async function boot(): Promise<void> {
     const { acquireSingleInstance } = await import("./services/infra/single-instance");
     acquireSingleInstance();
   } catch (error) {
-    console.error(`[sidecar] 单例守卫失败: ${error instanceof Error ? error.message : String(error)}`);
+    writeLogRecord({
+      level: "error",
+      context: "sidecar.lifecycle",
+      event: "sidecar.single_instance_failed",
+      message: "sidecar single-instance guard failed",
+      error: { message: error instanceof Error ? error.message : String(error) }
+    });
   }
-  console.error(`[sidecar] booted (pid=${process.pid}) args=${argv.slice(2).join(" ")}`);
+  writeLogRecord({
+    level: "info",
+    context: "sidecar.lifecycle",
+    event: "sidecar.started",
+    message: `sidecar started (pid=${process.pid})`,
+    data: { args: argv.slice(2) }
+  });
   const native = assertSidecarNativeRuntime();
-  console.error(`[sidecar] native ready capabilities=${native.capabilities.join(",")}`);
+  writeLogRecord({
+    level: "info",
+    context: "sidecar.lifecycle",
+    event: "sidecar.ready",
+    message: "sidecar native runtime ready",
+    data: { capabilities: native.capabilities }
+  });
   void initProxySettings().catch((error) => {
-    console.error(`[代理配置] 初始化失败: ${error instanceof Error ? error.message : String(error)}`);
+    writeLogRecord({
+      level: "error",
+      context: "sidecar.proxy",
+      event: "proxy.initialization_failed",
+      message: "proxy initialization failed",
+      error: { message: error instanceof Error ? error.message : String(error) }
+    });
   });
   if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
     const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
     setAutomationNotificationWriter(writeNotification);
     void startAutomationRunner().catch((error) => {
-      console.error(`[自动化 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+      writeLogRecord({
+        level: "error",
+        context: "sidecar.automation",
+        event: "automation.runner_start_failed",
+        message: "automation runner failed to start",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
     });
   }
   if (envAutostartEnabled("LUME_READING_RUNNER_AUTOSTART", true)) {
     const { startRoutineRunner } = await import("./services/routine/routine-runner");
     void startRoutineRunner().catch((error) => {
-      console.error(`[日程 Runner] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+      writeLogRecord({
+        level: "error",
+        context: "sidecar.routine",
+        event: "routine.runner_start_failed",
+        message: "routine runner failed to start",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
     });
   }
   if (envAutostartEnabled("LUME_DEFAULT_SKILLS_AUTOSTART", false)) {
@@ -156,7 +269,13 @@ async function boot(): Promise<void> {
   }
   if (envAutostartEnabled("LUME_IM_AUTOSTART", true)) {
     void imRuntimeManager.startEnabledAccounts().catch((error) => {
-      console.error(`[IM Runtime] 启动失败: ${error instanceof Error ? error.message : String(error)}`);
+      writeLogRecord({
+        level: "error",
+        context: "sidecar.im",
+        event: "im.runtime_start_failed",
+        message: "IM runtime failed to start",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
     });
   }
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
@@ -181,6 +300,12 @@ async function boot(): Promise<void> {
     const { stopRoutineRunner } = require("./services/routine/routine-runner");
     stopRoutineRunner();
     imRuntimeManager.stopAll();
+    for (const pending of pendingSettingsMutations.values()) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("sidecar is stopping"));
+    }
+    pendingSettingsMutations.clear();
+    flushLogTransport();
   };
   process.once("exit", stopWatcher);
   process.once("SIGINT", () => {
@@ -201,6 +326,6 @@ async function boot(): Promise<void> {
 }
 
 void boot().catch((error) => {
-  console.error(`[sidecar] boot failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+  writeEmergencyLog("sidecar boot failed", error);
   process.exit(1);
 });

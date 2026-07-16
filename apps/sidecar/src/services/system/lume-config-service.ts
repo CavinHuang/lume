@@ -22,6 +22,7 @@ import {
 } from "@lume/shared";
 import { getConfigDir, getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
 import { ensureGuanlanReady } from "../infra/guanlan-runtime-service";
+import { createLogger } from "../infra/logger";
 
 interface UpdateLumeConfigSectionInput {
   source: LumeConfigAuditSource;
@@ -32,6 +33,7 @@ interface UpdateLumeConfigSectionInput {
 }
 
 const CONFIG_VERSION = 1;
+const log = createLogger("lume-config");
 const OFFICIAL_PLUGIN_MARKET_SOURCE: LumeConfigPluginMarketSourceRef = {
   id: "official",
   name: "Lume Plugins",
@@ -818,7 +820,7 @@ function readOrCreateLumeConfig(): LumeConfigFile {
     }
     return normalized;
   } catch (error) {
-    console.warn("[Lume Config] 解析 lume.yaml 失败，回退默认配置:", error);
+    log.warn("failed to parse lume.yaml; using default config", { error });
     return createDefaultLumeConfig();
   }
 }

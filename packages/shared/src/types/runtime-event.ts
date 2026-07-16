@@ -328,6 +328,7 @@ export interface RuntimeNormalizedUsage {
   outputTokens: number;
   cacheReadInputTokens: number;
   cacheCreationInputTokens: number;
+  /** Backward-compatible alias for cacheReadInputTokens. */
   cachedTokens: number;
   totalTokens: number;
 }
@@ -370,6 +371,7 @@ export interface RuntimeBillingUsageRecord extends RuntimeNormalizedUsage {
   subagentRunId?: string;
   responseId?: string;
   costUSD?: number;
+  ttftMs?: number;
 }
 
 export interface RuntimeBillingUsageSummary {

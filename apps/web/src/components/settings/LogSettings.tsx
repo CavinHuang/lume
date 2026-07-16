@@ -7,6 +7,10 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Radio,
+  Pause,
+  Trash2,
+  ShieldCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
@@ -14,10 +18,29 @@ import type {
   LogFileSummary,
   LogViewerLevel,
   ReadLogFileResult,
+  ReadLogFileInput,
+  LumeLogEventV2,
+  LumeDiagnosticStatus,
+  LumeLoggingSettings,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { exportLogs, listLogFiles, openLogsDir, readLogFile } from '@/lib/desktop-api'
+import {
+  decryptDiagnosticContent,
+  deleteDiagnosticContent,
+  deleteLogs,
+  exportLogs,
+  getDiagnosticStatus,
+  getGeneralSettings,
+  listLogFiles,
+  openLogsDir,
+  readLogFile,
+  startDiagnosticCapture,
+  stopDiagnosticCapture,
+  subscribeLiveLogs,
+  writeClipboardText,
+  updateGeneralSettings,
+} from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 
 import { Input } from '@/components/ui/input'
@@ -35,17 +58,21 @@ const PAGE_SIZE = 300
 
 const SOURCE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'all', label: '全部来源' },
-  { value: 'desktop', label: 'Desktop' },
+  { value: 'main', label: 'Main' },
   { value: 'sidecar', label: 'Sidecar' },
-  { value: 'webview', label: 'Webview' },
+  { value: 'renderer', label: 'Renderer' },
+  { value: 'desktop-host', label: 'Desktop Host' },
+  { value: 'node-repl', label: 'Node REPL' },
 ]
 
 /** Extended log line that may include raw_json from Desktop direct read */
 interface LogLineEntryExt {
   lineNumber: number
+  fileName?: string
   level: LogViewerLevel
   text: string
-  raw_json?: string
+  rawJson?: string
+  event?: LumeLogEventV2
 }
 
 export function LogSettings() {
@@ -62,6 +89,49 @@ export function LogSettings() {
   const [contentRefreshKey, setContentRefreshKey] = React.useState(0)
   const [showRawJson, setShowRawJson] = React.useState(false)
   const [loadedLimit, setLoadedLimit] = React.useState(PAGE_SIZE)
+  const [selectedTraceId, setSelectedTraceId] = React.useState('')
+  const [livePaused, setLivePaused] = React.useState(false)
+  const [diagnosticStatus, setDiagnosticStatus] = React.useState<LumeDiagnosticStatus | null>(null)
+  const [diagnosticThreadId, setDiagnosticThreadId] = React.useState('')
+  const [diagnosticMinutes, setDiagnosticMinutes] = React.useState('60')
+  const [loggingSettings, setLoggingSettings] = React.useState<LumeLoggingSettings | null>(null)
+  const livePausedRef = React.useRef(false)
+  const liveRefreshTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  React.useEffect(() => { livePausedRef.current = livePaused }, [livePaused])
+
+  React.useEffect(() => {
+    void getDiagnosticStatus().then(setDiagnosticStatus).catch(() => {})
+    void getGeneralSettings().then((settings) => setLoggingSettings(settings.logging)).catch(() => {})
+  }, [])
+
+  const saveLoggingSettings = async (updates: Partial<LumeLoggingSettings>) => {
+    if (!loggingSettings) return
+    const optimistic = { ...loggingSettings, ...updates }
+    setLoggingSettings(optimistic)
+    try {
+      const settings = await updateGeneralSettings({ logging: updates })
+      setLoggingSettings(settings.logging)
+    } catch {
+      setLoggingSettings(loggingSettings)
+      toast.error('保存日志设置失败')
+    }
+  }
+
+  React.useEffect(() => {
+    let unsubscribe: (() => Promise<void>) | undefined
+    void subscribeLiveLogs(() => {
+      if (livePausedRef.current || liveRefreshTimer.current) return
+      liveRefreshTimer.current = setTimeout(() => {
+        liveRefreshTimer.current = null
+        setContentRefreshKey((key) => key + 1)
+      }, 250)
+    }).then((off) => { unsubscribe = off }).catch(() => {})
+    return () => {
+      if (liveRefreshTimer.current) clearTimeout(liveRefreshTimer.current)
+      void unsubscribe?.()
+    }
+  }, [])
 
   const selectedFile = React.useMemo(
     () => snapshot?.files.find((file) => file.name === selectedFileName) ?? null,
@@ -76,7 +146,7 @@ export function LogSettings() {
       setSnapshot(result)
       setSelectedFileName((current) => {
         if (current && result.files.some((file) => file.name === current)) return current
-        return result.files[0]?.name ?? ''
+        return result.files.length ? '*' : ''
       })
       setContentRefreshKey((k) => k + 1)
     } catch (loadError) {
@@ -95,10 +165,9 @@ export function LogSettings() {
   // Build keyword from source filter + user query
   const effectiveKeyword = React.useMemo(() => {
     const parts: string[] = []
-    if (source !== 'all') parts.push(`"source":"${source}"`)
     if (query.trim()) parts.push(query.trim())
     return parts.join(' ') || undefined
-  }, [source, query])
+  }, [query])
 
   // Reset limit when file/filter changes
   React.useEffect(() => {
@@ -119,6 +188,8 @@ export function LogSettings() {
       levels: level === 'all' ? undefined : [level],
       query: effectiveKeyword,
       maxLines: loadedLimit,
+      source: source === 'all' ? undefined : source as ReadLogFileInput['source'],
+      traceId: selectedTraceId || undefined,
     })
       .then((result) => {
         if (!cancelled) {
@@ -140,7 +211,7 @@ export function LogSettings() {
     return () => {
       cancelled = true
     }
-  }, [contentRefreshKey, level, effectiveKeyword, selectedFileName, loadedLimit])
+  }, [contentRefreshKey, level, effectiveKeyword, selectedFileName, loadedLimit, source, selectedTraceId])
 
   const handleOpenDir = async () => {
     try {
@@ -164,9 +235,54 @@ export function LogSettings() {
     }
   }
 
+  const handleDeleteLogs = async () => {
+    if (!window.confirm('确定删除全部普通日志吗？诊断密文不会被删除。')) return
+    const result = await deleteLogs()
+    toast.success(`已删除 ${result.deleted} 个日志分段`)
+    await refreshFiles()
+  }
+
+  const handleStartDiagnostic = async () => {
+    try {
+      const result = await startDiagnosticCapture({
+        ...(selectedTraceId ? { traceId: selectedTraceId } : { threadId: diagnosticThreadId.trim() }),
+        durationMinutes: Number(diagnosticMinutes),
+      })
+      setDiagnosticStatus(result)
+      toast.success('诊断正文捕获已开启')
+    } catch (captureError) {
+      toast.error(captureError instanceof Error ? captureError.message : '无法开启诊断正文捕获')
+    }
+  }
+
+  const handleStopDiagnostic = async (deleteContent: boolean) => {
+    try {
+      const result = await stopDiagnosticCapture(deleteContent)
+      setDiagnosticStatus(result)
+      toast.success(deleteContent ? '已停止捕获并删除诊断密文' : '已停止诊断正文捕获')
+    } catch {
+      toast.error('停止诊断正文捕获失败')
+    }
+  }
+
   // Cast lines to extended type — Desktop direct read includes raw_json
   const lines = (content?.lines ?? []) as unknown as LogLineEntryExt[]
   const hasMore = content ? content.matchedLines > lines.length : false
+  const traceSummary = React.useMemo(() => {
+    const events = lines.map((line) => line.event).filter((event): event is LumeLogEventV2 => Boolean(event))
+    const model = events.find((event) => event.event === 'model.resolved')?.data
+    const completed = [...events].reverse().find((event) => event.event === 'agent.run.completed' || event.event === 'agent.run.failed' || event.event === 'reply.committed')
+    const startedAt = events[0]?.observedAt
+    const endedAt = events.at(-1)?.observedAt
+    const durationMs = startedAt && endedAt ? Date.parse(endedAt) - Date.parse(startedAt) : undefined
+    return {
+      provider: typeof model?.provider === 'string' ? model.provider : undefined,
+      modelId: typeof model?.modelId === 'string' ? model.modelId : undefined,
+      status: completed?.status,
+      durationMs,
+      eventCount: events.length,
+    }
+  }, [lines])
 
   return (
     <div className="space-y-5">
@@ -181,6 +297,10 @@ export function LogSettings() {
             <RefreshCw size={14} className={cn(loadingFiles && 'animate-spin')} />
             刷新
           </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setLivePaused((value) => !value)}>
+            {livePaused ? <Radio size={14} /> : <Pause size={14} />}
+            {livePaused ? '继续实时跟随' : '暂停实时跟随'}
+          </Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => void handleOpenDir()}>
             <FolderOpen size={14} />
             打开目录
@@ -189,8 +309,106 @@ export function LogSettings() {
             {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
             导出全部
           </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => void handleDeleteLogs()} disabled={!snapshot?.totalFiles}>
+            <Trash2 size={14} />
+            清空普通日志
+          </Button>
         </div>
       </div>
+
+      {selectedTraceId && (
+        <div className="flex items-center justify-between rounded-[10px] border border-[var(--border)] bg-[var(--surface-1)] px-4 py-2 text-[13px]">
+          <div>
+            <span className="font-mono text-[var(--text-2)]">当前 trace：{selectedTraceId}</span>
+            <div className="mt-1 text-[12px] text-[var(--text-3)]">
+              {traceSummary.provider ?? 'provider unknown'} / {traceSummary.modelId ?? 'model unknown'} · {traceSummary.status ?? 'running/unknown'} · {traceSummary.eventCount} events
+              {Number.isFinite(traceSummary.durationMs) ? ` · ${traceSummary.durationMs} ms` : ''}
+            </div>
+          </div>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedTraceId('')}>查看全部</Button>
+        </div>
+      )}
+
+      <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface-1)] p-4">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-[14px] font-medium text-[var(--text-1)]">
+              <ShieldCheck size={16} />
+              诊断正文捕获
+            </div>
+            <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+              仅捕获指定 thread 或当前 trace 的用户与 Agent 正文，使用系统安全存储加密；最长 24 小时，普通导出不包含正文。
+            </p>
+          </div>
+          <span className="text-[12px] text-[var(--text-3)]">
+            {!diagnosticStatus?.available ? '系统安全存储不可用' : diagnosticStatus.lease?.enabled ? `有效至 ${new Date(diagnosticStatus.lease.expiresAt!).toLocaleString()}` : '未开启'}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={selectedTraceId || diagnosticThreadId}
+            onChange={(event) => setDiagnosticThreadId(event.target.value)}
+            disabled={Boolean(selectedTraceId) || diagnosticStatus?.lease?.enabled}
+            placeholder={selectedTraceId ? '使用当前 trace' : '输入 threadId'}
+            className="h-9 min-w-[280px] flex-1"
+          />
+          <Select value={diagnosticMinutes} onValueChange={(value) => value && setDiagnosticMinutes(value)} disabled={diagnosticStatus?.lease?.enabled}>
+            <SelectTrigger className="h-9 w-[130px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="60">1 小时</SelectItem>
+              <SelectItem value="360">6 小时</SelectItem>
+              <SelectItem value="1440">24 小时</SelectItem>
+            </SelectContent>
+          </Select>
+          {diagnosticStatus?.lease?.enabled ? (
+            <>
+              <Button type="button" variant="outline" size="sm" onClick={() => void handleStopDiagnostic(false)}>停止</Button>
+              <Button type="button" variant="destructive" size="sm" onClick={() => void handleStopDiagnostic(true)}>停止并删除</Button>
+            </>
+          ) : (
+            <Button type="button" variant="outline" size="sm" disabled={!diagnosticStatus?.available || (!selectedTraceId && !diagnosticThreadId.trim())} onClick={() => void handleStartDiagnostic()}>
+              开启捕获
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="sm" onClick={() => void deleteDiagnosticContent().then((result) => toast.success(`已删除 ${result.deleted} 条诊断密文`))}>
+            删除全部密文
+          </Button>
+        </div>
+      </div>
+
+      {loggingSettings && (
+        <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface-1)] p-4">
+          <div className="mb-3 text-[14px] font-medium text-[var(--text-1)]">日志策略</div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="space-y-1 text-[12px] text-[var(--text-3)]">
+              <span>终端级别</span>
+              <Select value={loggingSettings.consoleLevel} onValueChange={(value) => value && void saveLoggingSettings({ consoleLevel: value as LumeLoggingSettings['consoleLevel'] })}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>{LEVEL_OPTIONS.filter((item) => item.value !== 'all').map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </label>
+            <label className="space-y-1 text-[12px] text-[var(--text-3)]">
+              <span>普通文件级别（业务 trace 始终保留）</span>
+              <Select value={loggingSettings.fileLevel} onValueChange={(value) => value && void saveLoggingSettings({ fileLevel: value as LumeLoggingSettings['fileLevel'] })}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>{LEVEL_OPTIONS.filter((item) => item.value !== 'all').map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </label>
+            <label className="space-y-1 text-[12px] text-[var(--text-3)]">
+              <span>保留天数（1–365）</span>
+              <Input
+                type="number"
+                min={1}
+                max={365}
+                value={loggingSettings.retentionDays}
+                onChange={(event) => setLoggingSettings({ ...loggingSettings, retentionDays: Number(event.target.value) })}
+                onBlur={() => void saveLoggingSettings({ retentionDays: loggingSettings.retentionDays })}
+                className="h-9"
+              />
+            </label>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <Select
@@ -202,11 +420,16 @@ export function LogSettings() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {snapshot?.files.length ? snapshot.files.map((file) => (
-              <SelectItem key={file.name} value={file.name}>
-                {file.name} ({formatBytes(file.sizeBytes)})
-              </SelectItem>
-            )) : (
+            {snapshot?.files.length ? (
+              <>
+                <SelectItem value="*">所有日志文件 ({snapshot.totalFiles})</SelectItem>
+                {snapshot.files.map((file) => (
+                  <SelectItem key={file.name} value={file.name}>
+                    {file.name} ({formatBytes(file.sizeBytes)})
+                  </SelectItem>
+                ))}
+              </>
+            ) : (
               <SelectItem value="__none__">暂无日志文件</SelectItem>
             )}
           </SelectContent>
@@ -273,7 +496,7 @@ export function LogSettings() {
           ) : lines.length ? (
             <>
               {lines.slice().reverse().map((line) => (
-                <LogLine key={`${line.lineNumber}:${line.text}`} line={line} showRawJson={showRawJson} />
+                <LogLine key={`${line.fileName ?? selectedFileName}:${line.lineNumber}:${line.text}`} line={line} showRawJson={showRawJson} onSelectTrace={setSelectedTraceId} />
               ))}
               {hasMore && (
                 <div className="flex justify-center py-4">
@@ -301,18 +524,19 @@ export function LogSettings() {
   )
 }
 
-function LogLine({ line, showRawJson }: { line: LogLineEntryExt; showRawJson: boolean }) {
+function LogLine({ line, showRawJson, onSelectTrace }: { line: LogLineEntryExt; showRawJson: boolean; onSelectTrace: (traceId: string) => void }) {
   const [copied, setCopied] = React.useState(false)
+  const [diagnosticContent, setDiagnosticContent] = React.useState('')
 
   const handleCopy = () => {
-    const text = showRawJson && line.raw_json ? line.raw_json : line.text
-    navigator.clipboard.writeText(text).then(() => {
+    const text = showRawJson && line.rawJson ? line.rawJson : line.text
+    writeClipboardText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     }).catch(() => {})
   }
 
-  const displayText = showRawJson && line.raw_json ? line.raw_json : line.text
+  const displayText = showRawJson && line.rawJson ? line.rawJson : line.text
 
   return (
     <div className="group relative mb-2">
@@ -325,8 +549,35 @@ function LogLine({ line, showRawJson }: { line: LogLineEntryExt; showRawJson: bo
           line.level === 'trace' && 'text-[var(--text-3)]'
         )}
       >
+        {line.fileName && <span className="mr-2 text-[var(--text-3)]">[{line.fileName}]</span>}
         {displayText}
       </div>
+      {!showRawJson && line.event?.traceId && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-1 h-6 px-2 font-mono text-[11px] text-[var(--text-3)]"
+          onClick={() => onSelectTrace(line.event!.traceId!)}
+        >
+          trace {line.event.traceId.slice(0, 8)} · {line.event.source} · {line.event.status ?? 'event'}
+        </Button>
+      )}
+      {!showRawJson && line.event?.event === 'diagnostic.content_captured' && typeof line.event.data?.recordId === 'string' && (
+        <div className="mt-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void decryptDiagnosticContent(line.event!.data!.recordId as string)
+              .then((result) => setDiagnosticContent(result.content))
+              .catch(() => toast.error('诊断正文已过期或无法解密'))}
+          >
+            按需解密正文
+          </Button>
+          {diagnosticContent && <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-[8px] bg-[var(--surface-1)] p-3 font-sans text-[13px]">{diagnosticContent}</pre>}
+        </div>
+      )}
       <Button
                 variant="ghost"
         type="button"

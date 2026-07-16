@@ -11,8 +11,10 @@ import type {
 } from "@lume/shared";
 import { getAutomationJobsPath, getConfigDir } from "../infra/config-paths";
 import { getNextAutomationRunAt, validateAutomationSchedule } from "./automation-schedule";
+import { createLogger } from "../infra/logger";
 
 const INDEX_VERSION = 1;
+const log = createLogger("automation-manager");
 
 function writeJsonAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -25,9 +27,9 @@ function backupCorruptIndex(indexPath: string): void {
   const backupPath = `${indexPath}.corrupt-${Date.now()}`;
   try {
     renameSync(indexPath, backupPath);
-    console.warn(`[自动化任务] 检测到损坏索引，已备份: ${backupPath}`);
+    log.warn("backed up corrupt automation index", { backupPath });
   } catch (error) {
-    console.warn("[自动化任务] 备份损坏索引失败:", error);
+    log.warn("failed to back up corrupt automation index", { error, backupPath });
   }
 }
 
@@ -43,7 +45,7 @@ function readIndex(): AutomationJobsIndex {
     }
     return { version: INDEX_VERSION, jobs: parsed.jobs };
   } catch (error) {
-    console.error("[自动化任务] 读取索引失败:", error);
+    log.error("failed to read automation index", { error, indexPath });
     backupCorruptIndex(indexPath);
     return { version: INDEX_VERSION, jobs: [] };
   }

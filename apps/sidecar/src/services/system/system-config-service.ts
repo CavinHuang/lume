@@ -3,8 +3,10 @@ import { dirname, join } from "node:path";
 import type { EffectiveSystemConfig, LumeSystemConfig } from "@lume/shared";
 import { getLumeJsonPath } from "../infra/config-paths";
 import { getEffectiveLumeConfig } from "./lume-config-service";
+import { createLogger } from "../infra/logger";
 
 const SYSTEM_CONFIG_VERSION = 1;
+const log = createLogger("system-config");
 
 function createDefaultSystemConfig(): LumeSystemConfig {
   return {
@@ -121,7 +123,7 @@ function readOrCreatePrimarySystemConfig(): LumeSystemConfig {
   try {
     return normalizeSystemConfig(JSON.parse(readFileSync(path, "utf-8")));
   } catch (error) {
-    console.warn("[System Config] 读取 lume.json 失败，回退默认配置:", error);
+    log.warn("failed to read lume.json; using default system config", { error });
     return createDefaultSystemConfig();
   }
 }

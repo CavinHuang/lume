@@ -344,7 +344,7 @@ function readPersistedAssistantTokenUsage(metadata: Record<string, unknown> | un
   assignFiniteUsageNumber(usage, 'contextTokens', contextUsage?.totalTokens)
   assignFiniteUsageNumber(usage, 'contextWindow', contextUsage?.contextWindow)
   if (usage.cachedTokens === undefined) {
-    const cachedTokens = (usage.cacheReadInputTokens ?? 0) + (usage.cacheCreationInputTokens ?? 0)
+    const cachedTokens = usage.cacheReadInputTokens ?? 0
     if (cachedTokens > 0) usage.cachedTokens = cachedTokens
   }
   if (usage.contextTokens !== undefined && usage.contextWindow !== undefined && usage.contextWindow > 0) {

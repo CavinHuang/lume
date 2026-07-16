@@ -66,7 +66,12 @@ describe("OpenAIResponsesProvider", () => {
     })
 
     expect(requestBody).toBeDefined()
-    expect(requestBody?.instructions).toBe("You are helpful")
+    expect(requestBody?.instructions).toBeUndefined()
+    expect(requestBody?.input?.[0]).toEqual({
+      role: "developer",
+      type: "message",
+      content: [{ type: "input_text", text: "You are helpful" }],
+    })
     expect(requestBody?.model).toBe("gpt-4o")
     expect(requestBody?.max_output_tokens).toBe(1024)
     expect(requestBody?.input).toBeDefined()
@@ -123,6 +128,63 @@ describe("OpenAIResponsesProvider", () => {
       },
     ])
     expect(result.stopReason).toBe("tool_use")
+  })
+
+  test("replays full assistant and tool history with runtime developer input", async () => {
+    let requestBody: Record<string, any> | undefined
+    globalThis.fetch = (async (_url, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({
+        id: "resp_history",
+        object: "response",
+        status: "completed",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }],
+        usage: {
+          input_tokens: 120,
+          output_tokens: 8,
+          total_tokens: 128,
+          input_tokens_details: { cached_tokens: 40, cache_write_tokens: 10 },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      baseURL: "https://api.openai.com/v1",
+      retryConfig: fastRetry,
+    })
+    const result = await provider.createMessage({
+      model: "gpt-test",
+      maxTokens: 100,
+      system: "stable system",
+      messages: [
+        { role: "user", content: "old question" },
+        { role: "assistant", content: "old answer" },
+        { role: "assistant", content: [{ type: "tool_use", id: "call_1", response_item_id: "fc_1", name: "lookup", input: { q: "x" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "result" }] },
+        { role: "runtime", content: "current runtime" },
+        { role: "user", content: "new question" },
+      ],
+      promptCache: { strategy: "implicit", routingKey: "lume:v1:history", runtimeRole: "developer" },
+    })
+
+    expect(requestBody?.previous_response_id).toBeUndefined()
+    expect(requestBody?.prompt_cache_key).toBe("lume:v1:history")
+    expect(requestBody?.input).toEqual([
+      { role: "developer", type: "message", content: [{ type: "input_text", text: "stable system" }] },
+      { role: "user", type: "message", content: [{ type: "input_text", text: "old question" }] },
+      { role: "assistant", type: "message", content: [{ type: "input_text", text: "old answer" }] },
+      { type: "function_call", id: "fc_1", call_id: "call_1", name: "lookup", arguments: '{"q":"x"}' },
+      { type: "function_call_output", call_id: "call_1", output: "result" },
+      { role: "developer", type: "message", content: [{ type: "input_text", text: "current runtime" }] },
+      { role: "user", type: "message", content: [{ type: "input_text", text: "new question" }] },
+    ])
+    expect(result.usage).toEqual({
+      input_tokens: 70,
+      output_tokens: 8,
+      cache_read_input_tokens: 40,
+      cache_creation_input_tokens: 10,
+    })
   })
 
   test("normalizes invalid tool names and restores the original response name", async () => {
@@ -187,7 +249,7 @@ describe("OpenAIResponsesProvider", () => {
       const frames = [
         { type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "fc_memory", call_id: "call_memory", name: wireName } },
         { type: "response.function_call_arguments.delta", output_index: 0, delta: '{"query":"notes"}' },
-        { type: "response.completed", response: { id: "resp_memory", object: "response", status: "completed", output: [], usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
+        { type: "response.completed", response: { id: "resp_memory", object: "response", status: "completed", output: [], usage: { input_tokens: 30, output_tokens: 5, total_tokens: 35, input_tokens_details: { cached_tokens: 10, cache_write_tokens: 5 } } } },
       ]
       return new Response(
         frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(""),
@@ -222,6 +284,12 @@ describe("OpenAIResponsesProvider", () => {
       response_item_id: "fc_memory",
       name: "memory.search",
       input: { query: "notes" },
+    })
+    expect(step.value.usage).toEqual({
+      input_tokens: 15,
+      output_tokens: 5,
+      cache_read_input_tokens: 10,
+      cache_creation_input_tokens: 5,
     })
   })
 

@@ -21,6 +21,7 @@ import {
   type AgentDefinition,
   type AgentOptions,
   type ApiType,
+  type PromptCachePolicy,
   type ContentBlockParam,
   type ToolContext,
   type ToolResult,
@@ -46,6 +47,7 @@ import type {
   SubagentTaskFeedback
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import {
   buildBuiltinAgents,
@@ -130,6 +132,7 @@ const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
 interface RuntimeCoreResolvedModel {
   id: string;
   provider: string;
+  channelProvider?: string;
   baseUrl?: string;
   contextWindow?: number;
   maxTokens?: number;
@@ -147,6 +150,7 @@ export interface CreateRuntimeCoreSessionInput {
   agentDir: string;
   userMessage?: string;
   provider: string;
+  channelProvider?: string;
   openaiApiMode?: OpenAiApiMode;
   modelRef?: string;
   resolvedModelId: string;
@@ -218,6 +222,7 @@ export interface CreateRuntimeCoreSessionResult {
   session: RuntimeCoreSessionLike;
   sessionManager: RuntimeCoreSessionManager;
   systemPrompt: string;
+  runtimeContext: string;
   userMessageForModel: string | ContentBlockParam[];
   memoryContextUsedItems: MemoryV2RecallItem[];
   tools: ToolDefinition[];
@@ -440,6 +445,16 @@ async function runSidecarSubagent(input: {
       chatType: input.chatType,
       threadType: "subagent",
       permissionMode: childPermissionMode,
+      traceContext: {
+        submissionId: crypto.randomUUID(),
+        traceId: crypto.randomUUID(),
+        origin: "subagent",
+        ...(
+          typeof (input.messageMetadata?.traceContext as { traceId?: unknown } | undefined)?.traceId === "string"
+            ? { parentTraceId: (input.messageMetadata?.traceContext as { traceId: string }).traceId }
+            : {}
+        )
+      },
       messageMetadata: input.messageMetadata
     },
     runtime: {
@@ -1183,15 +1198,21 @@ function buildRuntimeCoreTools(input: {
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
       { source: "task", tools: taskLoopTools },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
-      ...(input.mcpTools?.length ? [{ source: "mcp" as const, tools: input.mcpTools }] : []),
+      ...(input.mcpTools?.length
+        ? [{ source: "mcp" as const, tools: sortDiscoveredTools(input.mcpTools) }]
+        : []),
       ...(input.pluginCommandTools?.length
-        ? [{ source: "plugin" as const, tools: input.pluginCommandTools }]
+        ? [{ source: "plugin" as const, tools: sortDiscoveredTools(input.pluginCommandTools) }]
         : []),
       ...(input.pluginMcpTools?.length
-        ? [{ source: "plugin" as const, tools: input.pluginMcpTools }]
+        ? [{ source: "plugin" as const, tools: sortDiscoveredTools(input.pluginMcpTools) }]
         : [])
     ]
   });
+}
+
+function sortDiscoveredTools(tools: ToolDefinition[]): ToolDefinition[] {
+  return [...tools].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function resolveSdkApiType(provider: string, openaiApiMode?: OpenAiApiMode): ApiType {
@@ -1206,6 +1227,62 @@ function resolveSdkApiType(provider: string, openaiApiMode?: OpenAiApiMode): Api
     return "openai-responses";
   }
   return "openai-completions";
+}
+
+export function resolvePromptCachePolicy(input: {
+  channelProvider?: string;
+  provider: string;
+  model: string;
+  threadId: string;
+  baseUrl?: string;
+}): PromptCachePolicy {
+  const channelProvider = (input.channelProvider ?? input.provider).trim().toLowerCase();
+  const routingKey = `lume:v1:${createHash("sha256")
+    .update(`${channelProvider}\0${input.model}\0${input.threadId}`)
+    .digest("hex")}`;
+  if (channelProvider === "anthropic" && isOfficialEndpoint(input.baseUrl, "api.anthropic.com")) {
+    return {
+      strategy: "anthropic-ephemeral",
+      ttl: "5m",
+      cacheStableSystem: true,
+      cacheConversation: true,
+      runtimeRole: "system"
+    };
+  }
+  if (channelProvider === "openai" && isOfficialEndpoint(input.baseUrl, "api.openai.com")) {
+    return { strategy: "implicit", routingKey, runtimeRole: "developer" };
+  }
+  if (channelProvider === "openrouter") {
+    return {
+      strategy: "openrouter-sticky",
+      routingKey,
+      runtimeRole: "system",
+      ...(input.model.toLowerCase().startsWith("anthropic/")
+        ? { ttl: "5m" as const, cacheStableSystem: true }
+        : {})
+    };
+  }
+  if (channelProvider === "deepseek") {
+    return { strategy: "implicit", runtimeRole: "user" };
+  }
+  return { strategy: "implicit", runtimeRole: "user" };
+}
+
+function isOfficialEndpoint(baseUrl: string | undefined, officialHost: string): boolean {
+  if (!baseUrl?.trim()) return true;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === officialHost;
+  } catch {
+    return false;
+  }
+}
+
+function fingerprintToolSchema(tools: ToolDefinition[]): string {
+  return createHash("sha256").update(JSON.stringify(tools.map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema
+  })))).digest("hex");
 }
 
 function isAutomationExecution(messageMetadata?: Record<string, unknown>): boolean {
@@ -1587,6 +1664,16 @@ export async function createRuntimeCoreSession(
     ? { appendContext: collectAppendContextEffects(beforeContextResult.effects) }
     : undefined;
   const desktopContext = await resolveDesktopContextProjection(input.messageMetadata);
+  const modelId = input.resolvedModel?.id ?? input.resolvedModelId;
+  const promptCache = resolvePromptCachePolicy({
+    channelProvider: input.channelProvider,
+    provider: input.provider,
+    model: modelId,
+    threadId: input.lumeSessionId,
+    baseUrl: input.resolvedModel?.baseUrl
+  });
+  const toolSchemaFingerprint = fingerprintToolSchema(toolset.tools);
+  const toolSchemaTokens = estimateToolSchemaTokens(toolset.tools);
 
   const contextAssembly = await new ContextAssembler().assemble({
     threadId: input.lumeSessionId,
@@ -1613,6 +1700,9 @@ export async function createRuntimeCoreSession(
     availableTools: toolset.availableToolNames,
     enabledPlugins,
     tokenBudget: contextTokenBudget,
+    toolSchemaFingerprint,
+    toolSchemaTokens,
+    cacheStrategy: promptCache.strategy,
     workflowContext,
     desktopContext,
     todoState: initialTodoState,
@@ -1638,7 +1728,11 @@ export async function createRuntimeCoreSession(
   const unresolvedSubagentTasks = input.threadType === "subagent"
     ? []
     : getSubagentCoordinator().list(input.lumeSessionId).tasks.filter((task) => task.status === "open" || task.status === "running" || task.status === "awaiting_review");
-  const systemPrompt = [contextAssembly.systemPrompt, buildSubagentWorkContext(unresolvedSubagentTasks)].filter(Boolean).join("\n\n");
+  const systemPrompt = contextAssembly.systemPrompt;
+  const runtimeContext = [
+    contextAssembly.runtimeContext,
+    buildSubagentWorkContext(unresolvedSubagentTasks)
+  ].filter(Boolean).join("\n\n");
   const context = sessionManager.buildSessionContext();
 
   const agentOptions: AgentOptions = {
@@ -1648,6 +1742,8 @@ export async function createRuntimeCoreSession(
     model: input.resolvedModel?.id ?? input.resolvedModelId,
     cwd: input.cwd,
     systemPrompt,
+    runtimeContext,
+    promptCache,
     tools: toolset.tools,
     sessionId: input.lumeSessionId,
     ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
@@ -1750,6 +1846,7 @@ export async function createRuntimeCoreSession(
     session,
     sessionManager,
     systemPrompt,
+    runtimeContext,
     userMessageForModel,
     memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
     tools: resolvedTools

@@ -1,5 +1,6 @@
 
 import { createProvider, type ApiType, type SDKMessage } from "@lume/agent-sdk";
+import { randomUUID } from "node:crypto";
 import type {
   AgentMessageQueueOperationResult,
   AgentMessageQueueSnapshot,
@@ -43,7 +44,7 @@ import {
 import { getAgentRuntimeStatusManager } from "./agent-runtime-status-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
 import { resolveAgentRuntimeRoutingTrace } from "./agent-runtime-context";
-import { createLogger } from "../infra/logger";
+import { createLogger, sanitizeBaseUrlForLog, writeLogRecord } from "../infra/logger";
 import { getSessionStateManager } from "../agent-runtime/runner/session-state-manager";
 import { submitAskUserQuestionAnswers as submitRuntimeAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
 import { submitToolPermissionDecision } from "../agent-runtime/interruption/tool-permission-session";
@@ -59,7 +60,7 @@ import {
 } from "./session-title-summarizer";
 import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 import { getSubagentRunRegistry } from "./subagents/subagent-run-registry";
-import { buildAgentSendStartLogData } from "./agent-log-summary";
+import { buildAgentContentLogData, buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
 import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
@@ -69,7 +70,7 @@ import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../ag
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
-import { emitAgentNotification } from "./agent-notification-service";
+import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -669,6 +670,7 @@ export async function sendAgentMessage(
       : undefined;
   const effectiveMessageMetadata = {
     ...(input.messageMetadata ?? {}),
+    ...(input.traceContext ? { traceContext: input.traceContext } : {}),
     ...(input.messageAttachments?.length ? { messageAttachments: input.messageAttachments } : {}),
     ...(isManualCompactCommand ? {
       hiddenFromChat: true,
@@ -683,6 +685,32 @@ export async function sendAgentMessage(
   let modelFacingUserMessage = userMessage;
 
   const sendStartTime = Date.now();
+  const correlation = {
+    traceId: input.traceContext?.traceId,
+    submissionId: input.traceContext?.submissionId,
+    threadId,
+    origin: input.traceContext?.origin
+  };
+  writeLogRecord({
+    level: "info",
+    kind: "trace",
+    context: "agent.model",
+    event: "model.resolved",
+    message: "agent model selection resolved",
+    status: "ok",
+    ...correlation,
+    data: {
+      requestedModelRef: input.modelRef,
+      requestedChannelId: input.channelId,
+      requestedModelId: input.modelId,
+      effectiveModelRef: canonicalModelRef,
+      channelId: resolvedChannelId,
+      provider: resolvedChannel?.provider,
+      adapter: resolvedChannel?.providerId,
+      modelId: resolvedModelId,
+      baseUrl: sanitizeBaseUrlForLog(resolvedChannel?.baseUrl)
+    }
+  });
   log.info("[Agent 会话] 开始发送消息", buildAgentSendStartLogData({
     threadId,
     workspaceId: effectiveWorkspaceId,
@@ -728,8 +756,30 @@ export async function sendAgentMessage(
     appendAgentThreadSDKMessages(threadId, [userSdkMessage]);
     emit.onMessageAppended?.({
       threadId,
-      message: createdUserVersion.message
+      message: createdUserVersion.message,
+      traceId: input.traceContext?.traceId,
+      submissionId: input.traceContext?.submissionId
     });
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.persistence",
+      event: "message.persisted",
+      message: "user message persisted",
+      status: "ok",
+      ...correlation,
+      messageId: createdUserVersion.message.id,
+      data: buildAgentContentLogData("user", userMessage)
+    });
+    if (input.traceContext?.traceId) {
+      emitDiagnosticContent({
+        captureType: "user_message",
+        threadId,
+        traceId: input.traceContext.traceId,
+        messageId: createdUserVersion.message.id,
+        content: userMessage
+      });
+    }
   }
   modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, userMessage);
 
@@ -747,6 +797,7 @@ export async function sendAgentMessage(
   }
   runtimeStatusManager.markStreaming(threadId);
   let runtimeCompleted = false;
+  let visibleAssistantMessageId: string | undefined;
 
   if (!resolvedChannelId || !resolvedModelId) {
     const msg = "Agent Runtime 缺少 channelId/modelId。";
@@ -757,6 +808,16 @@ export async function sendAgentMessage(
     });
     runtimeStatusManager.markErrored(threadId, msg);
     emit.onError(msg);
+    writeLogRecord({
+      level: "error",
+      kind: "trace",
+      context: "agent.runtime",
+      event: "agent.run.failed",
+      message: msg,
+      status: "error",
+      ...correlation,
+      data: { channelId: resolvedChannelId, modelId: resolvedModelId }
+    });
     return;
   }
   const { runAgentRuntime } = await import("../agent-runtime/runtime-core/attempt");
@@ -859,10 +920,36 @@ export async function sendAgentMessage(
         message: latestAssistantMessage
       });
       if (visibleAssistantMessage) {
+        visibleAssistantMessageId = visibleAssistantMessage.id;
         emit.onMessageAppended?.({
           threadId,
-          message: visibleAssistantMessage
+          message: visibleAssistantMessage,
+          traceId: input.traceContext?.traceId,
+          submissionId: input.traceContext?.submissionId
         });
+        writeLogRecord({
+          level: "info",
+          kind: "trace",
+          context: "agent.persistence",
+          event: "assistant.persisted",
+          message: "assistant message persisted",
+          status: "ok",
+          ...correlation,
+          messageId: visibleAssistantMessage.id,
+          data: {
+            ...buildAgentContentLogData("assistant", visibleAssistantMessage.content),
+            modelId: resolvedModelId
+          }
+        });
+        if (input.traceContext?.traceId) {
+          emitDiagnosticContent({
+            captureType: "assistant_message",
+            threadId,
+            traceId: input.traceContext.traceId,
+            messageId: visibleAssistantMessage.id,
+            content: visibleAssistantMessage.content
+          });
+        }
       }
     }
   }
@@ -873,6 +960,18 @@ export async function sendAgentMessage(
       persistedSdkMessageCount: persistedSdkMessages.length,
       visibleAssistantTurnCreated: activeTurnId !== null,
       autoTitlePending: shouldTryAutoTitle
+    });
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.runtime",
+      event: "agent.execution.completed",
+      message: "agent execution completed",
+      status: "ok",
+      durationMs: Date.now() - sendStartTime,
+      ...correlation,
+      messageId: visibleAssistantMessageId,
+      data: { persistedSdkMessageCount: persistedSdkMessages.length }
     });
     runtimeStatusManager.markCompleted(threadId);
     emit.onComplete();
@@ -929,7 +1028,26 @@ export function appendAgentMessage(
     onExecutionStarted?: () => void;
   }
 ): AgentThreadMessageDispatchResult {
-  return agentRuntimeKernel.dispatch(input, emit, options);
+  const traceContext = {
+    ...input.traceContext,
+    submissionId: input.traceContext?.submissionId ?? randomUUID(),
+    traceId: input.traceContext?.traceId ?? randomUUID(),
+    origin: input.traceContext?.origin
+      ?? (input.messageMetadata?.taskRunId || input.messageMetadata?.taskApprovalRejected ? "task" : "internal")
+  } satisfies NonNullable<AgentSendInput["traceContext"]>;
+  writeLogRecord({
+    level: "info",
+    kind: "trace",
+    context: "agent.dispatch",
+    event: "agent.entry.accepted",
+    message: "agent entry accepted by sidecar runtime",
+    status: "ok",
+    traceId: traceContext.traceId,
+    submissionId: traceContext.submissionId,
+    threadId: input.threadId,
+    origin: traceContext.origin
+  });
+  return agentRuntimeKernel.dispatch({ ...input, traceContext }, emit, options);
 }
 
 export function listAgentMessageQueue(threadId: string): AgentMessageQueueSnapshot {
@@ -947,6 +1065,21 @@ export function reorderAgentMessageQueue(input: AgentReorderMessageQueueInput): 
 
 export function removeQueuedAgentMessage(input: AgentRemoveQueuedMessageInput): AgentMessageQueueOperationResult {
   const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId);
+  if (removed) {
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.queue",
+      event: "agent.queue.cancelled",
+      message: "queued agent message cancelled",
+      status: "cancelled",
+      traceId: removed.input.traceContext?.traceId,
+      submissionId: removed.input.traceContext?.submissionId,
+      threadId: removed.input.threadId,
+      origin: removed.input.traceContext?.origin,
+      data: { queuedMessageId: removed.id }
+    });
+  }
   return finishQueueOperation(input.threadId, {
     ...(removed ? { removedMessage: toQueuedMessage(removed) } : {})
   });
@@ -957,6 +1090,21 @@ export function promoteQueuedAgentMessageToGuidance(
 ): AgentMessageQueueOperationResult {
   const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId);
   const promotedGuidance = removed ? runGuidanceStore.addQueuedDispatch(removed) : undefined;
+  if (removed) {
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.queue",
+      event: "agent.queue.promoted",
+      message: "queued agent message promoted to guidance",
+      status: "ok",
+      traceId: removed.input.traceContext?.traceId,
+      submissionId: removed.input.traceContext?.submissionId,
+      threadId: removed.input.threadId,
+      origin: removed.input.traceContext?.origin,
+      data: { queuedMessageId: removed.id, guidanceId: promotedGuidance?.id }
+    });
+  }
   return finishQueueOperation(input.threadId, {
     ...(promotedGuidance ? { promotedGuidance } : {})
   });

@@ -1,5 +1,6 @@
 import type { AgentMessageAttachmentInput, AgentSendInput } from "@lume/shared";
 import { estimateTokens, type ContentBlockParam, type TodoState } from "@lume/agent-sdk";
+import { createHash } from "node:crypto";
 import {
   buildDynamicContext,
   buildSystemPromptAppend,
@@ -41,6 +42,9 @@ export interface ContextAssemblyInput {
   availableTools: string[];
   enabledPlugins?: EnabledPluginContextItem[];
   tokenBudget: number;
+  toolSchemaFingerprint?: string;
+  toolSchemaTokens?: number;
+  cacheStrategy?: string;
   workflowContext?: {
     appendContext: CollectedAppendContextEffect[];
   };
@@ -55,6 +59,7 @@ export interface ContextAssemblyInput {
 
 export interface ContextAssemblyResult {
   systemPrompt: string;
+  runtimeContext: string;
   dynamicContext: string;
   memoryContext: string;
   memoryUserMessagePrefix: string;
@@ -68,6 +73,13 @@ export interface ContextAssemblyResult {
     includedMemoryIds: string[];
     includedSessionMessageIds: string[];
     tokenUsageEstimate: number;
+    systemPromptFingerprint: string;
+    runtimeContextFingerprint: string;
+    toolSchemaFingerprint?: string;
+    cacheStrategy?: string;
+    promptVersion: "lume:v1";
+    stableSystemTokens: number;
+    toolSchemaTokens?: number;
   };
 }
 
@@ -92,7 +104,13 @@ export class ContextAssembler {
         const result = await this.assembleWithoutContextSpan(input, span.id);
         await input.trace.recorder.endSpan(span.id, {
           budget: result.budget,
-          tokenUsageEstimate: result.trace.tokenUsageEstimate
+          tokenUsageEstimate: result.trace.tokenUsageEstimate,
+          promptVersion: result.trace.promptVersion,
+          cacheStrategy: result.trace.cacheStrategy,
+          systemPromptFingerprint: result.trace.systemPromptFingerprint,
+          toolSchemaFingerprint: result.trace.toolSchemaFingerprint,
+          stableSystemTokens: result.trace.stableSystemTokens,
+          toolSchemaTokens: result.trace.toolSchemaTokens
         });
         return result;
       } catch (error) {
@@ -236,7 +254,11 @@ export class ContextAssembler {
       : "";
     const systemPrompt = [
       agentSystemPrompt,
-      systemPromptAppend,
+      systemPromptAppend
+    ]
+      .filter((part) => typeof part === "string" && part.trim().length > 0)
+      .join("\n\n");
+    const runtimeContext = [
       dynamicContext,
       permissionDeniedContext,
       desktopContextPolicy,
@@ -261,6 +283,7 @@ export class ContextAssembler {
 
     return {
       systemPrompt,
+      runtimeContext,
       dynamicContext,
       memoryContext: memoryContext.prefix,
       memoryUserMessagePrefix: memoryContext.prefix,
@@ -274,10 +297,21 @@ export class ContextAssembler {
       trace: {
         includedMemoryIds: memoryContext.items.map((item) => item.id),
         includedSessionMessageIds: [],
-        tokenUsageEstimate: estimateTokens(systemPrompt)
+        tokenUsageEstimate: estimateTokens(`${systemPrompt}\n\n${runtimeContext}`),
+        systemPromptFingerprint: fingerprint(systemPrompt),
+        runtimeContextFingerprint: fingerprint(runtimeContext),
+        toolSchemaFingerprint: input.toolSchemaFingerprint,
+        cacheStrategy: input.cacheStrategy,
+        promptVersion: "lume:v1",
+        stableSystemTokens: estimateTokens(systemPrompt),
+        toolSchemaTokens: input.toolSchemaTokens
       }
     };
   }
+}
+
+function fingerprint(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function promptDesktopContext(value: unknown): unknown {

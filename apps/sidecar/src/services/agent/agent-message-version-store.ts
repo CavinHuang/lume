@@ -8,6 +8,7 @@ import {
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/shared";
 import { getAgentSessionDataDir } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
 
 export interface AgentMessageVersionGroupRecord {
   groupId: string;
@@ -46,6 +47,7 @@ export interface AgentMessageVersionStore {
 
 const STORE_VERSION = 1;
 const STORE_FILENAME = "message-versions.json";
+const log = createLogger("agent-message-version-store");
 
 function writeTextAtomic(path: string, payload: string): void {
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -60,9 +62,9 @@ function backupCorruptFile(filePath: string): void {
   const backupPath = `${filePath}.corrupt-${Date.now()}`;
   try {
     renameSync(filePath, backupPath);
-    console.warn(`[Agent 消息版本] 检测到损坏文件，已备份: ${backupPath}`);
+    log.warn("backed up corrupt message version file", { backupPath });
   } catch (error) {
-    console.warn("[Agent 消息版本] 备份损坏文件失败:", error);
+    log.warn("failed to back up corrupt message version file", { error, backupPath });
   }
 }
 
@@ -110,7 +112,7 @@ export function readAgentMessageVersionStore(sessionId: string): AgentMessageVer
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as AgentMessageVersionStore;
     return normalizeStore(sessionId, parsed);
   } catch (error) {
-    console.error(`[Agent 消息版本] 读取版本文件失败 (${sessionId}):`, error);
+    log.error("failed to read message version file", { error, sessionId });
     backupCorruptFile(path);
     return null;
   }

@@ -1,5 +1,4 @@
 import { convertFileSrc, invoke, isDesktopRuntime } from '@/lib/desktop-runtime/core'
-import { relaunch } from '@/lib/desktop-runtime/process'
 import { check, type DownloadEvent, type Update } from '@/lib/desktop-runtime/updater'
 import type { FileRef } from '@lume/shared'
 
@@ -95,5 +94,4 @@ export async function installDesktopUpdateAndRelaunch(): Promise<void> {
     throw new Error('更新尚未下载')
   }
   await pendingDesktopUpdate.install()
-  await relaunch()
 }

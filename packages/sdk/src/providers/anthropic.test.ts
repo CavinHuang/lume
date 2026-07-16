@@ -85,4 +85,80 @@ describe("AnthropicProvider", () => {
       cache_read_input_tokens: 0,
     })
   })
+
+  test("applies official five-minute cache markers and runtime system messages", async () => {
+    let request: Record<string, any> | undefined
+    const provider = new AnthropicProvider({ apiKey: "sk-test" })
+    ;(provider as any).client = {
+      messages: {
+        create: async (value: Record<string, any>) => {
+          request = value
+          return {
+            content: [{ type: "text", text: "ok" }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }
+        },
+      },
+    }
+
+    await provider.createMessage({
+      model: "claude-test",
+      maxTokens: 100,
+      system: "stable system",
+      messages: [
+        { role: "user", content: "old question" },
+        { role: "assistant", content: "old answer" },
+        { role: "runtime", content: "current runtime" },
+        { role: "user", content: "new question" },
+      ],
+      promptCache: {
+        strategy: "anthropic-ephemeral",
+        ttl: "5m",
+        cacheStableSystem: true,
+        cacheConversation: true,
+        runtimeRole: "system",
+      },
+    })
+
+    expect(request?.system).toEqual([{
+      type: "text",
+      text: "stable system",
+      cache_control: { type: "ephemeral", ttl: "5m" },
+    }])
+    expect(request?.cache_control).toEqual({ type: "ephemeral", ttl: "5m" })
+    expect(request?.messages[2]).toEqual({ role: "system", content: "current runtime" })
+  })
+
+  test("does not send Anthropic cache extensions to compatible endpoints by default", async () => {
+    let request: Record<string, any> | undefined
+    const provider = new AnthropicProvider({ apiKey: "sk-test", baseURL: "https://compatible.example/v1" })
+    ;(provider as any).client = {
+      messages: {
+        create: async (value: Record<string, any>) => {
+          request = value
+          return {
+            content: [{ type: "text", text: "ok" }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }
+        },
+      },
+    }
+
+    await provider.createMessage({
+      model: "claude-compatible",
+      maxTokens: 100,
+      system: "stable system",
+      messages: [{ role: "runtime", content: "current runtime" }],
+      promptCache: { strategy: "implicit", runtimeRole: "user" },
+    })
+
+    expect(request?.system).toBe("stable system")
+    expect(request?.cache_control).toBeUndefined()
+    expect(request?.messages).toEqual([{
+      role: "user",
+      content: "<lume_runtime_context>\ncurrent runtime\n</lume_runtime_context>",
+    }])
+  })
 })

@@ -9,7 +9,6 @@ import {
 import type {
   GitHubReleaseListOptions,
   NetworkDiagnosticResult,
-  ReadLogFileInput,
   TestSearchBackendInput,
   UpdateGeneralSettingsInput,
   UpdateUiStateInput
@@ -21,7 +20,7 @@ import {
   listGitHubReleases
 } from "../services/system/github-release-service";
 import { fetchWithProxy } from "../services/infra/proxy-fetch";
-import { createLogger, getLogsDir } from "../services/infra/logger";
+import { createLogger } from "../services/infra/logger";
 import { getLumeConfigYamlPath } from "../services/infra/config-paths";
 import { getEffectiveLumeConfig, updateLumeConfigSection } from "../services/system/lume-config-service";
 import { getEffectiveSystemConfig, updatePrimarySystemConfigSection } from "../services/system/system-config-service";
@@ -30,11 +29,6 @@ import {
   getPersistedGeneralSettings,
   updatePersistedGeneralSettings
 } from "../services/system/general-settings-service";
-import {
-  exportAllLogFiles,
-  listLogFiles,
-  readLogFile
-} from "../services/infra/log-viewer-service";
 import { testSearchBackend } from "../services/infra/search-test-service";
 import { getActiveProxyConfig } from "../services/system/proxy-settings-manager";
 import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
@@ -45,7 +39,6 @@ import {
   lumeConfigEffectiveInputSchema,
   lumeConfigUpdateInputSchema,
   systemConfigUpdateInputSchema,
-  readLogFileInputSchema,
   updateGeneralSettingsInputSchema,
   updateUiStateInputSchema
 } from "./schemas";
@@ -140,10 +133,6 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       log.info("[Agent 设置] 更新通用设置", { keys: Object.keys(input) });
       return updatePersistedGeneralSettings(input);
     },
-    [GENERAL_SETTINGS_IPC_CHANNELS.OPEN_LOGS_DIR]: async () => {
-      openInSystem(getLogsDir());
-      return { ok: true };
-    },
     [GENERAL_SETTINGS_IPC_CHANNELS.CLEAR_CACHE]: async (params) =>
       clearGeneralSettingsCaches(
         validateInput(
@@ -152,20 +141,6 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
           GENERAL_SETTINGS_IPC_CHANNELS.CLEAR_CACHE
         )
       ),
-    [GENERAL_SETTINGS_IPC_CHANNELS.LIST_LOG_FILES]: async () => listLogFiles(),
-    [GENERAL_SETTINGS_IPC_CHANNELS.READ_LOG_FILE]: async (params) =>
-      readLogFile(
-        validateInput(
-          readLogFileInputSchema,
-          params ?? {},
-          GENERAL_SETTINGS_IPC_CHANNELS.READ_LOG_FILE
-        ) as ReadLogFileInput
-      ),
-    [GENERAL_SETTINGS_IPC_CHANNELS.EXPORT_LOGS]: async () => {
-      const result = exportAllLogFiles();
-      openInSystem(result.path);
-      return { ...result, path: "" };
-    },
     [GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND]: async (params) => {
       const input = (params ?? {}) as TestSearchBackendInput;
       return testSearchBackend(input);

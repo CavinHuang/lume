@@ -12,6 +12,7 @@ import {
   buildSidecarSubagentRunContext,
   createRuntimeCoreSession,
   runForegroundSubagentWithTimeout,
+  resolvePromptCachePolicy,
   resolveSubagentModelOverride,
   type CreateRuntimeCoreSessionInput
 } from "./run";
@@ -717,6 +718,11 @@ describe("runtime-core run", () => {
       path: "plugins.enabled",
       value: ["demo"]
     });
+    updateLumeConfigSection({
+      source: "system",
+      path: "plugins.directories",
+      value: [join(cwd, ".lume", "plugins")]
+    });
 
     const result = await createRuntimeCoreSession({
       lumeSessionId: "plugin-session",
@@ -779,6 +785,11 @@ describe("runtime-core run", () => {
       path: "plugins.enabled",
       value: ["obsidian-bridge"]
     });
+    updateLumeConfigSection({
+      source: "system",
+      path: "plugins.directories",
+      value: [join(cwd, ".lume", "plugins")]
+    });
 
     const result = await createRuntimeCoreSession({
       lumeSessionId: "plugin-skill-context-session",
@@ -791,9 +802,9 @@ describe("runtime-core run", () => {
       permissionMode: "plan"
     });
 
-    expect(result.session.agent.state.systemPrompt).toContain("Enabled Plugins:");
-    expect(result.session.agent.state.systemPrompt).toContain("obsidian-bridge");
-    expect(result.session.agent.state.systemPrompt).toContain("obsidian_status");
+    expect(result.runtimeContext).toContain("Enabled Plugins:");
+    expect(result.runtimeContext).toContain("obsidian-bridge");
+    expect(result.runtimeContext).toContain("obsidian_status");
 
     result.session.dispose();
   });
@@ -901,6 +912,42 @@ describe("runtime-core run", () => {
     second.session.dispose();
   });
 
+  test("derives stable private routing keys per provider, model, and thread", () => {
+    const first = resolvePromptCachePolicy({
+      channelProvider: "openai",
+      provider: "openai",
+      model: "gpt-test",
+      threadId: "thread-a",
+      baseUrl: "https://api.openai.com/v1"
+    });
+    const same = resolvePromptCachePolicy({
+      channelProvider: "openai",
+      provider: "openai",
+      model: "gpt-test",
+      threadId: "thread-a",
+      baseUrl: "https://api.openai.com/v1"
+    });
+    const otherThread = resolvePromptCachePolicy({
+      channelProvider: "openai",
+      provider: "openai",
+      model: "gpt-test",
+      threadId: "thread-b",
+      baseUrl: "https://api.openai.com/v1"
+    });
+
+    expect(first.routingKey).toBe(same.routingKey);
+    expect(first.routingKey).not.toBe(otherThread.routingKey);
+    expect(first.routingKey).toMatch(/^lume:v1:[a-f0-9]{64}$/);
+    expect(first.routingKey).not.toContain("thread-a");
+    expect(resolvePromptCachePolicy({
+      channelProvider: "anthropic-compatible",
+      provider: "anthropic",
+      model: "claude-test",
+      threadId: "thread-a",
+      baseUrl: "https://proxy.example/v1"
+    })).toEqual({ strategy: "implicit", runtimeRole: "user" });
+  });
+
   test("重建 runtime 时应恢复 todo 工具状态并注入模型上下文", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-todo-restore-"));
     const agentDir = join(cwd, ".runtime-core-test");
@@ -950,8 +997,8 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits"
     });
 
-    expect(result.systemPrompt).toContain('<todo_state source="lume_runtime">');
-    expect(result.systemPrompt).toContain('"content":"D"');
+    expect(result.runtimeContext).toContain('<todo_state source="lume_runtime">');
+    expect(result.runtimeContext).toContain('"content":"D"');
     expect(result.userMessageForModel).toBe("继续");
     const todoTool = result.tools.find((tool) => tool.name === "TodoWrite");
     expect(todoTool).toBeTruthy();
@@ -1034,16 +1081,17 @@ describe("runtime-core run", () => {
       enabled: true,
       models: [{ id: "gpt-custom", name: "GPT Custom", enabled: true, capabilities: { chat: true } }]
     });
+    const thread = createAgentThread("responses thread", channel.id, undefined, undefined, "gpt-custom");
 
     const prepared = await prepareRuntimeCoreAttempt({
       input: {
-        threadId: "responses-thread",
+        threadId: thread.id,
         userMessage: "hello",
         permissionMode: "default",
         chatType: "direct"
       },
       runtime: {
-        sessionId: "responses-thread",
+        sessionId: thread.id,
         channelId: channel.id,
         resolvedModelId: "gpt-custom",
         threadType: "main"
@@ -1160,12 +1208,13 @@ describe("runtime-core run", () => {
     expect(systemPrompt).toContain("## AGENTS.md");
     expect(systemPrompt).toContain("Always verify edits before final output.");
     expect(systemPrompt).toContain("Available tools are provided by the runtime tool schema");
-    expect(systemPrompt).toContain("<thread_state>");
-    expect(systemPrompt).toContain("threadType: main");
-    expect(systemPrompt).toContain("chatType: direct");
-    expect(systemPrompt).toContain("modelId: claude-sonnet-4-5");
-    expect(systemPrompt).toContain("Preferred capability route: raw-tools");
-    expect(systemPrompt).toContain("<working_directory>");
+    expect(systemPrompt).not.toContain("<thread_state>");
+    expect(result.runtimeContext).toContain("<thread_state>");
+    expect(result.runtimeContext).toContain("threadType: main");
+    expect(result.runtimeContext).toContain("chatType: direct");
+    expect(result.runtimeContext).toContain("modelId: claude-sonnet-4-5");
+    expect(result.runtimeContext).toContain("Preferred capability route: raw-tools");
+    expect(result.runtimeContext).toContain("<working_directory>");
 
     result.session.dispose();
     rmSync(configDir, { recursive: true, force: true });
@@ -1177,7 +1226,8 @@ describe("runtime-core run", () => {
     process.env.LUME_CONFIG_DIR = configDir;
     process.env.LUME_AGENT_RUNTIME_MOCK_SUCCESS = "1";
 
-    const workspace = createAgentWorkspace("No Mirror Workspace");
+    const projectPath = mkdtempSync(join(tmpdir(), "lume-runtime-core-attempt-project-"));
+    const workspace = createAgentWorkspace("No Mirror Workspace", { projectPath });
     const channel = createChannel({
       name: "mock-openai",
       provider: "openai",
@@ -1245,7 +1295,8 @@ describe("runtime-core run", () => {
     process.env.LUME_CONFIG_DIR = configDir;
     process.env.LUME_AGENT_RUNTIME_MOCK_SUCCESS = "1";
 
-    const workspace = createAgentWorkspace("Subagent Parent Workspace");
+    const projectPath = mkdtempSync(join(tmpdir(), "lume-runtime-core-subagent-project-"));
+    const workspace = createAgentWorkspace("Subagent Parent Workspace", { projectPath });
     const channel = createChannel({
       name: "mock-subagent-thread-meta",
       provider: "openai",
@@ -1783,6 +1834,11 @@ describe("runtime-core run", () => {
       "utf-8",
     );
     updateLumeConfigSection({ source: "system", path: "plugins.enabled", value: ["demo"] });
+    updateLumeConfigSection({
+      source: "system",
+      path: "plugins.directories",
+      value: [join(cwd, ".lume", "plugins")]
+    });
 
     const result = await createRuntimeCoreSession({
       lumeSessionId: "plugin-gate-session",

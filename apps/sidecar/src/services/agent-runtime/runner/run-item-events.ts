@@ -597,9 +597,9 @@ function normalizeRuntimeUsage(value: unknown): RuntimeNormalizedUsage {
   const outputTokens = numberValue(record.outputTokens);
   const cacheReadInputTokens = numberValue(record.cacheReadInputTokens);
   const cacheCreationInputTokens = numberValue(record.cacheCreationInputTokens);
-  const splitCachedTokens = cacheReadInputTokens + cacheCreationInputTokens;
   const directCachedTokens = numberValue(record.cachedTokens);
-  const cachedTokens = splitCachedTokens > 0 ? splitCachedTokens : directCachedTokens;
+  const hasSplitCacheUsage = cacheReadInputTokens > 0 || cacheCreationInputTokens > 0;
+  const cachedTokens = hasSplitCacheUsage ? cacheReadInputTokens : directCachedTokens;
   const explicitTotalTokens = numberValue(record.totalTokens);
   return {
     inputTokens,
@@ -607,7 +607,9 @@ function normalizeRuntimeUsage(value: unknown): RuntimeNormalizedUsage {
     cacheReadInputTokens,
     cacheCreationInputTokens,
     cachedTokens,
-    totalTokens: explicitTotalTokens > 0 ? explicitTotalTokens : inputTokens + outputTokens + cachedTokens
+    totalTokens: explicitTotalTokens > 0
+      ? explicitTotalTokens
+      : inputTokens + outputTokens + cachedTokens + cacheCreationInputTokens
   };
 }
 
@@ -631,6 +633,7 @@ function normalizeRuntimeBillingRecord(
     ...(typeof record.subagentRunId === "string" && record.subagentRunId.trim() ? { subagentRunId: record.subagentRunId } : usageIdentity?.subagentRunId ? { subagentRunId: usageIdentity.subagentRunId } : {}),
     ...(typeof record.responseId === "string" && record.responseId.trim() ? { responseId: record.responseId } : usageIdentity?.responseId ? { responseId: usageIdentity.responseId } : {}),
     ...usage,
+    ...(typeof record.ttftMs === "number" && Number.isFinite(record.ttftMs) ? { ttftMs: record.ttftMs } : {}),
     ...(typeof record.costUSD === "number" && Number.isFinite(record.costUSD) ? { costUSD: record.costUSD } : {})
   };
 }

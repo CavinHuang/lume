@@ -40,7 +40,19 @@ export const agentSendInputSchema = z.object({
   messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
   messageMetadata: z.record(z.string(), z.unknown()).optional(),
   resendFromMessageId: z.string().optional(),
-  editFromMessageId: z.string().optional()
+  editFromMessageId: z.string().optional(),
+  traceContext: z.object({
+    submissionId: z.string().uuid(),
+    clientEventId: z.string().uuid().optional(),
+    traceId: z.string().uuid().optional(),
+    origin: z.union([
+      z.enum(["main_window", "quick_input", "automation", "routine", "subagent", "resume", "task", "internal"]),
+      z.string().regex(/^im\.[a-z0-9_-]{1,64}$/)
+    ]).optional(),
+    parentTraceId: z.string().uuid().optional(),
+    parentSpanId: z.string().uuid().optional(),
+    linkedTraceId: z.string().uuid().optional()
+  }).strict().optional()
 });
 
 export const agentAppendInputSchema = agentSendInputSchema;

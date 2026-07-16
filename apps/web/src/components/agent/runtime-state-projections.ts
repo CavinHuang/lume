@@ -67,6 +67,7 @@ export interface ContextWindowUsageSummary {
   inputTokens: number
   outputTokens: number
   cachedTokens: number
+  cacheWriteTokens?: number
   costUSD?: number
   records?: ContextWindowUsageRecord[]
 }
@@ -78,6 +79,7 @@ export interface ContextWindowUsageRecord {
   inputTokens: number
   outputTokens: number
   cachedTokens: number
+  cacheWriteTokens?: number
   cacheHitRate: number | null
   costUSD?: number
 }
@@ -242,6 +244,9 @@ export function buildContextWindowProgress(
         inputTokens: event.billing.cumulative.inputTokens,
         outputTokens: event.billing.cumulative.outputTokens,
         cachedTokens: event.billing.cumulative.cachedTokens,
+        ...(event.billing.cumulative.cacheCreationInputTokens > 0
+          ? { cacheWriteTokens: event.billing.cumulative.cacheCreationInputTokens }
+          : {}),
         ...(typeof event.billing.totalCostUSD === 'number' ? { costUSD: event.billing.totalCostUSD } : {}),
         ...buildUsageRecords(event.billing.records),
       }
@@ -592,7 +597,9 @@ function buildUsageRecords(
   return {
     records: records
       .map((record) => {
-        const cachedTokens = record.cachedTokens ?? 0
+        const cachedTokens = record.cacheReadInputTokens ?? record.cachedTokens ?? 0
+        const cacheWriteTokens = record.cacheCreationInputTokens ?? 0
+        const cacheHitDenominator = record.inputTokens + cachedTokens
         return {
           callerLabel: record.callerLabel,
           ...(typeof record.model === 'string' ? { model: record.model } : {}),
@@ -600,13 +607,14 @@ function buildUsageRecords(
           inputTokens: record.inputTokens,
           outputTokens: record.outputTokens,
           cachedTokens,
-          cacheHitRate: record.inputTokens > 0
-            ? Math.round((cachedTokens / record.inputTokens) * 100)
+          ...(cacheWriteTokens > 0 ? { cacheWriteTokens } : {}),
+          cacheHitRate: cacheHitDenominator > 0
+            ? Math.min(100, Math.max(0, Math.round((cachedTokens / cacheHitDenominator) * 100)))
             : null,
           ...(typeof record.costUSD === 'number' ? { costUSD: record.costUSD } : {}),
         }
       })
-      .filter((record) => record.inputTokens > 0 || record.outputTokens > 0 || record.cachedTokens > 0),
+      .filter((record) => record.inputTokens > 0 || record.outputTokens > 0 || record.cachedTokens > 0 || (record.cacheWriteTokens ?? 0) > 0),
   }
 }
 

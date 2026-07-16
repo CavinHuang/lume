@@ -23,6 +23,7 @@ interface PreparedRuntimeCoreAttempt {
   workspaceName?: string;
   workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
+  channelProvider?: string;
   apiKey: string;
 }
 
@@ -85,6 +86,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
     agentDir: prepared.agentDir,
     userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
+    channelProvider: prepared.channelProvider,
     modelRef: runtime.modelRef,
     resolvedModelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,
@@ -121,6 +123,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
   sessionManager.appendMessage({
     role: "assistant",
     provider: prepared.modelResolution.provider,
+    channelProvider: prepared.channelProvider,
     model: prepared.modelResolution.resolvedModelId,
     api: "anthropic-messages",
     stopReason: "stop",
@@ -290,6 +293,7 @@ export async function runRuntimeCoreMockCompactionAttempt(
     agentDir: prepared.agentDir,
     userMessage: input.userMessage,
     provider: prepared.modelResolution.provider,
+    channelProvider: prepared.channelProvider,
     modelRef: runtime.modelRef,
     resolvedModelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,
@@ -364,6 +368,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
     cwd: prepared.agentCwd,
     agentDir: prepared.agentDir,
     provider: prepared.modelResolution.provider,
+    channelProvider: prepared.channelProvider,
     modelRef: runtime.modelRef,
     resolvedModelId: prepared.modelResolution.resolvedModelId,
     resolvedModel: prepared.modelResolution.model,

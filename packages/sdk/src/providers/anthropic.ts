@@ -13,6 +13,43 @@ import type {
   CreateMessageStreamEvent,
 } from './types.js'
 
+function toAnthropicSystem(params: CreateMessageParams): string | Array<Record<string, unknown>> {
+  if (!params.promptCache?.cacheStableSystem || !params.system) return params.system
+  return [{
+    type: 'text',
+    text: params.system,
+    cache_control: { type: 'ephemeral', ttl: params.promptCache.ttl ?? '5m' },
+  }]
+}
+
+function toAnthropicMessages(params: CreateMessageParams): Array<Record<string, unknown>> {
+  return params.messages.map((message) => {
+    if (message.role !== 'runtime') return message as unknown as Record<string, unknown>
+    const content = typeof message.content === 'string'
+      ? message.content
+      : message.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n')
+    if (params.promptCache?.runtimeRole === 'system') {
+      return { role: 'system', content }
+    }
+    return {
+      role: 'user',
+      content: `<lume_runtime_context>\n${content}\n</lume_runtime_context>`,
+    }
+  })
+}
+
+function applyAnthropicCachePolicy(
+  requestParams: Record<string, unknown>,
+  params: CreateMessageParams,
+): void {
+  if (params.promptCache?.cacheConversation) {
+    requestParams.cache_control = {
+      type: 'ephemeral',
+      ttl: params.promptCache.ttl ?? '5m',
+    }
+  }
+}
+
 export class AnthropicProvider implements LLMProvider {
   readonly apiType = 'anthropic-messages' as const
   private client: Anthropic
@@ -27,12 +64,13 @@ export class AnthropicProvider implements LLMProvider {
   async countTokens(params: CreateMessageParams): Promise<number | null> {
     const requestParams: Record<string, unknown> = {
       model: params.model,
-      system: params.system,
-      messages: params.messages as Anthropic.MessageParam[],
+      system: toAnthropicSystem(params),
+      messages: toAnthropicMessages(params),
       tools: params.tools
         ? (params.tools as Anthropic.Tool[])
         : undefined,
     }
+    applyAnthropicCachePolicy(requestParams, params)
 
     if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
       requestParams.thinking = {
@@ -78,12 +116,13 @@ export class AnthropicProvider implements LLMProvider {
     const requestParams: Anthropic.MessageCreateParamsNonStreaming = {
       model: params.model,
       max_tokens: params.maxTokens,
-      system: params.system,
-      messages: params.messages as Anthropic.MessageParam[],
+      system: toAnthropicSystem(params) as any,
+      messages: toAnthropicMessages(params) as unknown as Anthropic.MessageParam[],
       tools: params.tools
         ? (params.tools as Anthropic.Tool[])
         : undefined,
     }
+    applyAnthropicCachePolicy(requestParams as unknown as Record<string, unknown>, params)
 
     // Extended thinking: 'enabled' uses explicit budget, 'adaptive' uses a default budget
     if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
@@ -122,12 +161,13 @@ export class AnthropicProvider implements LLMProvider {
     const requestParams: Anthropic.MessageStreamParams = {
       model: params.model,
       max_tokens: params.maxTokens,
-      system: params.system,
-      messages: params.messages as Anthropic.MessageParam[],
+      system: toAnthropicSystem(params) as any,
+      messages: toAnthropicMessages(params) as unknown as Anthropic.MessageParam[],
       tools: params.tools
         ? (params.tools as Anthropic.Tool[])
         : undefined,
     }
+    applyAnthropicCachePolicy(requestParams as unknown as Record<string, unknown>, params)
 
     if (params.thinking?.type === 'enabled' && params.thinking.budget_tokens) {
       ;(requestParams as any).thinking = {

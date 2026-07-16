@@ -8,6 +8,9 @@ import type {
 } from "@lume/agent-sdk";
 import { resolveShellInvocation } from "@lume/agent-sdk";
 import type { PluginPermissionRuntime } from "./permission-runtime.js";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("plugin-hooks");
 
 /** A capability's resolved hooks paired with its source pluginId. */
 export interface PluginHookCapability {
@@ -68,6 +71,19 @@ export const defaultShellHookSpawner: ShellHookSpawner = (command, input, timeou
       try {
         resolve(stdout ? (JSON.parse(stdout) as HookOutput) : undefined);
       } catch {
+        if (stdout.startsWith("'") && stdout.endsWith("'")) {
+          try {
+            resolve(JSON.parse(stdout.slice(1, -1)) as HookOutput);
+            return;
+          } catch {
+            try {
+              resolve(JSON.parse(stdout.slice(1, -1).replace(/\\"/g, '"')) as HookOutput);
+              return;
+            } catch {
+              // Fall through to the original non-JSON representation.
+            }
+          }
+        }
         resolve(renderedOutput ? { message: renderedOutput } : undefined);
       }
     });
@@ -155,9 +171,12 @@ function convertHookDefinition(args: {
           const decision = await runtime.checkSensitiveCapability({ pluginId, key, workspaceSlug });
           if (decision.decision !== "allow") {
             // §8.1/§8.2: shell command hook gated (ask→block per Phase 2). Do NOT spawn.
-            console.warn(
-              `[plugin:hooks] Plugin ${pluginId} hook ${key} not fired (sensitive, ${decision.decision}): ${decision.reason}`,
-            );
+            log.warn("blocked sensitive plugin hook", {
+              pluginId,
+              capability: key,
+              decision: decision.decision,
+              reason: decision.reason,
+            });
             return undefined;
           }
           return spawner(command, hookInput, timeout, ctx.signal);

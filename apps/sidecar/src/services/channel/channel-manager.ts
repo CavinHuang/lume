@@ -6,6 +6,7 @@ import { fetchWithProxy } from "../infra/proxy-fetch";
 import { decryptSecret, encryptSecret } from "../infra/secret-crypto";
 import { getSuggestedProviderModels, normalizeChannelModel, PROVIDER_API_FAMILIES } from "@lume/shared";
 import { parseModelRef } from "./model-selection";
+import { createLogger } from "../infra/logger";
 import type {
   Channel,
   ChannelCreateInput,
@@ -19,6 +20,7 @@ import type {
 } from "@lume/shared";
 
 const CONFIG_VERSION = 3;
+const log = createLogger("channel-manager");
 
 function readConfig(): ChannelsConfig {
   const configPath = getChannelsPath();
@@ -32,7 +34,7 @@ function readConfig(): ChannelsConfig {
     }
     return normalized.config;
   } catch (error) {
-    console.error("[渠道管理] 读取配置文件失败:", error);
+    log.error("failed to read channel configuration", { error });
     return { version: CONFIG_VERSION, channels: [] };
   }
 }

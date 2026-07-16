@@ -37,11 +37,8 @@ if (pkg.build?.artifactName !== "${productName}-${version}-${arch}.${ext}") {
 if (pkg.devDependencies?.electron !== "42.5.1") {
   fail(`desktop electron version must be 42.5.1, got ${JSON.stringify(pkg.devDependencies?.electron)}`);
 }
-if (pkg.devDependencies?.["electron-log"] !== "5.4.4") {
-  fail(`desktop must bundle electron-log 5.4.4 from devDependencies, got ${JSON.stringify(pkg.devDependencies?.["electron-log"])}`);
-}
-if (sidecarPkg.dependencies?.["electron-log"] !== "5.4.4") {
-  fail(`sidecar runtime must depend on electron-log 5.4.4, got ${JSON.stringify(sidecarPkg.dependencies?.["electron-log"])}`);
+if (pkg.devDependencies?.["electron-log"] || sidecarPkg.dependencies?.["electron-log"]) {
+  fail("desktop and sidecar must not bundle a second electron-log writer");
 }
 if (pkg.devDependencies?.["electron-updater"] !== "6.8.9" || pkg.dependencies?.["electron-updater"]) {
   fail("electron-updater must be bundled from desktop devDependencies");
@@ -110,11 +107,11 @@ function verifyDesktopRuntime(mainFile, preloadFile, bundleFile) {
   if (!mainSource.includes("system.ready")) {
     fail("desktop main must wait for sidecar system.ready");
   }
-  if (!mainSource.includes("system.log") || !mainSource.includes("writeDesktopLogRecord")) {
-    fail("desktop main must collect structured sidecar logs through system.log");
+  if (!mainSource.includes("system.log-batch") || !mainSource.includes("LoggingService")) {
+    fail("desktop main must collect structured sidecar logs through the unified writer");
   }
-  if (!mainSource.includes("electron-log") && !mainSource.includes("lume-desktop-ndjson")) {
-    fail("desktop main must use electron-log for structured file logging");
+  if (/from ["']electron-log|electron-log\/node|lume-desktop-ndjson/.test(mainSource)) {
+    fail("desktop main must not use a second electron-log writer");
   }
   if (!bundleSource.includes("process.parentPort")) {
     fail("sidecar bundle must support Electron utility parentPort transport");
@@ -122,8 +119,8 @@ function verifyDesktopRuntime(mainFile, preloadFile, bundleFile) {
   if (!bundleSource.includes("system.log")) {
     fail("sidecar bundle must emit structured logs through Electron utility parentPort");
   }
-  if (!bundleSource.includes("electron-log") && !bundleSource.includes("lume-sidecar-ndjson")) {
-    fail("sidecar bundle must use electron-log for fallback file logging");
+  if (/from ["']electron-log|electron-log\/node|lume-sidecar-ndjson/.test(bundleSource)) {
+    fail("sidecar bundle must not contain a second electron-log writer");
   }
   if (mainSource.includes("ELECTRON_RUN_AS_NODE")) {
     fail("desktop main must not depend on ELECTRON_RUN_AS_NODE");

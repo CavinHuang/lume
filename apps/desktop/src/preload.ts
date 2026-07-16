@@ -12,8 +12,19 @@ const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'read_clipboard_text',
   'write_clipboard_text',
   'write_web_log',
+  'write_web_log_batch',
   'desktop_list_log_files',
   'desktop_read_log_file',
+  'desktop_open_logs_dir',
+  'desktop_export_logs',
+  'desktop_delete_logs',
+  'desktop_log_live_subscribe',
+  'desktop_log_live_unsubscribe',
+  'desktop_diagnostic_status',
+  'desktop_diagnostic_start',
+  'desktop_diagnostic_stop',
+  'desktop_diagnostic_decrypt',
+  'desktop_diagnostic_delete',
   'read_text_file',
   'save_text_file_dialog',
   'save_file_path_dialog',
@@ -28,6 +39,7 @@ const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'open_weread_key_webview',
   'quick_input_hide', // Alt+L 快速输入子窗口：隐藏子窗口
   'quick_input_get_context',
+  'ack_renderer_delivery',
   'data_get_storage_stats',
   'data_export_zip',
   'data_migrate_to_dir',
@@ -40,6 +52,7 @@ const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'update:download',
   'window-state',
   'tray-action',
+  'logs:live',
 ])
 
 function validateRendererInvokeCommand(command) {

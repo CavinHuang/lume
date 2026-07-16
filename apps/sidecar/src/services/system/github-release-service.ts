@@ -1,9 +1,11 @@
 import type { GitHubRelease, GitHubReleaseListOptions } from "@lume/shared";
+import { createLogger } from "../infra/logger";
 
 const GITHUB_API_BASE = "https://api.github.com";
 const GITHUB_REPO_OWNER = process.env.LUME_GITHUB_RELEASE_OWNER?.trim() || "CavinHUang";
 const GITHUB_REPO_NAME = process.env.LUME_GITHUB_RELEASE_REPO?.trim() || "Lume";
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const log = createLogger("github-release");
 
 interface ReleaseCache {
   data: GitHubRelease[];
@@ -36,8 +38,7 @@ async function fetchFromGitHub<T>(endpoint: string): Promise<T> {
   });
 
   if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`GitHub API 请求失败: ${response.status} ${response.statusText} ${message}`);
+    throw new Error(`GitHub API 请求失败: ${response.status} ${response.statusText}`);
   }
 
   return (await response.json()) as T;
@@ -47,7 +48,7 @@ export async function getLatestGitHubRelease(): Promise<GitHubRelease | null> {
   try {
     return await fetchFromGitHub<GitHubRelease>("/releases/latest");
   } catch (error) {
-    console.warn("[github-release] 获取最新版本失败:", getErrorMessage(error));
+    log.warn("failed to fetch latest release", { error: getErrorMessage(error) });
     return null;
   }
 }
@@ -79,7 +80,7 @@ export async function listGitHubReleases(
 
     return filterReleases(releases, includePrerelease);
   } catch (error) {
-    console.warn("[github-release] 获取版本历史失败:", getErrorMessage(error));
+    log.warn("failed to fetch release history", { error: getErrorMessage(error) });
     if (!releaseCache) {
       return [];
     }
@@ -91,7 +92,7 @@ export async function getGitHubReleaseByTag(tag: string): Promise<GitHubRelease 
   try {
     return await fetchFromGitHub<GitHubRelease>(`/releases/tags/${encodeURIComponent(tag)}`);
   } catch (error) {
-    console.warn(`[github-release] 获取版本 ${tag} 失败:`, getErrorMessage(error));
+    log.warn("failed to fetch release by tag", { tag, error: getErrorMessage(error) });
     return null;
   }
 }

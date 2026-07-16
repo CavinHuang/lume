@@ -19,8 +19,10 @@ import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { assertExistingDirectory } from "../agent/agent-workdir-resolver";
 import { parseSkillFrontmatter } from "./skill-frontmatter";
 import { getInstalledSkillSourceMetadata, type InstalledSkillSourceMeta } from "./skills-market-metadata";
+import { createLogger } from "../infra/logger";
 
 const MAX_VERSIONS = 20;
+const log = createLogger("workspace-skill-editor");
 
 function normalizeSkillSlug(skillSlug: string): string {
   const trimmed = skillSlug.trim();
@@ -241,9 +243,9 @@ function readPluginEditableSkills(): EditableSkillMeta[] {
   }
 
   const result = Array.from(bySlug.values()).sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
-  console.debug(`[plugin:skills] discovered ${result.length} plugin skills`, {
+  log.debug("discovered plugin skills", {
+    count: result.length,
     root: pluginsRoot,
-    names: result.map((s) => s.slug),
   });
   return result;
 }

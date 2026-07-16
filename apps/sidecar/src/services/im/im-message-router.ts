@@ -15,13 +15,14 @@ import {
   type ImProvider,
   type LumeRuntimeEvent
 } from "@lume/shared";
+import { randomUUID } from "node:crypto";
 import { emitAgentNotification } from "../agent/agent-notification-service";
 import { createAgentThread, updateAgentThreadMeta } from "../agent/agent-thread-manager";
 import { appendAgentMessage, submitAgentToolPermission } from "../agent/agent-service";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 import { saveFilesToAgentSession } from "../agent/agent-files-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
-import { createLogger } from "../infra/logger";
+import { createLogger, writeLogRecord } from "../infra/logger";
 import { getImAccount } from "./im-config-manager";
 import {
   getImThreadBindingByPeer,
@@ -187,12 +188,40 @@ async function deliverAssistantReplyToIm(
     return;
   }
   log.info("投递助手回复到 IM", { threadId, peerId: binding.peerId, textLength: text.length });
+  writeLogRecord({
+    level: "info",
+    kind: "trace",
+    context: "agent.delivery.im",
+    event: "reply.forwarded",
+    message: "assistant reply forwarded to IM provider",
+    status: "started",
+    traceId: event.traceId,
+    submissionId: event.submissionId,
+    threadId,
+    messageId: event.message.id,
+    origin: `im.${binding.provider}`,
+    data: { provider: binding.provider, accountId: binding.accountId, peerKind: binding.peerKind }
+  });
   emitImDeliveryRuntimeEvent(threadId, event, binding, "pending", emitNotification);
   await sendBoundTextMessage({
     binding,
     text
   });
   emitImDeliveryRuntimeEvent(threadId, event, binding, "sent", emitNotification);
+  writeLogRecord({
+    level: "info",
+    kind: "trace",
+    context: "agent.delivery.im",
+    event: "reply.committed",
+    message: "IM provider acknowledged assistant reply",
+    status: "ok",
+    traceId: event.traceId,
+    submissionId: event.submissionId,
+    threadId,
+    messageId: event.message.id,
+    origin: `im.${binding.provider}`,
+    data: { provider: binding.provider, accountId: binding.accountId, peerKind: binding.peerKind }
+  });
 }
 
 function emitRuntimeError(
@@ -447,6 +476,20 @@ export function createImAgentStreamEmitter(
             log.error("微信回复发送失败", { threadId, error: message });
             const binding = getImThreadBindingByThreadId(threadId) ?? undefined;
             emitImDeliveryRuntimeEvent(threadId, event, binding, "failed", emitNotification, message);
+            writeLogRecord({
+              level: "error",
+              kind: "trace",
+              context: "agent.delivery.im",
+              event: "reply.delivery_failed",
+              message: "IM assistant reply delivery failed",
+              status: "error",
+              traceId: event.traceId,
+              submissionId: event.submissionId,
+              threadId,
+              messageId: event.message.id,
+              origin: binding ? `im.${binding.provider}` : "im.unknown",
+              error: { message }
+            });
           });
       }
     },
@@ -546,6 +589,11 @@ export async function routeInboundImMessage(
     workspaceId: message.workspaceId,
     chatType: message.peerKind === "group" ? "group" : "direct",
     threadType: message.peerKind === "group" ? "group" : "main",
+    traceContext: {
+      submissionId: randomUUID(),
+      traceId: randomUUID(),
+      origin: `im.${message.provider}`
+    },
     messageMetadata: {
       im: {
         provider: message.provider,

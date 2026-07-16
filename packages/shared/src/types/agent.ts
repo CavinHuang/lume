@@ -732,6 +732,30 @@ export interface InstallGitHubSkillToWorkspaceResult extends GlobalImportResult 
 
 // ===== Agent 发送输入 =====
 
+export type AgentTraceOrigin =
+  | 'main_window'
+  | 'quick_input'
+  | `im.${string}`
+  | 'automation'
+  | 'routine'
+  | 'subagent'
+  | 'resume'
+  | 'task'
+  | 'internal'
+
+export interface AgentTraceContext {
+  /** Renderer/client correlation only; never used as a persistence key. */
+  submissionId: string
+  clientEventId?: string
+  /** Canonical correlation id minted by the first trusted main/sidecar boundary. */
+  traceId?: string
+  /** Trusted boundaries overwrite or derive this value. */
+  origin?: AgentTraceOrigin
+  parentTraceId?: string
+  parentSpanId?: string
+  linkedTraceId?: string
+}
+
 /**
  * Agent 发送消息的输入参数
  */
@@ -763,6 +787,8 @@ export interface AgentSendInput {
   resendFromMessageId?: string
   /** 编辑后重发目标消息 ID */
   editFromMessageId?: string
+  /** End-to-end observability context. Content is correlation metadata, not authorization. */
+  traceContext?: AgentTraceContext
 }
 
 export interface AgentUpdateThreadModelSelectionInput {
@@ -777,6 +803,8 @@ export interface AgentThreadMessageDispatchResult {
   mode: 'sent' | 'queued'
   queuedCount: number
   queuedMessage?: AgentQueuedMessage
+  traceId?: string
+  submissionId?: string
 }
 
 export interface AgentQueuedMessage {
@@ -1274,6 +1302,9 @@ export interface AgentThreadRuntimeEventsResult {
 export interface AgentMessageAppendedEvent {
   threadId: string
   message: AgentMessage
+  traceId?: string
+  submissionId?: string
+  deliveryAttemptId?: string
 }
 
 export interface AgentRuntimeStatusChangedEvent {

@@ -104,14 +104,14 @@ export function AppearanceSettings() {
             })}
           </div>
         </div>
-        <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
+        <div className="py-2">
           <div className="min-w-0">
             <div className="text-[13px] font-medium leading-5 text-[var(--text-2)]">配色</div>
             <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">
               亮度模式与配色可以独立组合
             </div>
           </div>
-          <div className="grid w-[306px] grid-cols-2 gap-2">
+          <div className="mt-3 grid w-full grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-2">
             {THEME_PALETTE_OPTIONS.map((option) => (
               <Button
                 key={option.value}

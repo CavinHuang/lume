@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getSettingsPath } from "../infra/config-paths";
+import { LUME_LOGGING_DEFAULTS } from "@lume/shared";
 import {
   clearGeneralSettingsCaches,
   getPersistedGeneralSettings,
@@ -45,6 +46,7 @@ describe("general-settings-service", () => {
       themeMode: "system",
       themePalette: "mint",
       agentMessageDisplayMode: "minimal",
+      logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false,
@@ -59,11 +61,11 @@ describe("general-settings-service", () => {
     });
   });
 
-  test("更新常规设置时合并 themeMode 与 windowBehavior 并保留同级字段", () => {
+  test("更新常规设置时合并 themeMode 与 windowBehavior 并保留同级字段", async () => {
     const settingsPath = getSettingsPath();
     writeFileSync(settingsPath, JSON.stringify({ proxy: { enabled: true } }, null, 2), "utf-8");
 
-    const first = updatePersistedGeneralSettings({
+    const first = await updatePersistedGeneralSettings({
       themeMode: "dark",
       windowBehavior: {
         minimizeToTray: true
@@ -74,6 +76,7 @@ describe("general-settings-service", () => {
       themeMode: "dark",
       themePalette: "mint",
       agentMessageDisplayMode: "minimal",
+      logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false,
@@ -87,7 +90,7 @@ describe("general-settings-service", () => {
       }
     });
 
-    const second = updatePersistedGeneralSettings({
+    const second = await updatePersistedGeneralSettings({
       windowBehavior: {
         closeToTray: true
       }
@@ -97,6 +100,7 @@ describe("general-settings-service", () => {
       themeMode: "dark",
       themePalette: "mint",
       agentMessageDisplayMode: "minimal",
+      logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: true,
@@ -116,6 +120,7 @@ describe("general-settings-service", () => {
         themeMode?: string;
         themePalette?: string;
         agentMessageDisplayMode?: string;
+        logging?: typeof LUME_LOGGING_DEFAULTS;
         windowBehavior?: {
           minimizeToTray?: boolean;
           closeToTray?: boolean;
@@ -134,6 +139,7 @@ describe("general-settings-service", () => {
       themeMode: "dark",
       themePalette: "mint",
       agentMessageDisplayMode: "minimal",
+      logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: true,
@@ -150,7 +156,7 @@ describe("general-settings-service", () => {
     expect(existsSync(join(tempConfigDir, "settings.json.bak"))).toBeFalse();
   });
 
-  test("主题配色会校验、持久化并在局部更新后保留", () => {
+  test("主题配色会校验、持久化并在局部更新后保留", async () => {
     const settingsPath = getSettingsPath();
     writeFileSync(
       settingsPath,
@@ -160,10 +166,10 @@ describe("general-settings-service", () => {
 
     expect(getPersistedGeneralSettings().themePalette).toBe("mint");
 
-    const first = updatePersistedGeneralSettings({ themePalette: "iris" });
+    const first = await updatePersistedGeneralSettings({ themePalette: "iris" });
     expect(first.themePalette).toBe("iris");
 
-    const second = updatePersistedGeneralSettings({ themeMode: "light" });
+    const second = await updatePersistedGeneralSettings({ themeMode: "light" });
     expect(second.themePalette).toBe("iris");
 
     const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
@@ -172,22 +178,22 @@ describe("general-settings-service", () => {
     expect(raw.generalSettings?.themePalette).toBe("iris");
   });
 
-  test("樱雾和石墨余烬配色可以持久化后重新读取", () => {
-    updatePersistedGeneralSettings({ themePalette: "sakura" });
+  test("樱雾和石墨余烬配色可以持久化后重新读取", async () => {
+    await updatePersistedGeneralSettings({ themePalette: "sakura" });
     expect(getPersistedGeneralSettings().themePalette).toBe("sakura");
 
-    updatePersistedGeneralSettings({ themePalette: "ember" });
+    await updatePersistedGeneralSettings({ themePalette: "ember" });
     expect(getPersistedGeneralSettings().themePalette).toBe("ember");
   });
 
-  test("纸墨、薰衣草灰和橄榄工作室配色可以持久化后重新读取", () => {
+  test("纸墨、薰衣草灰和橄榄工作室配色可以持久化后重新读取", async () => {
     for (const themePalette of ["mono", "lavender", "olive"] as const) {
-      updatePersistedGeneralSettings({ themePalette });
+      await updatePersistedGeneralSettings({ themePalette });
       expect(getPersistedGeneralSettings().themePalette).toBe(themePalette);
     }
   });
 
-  test("更新 generalSettings 时保留既有 uiState", () => {
+  test("更新 generalSettings 时保留既有 uiState", async () => {
     const settingsPath = getSettingsPath();
     writeFileSync(settingsPath, JSON.stringify({
       uiState: {
@@ -206,7 +212,7 @@ describe("general-settings-service", () => {
       }
     }, null, 2), "utf-8");
 
-    updatePersistedGeneralSettings({
+    await updatePersistedGeneralSettings({
       themeMode: "light"
     });
 
@@ -227,7 +233,7 @@ describe("general-settings-service", () => {
     expect(raw.generalSettings?.themeMode).toBe("light");
   });
 
-  test("settings.json 解析失败时读取回退默认值，但写入会显式失败以避免覆盖其他段", () => {
+  test("settings.json 解析失败时读取回退默认值，但写入会显式失败以避免覆盖其他段", async () => {
     const settingsPath = getSettingsPath();
     writeFileSync(settingsPath, "{ invalid json", "utf-8");
 
@@ -235,6 +241,7 @@ describe("general-settings-service", () => {
       themeMode: "system",
       themePalette: "mint",
       agentMessageDisplayMode: "minimal",
+      logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false,
@@ -248,14 +255,14 @@ describe("general-settings-service", () => {
       }
     });
 
-    expect(() => updatePersistedGeneralSettings({
+    await expect(updatePersistedGeneralSettings({
       themeMode: "dark"
-    })).toThrow();
+    })).rejects.toThrow();
     expect(readFileSync(settingsPath, "utf-8")).toBe("{ invalid json");
   });
 
-  test("更新版本偏好时保留未传入的同级选项", () => {
-    const first = updatePersistedGeneralSettings({
+  test("更新版本偏好时保留未传入的同级选项", async () => {
+    const first = await updatePersistedGeneralSettings({
       updateSettings: {
         autoCheckUpdates: false,
         lastUpdateCheckAt: "2026-05-05T03:00:00.000Z"
@@ -269,7 +276,7 @@ describe("general-settings-service", () => {
       lastUpdateCheckAt: "2026-05-05T03:00:00.000Z"
     });
 
-    const second = updatePersistedGeneralSettings({
+    const second = await updatePersistedGeneralSettings({
       updateSettings: {
         notifyAfterDownload: false
       }
@@ -383,7 +390,7 @@ describe("general-settings-service", () => {
     expect(existsSync(logsFile)).toBeTrue();
   });
 
-  test("agentMessageDisplayMode 缺失时回退 minimal，显式值被保留并持久化", () => {
+  test("agentMessageDisplayMode 缺失时回退 minimal，显式值被保留并持久化", async () => {
     const settingsPath = getSettingsPath();
     writeFileSync(
       settingsPath,
@@ -394,7 +401,7 @@ describe("general-settings-service", () => {
     const loaded = getPersistedGeneralSettings();
     expect(loaded.agentMessageDisplayMode).toBe("minimal");
 
-    const updated = updatePersistedGeneralSettings({ agentMessageDisplayMode: "verbose" });
+    const updated = await updatePersistedGeneralSettings({ agentMessageDisplayMode: "verbose" });
     expect(updated.agentMessageDisplayMode).toBe("verbose");
 
     const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {

@@ -18,6 +18,7 @@ import {
   matchesAny,
   type CompiledPattern
 } from "../infra/pattern-utils";
+import { createLogger } from "../infra/logger";
 
 export type MemoryChatType = "direct" | "group" | "channel";
 
@@ -31,6 +32,7 @@ interface MemoryRuntimeConfigFile {
 }
 
 export const MEMORY_CONFIG_VERSION = 1;
+const log = createLogger("memory-policy");
 
 const DEFAULT_MEMORY_CONFIG: Required<Pick<MemoryRuntimeConfigFile, "version" | "tools" | "citations">> = {
   version: MEMORY_CONFIG_VERSION,
@@ -216,7 +218,7 @@ export function resolveMemoryRuntimeConfig(): {
         "utf-8"
       );
     } catch (error) {
-      console.warn("[Memory] 写入默认配置失败:", error);
+      log.warn("failed to write default memory config", { error });
     }
     return {
       toolPolicy: { ...DEFAULT_MEMORY_CONFIG.tools },
@@ -230,7 +232,7 @@ export function resolveMemoryRuntimeConfig(): {
     const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as MemoryRuntimeConfigFile;
     return parseMemoryRuntimeConfigPayload(parsed);
   } catch (error) {
-    console.warn("[Memory] 读取配置失败，使用默认值:", error);
+    log.warn("failed to read memory config; using defaults", { error });
     return {
       toolPolicy: { ...DEFAULT_MEMORY_CONFIG.tools },
       citationsMode: DEFAULT_MEMORY_CONFIG.citations,
@@ -249,7 +251,7 @@ export function getMemoryRuntimeConfig(): MemoryRuntimeConfig {
   try {
     return normalizeRuntimeConfig(JSON.parse(readFileSync(configPath, "utf-8")) as unknown);
   } catch (error) {
-    console.warn("[Memory] 读取配置失败，使用默认值:", error);
+    log.warn("failed to read memory config; using defaults", { error });
     return normalizeRuntimeConfig({});
   }
 }

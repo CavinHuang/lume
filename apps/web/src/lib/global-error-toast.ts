@@ -1,4 +1,5 @@
 import { toast } from 'sonner'
+import { writeWebLogEvent } from './desktop-api/logger'
 
 /**
  * Release 构建无 DevTools：把任何未被调用方捕获的 Promise 拒绝（含 sidecar 调用失败）
@@ -49,10 +50,31 @@ export function installGlobalErrorToast(): void {
   window.addEventListener('unhandledrejection', (event) => {
     const message = resolveUnhandledRejectionToast(event.reason)
     if (!message) return
+    writeWebLogEvent({
+      level: 'error',
+      context: 'renderer.global',
+      event: 'renderer.unhandled_rejection',
+      message,
+      error: event.reason instanceof Error
+        ? { name: event.reason.name, message: event.reason.message, stack: event.reason.stack }
+        : { message },
+    })
     const now = Date.now()
     const last = lastShownAt.get(message) ?? 0
     if (now - last < DEDUP_WINDOW_MS) return
     lastShownAt.set(message, now)
     toast.error(message, { duration: TOAST_DURATION_MS })
+  })
+  window.addEventListener('error', (event) => {
+    writeWebLogEvent({
+      level: 'error',
+      context: 'renderer.global',
+      event: 'renderer.uncaught_error',
+      message: event.message || 'uncaught renderer error',
+      error: event.error instanceof Error
+        ? { name: event.error.name, message: event.error.message, stack: event.error.stack }
+        : { message: event.message || 'uncaught renderer error' },
+      data: { filename: event.filename, line: event.lineno, column: event.colno },
+    })
   })
 }

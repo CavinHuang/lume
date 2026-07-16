@@ -3,10 +3,12 @@ import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { AGENT_IPC_CHANNELS, LUME_CONFIG_IPC_CHANNELS, MEMORY_IPC_CHANNELS } from "@lume/shared";
 import { getAgentWorkspacesDir, getConfigDir, getLumeConfigYamlPath, getStructuredMemoryDir } from "../infra/config-paths";
+import { createLogger } from "../infra/logger";
 
 type NotificationEmitter = (method: string, params: unknown) => void;
 
 const DEBOUNCE_MS = 500;
+const log = createLogger("workspace-watcher");
 
 let watchers: FSWatcher[] = [];
 let capabilitiesTimer: ReturnType<typeof setTimeout> | null = null;
@@ -97,9 +99,9 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
     try {
       const watcher = watch(targetPath, options, onChange);
       watchers.push(watcher);
-      console.log(`[工作区监听] 已监听 ${label}: ${targetPath}`);
+      log.debug("watching workspace path", { label, targetPath });
     } catch (error) {
-      console.error(`[工作区监听] 监听 ${label} 失败:`, error);
+      log.error("failed to watch workspace path", { error, label, targetPath });
     }
   };
 
@@ -114,15 +116,15 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
   }, "Lume 全局配置目录");
   safeWatch(getLumeConfigYamlPath(), {}, () => emitLumeConfigChanged(), "Lume 全局配置文件");
   if (watchers.length === 0) {
-    console.warn("[工作区监听] 未找到可监听目录，已跳过监听初始化");
+    log.warn("no workspace paths are available to watch");
     return;
   }
 
   try {
     // 保持与旧逻辑一致：启动后输出一次汇总日志
-    console.log("[工作区监听] 文件监听已启动");
+    log.info("workspace file watcher started", { watcherCount: watchers.length });
   } catch (error) {
-    console.error("[工作区监听] 启动失败:", error);
+    log.error("workspace file watcher failed to start", { error });
   }
 }
 
@@ -137,5 +139,5 @@ export function stopWorkspaceWatcher(): void {
     }
   }
   watchers = [];
-  console.log("[工作区监听] 已停止");
+  log.info("workspace file watcher stopped");
 }

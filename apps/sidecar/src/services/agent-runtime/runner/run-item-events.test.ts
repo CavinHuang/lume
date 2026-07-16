@@ -542,7 +542,7 @@ describe("projectRunStateToRuntimeEvents", () => {
         outputTokens: 5,
         cacheReadInputTokens: 3,
         cacheCreationInputTokens: 2,
-        cachedTokens: 5,
+        cachedTokens: 3,
         totalTokens: 20,
         estimatedTailTokens: 0,
         contextWindow: 1000,
@@ -554,14 +554,14 @@ describe("projectRunStateToRuntimeEvents", () => {
           outputTokens: 5,
           cacheReadInputTokens: 3,
           cacheCreationInputTokens: 2,
-          cachedTokens: 5,
+          cachedTokens: 3,
           totalTokens: 20
         },
         latestRecord: expect.objectContaining({
           callerLabel: "Turn 1",
           inputTokens: 6,
           outputTokens: 2,
-          cachedTokens: 2
+          cachedTokens: 1
         }),
         records: [
         expect.objectContaining({
@@ -573,7 +573,7 @@ describe("projectRunStateToRuntimeEvents", () => {
           outputTokens: 2,
           cacheReadInputTokens: 1,
           cacheCreationInputTokens: 1,
-          cachedTokens: 2,
+          cachedTokens: 1,
           costUSD: 0.004
         }),
         expect.objectContaining({
@@ -585,7 +585,7 @@ describe("projectRunStateToRuntimeEvents", () => {
           outputTokens: 3,
           cacheReadInputTokens: 2,
           cacheCreationInputTokens: 1,
-          cachedTokens: 3,
+          cachedTokens: 2,
           costUSD: 0.006
         })
         ],

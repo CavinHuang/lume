@@ -345,6 +345,45 @@ describe("QueryEngine context controller", () => {
     }));
   });
 
+  test("preserves only the latest runtime context across compaction", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    }]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "stable system",
+      runtimeContext: "latest runtime",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => true,
+        async compactConversation() {
+          return {
+            compactedMessages: [
+              { role: "user", content: "[Previous conversation summary]\n\nsummary" },
+              { role: "runtime", content: "stale summarized runtime" }
+            ],
+            summary: "summary",
+            metadata: { policy: "kernel-v1", source: "agent-runtime-kernel" }
+          };
+        }
+      }
+    });
+    engine.messages.push({ role: "runtime", content: "old runtime" });
+
+    await collectEvents(engine);
+
+    const runtimeMessages = provider.requests[0]?.messages.filter((message) => message.role === "runtime");
+    expect(runtimeMessages).toEqual([{ role: "runtime", content: "latest runtime" }]);
+  });
+
   test("runs slash compact as a manual kernel compaction without calling the provider", async () => {
     const provider = new StaticProvider([]);
     const engine = new QueryEngine({
@@ -1069,9 +1108,11 @@ describe("QueryEngine structured tool results", () => {
       { type: "image", source: { type: "base64", media_type: "image/png", data: "ZmFrZQ==" } },
     ]);
     expect((toolResultMessage!.content as any[])[0]._meta).toMatchObject({ traceId: "t-1" });
-    expect((engine as any).provider.requests[1].system).toContain(
-      "action-1: click on 微信#42; phase=observed; not verified complete",
-    );
+    expect((engine as any).provider.requests[1].system).toBe("test");
+    expect((engine as any).provider.requests[1].messages).toContainEqual(expect.objectContaining({
+      role: "runtime",
+      content: expect.stringContaining("action-1: click on 微信#42; phase=observed; not verified complete"),
+    }));
     const streamedToolResult = events.find((event: any) => event.type === "tool_result") as any;
     expect(streamedToolResult.result.output).not.toContain("ZmFrZQ==");
     expect(streamedToolResult.result.output).toContain("[Image: image/png]");

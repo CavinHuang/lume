@@ -16,6 +16,15 @@ import type { ToolResultContentBlock } from '../types.js'
 
 export type ApiType = 'anthropic-messages' | 'openai-completions' | 'deepseek-chat-completions' | 'openai-responses'
 
+export interface PromptCachePolicy {
+  strategy: 'implicit' | 'anthropic-ephemeral' | 'openrouter-sticky'
+  routingKey?: string
+  ttl?: '5m'
+  cacheStableSystem?: boolean
+  cacheConversation?: boolean
+  runtimeRole?: 'developer' | 'system' | 'user'
+}
+
 // --------------------------------------------------------------------------
 // Normalized Request
 // --------------------------------------------------------------------------
@@ -30,6 +39,7 @@ export interface CreateMessageParams {
   jsonSchema?: Record<string, unknown>
   outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> }
   effort?: 'low' | 'medium' | 'high' | 'max'
+  promptCache?: PromptCachePolicy
   /** 中止信号：用于在流式响应过程中即时取消底层 fetch。 */
   abortSignal?: AbortSignal
 }
@@ -39,7 +49,7 @@ export interface CreateMessageParams {
  * This is the internal representation used throughout the SDK.
  */
 export interface NormalizedMessageParam {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'runtime'
   content: string | NormalizedContentBlock[]
 }
 

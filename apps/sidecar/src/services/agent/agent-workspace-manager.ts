@@ -107,9 +107,9 @@ function backupCorruptIndex(indexPath: string, label: string): void {
   const backupPath = `${indexPath}.corrupt-${Date.now()}`;
   try {
     renameSync(indexPath, backupPath);
-    console.warn(`[${label}] 检测到损坏索引，已备份: ${backupPath}`);
+    log.warn("backed up corrupt workspace index", { label, backupPath });
   } catch (error) {
-    console.warn(`[${label}] 备份损坏索引失败:`, error);
+    log.warn("failed to back up corrupt workspace index", { label, backupPath, error });
   }
 }
 
@@ -122,7 +122,7 @@ function readIndex(): AgentWorkspacesIndex {
   try {
     return JSON.parse(readFileSync(indexPath, "utf-8")) as AgentWorkspacesIndex;
   } catch (error) {
-    console.error("[Agent 工作区] 读取索引文件失败:", error);
+    log.error("failed to read workspace index", { error, indexPath });
     backupCorruptIndex(indexPath, "Agent 工作区");
     return { version: INDEX_VERSION, workspaces: [] };
   }
@@ -133,7 +133,7 @@ function writeIndex(index: AgentWorkspacesIndex): void {
   try {
     writeJsonAtomic(indexPath, JSON.stringify(index, null, 2));
   } catch (error) {
-    console.error("[Agent 工作区] 写入索引文件失败:", error);
+    log.error("failed to write workspace index", { error, indexPath });
     throw new Error("写入 Agent 工作区索引失败");
   }
 }
@@ -430,7 +430,7 @@ export function createAgentWorkspace(name: string, options?: { slug?: string; pr
     index.workspaces.push(workspace);
     writeIndex(index);
 
-    console.log(`[Agent 工作区] 已创建工作区: ${displayName} (slug: ${slug})`);
+    log.info("created agent workspace", { workspaceId: workspace.id, slug });
     return workspace;
   });
 }
@@ -452,7 +452,7 @@ export function updateAgentWorkspace(id: string, updates: { name: string }): Age
     index.workspaces[idx] = updated;
     writeIndex(index);
 
-    console.log(`[Agent 工作区] 已更新工作区: ${updated.name} (${updated.id})`);
+    log.info("updated agent workspace", { workspaceId: updated.id, slug: updated.slug });
     return updated;
   });
 }
@@ -536,7 +536,7 @@ export function deleteAgentWorkspace(id: string): void {
     const removed = index.workspaces.splice(idx, 1)[0] as AgentWorkspace;
     writeIndex(index);
 
-    console.log(`[Agent 工作区] 已删除项目索引: ${removed.name} (slug: ${removed.slug}，真实目录已保留)`);
+    log.info("removed agent workspace index while preserving project directory", { workspaceId: removed.id, slug: removed.slug });
   });
 }
 
@@ -565,7 +565,7 @@ export function getWorkspaceMcpConfig(workspaceSlug: string): WorkspaceMcpConfig
     try {
       workspaceConfig = parseMcpConfigFromUnknown(JSON.parse(readFileSync(mcpPath, "utf-8")));
     } catch (error) {
-      console.error("[Agent 工作区] 读取 MCP 配置失败:", error);
+      log.error("failed to read workspace MCP configuration", { error, workspaceSlug });
       workspaceConfig = { servers: {} };
     }
   }
@@ -585,9 +585,9 @@ export function saveWorkspaceMcpConfig(workspaceSlug: string, config: WorkspaceM
   const mcpPath = getWorkspaceMcpPath(workspaceSlug);
   try {
     writeJsonAtomic(mcpPath, JSON.stringify(toCanonicalWorkspaceMcpConfig(config), null, 2));
-    console.log(`[Agent 工作区] 已保存 MCP 配置: ${workspaceSlug}`);
+    log.info("saved workspace MCP configuration", { workspaceSlug });
   } catch (error) {
-    console.error("[Agent 工作区] 保存 MCP 配置失败:", error);
+    log.error("failed to save workspace MCP configuration", { error, workspaceSlug });
     throw new Error("保存 MCP 配置失败");
   }
 }

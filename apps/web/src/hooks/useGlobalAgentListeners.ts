@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { listSubagentWork, onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
+import { acknowledgeRendererDelivery, listSubagentWork, onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
   agentRuntimeStatusAtom,
@@ -278,6 +278,11 @@ export function useGlobalAgentListeners() {
           void sidecarCall<AgentThreadRuntimeEventsResult>(AGENT_IPC_CHANNELS.GET_THREAD_RUNTIME_EVENTS, { threadId: event.threadId })
             .then((result) => {
               setRuntimeEvents((prev) => hydrateRuntimeEvents(prev, result))
+              if (event.message.role === 'assistant' && event.deliveryAttemptId) {
+                requestAnimationFrame(() => {
+                  void acknowledgeRendererDelivery(event)
+                })
+              }
             })
             .catch((error) => {
               console.error(`[useGlobalAgentListeners] 刷新运行事件失败: ${event.threadId}`, error)

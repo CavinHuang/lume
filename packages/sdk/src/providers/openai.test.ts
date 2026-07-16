@@ -214,6 +214,90 @@ describe("OpenAIProvider", () => {
     })
   })
 
+  test("sends prompt cache routing key and maps runtime to developer", async () => {
+    let requestBody: Record<string, any> | undefined
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({
+        id: "chatcmpl-cache",
+        choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: {
+          input_tokens: 150,
+          output_tokens: 10,
+          input_tokens_details: { cached_tokens: 40, cache_write_tokens: 20 },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIProvider({ apiKey: "sk-test", retryConfig: fastRetry })
+    const result = await provider.createMessage({
+      model: "gpt-test",
+      maxTokens: 100,
+      system: "stable system",
+      messages: [
+        { role: "user", content: "old" },
+        { role: "runtime", content: "current runtime" },
+        { role: "user", content: "new" },
+      ],
+      promptCache: {
+        strategy: "implicit",
+        routingKey: "lume:v1:hash",
+        runtimeRole: "developer",
+      },
+    })
+
+    expect(requestBody?.prompt_cache_key).toBe("lume:v1:hash")
+    expect(requestBody?.messages[2]).toEqual({ role: "developer", content: "current runtime" })
+    expect(result.usage).toEqual({
+      input_tokens: 90,
+      output_tokens: 10,
+      cache_read_input_tokens: 40,
+      cache_creation_input_tokens: 20,
+    })
+  })
+
+  test("uses OpenRouter sticky session and Claude system cache marker", async () => {
+    let requestBody: Record<string, any> | undefined
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({
+        id: "chatcmpl-openrouter",
+        choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+
+    const provider = new OpenAIProvider({
+      apiKey: "sk-test",
+      baseURL: "https://openrouter.ai/api/v1",
+      retryConfig: fastRetry,
+    })
+    await provider.createMessage({
+      model: "anthropic/claude-test",
+      maxTokens: 100,
+      system: "stable system",
+      messages: [{ role: "user", content: "hello" }],
+      promptCache: {
+        strategy: "openrouter-sticky",
+        routingKey: "lume:v1:thread",
+        ttl: "5m",
+        cacheStableSystem: true,
+        runtimeRole: "system",
+      },
+    })
+
+    expect(requestBody?.session_id).toBe("lume:v1:thread")
+    expect(requestBody?.prompt_cache_key).toBeUndefined()
+    expect(requestBody?.messages[0]).toEqual({
+      role: "system",
+      content: [{
+        type: "text",
+        text: "stable system",
+        cache_control: { type: "ephemeral", ttl: "5m" },
+      }],
+    })
+  })
+
   test("createMessageStream 将 abortSignal 透传给 fetch，支持中途停止", async () => {
     let usedSignal: AbortSignal | undefined
     globalThis.fetch = (async (_input, init) => {

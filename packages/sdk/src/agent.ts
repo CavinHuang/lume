@@ -203,8 +203,8 @@ function normalizeHistoryFromSessionMessages(
 ): NormalizedMessageParam[] {
   return messages
     .filter(
-      (message): message is SessionMessage & { role: 'user' | 'assistant' } =>
-        message.role === 'user' || message.role === 'assistant',
+      (message): message is SessionMessage & { role: 'user' | 'assistant' | 'runtime' } =>
+        message.role === 'user' || message.role === 'assistant' || message.role === 'runtime',
     )
     .map((message) => ({
       role: message.role,
@@ -280,7 +280,7 @@ function restoreMissingToolResults(
 }
 
 function normalizeSessionMessageContent(
-  message: SessionMessage & { role: 'user' | 'assistant' },
+  message: SessionMessage & { role: 'user' | 'assistant' | 'runtime' },
 ): NormalizedMessageParam['content'] {
   if (
     message.role === 'assistant' &&
@@ -1015,7 +1015,13 @@ export class Agent {
       : null
     const modelFacingPrompt = manualSkillInvocation?.prompt ?? normalizedPrompt
     const isManualCompactCommand = typeof normalizedPrompt === 'string' && normalizedPrompt.trim() === '/compact'
+    const runtimeMessage = !isManualCompactCommand && opts.runtimeContext?.trim()
+      ? toSessionMessage('runtime', opts.runtimeContext.trim())
+      : null
     const userMessage = isManualCompactCommand ? null : toSessionMessage('user', normalizedPrompt)
+    if (runtimeMessage) {
+      this.sessionMessages.push(runtimeMessage)
+    }
     if (userMessage) {
       this.sessionMessages.push(userMessage)
       this.messageLog.push({
@@ -1064,6 +1070,8 @@ export class Agent {
       provider,
       tools,
       systemPrompt,
+      runtimeContext: runtimeMessage ? opts.runtimeContext?.trim() : undefined,
+      promptCache: opts.promptCache,
       appendSystemPrompt,
       maxTurns: opts.maxTurns ?? 10,
       maxBudgetUsd: opts.maxBudgetUsd,
