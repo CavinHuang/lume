@@ -124,6 +124,8 @@ jobs:
           bun run --filter @lume/desktop build:runtime
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
+          node scripts/build-node-repl-resources.mjs
+          node scripts/build-desktop-host-resources.mjs
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
@@ -205,6 +207,8 @@ jobs:
           bun run --filter @lume/desktop build:runtime
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
+          node scripts/build-node-repl-resources.mjs
+          node scripts/build-desktop-host-resources.mjs
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
