@@ -17,9 +17,6 @@ requireAsset("macOS updater manifest", names, [/^latest-mac\.yml$/i], []);
 requireAsset("Windows NSIS installer", names, [/\.exe$/i], []);
 requireAsset("Windows NSIS blockmap", names, [/\.exe\.blockmap$/i], []);
 requireAsset("Windows updater manifest", names, [/^latest\.yml$/i], []);
-requireAsset("Linux x64 AppImage", names, [/\.AppImage$/i], [/x64|x86_64|amd64/i]);
-requireAsset("Linux ARM64 AppImage", names, [/\.AppImage$/i], [/arm64|aarch64/i]);
-requireAsset("Linux updater manifest", names, [/^latest-linux\.yml$/i], []);
 
 const windowsLatest = downloadReleaseAsset(tag, "latest.yml");
 if (!/\.exe/i.test(windowsLatest)) fail("latest.yml does not reference a Windows installer");

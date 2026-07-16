@@ -6,7 +6,7 @@ Lume desktop releases are packaged with Electron 42.5.1 and Electron Builder, di
 
 - `RELEASE_TOKEN`: GitHub token used by the release workflow to create draft releases, upload assets, delete stale assets on reruns, verify remote assets, and publish.
 - `GH_TOKEN`: set by workflow steps from `RELEASE_TOKEN` for GitHub CLI commands.
-- `LUME_DESKTOP_TARGET`: optional local target override for artifact verification scripts. Supported values are `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu`, and `aarch64-unknown-linux-gnu`.
+- `LUME_DESKTOP_TARGET`: optional local target override for artifact verification scripts. Supported release values are `aarch64-apple-darwin`, `x86_64-apple-darwin`, and `x86_64-pc-windows-msvc`.
 
 ## Release Flow
 
@@ -17,9 +17,8 @@ Lume desktop releases are packaged with Electron 42.5.1 and Electron Builder, di
 5. Each desktop package job builds the Rust N-API native module for its runner architecture into `apps/desktop/resources/natives/<platform>-<arch>/lume-natives.node`.
 6. Each desktop package job builds the TypeScript main process and sandbox preload with Vite into `apps/desktop/dist`, builds the sidecar and default-skills resources, verifies package inputs, smokes the sidecar through an Electron utility process, and packages with Electron Builder.
 7. The macOS package job builds both x64 and ARM64 native modules and both Electron architectures in the same Electron Builder invocation so `latest-mac.yml` covers both updater targets.
-8. The Linux package jobs build x64 and ARM64 AppImage artifacts on matching GitHub runner architectures.
-9. The workflow uploads Electron artifacts from `apps/desktop/dist-release` to the shared draft release.
-10. A final remote gate verifies installer/update assets, including both macOS architectures in `latest-mac.yml` and Linux AppImage assets, then publishes the draft automatically only after all gates pass.
+8. The workflow uploads macOS and Windows Electron artifacts from `apps/desktop/dist-release` to the shared draft release.
+9. A final remote gate verifies both macOS architectures in `latest-mac.yml` plus the Windows installer and updater assets, then publishes the draft automatically only after all gates pass.
 
 ## Local Commands
 
