@@ -41,3 +41,12 @@ Act 1 (grill) complete — plan locked with the user. MAX_ROUNDS=5.
 - Command: fresh `codex exec` session with `-s read-only`, JSON events, closed stdin, and a 10-minute ceiling.
 - Result: timed out after 10 minutes with no verdict file and no captured `thread.started` event.
 - Action: stopped without retry, as required by the skill timeout guard. `PLAN-wiki.md` remains the Act 1 locked plan and has not been modified by a reviewer.
+
+## Act 2 — Resumed attempt 1 blocked before Round 1
+
+- User explicitly requested continuation, so a fresh review session was allowed because the prior attempt produced no thread ID.
+- `codex login status` reports `Logged in using ChatGPT`; CLI remains `codex-cli 0.144.4` with config-unpinned model.
+- A two-minute read-only `PROBE_OK` exec with redirected stdin timed out before `thread.started` and produced no output file.
+- A second probe using a native PowerShell EOF pipeline also timed out before any JSON event.
+- Configured MCP servers were then disabled for the process with `-c mcp_servers={}`; the bounded probe still timed out before `thread.started`.
+- Conclusion: non-interactive `codex exec` is blocked in the current environment before a review session can start. No review round was consumed and no plan changes were made. Further blind retries are prohibited by the skill.
