@@ -17,6 +17,25 @@ const rendererFileRefSchema = z.object({
   relativePath: z.string()
 }).strict();
 
+const guardedProjectFileRefSchema = z.object({
+  ref: rendererFileRefSchema.extend({ source: z.literal("project") }).strict(),
+  guard: z.object({
+    kind: z.literal("project"),
+    workspaceSlug: idSchema,
+    expectedProjectRootFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    consumerThreadId: idSchema
+  }).strict()
+}).strict();
+
+const guardedSessionFileRefSchema = z.object({
+  ref: rendererFileRefSchema.extend({ source: z.literal("session") }).strict(),
+  guard: z.object({
+    kind: z.literal("session"),
+    consumerThreadId: idSchema,
+    expectedFileContextId: idSchema
+  }).strict()
+}).strict();
+
 const agentMessageAttachmentInputSchema = z.object({
   id: z.string().min(1),
   filename: z.string().min(1),
@@ -1107,6 +1126,8 @@ export const pathFileInputSchema = z.object({
 export const fileRefSchema = rendererFileRefSchema;
 
 export const fileRefInputSchema = z.object({ ref: fileRefSchema }).strict();
+export const guardedFileRefSchema = z.union([guardedProjectFileRefSchema, guardedSessionFileRefSchema]);
+export const guardedFileRefInputSchema = z.object({ guardedRef: guardedFileRefSchema }).strict();
 export const fileRefSearchInputSchema = z.object({
   ref: fileRefSchema,
   query: z.string().default(""),

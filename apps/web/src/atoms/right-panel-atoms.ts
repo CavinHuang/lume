@@ -1,6 +1,7 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { FileRef } from '@lume/shared'
+import type { FileRef, GuardedFileRef } from '@lume/shared'
+import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import {
   closeFileTab,
   createThreadFileWorkspace,
@@ -47,7 +48,8 @@ export const rightPanelFileWorkspacesAtom = atom<Record<string, ThreadFileWorksp
 
 type RightPanelWorkspaceAction =
   | { type: 'activate-function'; threadId: string; function: RightPanelFunction; binding?: ThreadFileWorkspace['binding'] }
-  | { type: 'open-file'; threadId: string; ref: FileRef; binding?: ThreadFileWorkspace['binding'] }
+  | { type: 'open-file'; threadId: string; ref: FileRef | GuardedFileRef; binding?: ThreadFileWorkspace['binding']; lineSelection?: ThreadFileLineSelection; navigationRevision?: number }
+  | { type: 'reveal-directory'; threadId: string; request: NonNullable<ThreadFileWorkspace['revealRequest']>; binding?: ThreadFileWorkspace['binding'] }
   | { type: 'close-function'; threadId: string; function: RightPanelFunction }
   | { type: 'close-file'; threadId: string; tabId: string }
 
@@ -76,7 +78,21 @@ export const rightPanelWorkspaceActionAtom = atom(null, (get, set, action: Right
       ...runtime,
       [action.threadId]: openFileTab(runtimeWorkspace, action.ref, {
         caseInsensitive: typeof navigator !== 'undefined' && /Win/i.test(navigator.platform),
+        lineSelection: action.lineSelection,
+        navigationRevision: action.navigationRevision,
       }),
+    })
+    return
+  }
+
+  if (action.type === 'reveal-directory') {
+    set(rightPanelWorkspacesAtom, {
+      ...persisted,
+      [action.threadId]: openRightPanelTab(persistedWorkspace, 'files'),
+    })
+    set(rightPanelFileWorkspacesAtom, {
+      ...runtime,
+      [action.threadId]: { ...runtimeWorkspace, activeItem: { kind: 'function', type: 'files' }, revealRequest: action.request },
     })
     return
   }

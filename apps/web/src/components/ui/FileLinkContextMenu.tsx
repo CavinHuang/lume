@@ -28,18 +28,24 @@ export function buildFileLinkMenuItems(
     items.push(sep())
   }
   items.push({ kind: "item", key: "open", label: "用系统应用打开", onSelect: actions.openInSystem })
-  items.push({ kind: "item", key: "reveal", label: "在 Finder 中显示", onSelect: actions.revealInFolder })
+  items.push({ kind: "item", key: "reveal", label: "在文件管理器中显示", onSelect: actions.revealInFolder })
   items.push(sep())
   if (ctx.source !== "local") {
     items.push({ kind: "item", key: "copy-rel", label: "复制相对路径", onSelect: actions.copyRelativePath })
   }
   items.push({ kind: "item", key: "copy-abs", label: "复制绝对路径", onSelect: actions.copyAbsolutePath })
+  if (ctx.protocolReference) {
+    items.push({ kind: "item", key: "copy-protocol", label: "复制协议引用", onSelect: actions.copyProtocolReference })
+  }
   items.push(sep())
-  items.push({ kind: "item", key: "save-as", label: "另存为…", onSelect: actions.saveAs })
+  if (!ctx.isDirectory) {
+    items.push({ kind: "item", key: "save-as", label: "另存为…", onSelect: actions.saveAs })
+  }
   return items
 }
 
 function isContextUsable(ctx: FileLinkContext): boolean {
+  if (ctx.guardedRef) return true
   if (ctx.source === "thread") return Boolean(ctx.threadId)
   if (ctx.source === "workspace") return Boolean(ctx.workspaceSlug)
   return true // local

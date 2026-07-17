@@ -42,7 +42,11 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'reveal_path_in_system',
   'open_file_ref',
   'reveal_file_ref',
+  'open_guarded_file_ref',
+  'reveal_guarded_file_ref',
+  'save_guarded_file_ref_as',
   'create_file_preview_scope',
+  'create_guarded_file_preview_scope',
   'revoke_file_preview_scope',
   'open_weread_key_webview',
   'quick_input_hide', // Alt+L 快速输入子窗口：隐藏子窗口

@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke, isDesktopRuntime } from '@/lib/desktop-runtime/core'
 import { check, type DownloadEvent, type Update } from '@/lib/desktop-runtime/updater'
-import type { FileRef } from '@lume/shared'
+import type { FileRef, GuardedFileRef } from '@lume/shared'
 
 export interface DesktopUpdateInfo {
   currentVersion: string
@@ -52,8 +52,16 @@ export const openFileRefInSystem = (ref: FileRef) =>
   invoke<void>('open_file_ref', { ref })
 export const revealFileRefInSystem = (ref: FileRef) =>
   invoke<void>('reveal_file_ref', { ref })
+export const openGuardedFileRefInSystem = (guardedRef: GuardedFileRef) =>
+  invoke<void>('open_guarded_file_ref', { guardedRef })
+export const revealGuardedFileRefInSystem = (guardedRef: GuardedFileRef) =>
+  invoke<void>('reveal_guarded_file_ref', { guardedRef })
 export const createFilePreviewScope = (input: { ref: FileRef; kind: 'html-directory' | 'media-file'; generation?: number }) =>
   invoke<{ token: string; url: string; expiresAt: number }>('create_file_preview_scope', input)
+export const createGuardedFilePreviewScope = (input: { guardedRef: GuardedFileRef; kind: 'html-directory' | 'media-file'; generation?: number }) =>
+  invoke<{ token: string; url: string; expiresAt: number }>('create_guarded_file_preview_scope', input)
+export const saveGuardedFileRefAs = (guardedRef: GuardedFileRef, filename: string, filters?: SaveFilePathFilter[]) =>
+  invoke<{ path: string | null }>('save_guarded_file_ref_as', { guardedRef, filename, filters })
 export const revokeFilePreviewScope = (token: string) =>
   invoke<void>('revoke_file_preview_scope', { token })
 export { isDesktopRuntime }

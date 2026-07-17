@@ -129,3 +129,40 @@ Fork isolation, navigation races, structured errors, clipboard handling, directo
 Changed files: none. Tests were not run.
 
 VERDICT: APPROVED
+
+## Act 3 — Build
+
+### Kickoff
+
+- Frozen spec: `PLAN-file-reference-ux.md`
+- Builder session: `019f6f43-cf89-75f3-9e57-6729af0e3916`
+- Codex CLI: 0.144.4, CLI default model, `--yolo`
+- Baseline commits: `8bbc5e7d` (workspace baseline) and `041f1fa8` (concurrent Wiki review-log baseline)
+- Maximum delegated fix rounds: 2
+
+### Builder attempt
+
+Codex implemented the protocol, guarded FileRef boundary, runtime binding propagation, message chips, navigation, preview, desktop IPC, copy behavior, icons, and directed tests. The session then failed before producing its final report because the Codex account hit its usage limit. The failure was external rather than a compile or test failure, so no fresh session was opened and no delegated fix round could run.
+
+### Primary-agent takeover
+
+The primary agent reviewed the complete task diff, preserved the concurrent `PLAN-wiki.md` / `PLAN-REVIEW-LOG-wiki.md` work and the pre-existing `MinimalProcessGroup` hunk, and made these scoped corrections:
+
+- directory reveal promises now settle as `superseded` when a thread disappears or its workspace/file-context binding changes;
+- guarded validation navigation has an explicit out-of-order latest-wins regression test;
+- selection-copy tests prove compact chips copy their full prefix-free path and line range;
+- test mocks expose the newly added guarded preview/action APIs without cross-file module-cache failures;
+- the user's concurrent Mermaid render-crash fix was preserved and excluded from this feature; four untracked Codex build-log artifacts were removed.
+
+### Verification
+
+- Feature-directed suite: 143 passed, 0 failed.
+- Prompt protocol contract: 1 passed, 0 failed.
+- Runtime binding projection contract: 1 passed, 0 failed.
+- `@lume/shared`, `@lume/sidecar`, `@lume/web`, and `@lume/desktop` typechecks: all passed.
+- Task diff check excluding the concurrent Wiki files and Mermaid render-crash fix: passed.
+- The originally approved broad test command completed with 675 passed and 13 failures. None of the failing assertions are in this feature diff; they are existing environment/mock/snapshot failures (plugin catalog/skill discovery, workspace fixture assumptions, UI snapshot expectations, context-compaction timeline) plus one market-catalog timeout. They remain outside this task rather than being rewritten here.
+
+### Build verdict
+
+Implementation is complete and the feature-specific proof passes. No new dependency was added, no implementation commit was created, and the diff is ready for human approval before commit.

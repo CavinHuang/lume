@@ -1,4 +1,4 @@
-import type { AgentMessageAttachmentInput, FileRef } from "./agent";
+import type { AgentMessageAttachmentInput, FileRef, FileReferenceBinding } from "./agent";
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
@@ -41,6 +41,8 @@ export interface RuntimeEventBase {
   sequence?: number;
   subagentRunId?: string;
   parentToolUseId?: string;
+  /** Frozen once for the logical reply and propagated to every runtime projection. */
+  fileReferenceBinding?: FileReferenceBinding;
 }
 
 export interface ContextBudgetRuntimeSnapshot {

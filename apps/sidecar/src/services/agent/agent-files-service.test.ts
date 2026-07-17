@@ -7,6 +7,7 @@ import {
   copyFolderToSession,
   copyFolderToWorkspace,
   convertLegacyFileRef,
+  createFileReferenceBinding,
   deleteAgentFile,
   deleteWorkspaceFile,
   exportLegacyResourceToProject,
@@ -21,9 +22,11 @@ import {
   renameAgentFile,
   renameWorkspaceFile,
   readAgentPath,
+  readGuardedFileRef,
   readWorkspaceRootPath,
   renameAuthorizedFileRef,
   resolveAuthorizedFileRef,
+  validateGuardedFileRef,
   resolveThreadAttachmentPath,
   resolveWorkspaceSlugBySessionId,
   saveFilesToAgentSession,
@@ -34,7 +37,7 @@ import {
   statAuthorizedFileRef,
   toThreadRelativePath
 } from "./agent-files-service";
-import { createAgentWorkspace } from "./agent-workspace-manager";
+import { createAgentWorkspace, relocateUnavailableAgentWorkspace } from "./agent-workspace-manager";
 import { createAgentThread } from "./agent-thread-manager";
 import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
 import { listMemorySourceFiles, memoryFileRefForPath } from "../memory-v2/source-files";
@@ -205,6 +208,58 @@ describe("agent-files-service file ops", () => {
 
     expect(converted).toEqual({ source: "session", scopeId: workdir.fileContextId, relativePath: "files/brief.md" });
     expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(join(workdir.filesRoot, "brief.md"));
+  });
+
+  test("guarded project references revalidate the root fingerprint on every operation", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "guarded-project-old");
+    const replacementPath = join(configDir, "guarded-project-new");
+    mkdirSync(projectPath);
+    mkdirSync(replacementPath);
+    writeFileSync(join(projectPath, "bound.txt"), "old", "utf-8");
+    writeFileSync(join(replacementPath, "bound.txt"), "new", "utf-8");
+    const workspace = createAgentWorkspace("guarded project", { projectPath });
+    const thread = createAgentThread("guarded project", undefined, workspace.id);
+    const binding = createFileReferenceBinding(thread.id);
+    const guardedRef = {
+      ref: { source: "project" as const, scopeId: workspace.slug, relativePath: "bound.txt" },
+      guard: {
+        kind: "project" as const,
+        workspaceSlug: workspace.slug,
+        expectedProjectRootFingerprint: binding.projectRootFingerprint!,
+        consumerThreadId: thread.id,
+      },
+    };
+
+    expect(validateGuardedFileRef(guardedRef)).toMatchObject({ ok: true, entry: { name: "bound.txt" } });
+    expect(readGuardedFileRef(guardedRef).content).toBe("old");
+
+    rmSync(projectPath, { recursive: true, force: true });
+    relocateUnavailableAgentWorkspace(workspace.id, replacementPath);
+    expect(validateGuardedFileRef(guardedRef)).toMatchObject({ ok: false, code: "BINDING_CHANGED" });
+    expect(() => readGuardedFileRef(guardedRef)).toThrow("BINDING_CHANGED");
+  });
+
+  test("a forked thread cannot consume the source thread session binding", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "guarded-session-project");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("guarded session", { projectPath });
+    const sourceThread = createAgentThread("guarded source", undefined, workspace.id);
+    const sourceWorkdir = resolveAgentThreadWorkdir(sourceThread.id);
+    writeFileSync(join(sourceWorkdir.filesRoot, "brief.md"), "brief", "utf-8");
+    const binding = createFileReferenceBinding(sourceThread.id);
+    const fork = createAgentThread("guarded fork", undefined, workspace.id, sourceThread.id, undefined, { fileContextMode: "fork" });
+    const guardedRef = {
+      ref: { source: "session" as const, scopeId: binding.fileContextId, relativePath: "files/brief.md" },
+      guard: {
+        kind: "session" as const,
+        consumerThreadId: fork.id,
+        expectedFileContextId: binding.fileContextId,
+      },
+    };
+
+    expect(validateGuardedFileRef(guardedRef)).toMatchObject({ ok: false, code: "BINDING_CHANGED" });
   });
 
   test("legacy thread conversion rejects an in-root junction that escapes the file context", () => {

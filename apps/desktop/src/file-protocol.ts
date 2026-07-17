@@ -9,6 +9,11 @@ interface PreviewEntryRef {
   relativePath: string
 }
 
+interface PreviewGuardedRef {
+  ref: PreviewEntryRef
+  guard: Record<string, unknown>
+}
+
 export const PREVIEW_PROTOCOL_MAX_MEDIA_BYTES = 50 * 1024 * 1024
 
 export type PreviewScopeKind = 'html-directory' | 'media-file'
@@ -18,6 +23,7 @@ export interface PreviewScope {
   kind: PreviewScopeKind
   ownerWebContentsId: number
   entryRef?: PreviewEntryRef
+  guardedRef?: PreviewGuardedRef
   entryPath: string
   rootPath: string
   generation: number
@@ -29,6 +35,7 @@ export interface PreviewScopeRegistry {
     kind: PreviewScopeKind
     ownerWebContentsId: number
     entryRef?: PreviewEntryRef
+    guardedRef?: PreviewGuardedRef
     absolutePath: string
     generation?: number
     ttlMs?: number
@@ -62,6 +69,7 @@ export function createPreviewScopeRegistry(options: { now?: () => number } = {})
         kind: input.kind,
         ownerWebContentsId: input.ownerWebContentsId,
         ...(input.entryRef ? { entryRef: input.entryRef } : {}),
+        ...(input.guardedRef ? { guardedRef: input.guardedRef } : {}),
         entryPath,
         rootPath,
         generation: input.generation ?? 0,

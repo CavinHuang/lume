@@ -211,6 +211,8 @@ export interface AgentThreadMessage {
   metadata?: Record<string, unknown>
   /** 原始 SDK 消息片段（优先用于原生渲染） */
   sdkMessages?: SDKMessage[]
+  /** 该逻辑回复创建时冻结的文件引用授权绑定；旧消息不回填。 */
+  fileReferenceBinding?: FileReferenceBinding
   /** 同一逻辑消息链的版本组 ID */
   versionGroupId?: string
   /** 当前消息在版本组中的 1-based 版本序号 */
@@ -1333,6 +1335,42 @@ export interface FileRef {
   relativePath: string
 }
 
+/** One immutable snapshot per logical Agent reply. It never contains local absolute paths. */
+export interface FileReferenceBinding {
+  workspaceSlug?: string
+  projectRootFingerprint?: string
+  fileContextId: string
+}
+
+export interface ProjectFileRefGuard {
+  kind: 'project'
+  workspaceSlug: string
+  expectedProjectRootFingerprint: string
+  consumerThreadId: string
+}
+
+export interface SessionFileRefGuard {
+  kind: 'session'
+  consumerThreadId: string
+  expectedFileContextId: string
+}
+
+/** Message-authored references are intentionally distinct from ordinary file-tree FileRefs. */
+export type GuardedFileRef =
+  | { ref: FileRef & { source: 'project' }; guard: ProjectFileRefGuard }
+  | { ref: FileRef & { source: 'session' }; guard: SessionFileRefGuard }
+
+export type GuardedFileRefErrorCode =
+  | 'NOT_FOUND'
+  | 'OUT_OF_SCOPE'
+  | 'BINDING_CHANGED'
+  | 'UNAVAILABLE'
+  | 'IO_ERROR'
+
+export type GuardedFileRefValidationResult =
+  | { ok: true; entry: FileEntry }
+  | { ok: false; code: GuardedFileRefErrorCode; message: string }
+
 /** 文件/目录条目（用于文件浏览器树形视图） */
 export interface FileEntry {
   /** 文件/目录名称 */
@@ -1824,6 +1862,12 @@ export const AGENT_IPC_CHANNELS = {
   MOVE_FILE_REF: 'agent:move-file-ref',
   DELETE_FILE_REF: 'agent:delete-file-ref',
   CONVERT_LEGACY_FILE_REF: 'agent:convert-legacy-file-ref',
+  /** Mandatory-guard message reference operations. Never accept a plain FileRef. */
+  VALIDATE_GUARDED_FILE_REF: 'agent:validate-guarded-file-ref',
+  LIST_GUARDED_FILE_REF_DIRECTORY: 'agent:list-guarded-file-ref-directory',
+  STAT_GUARDED_FILE_REF: 'agent:stat-guarded-file-ref',
+  READ_GUARDED_FILE_REF: 'agent:read-guarded-file-ref',
+  RESOLVE_GUARDED_FILE_REF: 'agent:resolve-guarded-file-ref',
 
   // 标题自动生成通知（主进程 → 渲染进程推送）
   /** 标题已更新（首次对话完成后自动生成） */

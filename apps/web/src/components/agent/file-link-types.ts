@@ -1,3 +1,5 @@
+import type { GuardedFileRef } from '@lume/shared'
+
 export type FileLinkSource = "thread" | "workspace" | "local"
 
 export interface FileLinkContext {
@@ -8,4 +10,7 @@ export interface FileLinkContext {
   threadId?: string
   /** source==="thread" | "workspace" 时必填 */
   workspaceSlug?: string
+  guardedRef?: GuardedFileRef
+  protocolReference?: string
+  isDirectory?: boolean
 }

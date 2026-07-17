@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FileRef } from '@lume/shared'
+import type { FileRef, GuardedFileRef } from '@lume/shared'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   createFilePreviewScope,
+  createGuardedFilePreviewScope,
   isDesktopRuntime,
   openExternal,
   revokeFilePreviewScope,
@@ -14,17 +15,20 @@ import {
   resolveHtmlPreviewLocalRef,
   isMissingFileError,
 } from './file-preview-utils'
+import type { RightPanelFileTarget } from './right-panel-files-state'
 
 export function RightPanelHtmlPreview({
   fileRef,
+  guardedRef,
   source,
   onOpenFile,
   onMissing,
   onPreviewScopeChange,
 }: {
   fileRef: FileRef
+  guardedRef?: GuardedFileRef
   source: string
-  onOpenFile: (ref: FileRef) => void
+  onOpenFile: (ref: RightPanelFileTarget) => void
   onMissing?: (ref: FileRef) => void
   onPreviewScopeChange?: (token: string | null) => void
 }) {
@@ -40,7 +44,10 @@ export function RightPanelHtmlPreview({
     let token: string | null = null
     setScope(null)
     setError(null)
-    void createFilePreviewScope({ ref: fileRef, kind: 'html-directory' })
+    const createScope = guardedRef
+      ? createGuardedFilePreviewScope({ guardedRef, kind: 'html-directory' })
+      : createFilePreviewScope({ ref: fileRef, kind: 'html-directory' })
+    void createScope
       .then((created) => {
         token = created.token
         if (disposed) {
@@ -63,7 +70,7 @@ export function RightPanelHtmlPreview({
         onPreviewScopeChange?.(null)
       }
     }
-  }, [fileRef, onMissing, onPreviewScopeChange])
+  }, [fileRef, guardedRef, onMissing, onPreviewScopeChange])
 
   useEffect(() => {
     if (!scope) return
@@ -73,7 +80,11 @@ export function RightPanelHtmlPreview({
       if (!message || !isHtmlPreviewMessageForScope(message, scope.url)) return
       if (message.kind === 'local') {
         const target = resolveHtmlPreviewLocalRef(fileRef, message.href)
-        if (target) onOpenFile(target)
+        if (target) {
+          onOpenFile(guardedRef
+            ? { ...guardedRef, ref: { ...guardedRef.ref, relativePath: target.relativePath } } as GuardedFileRef
+            : target)
+        }
         return
       }
       if (!limiter.allow()) return
@@ -81,7 +92,7 @@ export function RightPanelHtmlPreview({
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [fileRef, limiter, onOpenFile, scope])
+  }, [fileRef, guardedRef, limiter, onOpenFile, scope])
 
   if (!isDesktopRuntime()) {
     return (

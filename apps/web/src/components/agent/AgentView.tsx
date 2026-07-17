@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   agentStreamingStatesFamily,
@@ -22,13 +22,15 @@ import { ThreadFileEnvProvider } from './thread-file-env'
 import { Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { AGENT_IPC_CHANNELS, type AgentMessageAttachmentInput, type DesktopContextTarget, type FileRef } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentMessageAttachmentInput, type DesktopContextTarget, type FileRef, type GuardedFileRefValidationResult } from '@lume/shared'
 import {
   createPendingAttachmentsFromSourcePaths,
   isFileDragPayload,
   type DragDropPayload,
 } from './agent-file-drop'
 import { sidecarCall } from '@/lib/desktop-api'
+import type { OpenThreadFile } from './AgentFileReference'
+import { createFileTreeRevealRequest, settleFileTreeReveal } from '@/components/right-panel/right-panel-files-state'
 interface AgentViewProps {
   threadId: string
   readOnly?: boolean
@@ -37,6 +39,14 @@ interface AgentViewProps {
   desktopContextTarget?: DesktopContextTarget
   onSelectDesktopContextTarget?: (target: DesktopContextTarget) => void
   onClearDesktopContextTarget?: () => void
+}
+
+function guardedValidationStatus(code: Exclude<GuardedFileRefValidationResult, { ok: true }>['code']) {
+  if (code === 'NOT_FOUND') return 'not_found' as const
+  if (code === 'OUT_OF_SCOPE') return 'out_of_scope' as const
+  if (code === 'BINDING_CHANGED') return 'binding_changed' as const
+  if (code === 'UNAVAILABLE') return 'unavailable' as const
+  return 'io_error' as const
 }
 
 export function AgentView({
@@ -74,6 +84,8 @@ export function AgentView({
   const currentWsId = useAtomValue(currentWorkspaceIdAtom)
   const dispatchRightPanel = useSetAtom(rightPanelWorkspaceActionAtom)
   const setRightPanelLayout = useSetAtom(rightPanelLayoutAtom)
+  const navigationRevisionRef = useRef(0)
+  const pendingRevealRequestIdRef = useRef<string | null>(null)
   const workspaceSlug = useMemo(() => {
     const thread = threads.find((t) => t.id === threadId)
     const targetId = thread?.workspaceId ?? currentWsId
@@ -111,18 +123,65 @@ export function AgentView({
     }))
   }, [setRightPanelLayout])
 
-  const openThreadFilePreview = useCallback((path: string, signedRef?: FileRef) => {
-    if (signedRef) {
-      dispatchRightPanel({ type: 'open-file', threadId, ref: signedRef, binding: rightPanelBinding })
-      reopenRightPanel()
-      return
+  const openThreadFilePreview = useCallback<OpenThreadFile>(async (path, signedRef, options) => {
+    const navigationRevision = ++navigationRevisionRef.current
+    if (pendingRevealRequestIdRef.current) {
+      settleFileTreeReveal(pendingRevealRequestIdRef.current, { status: 'superseded' })
+      pendingRevealRequestIdRef.current = null
     }
-    void sidecarCall<FileRef>(AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF, {
-      recordKind: 'thread-attachment', threadId, ...(workspaceSlug ? { workspaceSlug } : {}), legacyRelativePath: path,
-    }).then((ref) => {
-      dispatchRightPanel({ type: 'open-file', threadId, ref, binding: rightPanelBinding })
+
+    if (options?.guardedRef) {
+      let validation: GuardedFileRefValidationResult
+      try {
+        validation = await sidecarCall<GuardedFileRefValidationResult>(AGENT_IPC_CHANNELS.VALIDATE_GUARDED_FILE_REF, {
+          guardedRef: options.guardedRef,
+        })
+      } catch {
+        return 'io_error'
+      }
+      if (navigationRevision !== navigationRevisionRef.current) return 'superseded'
+      if (!validation.ok) return guardedValidationStatus(validation.code)
+
+      if (validation.entry.isDirectory) {
+        const { request, completion } = createFileTreeRevealRequest(options.guardedRef, navigationRevision)
+        pendingRevealRequestIdRef.current = request.requestId
+        dispatchRightPanel({ type: 'reveal-directory', threadId, request, binding: rightPanelBinding })
+        reopenRightPanel()
+        const result = await completion
+        if (pendingRevealRequestIdRef.current === request.requestId) pendingRevealRequestIdRef.current = null
+        if (navigationRevision !== navigationRevisionRef.current) return 'superseded'
+        return result.status
+      }
+
+      dispatchRightPanel({
+        type: 'open-file',
+        threadId,
+        ref: options.guardedRef,
+        binding: rightPanelBinding,
+        lineSelection: options.lineSelection,
+        navigationRevision,
+      })
       reopenRightPanel()
-    }).catch((error) => toast.error(error instanceof Error ? error.message : '无法打开旧版文件引用'))
+      return 'opened'
+    }
+
+    if (signedRef) {
+      dispatchRightPanel({ type: 'open-file', threadId, ref: signedRef, binding: rightPanelBinding, navigationRevision })
+      reopenRightPanel()
+      return 'opened'
+    }
+    try {
+      const ref = await sidecarCall<FileRef>(AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF, {
+        recordKind: 'thread-attachment', threadId, ...(workspaceSlug ? { workspaceSlug } : {}), legacyRelativePath: path,
+      })
+      if (navigationRevision !== navigationRevisionRef.current) return 'superseded'
+      dispatchRightPanel({ type: 'open-file', threadId, ref, binding: rightPanelBinding, navigationRevision })
+      reopenRightPanel()
+      return 'opened'
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '无法打开旧版文件引用')
+      return 'unavailable'
+    }
   }, [dispatchRightPanel, reopenRightPanel, rightPanelBinding, threadId, workspaceSlug])
 
   const openMemoryFilePreview = useCallback((path: string, signedRef?: FileRef) => {
@@ -146,6 +205,12 @@ export function AgentView({
 
   useEffect(() => {
     setPendingAttachments([])
+    return () => {
+      if (pendingRevealRequestIdRef.current) {
+        settleFileTreeReveal(pendingRevealRequestIdRef.current, { status: 'superseded' })
+        pendingRevealRequestIdRef.current = null
+      }
+    }
   }, [threadId])
 
   useEffect(() => {
@@ -193,7 +258,7 @@ export function AgentView({
   return (
     <div className="flex-1 flex min-h-0 relative">
       {/* 主列 */}
-      <ThreadFileEnvProvider value={{ threadId, workspaceSlug }}>
+      <ThreadFileEnvProvider value={{ threadId, workspaceSlug, fileContextId: rightPanelBinding.fileContextId }}>
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <AgentHeader threadId={threadId} readOnly={readOnly} />
           <AgentMessages

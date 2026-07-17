@@ -746,6 +746,38 @@ describe('runtime-event-message-projection', () => {
     })
   })
 
+  test('keeps one run-start file binding on streaming text, plan preview, and the completed message', () => {
+    const fileReferenceBinding = {
+      workspaceSlug: 'demo',
+      projectRootFingerprint: 'b'.repeat(64),
+      fileContextId: 'context-1',
+    }
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started', fileReferenceBinding }),
+      event({ type: 'assistant.delta', delta: 'See `@project/src/app.ts#L4`.', fileReferenceBinding }),
+      event({
+        type: 'plan.preview',
+        fileReferenceBinding,
+        contractId: 'plan-bound',
+        title: 'Bound plan',
+        markdown: 'Inspect `@session/plans/plan.md`.',
+        stepCount: 1,
+      } as any),
+      event({ type: 'run.completed', fileReferenceBinding }),
+    ])
+
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant).toMatchObject({
+      type: 'assistant',
+      status: 'completed',
+      fileReferenceBinding,
+    })
+    expect((assistant as Extract<RuntimeMessageView, { type: 'assistant' }>).blocks.some((block) => (
+      block.type === 'plan_preview' && block.id === 'plan:plan-bound'
+    ))).toBe(true)
+    expect((assistant as Extract<RuntimeMessageView, { type: 'assistant' }>).fileReferenceBinding).toBe(fileReferenceBinding)
+  })
+
   test('projects memory context used RuntimeEvents as a bottom notice block', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'message.user.submitted', text: 'continue', messageId: 'user-1' }),

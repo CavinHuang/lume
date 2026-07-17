@@ -1,6 +1,6 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared"
 import { toast } from "sonner"
-import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, writeClipboardText, sidecarCall, type SaveFilePathFilter } from "@/lib/desktop-api"
+import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, writeClipboardText, sidecarCall, openGuardedFileRefInSystem, revealGuardedFileRefInSystem, saveGuardedFileRefAs, type SaveFilePathFilter } from "@/lib/desktop-api"
 import type { FileLinkContext } from "./file-link-types"
 
 function joinPath(dir: string, rel: string): string {
@@ -13,6 +13,10 @@ function isAbsolutePath(p: string): boolean {
 }
 
 export async function resolveAbsolutePath(ctx: FileLinkContext): Promise<string> {
+  if (ctx.guardedRef) {
+    const result = await sidecarCall<{ path: string }>(AGENT_IPC_CHANNELS.RESOLVE_GUARDED_FILE_REF, { guardedRef: ctx.guardedRef })
+    return result.path
+  }
   if (ctx.source === "local") return ctx.relPath
   // 文件树传入的 relPath 可能已是绝对路径（FileEntry.path 为完整路径），直接返回避免重复拼接根目录
   if (isAbsolutePath(ctx.relPath)) return ctx.relPath
@@ -58,12 +62,14 @@ export interface FileLinkActions {
   copyRelativePath: () => Promise<void>
   copyAbsolutePath: () => Promise<void>
   saveAs: () => Promise<void>
+  copyProtocolReference: () => Promise<void>
 }
 
 export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
   return {
     async openInSystem() {
       try {
+        if (ctx.guardedRef) return await openGuardedFileRefInSystem(ctx.guardedRef)
         await openInSystem(await resolveAbsolutePath(ctx))
       } catch (e) {
         toast.error(`无法打开：${errMsg(e)}`)
@@ -71,6 +77,7 @@ export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
     },
     async revealInFolder() {
       try {
+        if (ctx.guardedRef) return await revealGuardedFileRefInSystem(ctx.guardedRef)
         await revealPathInSystem(await resolveAbsolutePath(ctx))
       } catch (e) {
         toast.error(`无法定位：${errMsg(e)}`)
@@ -95,6 +102,12 @@ export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
     },
     async saveAs() {
       try {
+        if (ctx.guardedRef) {
+          const filters = buildSaveAsFilter(ctx.relPath)
+          const result = await saveGuardedFileRefAs(ctx.guardedRef, basename(ctx.relPath), filters)
+          if (result.path) toast.success(`已保存到 ${result.path}`)
+          return
+        }
         const abs = await resolveAbsolutePath(ctx)
         const { path: target } = await saveFilePathDialog(basename(abs), buildSaveAsFilter(abs))
         if (!target) return // 用户取消，静默
@@ -102,6 +115,14 @@ export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
         toast.success(`已保存到 ${target}`)
       } catch (e) {
         toast.error(`保存失败：${errMsg(e)}`)
+      }
+    },
+    async copyProtocolReference() {
+      try {
+        await writeClipboardText(ctx.protocolReference ?? ctx.relPath)
+        toast.success("已复制协议引用")
+      } catch (e) {
+        toast.error(`复制失败：${errMsg(e)}`)
       }
     },
   }

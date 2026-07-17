@@ -71,6 +71,7 @@ import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-s
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
+import { createFileReferenceBinding } from "./agent-files-service";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -821,6 +822,7 @@ export async function sendAgentMessage(
     return;
   }
   const { runAgentRuntime } = await import("../agent-runtime/runtime-core/attempt");
+  const fileReferenceBinding = createFileReferenceBinding(threadId);
   const configThinkingLevel = effectiveLumeConfig.agent?.thinkingLevel;
   const configPermissionMode = effectiveLumeConfig.agent?.permissionMode;
   const runtimeResult = await runAgentRuntime({
@@ -845,7 +847,8 @@ export async function sendAgentMessage(
       channelId: resolvedChannelId,
       resolvedModelId,
       workspaceId: effectiveWorkspaceId,
-      threadType: input.threadType
+      threadType: input.threadType,
+      fileReferenceBinding
     }
   }, {
     onSdkMessage: (message) => {
@@ -917,7 +920,7 @@ export async function sendAgentMessage(
       const visibleAssistantMessage = createAssistantMessageVersion({
         sessionId: threadId,
         turnId: activeTurnId,
-        message: latestAssistantMessage
+        message: { ...latestAssistantMessage, fileReferenceBinding }
       });
       if (visibleAssistantMessage) {
         visibleAssistantMessageId = visibleAssistantMessage.id;

@@ -96,6 +96,10 @@ export function createObservedRuntimeEmitter(
 ): AgentRuntimeEmitter {
   return {
     ...emit,
+    onRuntimeEvent: (event) => emit.onRuntimeEvent?.({
+      ...event,
+      fileReferenceBinding: observer.getFileReferenceBinding()
+    }),
     onSdkMessage: (message) => {
       observer.recordSdkMessage(message, emit.onRuntimeEvent);
       emit.onSdkMessage(message);

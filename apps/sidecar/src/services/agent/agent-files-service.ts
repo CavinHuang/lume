@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import type {
@@ -26,6 +27,10 @@ import type {
   ExternalAttachmentMeta,
   FileEntry,
   FileRef,
+  FileReferenceBinding,
+  GuardedFileRef,
+  GuardedFileRefErrorCode,
+  GuardedFileRefValidationResult,
   FileSearchResult,
   WorkspaceCopyFolderInput,
   WorkspaceSaveFilesInput
@@ -39,7 +44,8 @@ import {
 import { getMemoryV2ScopePaths } from "../memory-v2/paths";
 import { listMemorySourceFilesForScope } from "../memory-v2/source-files";
 import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
-import { getAgentWorkspaceBySlug } from "./agent-workspace-manager";
+import { getAgentThreadMeta } from "./agent-thread-manager";
+import { getAgentWorkspace, getAgentWorkspaceBySlug } from "./agent-workspace-manager";
 import {
   assertAttachmentMetadataHealthy,
   deleteAttachmentMeta,
@@ -194,6 +200,106 @@ export interface ResolvedAuthorizedFileRef {
   absolutePath: string;
 }
 
+export class GuardedFileRefError extends Error {
+  constructor(readonly code: GuardedFileRefErrorCode, message: string) {
+    super(`[${code}] ${message}`);
+    this.name = "GuardedFileRefError";
+  }
+}
+
+export function createProjectRootFingerprint(projectRoot: string): string {
+  const canonical = realpathSync(projectRoot);
+  const platformKey = process.platform === "win32" ? canonical.toLowerCase() : canonical;
+  return createHash("sha256").update(platformKey).digest("hex");
+}
+
+export function createFileReferenceBinding(threadId: string): FileReferenceBinding {
+  const thread = getAgentThreadMeta(threadId);
+  if (!thread) throw new Error(`Agent 线程不存在: ${threadId}`);
+  const workdir = resolveAgentThreadWorkdir(threadId);
+  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
+  return {
+    ...(workspace?.slug ? { workspaceSlug: workspace.slug } : {}),
+    ...(workdir.projectRoot ? { projectRootFingerprint: createProjectRootFingerprint(workdir.projectRoot) } : {}),
+    fileContextId: workdir.fileContextId
+  };
+}
+
+export function resolveGuardedFileRef(guarded: GuardedFileRef): ResolvedAuthorizedFileRef {
+  assertCurrentGuardBinding(guarded);
+  try {
+    return resolveAuthorizedFileRef(guarded.ref);
+  } catch (error) {
+    if (error instanceof GuardedFileRefError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    if (/不存在|ENOENT/i.test(message)) throw new GuardedFileRefError("NOT_FOUND", message);
+    if (/超出|符号链接|junction|安全相对路径|越过授权/i.test(message)) {
+      throw new GuardedFileRefError("OUT_OF_SCOPE", message);
+    }
+    if (/尚未绑定|授权根目录不存在/i.test(message)) throw new GuardedFileRefError("UNAVAILABLE", message);
+    throw new GuardedFileRefError("IO_ERROR", message);
+  }
+}
+
+function assertCurrentGuardBinding(guarded: GuardedFileRef): void {
+  const thread = getAgentThreadMeta(guarded.guard.consumerThreadId);
+  if (!thread) throw new GuardedFileRefError("UNAVAILABLE", "引用所属线程不可用");
+  if (guarded.guard.kind === "session") {
+    if (guarded.ref.source !== "session" || guarded.ref.scopeId !== guarded.guard.expectedFileContextId) {
+      throw new GuardedFileRefError("OUT_OF_SCOPE", "会话引用与 guard 不一致");
+    }
+    const currentFileContextId = thread.fileContextId?.trim() || thread.id;
+    if (currentFileContextId !== guarded.guard.expectedFileContextId) {
+      throw new GuardedFileRefError("BINDING_CHANGED", "引用来自原会话，当前线程文件上下文已改变");
+    }
+    return;
+  }
+  if (guarded.ref.source !== "project"
+    || guarded.ref.scopeId !== guarded.guard.workspaceSlug) {
+    throw new GuardedFileRefError("OUT_OF_SCOPE", "项目引用与 guard 不一致");
+  }
+  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
+  if (!workspace || workspace.slug !== guarded.guard.workspaceSlug || !workspace.projectPath) {
+    throw new GuardedFileRefError("BINDING_CHANGED", "线程项目绑定已改变");
+  }
+  let fingerprint: string;
+  try {
+    fingerprint = createProjectRootFingerprint(workspace.projectPath);
+  } catch {
+    throw new GuardedFileRefError("UNAVAILABLE", "当前项目目录不可用");
+  }
+  if (fingerprint !== guarded.guard.expectedProjectRootFingerprint) {
+    throw new GuardedFileRefError("BINDING_CHANGED", "项目根目录绑定已改变");
+  }
+}
+
+export function validateGuardedFileRef(guarded: GuardedFileRef): GuardedFileRefValidationResult {
+  try {
+    return { ok: true, entry: statResolvedFileRef(resolveGuardedFileRef(guarded)) };
+  } catch (error) {
+    const guardedError = error instanceof GuardedFileRefError
+      ? error
+      : new GuardedFileRefError("IO_ERROR", error instanceof Error ? error.message : String(error));
+    return { ok: false, code: guardedError.code, message: guardedError.message.replace(/^\[[A-Z_]+\]\s*/, "") };
+  }
+}
+
+export function statGuardedFileRef(guarded: GuardedFileRef): FileEntry {
+  return statResolvedFileRef(resolveGuardedFileRef(guarded));
+}
+
+export function readGuardedFileRef(guarded: GuardedFileRef): { content: string; truncated: boolean } {
+  const resolved = resolveGuardedFileRef(guarded);
+  if (!statSync(resolved.absolutePath).isFile()) throw new GuardedFileRefError("OUT_OF_SCOPE", "目标不是文件");
+  return readPreviewableText(resolved.absolutePath);
+}
+
+export function listGuardedFileRefDirectory(guarded: GuardedFileRef): FileEntry[] {
+  const resolved = resolveGuardedFileRef(guarded);
+  if (!statSync(resolved.absolutePath).isDirectory()) throw new GuardedFileRefError("OUT_OF_SCOPE", "目标不是目录");
+  return listResolvedDirectory(resolved);
+}
+
 export function normalizeAuthorizedRelativePath(input: string): string {
   if (input.includes("\0") || isAbsolute(input) || /^[a-zA-Z]:/.test(input) || input.startsWith("\\\\")) {
     throw new Error("FileRef 路径必须是安全相对路径");
@@ -243,6 +349,10 @@ export function resolveAuthorizedFileRef(ref: FileRef): ResolvedAuthorizedFileRe
 export function listAuthorizedFileRefDirectory(ref: FileRef): FileEntry[] {
   const resolved = resolveAuthorizedFileRef(ref);
   if (!statSync(resolved.absolutePath).isDirectory()) throw new Error("FileRef 目标不是目录");
+  return listResolvedDirectory(resolved);
+}
+
+function listResolvedDirectory(resolved: ResolvedAuthorizedFileRef): FileEntry[] {
   const entries = readdirSync(resolved.absolutePath, { withFileTypes: true }).map((entry) => ({
     name: entry.name,
     path: join(resolved.absolutePath, entry.name),
@@ -251,11 +361,14 @@ export function listAuthorizedFileRefDirectory(ref: FileRef): FileEntry[] {
   entries.sort((left, right) => left.isDirectory === right.isDirectory
     ? left.name.localeCompare(right.name, "en")
     : left.isDirectory ? -1 : 1);
-  return entries.map((entry) => enrichEntryWithFileRef(entry, resolved.rootPath, ref.source, ref.scopeId));
+  return entries.map((entry) => enrichEntryWithFileRef(entry, resolved.rootPath, resolved.ref.source, resolved.ref.scopeId));
 }
 
 export function statAuthorizedFileRef(ref: FileRef): FileEntry {
-  const resolved = resolveAuthorizedFileRef(ref);
+  return statResolvedFileRef(resolveAuthorizedFileRef(ref));
+}
+
+function statResolvedFileRef(resolved: ResolvedAuthorizedFileRef): FileEntry {
   const metadata = lstatSync(resolved.absolutePath);
   return {
     name: basename(resolved.absolutePath),

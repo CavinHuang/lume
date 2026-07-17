@@ -42,6 +42,7 @@ import type {
   AgentToolPermissionRequest,
   OpenAiApiMode,
   LumeRuntimeEvent,
+  FileReferenceBinding,
   SubagentTaskReport,
   SubagentTask,
   SubagentTaskFeedback
@@ -147,6 +148,7 @@ export interface CreateRuntimeCoreSessionInput {
   artifactsRoot?: string;
   projectRoot?: string;
   fileContextId?: string;
+  fileReferenceBinding?: FileReferenceBinding;
   agentDir: string;
   userMessage?: string;
   provider: string;
@@ -389,6 +391,7 @@ async function runSidecarSubagent(input: {
   workspaceId?: string;
   chatType?: AgentSendInput["chatType"];
   messageMetadata?: Record<string, unknown>;
+  fileReferenceBinding?: FileReferenceBinding;
   permissionMode?: AgentSendInput["permissionMode"];
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
@@ -469,7 +472,8 @@ async function runSidecarSubagent(input: {
       channelId: resolvedChannelId,
       resolvedModelId,
       workspaceId: input.workspaceId,
-      threadType: "subagent"
+      threadType: "subagent",
+      fileReferenceBinding: input.fileReferenceBinding
     }
   }, {
     onSdkMessage: (message) => {
@@ -767,6 +771,7 @@ function buildRuntimeCoreTools(input: {
   subagentDefinition?: AgentDefinition;
   boundSubagentReportTool?: ToolDefinition;
   messageMetadata?: Record<string, unknown>;
+  fileReferenceBinding?: FileReferenceBinding;
   originalUserInstruction?: string;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -928,6 +933,7 @@ function buildRuntimeCoreTools(input: {
               workspaceId: input.workspaceId,
               chatType: input.chatType,
               messageMetadata: input.messageMetadata,
+              fileReferenceBinding: input.fileReferenceBinding,
               onRuntimeEvent: (event) => {
                 coordinator.bindRuntimeRun(run.runId, event.runId);
                 input.emitRuntimeEvent?.(event);
@@ -1098,6 +1104,7 @@ function buildRuntimeCoreTools(input: {
         workspaceId: input.workspaceId,
         chatType: input.chatType,
         messageMetadata: input.messageMetadata,
+        fileReferenceBinding: input.fileReferenceBinding,
         onRuntimeEvent: input.emitRuntimeEvent,
         permissionMode,
         emitAskUserQuestion: input.emitAskUserQuestion,
@@ -1615,6 +1622,7 @@ export async function createRuntimeCoreSession(
     permissionMode: input.permissionMode,
     subagentDefinition,
     boundSubagentReportTool,
+    fileReferenceBinding: input.fileReferenceBinding,
     messageMetadata: input.messageMetadata,
     originalUserInstruction: input.userMessage,
     emitSdkMessage: input.emitSdkMessage,

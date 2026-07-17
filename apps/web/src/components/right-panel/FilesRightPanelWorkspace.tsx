@@ -13,6 +13,7 @@ import {
   openFileTab,
   fileRefKey,
   removeFileRef,
+  type RightPanelFileTarget,
   type ThreadFileWorkspace,
 } from './right-panel-files-state'
 import type { RightPanelFunction } from './right-panel-state'
@@ -68,7 +69,7 @@ export function FilesRightPanelWorkspace({
     return () => observer.disconnect()
   }, [])
 
-  const openFile = useCallback((ref: FileRef) => onWorkspaceChange(openFileTab(workspaceRef.current, ref, {
+  const openFile = useCallback((ref: RightPanelFileTarget) => onWorkspaceChange(openFileTab(workspaceRef.current, ref, {
     caseInsensitive: /Win/i.test(navigator.platform),
   })), [onWorkspaceChange])
   const handleMissing = useCallback((ref: FileRef) => {
@@ -134,6 +135,9 @@ export function FilesRightPanelWorkspace({
       <div className={cn('min-h-0 min-w-0 flex-1', !wide && showTree && 'hidden')}>
         <RightPanelFilePreview
           fileRef={previewRef}
+          guardedRef={activeTab?.guardedRef}
+          lineSelection={activeTab?.lineSelection}
+          navigationRevision={activeTab?.navigationRevision}
           onOpenFile={openFile}
           onMissing={handleMissing}
           onPreviewScopeChange={handlePreviewScopeChange}
@@ -168,7 +172,7 @@ function FileDetailsBar({ fileRef, entry, collapsed, onToggle, onPreview }: {
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title="更多文件操作" />}><MoreHorizontal size={13} /></DropdownMenuTrigger>
             <DropdownMenuContent>
-              <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(fileRef)}><FolderSearch size={13} />在资源管理器中显示</DropdownMenuItem>
+              <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(fileRef)}><FolderSearch size={13} />在文件管理器中显示</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void writeClipboardText(fileRef.relativePath)}><Copy size={13} />复制相对路径</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

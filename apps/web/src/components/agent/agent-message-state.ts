@@ -246,6 +246,7 @@ export function projectVisibleThreadMessages(visibleThreadMessages: AgentMessage
         text: message.content,
         thinking: message.reasoning ?? '',
         messageId: message.id,
+        ...(message.fileReferenceBinding ? { fileReferenceBinding: message.fileReferenceBinding } : {}),
         completedAt: createdAt,
         blocks: projectVisibleAssistantBlocks(message),
         status: 'completed',

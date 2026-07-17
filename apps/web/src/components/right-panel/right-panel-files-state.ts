@@ -1,13 +1,26 @@
-import type { FileRef, FileSource } from '@lume/shared'
+import type { FileRef, FileSource, GuardedFileRef } from '@lume/shared'
+import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import { RIGHT_PANEL_FUNCTION_ORDER, type RightPanelFunction } from './right-panel-state'
 
 export type RightPanelActiveItem =
   | { kind: 'function'; type: RightPanelFunction }
   | { kind: 'file'; tabId: string }
 
-export interface RightPanelFileTab {
+export type RightPanelFileTab = {
   id: string
   ref: FileRef
+  guardedRef?: GuardedFileRef
+  lineSelection?: ThreadFileLineSelection
+  navigationRevision: number
+}
+
+export type RightPanelFileTarget = FileRef | GuardedFileRef
+
+export interface FileTreeRevealRequest {
+  requestId: string
+  navigationRevision: number
+  ref: FileRef
+  guardedRef?: GuardedFileRef
 }
 
 export type FileSourceLoadState = 'fresh' | 'stale' | 'loading' | 'error'
@@ -26,6 +39,7 @@ export interface ThreadFileWorkspace {
   openTabs: RightPanelFileTab[]
   sourceStatus: Record<FileSource, FileSourceLoadState>
   previewScopes: Record<string, string>
+  revealRequest: FileTreeRevealRequest | null
 }
 
 export interface FileRefIdentityOptions {
@@ -67,25 +81,58 @@ export function createThreadFileWorkspace(
     openTabs: [],
     sourceStatus: { project: 'fresh', session: 'fresh', memory: 'fresh', legacy: 'fresh' },
     previewScopes: {},
+    revealRequest: null,
   }
 }
 
 export function openFileTab(
   state: ThreadFileWorkspace,
-  ref: FileRef,
-  options: FileRefIdentityOptions = {},
+  target: RightPanelFileTarget,
+  options: FileRefIdentityOptions & { lineSelection?: ThreadFileLineSelection; navigationRevision?: number } = {},
 ): ThreadFileWorkspace {
+  const guardedRef = isGuardedFileRef(target) ? target : undefined
+  const ref = guardedRef?.ref ?? target as FileRef
+  const lineSelection = normalizeLineSelection(options.lineSelection)
   const key = fileRefKey(ref, options)
   const existing = state.openTabs.find((tab) => fileRefKey(tab.ref, options) === key)
-  if (existing) return { ...state, activeItem: { kind: 'file', tabId: existing.id } }
+  if (existing) {
+    const navigationRevision = options.navigationRevision ?? existing.navigationRevision + 1
+    return {
+      ...state,
+      openTabs: state.openTabs.map((tab) => tab.id === existing.id ? {
+        ...tab,
+        ...(guardedRef ? { guardedRef } : {}),
+        lineSelection,
+        navigationRevision,
+      } : tab),
+      activeItem: { kind: 'file', tabId: existing.id },
+    }
+  }
 
   const normalized = normalizeFileRef(ref)
-  const tab: RightPanelFileTab = { id: `file:${encodeURIComponent(key)}`, ref: normalized }
+  const tab: RightPanelFileTab = {
+    id: `file:${encodeURIComponent(key)}`,
+    ref: normalized,
+    ...(guardedRef ? { guardedRef: { ...guardedRef, ref: normalized as GuardedFileRef['ref'] } as GuardedFileRef } : {}),
+    lineSelection,
+    navigationRevision: options.navigationRevision ?? 1,
+  }
   return {
     ...state,
     openTabs: [...state.openTabs, tab],
     activeItem: { kind: 'file', tabId: tab.id },
   }
+}
+
+export function normalizeLineSelection(selection?: ThreadFileLineSelection): ThreadFileLineSelection | undefined {
+  if (!selection) return undefined
+  const start = Math.max(1, Math.trunc(selection.start))
+  const end = Math.max(start, Math.trunc(selection.end))
+  return { start, end }
+}
+
+export function isGuardedFileRef(value: RightPanelFileTarget): value is GuardedFileRef {
+  return Boolean(value && typeof value === 'object' && 'guard' in value && 'ref' in value)
 }
 
 export function closeFileTab(
@@ -211,6 +258,7 @@ export function reconcileThreadFileWorkspaces(
   for (const [threadId, state] of Object.entries(workspaces)) {
     const thread = threadById.get(threadId)
     if (!thread) {
+      if (state.revealRequest) settleFileTreeReveal(state.revealRequest.requestId, { status: 'superseded' })
       revokedScopeTokens.push(...Object.values(state.previewScopes))
       continue
     }
@@ -219,6 +267,7 @@ export function reconcileThreadFileWorkspaces(
       next[threadId] = state
       continue
     }
+    if (state.revealRequest) settleFileTreeReveal(state.revealRequest.requestId, { status: 'superseded' })
     revokedScopeTokens.push(...Object.values(state.previewScopes))
     const openTabs = state.openTabs.filter((tab) => tab.ref.source === 'session' && tab.ref.scopeId === thread.fileContextId)
     const activeFileTabId = state.activeItem?.kind === 'file' ? state.activeItem.tabId : null
@@ -240,9 +289,44 @@ export function reconcileThreadFileWorkspaces(
       directoryCache: {},
       sourceStatus: Object.fromEntries(SOURCES.map((source) => [source, 'stale'])) as ThreadFileWorkspace['sourceStatus'],
       previewScopes: {},
+      revealRequest: null,
     }
   }
   return { workspaces: next, revokedScopeTokens }
+}
+
+type RevealSettlement = { status: 'opened' | 'superseded' | 'unavailable' }
+const revealSettlements = new Map<string, { resolve: (value: RevealSettlement) => void; timeout: ReturnType<typeof setTimeout> }>()
+
+export function createFileTreeRevealRequest(
+  target: RightPanelFileTarget,
+  navigationRevision: number,
+  timeoutMs = 10_000,
+): { request: FileTreeRevealRequest; completion: Promise<RevealSettlement> } {
+  const requestId = crypto.randomUUID()
+  const guardedRef = isGuardedFileRef(target) ? target : undefined
+  const ref = guardedRef?.ref ?? target as FileRef
+  let resolveCompletion!: (value: RevealSettlement) => void
+  const completion = new Promise<RevealSettlement>((resolve) => { resolveCompletion = resolve })
+  const timeout = setTimeout(() => settleFileTreeReveal(requestId, { status: 'unavailable' }), timeoutMs)
+  revealSettlements.set(requestId, { resolve: resolveCompletion, timeout })
+  return { request: { requestId, navigationRevision, ref, ...(guardedRef ? { guardedRef } : {}) }, completion }
+}
+
+export function settleFileTreeReveal(requestId: string, result: RevealSettlement): void {
+  const pending = revealSettlements.get(requestId)
+  if (!pending) return
+  revealSettlements.delete(requestId)
+  clearTimeout(pending.timeout)
+  pending.resolve(result)
+}
+
+export function getFileTreeRevealDirectories(target: FileRef): FileRef[] {
+  const segments = normalizeFileRef(target).relativePath.split('/').filter(Boolean)
+  return Array.from({ length: Math.max(segments.length, 1) }, (_, index) => ({
+    ...target,
+    relativePath: segments.slice(0, index).join('/'),
+  }))
 }
 
 export function getEffectiveThreadFileBindings(

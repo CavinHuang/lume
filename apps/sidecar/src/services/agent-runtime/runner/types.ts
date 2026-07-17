@@ -1,5 +1,5 @@
 import type { SDKMessage } from "@lume/agent-sdk";
-import type { AgentSendInput } from "@lume/shared";
+import type { AgentSendInput, FileReferenceBinding } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
 import type { AgentBrowserAuthRequest } from "@lume/shared";
 import type { AgentDesktopActionRequest } from "@lume/shared";
@@ -45,5 +45,6 @@ export interface AgentRuntimeRunParams {
     resolvedModelId: string;
     workspaceId?: string;
     threadType?: AgentSendInput["threadType"];
+    fileReferenceBinding?: FileReferenceBinding;
   };
 }

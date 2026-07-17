@@ -66,6 +66,7 @@ import {
   getWorkspaceResourcesDirectory,
   listAgentDirectory,
   listAuthorizedFileRefDirectory,
+  listGuardedFileRefDirectory,
   listProjectDirectory,
   listWorkspaceDirectory,
   listWorkspaceRootDirectory,
@@ -81,6 +82,7 @@ import {
   readAgentFileData,
   readAgentPath,
   readAuthorizedFileRef,
+  readGuardedFileRef,
   statAuthorizedFileRef,
   readProjectFileData,
   readProjectPath,
@@ -91,6 +93,9 @@ import {
   renameAgentFile,
   renameAuthorizedFileRef,
   resolveAuthorizedFileRef,
+  resolveGuardedFileRef,
+  statGuardedFileRef,
+  validateGuardedFileRef,
   renameWorkspaceFile,
   renameWorkspaceRootFile,
   resolveWorkspaceSlugByThreadId,
@@ -219,6 +224,7 @@ import {
   deleteSkillInputSchema,
   editableSkillInputSchema,
   fileRefInputSchema,
+  guardedFileRefInputSchema,
   fileRefMoveInputSchema,
   fileRefRenameInputSchema,
   fileRefSearchInputSchema,
@@ -1577,6 +1583,27 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF]: async (params) => {
       const input = validateInput(legacyFileRefConversionInputSchema, params, AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF);
       return convertLegacyFileRef(input);
+    },
+    [AGENT_IPC_CHANNELS.VALIDATE_GUARDED_FILE_REF]: async (params) => {
+      const input = validateInput(guardedFileRefInputSchema, params, AGENT_IPC_CHANNELS.VALIDATE_GUARDED_FILE_REF);
+      return validateGuardedFileRef(input.guardedRef);
+    },
+    [AGENT_IPC_CHANNELS.LIST_GUARDED_FILE_REF_DIRECTORY]: async (params) => {
+      const input = validateInput(guardedFileRefInputSchema, params, AGENT_IPC_CHANNELS.LIST_GUARDED_FILE_REF_DIRECTORY);
+      return listGuardedFileRefDirectory(input.guardedRef);
+    },
+    [AGENT_IPC_CHANNELS.STAT_GUARDED_FILE_REF]: async (params) => {
+      const input = validateInput(guardedFileRefInputSchema, params, AGENT_IPC_CHANNELS.STAT_GUARDED_FILE_REF);
+      return statGuardedFileRef(input.guardedRef);
+    },
+    [AGENT_IPC_CHANNELS.READ_GUARDED_FILE_REF]: async (params) => {
+      const input = validateInput(guardedFileRefInputSchema, params, AGENT_IPC_CHANNELS.READ_GUARDED_FILE_REF);
+      return readGuardedFileRef(input.guardedRef);
+    },
+    [AGENT_IPC_CHANNELS.RESOLVE_GUARDED_FILE_REF]: async (params) => {
+      const input = validateInput(guardedFileRefInputSchema, params, AGENT_IPC_CHANNELS.RESOLVE_GUARDED_FILE_REF);
+      const resolved = resolveGuardedFileRef(input.guardedRef);
+      return { path: resolved.absolutePath, relativePath: resolved.relativePath };
     },
     [AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]: async (params) =>
       saveFilesToAgentThread(

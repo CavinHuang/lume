@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentTraceContext,
+  FileReferenceBinding,
   LumeRuntimeEvent,
   RuntimeBillingUsageSummary,
   RuntimeNormalizedUsage,
@@ -30,6 +31,7 @@ export interface CreateLumeRunObserverInput {
   threadId: string;
   workspaceId?: string;
   workspaceSlug?: string;
+  fileReferenceBinding?: FileReferenceBinding;
   userMessage: string;
   permissionMode?: LumeRunState["input"]["permissionMode"];
   threadType?: string;
@@ -159,6 +161,7 @@ export class LumeRunObserver {
       threadId: input.threadId,
       workspaceId: input.workspaceId,
       workspaceSlug: input.workspaceSlug,
+      fileReferenceBinding: input.fileReferenceBinding,
       rootAgentId: input.rootAgentId ?? "runtime-core",
       currentAgentId: input.currentAgentId ?? "runtime-core",
       status: "running",
@@ -404,6 +407,10 @@ export class LumeRunObserver {
     return this.state.workspaceSlug;
   }
 
+  getFileReferenceBinding(): FileReferenceBinding | undefined {
+    return this.state.fileReferenceBinding;
+  }
+
   getUserMessage(): string {
     return this.state.input.userMessage;
   }
@@ -500,7 +507,7 @@ export class LumeRunObserver {
     if (!emit) return;
     const sequence = this.nextRuntimeSequenceByRun.get(event.runId) ?? 0;
     this.nextRuntimeSequenceByRun.set(event.runId, sequence + 1);
-    emit({ ...event, sequence });
+    emit({ ...event, fileReferenceBinding: this.state.fileReferenceBinding, sequence });
   }
 
   private rememberSubagentParentToolCall(message: SDKMessage & Record<string, unknown>): void {

@@ -69,11 +69,11 @@ describe('getCopyTextWithoutAfterglow', () => {
   test('removes afterglow nodes from copied text', () => {
     const clone = {
       textContent: '正文⟡ 不要复制结尾',
-      querySelectorAll: () => [{
+      querySelectorAll: (selector: string) => selector === '[data-afterglow]' ? [{
         remove: () => {
           clone.textContent = '正文结尾'
         },
-      }],
+      }] : [],
     }
     const root = {
       cloneNode: () => clone,
@@ -81,11 +81,32 @@ describe('getCopyTextWithoutAfterglow', () => {
 
     expect(getCopyTextWithoutAfterglow(root)).toBe('正文结尾')
   })
+
+  test('replaces compact file chips with their complete portable copy text', () => {
+    let copiedText = '查看 …/src/app.tsL3–8'
+    const referenceNode = {
+      dataset: { fileReferenceCopyText: 'packages/web/src/app.ts#L3-L8' },
+      get textContent() { return copiedText },
+      set textContent(value: string) { copiedText = `查看 ${value}` },
+    }
+    const clone = {
+      get textContent() { return copiedText },
+      querySelectorAll: (selector: string) => selector === '[data-file-reference-copy-text]' ? [referenceNode] : [],
+    }
+    const root = { cloneNode: () => clone } as unknown as Node & ParentNode
+
+    expect(getCopyTextWithoutAfterglow(root)).toBe('查看 packages/web/src/app.ts#L3-L8')
+  })
 })
 
 describe('getAssistantCopyText', () => {
   test('removes afterglow lines from footer copy text', () => {
     expect(getAssistantCopyText('正文\n⟡ 不要复制\n结尾')).toBe('正文\n结尾')
+  })
+
+  test('removes internal file reference prefixes while preserving line ranges', () => {
+    expect(getAssistantCopyText('查看 `@project/src/app.ts#L3-L8`。')).toBe('查看 `src/app.ts#L3-L8`。')
+    expect(getAssistantCopyText('[配置](@session/output/config%20file.json)')).toBe('[配置](output/config%20file.json)')
   })
 })
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, ChevronsUp, Folder, MoreHorizontal, RefreshCw, Search, X } from 'lucide-react'
-import { AGENT_IPC_CHANNELS, type FileEntry, type FileIndexEntry, type FileRef, type FileSource } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type FileEntry, type FileIndexEntry, type FileRef, type FileSource, type GuardedFileRef } from '@lume/shared'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -30,8 +30,10 @@ import {
 import { cn } from '@/lib/utils'
 import {
   fileRefKey,
+  getFileTreeRevealDirectories,
   removeFileRef,
   rewriteFileRefPrefix,
+  settleFileTreeReveal,
   type ThreadFileWorkspace,
 } from './right-panel-files-state'
 import {
@@ -181,6 +183,72 @@ export function UnifiedFileTree({
   useEffect(() => {
     for (const root of roots) void load(root)
   }, [roots])
+
+  useEffect(() => {
+    const request = workspace.revealRequest
+    if (!request) return
+    let disposed = false
+    const requestIdentity = treeCacheIdentityRef.current
+    const target = request.ref
+
+    const isCurrent = () => !disposed
+      && treeCacheIdentityRef.current === requestIdentity
+      && workspaceRef.current.revealRequest?.requestId === request.requestId
+
+    const guardedFor = (ref: FileRef): GuardedFileRef | undefined => request.guardedRef
+      ? { ...request.guardedRef, ref: { ...request.guardedRef.ref, relativePath: ref.relativePath } } as GuardedFileRef
+      : undefined
+
+    void (async () => {
+      try {
+        const segments = target.relativePath.split('/').filter(Boolean)
+        const directoriesToLoad = getFileTreeRevealDirectories(target)
+        let nextCache = cacheRef.current
+        for (const directoryRef of directoriesToLoad) {
+          const entries = request.guardedRef
+            ? await sidecarCall<FileEntry[]>(AGENT_IPC_CHANNELS.LIST_GUARDED_FILE_REF_DIRECTORY, {
+                guardedRef: guardedFor(directoryRef),
+              })
+            : await sidecarCall<FileEntry[]>(AGENT_IPC_CHANNELS.LIST_FILE_REF_DIRECTORY, { ref: directoryRef })
+          if (!isCurrent()) {
+            settleFileTreeReveal(request.requestId, { status: 'superseded' })
+            return
+          }
+          nextCache = { ...nextCache, [fileRefKey(directoryRef)]: entries }
+        }
+
+        const ancestorKeys = segments.slice(0, -1).map((_, index) => fileRefKey({
+          ...target,
+          relativePath: segments.slice(0, index + 1).join('/'),
+        }))
+        const targetKey = fileRefKey(target)
+        cacheRef.current = nextCache
+        setCache(nextCache)
+        commitWorkspace({
+          ...workspaceRef.current,
+          selectedRef: target,
+          expandedKeys: [...new Set([...workspaceRef.current.expandedKeys, ...ancestorKeys])],
+          directoryCache: nextCache,
+          scrollAnchor: targetKey,
+        })
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
+        const row = Array.from(scrollContainerRef.current?.querySelectorAll<HTMLElement>('[data-file-ref-key]') ?? [])
+          .find((element) => element.dataset.fileRefKey === targetKey)
+        row?.scrollIntoView({ block: 'nearest' })
+        settleFileTreeReveal(request.requestId, { status: 'opened' })
+        if (workspaceRef.current.revealRequest?.requestId === request.requestId) {
+          commitWorkspace({ ...workspaceRef.current, revealRequest: null })
+        }
+      } catch {
+        settleFileTreeReveal(request.requestId, isCurrent() ? { status: 'unavailable' } : { status: 'superseded' })
+      }
+    })()
+
+    return () => {
+      disposed = true
+      settleFileTreeReveal(request.requestId, { status: 'superseded' })
+    }
+  }, [workspace.revealRequest?.requestId, treeCacheIdentity, commitWorkspace])
 
   useEffect(() => {
     for (const source of Object.keys(workspace.sourceStatus) as FileSource[]) {
@@ -596,7 +664,7 @@ function TreeEntryRow(props: {
           <DropdownMenuContent>
             {!entry.isDirectory && <DropdownMenuItem onSelect={() => props.onOpen(entry.ref!)}>预览</DropdownMenuItem>}
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void openFileRefInSystem(entry.ref!)}>系统打开</DropdownMenuItem>
-            <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(entry.ref!)}>在资源管理器中显示</DropdownMenuItem>
+            <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void revealFileRefInSystem(entry.ref!)}>在文件管理器中显示</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void writeClipboardText(entry.ref!.relativePath)}>复制相对路径</DropdownMenuItem>
             <DropdownMenuItem disabled={!isDesktopRuntime()} onSelect={() => void props.onCopyAbsolutePath(entry.ref!)}>复制绝对路径</DropdownMenuItem>
             {entry.ref.source === 'legacy' && <DropdownMenuItem onSelect={() => void props.onExportLegacy(entry)}>导出到项目（不覆盖）</DropdownMenuItem>}

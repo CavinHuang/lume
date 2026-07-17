@@ -157,6 +157,31 @@ describe("agent-message-versioning-service", () => {
     expect(versions[0]?.content).toBe("回答2");
   });
 
+  test("assistant file reference bindings survive version persistence and projection", () => {
+    initializeVersionStoreFromMessages("session-file-binding", []);
+    const user = createUserMessageVersion({ sessionId: "session-file-binding", content: "问题", createdAt: 1 });
+    const fileReferenceBinding = {
+      workspaceSlug: "demo",
+      projectRootFingerprint: "c".repeat(64),
+      fileContextId: "context-1",
+    };
+    const assistant = createAssistantMessageVersion({
+      sessionId: "session-file-binding",
+      turnId: user.turnId,
+      message: {
+        id: "assistant-file-binding",
+        role: "assistant",
+        content: "`@project/src/app.ts`",
+        createdAt: 2,
+        fileReferenceBinding,
+      },
+    });
+
+    expect(assistant?.fileReferenceBinding).toEqual(fileReferenceBinding);
+    expect(getVisibleAgentMessages("session-file-binding").at(-1)?.fileReferenceBinding).toEqual(fileReferenceBinding);
+    expect(getAgentMessageVersions("session-file-binding", assistant?.versionGroupId ?? "")[0]?.fileReferenceBinding).toEqual(fileReferenceBinding);
+  });
+
   test("createUserMessageVersion 应保留用户原始 sdkMessages", () => {
     initializeVersionStoreFromMessages("session-sdk-user", []);
 

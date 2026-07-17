@@ -40,6 +40,10 @@ test("renderer IPC commands are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("data_export_zip"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("write_web_log"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("quick_input_get_context"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("open_guarded_file_ref"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("reveal_guarded_file_ref"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("save_guarded_file_ref_as"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("create_guarded_file_preview_scope"), true);
   assert.equal(validateRendererInvokeCommand("open_external"), "open_external");
   assert.throws(
     () => validateRendererInvokeCommand("shell:run-arbitrary-command"),
@@ -72,6 +76,24 @@ test("preview scopes bind unguessable tokens to one webContents owner and expire
   assert.equal(registry.owns(scope.token, 8), false);
   now = 1_101;
   assert.equal(registry.owns(scope.token, 7), false);
+});
+
+test("guarded preview scopes retain their mandatory guard for per-request revalidation", () => {
+  const registry = createPreviewScopeRegistry();
+  const root = mkdtempSync(join(tmpdir(), "lume-preview-guarded-"));
+  const entry = join(root, "image.png");
+  writeFileSync(entry, "image");
+  const guardedRef = {
+    ref: { source: "project", scopeId: "demo", relativePath: "image.png" },
+    guard: {
+      kind: "project",
+      workspaceSlug: "demo",
+      expectedProjectRootFingerprint: "a".repeat(64),
+      consumerThreadId: "thread-1",
+    },
+  };
+  const scope = registry.create({ kind: "media-file", ownerWebContentsId: 7, absolutePath: entry, guardedRef });
+  assert.deepEqual(registry.get(scope.token)?.guardedRef, guardedRef);
 });
 
 test("HTML preview resolution stays inside its directory and static allowlist", () => {
@@ -197,6 +219,14 @@ test("main installs one owner gate and enables CORS only on the preview protocol
     mainSource.indexOf("const sidecarHost"),
   );
   assert.equal((schemeRegistrations.match(/corsEnabled:\s*true/g) ?? []).length, 1);
+});
+
+test("main revalidates guarded preview scopes and guarded file actions through sidecar", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.match(mainSource, /scope\?\.guardedRef/);
+  assert.match(mainSource, /agent:resolve-guarded-file-ref/);
+  assert.match(mainSource, /case 'create_guarded_file_preview_scope'/);
+  assert.match(mainSource, /guardedRef: payload\.guardedRef/);
 });
 
 test("renderer event subscriptions are explicitly allowlisted", () => {

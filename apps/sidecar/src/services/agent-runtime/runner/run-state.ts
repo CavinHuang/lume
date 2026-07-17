@@ -1,6 +1,7 @@
 import type {
   AgentMessageAttachmentInput,
   AgentTraceContext,
+  FileReferenceBinding,
   RuntimeBillingUsageSummary,
   RuntimeUsageContextSnapshot
 } from "@lume/shared";
@@ -61,6 +62,7 @@ export interface LumeRunState {
   threadId: string;
   workspaceId?: string;
   workspaceSlug?: string;
+  fileReferenceBinding?: FileReferenceBinding;
   rootAgentId: string;
   currentAgentId: string;
   status: LumeRunStatus;

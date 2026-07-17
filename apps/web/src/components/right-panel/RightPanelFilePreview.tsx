@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { Copy, ExternalLink, FolderSearch, RotateCw } from 'lucide-react'
-import type { FileEntry, FileRef } from '@lume/shared'
+import type { FileEntry, FileRef, GuardedFileRef } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import {
   createFilePreviewScope,
+  createGuardedFilePreviewScope,
   isDesktopRuntime,
+  openGuardedFileRefInSystem,
   openFileRefInSystem,
+  revealGuardedFileRefInSystem,
   revealFileRefInSystem,
   revokeFilePreviewScope,
   sidecarCall,
@@ -17,17 +20,26 @@ import {
 import { classifyFilePreview, isMissingFileError } from './file-preview-utils'
 import { RightPanelHtmlPreview } from './RightPanelHtmlPreview'
 import { RightPanelSourcePreview } from './RightPanelSourcePreview'
+import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
+import type { RightPanelFileTarget } from './right-panel-files-state'
+import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
 
 interface PreviewPayload { content: string; truncated: boolean }
 
 export function RightPanelFilePreview({
   fileRef,
+  guardedRef,
+  lineSelection,
+  navigationRevision,
   onOpenFile,
   onMissing,
   onPreviewScopeChange,
 }: {
   fileRef: FileRef | null
-  onOpenFile: (ref: FileRef) => void
+  guardedRef?: GuardedFileRef
+  lineSelection?: ThreadFileLineSelection
+  navigationRevision?: number
+  onOpenFile: (ref: RightPanelFileTarget) => void
   onMissing?: (ref: FileRef) => void
   onPreviewScopeChange?: (token: string | null) => void
 }) {
@@ -50,7 +62,7 @@ export function RightPanelFilePreview({
     setPayload(null)
     setImageScope(null)
     setError(null)
-    setSourceMode(false)
+    setSourceMode(Boolean(lineSelection && kind === 'markdown'))
     setImageOriginalSize(false)
     setMetadata(null)
     if (!fileRef) return
@@ -61,7 +73,9 @@ export function RightPanelFilePreview({
       onMissing?.(fileRef)
       return true
     }
-    void sidecarCall<FileEntry>(AGENT_IPC_CHANNELS.STAT_FILE_REF, { ref: fileRef })
+    const statChannel = guardedRef ? AGENT_IPC_CHANNELS.STAT_GUARDED_FILE_REF : AGENT_IPC_CHANNELS.STAT_FILE_REF
+    const statInput = guardedRef ? { guardedRef } : { ref: fileRef }
+    void sidecarCall<FileEntry>(statChannel, statInput)
       .then((result) => { if (current === requestId.current) setMetadata(result) })
       .catch((nextError) => {
         if (current !== requestId.current) return
@@ -75,7 +89,10 @@ export function RightPanelFilePreview({
       setLoading(true)
       let token: string | null = null
       let disposed = false
-      void createFilePreviewScope({ ref: fileRef, kind: 'media-file', generation: current })
+      const createScope = guardedRef
+        ? createGuardedFilePreviewScope({ guardedRef, kind: 'media-file', generation: current })
+        : createFilePreviewScope({ ref: fileRef, kind: 'media-file', generation: current })
+      void createScope
         .then((scope) => {
           token = scope.token
           if (disposed || current !== requestId.current) {
@@ -103,7 +120,9 @@ export function RightPanelFilePreview({
     if (kind === 'unsupported') return
     setLoading(true)
     let disposed = false
-    void sidecarCall<PreviewPayload>(AGENT_IPC_CHANNELS.READ_FILE_REF, { ref: fileRef })
+    const readChannel = guardedRef ? AGENT_IPC_CHANNELS.READ_GUARDED_FILE_REF : AGENT_IPC_CHANNELS.READ_FILE_REF
+    const readInput = guardedRef ? { guardedRef } : { ref: fileRef }
+    void sidecarCall<PreviewPayload>(readChannel, readInput)
       .then((result) => {
         if (!disposed && current === requestId.current) setPayload(result)
       })
@@ -115,20 +134,27 @@ export function RightPanelFilePreview({
       })
       .finally(() => { if (!disposed && current === requestId.current) setLoading(false) })
     return () => { disposed = true }
-  }, [fileRef, kind, onMissing, onPreviewScopeChange, refreshKey])
+  }, [fileRef, guardedRef, kind, lineSelection, onMissing, onPreviewScopeChange, refreshKey])
 
   if (!fileRef) {
     return <div className="flex h-full items-center justify-center text-[13px] text-foreground/45">选择文件以预览</div>
   }
   const desktop = isDesktopRuntime()
+  const title = (
+    <span className="min-w-0 flex-1 truncate text-[12px] font-medium" title={fileRef.relativePath}>
+      {basename(fileRef.relativePath)}
+      <span className="ml-2 font-normal text-foreground/42">{parentPath(fileRef.relativePath)}</span>
+    </span>
+  )
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-2.5">
         <FileTypeIcon filename={fileRef.relativePath} size={15} />
-        <div className="min-w-0 flex-1 truncate text-[12px] font-medium" title={fileRef.relativePath}>
-          {basename(fileRef.relativePath)}
-          <span className="ml-2 font-normal text-foreground/42">{parentPath(fileRef.relativePath)}</span>
-        </div>
+        {guardedRef ? (
+          <FileLinkContextMenu context={{ source: 'thread', relPath: fileRef.relativePath, guardedRef }} inline>
+            {title}
+          </FileLinkContextMenu>
+        ) : title}
         {(kind === 'markdown' || kind === 'html') && (
           <Button variant="ghost" size="sm" onClick={() => setSourceMode((value) => !value)}>
             {sourceMode ? '渲染' : '源码'}
@@ -137,8 +163,8 @@ export function RightPanelFilePreview({
         {kind === 'image' && <Button variant="ghost" size="sm" onClick={() => setImageOriginalSize((value) => !value)}>{imageOriginalSize ? '适应' : '原始尺寸'}</Button>}
         {payload && <Button variant="ghost" size="sm" onClick={() => void writeClipboardText(payload.content)}>复制内容</Button>}
         <Button variant="ghost" size="icon-sm" onClick={refresh} title="重新读取预览"><RotateCw size={14} /></Button>
-        <Button variant="ghost" size="icon-sm" disabled={!desktop} onClick={() => void openFileRefInSystem(fileRef)} title={desktop ? '系统打开' : '仅桌面端可用'}><ExternalLink size={14} /></Button>
-        <Button variant="ghost" size="icon-sm" disabled={!desktop} onClick={() => void revealFileRefInSystem(fileRef)} title={desktop ? '在资源管理器中显示' : '仅桌面端可用'}><FolderSearch size={14} /></Button>
+        <Button variant="ghost" size="icon-sm" disabled={!desktop} onClick={() => void (guardedRef ? openGuardedFileRefInSystem(guardedRef) : openFileRefInSystem(fileRef))} title={desktop ? '系统打开' : '仅桌面端可用'}><ExternalLink size={14} /></Button>
+        <Button variant="ghost" size="icon-sm" disabled={!desktop} onClick={() => void (guardedRef ? revealGuardedFileRefInSystem(guardedRef) : revealFileRefInSystem(fileRef))} title={desktop ? '在文件管理器中显示' : '仅桌面端可用'}><FolderSearch size={14} /></Button>
         <Button variant="ghost" size="icon-sm" onClick={() => void writeClipboardText(fileRef.relativePath)} title="复制相对路径"><Copy size={14} /></Button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
@@ -157,11 +183,16 @@ export function RightPanelFilePreview({
           <div className={kind === 'text' || sourceMode ? 'h-full' : 'h-full p-4'}>
             {payload.truncated && <p className={kind === 'text' || sourceMode ? 'm-0 px-3 py-2 text-[12px] text-amber-600' : 'mb-3 text-[12px] text-amber-600'}>文件超过 512 KB，仅显示前 512 KB。</p>}
             {kind === 'html' && !sourceMode ? (
-              <RightPanelHtmlPreview fileRef={fileRef} source={payload.content} onOpenFile={onOpenFile} onMissing={onMissing} onPreviewScopeChange={onPreviewScopeChange} />
+              <RightPanelHtmlPreview fileRef={fileRef} guardedRef={guardedRef} source={payload.content} onOpenFile={onOpenFile} onMissing={onMissing} onPreviewScopeChange={onPreviewScopeChange} />
             ) : kind === 'markdown' && !sourceMode ? (
               <XMarkdown className="x-markdown text-[13px] leading-6">{payload.content}</XMarkdown>
             ) : (
-              <RightPanelSourcePreview content={payload.content} filePath={fileRef.relativePath} />
+              <RightPanelSourcePreview
+                content={payload.content}
+                filePath={fileRef.relativePath}
+                lineSelection={kind === 'text' || kind === 'markdown' ? lineSelection : undefined}
+                navigationRevision={navigationRevision}
+              />
             )}
           </div>
         ) : null}

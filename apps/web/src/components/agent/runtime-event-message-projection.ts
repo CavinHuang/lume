@@ -1,4 +1,4 @@
-import type { LumeRuntimeEvent } from '@lume/shared'
+import type { FileReferenceBinding, LumeRuntimeEvent } from '@lume/shared'
 import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
@@ -17,6 +17,7 @@ export interface ProjectionState {
   // 重建的 assistant 必须用唯一 id（见 assistantIdFor），避免与已 flush 的同 runId 消息
   // id 冲突 → AgentMessages 列表 React key 撞车（duplicate/omit + 跳变）。
   assistantSegmentByRun: Map<string, number>
+  fileReferenceBinding?: FileReferenceBinding
 }
 
 /**
@@ -47,6 +48,10 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
 
 export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEvent): void {
   const { messages } = state
+  if (event.fileReferenceBinding) {
+    state.fileReferenceBinding = event.fileReferenceBinding
+    if (state.currentAssistant) state.currentAssistant.fileReferenceBinding = event.fileReferenceBinding
+  }
 
   if (event.type === 'run.started') {
     state.terminalClosed = false
@@ -66,14 +71,14 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       ...(typeof event.versionIndex === 'number' ? { versionIndex: event.versionIndex } : {}),
       ...(typeof event.versionCount === 'number' ? { versionCount: event.versionCount } : {}),
     })
-    state.currentAssistant = createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant = createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.terminalClosed = false
     return
   }
 
   if (event.type === 'task.progress') {
     if (state.terminalClosed || !state.currentAssistant) {
-      state.currentAssistant = createAssistantMessage(`assistant:task:${event.taskRunId}:${event.runId}`)
+      state.currentAssistant = createBoundAssistant(state, `assistant:task:${event.taskRunId}:${event.runId}`)
     }
     state.terminalClosed = false
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'task_progress')
@@ -88,7 +93,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
 
   if (event.type === 'memory.context.used') {
     if (event.items.length === 0) return
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'memory_context_used')
     state.currentAssistant.blocks.push({
       type: 'memory_context_used',
@@ -154,27 +159,27 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'assistant.delta') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.text += event.delta
     appendAssistantTextBlock(state.currentAssistant, event.delta)
     return
   }
 
   if (event.type === 'assistant.thinking_delta') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.thinking += event.delta
     appendAssistantThinkingBlock(state.currentAssistant, event.delta)
     return
   }
 
   if (event.type === 'assistant.final') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     replaceAssistantContentBlocks(state.currentAssistant, event.blocks)
     return
   }
 
   if (event.type === 'plan.preview') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks.push({
       type: 'plan_preview',
       id: `plan:${event.contractId}`,
@@ -193,7 +198,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'todo.state_updated') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block) => block.type !== 'todo_update')
     state.currentAssistant.blocks.push({
       type: 'todo_update',
@@ -210,7 +215,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'tool.started') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     const toolCall: RuntimeToolCallView = {
       id: event.toolCallId,
       toolName: event.toolName,
@@ -226,7 +231,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'tool.completed' || event.type === 'tool.failed') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     const existing = state.currentAssistant.toolCalls.get(event.toolCallId)
     const isError = event.type === 'tool.failed'
     const permissionState = isError && isToolPermissionTimeoutMessage(event.error.message)
@@ -252,7 +257,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'tool.permission_timeout') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     const existing = state.currentAssistant.toolCalls.get(event.toolCallId)
     const toolCall: RuntimeToolCallView = {
       id: event.toolCallId,
@@ -270,7 +275,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'run.completed' || event.type === 'run.turn_limited') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     if (event.type === 'run.turn_limited') {
       appendAssistantTextBlock(state.currentAssistant, TURN_LIMIT_NOTICE)
       recomputeAssistantContent(state.currentAssistant)
@@ -287,7 +292,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   }
 
   if (event.type === 'run.failed' || event.type === 'run.cancelled') {
-    state.currentAssistant ??= createAssistantMessage(assistantIdFor(state, event.runId))
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.status = 'failed'
     state.currentAssistant.error = event.type === 'run.failed' ? event.error.message : (event.reason ?? 'Run cancelled')
     flushAssistant(state.messages, state.currentAssistant)
@@ -453,6 +458,7 @@ interface MutableAssistantMessage {
   text: string
   thinking: string
   messageId?: string
+  fileReferenceBinding?: FileReferenceBinding
   completedAt?: string
   status: RuntimeAssistantMessageView['status']
   error?: string
@@ -465,7 +471,11 @@ interface MutableAssistantMessage {
   currentContentSegmentStart: number
 }
 
-function createAssistantMessage(id: string): MutableAssistantMessage {
+function createBoundAssistant(state: ProjectionState, id: string): MutableAssistantMessage {
+  return createAssistantMessage(id, state.fileReferenceBinding)
+}
+
+function createAssistantMessage(id: string, fileReferenceBinding?: FileReferenceBinding): MutableAssistantMessage {
   return {
     id,
     text: '',
@@ -475,6 +485,7 @@ function createAssistantMessage(id: string): MutableAssistantMessage {
     toolBlockIds: new Map(),
     blocks: [],
     currentContentSegmentStart: 0,
+    ...(fileReferenceBinding ? { fileReferenceBinding } : {}),
   }
 }
 
@@ -582,6 +593,7 @@ function snapshotAssistant(assistant: MutableAssistantMessage | null): RuntimeMe
     text: assistant.text,
     thinking: assistant.thinking,
     ...(assistant.messageId ? { messageId: assistant.messageId } : {}),
+    ...(assistant.fileReferenceBinding ? { fileReferenceBinding: assistant.fileReferenceBinding } : {}),
     ...(assistant.completedAt ? { completedAt: assistant.completedAt } : {}),
     blocks: assistant.blocks,
     status: assistant.status,

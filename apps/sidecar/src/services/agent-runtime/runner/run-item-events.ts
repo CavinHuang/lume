@@ -89,7 +89,7 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
     });
   }
 
-  return events;
+  return events.map((event) => ({ ...event, fileReferenceBinding: run.fileReferenceBinding }));
 }
 
 function withInferredSubagentOwner(items: LumeRunItem[], index: number): LumeRunItem {

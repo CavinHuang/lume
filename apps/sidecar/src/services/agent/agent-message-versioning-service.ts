@@ -36,6 +36,7 @@ function toAgentMessage(
     model: record.model,
     metadata: record.metadata,
     sdkMessages: record.sdkMessages,
+    fileReferenceBinding: record.fileReferenceBinding,
     versionGroupId: record.groupId,
     versionIndex: record.versionIndex,
     versionCount,
@@ -146,7 +147,8 @@ function reconcileSingleVersionStoreFromTranscript(
       reasoning: message.reasoning,
       model: message.model,
       metadata: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : undefined,
-      sdkMessages: message.sdkMessages
+      sdkMessages: message.sdkMessages,
+      fileReferenceBinding: message.fileReferenceBinding
     });
     nextStore.visibleGroupIds.push(groupId);
   }
@@ -431,7 +433,8 @@ export function createAssistantMessageVersion(params: {
       reasoning: params.message.reasoning,
       model: params.message.model,
       metadata: params.message.metadata,
-      sdkMessages: params.message.sdkMessages
+      sdkMessages: params.message.sdkMessages,
+      fileReferenceBinding: params.message.fileReferenceBinding
     };
     const userGroupIndex = store.visibleGroupIds.findIndex((groupIdItem) => {
       const visibleGroup = findGroup(store, groupIdItem);
@@ -462,7 +465,8 @@ export function createAssistantMessageVersion(params: {
     reasoning: params.message.reasoning,
     model: params.message.model,
     metadata: params.message.metadata,
-    sdkMessages: params.message.sdkMessages
+    sdkMessages: params.message.sdkMessages,
+    fileReferenceBinding: params.message.fileReferenceBinding
   };
   store.messages.push(nextRecord);
   group.latestMessageId = messageId;

@@ -420,6 +420,27 @@ describe("agent-prompt-builder", () => {
     expect(dynamic).toContain("$pluginId");
   });
 
+  test("buildDynamicContext injects the same rooted file reference protocol for main and minimal subagents", () => {
+    const roots = {
+      projectRoot: "D:/work/demo",
+      lumeWorkDir: "D:/lume/threads/thread-1",
+    };
+    for (const threadType of ["main", "subagent"] as const) {
+      const dynamic = buildDynamicContext({
+        sessionId: `file-ref-${threadType}`,
+        sessionType: threadType,
+        ...roots,
+      });
+      expect(dynamic).toContain("<file_reference_protocol>");
+      expect(dynamic).toContain("项目根目录: D:/work/demo");
+      expect(dynamic).toContain("会话文件上下文根目录: D:/lume/threads/thread-1");
+      expect(dynamic).toContain("`@project/<relative-path>`");
+      expect(dynamic).toContain("`@session/<relative-path>`");
+      expect(dynamic).toContain("不要创建 Markdown 链接");
+      expect(dynamic).toContain("不要引用这两个根目录之外的绝对路径");
+    }
+  });
+
   test("workspace context 应过滤空模板并默认跳过 heartbeat", () => {
     const workspaceSlug = `prompt-sanitized-workspace-${Date.now()}`;
     const workspacePath = getAgentWorkspacePath(workspaceSlug);

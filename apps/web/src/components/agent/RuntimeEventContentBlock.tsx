@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
 import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, ListChecks, ListCollapse, Loader2, Puzzle, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
@@ -10,12 +10,10 @@ import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardText } from '@/lib/desktop-api'
-import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
-import { normalizeThreadFilePathCandidate } from './thread-file-links'
+import { parseThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { resolveAbsolutePath } from '@/components/agent/file-link-actions'
 import { lumeFileUrl } from '@/components/right-panel/file-preview-utils'
-import { useThreadFileEnv } from './thread-file-env'
-import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
+import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding } from './thread-file-env'
 import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
@@ -31,6 +29,7 @@ import {
 
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { AgentFileReference, type OpenThreadFile } from './AgentFileReference'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
@@ -41,7 +40,7 @@ interface RuntimeEventContentBlockProps {
   canEditUserMessage?: boolean
   showExpressionActions?: boolean
   threadId: string
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
   onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
   onUserResizeStart?: () => void
@@ -97,11 +96,14 @@ export function showTemporaryCopiedFeedback(
 export function getCopyTextWithoutAfterglow(container: Node & ParentNode): string {
   const clone = container.cloneNode(true) as Node & ParentNode
   clone.querySelectorAll('[data-afterglow]').forEach((node) => node.remove())
+  clone.querySelectorAll<HTMLElement>('[data-file-reference-copy-text]').forEach((node) => {
+    node.textContent = node.dataset.fileReferenceCopyText ?? node.textContent
+  })
   return (clone.textContent ?? '').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 export function getAssistantCopyText(text: string): string {
-  return stripAfterglowLines(text)
+  return stripFileReferenceProtocolFromMarkdown(stripAfterglowLines(text))
 }
 
 export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
@@ -173,6 +175,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   )
 
   return (
+    <MessageFileReferenceBindingProvider value={message.fileReferenceBinding} consumerThreadId={threadId}>
     <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
       {showAssistantAvatar && (
         <div
@@ -235,6 +238,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
         {message.imDelivery && <ImDeliveryStatusLine delivery={message.imDelivery} />}
       </div>
     </div>
+    </MessageFileReferenceBindingProvider>
   )
 }, areRuntimeEventContentBlockPropsEqual)
 
@@ -394,7 +398,7 @@ function UserMessageBlock({
   threadId: string
   className: string
   canEdit: boolean
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -694,7 +698,7 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
 }: {
   block: RuntimeAssistantBlock
   threadId: string
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
   isStreaming: boolean
   isActiveThinking: boolean
   onUserResizeStart?: () => void
@@ -1079,7 +1083,7 @@ function StandardAssistantContent({
   threadId: string
   activeStreamingTextBlockId: string | null
   isStreamingMessage: boolean
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
   onUserResizeStart?: () => void
 }) {
   const segments = useMemo(() => groupAssistantBlocksForStandard(blocks), [blocks])
@@ -1177,7 +1181,7 @@ function MinimalAssistantContent({
   threadId: string
   isStreamingMessage: boolean
   activeStreamingTextBlockId: string | null
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
   onUserResizeStart?: () => void
 }) {
   const segments = useMemo(() => groupAssistantBlocksForMinimal(blocks), [blocks])
@@ -1411,7 +1415,7 @@ const SmoothText = memo(function SmoothText({
 }: {
   text: string
   isStreaming: boolean
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
 }) {
   const { displayedContent } = useSmoothStream({
     content: text,
@@ -1433,6 +1437,7 @@ const SmoothText = memo(function SmoothText({
         onOpenThreadFile={onOpenThreadFile}
       />
     ),
+    a: (props: MarkdownAnchorProps) => <MarkdownAnchor {...props} onOpenThreadFile={onOpenThreadFile} />,
     'incomplete-link': IncompleteLink,
     'incomplete-image': IncompleteImage,
     'incomplete-table': IncompleteTable,
@@ -1448,7 +1453,10 @@ const SmoothText = memo(function SmoothText({
     const text = getCopyTextWithoutAfterglow(fragment)
     if (!text) return
     event.preventDefault()
-    event.clipboardData.setData('text/plain', text)
+    void writeClipboardText(text).catch((error) => {
+      console.error('[SmoothText] 复制选区失败:', error)
+      toast.error('复制失败')
+    })
   }, [])
   const renderMarkdown = (content: string, key?: string) => (
     <XMarkdown
@@ -1492,7 +1500,7 @@ export function PlanPreviewCard({
   onOpenThreadFile,
 }: {
   preview: PlanPreviewView
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
 }) {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -1508,7 +1516,7 @@ export function PlanPreviewCard({
 
   const handleCopy = async () => {
     try {
-      await writeClipboardText(preview.markdown)
+      await writeClipboardText(getAssistantCopyText(preview.markdown))
       showTemporaryCopiedFeedback(feedbackStateRef.current, {
         setCopied,
         setTimer: window.setTimeout,
@@ -1596,7 +1604,7 @@ const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
   onOpenThreadFile,
 }: {
   markdown: string
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
 }) {
   const isDark = useIsDark()
   const components = useMemo(() => ({
@@ -1607,6 +1615,7 @@ const PlanPreviewMarkdown = memo(function PlanPreviewMarkdown({
         onOpenThreadFile={onOpenThreadFile}
       />
     ),
+    a: (props: MarkdownAnchorProps) => <MarkdownAnchor {...props} onOpenThreadFile={onOpenThreadFile} />,
   }), [onOpenThreadFile])
 
   return (
@@ -1627,6 +1636,10 @@ type MarkdownCodeProps = HTMLAttributes<HTMLElement> & {
   lang?: string
   domNode?: unknown
   streamStatus?: unknown
+}
+
+type MarkdownAnchorProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
+  children?: ReactNode
 }
 
 type MarkdownPreProps = HTMLAttributes<HTMLPreElement> & {
@@ -1670,50 +1683,33 @@ export function MarkdownCode({
   streamStatus: _streamStatus,
   onOpenThreadFile,
   ...rest
-}: MarkdownCodeProps & { onOpenThreadFile?: (path: string, fileRef?: FileRef) => void }) {
-  const env = useThreadFileEnv()
+}: MarkdownCodeProps & { onOpenThreadFile?: OpenThreadFile }) {
+  const binding = useMessageFileReferenceBinding()
   const text = flattenText(children)
-  const filePath = !block ? normalizeThreadFilePathCandidate(text) : null
+  const reference = !block ? parseThreadFileReference(text) : null
 
-  if (filePath && onOpenThreadFile) {
-    const button = (
-      <Button
-                variant="ghost"
-        type="button"
-        data-thread-file-link="true"
-        data-file-link-highlight="true"
-        aria-label={`在右侧预览文件 ${filePath}`}
-        onClick={(event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          onOpenThreadFile(filePath)
-        }}
-        className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded-md border border-[color:color-mix(in_oklab,var(--lume-accent)_28%,var(--lume-border-subtle))] bg-[var(--lume-accent-soft)] px-1.5 py-0.5 align-baseline font-mono text-[0.92em] font-medium text-[var(--lume-accent)] shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)] transition-colors hover:border-[color:color-mix(in_oklab,var(--lume-accent)_46%,var(--lume-border-strong))] hover:text-[var(--lume-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lume-focus-ring)]"
-        title="在右侧预览文件"
-      >
-        <span
-          aria-hidden="true"
-          data-file-link-icon="true"
-          className="inline-flex shrink-0 items-center"
-        >
-          <FileTypeIcon filename={filePath} size={13} />
-        </span>
-        <span className="truncate">{children}</span>
-      </Button>
-    )
-    return (
-      <FileLinkContextMenu
-        context={{ source: "thread", relPath: filePath, threadId: env.threadId, workspaceSlug: env.workspaceSlug }}
-        onPreview={() => onOpenThreadFile(filePath)}
-        inline
-      >
-        {button}
-      </FileLinkContextMenu>
-    )
+  if (reference && onOpenThreadFile) {
+    return <AgentFileReference reference={reference} binding={binding} onOpen={onOpenThreadFile} />
   }
 
   const codeProps = normalizeMarkdownCodeProps(rest as Record<string, unknown>) as HTMLAttributes<HTMLElement>
   return <code {...codeProps}>{children}</code>
+}
+
+export function MarkdownAnchor({
+  href,
+  children,
+  onOpenThreadFile,
+  ...rest
+}: MarkdownAnchorProps & { onOpenThreadFile?: OpenThreadFile }) {
+  const binding = useMessageFileReferenceBinding()
+  const reference = typeof href === 'string' && (href.startsWith('@project/') || href.startsWith('@session/'))
+    ? parseThreadFileReference(href, { markdownHref: true })
+    : null
+  if (reference && onOpenThreadFile) {
+    return <AgentFileReference reference={reference} binding={binding} onOpen={onOpenThreadFile} />
+  }
+  return <a {...rest} href={href}>{children}</a>
 }
 
 export function normalizeMarkdownCodeProps(props: Record<string, unknown>): Record<string, unknown> {

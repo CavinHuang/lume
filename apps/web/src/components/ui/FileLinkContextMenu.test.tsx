@@ -23,7 +23,7 @@ describe("buildFileLinkMenuItems", () => {
     expect(labels).toEqual([
       "在右侧预览",
       "用系统应用打开",
-      "在 Finder 中显示",
+      "在文件管理器中显示",
       "复制相对路径",
       "复制绝对路径",
       "另存为…",
@@ -36,6 +36,28 @@ describe("buildFileLinkMenuItems", () => {
     const labels = items.filter((i) => i.kind === "item").map((i) => i.label)
     expect(labels).not.toContain("在右侧预览")
     expect(labels[0]).toBe("用系统应用打开")
+  })
+
+  test("protocol directories expose guarded applicable actions without save-as", () => {
+    const ctx: FileLinkContext = {
+      source: "thread",
+      relPath: "src/components/",
+      protocolReference: "@project/src/components/",
+      isDirectory: true,
+      guardedRef: {
+        ref: { source: "project", scopeId: "ws", relativePath: "src/components" },
+        guard: {
+          kind: "project",
+          workspaceSlug: "ws",
+          expectedProjectRootFingerprint: "a".repeat(64),
+          consumerThreadId: "t1",
+        },
+      },
+    }
+    const labels = buildFileLinkMenuItems(ctx).filter((item) => item.kind === "item").map((item) => item.label)
+    expect(labels).toContain("复制协议引用")
+    expect(labels).toContain("在文件管理器中显示")
+    expect(labels).not.toContain("另存为…")
   })
 
   test("local source: hides copy relative path", () => {

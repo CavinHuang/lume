@@ -608,6 +608,20 @@ function registerFileProtocol() {
   }
   protocol.handle(FILE_PROTOCOL, async (request) => {
     if (request.url.startsWith(`${FILE_PROTOCOL}://preview/`)) {
+      const token = previewTokenFromUrl(request.url)
+      const scope = token ? previewScopes.get(token) : null
+      if (scope?.guardedRef) {
+        try {
+          const resolved = await sidecarHost.call('agent:resolve-guarded-file-ref', { guardedRef: scope.guardedRef }) as { path: string }
+          if (resolve(resolved.path) !== resolve(scope.entryPath)) {
+            previewScopes.revoke(scope.token)
+            return new Response('Forbidden', { status: 403 })
+          }
+        } catch {
+          previewScopes.revoke(scope.token)
+          return new Response('Forbidden', { status: 403 })
+        }
+      }
       return createPreviewProtocolResponse(previewScopes, request)
     }
     const workspacesRoot = join(resolveConfigDir(), 'agent-workspaces')
@@ -1161,6 +1175,26 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       shell.showItemInFolder(resolved.path)
       return null
     }
+    case 'open_guarded_file_ref': {
+      const resolved = await sidecarHost.call('agent:resolve-guarded-file-ref', { guardedRef: payload.guardedRef }) as { path: string }
+      const error = await shell.openPath(resolved.path)
+      if (error) throw new Error(error)
+      return null
+    }
+    case 'reveal_guarded_file_ref': {
+      const resolved = await sidecarHost.call('agent:resolve-guarded-file-ref', { guardedRef: payload.guardedRef }) as { path: string }
+      shell.showItemInFolder(resolved.path)
+      return null
+    }
+    case 'save_guarded_file_ref_as': {
+      const filters = Array.isArray(payload.filters) && payload.filters.length > 0 ? payload.filters : undefined
+      const result = await dialog.showSaveDialog(mainWindow, { defaultPath: payload.filename, ...(filters ? { filters } : {}) })
+      if (result.canceled || !result.filePath) return { path: null }
+      const resolved = await sidecarHost.call('agent:resolve-guarded-file-ref', { guardedRef: payload.guardedRef }) as { path: string }
+      ensureFile(resolved.path, '源文件不存在')
+      copyFileSync(resolved.path, result.filePath)
+      return { path: result.filePath }
+    }
     case 'create_file_preview_scope': {
       if (!context.ownerWebContentsId) throw new Error('preview scope owner is missing')
       const resolved = await sidecarHost.call('agent:resolve-file-ref', { ref: payload.ref }) as { path: string }
@@ -1168,6 +1202,19 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         kind: payload.kind,
         ownerWebContentsId: context.ownerWebContentsId,
         entryRef: payload.ref,
+        absolutePath: resolved.path,
+        generation: payload.generation,
+      })
+      return { token: scope.token, url: previewScopeUrl(scope), expiresAt: scope.expiresAt }
+    }
+    case 'create_guarded_file_preview_scope': {
+      if (!context.ownerWebContentsId) throw new Error('preview scope owner is missing')
+      const resolved = await sidecarHost.call('agent:resolve-guarded-file-ref', { guardedRef: payload.guardedRef }) as { path: string }
+      const scope = previewScopes.create({
+        kind: payload.kind,
+        ownerWebContentsId: context.ownerWebContentsId,
+        entryRef: payload.guardedRef.ref,
+        guardedRef: payload.guardedRef,
         absolutePath: resolved.path,
         generation: payload.generation,
       })

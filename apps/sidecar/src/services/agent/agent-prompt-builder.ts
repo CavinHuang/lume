@@ -524,6 +524,26 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     sections.push(`<lume_working_directory ordinary_session="true">${ctx.lumeWorkDir}</lume_working_directory>`);
   }
 
+  if (ctx.projectRoot || ctx.lumeWorkDir) {
+    const lines = [
+      "<file_reference_protocol>",
+      "在主回复、子 Agent 回复和计划 Markdown 中引用本地文件时，只使用行内代码协议，不要创建 Markdown 链接。",
+      ...(ctx.projectRoot ? [
+        `项目根目录: ${ctx.projectRoot}`,
+        "项目根目录内的已知路径写作 `@project/<relative-path>`。"
+      ] : []),
+      ...(ctx.lumeWorkDir ? [
+        `会话文件上下文根目录: ${ctx.lumeWorkDir}`,
+        "会话文件上下文内的已知路径写作 `@session/<relative-path>`。"
+      ] : []),
+      "路径使用 /，移除绝对根前缀；只引用确认位于对应根目录内的目标。",
+      "文本或源码可追加 #L42 或 #L42-L48；目录引用以 / 结尾且不带行号。",
+      "不要引用这两个根目录之外的绝对路径，也不要继续输出无前缀的旧版会话路径。",
+      "</file_reference_protocol>"
+    ];
+    sections.push(lines.join("\n"));
+  }
+
   return sections.join("\n\n");
 }
 

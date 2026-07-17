@@ -14,12 +14,13 @@ import {
   rightPanelWorkspacesAtom,
   tabsAtom,
 } from '@/atoms'
-import { AGENT_IPC_CHANNELS, type FileRef } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type FileRef, type GuardedFileRef, type GuardedFileRefValidationResult } from '@lume/shared'
+import type { OpenThreadFile } from './AgentFileReference'
 
 mock.restore()
 
 let latestAgentMessagesProps: {
-  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onOpenThreadFile?: OpenThreadFile
   onOpenThreadImage?: (attachment: {
     id: string
     filename: string
@@ -70,12 +71,20 @@ mock.module('@/lib/desktop-api', () => ({
   createThread: () => Promise.resolve({ id: 'thread-1' }),
   clearCache: () => Promise.resolve({ cleared: [], skipped: [] }),
   copyFile: () => Promise.resolve(undefined),
+  createFilePreviewScope: () => Promise.resolve({ token: 'preview', url: 'lume-file://preview', expiresAt: 0 }),
+  createGuardedFilePreviewScope: () => Promise.resolve({ token: 'guarded-preview', url: 'lume-file://preview', expiresAt: 0 }),
   openFileDialog: () =>
     (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
   localFilePreviewUrl: (path: string) => `asset://${path}`,
   openInSystem: () => Promise.resolve(undefined),
+  openFileRefInSystem: () => Promise.resolve(undefined),
+  openGuardedFileRefInSystem: () => Promise.resolve(undefined),
   revealPathInSystem: () => Promise.resolve(undefined),
+  revealFileRefInSystem: () => Promise.resolve(undefined),
+  revealGuardedFileRefInSystem: () => Promise.resolve(undefined),
+  revokeFilePreviewScope: () => Promise.resolve(undefined),
   saveFilePathDialog: () => Promise.resolve({ path: '/tmp/lume.txt' }),
+  saveGuardedFileRefAs: () => Promise.resolve({ path: '/tmp/lume.txt' }),
   saveTextFileDialog: () => Promise.resolve({ path: '/tmp/lume.txt' }),
   writeClipboardText: () => Promise.resolve(undefined),
   statFilePaths: () =>
@@ -512,6 +521,75 @@ describe('AgentView plan approval tab behavior', () => {
         await flush()
       })
       expect(toastErrorMock).toHaveBeenCalledWith('legacy conversion failed')
+    } finally {
+      await act(async () => {
+        root?.unmount()
+        root = null
+        await flush()
+      })
+      cleanup()
+    }
+  })
+
+  test('keeps guarded file navigation latest-wins when validations finish out of order', async () => {
+    const { container, cleanup } = installFakeDom()
+    const store = createStore()
+    store.set(tabsAtom, [{ id: 'thread-1', type: 'agent', title: 'Thread', threadId: 'thread-1' }])
+    store.set(activeTabIdAtom, 'thread-1')
+    store.set(agentThreadsAtom, [{
+      id: 'thread-1', title: 'Thread', workspaceId: 'workspace-1', fileContextId: 'context-1',
+      pinned: false, createdAt: 1, updatedAt: 2,
+    }])
+    store.set(agentWorkspacesAtom, [{
+      id: 'workspace-1', name: 'Workspace', slug: 'workspace', createdAt: 1, updatedAt: 2,
+    }])
+    store.set(currentWorkspaceIdAtom, 'workspace-1')
+    store.set(agentStreamingStatesAtom, { 'thread-1': 'idle' })
+    store.set(rightPanelFileWorkspacesAtom, {})
+
+    const validationResolvers: Array<(value: GuardedFileRefValidationResult) => void> = []
+    ;(globalThis as any).__lumeDesktopSidecarCall = (channel: string, payload?: Record<string, unknown>) => {
+      if (channel === AGENT_IPC_CHANNELS.VALIDATE_GUARDED_FILE_REF) {
+        return new Promise<GuardedFileRefValidationResult>((resolve) => validationResolvers.push(resolve))
+      }
+      return sidecarCallMock(channel, payload)
+    }
+    const guardedRef = (relativePath: string): GuardedFileRef => ({
+      ref: { source: 'project', scopeId: 'workspace', relativePath },
+      guard: {
+        kind: 'project', workspaceSlug: 'workspace', expectedProjectRootFingerprint: 'a'.repeat(64),
+        consumerThreadId: 'thread-1',
+      },
+    })
+
+    let root: Root | null = createRoot(container as never)
+    try {
+      await act(async () => {
+        root!.render(<Provider store={store}><AgentView threadId="thread-1" /></Provider>)
+        await flush()
+      })
+
+      const firstRef = guardedRef('src/old.ts')
+      const secondRef = guardedRef('src/new.ts')
+      const first = latestAgentMessagesProps!.onOpenThreadFile!('src/old.ts', undefined, { guardedRef: firstRef })
+      const second = latestAgentMessagesProps!.onOpenThreadFile!('src/new.ts', undefined, { guardedRef: secondRef })
+      expect(validationResolvers).toHaveLength(2)
+
+      await act(async () => {
+        validationResolvers[1]!({ ok: true, entry: { name: 'new.ts', path: 'src/new.ts', isDirectory: false } })
+        await flush()
+      })
+      expect(await second).toBe('opened')
+      expect(store.get(rightPanelFileWorkspacesAtom)['thread-1']?.openTabs.map((tab) => tab.ref.relativePath))
+        .toEqual(['src/new.ts'])
+
+      await act(async () => {
+        validationResolvers[0]!({ ok: true, entry: { name: 'old.ts', path: 'src/old.ts', isDirectory: false } })
+        await flush()
+      })
+      expect(await first).toBe('superseded')
+      expect(store.get(rightPanelFileWorkspacesAtom)['thread-1']?.openTabs.map((tab) => tab.ref.relativePath))
+        .toEqual(['src/new.ts'])
     } finally {
       await act(async () => {
         root?.unmount()

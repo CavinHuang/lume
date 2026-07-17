@@ -1,10 +1,13 @@
 import { describe, expect, mock, test } from 'bun:test'
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { MessageFileReferenceBindingProvider, ThreadFileEnvProvider } from './thread-file-env'
 
 mock.module('@lume/ui', () => ({
   useSmoothStream: ({ content }: { content: string }) => ({ displayedContent: content }),
   MermaidBlock: ({ code }: { code: string }) => <section data-mermaid-block="true">{code}</section>,
+  highlightCode: async () => undefined,
+  highlightToTokens: () => null,
 }))
 
 mock.module('@ant-design/x-markdown', () => ({
@@ -22,6 +25,9 @@ mock.module('@/lib/desktop-api', () => ({
   saveTextFileDialog: async () => undefined,
   saveFilePathDialog: async () => undefined,
   copyFile: async () => undefined,
+  openGuardedFileRefInSystem: async () => undefined,
+  revealGuardedFileRefInSystem: async () => undefined,
+  saveGuardedFileRefAs: async () => undefined,
   sidecarCall: async () => undefined,
   writeClipboardText: async () => undefined,
 }))
@@ -31,7 +37,7 @@ mock.module('./tool-result-renderers', () => ({
 }))
 
 const contentBlockModule = await import('./RuntimeEventContentBlock')
-const { MarkdownCode } = contentBlockModule
+const { MarkdownAnchor, MarkdownCode } = contentBlockModule
 const normalizeMarkdownCodeProps = (contentBlockModule as typeof contentBlockModule & {
   normalizeMarkdownCodeProps?: (props: Record<string, unknown>) => Record<string, unknown>
 }).normalizeMarkdownCodeProps
@@ -53,7 +59,7 @@ describe('RuntimeEventContentBlock markdown file links', () => {
     expect(markup).toContain('data-thread-file-link="true"')
     expect(markup).toContain('data-file-link-icon="true"')
     expect(markup).toContain('data-file-link-highlight="true"')
-    expect(markup).toContain('aria-label="在右侧预览文件 plans/deepseek-open-source-research.md"')
+    expect(markup).toContain('aria-label="旧版会话：plans/deepseek-open-source-research.md"')
   })
 
   test('uses the icon that matches the file extension', () => {
@@ -61,6 +67,55 @@ describe('RuntimeEventContentBlock markdown file links', () => {
     expect(renderFileLink('src/App.tsx')).toContain('lucide-file-code')
     expect(renderFileLink('data/config.json')).toContain('lucide-file-braces')
     expect(renderFileLink('images/diagram.png')).toContain('lucide-file-image')
+  })
+
+  test('renders strict project references with compact paths and separate line labels', () => {
+    const markup = renderToStaticMarkup(
+      <ThreadFileEnvProvider value={{ threadId: 'thread-1', workspaceSlug: 'demo', fileContextId: 'context-1' }}>
+        <MessageFileReferenceBindingProvider value={{ workspaceSlug: 'demo', projectRootFingerprint: 'a'.repeat(64), fileContextId: 'context-1' }}>
+          <MarkdownCode onOpenThreadFile={() => 'opened'}>
+            @project/very/long/nested/component/folder/Component.tsx#L42-L48
+          </MarkdownCode>
+        </MessageFileReferenceBindingProvider>
+      </ThreadFileEnvProvider>,
+    )
+
+    expect(markup).toContain('data-agent-file-reference="true"')
+    expect(markup).toContain('data-file-reference-copy-text="very/long/nested/component/folder/Component.tsx#L42-L48"')
+    expect(markup).toContain('…/folder/Component.tsx')
+    expect(markup).toContain('L42–48')
+    expect(markup).not.toContain('&gt;@project/')
+  })
+
+  test('supports encoded explicit markdown targets and directory icons', () => {
+    const linkMarkup = renderToStaticMarkup(
+      <ThreadFileEnvProvider value={{ threadId: 'thread-1', fileContextId: 'context-1' }}>
+        <MessageFileReferenceBindingProvider value={{ fileContextId: 'context-1' }}>
+          <MarkdownAnchor href="@session/output/config%20file.json" onOpenThreadFile={() => 'opened'}>config</MarkdownAnchor>
+        </MessageFileReferenceBindingProvider>
+      </ThreadFileEnvProvider>,
+    )
+    expect(linkMarkup).toContain('data-file-reference-copy-text="output/config file.json"')
+    expect(linkMarkup).toContain('config file.json')
+
+    const directoryMarkup = renderToStaticMarkup(
+      <MarkdownCode onOpenThreadFile={() => 'opened'}>@project/src/components/</MarkdownCode>,
+    )
+    expect(directoryMarkup).toContain('lucide-folder')
+    expect(directoryMarkup).toContain('data-invalid="true"')
+  })
+
+  test('marks inherited session references unavailable in a fork without touching legacy links', () => {
+    const markup = renderToStaticMarkup(
+      <ThreadFileEnvProvider value={{ threadId: 'fork', fileContextId: 'fork-context' }}>
+        <MessageFileReferenceBindingProvider value={{ fileContextId: 'source-context' }}>
+          <MarkdownCode onOpenThreadFile={() => 'opened'}>@session/files/brief.md</MarkdownCode>
+        </MessageFileReferenceBindingProvider>
+      </ThreadFileEnvProvider>,
+    )
+    expect(markup).toContain('data-invalid="true"')
+    expect(markup).toContain('来自原会话，当前分叉不可用')
+    expect(renderFileLink('plans/legacy.md')).not.toContain('data-invalid="true"')
   })
 
   test('normalizes markdown code class attributes without React DOM warnings', () => {
