@@ -1379,9 +1379,30 @@ export const updateUiStateInputSchema = z.object({
   agentDraftByThreadId: z.record(z.string(), z.string()).optional()
 });
 
+const customThemePaletteColorsSchema = z.object({
+  background: z.string().regex(/^#[0-9a-f]{6}$/i),
+  surface: z.string().regex(/^#[0-9a-f]{6}$/i),
+  text: z.string().regex(/^#[0-9a-f]{6}$/i),
+  muted: z.string().regex(/^#[0-9a-f]{6}$/i),
+  accent: z.string().regex(/^#[0-9a-f]{6}$/i)
+});
+
+const customThemePaletteSchema = z.object({
+  id: z.string().regex(/^custom:[a-z0-9][a-z0-9-]{0,47}$/),
+  name: z.string().trim().min(1).max(32),
+  light: customThemePaletteColorsSchema,
+  dark: customThemePaletteColorsSchema
+});
+
+const themePaletteSchema = z.union([
+  z.enum(["mint", "iris", "clay", "ocean", "sakura", "ember", "mono", "lavender", "olive"]),
+  z.string().regex(/^custom:[a-z0-9][a-z0-9-]{0,47}$/)
+]);
+
 export const updateGeneralSettingsInputSchema = z.object({
   themeMode: z.enum(["system", "light", "dark"]).optional(),
-  themePalette: z.enum(["mint", "iris", "clay", "ocean", "sakura", "ember", "mono", "lavender", "olive"]).optional(),
+  themePalette: themePaletteSchema.optional(),
+  customThemePalettes: z.array(customThemePaletteSchema).max(12).optional(),
   windowBehavior: z.object({
     minimizeToTray: z.boolean().optional(),
     closeToTray: z.boolean().optional()

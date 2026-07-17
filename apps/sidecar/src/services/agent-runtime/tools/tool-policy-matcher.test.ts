@@ -25,6 +25,9 @@ describe("tool-policy-matcher", () => {
     ]);
     expect(expandRuntimeToolPolicyEntries(["group:im"])).toEqual(["send_im_message"]);
     expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_search");
+    expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_recommend");
+    expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_reading_profile");
+    expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_book_context");
   });
 
   test("normalizes Guanlan compact aliases", () => {

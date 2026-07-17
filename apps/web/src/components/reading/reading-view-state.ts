@@ -74,6 +74,7 @@ export interface WereadNotebookBook {
   title: string
   author?: string
   coverUrl?: string
+  openUrl?: string
   noteCount: number
   highlightCount: number
   thoughtCount: number
@@ -493,6 +494,10 @@ function notebookToBook(
   const localBook = localByWereadId.get(bookId)
   const localNoteCount = notesByWereadId.get(bookId) ?? 0
   const status = readWereadBookStatus(raw, bookInfo, progressPercent)
+  const openUrl = readString(raw.deepLink)
+    ?? readString(bookInfo.deepLink)
+    ?? readString(source?.deepLink)
+    ?? readString(source?.url)
   const sort = lastReadAt
     ?? readNumber(raw.sort)
     ?? (useNotebookSort ? notebookCounts?.sort : undefined)
@@ -508,6 +513,7 @@ function notebookToBook(
     ...(readString(bookInfo.cover) ?? readString(bookInfo.coverUrl) ?? readString(raw.cover) ?? readString(raw.coverUrl) ? {
       coverUrl: readString(bookInfo.cover) ?? readString(bookInfo.coverUrl) ?? readString(raw.cover) ?? readString(raw.coverUrl)
     } : {}),
+    ...(openUrl ? { openUrl } : {}),
     noteCount: highlightCount + thoughtCount + bookmarkCount,
     highlightCount,
     thoughtCount,

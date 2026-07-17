@@ -9,7 +9,8 @@ interface WereadClientInput {
 }
 
 const WEREAD_GATEWAY_URL = "https://i.weread.qq.com/api/agent/gateway";
-const WEREAD_SKILL_VERSION = "1.0.3";
+const WEREAD_SKILL_VERSION = "1.0.4";
+const WEREAD_RECENT_PROGRESS_LIMIT = 5;
 
 export class WereadClient {
   private readonly apiKey: string;
@@ -25,18 +26,33 @@ export class WereadClient {
   }
 
   async shelf(): Promise<ReadingSourceBook[]> {
-    const payload = await this.callGateway("/shelf/sync");
-    const books = extractBookArray(payload).map(mapWereadBook);
-    return Promise.all(books.map(async (book) => {
-      const bookId = book.source?.externalId;
-      if (!bookId) return book;
+    const payload = await this.shelfSnapshot();
+    const shelfItems = extractBookArray(payload);
+    const books = shelfItems.map(mapWereadBook);
+    const recentBookIds = shelfItems
+      .map((item, index) => ({
+        bookId: books[index]?.source?.externalId,
+        readUpdateTime: readShelfUpdateTime(item)
+      }))
+      .filter((item): item is { bookId: string; readUpdateTime: number } => Boolean(item.bookId))
+      .sort((left, right) => right.readUpdateTime - left.readUpdateTime)
+      .slice(0, WEREAD_RECENT_PROGRESS_LIMIT);
+    const progressByBookId = new Map(await Promise.all(recentBookIds.map(async ({ bookId }) => {
       const progress = await this.bookProgress(bookId).catch(() => null);
+      return [bookId, progress] as const;
+    })));
+    return books.map((book) => {
+      const progress = book.source?.externalId ? progressByBookId.get(book.source.externalId) : undefined;
       return progress ? mergeWereadProgress(book, progress) : book;
-    }));
+    });
+  }
+
+  async shelfSnapshot(): Promise<unknown> {
+    return this.callGateway("/shelf/sync");
   }
 
   async shelfStats(): Promise<{ total: number; bookCount: number; albumCount: number; mpCount: number }> {
-    return readShelfStats(await this.callGateway("/shelf/sync"));
+    return readShelfStats(await this.shelfSnapshot());
   }
 
   async search(query: string, limit = 10): Promise<ReadingSearchResult[]> {
@@ -66,7 +82,10 @@ export class WereadClient {
 
   async bookmarks(bookId: string): Promise<unknown[]> {
     const payload = await this.callGateway("/book/bookmarklist", { bookId });
-    return withChapterTitles(extractWereadBookmarkItems(payload), readWereadChapterTitles(payload));
+    return withBookmarkDeepLinks(
+      withChapterTitles(extractWereadBookmarkItems(payload), readWereadChapterTitles(payload)),
+      bookId
+    );
   }
 
   async notebooks(): Promise<unknown[]> {
@@ -142,8 +161,32 @@ export class WereadClient {
     })).filter((item) => item.content);
   }
 
-  async readdata(period?: string): Promise<unknown> {
-    return this.callGateway("/readdata/detail", period ? { mode: normalizeReadDataMode(period) } : undefined);
+  async readdata(period?: string, baseTime?: number): Promise<unknown> {
+    return this.callGateway("/readdata/detail", {
+      ...(period ? { mode: normalizeReadDataMode(period) } : {}),
+      ...(typeof baseTime === "number" ? { baseTime } : {})
+    });
+  }
+
+  async bookInfo(bookId: string): Promise<unknown> {
+    return this.callGateway("/book/info", { bookId });
+  }
+
+  async chapters(bookId: string): Promise<unknown> {
+    return this.callGateway("/book/chapterinfo", { bookId });
+  }
+
+  async recommendations(count = 12, maxIdx = 0): Promise<unknown> {
+    return this.callGateway("/book/recommend", { count, maxIdx });
+  }
+
+  async similarBooks(bookId: string, count = 12, maxIdx = 0, sessionId?: string): Promise<unknown> {
+    return this.callGateway("/book/similar", {
+      bookId,
+      count,
+      maxIdx,
+      ...(sessionId ? { sessionId } : {})
+    });
   }
 
   private async callGateway(apiName: string, params: Record<string, unknown> = {}): Promise<unknown> {
@@ -198,6 +241,7 @@ function mapWereadBook(item: Record<string, unknown>): ReadingSourceBook {
   const progressPercent = readProgressPercent(item, bookInfo, source);
   const lastReadAt = readWereadTimestamp(item, bookInfo, source);
   const status = readWereadBookStatus(item, bookInfo, progressPercent);
+  const deepLink = readString(item.deepLink) ?? readString(bookInfo.deepLink) ?? readString(source.deepLink);
   return {
     title,
     author,
@@ -209,7 +253,7 @@ function mapWereadBook(item: Record<string, unknown>): ReadingSourceBook {
       externalId,
       title,
       author,
-      url: externalId ? `https://weread.qq.com/web/book/${externalId}` : undefined
+      url: deepLink ?? (externalId ? `https://weread.qq.com/web/book/${externalId}` : undefined)
     },
     ...(typeof progressPercent === "number" ? { progressPercent } : {}),
     ...(typeof lastReadAt === "number" ? { lastReadAt } : {})
@@ -480,23 +524,49 @@ function normalizeReadDataMode(period: string): string {
     case "week":
     case "weekly":
     case "本周":
-      return "本周";
+      return "weekly";
     case "month":
     case "monthly":
     case "本月":
-      return "本月";
+      return "monthly";
     case "year":
     case "annually":
     case "今年":
-      return "今年";
+      return "annually";
     case "all":
     case "overall":
     case "total":
     case "总计":
-      return "总计";
+      return "overall";
     default:
       return period;
   }
+}
+
+function withBookmarkDeepLinks(items: unknown[], bookId: string): unknown[] {
+  return items.map((item) => {
+    if (!isRecord(item) || readString(item.openUrl)) return item;
+    const chapterUid = readNumber(item.chapterUid) ?? readString(item.chapterUid);
+    const range = readString(item.range);
+    const separator = range?.lastIndexOf("-") ?? -1;
+    if (chapterUid === undefined || !range || separator <= 0 || separator === range.length - 1) return item;
+    const params = new URLSearchParams({
+      bookId,
+      chapterUid: String(chapterUid),
+      rangeStart: range.slice(0, separator),
+      rangeEnd: range.slice(separator + 1)
+    });
+    return { ...item, openUrl: `weread://bestbookmark?${params.toString()}` };
+  });
+}
+
+function readShelfUpdateTime(item: Record<string, unknown>): number {
+  const bookInfo = readBookInfo(item);
+  return readNumber(item.readUpdateTime)
+    ?? readNumber(bookInfo.readUpdateTime)
+    ?? readNumber(item.lectureReadUpdateTime)
+    ?? readNumber(bookInfo.lectureReadUpdateTime)
+    ?? 0;
 }
 
 function mapReviewListType(listType: string): number {

@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 import type { RuntimeAssistantBlock } from './runtime-message-view'
-import { groupAssistantBlocksForMinimal } from './minimal-assistant-grouping'
+import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 
 const text = (id: string): RuntimeAssistantBlock => ({ type: 'text', id, text: `t-${id}` })
 const tool = (id: string): RuntimeAssistantBlock => ({
   type: 'tool_call',
   id,
   toolCall: { id, toolName: 'Bash', input: {}, status: 'completed' },
+})
+const imageTool = (id: string): RuntimeAssistantBlock => ({
+  type: 'tool_call',
+  id,
+  toolCall: { id, toolName: 'image_gen', input: {}, status: 'completed' },
 })
 const think = (id: string): RuntimeAssistantBlock => ({ type: 'thinking', id, text: `k-${id}` })
 const plan = (id: string): RuntimeAssistantBlock => ({
@@ -66,8 +71,38 @@ describe('groupAssistantBlocksForMinimal', () => {
     }
   })
 
+  test('image tools leave the collapsible process and stay in a horizontal group', () => {
+    const result = groupAssistantBlocksForMinimal([
+      tool('1'),
+      imageTool('2'),
+      imageTool('3'),
+      tool('4'),
+    ])
+
+    expect(result.map((segment) => segment.kind)).toEqual(['process', 'image_tools', 'process'])
+    if (result[1].kind === 'image_tools') {
+      expect(result[1].blocks.map((block) => block.toolCall.id)).toEqual(['2', '3'])
+    }
+  })
+
   test('empty input returns no segments', () => {
     const result = groupAssistantBlocksForMinimal([])
     expect(result).toEqual([])
+  })
+})
+
+describe('groupAssistantBlocksForStandard', () => {
+  test('groups only adjacent image tools and preserves other blocks', () => {
+    const result = groupAssistantBlocksForStandard([
+      text('1'),
+      imageTool('2'),
+      imageTool('3'),
+      tool('4'),
+    ])
+
+    expect(result.map((segment) => segment.kind)).toEqual(['inline', 'image_tools', 'inline'])
+    if (result[1].kind === 'image_tools') {
+      expect(result[1].blocks).toHaveLength(2)
+    }
   })
 })

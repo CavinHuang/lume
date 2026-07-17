@@ -43,6 +43,7 @@ describe('general settings state', () => {
     expect(GENERAL_SETTINGS_DEFAULTS).toEqual({
       themeMode: 'system',
       themePalette: 'mint',
+      customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: false,
@@ -66,6 +67,7 @@ describe('general settings state', () => {
     })).toEqual({
       themeMode: 'system',
       themePalette: 'mint',
+      customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: false,
@@ -85,6 +87,7 @@ describe('general settings state', () => {
     expect(mergeGeneralSettings({
       themeMode: 'dark',
       themePalette: 'iris',
+      customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: true,
@@ -102,6 +105,7 @@ describe('general settings state', () => {
     })).toEqual({
       themeMode: 'light',
       themePalette: 'iris',
+      customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
       windowBehavior: {
         minimizeToTray: true,

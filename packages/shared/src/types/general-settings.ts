@@ -3,7 +3,26 @@ import { LUME_LOGGING_DEFAULTS } from "./logging"
 
 export type ThemeMode = "system" | "light" | "dark"
 
-export type ThemePalette = "mint" | "iris" | "clay" | "ocean" | "sakura" | "ember" | "mono" | "lavender" | "olive"
+export type BuiltInThemePalette = "mint" | "iris" | "clay" | "ocean" | "sakura" | "ember" | "mono" | "lavender" | "olive"
+
+export type CustomThemePaletteId = `custom:${string}`
+
+export type ThemePalette = BuiltInThemePalette | CustomThemePaletteId
+
+export interface CustomThemePaletteColors {
+  background: string
+  surface: string
+  text: string
+  muted: string
+  accent: string
+}
+
+export interface CustomThemePalette {
+  id: CustomThemePaletteId
+  name: string
+  light: CustomThemePaletteColors
+  dark: CustomThemePaletteColors
+}
 
 export type AgentMessageDisplayMode = "minimal" | "verbose"
 
@@ -23,6 +42,7 @@ export interface GeneralSettingsUpdateSettings {
 export interface GeneralSettings {
   themeMode: ThemeMode
   themePalette: ThemePalette
+  customThemePalettes: CustomThemePalette[]
   windowBehavior: GeneralSettingsWindowBehavior
   updateSettings: GeneralSettingsUpdateSettings
   agentMessageDisplayMode: AgentMessageDisplayMode
@@ -32,6 +52,7 @@ export interface GeneralSettings {
 export interface UpdateGeneralSettingsInput {
   themeMode?: ThemeMode
   themePalette?: ThemePalette
+  customThemePalettes?: CustomThemePalette[]
   windowBehavior?: Partial<GeneralSettingsWindowBehavior>
   updateSettings?: Partial<GeneralSettingsUpdateSettings>
   agentMessageDisplayMode?: AgentMessageDisplayMode
@@ -121,6 +142,7 @@ export interface TestSearchBackendResult {
 export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   themeMode: "system",
   themePalette: "mint",
+  customThemePalettes: [],
   windowBehavior: {
     minimizeToTray: false,
     closeToTray: false,

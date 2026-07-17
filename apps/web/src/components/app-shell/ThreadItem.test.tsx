@@ -26,6 +26,7 @@ function renderMarkup(streaming: boolean): string {
         onSelect={() => {}}
         onTogglePin={() => {}}
         onArchive={() => {}}
+        onTrash={() => {}}
         onRename={() => {}}
       />
     </Provider>,
@@ -90,6 +91,7 @@ describe('ThreadItem delegate tree', () => {
           onSelect={() => {}}
           onTogglePin={() => {}}
           onArchive={() => {}}
+          onTrash={() => {}}
           onRename={() => {}}
         />
       </Provider>,
@@ -116,6 +118,7 @@ describe('ThreadItem delegate tree', () => {
           onSelect={() => {}}
           onTogglePin={() => {}}
           onArchive={() => {}}
+          onTrash={() => {}}
           onRename={() => {}}
         />
       </Provider>,

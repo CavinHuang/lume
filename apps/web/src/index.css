@@ -136,11 +136,13 @@
 .agent-message-markdown {
   color: var(--lume-text-primary);
   font-weight: 450;
+  line-height: 1.85;
   overflow-wrap: anywhere;
 }
 
 .agent-message-markdown p {
-  margin: 0 0 16px;
+  margin: 0 0 14px;
+  color: var(--lume-text-primary);
 }
 
 .agent-message-markdown p:last-child {
@@ -152,32 +154,128 @@
   font-weight: 700;
 }
 
+.agent-message-markdown a {
+  color: var(--lume-accent);
+  font-weight: 550;
+  text-decoration-color: color-mix(in oklab, var(--lume-accent) 38%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.agent-message-markdown a:hover {
+  text-decoration-color: var(--lume-accent);
+}
+
+.agent-message-markdown blockquote {
+  margin: 18px 0;
+  border: 0;
+  border-left: 3px solid color-mix(in oklab, var(--lume-accent) 58%, var(--lume-border-subtle));
+  border-radius: 0 12px 12px 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--lume-accent) 8%, var(--lume-bg-elevated)) 0%,
+    color-mix(in oklab, var(--lume-accent) 3%, transparent) 72%,
+    transparent 100%
+  );
+  padding: 12px 18px;
+  color: var(--lume-text-secondary);
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.agent-message-markdown blockquote:hover {
+  border-left-color: color-mix(in oklab, var(--lume-accent) 76%, var(--lume-border-subtle));
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--lume-accent) 10%, var(--lume-bg-elevated)) 0%,
+    color-mix(in oklab, var(--lume-accent) 4%, transparent) 72%,
+    transparent 100%
+  );
+}
+
+.agent-message-markdown blockquote p {
+  margin: 0 0 8px;
+  color: inherit;
+}
+
+.agent-message-markdown blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.agent-message-markdown blockquote strong {
+  color: var(--lume-text-primary);
+}
+
 .agent-message-markdown ul,
 .agent-message-markdown ol {
-  margin: 10px 0 22px 20px;
+  margin: 10px 0 18px 20px;
   padding-left: 8px;
 }
 
 .agent-message-markdown li {
-  margin: 5px 0;
+  margin: 4px 0;
   padding-left: 2px;
+  color: var(--lume-text-primary);
+}
+
+.agent-message-markdown li::marker {
+  color: color-mix(in oklab, var(--lume-accent) 70%, var(--lume-text-muted));
 }
 
 .agent-message-markdown h1,
 .agent-message-markdown h2,
 .agent-message-markdown h3,
 .agent-message-markdown h4 {
-  margin: 22px 0 10px;
+  margin: 26px 0 10px;
   color: var(--lume-text-primary);
   font-weight: 700;
-  line-height: 1.45;
+  letter-spacing: -0.018em;
+  line-height: 1.4;
 }
+
+.agent-message-markdown h1 { font-size: 24px; }
+.agent-message-markdown h2 { font-size: 21px; }
+.agent-message-markdown h3 { font-size: 18px; }
+.agent-message-markdown h4 { font-size: 16px; }
 
 .agent-message-markdown h1:first-child,
 .agent-message-markdown h2:first-child,
 .agent-message-markdown h3:first-child,
 .agent-message-markdown h4:first-child {
   margin-top: 0;
+}
+
+.agent-message-markdown hr {
+  height: 1px;
+  margin: 28px 0;
+  border: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--lume-border-subtle) 12%,
+    var(--lume-border-subtle) 88%,
+    transparent
+  );
+}
+
+.agent-message-markdown :not(pre) > code {
+  border: 1px solid color-mix(in oklab, var(--lume-border-subtle) 76%, transparent);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--lume-accent) 6%, var(--lume-bg-elevated)) !important;
+  padding: 0.12em 0.42em;
+  color: color-mix(in oklab, var(--lume-accent) 72%, var(--lume-text-primary)) !important;
+  font-size: 0.88em;
+}
+
+.agent-message-markdown table:not(pre) {
+  margin: 18px 0 22px;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--lume-border-subtle);
+}
+
+.agent-message-markdown th {
+  background: color-mix(in oklab, var(--lume-accent) 6%, var(--lume-bg-elevated));
+  color: var(--lume-text-primary);
+  font-weight: 650;
 }
 
 @keyframes lume-shimmer-text {
@@ -455,6 +553,61 @@
   --sidebar-accent-foreground: var(--lume-text-primary);
   --sidebar-border: var(--lume-border-subtle);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+@keyframes lume-image-generation-breathe {
+  0%, 100% {
+    opacity: 0.28;
+    transform: scale(0.98);
+  }
+  50% {
+    opacity: 0.82;
+    transform: scale(1.02);
+  }
+}
+
+@keyframes lume-image-generation-glow {
+  0%, 100% {
+    opacity: 0.16;
+    transform: translate3d(-14%, 8%, 0) scale(0.9);
+  }
+  50% {
+    opacity: 0.42;
+    transform: translate3d(12%, -6%, 0) scale(1.08);
+  }
+}
+
+.lume-image-generation-loading {
+  position: relative;
+  background: #171717;
+  box-shadow: inset 0 0 64px rgb(0 0 0 / 0.26);
+}
+
+.lume-image-generation-loading::before {
+  position: absolute;
+  inset: 17%;
+  content: '';
+  background-image: radial-gradient(circle, rgb(255 255 255 / 0.68) 1px, transparent 1.35px);
+  background-size: 12px 12px;
+  mask-image: radial-gradient(ellipse at 38% 58%, #000 0%, #000 28%, transparent 76%);
+  animation: lume-image-generation-breathe 1.8s ease-in-out infinite;
+}
+
+.lume-image-generation-loading::after {
+  position: absolute;
+  inset: 18%;
+  content: '';
+  border-radius: 999px;
+  background: radial-gradient(circle, rgb(255 255 255 / 0.07), transparent 68%);
+  filter: blur(18px);
+  animation: lume-image-generation-glow 2.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lume-image-generation-loading::before,
+  .lume-image-generation-loading::after {
+    animation: none;
+  }
 }
 
 :root[data-theme-palette='iris'] {
@@ -823,6 +976,52 @@
   --muted: #2e3120;
   --accent: #393d24;
   --input: rgb(255 255 255 / 14%);
+}
+
+:root[data-theme-palette='custom'] {
+  --lume-bg-app: var(--lume-custom-light-background);
+  --lume-bg-rail: color-mix(in oklab, var(--lume-custom-light-surface) 80%, var(--lume-custom-light-background));
+  --lume-bg-panel: var(--lume-custom-light-surface);
+  --lume-bg-elevated: color-mix(in oklab, var(--lume-custom-light-surface) 96%, var(--lume-custom-light-text));
+  --lume-border-subtle: color-mix(in oklab, var(--lume-custom-light-text) 12%, var(--lume-custom-light-surface));
+  --lume-border-strong: color-mix(in oklab, var(--lume-custom-light-text) 20%, var(--lume-custom-light-surface));
+  --lume-text-primary: var(--lume-custom-light-text);
+  --lume-text-secondary: color-mix(in oklab, var(--lume-custom-light-text) 72%, var(--lume-custom-light-background));
+  --lume-text-muted: var(--lume-custom-light-muted);
+  --lume-accent: var(--lume-custom-light-accent);
+  --lume-accent-2: color-mix(in oklab, var(--lume-custom-light-accent) 65%, var(--lume-custom-light-muted));
+  --lume-accent-soft: color-mix(in oklab, var(--lume-custom-light-accent) 14%, var(--lume-custom-light-surface));
+  --lume-accent-foreground: var(--lume-custom-light-background);
+  --lume-focus-ring: color-mix(in oklab, var(--lume-custom-light-accent) 42%, transparent);
+  --card: var(--lume-bg-panel);
+  --popover: var(--lume-bg-elevated);
+  --secondary: color-mix(in oklab, var(--lume-custom-light-text) 6%, var(--lume-custom-light-surface));
+  --muted: var(--secondary);
+  --accent: var(--lume-accent-soft);
+  --input: var(--lume-border-subtle);
+}
+
+.dark[data-theme-palette='custom'] {
+  --lume-bg-app: var(--lume-custom-dark-background);
+  --lume-bg-rail: color-mix(in oklab, var(--lume-custom-dark-surface) 80%, var(--lume-custom-dark-background));
+  --lume-bg-panel: var(--lume-custom-dark-surface);
+  --lume-bg-elevated: color-mix(in oklab, var(--lume-custom-dark-surface) 90%, var(--lume-custom-dark-text));
+  --lume-border-subtle: color-mix(in oklab, var(--lume-custom-dark-text) 16%, var(--lume-custom-dark-surface));
+  --lume-border-strong: color-mix(in oklab, var(--lume-custom-dark-text) 26%, var(--lume-custom-dark-surface));
+  --lume-text-primary: var(--lume-custom-dark-text);
+  --lume-text-secondary: color-mix(in oklab, var(--lume-custom-dark-text) 76%, var(--lume-custom-dark-background));
+  --lume-text-muted: var(--lume-custom-dark-muted);
+  --lume-accent: var(--lume-custom-dark-accent);
+  --lume-accent-2: color-mix(in oklab, var(--lume-custom-dark-accent) 65%, var(--lume-custom-dark-muted));
+  --lume-accent-soft: color-mix(in oklab, var(--lume-custom-dark-accent) 24%, var(--lume-custom-dark-surface));
+  --lume-accent-foreground: var(--lume-custom-dark-background);
+  --lume-focus-ring: color-mix(in oklab, var(--lume-custom-dark-accent) 46%, transparent);
+  --card: var(--lume-bg-panel);
+  --popover: var(--lume-bg-elevated);
+  --secondary: color-mix(in oklab, var(--lume-custom-dark-text) 10%, var(--lume-custom-dark-surface));
+  --muted: var(--secondary);
+  --accent: var(--lume-accent-soft);
+  --input: var(--lume-border-subtle);
 }
 
 .scrollbar-none::-webkit-scrollbar {

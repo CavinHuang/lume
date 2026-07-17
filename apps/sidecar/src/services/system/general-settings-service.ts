@@ -10,6 +10,9 @@ import { join, resolve, sep } from "node:path";
 import {
   GENERAL_SETTINGS_DEFAULTS,
   type AgentMessageDisplayMode,
+  type BuiltInThemePalette,
+  type CustomThemePalette,
+  type CustomThemePaletteColors,
   type GeneralSettings,
   type LumeLogLevel,
   type PersistedUiState,
@@ -53,12 +56,15 @@ export interface SidecarClearCacheResult {
 }
 
 const CACHE_KEYS: SidecarCacheCleanupKey[] = ["logs", "vectorIndex", "pluginsCache"];
+const CUSTOM_THEME_ID_PATTERN = /^custom:[a-z0-9][a-z0-9-]{0,47}$/;
+const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+const MAX_CUSTOM_THEME_PALETTES = 12;
 
 function isThemeMode(value: unknown): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
 }
 
-function isThemePalette(value: unknown): value is ThemePalette {
+function isBuiltInThemePalette(value: unknown): value is BuiltInThemePalette {
   return value === "mint"
     || value === "iris"
     || value === "clay"
@@ -68,6 +74,54 @@ function isThemePalette(value: unknown): value is ThemePalette {
     || value === "mono"
     || value === "lavender"
     || value === "olive";
+}
+
+function sanitizeCustomThemeColors(input: unknown): CustomThemePaletteColors | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+  const value = input as Partial<CustomThemePaletteColors>;
+  if (!HEX_COLOR_PATTERN.test(value.background ?? "")
+    || !HEX_COLOR_PATTERN.test(value.surface ?? "")
+    || !HEX_COLOR_PATTERN.test(value.text ?? "")
+    || !HEX_COLOR_PATTERN.test(value.muted ?? "")
+    || !HEX_COLOR_PATTERN.test(value.accent ?? "")) {
+    return null;
+  }
+  return {
+    background: value.background!,
+    surface: value.surface!,
+    text: value.text!,
+    muted: value.muted!,
+    accent: value.accent!
+  };
+}
+
+function sanitizeCustomThemePalettes(input: unknown): CustomThemePalette[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const result: CustomThemePalette[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== "object") continue;
+    const value = item as Partial<CustomThemePalette>;
+    const name = typeof value.name === "string" ? value.name.trim().slice(0, 32) : "";
+    const light = sanitizeCustomThemeColors(value.light);
+    const dark = sanitizeCustomThemeColors(value.dark);
+    if (!CUSTOM_THEME_ID_PATTERN.test(value.id ?? "") || !name || !light || !dark || seen.has(value.id!)) {
+      continue;
+    }
+    seen.add(value.id!);
+    result.push({ id: value.id!, name, light, dark });
+    if (result.length >= MAX_CUSTOM_THEME_PALETTES) break;
+  }
+  return result;
+}
+
+function isThemePalette(value: unknown, customThemePalettes: CustomThemePalette[]): value is ThemePalette {
+  return isBuiltInThemePalette(value)
+    || (typeof value === "string" && customThemePalettes.some((theme) => theme.id === value));
 }
 
 function isAgentMessageDisplayMode(value: unknown): value is AgentMessageDisplayMode {
@@ -127,6 +181,7 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
   if (typeof input !== "object" || input === null) {
     return {
       ...GENERAL_SETTINGS_DEFAULTS,
+      customThemePalettes: [],
       windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior },
       updateSettings: { ...GENERAL_SETTINGS_DEFAULTS.updateSettings },
       logging: { ...GENERAL_SETTINGS_DEFAULTS.logging }
@@ -142,12 +197,14 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
     typeof value.updateSettings === "object" && value.updateSettings !== null
       ? value.updateSettings
       : undefined;
+  const customThemePalettes = sanitizeCustomThemePalettes(value.customThemePalettes);
 
   return {
     themeMode: isThemeMode(value.themeMode) ? value.themeMode : GENERAL_SETTINGS_DEFAULTS.themeMode,
-    themePalette: isThemePalette(value.themePalette)
+    themePalette: isThemePalette(value.themePalette, customThemePalettes)
       ? value.themePalette
       : GENERAL_SETTINGS_DEFAULTS.themePalette,
+    customThemePalettes,
     agentMessageDisplayMode: isAgentMessageDisplayMode(value.agentMessageDisplayMode)
       ? value.agentMessageDisplayMode
       : GENERAL_SETTINGS_DEFAULTS.agentMessageDisplayMode,
@@ -273,6 +330,7 @@ export function getPersistedGeneralSettings(): GeneralSettings {
       log.warn("failed to read settings; using general defaults", { error: error.cause ?? error });
       return {
         ...GENERAL_SETTINGS_DEFAULTS,
+        customThemePalettes: [],
         windowBehavior: { ...GENERAL_SETTINGS_DEFAULTS.windowBehavior },
         updateSettings: { ...GENERAL_SETTINGS_DEFAULTS.updateSettings },
         logging: { ...GENERAL_SETTINGS_DEFAULTS.logging }
@@ -285,9 +343,16 @@ export function getPersistedGeneralSettings(): GeneralSettings {
 export async function updatePersistedGeneralSettings(input: UpdateGeneralSettingsInput): Promise<GeneralSettings> {
   const settings = readPersistedSettings() as SidecarSettings;
   const current = sanitizeGeneralSettings(settings.generalSettings);
+  const customThemePalettes = input.customThemePalettes === undefined
+    ? current.customThemePalettes
+    : sanitizeCustomThemePalettes(input.customThemePalettes);
+  const requestedThemePalette = input.themePalette ?? current.themePalette;
   const next: GeneralSettings = {
     themeMode: input.themeMode ?? current.themeMode,
-    themePalette: input.themePalette ?? current.themePalette,
+    themePalette: isThemePalette(requestedThemePalette, customThemePalettes)
+      ? requestedThemePalette
+      : GENERAL_SETTINGS_DEFAULTS.themePalette,
+    customThemePalettes,
     agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
     logging: sanitizeLoggingSettings({ ...current.logging, ...(input.logging ?? {}) }),
     windowBehavior: {

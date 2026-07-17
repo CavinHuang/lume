@@ -80,7 +80,9 @@ describe("default skills inventory", () => {
     expect(meta.disableModelInvocation).not.toBe(true);
     expect(meta.allowedTools).toEqual(["personalize_ui"]);
     expect(content).toContain("personalize_ui");
-    expect(content).toContain("只支持 themeMode、activeView、promptSidebarOpen、sidePanelOpen");
+    expect(content).toContain("支持 themeMode、themePalette、customThemePalettes、activeView、promptSidebarOpen、sidePanelOpen");
+    expect(content).toContain("upsert_theme");
+    expect(content).toContain("delete_theme");
   });
 
   test("docsmith can use the real Office package tools while guarding unavailable Office tools", () => {

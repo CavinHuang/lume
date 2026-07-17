@@ -23,7 +23,7 @@ import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
 import { summarizeMessageForPreview } from '@/components/app-shell/ThreadMiniMapPopover'
 import type { TodoBlockData } from './runtime-message-view'
 import { threadMessagesCache } from './thread-messages-cache'
-import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
+import { useBootstrapGeneralSettings, useSyncGeneralSettingsAfterPersonalize } from '@/lib/use-general-settings'
 import {
   collectNewRuntimeMessageIds,
   collectConversationMinimapItems,
@@ -52,6 +52,7 @@ interface AgentMessagesProps {
 export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThreadImage, onOpenMemorySource }: AgentMessagesProps) {
   useBootstrapGeneralSettings()
   const runtimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId))?.events ?? []
+  useSyncGeneralSettingsAfterPersonalize(runtimeEvents)
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)

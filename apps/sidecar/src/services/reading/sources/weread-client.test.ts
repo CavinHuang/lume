@@ -41,12 +41,12 @@ describe("WereadClient", () => {
     expect(calls.every((call) => call.auth === "Bearer secret-key")).toBeTrue();
     expect(calls.every((call) => call.contentType?.includes("application/json"))).toBeTrue();
     expect(calls.map((call) => call.body)).toEqual([
-      { api_name: "/shelf/sync", skill_version: "1.0.3" },
-      { api_name: "/user/notebooks", count: 500, skill_version: "1.0.3" },
-      { api_name: "/book/bookmarklist", bookId: "wr-1", skill_version: "1.0.3" },
-      { api_name: "/review/list/mine", bookid: "wr-1", count: 50, synckey: 0, skill_version: "1.0.3" },
-      { api_name: "/readdata/detail", mode: "本周", skill_version: "1.0.3" },
-      { api_name: "/store/search", keyword: "置身事内", scope: 10, maxIdx: 0, count: 3, skill_version: "1.0.3" }
+      { api_name: "/shelf/sync", skill_version: "1.0.4" },
+      { api_name: "/user/notebooks", count: 500, skill_version: "1.0.4" },
+      { api_name: "/book/bookmarklist", bookId: "wr-1", skill_version: "1.0.4" },
+      { api_name: "/review/list/mine", bookid: "wr-1", count: 50, synckey: 0, skill_version: "1.0.4" },
+      { api_name: "/readdata/detail", mode: "weekly", skill_version: "1.0.4" },
+      { api_name: "/store/search", keyword: "置身事内", scope: 10, maxIdx: 0, count: 3, skill_version: "1.0.4" }
     ]);
     expect(calls.some((call) => "params" in call.body)).toBeFalse();
   });
@@ -104,7 +104,8 @@ describe("WereadClient", () => {
       }
     });
 
-    await expect(client.shelf()).resolves.toMatchObject([
+    const books = await client.shelf();
+    expect(books).toMatchObject([
       {
         title: "我在北京送快递",
         source: { externalId: "wr-1" },
@@ -155,6 +156,7 @@ describe("WereadClient", () => {
                   title: "好吗好的",
                   author: "大冰",
                   cover: "https://cover.example.com/ok.jpg",
+                  deepLink: "weread://reading?bId=wr-progress",
                   readUpdateTime: 1717300000
                 }
               }
@@ -173,7 +175,8 @@ describe("WereadClient", () => {
       }
     });
 
-    await expect(client.shelf()).resolves.toMatchObject([
+    const books = await client.shelf();
+    expect(books).toMatchObject([
       {
         title: "好吗好的",
         source: { externalId: "wr-progress" },
@@ -182,6 +185,7 @@ describe("WereadClient", () => {
         status: "reading"
       }
     ]);
+    expect(books[0]?.source?.url).toBe("weread://reading?bId=wr-progress");
     expect(calls.map((call) => call.api_name)).toEqual([
       "/shelf/sync",
       "/book/getprogress"
@@ -202,14 +206,68 @@ describe("WereadClient", () => {
       }
     });
 
-    await expect(client.readdata("all")).resolves.toEqual({
+    await expect(client.readdata("all", 0)).resolves.toEqual({
       totalDays: 564,
       readTime: 2851200
     });
     expect(calls[0]).toMatchObject({
       api_name: "/readdata/detail",
-      mode: "总计"
+      mode: "overall",
+      baseTime: 0
     });
+  });
+
+  test("limits progress enrichment to the five most recently read shelf books", async () => {
+    const progressBookIds: string[] = [];
+    const client = new WereadClient({
+      apiKey: "secret-key",
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        if (body.api_name === "/shelf/sync") {
+          return jsonResponse({
+            books: Array.from({ length: 7 }, (_, index) => ({
+              bookId: `wr-${index + 1}`,
+              title: `第 ${index + 1} 本`,
+              readUpdateTime: index + 1
+            }))
+          });
+        }
+        if (body.api_name === "/book/getprogress") {
+          progressBookIds.push(String(body.bookId));
+          return jsonResponse({ book: { bookId: body.bookId, progress: 50 } });
+        }
+        return jsonResponse({});
+      }
+    });
+
+    const books = await client.shelf();
+
+    expect(progressBookIds).toEqual(["wr-7", "wr-6", "wr-5", "wr-4", "wr-3"]);
+    expect(books.find((book) => book.source?.externalId === "wr-7")?.progressPercent).toBe(50);
+    expect(books.find((book) => book.source?.externalId === "wr-2")?.progressPercent).toBeUndefined();
+  });
+
+  test("calls the official detail, chapter, and recommendation APIs with required paging parameters", async () => {
+    const calls: Record<string, unknown>[] = [];
+    const client = new WereadClient({
+      apiKey: "secret-key",
+      fetch: async (_url, init) => {
+        calls.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+        return jsonResponse({});
+      }
+    });
+
+    await client.bookInfo("wr-1");
+    await client.chapters("wr-1");
+    await client.recommendations();
+    await client.similarBooks("wr-1", 8, 20, "session-1");
+
+    expect(calls).toEqual([
+      { api_name: "/book/info", bookId: "wr-1", skill_version: "1.0.4" },
+      { api_name: "/book/chapterinfo", bookId: "wr-1", skill_version: "1.0.4" },
+      { api_name: "/book/recommend", count: 12, maxIdx: 0, skill_version: "1.0.4" },
+      { api_name: "/book/similar", bookId: "wr-1", count: 8, maxIdx: 20, sessionId: "session-1", skill_version: "1.0.4" }
+    ]);
   });
 
   test("classifies WeRead books with finishedDate as finished", async () => {
@@ -320,7 +378,7 @@ describe("WereadClient", () => {
         if (body.api_name === "/book/bookmarklist") {
           return jsonResponse({
             chapters: [{ chapterUid: 1001, title: "最后一个义工" }],
-            updated: [{ bookmarkId: "b1", chapterUid: 1001, markText: "先好好去挣钱。" }]
+            updated: [{ bookmarkId: "b1", chapterUid: 1001, range: "120-138", markText: "先好好去挣钱。" }]
           });
         }
         if (body.api_name === "/book/bestbookmarks") {
@@ -337,7 +395,8 @@ describe("WereadClient", () => {
     await expect(client.bookmarks("wr-1")).resolves.toMatchObject([
       {
         bookmarkId: "b1",
-        chapterTitle: "最后一个义工"
+        chapterTitle: "最后一个义工",
+        openUrl: "weread://bestbookmark?bookId=wr-1&chapterUid=1001&rangeStart=120&rangeEnd=138"
       }
     ]);
     await expect(client.bestBookmarks("wr-1")).resolves.toMatchObject([

@@ -90,7 +90,8 @@ describe('LumeSidebar', () => {
       onCreateWorkspace: () => {},
       onOpenThread: () => {},
       onToggleThreadPin: () => {},
-      onDeleteThread: () => {},
+      onArchiveThread: () => {},
+      onTrashThread: () => {},
       onRenameThread: () => {},
     })
     const recycleBinButton = findButtonByLabel(tree, '回收站')
@@ -110,6 +111,8 @@ describe('LumeSidebar', () => {
 
   test('workspace rows receive the toggle handler for title clicks', () => {
     const onToggleWorkspace = mock()
+    const onArchiveThread = mock()
+    const onTrashThread = mock()
     const model = buildLumeSidebarViewModel({
       workspaces: [createWorkspace()],
       threads: [],
@@ -131,7 +134,8 @@ describe('LumeSidebar', () => {
       onCreateWorkspace: () => {},
       onOpenThread: () => {},
       onToggleThreadPin: () => {},
-      onDeleteThread: () => {},
+      onArchiveThread,
+      onTrashThread,
       onRenameThread: () => {},
       onToggleWorkspacePin: () => {},
       onRenameWorkspace: () => {},
@@ -141,5 +145,7 @@ describe('LumeSidebar', () => {
 
     expect(workspaceItem).not.toBeNull()
     expect(workspaceItem?.props.onToggleWorkspace).toBe(onToggleWorkspace)
+    expect(workspaceItem?.props.onArchiveThread).toBe(onArchiveThread)
+    expect(workspaceItem?.props.onTrashThread).toBe(onTrashThread)
   })
 })

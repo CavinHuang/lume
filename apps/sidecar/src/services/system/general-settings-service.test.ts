@@ -19,6 +19,25 @@ import {
   updatePersistedGeneralSettings
 } from "./general-settings-service";
 
+const customTheme = {
+  id: "custom:quiet-forest" as const,
+  name: "静谧森林",
+  light: {
+    background: "#f7faf7",
+    surface: "#ffffff",
+    text: "#1f2a22",
+    muted: "#6f7f73",
+    accent: "#3f7d58"
+  },
+  dark: {
+    background: "#111713",
+    surface: "#1c261f",
+    text: "#eef7f0",
+    muted: "#91a697",
+    accent: "#76c893"
+  }
+};
+
 describe("general-settings-service", () => {
   let prevConfigDir: string | undefined;
   let tempConfigDir = "";
@@ -45,6 +64,7 @@ describe("general-settings-service", () => {
     expect(getPersistedGeneralSettings()).toEqual({
       themeMode: "system",
       themePalette: "mint",
+      customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -75,6 +95,7 @@ describe("general-settings-service", () => {
     expect(first).toEqual({
       themeMode: "dark",
       themePalette: "mint",
+      customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -99,6 +120,7 @@ describe("general-settings-service", () => {
     expect(second).toEqual({
       themeMode: "dark",
       themePalette: "mint",
+      customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -119,6 +141,7 @@ describe("general-settings-service", () => {
       generalSettings?: {
         themeMode?: string;
         themePalette?: string;
+        customThemePalettes?: unknown[];
         agentMessageDisplayMode?: string;
         logging?: typeof LUME_LOGGING_DEFAULTS;
         windowBehavior?: {
@@ -138,6 +161,7 @@ describe("general-settings-service", () => {
     expect(raw.generalSettings).toEqual({
       themeMode: "dark",
       themePalette: "mint",
+      customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
@@ -193,6 +217,21 @@ describe("general-settings-service", () => {
     }
   });
 
+  test("自定义主题会持久化，删除当前主题时回退薄荷极光", async () => {
+    const created = await updatePersistedGeneralSettings({
+      customThemePalettes: [customTheme],
+      themePalette: customTheme.id
+    });
+
+    expect(created.customThemePalettes).toEqual([customTheme]);
+    expect(created.themePalette).toBe(customTheme.id);
+    expect(getPersistedGeneralSettings().customThemePalettes).toEqual([customTheme]);
+
+    const deleted = await updatePersistedGeneralSettings({ customThemePalettes: [] });
+    expect(deleted.customThemePalettes).toEqual([]);
+    expect(deleted.themePalette).toBe("mint");
+  });
+
   test("更新 generalSettings 时保留既有 uiState", async () => {
     const settingsPath = getSettingsPath();
     writeFileSync(settingsPath, JSON.stringify({
@@ -240,6 +279,7 @@ describe("general-settings-service", () => {
     expect(getPersistedGeneralSettings()).toEqual({
       themeMode: "system",
       themePalette: "mint",
+      customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {

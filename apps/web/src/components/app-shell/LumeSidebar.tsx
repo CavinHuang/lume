@@ -36,7 +36,8 @@ interface LumeSidebarProps {
   onCreateWorkspace: () => void
   onOpenThread: (threadId: string, workspaceId?: string) => void
   onToggleThreadPin: (threadId: string) => void
-  onDeleteThread: (threadId: string) => void
+  onArchiveThread: (threadId: string) => void
+  onTrashThread: (threadId: string) => void
   onRenameThread: (threadId: string, title: string) => void
   onToggleWorkspacePin: (workspaceId: string) => void
   onRenameWorkspace: (workspaceId: string, name: string) => void
@@ -56,7 +57,8 @@ export function LumeSidebar({
   onCreateWorkspace,
   onOpenThread,
   onToggleThreadPin,
-  onDeleteThread,
+  onArchiveThread,
+  onTrashThread,
   onRenameThread,
   onToggleWorkspacePin,
   onRenameWorkspace,
@@ -246,7 +248,8 @@ export function LumeSidebar({
               onToggleWorkspace={onToggleWorkspace}
               onOpenThread={onOpenThread}
               onToggleThreadPin={onToggleThreadPin}
-              onArchiveThread={onDeleteThread}
+              onArchiveThread={onArchiveThread}
+              onTrashThread={onTrashThread}
               onRenameThread={onRenameThread}
               onToggleWorkspacePin={onToggleWorkspacePin}
               onRenameWorkspace={onRenameWorkspace}

@@ -11,6 +11,7 @@ import {
   reviseReadingNote
 } from "../../../reading/reading-store";
 import { WereadClient } from "../../../reading/sources/weread-client";
+import { buildWereadReadingProfile } from "../../../reading/weread-reading-profile";
 import { generateReadingShareCard } from "../../../reading/share-card-service";
 import {
   exportAllReadingNotes,
@@ -22,13 +23,18 @@ import { createSdkJsonResultTool } from "../sdk-tool-result";
 
 interface WereadToolSource {
   shelf: () => Promise<unknown>;
+  shelfSnapshot: () => Promise<unknown>;
   notebooks: () => Promise<unknown>;
   bookmarks: (bookId: string) => Promise<unknown>;
   bestBookmarks: (bookId: string) => Promise<unknown>;
   reviews: (bookId: string) => Promise<unknown>;
   publicReviews: (bookId: string, listType?: string) => Promise<unknown>;
-  readdata: (period?: string) => Promise<unknown>;
+  readdata: (period?: string, baseTime?: number) => Promise<unknown>;
   search: (query: string, limit?: number) => Promise<unknown>;
+  bookInfo: (bookId: string) => Promise<unknown>;
+  chapters: (bookId: string) => Promise<unknown>;
+  recommendations: (count?: number, maxIdx?: number) => Promise<unknown>;
+  similarBooks: (bookId: string, count?: number, maxIdx?: number, sessionId?: string) => Promise<unknown>;
 }
 
 export interface CreateReadingToolsInput {
@@ -283,6 +289,16 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
     createWereadTool("weread_notebooks", "读取已连接微信读书笔记本列表。", {}, async () => ({
       notebooks: await resolveWeread(input).notebooks()
     })),
+    createWereadTool(
+      "weread_reading_profile",
+      "交叉分析微信读书书架、分类、笔记深度和最近 30 天活动。推荐下一本、规划学习路径或生成阅读复盘前优先调用；会区分真读、浅尝、收藏未读和隐藏深读，并明确空数据降级提示。",
+      {},
+      async () => {
+        const source = resolveWeread(input);
+        const [shelf, notebooks] = await Promise.all([source.shelfSnapshot(), source.notebooks()]);
+        return { profile: buildWereadReadingProfile(shelf, notebooks) };
+      }
+    ),
     createWereadTool("weread_bookmarks", "读取指定微信读书书籍的划线。", {
       bookId: { type: "string", minLength: 1 }
     }, async (args) => ({
@@ -307,15 +323,90 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
         optionalString(args.listType)
       )
     }), ["bookId"]),
-    createWereadTool("weread_readdata", "读取微信读书阅读统计。", {}, async () => ({
-      readdata: await resolveWeread(input).readdata()
+    createWereadTool("weread_readdata", "读取微信读书阅读统计，支持自然周、月、年和总计。", {
+      period: { type: "string", enum: ["weekly", "monthly", "annually", "overall"] },
+      baseTime: { type: "number", minimum: 0 }
+    }, async (args) => ({
+      readdata: await resolveWeread(input).readdata(
+        optionalString(args.period),
+        optionalNumber(args.baseTime)
+      )
     })),
     createWereadTool("weread_search", "搜索微信读书书籍。", {
       query: { type: "string", minLength: 1 },
       limit: { type: "number", minimum: 1, maximum: 20 }
     }, async (args) => ({
       results: await resolveWeread(input).search(requiredString(args.query, "query"), optionalNumber(args.limit))
-    }), ["query"])
+    }), ["query"]),
+    createWereadTool("weread_book_info", "读取微信读书书籍详情。", {
+      bookId: { type: "string", minLength: 1 }
+    }, async (args) => ({
+      book: await resolveWeread(input).bookInfo(requiredString(args.bookId, "bookId"))
+    }), ["bookId"]),
+    createWereadTool("weread_chapters", "读取微信读书书籍章节目录。", {
+      bookId: { type: "string", minLength: 1 }
+    }, async (args) => ({
+      chapters: await resolveWeread(input).chapters(requiredString(args.bookId, "bookId"))
+    }), ["bookId"]),
+    createWereadTool(
+      "weread_book_context",
+      "一次读取指定书籍的详情、章节、个人划线和想法，用于按章节整理结构化读书笔记；不包含公开书评，避免把他人观点混入用户笔记。",
+      { bookId: { type: "string", minLength: 1 } },
+      async (args) => {
+        const bookId = requiredString(args.bookId, "bookId");
+        const source = resolveWeread(input);
+        const [book, chapters, bookmarks, reviews] = await Promise.all([
+          source.bookInfo(bookId),
+          source.chapters(bookId),
+          source.bookmarks(bookId),
+          source.reviews(bookId)
+        ]);
+        const bookmarkCount = Array.isArray(bookmarks) ? bookmarks.length : 0;
+        const reviewCount = Array.isArray(reviews) ? reviews.length : 0;
+        const personalNoteCount = bookmarkCount + reviewCount;
+        return {
+          bookId,
+          book,
+          chapters,
+          bookmarks,
+          reviews,
+          contextSummary: {
+            bookmarkCount,
+            reviewCount,
+            personalNoteCount,
+            readiness: personalNoteCount === 0 ? "empty" : personalNoteCount < 5 ? "sparse" : "ready",
+            guidance: personalNoteCount === 0
+              ? "没有个人划线或想法，无法可靠提炼个人读书笔记；可询问是否改看公开高赞划线。"
+              : personalNoteCount < 5
+                ? "个人材料较少，生成的笔记会偏短；可先询问是否补充公开高赞划线作为参考。"
+                : "个人材料足够，可按章节归位后提炼核心论点。"
+          }
+        };
+      },
+      ["bookId"]
+    ),
+    createWereadTool("weread_recommend", "读取微信读书个性化推荐。", {
+      count: { type: "number", minimum: 1, maximum: 20 },
+      maxIdx: { type: "number", minimum: 0 }
+    }, async (args) => ({
+      recommendations: await resolveWeread(input).recommendations(
+        optionalNumber(args.count),
+        optionalNumber(args.maxIdx)
+      )
+    })),
+    createWereadTool("weread_similar", "根据指定微信读书书籍读取相似推荐。", {
+      bookId: { type: "string", minLength: 1 },
+      count: { type: "number", minimum: 1, maximum: 20 },
+      maxIdx: { type: "number", minimum: 0 },
+      sessionId: { type: "string" }
+    }, async (args) => ({
+      recommendations: await resolveWeread(input).similarBooks(
+        requiredString(args.bookId, "bookId"),
+        optionalNumber(args.count),
+        optionalNumber(args.maxIdx),
+        optionalString(args.sessionId)
+      )
+    }), ["bookId"])
   ];
 }
 

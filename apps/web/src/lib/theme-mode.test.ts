@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
+import type { CustomThemePalette } from '@lume/shared'
 import {
   readStoredThemeMode,
   readStoredThemePalette,
@@ -24,6 +25,34 @@ const localStorageMock = {
 const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window
 const originalDocument = (globalThis as typeof globalThis & { document?: unknown }).document
 const dataset: Record<string, string> = {}
+const styleProperties = new Map<string, string>()
+const style = {
+  setProperty(name: string, value: string) {
+    styleProperties.set(name, value)
+  },
+  removeProperty(name: string) {
+    styleProperties.delete(name)
+  },
+}
+
+const customTheme: CustomThemePalette = {
+  id: 'custom:quiet-forest',
+  name: '静谧森林',
+  light: {
+    background: '#f7faf7',
+    surface: '#ffffff',
+    text: '#1f2a22',
+    muted: '#6f7f73',
+    accent: '#3f7d58',
+  },
+  dark: {
+    background: '#111713',
+    surface: '#1c261f',
+    text: '#eef7f0',
+    muted: '#91a697',
+    accent: '#76c893',
+  },
+}
 
 beforeAll(() => {
   Object.defineProperty(globalThis, 'window', {
@@ -35,7 +64,7 @@ beforeAll(() => {
   Object.defineProperty(globalThis, 'document', {
     configurable: true,
     value: {
-      documentElement: { dataset },
+      documentElement: { dataset, style },
     },
   })
 })
@@ -58,7 +87,10 @@ describe('resolveShouldUseDark', () => {
 afterEach(() => {
   localStorageMock.removeItem('lume:theme-mode')
   localStorageMock.removeItem('lume:theme-palette')
+  localStorageMock.removeItem('lume:custom-theme-cache')
   delete dataset.themePalette
+  delete dataset.customThemeId
+  styleProperties.clear()
 })
 
 afterAll(() => {
@@ -113,5 +145,15 @@ describe('theme palette runtime', () => {
 
     expect(localStorageMock.getItem('lume:theme-palette')).toBe('clay')
     expect(dataset.themePalette).toBe('clay')
+  })
+
+  test('stores and applies a custom theme through shared custom variables', () => {
+    setThemePalette(customTheme.id, [customTheme])
+
+    expect(localStorageMock.getItem('lume:theme-palette')).toBe(customTheme.id)
+    expect(dataset.themePalette).toBe('custom')
+    expect(dataset.customThemeId).toBe(customTheme.id)
+    expect(styleProperties.get('--lume-custom-light-background')).toBe('#f7faf7')
+    expect(styleProperties.get('--lume-custom-dark-accent')).toBe('#76c893')
   })
 })

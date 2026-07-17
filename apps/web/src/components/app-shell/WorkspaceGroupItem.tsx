@@ -28,6 +28,7 @@ interface WorkspaceGroupItemProps {
   onOpenThread: (threadId: string, workspaceId?: string) => void
   onToggleThreadPin: (threadId: string) => void
   onArchiveThread: (threadId: string) => void
+  onTrashThread: (threadId: string) => void
   onRenameThread: (threadId: string, title: string) => void
   onToggleWorkspacePin: (workspaceId: string) => void
   onRenameWorkspace: (workspaceId: string, name: string) => void
@@ -46,6 +47,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
   onOpenThread,
   onToggleThreadPin,
   onArchiveThread,
+  onTrashThread,
   onRenameThread,
   onToggleWorkspacePin,
   onRenameWorkspace,
@@ -235,6 +237,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
                   onSelect={onOpenThread}
                   onTogglePin={onToggleThreadPin}
                   onArchive={onArchiveThread}
+                  onTrash={onTrashThread}
                   onRename={onRenameThread}
                 />
               ))}

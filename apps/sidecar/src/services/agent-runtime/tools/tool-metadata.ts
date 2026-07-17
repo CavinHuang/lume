@@ -426,12 +426,18 @@ registerToolMetadata({
 for (const name of [
   "weread_shelf",
   "weread_notebooks",
+  "weread_reading_profile",
   "weread_bookmarks",
   "weread_best_bookmarks",
   "weread_reviews",
   "weread_public_reviews",
   "weread_readdata",
-  "weread_search"
+  "weread_search",
+  "weread_book_info",
+  "weread_chapters",
+  "weread_book_context",
+  "weread_recommend",
+  "weread_similar"
 ]) {
   registerToolMetadata({
     name,

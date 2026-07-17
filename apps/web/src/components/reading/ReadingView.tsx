@@ -855,14 +855,31 @@ function WereadBookPanel({
   const reviews = detail?.reviews ?? []
   const bestBookmarks = detail?.bestBookmarks ?? []
   const publicReviews = detail?.publicReviews ?? []
+  const openBook = async () => {
+    if (!book.openUrl) return
+    try {
+      await openExternal(book.openUrl)
+    } catch (error) {
+      console.error('[ReadingView] 打开微信读书书籍失败:', error)
+      toast.error('打开微信读书失败')
+    }
+  }
   return (
     <section>
       <div className="mx-auto max-w-[760px]">
-        <div>
-          <h2 className="text-[20px] font-semibold leading-8">《{book.title}》</h2>
-          <div className="mt-1 text-[13px] text-[var(--text-3)]">
-            {[book.author, `${book.noteCount} 条笔记`, '微信读书', readData?.readDays ? `${readData.readDays} 天阅读` : undefined].filter(Boolean).join(' · ')}
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-[20px] font-semibold leading-8">《{book.title}》</h2>
+            <div className="mt-1 text-[13px] text-[var(--text-3)]">
+              {[book.author, `${book.noteCount} 条笔记`, '微信读书', readData?.readDays ? `${readData.readDays} 天阅读` : undefined].filter(Boolean).join(' · ')}
+            </div>
           </div>
+          {book.openUrl && (
+            <Button variant="outline" type="button" onClick={() => void openBook()} className="shrink-0 gap-1.5">
+              <BookOpen size={14} />
+              打开阅读
+            </Button>
+          )}
         </div>
 
         <div className="mt-5 grid grid-cols-3 overflow-hidden rounded-[8px] bg-[var(--reading-panel)] p-1">

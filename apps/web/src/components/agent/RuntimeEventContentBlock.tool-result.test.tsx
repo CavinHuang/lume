@@ -29,7 +29,9 @@ mock.module('@/lib/desktop-api', () => ({
 }))
 
 mock.module('./tool-result-renderers', () => ({
-  ToolResultRenderer: () => <div data-tool-result-renderer="true">heavy result</div>,
+  ToolResultRenderer: ({ toolName }: { toolName: string }) => (
+    <div data-tool-result-renderer={toolName}>heavy result</div>
+  ),
 }))
 
 const { RuntimeEventContentBlock } = await import('./RuntimeEventContentBlock')
@@ -65,9 +67,51 @@ describe('RuntimeEventContentBlock tool results', () => {
       />,
     )
 
-    expect(markup).toContain('Bash')
-    expect(markup).toContain('已完成')
-    expect(markup).not.toContain('data-tool-result-renderer="true"')
+    expect(markup).toContain('1 个工具调用')
+    expect(markup).not.toContain('data-tool-result-renderer="Bash"')
+  })
+
+  test('renders completed image tools immediately without a tool card', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-image',
+      type: 'assistant',
+      text: '',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      blocks: [
+        {
+          type: 'tool_call',
+          id: 'tool:image-1',
+          toolCall: {
+            id: 'image-1',
+            toolName: 'image_gen',
+            input: { prompt: 'first' },
+            status: 'completed',
+            output: JSON.stringify({ images: [{ threadPath: 'first.png' }] }),
+          },
+        },
+        {
+          type: 'tool_call',
+          id: 'tool:image-2',
+          toolCall: {
+            id: 'image-2',
+            toolName: 'image_gen',
+            input: { prompt: 'second' },
+            status: 'completed',
+            output: JSON.stringify({ images: [{ threadPath: 'second.png' }] }),
+          },
+        },
+      ],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock message={message} threadId="thread-images" />,
+    )
+
+    expect(markup).toContain('data-image-generation-group="2"')
+    expect(markup.match(/data-tool-result-renderer="image_gen"/g)).toHaveLength(2)
+    expect(markup).not.toContain('已完成')
   })
 })
 

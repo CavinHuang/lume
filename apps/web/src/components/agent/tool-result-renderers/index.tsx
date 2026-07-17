@@ -18,9 +18,10 @@ interface ToolResultRendererProps {
   toolName: string
   input: Record<string, unknown>
   result: unknown
+  imagePresentation?: 'default' | 'gallery'
 }
 
-export function ToolResultRenderer({ toolName, input, result }: ToolResultRendererProps): ReactNode {
+export function ToolResultRenderer({ toolName, input, result, imagePresentation }: ToolResultRendererProps): ReactNode {
   switch (toolName) {
     case 'Bash': return <BashResult input={input} result={result} />
     case 'Read': return <ReadResult input={input} result={result} />
@@ -35,7 +36,7 @@ export function ToolResultRenderer({ toolName, input, result }: ToolResultRender
     case 'guanlan_hotnews': return <GuanlanTextResult variant="hotnews" input={input} result={result} />
     case 'guanlan_research': return <GuanlanTextResult variant="research" input={input} result={result} />
     case 'info_extract': return <InfoExtractResult input={input} result={result} />
-    case 'image_gen': return <ImageGenResult input={input} result={result} />
+    case 'image_gen': return <ImageGenResult input={input} result={result} presentation={imagePresentation} />
     case 'TodoWrite': return <TodoResult input={input} result={result} />
     default: return <DefaultResult toolName={toolName} input={input} result={result} />
   }

@@ -80,13 +80,21 @@ describe("create-reading-tools", () => {
     const tools = createSdkReadingTools({
       weread: {
         shelf: async () => [{ title: "置身事内", source: { kind: "weread", externalId: "wr-2" } }],
-        notebooks: async () => [{ title: "置身事内", noteCount: 3 }],
+        shelfSnapshot: async () => ({
+          books: [{ bookId: "wr-2", title: "置身事内", readUpdateTime: 1_717_200_000 }],
+          archive: [{ name: "经济", bookIds: ["wr-2"] }]
+        }),
+        notebooks: async () => [{ bookId: "wr-2", title: "置身事内", noteCount: 3 }],
         bookmarks: async () => [{ chapterTitle: "第一章" }],
         bestBookmarks: async () => [{ markText: "地方政府的行为必须放在制度里理解。", totalCount: 1200 }],
         reviews: async () => [{ content: "很有意思" }],
         publicReviews: async () => [{ content: "这本书讲清楚了制度约束。", likeCount: 88 }],
-        readdata: async () => ({ readingTime: 120 }),
-        search: async () => [{ source: "weread", title: "置身事内", externalId: "wr-2" }]
+        readdata: async (period, baseTime) => ({ readingTime: 120, period, baseTime }),
+        search: async () => [{ source: "weread", title: "置身事内", externalId: "wr-2" }],
+        bookInfo: async (bookId) => ({ bookId, title: "置身事内" }),
+        chapters: async (bookId) => ({ bookId, chapters: [{ chapterUid: 1, title: "第一章" }] }),
+        recommendations: async (count, maxIdx) => ({ count, maxIdx, books: [{ bookId: "wr-3", title: "县中的孩子" }] }),
+        similarBooks: async (bookId, count, maxIdx, sessionId) => ({ bookId, count, maxIdx, sessionId, books: [{ bookId: "wr-4", title: "中国式现代化" }] })
       }
     });
 
@@ -99,6 +107,12 @@ describe("create-reading-tools", () => {
     await expect(callTool(resolveTool(tools, "weread_notebooks"), {})).resolves.toMatchObject({
       notebooks: [{ title: "置身事内", noteCount: 3 }]
     });
+    await expect(callTool(resolveTool(tools, "weread_reading_profile"), {})).resolves.toMatchObject({
+      profile: {
+        summary: { shelfBookCount: 1, notebookBookCount: 1, shelvedUnreadCount: 0 },
+        categories: [{ name: "经济", bookCount: 1 }]
+      }
+    });
     await expect(callTool(resolveTool(tools, "weread_best_bookmarks"), { bookId: "wr-2" })).resolves.toMatchObject({
       bookmarks: [{ markText: "地方政府的行为必须放在制度里理解。", totalCount: 1200 }]
     });
@@ -107,6 +121,29 @@ describe("create-reading-tools", () => {
     });
     await expect(callTool(resolveTool(tools, "weread_search"), { query: "置身事内" })).resolves.toMatchObject({
       results: [{ title: "置身事内" }]
+    });
+    await expect(callTool(resolveTool(tools, "weread_readdata"), { period: "annually", baseTime: 1735689600 })).resolves.toMatchObject({
+      readdata: { period: "annually", baseTime: 1735689600 }
+    });
+    await expect(callTool(resolveTool(tools, "weread_book_info"), { bookId: "wr-2" })).resolves.toMatchObject({
+      book: { title: "置身事内" }
+    });
+    await expect(callTool(resolveTool(tools, "weread_chapters"), { bookId: "wr-2" })).resolves.toMatchObject({
+      chapters: { chapters: [{ title: "第一章" }] }
+    });
+    await expect(callTool(resolveTool(tools, "weread_book_context"), { bookId: "wr-2" })).resolves.toMatchObject({
+      bookId: "wr-2",
+      book: { title: "置身事内" },
+      chapters: { chapters: [{ title: "第一章" }] },
+      bookmarks: [{ chapterTitle: "第一章" }],
+      reviews: [{ content: "很有意思" }],
+      contextSummary: { personalNoteCount: 2, readiness: "sparse" }
+    });
+    await expect(callTool(resolveTool(tools, "weread_recommend"), { count: 8, maxIdx: 0 })).resolves.toMatchObject({
+      recommendations: { count: 8, maxIdx: 0, books: [{ title: "县中的孩子" }] }
+    });
+    await expect(callTool(resolveTool(tools, "weread_similar"), { bookId: "wr-2", count: 6, maxIdx: 0, sessionId: "session-1" })).resolves.toMatchObject({
+      recommendations: { bookId: "wr-2", count: 6, maxIdx: 0, sessionId: "session-1" }
     });
   });
 

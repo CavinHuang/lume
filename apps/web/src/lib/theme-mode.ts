@@ -1,5 +1,6 @@
 import {
   GENERAL_SETTINGS_DEFAULTS,
+  type CustomThemePalette,
   type ThemeMode,
   type ThemePalette,
 } from '@lume/shared'
@@ -11,6 +12,35 @@ const mediaQuery = typeof window !== 'undefined'
   : null
 const THEME_MODE_STORAGE_KEY = 'lume:theme-mode'
 const THEME_PALETTE_STORAGE_KEY = 'lume:theme-palette'
+const CUSTOM_THEME_CACHE_STORAGE_KEY = 'lume:custom-theme-cache'
+const CUSTOM_THEME_VARIABLES = ['background', 'surface', 'text', 'muted', 'accent'] as const
+
+function isCustomThemePaletteId(value: unknown): value is `custom:${string}` {
+  return typeof value === 'string' && /^custom:[a-z0-9][a-z0-9-]{0,47}$/.test(value)
+}
+
+function readCachedCustomTheme(themePalette: ThemePalette): CustomThemePalette | undefined {
+  if (typeof window === 'undefined' || !isCustomThemePaletteId(themePalette)) return undefined
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(CUSTOM_THEME_CACHE_STORAGE_KEY) ?? 'null') as CustomThemePalette | null
+    return cached?.id === themePalette ? cached : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function clearCustomThemeRuntime(): void {
+  if (typeof window !== 'undefined') {
+    window.localStorage.removeItem(CUSTOM_THEME_CACHE_STORAGE_KEY)
+  }
+  if (typeof document === 'undefined') return
+  delete document.documentElement.dataset.customThemeId
+  for (const mode of ['light', 'dark'] as const) {
+    for (const variable of CUSTOM_THEME_VARIABLES) {
+      document.documentElement.style.removeProperty(`--lume-custom-${mode}-${variable}`)
+    }
+  }
+}
 
 export function resolveShouldUseDark(themeMode: ThemeMode, prefersDark: boolean): boolean {
   return themeMode === 'dark' || (themeMode === 'system' && prefersDark)
@@ -57,12 +87,36 @@ export function getThemeMode(): ThemeMode {
   return currentThemeMode
 }
 
-export function setThemePalette(themePalette: ThemePalette): void {
+export function setThemePalette(
+  themePalette: ThemePalette,
+  customThemePalettes: CustomThemePalette[] = []
+): void {
+  const customTheme = isCustomThemePaletteId(themePalette)
+    ? customThemePalettes.find((theme) => theme.id === themePalette) ?? readCachedCustomTheme(themePalette)
+    : undefined
+  const appliedPalette = customTheme ? themePalette : isCustomThemePaletteId(themePalette) ? 'mint' : themePalette
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem(THEME_PALETTE_STORAGE_KEY, themePalette)
+    window.localStorage.setItem(THEME_PALETTE_STORAGE_KEY, appliedPalette)
+    if (customTheme) {
+      window.localStorage.setItem(CUSTOM_THEME_CACHE_STORAGE_KEY, JSON.stringify(customTheme))
+    }
   }
   if (typeof document !== 'undefined') {
-    document.documentElement.dataset.themePalette = themePalette
+    if (!customTheme) {
+      clearCustomThemeRuntime()
+      document.documentElement.dataset.themePalette = appliedPalette
+      return
+    }
+    document.documentElement.dataset.themePalette = 'custom'
+    document.documentElement.dataset.customThemeId = customTheme.id
+    for (const mode of ['light', 'dark'] as const) {
+      for (const variable of CUSTOM_THEME_VARIABLES) {
+        document.documentElement.style.setProperty(
+          `--lume-custom-${mode}-${variable}`,
+          customTheme[mode][variable]
+        )
+      }
+    }
   }
 }
 
@@ -92,6 +146,7 @@ export function readStoredThemePalette(): ThemePalette {
     || value === 'mono'
     || value === 'lavender'
     || value === 'olive'
+    || isCustomThemePaletteId(value)
     ? value
     : GENERAL_SETTINGS_DEFAULTS.themePalette
 }

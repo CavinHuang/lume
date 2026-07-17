@@ -37,6 +37,21 @@ describe("tool-metadata", () => {
       riskLevel: "low",
       allowedInPlanMode: true
     });
+    expect(getToolMetadata("weread_recommend")).toMatchObject({
+      category: "network",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(getToolMetadata("weread_reading_profile")).toMatchObject({
+      category: "network",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(getToolMetadata("weread_book_context")).toMatchObject({
+      category: "network",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
     expect(getToolMetadata("lume_revise_reading_note")).toMatchObject({
       category: "write",
       riskLevel: "medium",

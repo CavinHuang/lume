@@ -176,7 +176,15 @@ export function LeftSidebar() {
     }
   }
 
-  const deleteThread = (threadId: string) => {
+  const removeThreadFromNavigation = (threadId: string) => {
+    setThreads((previous) => previous.filter((item) => item.id !== threadId))
+    setTabs((previous) => previous.filter((tab) => tab.id !== threadId))
+    if (activeTabId === threadId) {
+      setActiveTabId(null)
+    }
+  }
+
+  const archiveThread = (threadId: string) => {
     const thread = threads.find((item) => item.id === threadId)
     if (!thread) return
 
@@ -188,16 +196,35 @@ export function LeftSidebar() {
       destructive: false,
       onConfirm: async () => {
         try {
-          await sidecarCall('agent:archive-thread', { threadId: thread.id })
-          setThreads((previous) => previous.filter((item) => item.id !== thread.id))
-          setTabs((previous) => previous.filter((tab) => tab.id !== thread.id))
-          if (activeTabId === thread.id) {
-            setActiveTabId(null)
-          }
+          await sidecarCall(AGENT_IPC_CHANNELS.ARCHIVE_THREAD, { threadId: thread.id })
+          removeThreadFromNavigation(thread.id)
           toast.success('已归档')
         } catch (error) {
           console.error('[LeftSidebar] 归档失败:', error)
           toast.error('归档失败')
+        }
+      },
+    })
+  }
+
+  const trashThread = (threadId: string) => {
+    const thread = threads.find((item) => item.id === threadId)
+    if (!thread) return
+
+    setConfirmState({
+      open: true,
+      title: '删除会话',
+      description: `确认将会话「${thread.title}」移入回收站？你可以在设置 > 归档与回收站中恢复。`,
+      confirmLabel: '移入回收站',
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          await sidecarCall(AGENT_IPC_CHANNELS.TRASH_THREAD, { threadId: thread.id })
+          removeThreadFromNavigation(thread.id)
+          toast.success('已移入回收站')
+        } catch (error) {
+          console.error('[LeftSidebar] 移入回收站失败:', error)
+          toast.error('删除失败')
         }
       },
     })
@@ -371,7 +398,8 @@ export function LeftSidebar() {
         onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
         onOpenThread={openThread}
         onToggleThreadPin={togglePin}
-        onDeleteThread={deleteThread}
+        onArchiveThread={archiveThread}
+        onTrashThread={trashThread}
         onRenameThread={renameThread}
         onToggleWorkspacePin={toggleWorkspacePin}
         onRenameWorkspace={renameWorkspace}

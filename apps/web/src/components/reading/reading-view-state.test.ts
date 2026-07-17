@@ -383,7 +383,7 @@ describe('reading view state', () => {
             status: 'reading',
             progressPercent: 42,
             lastReadAt: 1717100000000,
-            source: { kind: 'weread', externalId: 'wr-reading' },
+            source: { kind: 'weread', externalId: 'wr-reading', url: 'weread://reading?bId=wr-reading' },
           },
           {
             title: '书架里的已读书',
@@ -426,6 +426,7 @@ describe('reading view state', () => {
       bookmarkCount: 0,
       progressLabel: '42%',
       status: 'reading',
+      openUrl: 'weread://reading?bId=wr-reading',
     })
     expect(view.books[1]).toMatchObject({
       title: '书架里的已读书',

@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { activeTabIdAtom, agentThreadsAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
-import { groupAssistantBlocksForMinimal } from './minimal-assistant-grouping'
+import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardText } from '@/lib/desktop-api'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
@@ -193,22 +193,14 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
             onUserResizeStart={onUserResizeStart}
           />
         ) : (
-          contentBlocks
-            .filter((block) => block.type !== 'memory_context_used')
-            .map((block, index) => (
-              <RuntimeEventAssistantBlockItem
-                key={block.id}
-                block={block}
-                threadId={threadId}
-                onOpenThreadFile={onOpenThreadFile}
-                onUserResizeStart={onUserResizeStart}
-                isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
-                isActiveThinking={block.type === 'thinking'
-                  && streaming === true
-                  && message.status === 'streaming'
-                  && index === contentBlocks.length - 1}
-              />
-            ))
+          <StandardAssistantContent
+            blocks={minimalBlocks}
+            threadId={threadId}
+            activeStreamingTextBlockId={activeStreamingTextBlockId}
+            isStreamingMessage={streaming === true && message.status === 'streaming'}
+            onOpenThreadFile={onOpenThreadFile}
+            onUserResizeStart={onUserResizeStart}
+          />
         )}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
@@ -1075,6 +1067,104 @@ const MinimalSubagentRow = memo(function MinimalSubagentRow({
   )
 })
 
+function StandardAssistantContent({
+  blocks,
+  threadId,
+  activeStreamingTextBlockId,
+  isStreamingMessage,
+  onOpenThreadFile,
+  onUserResizeStart,
+}: {
+  blocks: RuntimeAssistantBlock[]
+  threadId: string
+  activeStreamingTextBlockId: string | null
+  isStreamingMessage: boolean
+  onOpenThreadFile?: (path: string, fileRef?: FileRef) => void
+  onUserResizeStart?: () => void
+}) {
+  const segments = useMemo(() => groupAssistantBlocksForStandard(blocks), [blocks])
+  const lastBlockId = blocks.at(-1)?.id
+
+  return segments.map((segment) => {
+    if (segment.kind === 'image_tools') {
+      return <ImageGenerationGroup key={`images:${segment.blocks[0]?.id ?? 'empty'}`} blocks={segment.blocks} />
+    }
+    const block = segment.block
+    return (
+      <RuntimeEventAssistantBlockItem
+        key={block.id}
+        block={block}
+        threadId={threadId}
+        onOpenThreadFile={onOpenThreadFile}
+        onUserResizeStart={onUserResizeStart}
+        isStreaming={block.type === 'text' && block.id === activeStreamingTextBlockId}
+        isActiveThinking={block.type === 'thinking' && isStreamingMessage && block.id === lastBlockId}
+      />
+    )
+  })
+}
+
+function ImageGenerationGroup({
+  blocks,
+}: {
+  blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>>
+}) {
+  return (
+    <div
+      data-image-generation-group={blocks.length}
+      className="flex w-full snap-x snap-mandatory gap-3 overflow-x-auto pb-1"
+      aria-label="生成的图片"
+    >
+      {blocks.map((block) => {
+        const { toolCall } = block
+        const input = asRecord(toolCall.input)
+        if (toolCall.status === 'running') {
+          return (
+            <div
+              key={block.id}
+              data-image-generation-loading="true"
+              className="lume-image-generation-loading aspect-square w-[min(21.5vw,216px)] min-w-[190px] shrink-0 snap-start overflow-hidden rounded-[20px]"
+              role="status"
+              aria-label="正在生成图片"
+            >
+              <span className="sr-only">正在生成图片</span>
+            </div>
+          )
+        }
+        if (toolCall.status === 'failed') {
+          return (
+            <div
+              key={block.id}
+              className="flex aspect-square w-[min(21.5vw,216px)] min-w-[190px] shrink-0 snap-start items-center justify-center rounded-[20px] bg-foreground/[0.04] text-[12px] text-destructive/70"
+            >
+              图片生成失败
+            </div>
+          )
+        }
+        return (
+          <div key={block.id} data-image-generation-result="true" className="shrink-0 snap-start">
+            <ToolResultRenderer
+              toolName={toolCall.toolName}
+              input={input}
+              result={parseToolCallOutput(toolCall.output)}
+              imagePresentation="gallery"
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function parseToolCallOutput(output: unknown): unknown {
+  if (typeof output !== 'string') return output
+  try {
+    return JSON.parse(output)
+  } catch {
+    return output
+  }
+}
+
 function MinimalAssistantContent({
   blocks,
   threadId,
@@ -1095,6 +1185,9 @@ function MinimalAssistantContent({
   return (
     <>
       {segments.map((segment) => {
+        if (segment.kind === 'image_tools') {
+          return <ImageGenerationGroup key={`images:${segment.blocks[0]?.id ?? 'empty'}`} blocks={segment.blocks} />
+        }
         if (segment.kind === 'inline') {
           const block = segment.block
           if (block.type === 'text') {

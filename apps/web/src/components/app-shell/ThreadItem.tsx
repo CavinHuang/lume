@@ -50,6 +50,7 @@ interface ThreadItemProps {
   onSelect: (id: string) => void
   onTogglePin: (id: string) => void
   onArchive: (id: string) => void
+  onTrash: (id: string) => void
   onRename: (id: string, title: string) => void
   /** 预留开关：禁用 hover 预览浮层（对齐 Proma disableMiniMap，默认 false） */
   disableMiniMap?: boolean
@@ -60,6 +61,7 @@ export const ThreadItem = memo(function ThreadItem({
   onSelect,
   onTogglePin,
   onArchive,
+  onTrash,
   onRename,
   disableMiniMap = false,
 }: ThreadItemProps) {
@@ -165,7 +167,7 @@ export const ThreadItem = memo(function ThreadItem({
         归档
       </MenuItem>
       <MenuSeparator />
-      <MenuItem destructive onSelect={() => onArchive(thread.id)}>
+      <MenuItem destructive onSelect={() => onTrash(thread.id)}>
         <Trash2 size={14} />
         删除
       </MenuItem>
@@ -299,6 +301,7 @@ export const ThreadItem = memo(function ThreadItem({
             onSelect={onSelect}
             onTogglePin={onTogglePin}
             onArchive={onArchive}
+            onTrash={onTrash}
             onRename={onRename}
           />
         ))}

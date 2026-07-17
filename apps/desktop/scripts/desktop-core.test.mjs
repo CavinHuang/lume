@@ -213,11 +213,12 @@ test('system file helpers preserve old path validation and base64 errors', () =>
   }
 })
 
-test('external URLs are restricted to http and https', () => {
+test('external URLs are restricted to web and WeRead links', () => {
   assert.equal(validateExternalUrl('https://example.com/path'), 'https://example.com/path')
   assert.equal(validateExternalUrl('http://example.com/path'), 'http://example.com/path')
-  assert.throws(() => validateExternalUrl('file:///tmp/secret'), /only http\/https urls are allowed/)
-  assert.throws(() => validateExternalUrl('javascript:alert(1)'), /only http\/https urls are allowed/)
+  assert.equal(validateExternalUrl('weread://reading?bId=123'), 'weread://reading?bId=123')
+  assert.throws(() => validateExternalUrl('file:///tmp/secret'), /only http\/https\/weread urls are allowed/)
+  assert.throws(() => validateExternalUrl('javascript:alert(1)'), /only http\/https\/weread urls are allowed/)
 })
 
 test('WeRead auth window only accepts the expected weread skills URL', () => {

@@ -46,7 +46,9 @@ mock.module('@/lib/desktop-api', () => ({
 }))
 
 mock.module('./tool-result-renderers', () => ({
-  ToolResultRenderer: () => <div data-tool-result-renderer="true">heavy result</div>,
+  ToolResultRenderer: ({ toolName }: { toolName: string }) => (
+    <div data-tool-result-renderer={toolName}>heavy result</div>
+  ),
 }))
 
 const { RuntimeEventContentBlock } = await import('./RuntimeEventContentBlock')
@@ -108,7 +110,8 @@ describe('MinimalAssistantContent', () => {
 
     // Process line summary present, collapsed (no tool result markers rendered).
     expect(markup).toContain('2 个工具调用')
-    expect(markup).not.toContain('data-tool-result-renderer="true"')
+    expect(markup).not.toContain('data-tool-result-renderer="Bash"')
+    expect(markup).not.toContain('data-tool-result-renderer="Read"')
   })
 
   test('shows a running-tool process line while streaming', () => {
@@ -140,6 +143,49 @@ describe('MinimalAssistantContent', () => {
     expect(markup).toContain('正在执行')
     // No total-style X/Y step counter rendered.
     expect(markup).not.toMatch(/步 \/ 总/)
+  })
+
+  test('shows image generation as persistent media instead of a collapsed tool row', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-images',
+      type: 'assistant',
+      text: '',
+      thinking: '',
+      status: 'streaming',
+      toolCalls: [],
+      blocks: [
+        {
+          type: 'tool_call',
+          id: 'tool:image-running',
+          toolCall: {
+            id: 'image-running',
+            toolName: 'image_gen',
+            input: { prompt: 'loading' },
+            status: 'running',
+          },
+        },
+        {
+          type: 'tool_call',
+          id: 'tool:image-completed',
+          toolCall: {
+            id: 'image-completed',
+            toolName: 'image_gen',
+            input: { prompt: 'done' },
+            status: 'completed',
+            output: JSON.stringify({ images: [{ threadPath: 'done.png' }] }),
+          },
+        },
+      ],
+    }
+
+    const markup = renderMessage(
+      <RuntimeEventContentBlock message={message} streaming={true} threadId="thread-images" />,
+    )
+
+    expect(markup).toContain('data-image-generation-group="2"')
+    expect(markup).toContain('data-image-generation-loading="true"')
+    expect(markup).toContain('data-tool-result-renderer="image_gen"')
+    expect(markup).not.toContain('2 个工具调用')
   })
 
   test('completed group shows frozen duration and no running clock', () => {

@@ -1,15 +1,22 @@
 import * as React from 'react'
-import { useAtom } from 'jotai'
-import { Monitor, Moon, Sun, type LucideIcon } from 'lucide-react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { Monitor, Moon, Sparkles, Sun, Trash2, type LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
   AgentMessageDisplayMode,
+  CustomThemePalette,
   ThemeMode,
   ThemePalette,
   UpdateGeneralSettingsInput,
 } from '@lume/shared'
 import { updateGeneralSettings } from '@/lib/desktop-api'
-import { generalSettingsAtom } from '@/atoms'
+import {
+  activeTabIdAtom,
+  currentWorkspaceIdAtom,
+  generalSettingsAtom,
+  tabsAtom,
+  welcomePromptSeedAtom,
+} from '@/atoms'
 import { setThemeMode, setThemePalette } from '@/lib/theme-mode'
 import { useBootstrapGeneralSettings } from '@/lib/use-general-settings'
 import { cn } from '@/lib/utils'
@@ -20,6 +27,8 @@ import {
 } from './general-settings-state'
 
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { upsertWelcomeTab } from '@/components/app-shell/LeftSidebar'
 const THEME_ICONS: Record<ThemeMode, LucideIcon> = {
   system: Monitor,
   light: Sun,
@@ -35,6 +44,11 @@ export function AppearanceSettings() {
   useBootstrapGeneralSettings()
   const [settings, setSettings] = useAtom(generalSettingsAtom)
   const [saving, setSaving] = React.useState(false)
+  const [deleteTarget, setDeleteTarget] = React.useState<CustomThemePalette | null>(null)
+  const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
 
   const persistSettings = async (updates: UpdateGeneralSettingsInput, successMessage: string) => {
     const optimistic = mergeGeneralSettings(settings, updates)
@@ -46,8 +60,8 @@ export function AppearanceSettings() {
       if (updates.themeMode) {
         setThemeMode(saved.themeMode)
       }
-      if (updates.themePalette) {
-        setThemePalette(saved.themePalette)
+      if (updates.themePalette || updates.customThemePalettes) {
+        setThemePalette(saved.themePalette, saved.customThemePalettes)
       }
       toast.success(successMessage)
     } catch (error) {
@@ -74,10 +88,32 @@ export function AppearanceSettings() {
     void persistSettings({ agentMessageDisplayMode: mode }, '外观设置已保存')
   }
 
+  const handleAskLumeToConfigure = () => {
+    setWelcomePromptSeed(
+      '请帮我为 Lume 设计一套自定义主题。先询问我的风格、色彩和使用场景偏好；确认方案后，使用 personalize_ui 的 upsert_theme 操作创建并立即启用主题。主题需要同时提供浅色与深色配色，并确保文字与背景有足够对比度。'
+    )
+    setTabs((current) => upsertWelcomeTab(current, currentWorkspaceId))
+    setActiveTabId('__welcome__')
+  }
+
+  const handleDeleteCustomTheme = (theme: CustomThemePalette) => {
+    const customThemePalettes = settings.customThemePalettes.filter((item) => item.id !== theme.id)
+    void persistSettings({
+      customThemePalettes,
+      ...(settings.themePalette === theme.id ? { themePalette: 'mint' } : {}),
+    }, '自定义主题已删除')
+  }
+
   return (
     <div className="space-y-3">
       <section className="lume-panel-padded">
-        <h2 className="mb-3 text-[16px] font-semibold leading-6 text-[var(--text-1)]">主题与配色</h2>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-[16px] font-semibold leading-6 text-[var(--text-1)]">主题与配色</h2>
+          <Button type="button" variant="outline" size="sm" onClick={handleAskLumeToConfigure}>
+            <Sparkles size={14} />
+            让 Lume 配置
+          </Button>
+        </div>
         <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
           <div className="text-[13px] font-medium leading-5 text-[var(--text-2)]">主题</div>
           <div className="lume-segmented grid w-[306px] grid-cols-3">
@@ -140,6 +176,52 @@ export function AppearanceSettings() {
                 <span className="truncate">{option.label}</span>
               </Button>
             ))}
+            {settings.customThemePalettes.map((theme) => {
+              const selected = settings.themePalette === theme.id
+              const colors = [theme.light.background, theme.light.surface, theme.light.accent, theme.light.text]
+              return (
+                <div
+                  key={theme.id}
+                  className={cn(
+                    'flex min-w-0 items-center rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)]',
+                    selected ? 'border-[var(--brand)] ring-1 ring-[var(--brand)]' : ''
+                  )}
+                >
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    aria-pressed={selected}
+                    title={theme.name}
+                    onClick={() => handleThemePaletteChange(theme.id)}
+                    disabled={saving}
+                    className="h-auto min-w-0 flex-1 justify-start gap-2 rounded-r-none px-3 py-2 text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-3)]"
+                  >
+                    <span className="flex shrink-0 -space-x-1" aria-hidden="true">
+                      {colors.map((color, index) => (
+                        <span
+                          key={`${color}-${index}`}
+                          className="size-3 rounded-full border border-black/10 dark:border-white/15"
+                          style={{ backgroundColor: color }}
+                        />
+                      ))}
+                    </span>
+                    <span className="truncate">{theme.name}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`删除主题 ${theme.name}`}
+                    title="删除自定义主题"
+                    disabled={saving}
+                    onClick={() => setDeleteTarget(theme)}
+                    className="mr-1 size-7 shrink-0 text-[var(--text-3)] hover:text-destructive"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              )
+            })}
           </div>
         </div>
       </section>
@@ -175,6 +257,20 @@ export function AppearanceSettings() {
           </div>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+        title="删除自定义主题？"
+        description={`“${deleteTarget?.name ?? ''}”将从 Lume 中移除。此操作无法撤销。`}
+        confirmLabel="删除"
+        destructive
+        onConfirm={() => {
+          if (deleteTarget) handleDeleteCustomTheme(deleteTarget)
+        }}
+      />
     </div>
   )
 }

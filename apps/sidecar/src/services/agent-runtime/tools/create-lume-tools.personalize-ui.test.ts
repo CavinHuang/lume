@@ -58,7 +58,7 @@ describe("createLumeRuntimeTools personalize_ui", () => {
 
     await expect(callTool(tool, { action: "read" })).resolves.toMatchObject({
       ok: true,
-      supportedFields: ["themeMode", "activeView", "promptSidebarOpen", "sidePanelOpen"],
+      supportedFields: ["themeMode", "themePalette", "customThemePalettes", "activeView", "promptSidebarOpen", "sidePanelOpen"],
       generalSettings: { themeMode: "system" },
       uiState: { activeView: "conversations", promptSidebarOpen: false }
     });
@@ -82,5 +82,42 @@ describe("createLumeRuntimeTools personalize_ui", () => {
     });
     expect(getPersistedGeneralSettings().themeMode).toBe("dark");
     expect(getPersistedUiState().agentSidePanelOpenByThreadId["thread-1"]).toBe(true);
+  });
+
+  test("creates, activates, and deletes a custom theme", async () => {
+    const tool = resolveTool(createTools("thread-1"), "personalize_ui");
+    const customTheme = {
+      id: "custom:quiet-forest",
+      name: "静谧森林",
+      light: {
+        background: "#f7faf7",
+        surface: "#ffffff",
+        text: "#1f2a22",
+        muted: "#6f7f73",
+        accent: "#3f7d58"
+      },
+      dark: {
+        background: "#111713",
+        surface: "#1c261f",
+        text: "#eef7f0",
+        muted: "#91a697",
+        accent: "#76c893"
+      }
+    };
+
+    const created = await callTool(tool, { action: "upsert_theme", customTheme });
+    expect(created).toMatchObject({
+      ok: true,
+      generalSettings: {
+        themePalette: customTheme.id,
+        customThemePalettes: [customTheme]
+      }
+    });
+
+    const deleted = await callTool(tool, { action: "delete_theme", themeId: customTheme.id });
+    expect(deleted).toMatchObject({
+      ok: true,
+      generalSettings: { themePalette: "mint", customThemePalettes: [] }
+    });
   });
 });

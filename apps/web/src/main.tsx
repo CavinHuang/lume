@@ -23,17 +23,19 @@ async function bootstrap() {
 
   let themeMode = storedThemeMode || GENERAL_SETTINGS_DEFAULTS.themeMode
   let themePalette = storedThemePalette || GENERAL_SETTINGS_DEFAULTS.themePalette
+  let customThemePalettes = GENERAL_SETTINGS_DEFAULTS.customThemePalettes
 
   try {
     const settings = await getGeneralSettings()
     themeMode = settings.themeMode
     themePalette = settings.themePalette
+    customThemePalettes = settings.customThemePalettes
   } catch {
     // Fall back to the last locally stored theme mode during bootstrap.
   }
 
   setThemeMode(themeMode)
-  setThemePalette(themePalette)
+  setThemePalette(themePalette, customThemePalettes)
 
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

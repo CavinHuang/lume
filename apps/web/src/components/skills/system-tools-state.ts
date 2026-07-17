@@ -78,12 +78,18 @@ export function isToolInGroup(toolName: string, groupId: string): boolean {
         'weread_export_all_notes',
         'weread_shelf',
         'weread_notebooks',
+        'weread_reading_profile',
         'weread_bookmarks',
         'weread_best_bookmarks',
         'weread_reviews',
         'weread_public_reviews',
         'weread_readdata',
         'weread_search',
+        'weread_book_info',
+        'weread_chapters',
+        'weread_book_context',
+        'weread_recommend',
+        'weread_similar',
       ].includes(toolName)
     default:
       return false

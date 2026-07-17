@@ -285,8 +285,14 @@ export function createFileMetadata(filePath) {
 }
 
 export function validateExternalUrl(url) {
-  if (!(url?.startsWith('http://') || url?.startsWith('https://'))) {
-    throw new Error('only http/https urls are allowed')
+  let protocol
+  try {
+    protocol = new URL(url).protocol
+  } catch {
+    throw new Error('only http/https/weread urls are allowed')
+  }
+  if (!['http:', 'https:', 'weread:'].includes(protocol)) {
+    throw new Error('only http/https/weread urls are allowed')
   }
   return url
 }

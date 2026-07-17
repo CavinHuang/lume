@@ -2,9 +2,9 @@ import type {
   AgentProxyMode,
   AgentProxySettings,
   GeneralSettings,
+  BuiltInThemePalette,
   UpdateGeneralSettingsInput,
   ThemeMode,
-  ThemePalette,
 } from '@lume/shared'
 import { GENERAL_SETTINGS_DEFAULTS as SHARED_GENERAL_SETTINGS_DEFAULTS } from '@lume/shared'
 
@@ -15,7 +15,7 @@ export interface ThemeModeOption {
 }
 
 export interface ThemePaletteOption {
-  value: ThemePalette
+  value: BuiltInThemePalette
   label: string
   desc: string
   colors: readonly [string, string, string, string]
@@ -131,6 +131,7 @@ export function mergeGeneralSettings(
   return {
     themeMode: updates.themeMode ?? base.themeMode,
     themePalette: updates.themePalette ?? base.themePalette,
+    customThemePalettes: updates.customThemePalettes ?? base.customThemePalettes ?? [],
     agentMessageDisplayMode: updates.agentMessageDisplayMode ?? base.agentMessageDisplayMode,
     logging: {
       ...base.logging,
