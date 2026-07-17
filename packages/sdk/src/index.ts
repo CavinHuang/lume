@@ -482,6 +482,7 @@ export * from './tools/render-client.js'
 
 // WebFetch internals (enhanced WebFetch assembly in sidecar needs these)
 export { runWebFetch, type WebFetchInput, type WebFetchDeps } from './tools/web-fetch.js'
+export { extractArticleMarkdown } from './tools/html-to-markdown.js'
 export {
   fetchIdFromUrl,
   lumeFileUrl,

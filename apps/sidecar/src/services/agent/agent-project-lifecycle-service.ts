@@ -37,6 +37,7 @@ import {
 import { getWorkspaceMcpManager } from "../mcp/workspace-mcp-manager";
 import { getAgentFileContextRootPath } from "../infra/config-paths";
 import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { getWikiService } from "../wiki/wiki-service";
 
 const DEFAULT_DRAIN_TIMEOUT_MS = 5_000;
 const PROJECT_DISABLED_REASON = "项目已移除，自动化任务已停用";
@@ -169,6 +170,8 @@ export async function removeProject(input: {
 
   await drainProjectRuntime(workspace, threads);
   materializeThreadFileContexts(threads);
+  // Wiki 归档是 destructive sequence 的前置条件；失败时项目保持存在。
+  getWikiService().archiveWorkspace(input.workspaceId);
 
   disableAutomationJobsReferencingProject({
     workspaceId: input.workspaceId,

@@ -35,7 +35,6 @@ import {
   getWereadShelf,
 } from '@/lib/desktop-api/reading'
 import { cn } from '@/lib/utils'
-import { RoutinePanel } from '../routine/RoutinePanel'
 import {
   buildReadingBookRail,
   buildManualReadingRunInput,
@@ -90,10 +89,7 @@ const readingThemeVars = {
   '--reading-serif': '"Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", STSong, SimSun, serif',
 } as CSSProperties
 
-type ReadingViewTab = "reading" | "routine"
-
 export function ReadingView() {
-  const [viewTab, setViewTab] = useState<ReadingViewTab>("reading")
   const [snapshot, setSnapshot] = useState<ReadingLibrarySnapshot | null>(null)
   const [selectedId, setSelectedId] = useState('__all__')
   const [loading, setLoading] = useState(true)
@@ -408,36 +404,7 @@ export function ReadingView() {
       style={readingThemeVars}
     >
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center gap-1 border-b border-[var(--reading-border)] bg-[var(--reading-rail)] px-4 py-2">
-          <Button
-                variant="ghost"
-            type="button"
-            onClick={() => { setViewTab("reading"); setSelectedId("__all__") }}
-            className={cn(
-              "rounded-[6px] px-3 py-1.5 text-[13px] font-medium transition-colors",
-              viewTab === "reading"
-                ? "bg-[var(--reading-active)] text-[var(--text-1)]"
-                : "text-[var(--text-3)] hover:text-[var(--text-1)]",
-            )}
-          >
-            一起读书
-          </Button>
-          <Button
-                variant="ghost"
-            type="button"
-            onClick={() => setViewTab("routine")}
-            className={cn(
-              "rounded-[6px] px-3 py-1.5 text-[13px] font-medium transition-colors",
-              viewTab === "routine"
-                ? "bg-[var(--reading-active)] text-[var(--text-1)]"
-                : "text-[var(--text-3)] hover:text-[var(--text-1)]",
-            )}
-          >
-            今日日程
-          </Button>
-        </div>
         <div className="flex min-h-0 flex-1">
-          {viewTab === "reading" && (
           <aside className="hidden h-full min-h-0 w-[212px] shrink-0 overflow-hidden border-r border-[var(--reading-border)] bg-[var(--reading-rail)] px-3 py-4 lg:block">
             <div className="flex h-full min-h-0 flex-col gap-4">
               <div className="flex shrink-0 flex-col gap-3">
@@ -488,17 +455,6 @@ export function ReadingView() {
               ) : null}
             </div>
           </aside>
-          )}
-
-          {viewTab === "routine" ? (
-            <ScrollArea className="min-h-0 w-full min-w-0 flex-1">
-              <div className="flex min-h-full w-full justify-center">
-                <main className="w-full max-w-[980px] px-5 py-7 lg:px-8">
-                  <RoutinePanel />
-                </main>
-              </div>
-            </ScrollArea>
-          ) : (
             <ScrollArea className="min-h-0 w-full min-w-0 flex-1">
               <div className="flex min-h-full w-full justify-center">
                 <main className="w-full max-w-[980px] px-5 py-7 lg:px-8">
@@ -668,7 +624,6 @@ export function ReadingView() {
           </main>
         </div>
       </ScrollArea>
-          )}
         </div>
       </div>
 

@@ -19,6 +19,8 @@ import { createComputerUseVisionRouter } from "./computer-use/computer-use-visio
 import { getComputerUseSessionRegistry } from "./computer-use/computer-use-session";
 import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-surface";
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
+import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
+import { createWikiReadTools } from "./wiki/create-wiki-tools";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -59,6 +61,11 @@ export interface CreateLumeRuntimeToolsOutput {
 }
 
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
+  const wikiProfile = getAgentThreadMeta(input.threadId)?.wikiProfile;
+  if (wikiProfile?.kind === "ask-wiki") {
+    const customTools = createWikiReadTools(wikiProfile.scope);
+    return { customTools, availableToolNames: customTools.map((tool) => tool.name) };
+  }
   const enabledMemoryToolNames = resolveEnabledMemoryToolNames(input.memoryToolPolicy);
   const enabledMemoryTools = new Set(enabledMemoryToolNames);
   const memoryTools = input.workspaceSlug

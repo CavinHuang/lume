@@ -844,6 +844,7 @@ function buildRuntimeCoreTools(input: {
     emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {})
   });
+  const askWikiOnly = getAgentThreadMeta(input.sessionId)?.wikiProfile?.kind === "ask-wiki";
 
   const policyInput = {
     provider: input.provider,
@@ -1193,7 +1194,9 @@ function buildRuntimeCoreTools(input: {
     policyInput,
     pluginDiagnostics: input.pluginDiagnostics,
     mcpDiagnostics: input.mcpDiagnostics,
-    groups: [
+    groups: askWikiOnly ? [
+      { source: "lume", tools: lumeTools.customTools as ToolDefinition[] }
+    ] : [
       { source: "sdk", tools: baseTools },
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
       { source: "task", tools: taskLoopTools },

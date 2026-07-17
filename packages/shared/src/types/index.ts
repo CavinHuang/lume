@@ -28,3 +28,4 @@ export * from "./plugin-audit";
 export * from "./plugin-market";
 export * from "./computer-use";
 export * from "./logging";
+export * from "./wiki";
