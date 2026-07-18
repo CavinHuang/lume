@@ -916,11 +916,11 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
   return (
     <div>
       <Button
-                variant="ghost"
+        variant="ghost"
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
-        className="flex items-center gap-1.5 text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60"
+        className="flex h-auto items-center gap-1.5 p-0 font-normal text-[11.5px] text-foreground/40 transition-colors hover:bg-transparent hover:text-foreground/60"
       >
         {summaryNodes}
         <ChevronRight size={12} className={cn('shrink-0 transition-transform', expanded && 'rotate-90')} />

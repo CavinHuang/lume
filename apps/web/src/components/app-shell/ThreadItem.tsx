@@ -196,7 +196,7 @@ export const ThreadItem = memo(function ThreadItem({
     >
       <div
         className={cn(
-          'group relative rounded-lg transition-colors duration-100',
+          'group relative rounded-[8px] transition-colors duration-100',
           thread.active
             ? 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--lume-bg-elevated))]'
             : 'hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',

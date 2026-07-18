@@ -81,7 +81,7 @@ export function LumeSidebar({
               disabled={item.disabled}
               onClick={() => handleCollapsedItemClick(item.id, item.kind, item.workspaceId, onTopAction, onFooterAction, onSelectWorkspace)}
               className={cn(
-                'flex h-11 w-11 items-center justify-center rounded-2xl border transition-colors',
+                'flex h-11 w-11 items-center justify-center rounded-[8px] border transition-colors',
                 item.id === 'new-chat'
                   ? 'border-transparent bg-[var(--brand)] text-[var(--brand-foreground)]'
                   : 'border-transparent bg-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]',
@@ -105,7 +105,7 @@ export function LumeSidebar({
               title={item.label}
               onClick={() => item.workspaceId && onSelectWorkspace(item.workspaceId)}
               className={cn(
-                'relative flex h-11 w-11 items-center justify-center rounded-2xl border border-transparent transition-colors',
+                'relative flex h-11 w-11 items-center justify-center rounded-[8px] border border-transparent transition-colors',
                 item.active
                   ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--lume-bg-elevated))] text-[var(--lume-text-primary)]'
                   : 'text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]',
@@ -123,7 +123,7 @@ export function LumeSidebar({
             type="button"
             title="展开侧边栏"
             onClick={() => onSetCollapsed(false)}
-            className="flex h-11 w-11 items-center justify-center rounded-2xl border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
+            className="flex h-11 w-11 items-center justify-center rounded-[8px] border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
           >
             <ChevronRight size={18} />
           </Button>
@@ -136,7 +136,7 @@ export function LumeSidebar({
               disabled={item.disabled}
               onClick={() => handleCollapsedItemClick(item.id, item.kind, item.workspaceId, onTopAction, onFooterAction, onSelectWorkspace)}
               className={cn(
-                'flex h-11 w-11 items-center justify-center rounded-2xl border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]',
+                'flex h-11 w-11 items-center justify-center rounded-[8px] border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]',
                 item.active && 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--lume-bg-elevated))] text-[var(--lume-text-primary)]',
                 item.disabled && 'cursor-not-allowed opacity-45 hover:bg-transparent hover:text-[var(--lume-text-secondary)]',
               )}
@@ -160,7 +160,7 @@ export function LumeSidebar({
                 key={action.id}
                 type="button"
                 onClick={() => onTopAction(action.id)}
-                className="flex h-10 w-full items-center gap-3 rounded-xl bg-[var(--brand)] px-4 text-left text-[13px] font-medium text-[var(--brand-foreground)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_72%,var(--brand-2))] hover:text-[var(--brand-foreground)]"
+                className="flex h-10 w-full items-center gap-3 rounded-[8px] bg-[var(--brand)] px-4 text-left text-[13px] font-medium text-[var(--brand-foreground)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_72%,var(--brand-2))] hover:text-[var(--brand-foreground)]"
               >
                 <SquarePen size={17} />
                 <span className="flex-1">新建聊天</span>
@@ -181,7 +181,7 @@ export function LumeSidebar({
               disabled={action.disabled}
               onClick={() => onTopAction(action.id)}
               className={cn(
-                'flex h-9 w-full justify-start items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
+                'flex h-9 w-full justify-start items-center gap-3 rounded-[8px] px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
                 action.disabled
                   ? 'cursor-not-allowed text-[var(--lume-text-muted)] opacity-70'
                   : action.active
@@ -218,7 +218,7 @@ export function LumeSidebar({
             type="button"
             title={allExpanded ? '收起全部' : '展开全部'}
             onClick={onToggleAllWorkspaces}
-            className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
+            className="flex size-6 items-center justify-center rounded-[8px] border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
           >
             {allExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </Button>
@@ -227,7 +227,7 @@ export function LumeSidebar({
             type="button"
             title="添加项目"
             onClick={onCreateWorkspace}
-            className="flex size-6 items-center justify-center rounded-lg border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
+            className="flex size-6 items-center justify-center rounded-[8px] border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
           >
             <Plus size={17} strokeWidth={2.1} />
           </Button>
@@ -272,7 +272,7 @@ export function LumeSidebar({
                     disabled={action.disabled}
                     onClick={() => onFooterAction(action.id)}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 justify-start items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
+                      'flex h-full min-w-0 flex-1 justify-start items-center gap-3 rounded-[8px] px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
                       action.disabled
                         ? 'cursor-not-allowed text-[var(--lume-text-muted)] opacity-70'
                         : 'text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]',
@@ -288,7 +288,7 @@ export function LumeSidebar({
                     type="button"
                     title="收起侧边栏"
                     onClick={() => onSetCollapsed(true)}
-                    className="flex size-8 items-center justify-center rounded-xl border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
+                    className="flex size-8 items-center justify-center rounded-[8px] border border-transparent text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
                   >
                     <ChevronLeft size={17} />
                   </Button>
@@ -304,7 +304,7 @@ export function LumeSidebar({
                 disabled={action.disabled}
                 onClick={() => onFooterAction(action.id)}
                 className={cn(
-                  'flex h-9 w-full justify-start items-center gap-3 rounded-xl px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
+                  'flex h-9 w-full justify-start items-center gap-3 rounded-[8px] px-3.5 text-left text-[13px] transition-colors duration-150 ease-out',
                   action.disabled
                     ? 'cursor-not-allowed text-[var(--lume-text-muted)] opacity-70'
                     : 'text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]',

@@ -99,7 +99,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
   return (
     <section
       className={cn(
-        'relative rounded-lg transition-colors duration-150 ease-out',
+        'relative rounded-[8px] transition-colors duration-150 ease-out',
         !isExpanded && 'mb-1',
       )}
     >
@@ -107,7 +107,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
         {renaming ? (
           <div
             className={cn(
-              'relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2 text-left',
+              'relative flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-[8px] px-2 text-left',
               isCurrent ? 'text-[var(--lume-text-primary)]' : 'text-[var(--lume-text-secondary)]',
             )}
           >
@@ -145,7 +145,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
             data-expanded={isExpanded}
             onClick={() => onToggleWorkspace(id)}
             className={cn(
-              'h-8 min-w-0 flex-1 shrink justify-start gap-2 rounded-lg bg-transparent px-2 text-left transition-colors duration-150 ease-out group-hover/workspace:pr-14 hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
+              'h-8 min-w-0 flex-1 shrink justify-start gap-2 rounded-[8px] bg-transparent px-2 text-left transition-colors duration-150 ease-out group-hover/workspace:pr-14 hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)]',
               isCurrent
                 ? 'text-[var(--lume-text-primary)]'
                 : 'text-[var(--lume-text-secondary)] hover:text-[var(--lume-text-primary)]',
@@ -247,7 +247,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
                   variant="ghost"
                   type="button"
                   onClick={() => setExtraCount((prev) => prev + THREAD_EXPAND_STEP)}
-                  className="mt-1 h-8 w-full justify-center rounded-lg bg-transparent px-2 text-[12px] font-medium text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
+                  className="mt-1 h-8 w-full justify-center rounded-[8px] bg-transparent px-2 text-[12px] font-medium text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
                 >
                   显示更多（{currentHiddenCount}）
                 </Button>
@@ -258,7 +258,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
                   variant="ghost"
                   type="button"
                   onClick={() => setExtraCount(0)}
-                  className="h-8 w-full justify-center rounded-lg bg-transparent px-2 text-[12px] font-medium text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
+                  className="h-8 w-full justify-center rounded-[8px] bg-transparent px-2 text-[12px] font-medium text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)]"
                 >
                   收起
                 </Button>
