@@ -6,7 +6,7 @@ import { createAgent } from "./agent.js"
 import type { ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
 import { forkSession, getSessionMessages, saveSession } from "./session.js"
-import { clearSkills } from "./skills/registry.js"
+import { clearSkills, getSkill } from "./skills/registry.js"
 
 function tool(name: string): ToolDefinition {
   return {
@@ -141,6 +141,52 @@ describe("Agent compact command", () => {
 })
 
 describe("Agent skill slash commands", () => {
+  test("reloads added, updated, and deleted filesystem skills between turns", async () => {
+    const root = mkdtempSync(join(tmpdir(), "sdk-agent-hot-skill-"))
+    tempDirs.push(root)
+    const skillDir = join(root, "hot-skill")
+    const skillFile = join(skillDir, "SKILL.md")
+    const writeSkill = (body: string) => {
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(
+        skillFile,
+        `---\nname: Hot Skill\ndescription: Reload test\n---\n${body}`,
+        "utf-8",
+      )
+    }
+
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      skillsDirectories: [root],
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    expect(getSkill("hot-skill")).toBeUndefined()
+
+    writeSkill("First prompt: ${ARG}")
+    for await (const _event of agent.query("/skill hot-skill one")) {
+      // drain query
+    }
+    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("First prompt: one")
+
+    writeSkill("Updated prompt: ${ARG}")
+    for await (const _event of agent.query("/skill hot-skill two")) {
+      // drain query
+    }
+    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("Updated prompt: two")
+
+    rmSync(skillDir, { recursive: true, force: true })
+    for await (const _event of agent.query("refresh after deletion")) {
+      // drain query
+    }
+    expect(getSkill("hot-skill")).toBeUndefined()
+
+    await agent.close()
+  })
+
   test("close unregisters filesystem skills owned by that agent", async () => {
     const rootA = mkdtempSync(join(tmpdir(), "sdk-agent-file-skill-a-"))
     const rootB = mkdtempSync(join(tmpdir(), "sdk-agent-file-skill-b-"))

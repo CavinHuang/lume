@@ -191,11 +191,14 @@ export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactEl
       startTx: transform.translateX, startTy: transform.translateY,
     }
     const onMove = (ev: MouseEvent) => {
-      if (!dragRef.current) return
+      const drag = dragRef.current
+      if (!drag) return
+      const translateX = drag.startTx + ev.clientX - drag.startX
+      const translateY = drag.startTy + ev.clientY - drag.startY
       setTransform((prev) => ({
         ...prev,
-        translateX: dragRef.current!.startTx + ev.clientX - dragRef.current!.startX,
-        translateY: dragRef.current!.startTy + ev.clientY - dragRef.current!.startY,
+        translateX,
+        translateY,
       }))
     }
     const onUp = () => {

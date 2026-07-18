@@ -21,8 +21,10 @@ describe("core prompt sections", () => {
     expect(section).toContain("三个以上对象");
     expect(section).toContain("优先使用表格");
     expect(section).toContain("Mermaid");
-    expect(section).toContain("不超过 12 个节点");
-    expect(section).toContain("accTitle");
+    expect(section).toContain("必须先调用已加载的 `lume-mermaid` Skill");
+    expect(section).toContain("Skill 不可用时改用简洁文字或表格");
+    expect(section).not.toContain("节点文本使用引号");
+    expect(section).not.toContain("accTitle");
     expect(section).toContain("明确要求生成图片");
     expect(section).toContain("先说明用途并请求确认");
     expect(section).toContain("用户明确指定的表达形式始终优先");

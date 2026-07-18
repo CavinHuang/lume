@@ -937,6 +937,16 @@ export class Agent {
     const opts = this.getEffectiveOptions(overrides)
     const cwd = opts.cwd || process.cwd()
 
+    // Skills are editable while an Agent instance is alive. Refresh them at the
+    // turn boundary so additions, updates, and deletions take effect without a
+    // sidecar restart. Re-register explicit skills last to preserve precedence.
+    await this.registerFilesystemSkills({
+      cwd,
+      roots: opts.skillsDirectories,
+      shouldLoadSkill: opts.shouldLoadFilesystemSkill,
+    })
+    this.registerExplicitSkills()
+
     this.abortCtrl = opts.abortController || new AbortController()
     if (opts.abortSignal) {
       opts.abortSignal.addEventListener('abort', () => this.abortCtrl?.abort(), { once: true })

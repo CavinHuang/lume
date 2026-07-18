@@ -52,6 +52,18 @@ describe("default skills inventory", () => {
     expect(content).not.toContain("不要声称已经生成图片");
   });
 
+  test("lume-mermaid skill documents the renderer-compatible dialect", () => {
+    const { content, meta } = readDefaultSkill("lume-mermaid");
+
+    expect(meta.name).toBe("Lume Mermaid 图解");
+    expect(meta.description).toContain("beautiful-mermaid");
+    expect(meta.whenToUse).toContain("系统架构");
+    expect(content).toContain('不要写成 `A["带引号文本"]`');
+    expect(content).toContain("不要使用 `<br/>`");
+    expect(content).toContain("只在关闭 `subgraph` 时使用 `end`");
+    expect(content).toContain("不要输出当前渲染器不支持的 `accTitle`");
+  });
+
   test("bundles an auto-invocable gallery-share skill backed by local Reading share cards", () => {
     const { content, meta } = readDefaultSkill("gallery-share");
 
