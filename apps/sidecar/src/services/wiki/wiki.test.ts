@@ -45,6 +45,7 @@ describe('wiki stores and security', () => {
     const subject = { kind: 'desktop_agent' as const, subjectId: 'agent', workspaceIds: [uuid], allowInbox: false, allowAll: false }
     const scope = { kind: 'workspace' as const, workspaceId: uuid }
     expect(pageAllowed(page.frontmatter, subject, scope)).toBe(true)
+    expect(pageAllowed(page.frontmatter, { kind: 'desktop_owner', subjectId: 'owner', workspaceIds: [], allowInbox: true, allowAll: true }, scope)).toBe(true)
     expect(sourceAllowed('source-1', page.frontmatter, subject, scope, acl)).toBe(false)
     acl.append('source-1', uuid, 'grant', 'owner')
     expect(sourceAllowed('source-1', page.frontmatter, subject, scope, acl)).toBe(true)

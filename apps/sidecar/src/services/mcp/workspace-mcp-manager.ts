@@ -5,7 +5,8 @@ import {
   type McpClientServerStatus,
   type McpListResourcesResult,
   type McpReadResourceResult,
-  type NormalizedMcpServerConfig
+  type NormalizedMcpServerConfig,
+  type SandboxSettings
 } from "@lume/agent-sdk";
 import {
   maskMcpSecrets,
@@ -58,6 +59,9 @@ export interface WorkspaceMcpManagerOptions {
   logger?: Pick<Logger, "warn" | "error" | "info">;
   /** Optional pre-connect authorization (e.g. plugin §8.1 MCP start gate). Undefined = no gate (workspace singleton). */
   authorizeConnect?: (serverId: string) => Promise<McpGateDecision>;
+  /** Optional process sandbox for stdio servers owned by this manager. */
+  stdioSandbox?: SandboxSettings;
+  stdioCwd?: string;
 }
 
 export interface WorkspaceMcpRuntimeTools {
@@ -163,7 +167,10 @@ function isUnsupportedResourceListError(error: unknown): boolean {
   return /method not found|-32601/i.test(errorMessageFromUnknown(error));
 }
 
-function toNormalizedConfigs(config: WorkspaceMcpConfig): Record<string, NormalizedMcpServerConfig> {
+function toNormalizedConfigs(
+  config: WorkspaceMcpConfig,
+  stdio?: { sandbox?: SandboxSettings; cwd?: string }
+): Record<string, NormalizedMcpServerConfig> {
   const configs: Record<string, NormalizedMcpServerConfig> = {};
   for (const [serverId, entry] of Object.entries(config.servers ?? {})) {
     const transport = normalizeMcpTransport(entry);
@@ -183,6 +190,8 @@ function toNormalizedConfigs(config: WorkspaceMcpConfig): Record<string, Normali
       ...(entry.command ? { command: entry.command } : {}),
       ...(entry.args ? { args: entry.args } : {}),
       ...(entry.env ? { env: entry.env } : {}),
+      ...(transport === "stdio" && stdio?.cwd ? { cwd: stdio.cwd } : {}),
+      ...(transport === "stdio" && stdio?.sandbox ? { sandbox: stdio.sandbox } : {}),
       ...(entry.url ? { url: entry.url } : {}),
       ...(entry.headers ? { headers: entry.headers } : {})
     };
@@ -270,6 +279,8 @@ export class WorkspaceMcpManager {
   private readonly sdkManagerFactory: () => WorkspaceSdkMcpManager;
   private readonly logger: Pick<Logger, "warn" | "error" | "info">;
   private readonly authorizeConnect?: (serverId: string) => Promise<McpGateDecision>;
+  private readonly stdioSandbox?: SandboxSettings;
+  private readonly stdioCwd?: string;
   private readonly workspaces = new Map<string, WorkspaceState>();
 
   constructor(options: WorkspaceMcpManagerOptions = {}) {
@@ -277,11 +288,13 @@ export class WorkspaceMcpManager {
     this.sdkManagerFactory = options.sdkManagerFactory ?? (() => new McpClientManager());
     this.logger = options.logger ?? singletonLogger;
     this.authorizeConnect = options.authorizeConnect;
+    this.stdioSandbox = options.stdioSandbox;
+    this.stdioCwd = options.stdioCwd;
   }
 
   async syncWorkspace(workspaceSlug: string, options: SyncWorkspaceOptions = {}): Promise<void> {
     const config = this.readConfig(workspaceSlug);
-    const normalized = toNormalizedConfigs(config);
+    const normalized = this.normalizedConfigs(config);
     const state = this.ensureWorkspaceState(workspaceSlug);
     const currentIds = new Set(Object.keys(normalized));
     const currentEnabledIds = new Set(Object.entries(normalized)
@@ -362,13 +375,20 @@ export class WorkspaceMcpManager {
       throw new PublicMcpError("not_found", `MCP server not found: ${serverId}`);
     }
     const state = this.ensureWorkspaceState(workspaceSlug);
-    state.sdk.sync(toNormalizedConfigs(config));
+    state.sdk.sync(this.normalizedConfigs(config));
     await (state.sdk.connect ?? state.sdk.ensureConnected)?.call(state.sdk, serverId);
     const status = this.getStatus(workspaceSlug).find((item) => item.serverId === serverId);
     if (!status) {
       throw new PublicMcpError("not_found", `MCP server not found: ${serverId}`);
     }
     return status;
+  }
+
+  private normalizedConfigs(config: WorkspaceMcpConfig): Record<string, NormalizedMcpServerConfig> {
+    return toNormalizedConfigs(config, {
+      sandbox: this.stdioSandbox,
+      cwd: this.stdioCwd
+    });
   }
 
   async listResources(input: { workspaceSlug: string; serverId?: string }): Promise<ListMcpResourcesResponse> {

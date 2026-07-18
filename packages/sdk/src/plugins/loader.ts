@@ -7,11 +7,13 @@ import type {
   AgentOptions,
   McpServerConfig,
   ToolDefinition,
+  ToolResult,
 } from '../types.js'
 import type { HookConfig, HookDefinition } from '../hooks.js'
 import type { SkillDefinition } from '../skills/types.js'
 import type { CommandDefinition } from '../commands/types.js'
 import type { CommandToolContribution } from './normalized.js'
+import { spawnWithProcessSandbox } from '../utils/process-sandbox.js'
 
 export interface LoadedPlugin {
   name: string
@@ -102,6 +104,17 @@ export function buildCommandToolDefinition(
       const timeout = Math.max(1, contribution.timeoutMs ?? 30_000)
       const cwd = contribution.cwd ? resolve(pluginRoot, contribution.cwd) : pluginRoot
       const args = [...(contribution.args ?? []), payload]
+      if (context.sandbox?.processIsolation?.enabled) {
+        return executeSandboxedCommandTool({
+          command: contribution.command,
+          args,
+          cwd,
+          timeout,
+          payload,
+          env: contribution.env,
+          context,
+        })
+      }
       return await new Promise((resolveResult) => {
         const child = execFile(contribution.command, args, {
           cwd,
@@ -144,6 +157,74 @@ export function buildCommandToolDefinition(
       source: 'plugin',
     },
   }
+}
+
+async function executeSandboxedCommandTool(input: {
+  command: string
+  args: string[]
+  cwd: string
+  timeout: number
+  payload: string
+  env?: Record<string, string>
+  context: Parameters<NonNullable<ToolDefinition['call']>>[1]
+}): Promise<ToolResult> {
+  return await new Promise<ToolResult>((resolveResult) => {
+    let child: ReturnType<typeof spawnWithProcessSandbox>
+    try {
+      child = spawnWithProcessSandbox(input.command, input.args, {
+        cwd: input.cwd,
+        cwdAccess: 'readonly',
+        timeoutMs: input.timeout,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          PLUGIN_INPUT: input.payload,
+          ...(input.env ?? {}),
+          ...(input.context.toolConfig?.env && typeof input.context.toolConfig.env === 'object'
+            ? input.context.toolConfig.env as Record<string, string>
+            : {}),
+        },
+      }, input.context.sandbox)
+    } catch (error) {
+      resolveResult({
+        type: 'tool_result',
+        tool_use_id: input.context.toolUseId ?? '',
+        content: error instanceof Error ? error.message : String(error),
+        is_error: true,
+      })
+      return
+    }
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let size = 0
+    const collect = (target: Buffer[]) => (chunk: Buffer) => {
+      size += chunk.byteLength
+      if (size <= 1024 * 1024) target.push(chunk)
+      else child.kill()
+    }
+    child.stdout?.on('data', collect(stdout))
+    child.stderr?.on('data', collect(stderr))
+    child.once('error', (error) => resolveResult({
+      type: 'tool_result',
+      tool_use_id: input.context.toolUseId ?? '',
+      content: error.message,
+      is_error: true,
+    }))
+    child.once('close', (code) => {
+      const out = Buffer.concat(stdout).toString('utf8')
+      const err = Buffer.concat(stderr).toString('utf8')
+      const failed = code !== 0 || size > 1024 * 1024
+      resolveResult({
+        type: 'tool_result',
+        tool_use_id: input.context.toolUseId ?? '',
+        content: size > 1024 * 1024
+          ? 'Plugin command output exceeded 1 MiB'
+          : [out, err].filter(Boolean).join('\n') || '(no output)',
+        ...(failed ? { is_error: true } : {}),
+      })
+    })
+    input.context.abortSignal?.addEventListener('abort', () => child.kill(), { once: true })
+  })
 }
 
 function commandToolFromManifest(manifest: CommandToolManifest, pluginPath: string): ToolDefinition {

@@ -10,6 +10,7 @@ import { LumeRunner, resolveRuntimeCoreMaxTurns } from "./lume-runner";
 import type { LumeRunState } from "./run-state";
 import { createMemoryV2Store } from "../../memory-v2/markdown-store";
 import { getMemoryV2ScopePaths } from "../../memory-v2/paths";
+import { getWikiProtectedRootPath } from "../../infra/config-paths";
 
 function createTestParams(threadId: string): AgentRuntimeRunParams {
   return {
@@ -913,6 +914,7 @@ describe("LumeRunner", () => {
     const runner = await createRunner(agentDir, events);
     const lifecycle: string[] = [];
     let registeredAbort: (() => Promise<void>) | undefined;
+    let queryOptions: { sandbox?: unknown } | undefined;
 
     const result = await runner.runRuntimeSession({
       params: createTestParams("thread-1"),
@@ -928,13 +930,16 @@ describe("LumeRunner", () => {
           interrupt: async () => {
             lifecycle.push("interrupt");
           },
-          query: () => stream([{
-            type: "assistant",
-            message: {
-              role: "assistant",
-              content: [{ type: "text", text: "hello" }]
-            }
-          } as SDKMessage])
+          query: (_message: unknown, options: { sandbox?: unknown }) => {
+            queryOptions = options;
+            return stream([{
+              type: "assistant",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "hello" }]
+              }
+            } as SDKMessage]);
+          }
         },
         session: {
           sessionId: "sdk-session-1",
@@ -958,6 +963,13 @@ describe("LumeRunner", () => {
     await registeredAbort?.();
 
     expect(result).toEqual({ status: "completed" });
+    expect(queryOptions?.sandbox).toEqual({
+      enabled: true,
+      filesystem: {
+        denyRead: [getWikiProtectedRootPath()],
+        denyWrite: [getWikiProtectedRootPath()]
+      }
+    });
     expect(events).toEqual(["sdk:assistant", "complete"]);
     expect(lifecycle).toEqual([
       "registerAbort",

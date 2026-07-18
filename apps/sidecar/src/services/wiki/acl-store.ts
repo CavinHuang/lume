@@ -35,13 +35,18 @@ export class WikiAclStore {
 }
 
 export function pageAllowed(frontmatter: WikiPageFrontmatter, subject: WikiTrustedSubject, scope: WikiSearchScope): boolean {
-  if (subject.kind === "desktop_owner") {
-    if (scope.kind === "all") return subject.allowAll;
-    if (scope.kind === "inbox") return subject.allowInbox && frontmatter.primary_workspace_id === null;
-    if (scope.kind === "page") return true;
+  if (scope.kind === "all") return subject.allowAll;
+  if (scope.kind === "inbox") return subject.allowInbox && frontmatter.primary_workspace_id === null;
+  if (scope.kind === "page") {
+    if (subject.kind === "desktop_owner") return true;
+    if (frontmatter.primary_workspace_id === null) return subject.allowInbox;
+    return [frontmatter.primary_workspace_id, ...frontmatter.associated_workspace_ids]
+      .some((workspaceId) => subject.workspaceIds.includes(workspaceId));
   }
-  if (scope.kind === "all" || scope.kind === "inbox") return false;
   const workspaceId = scope.kind === "workspace" ? scope.workspaceId : undefined;
+  if (workspaceId && subject.kind === "desktop_owner") {
+    return frontmatter.primary_workspace_id === workspaceId || frontmatter.associated_workspace_ids.includes(workspaceId);
+  }
   if (!workspaceId || !subject.workspaceIds.includes(workspaceId)) return false;
   return frontmatter.primary_workspace_id === workspaceId || frontmatter.associated_workspace_ids.includes(workspaceId);
 }
@@ -49,6 +54,8 @@ export function pageAllowed(frontmatter: WikiPageFrontmatter, subject: WikiTrust
 export function sourceAllowed(sourceId: string, page: WikiPageFrontmatter, subject: WikiTrustedSubject, scope: WikiSearchScope, acl: WikiAclStore): boolean {
   if (!pageAllowed(page, subject, scope)) return false;
   if (subject.kind === "desktop_owner") return true;
-  if (scope.kind !== "workspace") return false;
-  return acl.hasGrant(sourceId, scope.workspaceId);
+  if (scope.kind === "workspace") return acl.hasGrant(sourceId, scope.workspaceId);
+  return [page.primary_workspace_id, ...page.associated_workspace_ids]
+    .filter((workspaceId): workspaceId is string => Boolean(workspaceId && subject.workspaceIds.includes(workspaceId)))
+    .some((workspaceId) => acl.hasGrant(sourceId, workspaceId));
 }

@@ -20,19 +20,19 @@ export function createNodeReplRuntimeRegistry(
 ): NodeReplRuntimeRegistry {
   const entries = new Map<string, ThreadRuntimeEntry>();
 
-  async function ensure(threadId: string, options: { cwd?: string } = {}): Promise<ThreadRuntimeEntry> {
+  async function ensure(threadId: string, options: { cwd?: string; sandbox?: import("@lume/agent-sdk").SandboxSettings } = {}): Promise<ThreadRuntimeEntry> {
     const existing = entries.get(threadId);
     if (existing) return existing;
 
     const cwd = options.cwd ?? defaults.cwd ?? process.cwd();
-    const client = await factory({ threadId, cwd });
+    const client = await factory({ threadId, cwd, sandbox: options.sandbox });
     const created: ThreadRuntimeEntry = { client, cwd, moduleDirs: [] };
     entries.set(threadId, created);
     return created;
   }
 
   return {
-    async addModuleDir(threadId: string, dir: string, options?: { cwd?: string }) {
+    async addModuleDir(threadId: string, dir: string, options?: { cwd?: string; sandbox?: import("@lume/agent-sdk").SandboxSettings }) {
       const entry = await ensure(threadId, options);
       if (entry.moduleDirs.includes(dir)) return false;
       const added = await entry.client.addNodeModuleDirectory(dir);
@@ -51,7 +51,7 @@ export function createNodeReplRuntimeRegistry(
         throw error;
       }
     },
-    async reset(threadId: string, options?: { cwd?: string }) {
+    async reset(threadId: string, options?: { cwd?: string; sandbox?: import("@lume/agent-sdk").SandboxSettings }) {
       const entry = await ensure(threadId, options);
       await entry.client.reset();
     },

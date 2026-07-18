@@ -19,6 +19,7 @@ import { sidecarCall } from './system'
 
 export const getWikiSnapshot = () => sidecarCall<WikiSnapshot>(WIKI_IPC_CHANNELS.GET_SNAPSHOT, {})
 export const getWikiCapabilities = () => sidecarCall<WikiCapabilityMatrix>(WIKI_IPC_CHANNELS.GET_CAPABILITIES, {})
+export const prepareWikiRuntime = () => sidecarCall<WikiCapabilityMatrix>(WIKI_IPC_CHANNELS.PREPARE_RUNTIME, {})
 export const searchWiki = (input: WikiSearchInput) => sidecarCall<WikiSearchResult[]>(WIKI_IPC_CHANNELS.SEARCH, input)
 export const readWikiPage = (pageId: string, scope: WikiSearchScope) => sidecarCall<WikiReadResult>(WIKI_IPC_CHANNELS.READ, { pageId, scope })
 export const followWikiLinks = (pageId: string, scope: WikiSearchScope, depth = 1) => sidecarCall<WikiPageRecord[]>(WIKI_IPC_CHANNELS.FOLLOW_LINKS, { pageId, scope, depth })

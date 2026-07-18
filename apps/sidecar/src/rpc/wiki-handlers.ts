@@ -6,7 +6,9 @@ import type {
   WikiSearchScope,
 } from "@lume/shared";
 import { WIKI_IPC_CHANNELS } from "@lume/shared";
-import { getWikiService, WIKI_CAPABILITIES } from "../services/wiki/wiki-service";
+import { WIKI_CAPABILITIES } from "../services/wiki/wiki-capabilities";
+import { getWikiService } from "../services/wiki/wiki-service";
+import { prepareWikiRuntimeCapability } from "../services/wiki/wiki-runtime-capability";
 import type { RpcHandler } from "./types";
 
 function object(value: unknown, method: string): Record<string, unknown> {
@@ -33,6 +35,7 @@ export function createWikiHandlers(): Record<string, RpcHandler> {
   return {
     [WIKI_IPC_CHANNELS.GET_SNAPSHOT]: async () => service().getSnapshot(),
     [WIKI_IPC_CHANNELS.GET_CAPABILITIES]: async () => WIKI_CAPABILITIES,
+    [WIKI_IPC_CHANNELS.PREPARE_RUNTIME]: async () => prepareWikiRuntimeCapability(),
     [WIKI_IPC_CHANNELS.SEARCH]: async (params) => {
       const input = object(params, WIKI_IPC_CHANNELS.SEARCH);
       return service().search({ query: typeof input.query === "string" ? input.query : "", scope: scope(input.scope), maxResults: typeof input.maxResults === "number" ? input.maxResults : undefined } satisfies WikiSearchInput);

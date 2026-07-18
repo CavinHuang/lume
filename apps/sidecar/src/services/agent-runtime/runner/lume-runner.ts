@@ -1,4 +1,4 @@
-import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn } from "@lume/agent-sdk";
+import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type SandboxSettings } from "@lume/agent-sdk";
 import type { LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
@@ -44,6 +44,7 @@ import {
 } from "../../memory-v2/conversation-summary";
 import type { LumeRunState } from "./run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
+import { createWikiProtectedSandbox, resolveWikiRuntimeCapability } from "../../wiki/wiki-runtime-capability";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -72,6 +73,7 @@ interface RuntimeSessionRunInput {
   prepared: PreparedRuntimeCoreAttempt;
   runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">;
   options: RunRuntimeCoreAttemptOptions;
+  sandbox?: SandboxSettings;
   createCanUseTool: (
     askUserSignal: AbortSignal,
     workflowHooks?: LumeWorkflowHookRuntimeLike
@@ -216,6 +218,7 @@ export class LumeRunner {
     prepared,
     runtimeSession,
     options,
+    sandbox,
     createCanUseTool
   }: RuntimeSessionRunInput): Promise<AgentRuntimeRunResult> {
     const { input, runtime } = params;
@@ -253,6 +256,7 @@ export class LumeRunner {
         canUseTool: createCanUseTool(askUserAbortController.signal, this.workflowHooks),
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
+        sandbox: sandbox ?? createWikiProtectedSandbox(),
         ...(maxTurns === undefined ? {} : { maxTurns })
       });
 
@@ -290,6 +294,17 @@ export class LumeRunner {
     createRuntimeSession = createRuntimeCoreSession
   }: PreparedRuntimeCoreRunInput): Promise<AgentRuntimeRunResult> {
     const { input, runtime } = params;
+    const wikiCapability = await resolveWikiRuntimeCapability({
+      threadId: runtime.sessionId,
+      cwd: prepared.agentCwd,
+      lumeWorkDir: prepared.lumeWorkDir,
+      filesRoot: prepared.filesRoot,
+      plansRoot: prepared.plansRoot,
+      artifactsRoot: prepared.artifactsRoot,
+      workspaceId: runtime.workspaceId,
+      threadType: runtime.threadType,
+      chatType: input.chatType
+    });
     const runtimeSession = await createRuntimeSession({
       lumeSessionId: runtime.sessionId,
       cwd: prepared.agentCwd,
@@ -339,7 +354,9 @@ export class LumeRunner {
       runId: this.observer.getRunId(),
       workflowHooks: this.workflowHooks,
       applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
-      trace: this.observer.getContextAssemblyTrace()
+      trace: this.observer.getContextAssemblyTrace(),
+      wikiPhaseBEnabled: wikiCapability.phaseBEnabled,
+      processSandbox: wikiCapability.sandbox
     });
     this.latestMemoryContextUsedItems = runtimeSession.memoryContextUsedItems ?? [];
 
@@ -348,6 +365,7 @@ export class LumeRunner {
       prepared,
       runtimeSession,
       options,
+      sandbox: wikiCapability.sandbox,
       createCanUseTool
     });
   }

@@ -16,6 +16,7 @@ describe('wiki shared contract', () => {
 
   test('keeps renderer mutation surface draft-id based', () => {
     expect(WIKI_IPC_CHANNELS.APPLY_DRAFT).toBe('wiki:apply-draft')
+    expect(WIKI_IPC_CHANNELS.PREPARE_RUNTIME).toBe('wiki:prepare-runtime')
     expect(Object.values(WIKI_IPC_CHANNELS)).not.toContain('wiki:apply-paths')
   })
 })

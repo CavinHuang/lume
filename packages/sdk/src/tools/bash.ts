@@ -2,13 +2,13 @@
  * BashTool - Execute shell commands
  */
 
-import { spawn } from 'child_process'
 import { appendFile, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { createTaskRecord, updateTaskRecord } from './task-tools.js'
 import { defineTool } from './types.js'
 import { resolveShellInvocation } from '../utils/shell-invocation.js'
+import { spawnWithProcessSandbox } from '../utils/process-sandbox.js'
 
 export const BashTool = defineTool({
   name: 'Bash',
@@ -67,13 +67,13 @@ export const BashTool = defineTool({
       })
 
       const shell = resolveShellInvocation(command)
-      const proc = spawn(shell.command, shell.args, {
+      const proc = spawnWithProcessSandbox(shell.command, shell.args, {
         cwd: context.cwd,
         env: { ...process.env },
-        timeout: timeoutMs,
+        timeoutMs,
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
-      })
+      }, context.sandbox)
 
       const chunks: Buffer[] = []
       const errChunks: Buffer[] = []
@@ -169,12 +169,12 @@ export const BashTool = defineTool({
       const errChunks: Buffer[] = []
 
       const shell = resolveShellInvocation(command)
-      const proc = spawn(shell.command, shell.args, {
+      const proc = spawnWithProcessSandbox(shell.command, shell.args, {
         cwd: context.cwd,
         env: { ...process.env },
-        timeout: timeoutMs,
+        timeoutMs,
         stdio: ['pipe', 'pipe', 'pipe'],
-      })
+      }, context.sandbox)
 
       proc.stdout?.on('data', (data: Buffer) => {
         chunks.push(data)

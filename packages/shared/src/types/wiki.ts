@@ -295,6 +295,7 @@ export interface WikiSnapshot {
 
 export interface WikiCapabilityMatrix {
   phase: "A" | "B";
+  runtimeStatus: "idle" | "preparing" | "ready" | "unavailable";
   uiMutation: boolean;
   askWikiReadOnly: boolean;
   ordinaryAgentRead: boolean;
@@ -319,5 +320,6 @@ export const WIKI_IPC_CHANNELS = {
   RUN_LINT: "wiki:run-lint",
   ARCHIVE_WORKSPACE: "wiki:archive-workspace",
   CREATE_ASK_THREAD: "wiki:create-ask-thread",
-  GET_CAPABILITIES: "wiki:get-capabilities"
+  GET_CAPABILITIES: "wiki:get-capabilities",
+  PREPARE_RUNTIME: "wiki:prepare-runtime"
 } as const;

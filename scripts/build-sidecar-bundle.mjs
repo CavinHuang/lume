@@ -13,6 +13,22 @@ const sdkRequire = createRequire(resolve(REPO_ROOT, "packages", "sdk", "package.
 const jsdomEntry = sdkRequire.resolve("jsdom");
 const jsdomLibDir = dirname(jsdomEntry);
 const XHR_WORKER_ENTRY = resolve(jsdomLibDir, "jsdom", "living", "xhr", "xhr-sync-worker.js");
+const mxcPackageJson = sdkRequire.resolve("@microsoft/mxc-sdk/package.json");
+const mxcRequire = createRequire(mxcPackageJson);
+const nodePtyPackageJson = mxcRequire.resolve("node-pty/package.json");
+const nodePtyRequire = createRequire(nodePtyPackageJson);
+const RUNTIME_EXTERNAL_PACKAGES = [
+  "@microsoft/mxc-sdk",
+  "node-pty",
+  "node-addon-api",
+  "semver",
+];
+const RUNTIME_EXTERNAL_ROOTS = new Map([
+  ["@microsoft/mxc-sdk", dirname(mxcPackageJson)],
+  ["node-pty", dirname(nodePtyPackageJson)],
+  ["node-addon-api", dirname(nodePtyRequire.resolve("node-addon-api/package.json"))],
+  ["semver", dirname(mxcRequire.resolve("semver/package.json"))],
+]);
 
 mkdirSync(OUT_DIR, { recursive: true });
 // Windows utilityProcess may keep the directory handle open briefly even after
@@ -25,7 +41,14 @@ for (const [entry, outfile] of [
   [SIDECAR_ENTRY, OUT_FILE],
   [XHR_WORKER_ENTRY, XHR_WORKER_OUT_FILE],
 ]) {
-  const args = ["build", entry, "--target=node", "--format=esm", `--outfile=${outfile}`];
+  const args = [
+    "build",
+    entry,
+    "--target=node",
+    "--format=esm",
+    ...RUNTIME_EXTERNAL_PACKAGES.map((pkg) => `--external=${pkg}`),
+    `--outfile=${outfile}`,
+  ];
   console.error(`[sidecar-bundle] bun ${args.join(" ")}`);
   const result = spawnSync("bun", args, { cwd: REPO_ROOT, stdio: "inherit" });
   if (result.status !== 0) process.exit(result.status ?? 1);
@@ -123,6 +146,9 @@ for (const m of runtimeBundleSrc.matchAll(/require[0-9]?\("([^"]+)"\)/g)) {
   if (!reqsByPkg.has(pkg)) reqsByPkg.set(pkg, new Set());
   reqsByPkg.get(pkg).add(req);
 }
+for (const pkg of RUNTIME_EXTERNAL_PACKAGES) {
+  if (!reqsByPkg.has(pkg)) reqsByPkg.set(pkg, new Set());
+}
 const bunCacheDir = resolve(REPO_ROOT, "node_modules", ".bun");
 const bunEntries = existsSync(bunCacheDir) ? readdirSync(bunCacheDir) : [];
 const fileExistsUnder = (root, sub) => {
@@ -131,20 +157,21 @@ const fileExistsUnder = (root, sub) => {
     .some((c) => existsSync(resolve(root, c)));
 };
 for (const [pkg, reqs] of reqsByPkg) {
+  const externalRoot = RUNTIME_EXTERNAL_ROOTS.get(pkg);
   const cachePrefix = (pkg.includes("/") ? pkg.replace("/", "+") : pkg) + "@";
   const entries = bunEntries.filter((e) => e.startsWith(cachePrefix));
   // 选包含所有 require 子路径的版本（处理多版本传递依赖）
-  const chosen = entries.find((entry) => {
+  const chosen = externalRoot ? undefined : entries.find((entry) => {
     const pkgRoot = resolve(bunCacheDir, entry, "node_modules", pkg);
     return [...reqs].every((req) => {
       const sub = req.slice(pkg.length + 1);
       return !sub || fileExistsUnder(pkgRoot, sub);
     });
-  }) ?? entries[0];
-  if (!chosen) { console.error(`[sidecar-bundle] warn: not in .bun cache: ${pkg}`); continue; }
-  const pkgRoot = resolve(bunCacheDir, chosen, "node_modules", pkg);
+  }) ?? (externalRoot ? undefined : entries[0]);
+  if (!externalRoot && !chosen) { console.error(`[sidecar-bundle] warn: not in .bun cache: ${pkg}`); continue; }
+  const pkgRoot = externalRoot ?? resolve(bunCacheDir, chosen, "node_modules", pkg);
   const dest = resolve(OUT_DIR, "node_modules", pkg);
   rmSync(dest, { recursive: true, force: true });
   cpSync(pkgRoot, dest, { recursive: true });
-  console.error(`[sidecar-bundle] copied ${pkg} (${chosen}) -> resources/sidecar/node_modules/${pkg}`);
+  console.error(`[sidecar-bundle] copied ${pkg} (${externalRoot ? "resolved runtime dependency" : chosen}) -> resources/sidecar/node_modules/${pkg}`);
 }

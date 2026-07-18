@@ -3,9 +3,9 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import { extractArticleMarkdown } from "@lume/agent-sdk";
 import type {
-  WikiCapabilityMatrix, WikiChangeDraft, WikiCreateEditDraftInput, WikiCreateImportDraftInput,
+  WikiChangeDraft, WikiCreateEditDraftInput, WikiCreateImportDraftInput,
   WikiPageRecord, WikiReadResult, WikiSearchInput, WikiSearchResult, WikiSnapshot,
-  WikiSourceKind, WikiTrustedSubject, WikiWorkspaceSnapshot
+  WikiPageType, WikiSourceKind, WikiTrustedSubject, WikiWorkspaceSnapshot
 } from "@lume/shared";
 import { getAgentThreadMessages, getAgentThreadMeta, createAgentThread } from "../agent/agent-thread-manager";
 import { getAgentWorkspace, listAgentWorkspaces } from "../agent/agent-workspace-manager";
@@ -20,16 +20,21 @@ import { createWikiPageMarkdown, extractWikiLinks, parseWikiPage, serializeWikiP
 import { WikiMutationCoordinator } from "./mutation-coordinator";
 import { assertExternalPathWithin } from "./path-security";
 import { WikiSafeHttpFetchService } from "./safe-http-fetch";
+import { WIKI_CAPABILITIES } from "./wiki-capabilities";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_BATCH_BYTES = 250 * 1024 * 1024;
 const MAX_FILES = 500;
 
-export const WIKI_CAPABILITIES: WikiCapabilityMatrix = {
-  phase: "A", uiMutation: true, askWikiReadOnly: true, ordinaryAgentRead: false, agentProposals: false,
-  protectedRootGate: false, allowedRootSandbox: false,
-  reason: "Ask Wiki 使用固定只读 profile；全局 protected-root 与不透明命令允许根沙箱尚未验收，因此保持 Phase A，不给普通编码会话附加 Wiki scope。"
-};
+export interface WikiAgentProposalInput {
+  action: "create" | "update";
+  title: string;
+  body: string;
+  pageType?: Exclude<WikiPageType, "source">;
+  pageId?: string;
+  expectedHash?: string;
+  primaryWorkspaceId?: string | null;
+}
 
 export class WikiService {
   readonly root: string;
@@ -149,6 +154,76 @@ export class WikiService {
       operations: [{ kind: target === current.path ? "update" : "move", pageId: current.id, beforeHash: current.hash, targetRelativePath: target, previousRelativePath: current.path, markdown }],
       sources: [], diffs: [{ path: target, beforeHash: current.hash, afterHash: sha256(markdown), preview: `保存 revision ${frontmatter.revision}` }],
       pageVisibilityWorkspaceIds: [frontmatter.primary_workspace_id, ...frontmatter.associated_workspace_ids].filter(Boolean) as string[], sourceGrantWorkspaceIds: []
+    });
+  }
+
+  createAgentProposalDraft(
+    input: WikiAgentProposalInput,
+    scope: WikiSearchInput["scope"],
+    subject: WikiTrustedSubject
+  ): WikiChangeDraft {
+    if (input.action === "update") {
+      if (!input.pageId || !input.expectedHash) throw new Error("更新提案需要 pageId 与 expectedHash");
+      const current = this.read(input.pageId, scope, subject).page;
+      if (current.hash !== input.expectedHash) throw new Error("Wiki 页面已变化，请重新读取后再提案");
+      const frontmatter = {
+        ...current.frontmatter,
+        title: input.title.trim() || current.title,
+        type: input.pageType ?? current.type,
+        updated: new Date().toISOString(),
+        revision: current.revision + 1
+      };
+      const markdown = serializeWikiPage(frontmatter, input.body);
+      const target = wikiPageRelativePath(frontmatter);
+      return this.coordinator.stageDraft({
+        origin: "agent",
+        risk: current.protected ? "high" : "low",
+        riskReasons: current.protected ? ["目标页面处于 protected 状态"] : [],
+        title: `Agent 建议更新 ${frontmatter.title}`,
+        operations: [{
+          kind: target === current.path ? "update" : "move",
+          pageId: current.id,
+          beforeHash: current.hash,
+          targetRelativePath: target,
+          ...(target === current.path ? {} : { previousRelativePath: current.path }),
+          markdown
+        }],
+        sources: [],
+        diffs: [{ path: target, beforeHash: current.hash, afterHash: sha256(markdown), preview: `建议更新 revision ${frontmatter.revision}` }],
+        pageVisibilityWorkspaceIds: [frontmatter.primary_workspace_id, ...frontmatter.associated_workspace_ids].filter(Boolean) as string[],
+        sourceGrantWorkspaceIds: []
+      });
+    }
+
+    if (scope.kind === "page") throw new Error("页面级 Wiki scope 不能新建页面");
+    const primaryWorkspaceId = scope.kind === "workspace"
+      ? scope.workspaceId
+      : scope.kind === "inbox"
+        ? null
+        : input.primaryWorkspaceId ?? null;
+    const primary = primaryWorkspaceId ? workspaceSnapshot(primaryWorkspaceId) : null;
+    const title = input.title.trim();
+    if (!title) throw new Error("新建提案需要标题");
+    const markdown = createWikiPageMarkdown({
+      type: input.pageType ?? "synthesis",
+      title,
+      primaryWorkspace: primary,
+      associatedWorkspaceIds: [],
+      sourceIds: [],
+      body: input.body
+    });
+    const page = parseWikiPage(markdown);
+    const targetRelativePath = wikiPageRelativePath(page.frontmatter);
+    return this.coordinator.stageDraft({
+      origin: "agent",
+      risk: "low",
+      riskReasons: [],
+      title: `Agent 建议新建 ${title}`,
+      operations: [{ kind: "create", pageId: page.id, beforeHash: null, targetRelativePath, markdown }],
+      sources: [],
+      diffs: [{ path: targetRelativePath, beforeHash: null, afterHash: sha256(markdown), preview: `建议新建 ${title}` }],
+      pageVisibilityWorkspaceIds: primaryWorkspaceId ? [primaryWorkspaceId] : [],
+      sourceGrantWorkspaceIds: []
     });
   }
 

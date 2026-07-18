@@ -8,6 +8,7 @@ describe('WikiView render smoke', () => {
     expect(html).toContain('知识归宿')
     expect(html).toContain('导入')
     expect(html).toContain('向 Wiki 提问')
-    expect(html).toContain('还没有 Wiki 页面')
+    expect(html).toContain('正在打开 Wiki')
+    expect(html).not.toContain('Phase A')
   })
 })

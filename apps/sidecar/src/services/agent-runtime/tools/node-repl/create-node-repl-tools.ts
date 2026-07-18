@@ -70,6 +70,7 @@ export function createNodeReplTools(input: {
         });
         const result = await registry.exec(threadId, execInput, {
           cwd: context.cwd || input.cwd,
+          sandbox: context.sandbox,
           emitBrowserAuthRequest: input.emitBrowserAuthRequest
             ? (request, signal) => resolveBrowserAuthRequest({
               request,
@@ -108,7 +109,7 @@ export function createNodeReplTools(input: {
       },
       async call(_args, context) {
         const threadId = context.sessionId ?? input.sessionId;
-        await registry.reset(threadId, { cwd: context.cwd || input.cwd });
+        await registry.reset(threadId, { cwd: context.cwd || input.cwd, sandbox: context.sandbox });
         return { type: "tool_result", tool_use_id: context.toolUseId ?? "", content: "ok" };
       }
     },
@@ -140,7 +141,7 @@ export function createNodeReplTools(input: {
         if (!isNodeModulesDirectory(dir)) return errorResult(context.toolUseId, "path must end with node_modules");
 
         const threadId = context.sessionId ?? input.sessionId;
-        const added = await registry.addModuleDir(threadId, dir, { cwd: context.cwd || input.cwd });
+        const added = await registry.addModuleDir(threadId, dir, { cwd: context.cwd || input.cwd, sandbox: context.sandbox });
         return { type: "tool_result", tool_use_id: context.toolUseId ?? "", content: String(added) };
       }
     }
