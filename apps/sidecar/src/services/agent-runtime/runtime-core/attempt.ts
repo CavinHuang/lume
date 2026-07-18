@@ -24,6 +24,7 @@ import { builtinToolInputGuardrails } from "../guardrails/builtin-tool-guardrail
 import { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
 import { LumeRunner } from "../runner/lume-runner";
 import { ToolExecutionGateway } from "../tools/tool-execution-gateway";
+import { getWikiProtectedRootPath } from "../../infra/config-paths";
 import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
 import { prepareRuntimeCoreAttempt, type PreparedRuntimeCoreAttempt } from "./prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
@@ -443,6 +444,7 @@ export function createCanUseToolHandler(
       classifierEnabled: config.permissions?.classifier?.enabled ?? false,
       permissionRules,
       privateWriteRoots,
+      protectedRoots: [getWikiProtectedRootPath()],
       context: {
         threadId: params.runtime.sessionId,
         cwd: prepared.agentCwd,

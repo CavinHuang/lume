@@ -1,3 +1,4 @@
+import type { SandboxSettings } from "@lume/agent-sdk";
 import type { McpServerEntry, WorkspaceMcpConfig } from "@lume/shared";
 import {
   WorkspaceMcpManager,
@@ -16,6 +17,8 @@ export interface BuildPluginMcpManagerOptions {
   workspaceSlug?: string;
   /** Test seam (mirrors WorkspaceMcpManagerOptions.sdkManagerFactory). */
   sdkManagerFactory?: () => WorkspaceSdkMcpManager;
+  stdioSandbox?: SandboxSettings;
+  stdioCwd?: string;
 }
 
 /** Build a `${pluginId}:${serverId}` → pluginId index (shared by the start gate + tool stamping). */
@@ -46,7 +49,7 @@ export function buildPluginMcpManager(
     namespaced.servers[id] = server.entry as McpServerEntry;
   }
 
-  const { permissionRuntime, workspaceSlug, sdkManagerFactory } = options;
+  const { permissionRuntime, workspaceSlug, sdkManagerFactory, stdioSandbox, stdioCwd } = options;
   const authorizeConnect = permissionRuntime
     ? async (serverId: string): Promise<McpGateDecision> => {
         const pluginId = pluginIdByServerId.get(serverId);
@@ -72,5 +75,7 @@ export function buildPluginMcpManager(
     readConfig: () => namespaced,
     ...(sdkManagerFactory ? { sdkManagerFactory } : {}),
     ...(authorizeConnect ? { authorizeConnect } : {}),
+    ...(stdioSandbox ? { stdioSandbox } : {}),
+    ...(stdioCwd ? { stdioCwd } : {}),
   });
 }

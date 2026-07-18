@@ -133,7 +133,7 @@ export const DATA_CATEGORY_SCAN_SPEC: DataCategoryScanSpec[] = [
   },
   {
     key: "business",
-    scanPaths: ["reading", "routine", "automation"],
+    scanPaths: ["reading", "routine", "automation", "wiki"],
     skipSubdirs: [],
   },
   {

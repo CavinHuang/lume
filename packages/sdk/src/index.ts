@@ -52,6 +52,18 @@ export type { McpSdkServerConfig } from './sdk-mcp-server.js'
 
 export { QueryEngine } from './engine.js'
 export { resolveShellInvocation } from './utils/shell-invocation.js'
+export {
+  buildCommandLine,
+  getProcessSandboxSupport,
+  probeProcessSandbox,
+  spawnWithProcessSandbox,
+} from './utils/process-sandbox.js'
+export type {
+  ProcessSandboxProbeInput,
+  ProcessSandboxProbeResult,
+  ProcessSandboxSupport,
+  SandboxedProcessOptions,
+} from './utils/process-sandbox.js'
 
 // --------------------------------------------------------------------------
 // LLM Providers (Anthropic + OpenAI)
@@ -482,6 +494,7 @@ export * from './tools/render-client.js'
 
 // WebFetch internals (enhanced WebFetch assembly in sidecar needs these)
 export { runWebFetch, type WebFetchInput, type WebFetchDeps } from './tools/web-fetch.js'
+export { extractArticleMarkdown } from './tools/html-to-markdown.js'
 export {
   fetchIdFromUrl,
   lumeFileUrl,
@@ -607,6 +620,7 @@ export type {
 
   // Sandbox types
   SandboxSettings,
+  SandboxProcessIsolationConfig,
   SandboxNetworkConfig,
   SandboxFilesystemConfig,
 

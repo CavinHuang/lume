@@ -59,6 +59,7 @@ type FileContextMode = "newRoot" | "inherit" | "fork";
 interface CreateAgentThreadOptions {
   fileContextMode?: FileContextMode;
   fileContextId?: string;
+  wikiProfile?: AgentThreadMeta["wikiProfile"];
 }
 
 function buildModelRef(channelId?: string, modelId?: string): string | undefined {
@@ -290,6 +291,7 @@ export function createAgentThreadWithModelRef(
       modelId,
       modelSelectionSource: explicitSelectionProvided ? "thread-override" : "inherited",
       workspaceId,
+      wikiProfile: options?.wikiProfile,
       fileContextId,
       parentThreadId,
       pinned: false,

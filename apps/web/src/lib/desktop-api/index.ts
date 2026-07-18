@@ -13,6 +13,7 @@ export * from './mcp'
 export * from './model'
 export * from './im'
 export * from './reading'
+export * from './wiki'
 export { localFilePreviewUrl, openInSystem } from './native'
 export { sidecarCall } from './system'
 export type {

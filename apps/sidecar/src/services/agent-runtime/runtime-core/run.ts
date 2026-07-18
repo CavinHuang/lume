@@ -27,6 +27,7 @@ import {
   type ToolResult,
   type RenderClient,
   type TodoState,
+  type SandboxSettings,
   SkillTool,
   createTodoTool,
   defineTool,
@@ -62,7 +63,7 @@ import {
   getWorkspaceSkillsDir
 } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
-import { getWorkspaceMcpManager } from "../../mcp/workspace-mcp-manager";
+import { getWorkspaceMcpManager, WorkspaceMcpManager } from "../../mcp/workspace-mcp-manager";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-v2/policy";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
 import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
@@ -184,6 +185,8 @@ export interface CreateRuntimeCoreSessionInput {
   workflowHooks?: LumeWorkflowHookRuntimeLike;
   applyWorkflowHookEffects?: (result: LumeWorkflowHookExecutionResult) => Promise<void> | void;
   trace?: ContextAssemblyInput["trace"];
+  wikiPhaseBEnabled?: boolean;
+  processSandbox?: SandboxSettings;
 }
 
 interface BoundSubagentIdentity {
@@ -791,6 +794,7 @@ function buildRuntimeCoreTools(input: {
   pluginCommandTools?: ToolDefinition[];
   /** Plugin MCP tool definitions (Phase MCP Merge-A) from the plugin-scoped MCP manager. */
   pluginMcpTools?: ToolDefinition[];
+  wikiPhaseBEnabled?: boolean;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
@@ -847,8 +851,10 @@ function buildRuntimeCoreTools(input: {
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitRuntimeEvent,
-    emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {})
+    emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {}),
+    wikiPhaseBEnabled: input.wikiPhaseBEnabled
   });
+  const askWikiOnly = getAgentThreadMeta(input.sessionId)?.wikiProfile?.kind === "ask-wiki";
 
   const policyInput = {
     provider: input.provider,
@@ -1200,7 +1206,9 @@ function buildRuntimeCoreTools(input: {
     policyInput,
     pluginDiagnostics: input.pluginDiagnostics,
     mcpDiagnostics: input.mcpDiagnostics,
-    groups: [
+    groups: askWikiOnly ? [
+      { source: "lume", tools: lumeTools.customTools as ToolDefinition[] }
+    ] : [
       { source: "sdk", tools: baseTools },
       ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
       { source: "task", tools: taskLoopTools },
@@ -1537,6 +1545,7 @@ export async function createRuntimeCoreSession(
     capabilities: pluginAssembly.hooks,
     runtime: hookPermissionRuntime,
     workspaceSlug: input.workspaceSlug,
+    sandbox: input.processSandbox,
   });
 
   // Register plugin skills (resolver already namespaced skill.name as `${pluginId}:${original}`).
@@ -1567,9 +1576,14 @@ export async function createRuntimeCoreSession(
   const pluginMcpManager = buildPluginMcpManager(pluginAssembly.mcpServers, {
     permissionRuntime: pluginMcpPermissionRuntime,
     workspaceSlug: input.workspaceSlug,
+    stdioSandbox: input.processSandbox,
+    stdioCwd: input.cwd,
   });
-  const workspaceMcpManager = getWorkspaceMcpManager();
-  const pluginMcpRuntime = await pluginMcpManager
+  const askWikiOnly = getAgentThreadMeta(input.lumeSessionId)?.wikiProfile?.kind === "ask-wiki";
+  const workspaceMcpManager = input.processSandbox?.processIsolation?.enabled
+    ? new WorkspaceMcpManager({ stdioSandbox: input.processSandbox, stdioCwd: input.cwd })
+    : getWorkspaceMcpManager();
+  const pluginMcpRuntime = askWikiOnly ? { tools: [], diagnostics: [] } : await pluginMcpManager
     .createRuntimeTools(PLUGIN_MCP_WORKSPACE_SLUG, {
       includeManagementTools: false,
       toolMetadataProvider: (serverId) => {
@@ -1587,7 +1601,7 @@ export async function createRuntimeCoreSession(
       }],
     }));
   const enabledPlugins = buildEnabledPluginContext(registeredPlugins, runtimePluginAssembly);
-  const workspaceMcpRuntime = input.workspaceSlug
+  const workspaceMcpRuntime = input.workspaceSlug && !askWikiOnly
     ? await workspaceMcpManager.createRuntimeTools(input.workspaceSlug).catch((error) => ({
       tools: [],
       diagnostics: [{
@@ -1645,6 +1659,7 @@ export async function createRuntimeCoreSession(
     })),
     pluginCommandTools: pluginAssembly.commandToolDefinitions,
     pluginMcpTools: pluginMcpRuntime.tools,
+    wikiPhaseBEnabled: input.wikiPhaseBEnabled,
     mcpTools: replaceMcpResourceTools(workspaceMcpRuntime.tools, pluginAwareMcpResourceTools),
     mcpDiagnostics: [
       ...(workspaceMcpRuntime.diagnostics ?? []),
@@ -1830,6 +1845,14 @@ export async function createRuntimeCoreSession(
         log.warn("Plugin MCP disposeWorkspace failed during session dispose", {
           sessionId: input.lumeSessionId,
           error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      if (input.workspaceSlug && input.processSandbox?.processIsolation?.enabled) {
+        await workspaceMcpManager.disposeWorkspace(input.workspaceSlug).catch((error) => {
+          log.warn("Sandboxed workspace MCP dispose failed", {
+            sessionId: input.lumeSessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
       }
       clearRuntimeToolDescriptors(input.lumeSessionId);

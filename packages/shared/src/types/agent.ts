@@ -8,6 +8,7 @@
 import type { SDKMessage } from "@lume/agent-sdk"
 import type { LumeRuntimeEvent } from "./runtime-event"
 import type { LumeConfigThinkingLevel } from "./lume-config"
+import type { WikiSearchScope } from "./wiki"
 import type { McpTransportType } from "./mcp"
 export type { SDKMessage } from "@lume/agent-sdk"
 export type {
@@ -171,6 +172,11 @@ export interface AgentThreadMeta {
   runtimeThreadId?: string
   /** 所属工作区 ID */
   workspaceId?: string
+  /** 由 sidecar 签发的 Wiki 专用会话能力；renderer 不能自行构造。 */
+  wikiProfile?: {
+    kind: 'ask-wiki'
+    scope: WikiSearchScope
+  }
   /** 稳定文件上下文 ID：主/子 Agent 共享，用户分叉隔离 */
   fileContextId?: string
   /** 外部来源，用于按 IM 渠道等入口分组展示 */

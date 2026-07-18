@@ -1,3 +1,6 @@
+import type { SandboxSettings } from '../types.js';
+import { SandboxedStdioClientTransport } from './sandboxed-stdio-transport.js';
+
 export type McpTransportKind = 'stdio' | 'sse' | 'streamable_http';
 export type McpClientStatus = 'idle' | 'connecting' | 'connected' | 'failed';
 export type McpClientErrorCode =
@@ -15,6 +18,8 @@ export interface NormalizedMcpServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  cwd?: string;
+  sandbox?: SandboxSettings;
   url?: string;
   headers?: Record<string, string>;
 }
@@ -187,10 +192,12 @@ function configsEqual(left: NormalizedMcpServerConfig, right: NormalizedMcpServe
     && left.enabled === right.enabled
     && left.transport === right.transport
     && left.command === right.command
+    && left.cwd === right.cwd
     && left.url === right.url
     && stringArraysEqual(left.args, right.args)
     && stringRecordsEqual(left.env, right.env)
-    && stringRecordsEqual(left.headers, right.headers);
+    && stringRecordsEqual(left.headers, right.headers)
+    && JSON.stringify(left.sandbox) === JSON.stringify(right.sandbox);
 }
 
 function cloneConfig(config: NormalizedMcpServerConfig): NormalizedMcpServerConfig {
@@ -198,7 +205,8 @@ function cloneConfig(config: NormalizedMcpServerConfig): NormalizedMcpServerConf
     ...config,
     ...(config.args ? { args: [...config.args] } : {}),
     ...(config.env ? { env: { ...config.env } } : {}),
-    ...(config.headers ? { headers: { ...config.headers } } : {})
+    ...(config.headers ? { headers: { ...config.headers } } : {}),
+    ...(config.sandbox ? { sandbox: structuredClone(config.sandbox) } : {})
   };
 }
 
@@ -370,6 +378,15 @@ async function defaultTransportFactory(
   config: NormalizedMcpServerConfig
 ): Promise<unknown> {
   if (config.transport === 'stdio') {
+    if (config.sandbox?.processIsolation?.enabled) {
+      return new SandboxedStdioClientTransport({
+        command: config.command ?? '',
+        args: config.args ?? [],
+        env: { ...process.env, ...config.env } as Record<string, string>,
+        cwd: config.cwd,
+        sandbox: config.sandbox,
+      });
+    }
     const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
     return new StdioClientTransport({
       command: config.command ?? '',

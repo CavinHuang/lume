@@ -12,6 +12,7 @@ import { createReadingHandlers } from "./reading-handlers";
 import { createRoutineHandlers } from "./routine-handlers";
 import { createSystemHandlers } from "./system-handlers";
 import { createDesktopContextHandlers } from "./desktop-context-handlers";
+import { createWikiHandlers } from "./wiki-handlers";
 import { desktopContextRpcService } from "../services/desktop-context/desktop-context-runtime";
 import type { NotificationWriter, RpcHandler } from "./types";
 
@@ -58,6 +59,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     createAutomationHandlers(),
     createRoutineHandlers(),
     createDesktopContextHandlers(desktopContextRpcService),
+    createWikiHandlers(),
     createAgentHandlers({
       writeNotification: context.writeNotification,
       planModePhaseTracker,

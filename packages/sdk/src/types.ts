@@ -868,6 +868,8 @@ export interface McpStdioConfig {
   command: string
   args?: string[]
   env?: Record<string, string>
+  cwd?: string
+  sandbox?: SandboxSettings
   onElicitation?: McpElicitationHandler
   onResourceUpdate?: McpResourceUpdateHandler
 }
@@ -951,11 +953,30 @@ export interface SandboxSettings {
   autoAllowBashIfSandboxed?: boolean
   excludedCommands?: string[]
   allowUnsandboxedCommands?: boolean
+  processIsolation?: SandboxProcessIsolationConfig
   network?: SandboxNetworkConfig
   filesystem?: SandboxFilesystemConfig
   ignoreViolations?: Record<string, string[]>
   enableWeakerNestedSandbox?: boolean
   ripgrep?: { command: string; args?: string[] }
+}
+
+export interface SandboxProcessIsolationConfig {
+  /** Launch opaque child processes through an OS-enforced sandbox. */
+  enabled?: boolean
+  /** Fail closed when the host sandbox is unavailable or cannot start. */
+  required?: boolean
+  /** Extra roots visible as read-only to the child process. */
+  readonlyPaths?: string[]
+  /** Extra roots visible as read-write to the child process. */
+  readwritePaths?: string[]
+  /** Roots that remain inaccessible even if a broader root is granted. */
+  deniedPaths?: string[]
+  /** Preferred executable directories prepended to PATH inside the sandbox. */
+  executableSearchPaths?: string[]
+  /** Preserve existing command network behavior. */
+  allowOutbound?: boolean
+  allowLocalNetwork?: boolean
 }
 
 export interface SandboxNetworkConfig {

@@ -7,6 +7,7 @@ import type {
   McpServerConfig,
   ToolResult,
 } from '../types.js'
+import { SandboxedStdioClientTransport } from './sandboxed-stdio-transport.js'
 
 export interface MCPConnection {
   name: string
@@ -41,13 +42,24 @@ export async function connectMCPServer(
     let transport: any
 
     if (!config.type || config.type === 'stdio') {
-      const stdioConfig = config as { command: string; args?: string[]; env?: Record<string, string> }
-      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
-      transport = new StdioClientTransport({
-        command: stdioConfig.command,
-        args: stdioConfig.args || [],
-        env: { ...process.env, ...stdioConfig.env } as Record<string, string>,
-      })
+      const stdioConfig = config as Extract<McpServerConfig, { type?: 'stdio' }>
+      if (stdioConfig.sandbox?.processIsolation?.enabled) {
+        transport = new SandboxedStdioClientTransport({
+          command: stdioConfig.command,
+          args: stdioConfig.args || [],
+          env: { ...process.env, ...stdioConfig.env } as Record<string, string>,
+          cwd: stdioConfig.cwd,
+          sandbox: stdioConfig.sandbox,
+        })
+      } else {
+        const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+        transport = new StdioClientTransport({
+          command: stdioConfig.command,
+          args: stdioConfig.args || [],
+          env: { ...process.env, ...stdioConfig.env } as Record<string, string>,
+          cwd: stdioConfig.cwd,
+        })
+      }
     } else if (config.type === 'sse') {
       const sseConfig = config as { url: string; headers?: Record<string, string> }
       const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js')

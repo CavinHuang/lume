@@ -99,6 +99,25 @@ describe("WorkspaceMcpManager", () => {
     expect(fake.connectCalls).toEqual(["local", "local"]);
   });
 
+  test("attaches the session sandbox only to local stdio servers", async () => {
+    const fake = createFakeSdkManager();
+    const sandbox = { enabled: true, processIsolation: { enabled: true, deniedPaths: ["D:/wiki"] } };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        local: { enabled: true, transport: "stdio", command: "node" },
+        remote: { enabled: true, transport: "streamable_http", url: "https://example.com/mcp" }
+      }),
+      sdkManagerFactory: () => fake,
+      stdioSandbox: sandbox,
+      stdioCwd: "D:/workspace"
+    });
+
+    await manager.syncWorkspace("demo");
+
+    expect(fake.syncCalls[0]?.local).toMatchObject({ sandbox, cwd: "D:/workspace" });
+    expect(fake.syncCalls[0]?.remote).not.toHaveProperty("sandbox");
+  });
+
   test("getStatus returns saved servers as disconnected before sync", () => {
     const manager = new WorkspaceMcpManager({
       readConfig: () => createConfig({

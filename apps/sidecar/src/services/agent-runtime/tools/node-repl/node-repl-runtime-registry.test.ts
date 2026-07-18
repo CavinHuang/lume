@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
-import type { JsExecInput, NodeReplRuntimeClient } from "./node-repl-types";
+import type { JsExecInput, NodeReplRuntimeClient, RuntimeFactoryInput } from "./node-repl-types";
 
 function createFakeNodeReplClient(options: { failWithTimeout?: boolean } = {}): NodeReplRuntimeClient & {
   resetCalls: number;
@@ -55,5 +55,21 @@ describe("node-repl runtime registry", () => {
 
     expect(client.shutdownCalls).toBe(1);
     expect(registry.debugSnapshot("thread-1")).toBeNull();
+  });
+
+  test("passes the query process sandbox into the runtime factory", async () => {
+    let factoryInput: RuntimeFactoryInput | undefined;
+    const registry = createNodeReplRuntimeRegistry((input) => {
+      factoryInput = input;
+      return createFakeNodeReplClient();
+    });
+    const sandbox = {
+      enabled: true,
+      processIsolation: { enabled: true, deniedPaths: ["D:/wiki"] }
+    };
+
+    await registry.exec("thread-1", { code: "1 + 1" }, { cwd: "D:/workspace", sandbox });
+
+    expect(factoryInput).toEqual({ threadId: "thread-1", cwd: "D:/workspace", sandbox });
   });
 });

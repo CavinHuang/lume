@@ -19,6 +19,10 @@ import { createComputerUseVisionRouter } from "./computer-use/computer-use-visio
 import { getComputerUseSessionRegistry } from "./computer-use/computer-use-session";
 import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-surface";
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
+import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
+import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { createWikiProposalTool, createWikiReadTools } from "./wiki/create-wiki-tools";
+import { resolveTrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -45,6 +49,7 @@ export interface CreateLumeRuntimeToolsInput {
   memoryToolPolicy?: MemoryToolPolicy;
   includeCitations: boolean;
   automationExecution?: boolean;
+  wikiPhaseBEnabled?: boolean;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
@@ -59,6 +64,21 @@ export interface CreateLumeRuntimeToolsOutput {
 }
 
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
+  const threadMeta = getAgentThreadMeta(input.threadId);
+  const wikiProfile = resolveTrustedWikiRuntimeProfile({
+    threadMeta,
+    workspaceId: input.workspaceId,
+    workspaceExists: Boolean(input.workspaceId && getAgentWorkspace(input.workspaceId)),
+    threadType: input.threadType,
+    chatType: input.chatType
+  });
+  if (wikiProfile?.explicit) {
+    const customTools = [
+      ...createWikiReadTools(wikiProfile.scope),
+      ...(input.wikiPhaseBEnabled ? [createWikiProposalTool(wikiProfile.scope)] : [])
+    ];
+    return { customTools, availableToolNames: customTools.map((tool) => tool.name) };
+  }
   const enabledMemoryToolNames = resolveEnabledMemoryToolNames(input.memoryToolPolicy);
   const enabledMemoryTools = new Set(enabledMemoryToolNames);
   const memoryTools = input.workspaceSlug
@@ -125,6 +145,11 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const nodeReplTools = computerUseSurface === "sky"
     ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
     : allNodeReplTools;
+  const ordinaryWikiTools = input.wikiPhaseBEnabled
+    && wikiProfile
+    && !wikiProfile.explicit
+    ? createWikiReadTools(wikiProfile.scope)
+    : [];
   const customTools = [
     ...memoryTools,
     ...cronTools,
@@ -137,6 +162,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...routineTools,
     ...imageGenTools,
     ...nodeReplTools,
+    ...ordinaryWikiTools,
     ...(computerUseSurface === "mcp" ? computerUseTools : []),
   ];
   const customToolNames = customTools.map((tool) => tool.name);

@@ -1,12 +1,12 @@
-import { spawn } from "node:child_process";
 import type {
   HookConfig,
   HookDefinition,
   HookInput,
   HookOutput,
   SensitiveCapabilityKey,
+  SandboxSettings,
 } from "@lume/agent-sdk";
-import { resolveShellInvocation } from "@lume/agent-sdk";
+import { resolveShellInvocation, spawnWithProcessSandbox } from "@lume/agent-sdk";
 import type { PluginPermissionRuntime } from "./permission-runtime.js";
 import { createLogger } from "../../infra/logger";
 
@@ -38,10 +38,21 @@ export type ShellHookSpawner = (
  * parse stdout as HookOutput (non-JSON → {message}). Mirrors packages/sdk/src/hooks.ts:307-377.
  */
 export const defaultShellHookSpawner: ShellHookSpawner = (command, input, timeout, signal) => {
+  return spawnShellHook(command, input, timeout, signal);
+};
+
+function spawnShellHook(
+  command: string,
+  input: HookInput,
+  timeout: number,
+  signal: AbortSignal,
+  sandbox?: SandboxSettings,
+): Promise<HookOutput | undefined> {
   return new Promise((resolve) => {
     const shell = resolveShellInvocation(command);
-    const proc = spawn(shell.command, shell.args, {
-      timeout,
+    const proc = spawnWithProcessSandbox(shell.command, shell.args, {
+      cwd: input.cwd || process.cwd(),
+      timeoutMs: timeout,
       env: {
         ...process.env,
         HOOK_EVENT: input.event,
@@ -50,7 +61,7 @@ export const defaultShellHookSpawner: ShellHookSpawner = (command, input, timeou
         HOOK_CWD: input.cwd || "",
       },
       stdio: ["pipe", "pipe", "pipe"],
-    });
+    }, sandbox);
 
     proc.stdin?.write(JSON.stringify(input));
     proc.stdin?.end();
@@ -92,13 +103,14 @@ export const defaultShellHookSpawner: ShellHookSpawner = (command, input, timeou
       resolve(undefined);
     });
   });
-};
+}
 
 export interface BuildPluginAgentHooksInput {
   capabilities: PluginHookCapability[];
   runtime: PluginPermissionRuntime;
   workspaceSlug?: string;
   spawner?: ShellHookSpawner;
+  sandbox?: SandboxSettings;
 }
 
 /**
@@ -114,7 +126,8 @@ export interface BuildPluginAgentHooksInput {
  * Pure given the runtime + spawner (both injectable for tests).
  */
 export function buildPluginAgentHooks(input: BuildPluginAgentHooksInput): Record<string, AgentHookEntry[]> {
-  const spawner = input.spawner ?? defaultShellHookSpawner;
+  const spawner = input.spawner ?? ((command, hookInput, timeout, signal) =>
+    spawnShellHook(command, hookInput, timeout, signal, input.sandbox));
   const result: Record<string, AgentHookEntry[]> = {};
 
   for (const capability of input.capabilities) {

@@ -1,7 +1,8 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
+import { spawnWithProcessSandbox, type SandboxSettings } from "@lume/agent-sdk";
 import type {
   JsExecInput,
   NodeReplBrowserAuthRequest,
@@ -68,6 +69,7 @@ interface JsonlNodeReplRuntimeClientOptions {
   hostPath: string;
   kernelPath: string;
   nodePath: string;
+  sandbox?: SandboxSettings;
 }
 
 export function createNodeReplRuntimeClientFromEnv(input: RuntimeFactoryInput): NodeReplRuntimeClient {
@@ -77,12 +79,13 @@ export function createNodeReplRuntimeClientFromEnv(input: RuntimeFactoryInput): 
     cwd: input.cwd,
     hostPath: requiredEnv("LUME_NODE_REPL_HOST"),
     kernelPath: join(rootPath, "runtime", "kernel-process.js"),
-    nodePath: process.env.LUME_NODE_REPL_ELECTRON?.trim() || process.execPath
+    nodePath: process.env.LUME_NODE_REPL_ELECTRON?.trim() || process.execPath,
+    sandbox: input.sandbox
   });
 }
 
 export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: ChildProcess | null = null;
   private nextId = 1;
   private pending = new Map<string, PendingCall>();
   private activeExecs = new Map<string, ActiveExec>();
@@ -133,7 +136,8 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
   private async call(method: string, params: Record<string, unknown>, timeoutMs = DEFAULT_CALL_TIMEOUT_MS): Promise<unknown> {
     this.ensureStarted();
     const child = this.child;
-    if (!child || !child.stdin.writable) {
+    const stdin = child?.stdin;
+    if (!child || !stdin || !stdin.writable) {
       throw new Error("node_repl runtime stdin unavailable");
     }
 
@@ -150,7 +154,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
         reject(new Error(`node_repl ${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timeout });
-      child.stdin.write(`${payload}\n`, "utf8", (error) => {
+      stdin.write(`${payload}\n`, "utf8", (error) => {
         if (!error) return;
         clearTimeout(timeout);
         this.pending.delete(requestId);
@@ -162,7 +166,7 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
   private ensureStarted(): void {
     if (this.child) return;
 
-    const child = spawn(this.options.hostPath, [
+    const child = spawnWithProcessSandbox(this.options.hostPath, [
       "--runtime-jsonl",
       "--kernel-path",
       this.options.kernelPath,
@@ -181,9 +185,14 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
         NODE_REPL_SESSION_ID: this.options.threadId
       },
       stdio: ["pipe", "pipe", "pipe"]
-    });
+    }, extendNodeReplSandbox(this.options));
     this.child = child;
 
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      child.kill();
+      this.child = null;
+      throw new Error("node_repl sandbox did not provide stdio pipes");
+    }
     createInterface({ input: child.stdout }).on("line", (line) => {
       this.handleLine(line);
     });
@@ -276,8 +285,9 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
 
   private writeHostResult(id: string, ok: boolean, value?: unknown, error?: string): void {
     const child = this.child;
-    if (!child || !child.stdin.writable) return;
-    child.stdin.write(`${JSON.stringify({
+    const stdin = child?.stdin;
+    if (!child || !stdin || !stdin.writable) return;
+    stdin.write(`${JSON.stringify({
       request_id: `host-result-${this.nextId++}`,
       method: "host_result",
       params: {
@@ -288,6 +298,22 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       }
     })}\n`, "utf8");
   }
+}
+
+function extendNodeReplSandbox(options: JsonlNodeReplRuntimeClientOptions): SandboxSettings | undefined {
+  if (!options.sandbox?.processIsolation?.enabled) return options.sandbox;
+  return {
+    ...options.sandbox,
+    processIsolation: {
+      ...options.sandbox.processIsolation,
+      readonlyPaths: [
+        ...(options.sandbox.processIsolation.readonlyPaths ?? []),
+        dirname(options.hostPath),
+        dirname(options.kernelPath),
+        dirname(options.nodePath)
+      ]
+    }
+  };
 }
 
 export function buildNodeReplChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

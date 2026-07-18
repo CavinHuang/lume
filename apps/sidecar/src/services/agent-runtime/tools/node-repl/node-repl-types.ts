@@ -59,6 +59,7 @@ export interface NodeReplComputerUseResult {
 }
 
 export interface NodeReplRuntimeExecOptions {
+  sandbox?: SandboxSettings;
   emitBrowserAuthRequest?: (request: NodeReplBrowserAuthRequest, signal: AbortSignal) => Promise<NodeReplBrowserAuthResult>;
   emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
 }
@@ -73,14 +74,16 @@ export interface NodeReplRuntimeClient {
 export interface RuntimeFactoryInput {
   threadId: string;
   cwd: string;
+  sandbox?: SandboxSettings;
 }
 
 export type RuntimeFactory = (input: RuntimeFactoryInput) => NodeReplRuntimeClient | Promise<NodeReplRuntimeClient>;
 
 export interface NodeReplRuntimeRegistry {
-  addModuleDir(threadId: string, dir: string, options?: { cwd?: string }): Promise<boolean>;
+  addModuleDir(threadId: string, dir: string, options?: { cwd?: string; sandbox?: SandboxSettings }): Promise<boolean>;
   exec(threadId: string, input: JsExecInput, options?: { cwd?: string } & NodeReplRuntimeExecOptions): Promise<NodeReplExecutionResult>;
-  reset(threadId: string, options?: { cwd?: string }): Promise<void>;
+  reset(threadId: string, options?: { cwd?: string; sandbox?: SandboxSettings }): Promise<void>;
   shutdown(threadId: string): Promise<void>;
   debugSnapshot(threadId: string): { moduleDirs: string[]; cwd: string } | null;
 }
+import type { SandboxSettings } from "@lume/agent-sdk";
