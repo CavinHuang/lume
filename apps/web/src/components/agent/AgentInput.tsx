@@ -3,13 +3,14 @@ import StarterKit from '@tiptap/starter-kit'
 import { cn } from '@/lib/utils'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
-import { Bot, Send, Square, FileText, Image, Plus, Puzzle, LoaderCircle, MonitorOff } from 'lucide-react'
+import { Send, Square, FileText, Plus, LoaderCircle, MonitorOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   agentSend,
   getThreadMessages,
+  isTerminalAgentSubmissionError,
   listAgentMessageQueue,
   onSidecarEvent,
   openFileDialog,
@@ -17,6 +18,7 @@ import {
   removeQueuedAgentMessage,
   reorderAgentMessageQueue,
   sidecarCall,
+  updateQueuedAgentMessage,
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
@@ -27,10 +29,8 @@ import {
   AGENT_IPC_CHANNELS,
   DESKTOP_CONTEXT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
-  type AgentListPluginsResult,
   type AgentMessage,
   type AgentMessageAttachmentInput,
-  type AgentPluginListItem,
   type AgentSavedFile,
   type Channel,
   type DesktopContextTarget,
@@ -38,11 +38,13 @@ import {
   type LumeEffectiveConfig,
   type LumeConfigThinkingLevel,
   type LumeRuntimeEvent,
+  type AgentQueuedMessage,
 } from '@lume/shared'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { MentionList } from './MentionList'
-import { PluginMentionNodeView } from './PluginMentionNodeView'
+import { CapabilityMentionNodeView } from './CapabilityMentionNodeView'
+import { serializeAgentEditorMessage } from './agent-editor-message-parts'
 import { ModelPicker } from './ModelPicker'
 import { PermissionModePicker } from './PermissionModePicker'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
@@ -70,19 +72,18 @@ import {
   upsertAgentMessageQueueSnapshot,
 } from './agent-message-queue-state'
 import { type MentionItem } from './slash-command-state'
-import { createSuggestionRenderer } from './editor-mention-suggestions'
+import { createCapabilityReferencePasteHandler, createSuggestionRenderer } from './editor-mention-suggestions'
+import { extractClipboardFiles, handleAttachmentPaste } from './editor-attachment-paste'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { buildContextWindowProgress } from './runtime-state-projections'
 import { ContextWindowIndicator } from './ContextWindowIndicator'
 import { getThreadSelectionSummary } from '@/components/model-selection/model-selection-state'
 import {
   applyAgentRoleMentions,
-  applyAgentRoleRecommendation,
   buildAgentRoleMentionItems,
-  buildAgentInputRoleRecommendations,
-  type AgentInputRoleRecommendation,
 } from './agent-input-role-recommendations'
-import { AgentAttachmentGrid, attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
+import { attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
+import { PendingAttachmentList } from './PendingAttachmentList'
 import { DesktopContextPlusItem } from './DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
 import {
@@ -97,13 +98,6 @@ import {
 import { resolveOpenDesktopAssistantSettingsState } from './agent-input-desktop-settings'
 
 import { Button } from '@/components/ui/button'
-type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
-
-function normalizeListPluginsResult(result: unknown): InstalledPluginSummary[] {
-  if (Array.isArray(result)) return result as InstalledPluginSummary[]
-  return (result as Partial<AgentListPluginsResult>).plugins ?? []
-}
-
 interface AgentInputProps {
   threadId: string
   streaming?: boolean
@@ -159,6 +153,7 @@ function createAgentSuggestionRenderer(
   threadId: string,
   _getWorkspaceSlug: () => string | null,
   setSuggestionOpen: (open: boolean) => void,
+  onEscape?: () => void,
 ) {
   return {
     char: '@',
@@ -193,6 +188,7 @@ function createAgentSuggestionRenderer(
           if (props.event.key === 'Escape') {
             setSuggestionOpen(false)
             wrapper?.remove()
+            onEscape?.()
             return true
           }
           return component?.ref?.onKeyDown(props) ?? false
@@ -277,11 +273,19 @@ export function AgentInput({
     onConfirm: () => void
   }>({ open: false, title: '', description: '', confirmLabel: '确认', destructive: false, onConfirm: () => {} })
   const [localSending, setLocalSending] = useState(false)
+  const localSendingRef = useRef(localSending)
+  localSendingRef.current = localSending
+  const [editingQueuedMessage, setEditingQueuedMessage] = useState<{
+    item: AgentQueuedMessage
+    expectedRevision: number
+    previousDraft: AgentInputDraftJSON | undefined
+  } | null>(null)
+  const editingQueuedMessageRef = useRef(editingQueuedMessage)
+  editingQueuedMessageRef.current = editingQueuedMessage
   const [historyMessages, setHistoryMessages] = useState<AgentMessage[]>([])
   const mentionSuggestionOpenRef = useRef(false)
   const [plusPanelOpen, setPlusPanelOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
-  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginSummary[]>([])
   const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const [desktopContextCaptureMessage, setDesktopContextCaptureMessage] = useState<string | undefined>()
   const [desktopContextCaptureLoading, setDesktopContextCaptureLoading] = useState(false)
@@ -289,6 +293,15 @@ export function AgentInput({
   const [desktopContextPermissionRequestLoading, setDesktopContextPermissionRequestLoading] = useState(false)
   const [localDesktopContextTarget, setLocalDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const sendNowRef = useRef<() => void>(() => undefined)
+  const stopNowRef = useRef<() => void>(() => undefined)
+  const lastEscapeAtRef = useRef(0)
+  const pendingSubmissionRef = useRef<{ id: string; identity: string } | null>(null)
+  const cancelQueueEditRef = useRef<() => void>(() => undefined)
+  const streamingRef = useRef(streaming)
+  streamingRef.current = streaming
+  const addPendingAttachmentsRef = useRef(onAddPendingAttachments)
+  addPendingAttachmentsRef.current = onAddPendingAttachments
+  const attachmentPasteInProgressRef = useRef(false)
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
     [threadId],
@@ -465,43 +478,73 @@ export function AgentInput({
   const handleSlashCommandExecuteStable = useCallback((id: string) => {
     slashCommandExecuteRef.current(id)
   }, [])
+  const handleLocalSuggestionEscape = useCallback(() => {
+    if (!streamingRef.current) return
+    lastEscapeAtRef.current = Date.now()
+    toast.info('再次按 Esc 停止当前输出', { duration: 900 })
+  }, [])
+  const handleCapabilityReferencePaste = createCapabilityReferencePasteHandler(threadId, getWorkspaceSlug)
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ undoRedo: false, bold: false, italic: false, strike: false }),
-      Placeholder.configure({ placeholder: '输入任务... 支持 @Agent/@文件 /命令 $技能 %插件' }),
+      StarterKit.configure({ bold: false, italic: false, strike: false }),
+      Placeholder.configure({ placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent 或文件' }),
       Mention.configure({
         HTMLAttributes: {
           class: 'mention bg-blue-500/10 text-blue-600 dark:text-blue-400 px-0.5 rounded font-medium text-[13px]',
         },
-        suggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen),
-      }),
-      Mention.extend({ name: 'slashMention' }).configure({
-        HTMLAttributes: {
-          class: 'mention bg-orange-500/10 text-orange-600 dark:text-orange-400 px-0.5 rounded font-medium text-[13px]',
-        },
-        suggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable),
-      }),
-      Mention.extend({ name: 'skillMention' }).configure({
-        HTMLAttributes: {
-          class: 'mention bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-0.5 rounded font-medium text-[13px]',
-        },
-        suggestion: createSuggestionRenderer('$', threadId, '$', getWorkspaceSlug, setMentionSuggestionOpen),
+        suggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen, handleLocalSuggestionEscape),
       }),
       Mention.extend({
-        name: 'pluginMention',
+        name: 'capabilityMention',
+        addAttributes() {
+          return {
+            ...this.parent?.(),
+            uri: { default: null },
+            kind: { default: null },
+            occurrenceId: { default: null },
+            iconUrl: { default: null },
+          }
+        },
         addNodeView() {
-          return ReactNodeViewRenderer(PluginMentionNodeView)
+          return ReactNodeViewRenderer(CapabilityMentionNodeView)
         },
       }).configure({
-        HTMLAttributes: { class: 'plugin-mention' },
-        suggestion: createSuggestionRenderer('%', threadId, '%', getWorkspaceSlug, setMentionSuggestionOpen),
+        HTMLAttributes: { class: 'capability-mention' },
+        renderText: ({ node }) => node.attrs.uri ?? '',
+        suggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable, handleLocalSuggestionEscape),
       }),
     ],
     editorProps: {
       attributes: {
         class:
           'outline-none min-h-[72px] max-h-[220px] overflow-y-auto text-[14px] leading-7 text-[var(--text-1)]',
+      },
+      handlePaste(view, event) {
+        if (
+          extractClipboardFiles(event.clipboardData).length > 0
+          && (localSendingRef.current || editingQueuedMessageRef.current)
+        ) {
+          event.preventDefault()
+          toast.error(editingQueuedMessageRef.current
+            ? '编辑排队消息时暂不支持修改附件'
+            : '消息正在提交，请稍后粘贴附件')
+          return true
+        }
+        if (handleAttachmentPaste(event, {
+          onStart: () => { attachmentPasteInProgressRef.current = true },
+          onAttachments: (attachments) => {
+            addPendingAttachmentsRef.current(attachments)
+            toast.success(`已粘贴 ${attachments.length} 个附件`)
+          },
+          onError: (error) => {
+            console.error('[AgentInput] 粘贴附件失败:', error)
+            toast.error('粘贴附件失败')
+          },
+          onSettled: () => { attachmentPasteInProgressRef.current = false },
+        })) return true
+
+        return handleCapabilityReferencePaste(view, event)
       },
       handleKeyDown(_, event) {
         if (shouldSendAgentInputOnEnter(event, mentionSuggestionOpenRef.current)) {
@@ -529,6 +572,25 @@ export function AgentInput({
         if (event.key === 'Escape' && historyIndexRef.current >= 0) {
           event.preventDefault()
           resetToDraftRef.current()
+          handleLocalSuggestionEscape()
+          return true
+        }
+        if (event.key === 'Escape' && editingQueuedMessageRef.current) {
+          event.preventDefault()
+          cancelQueueEditRef.current()
+          handleLocalSuggestionEscape()
+          return true
+        }
+        if (event.key === 'Escape' && streamingRef.current && !mentionSuggestionOpenRef.current) {
+          event.preventDefault()
+          const now = Date.now()
+          if (now - lastEscapeAtRef.current <= 800) {
+            lastEscapeAtRef.current = 0
+            stopNowRef.current()
+          } else {
+            lastEscapeAtRef.current = now
+            toast.info('再次按 Esc 停止当前输出', { duration: 900 })
+          }
           return true
         }
         return false
@@ -545,9 +607,23 @@ export function AgentInput({
         isNavigatingHistoryRef.current = false
         historyIndexRef.current = -1 // 用户在回溯态手动输入 → 退出回溯
       }
-      debouncedSaveDraft(editor.getJSON())
+      if (!editingQueuedMessageRef.current) debouncedSaveDraft(editor.getJSON())
     },
   })
+
+  const finishQueueEdit = useCallback((restoreDraft: boolean) => {
+    const editing = editingQueuedMessageRef.current
+    if (!editor || !editing) return
+    if (restoreDraft && editing.previousDraft && !isEmptyDraft(editing.previousDraft)) {
+      editor.commands.setContent(editing.previousDraft, { emitUpdate: false })
+    } else {
+      editor.commands.clearContent(false)
+    }
+    setEditorText(editor.getText())
+    setEditingQueuedMessage(null)
+    queueMicrotask(() => editor.commands.focus('end'))
+  }, [editor])
+  cancelQueueEditRef.current = () => finishQueueEdit(true)
 
   // 草稿恢复：threadId 变化或 editor 就绪时，把存盘草稿填回编辑器
   useEffect(() => {
@@ -592,23 +668,6 @@ export function AgentInput({
     contextWindow: selectedModelSummary.meta?.contextWindow,
     messages: historyMessages,
   })
-  const roleRecommendations = useMemo(
-    () => streaming || localSending ? [] : buildAgentInputRoleRecommendations(editorText),
-    [editorText, localSending, streaming],
-  )
-
-  const applyRoleRecommendation = useCallback((recommendation: AgentInputRoleRecommendation) => {
-    if (!editor) return
-    const nextText = applyAgentRoleRecommendation(editor.getText(), recommendation.role.id)
-    editor.commands.setContent(
-      nextText.split('\n').map((line) => ({
-        type: 'paragraph',
-        content: line.length > 0 ? [{ type: 'text', text: line }] : undefined,
-      })),
-    )
-    editor.commands.focus('end')
-    setEditorText(nextText)
-  }, [editor])
 
   const doClear = useCallback(async () => {
     try {
@@ -633,6 +692,17 @@ export function AgentInput({
 
   const handleSlashCommandExecute = useCallback((id: string) => {
     if (!editor) return
+    const actionHasConflictingPayload = editor.getText().trim() !== `/${id}`
+      || pendingAttachments.length > 0
+      || Boolean(selectedDesktopContextTarget)
+    if (actionHasConflictingPayload) {
+      toast.error('请先清空正文、附件和当前应用上下文，再执行该动作')
+      return
+    }
+    if (streaming) {
+      toast.error('当前正在输出，请停止后再执行该动作')
+      return
+    }
     if (id === 'clear') {
       editor.commands.clearContent()
       setEditorText('')
@@ -652,8 +722,7 @@ export function AgentInput({
       setEditorText('')
       void (async () => {
         try {
-          const result = await sidecarCall(AGENT_IPC_CHANNELS.RELOAD_PLUGINS, {})
-          setInstalledPlugins(normalizeListPluginsResult(result))
+          await sidecarCall(AGENT_IPC_CHANNELS.RELOAD_PLUGINS, {})
           toast.success('插件已重新加载')
         } catch (error) {
           console.error('[AgentInput] 重载插件失败:', error)
@@ -686,6 +755,8 @@ export function AgentInput({
           const result = await agentSend({
             threadId,
             userMessage: '/compact',
+            clientSubmissionId: crypto.randomUUID(),
+            messageMetadata: { hiddenFromChat: true, manualCommand: 'compact' },
             ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
           })
           if (shouldReleaseAgentInputLocalSendingAfterDispatch(result.mode)) {
@@ -702,18 +773,52 @@ export function AgentInput({
       })()
       return
     }
-  }, [editor, threadId, threads, doClear])
+  }, [editor, threadId, threads, doClear, pendingAttachments.length, selectedDesktopContextTarget, streaming])
 
   slashCommandExecuteRef.current = handleSlashCommandExecute
 
   const handleSend = useCallback(async () => {
     if (!editor || localSending) return
-    const rawText = applyAgentRoleMentions(editor.getText()).trim()
+    if (attachmentPasteInProgressRef.current) {
+      toast.info('正在读取粘贴的附件，请稍候')
+      return
+    }
+    const serialized = serializeAgentEditorMessage(editor.getJSON(), applyAgentRoleMentions)
+    const rawText = serialized.userMessage
     if (!rawText && pendingAttachments.length === 0) return
 
-    // 兜底：手打 /clear /compact /reload-plugins 文本回车，走与「选中」相同的流程
-    if (rawText === '/reload-plugins' || rawText === '/clear' || rawText === '/compact') {
-      handleSlashCommandExecute(rawText.replace(/^\//, ''))
+    const queueEdit = editingQueuedMessageRef.current
+    if (queueEdit) {
+      setLocalSending(true)
+      try {
+        const result = await updateQueuedAgentMessage({
+          threadId,
+          queuedMessageId: queueEdit.item.id,
+          expectedRevision: queueEdit.expectedRevision,
+          queueOperationId: crypto.randomUUID(),
+          userMessage: rawText,
+          messageParts: serialized.messageParts,
+        })
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+        if (!result.ok) {
+          setEditingQueuedMessage((current) => current
+            ? {
+                ...current,
+                expectedRevision: result.snapshot.revision,
+                item: result.snapshot.queuedMessages.find((item) => item.id === current.item.id) ?? current.item,
+              }
+            : current)
+          toast.error('队列已发生变化，请基于最新内容重新保存')
+          return
+        }
+        finishQueueEdit(true)
+        toast.success('排队消息已更新')
+      } catch (error) {
+        console.error('[AgentInput] 更新排队消息失败:', error)
+        toast.error('更新排队消息失败')
+      } finally {
+        setLocalSending(false)
+      }
       return
     }
 
@@ -740,11 +845,31 @@ export function AgentInput({
         setLocalDesktopContextTarget(state.target)
       }
     }
+    const submissionIdentity = JSON.stringify({
+      userMessage: text,
+      messageParts: serialized.messageParts,
+      attachments: pendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
+      thinkingLevel,
+      permissionMode,
+      workspaceId: workspaceIdRef.current,
+      messageMetadata: sendMessageMetadata,
+    })
+    if (pendingSubmissionRef.current && pendingSubmissionRef.current.identity !== submissionIdentity) {
+      await sidecarCall(AGENT_IPC_CHANNELS.ABORT_SUBMISSION, {
+        clientSubmissionId: pendingSubmissionRef.current.id,
+      }).catch(() => undefined)
+      pendingSubmissionRef.current = null
+    }
+    const clientSubmissionId = pendingSubmissionRef.current?.identity === submissionIdentity
+      ? pendingSubmissionRef.current.id
+      : crypto.randomUUID()
+    pendingSubmissionRef.current = { id: clientSubmissionId, identity: submissionIdentity }
     let messageAttachments: AgentMessageAttachmentInput[] = []
     try {
       if (pendingAttachments.length > 0) {
         const savedFiles = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
           threadId,
+          clientSubmissionId,
           files: pendingAttachments.map((attachment) => ({
             filename: attachment.filename,
             ...(attachment.sourcePath ? { sourcePath: attachment.sourcePath } : {}),
@@ -771,21 +896,27 @@ export function AgentInput({
     }
     const createdAt = new Date().toISOString()
     const sentJson = editor.getJSON()
-    editor.commands.clearContent()
-    setEditorText('')
-    pushHistoryEntry(sentJson)
-    clearDraftState()
-    ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
     try {
       const result = await agentSend({
         threadId,
         userMessage: text,
+        clientSubmissionId,
+        ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
+          ? { messageParts: serialized.messageParts }
+          : {}),
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
         ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
+      pendingSubmissionRef.current = null
+      editor.commands.clearContent()
+      setEditorText('')
+      pushHistoryEntry(sentJson)
+      clearDraftState()
+      ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
+      editor.commands.focus('end')
       onMessageMetadataConsumed()
       if (shouldReleaseAgentInputLocalSendingAfterDispatch(result.mode)) {
         setLocalSending(false)
@@ -799,6 +930,9 @@ export function AgentInput({
           createdAt,
           text,
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+          ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
+            ? { messageParts: serialized.messageParts }
+            : {}),
         }))
         setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
       } else {
@@ -819,10 +953,11 @@ export function AgentInput({
       toast.error('发送失败')
       setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
       setLocalSending(false)
+      if (isTerminalAgentSubmissionError(error)) pendingSubmissionRef.current = null
     }
   }, [
     editor,
-    handleSlashCommandExecute,
+    finishQueueEdit,
     localSending,
     onClearPendingAttachments,
     onMessageMetadataConsumed,
@@ -885,7 +1020,7 @@ export function AgentInput({
   useEffect(() => {
     return () => {
       ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
-      if (editor && !isNavigatingHistoryRef.current) {
+      if (editor && !isNavigatingHistoryRef.current && !editingQueuedMessageRef.current) {
         saveDraft(editor.getJSON())
       }
     }
@@ -898,6 +1033,7 @@ export function AgentInput({
       await sidecarCall(AGENT_IPC_CHANNELS.STOP_THREAD, { threadId })
     } catch (error) {
       console.error('[AgentInput] 停止失败:', error)
+      toast.error('停止失败，请重试')
     }
   }
 
@@ -909,9 +1045,12 @@ export function AgentInput({
     reorderAgentMessageQueue({
       threadId,
       orderedMessageIds: optimisticSnapshot.queuedMessages.map((item) => item.id),
+      expectedRevision: previousSnapshot.revision,
+      queueOperationId: crypto.randomUUID(),
     })
       .then((result) => {
         setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+        if (!result.ok) toast.error('队列已发生变化，已刷新最新顺序')
       })
       .catch((error) => {
         console.error('[AgentInput] 消息队列排序失败:', error)
@@ -921,42 +1060,53 @@ export function AgentInput({
   }, [messageQueueSnapshot, setMessageQueues, threadId])
 
   const handleRemoveQueuedMessage = useCallback((queuedMessageId: string) => {
-    removeQueuedAgentMessage({ threadId, queuedMessageId })
+    removeQueuedAgentMessage({
+      threadId,
+      queuedMessageId,
+      expectedRevision: messageQueueSnapshot.revision,
+      queueOperationId: crypto.randomUUID(),
+    })
       .then((result) => {
         setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+        if (!result.ok) toast.error('队列已发生变化，删除未执行')
       })
       .catch((error) => {
         console.error('[AgentInput] 删除排队消息失败:', error)
         toast.error('删除排队消息失败')
       })
-  }, [setMessageQueues, threadId])
+  }, [messageQueueSnapshot.revision, setMessageQueues, threadId])
 
   const handleEditQueuedMessage = useCallback((queuedMessageId: string) => {
     if (!editor) return
     const editing = startEditingQueuedMessage(messageQueueSnapshot, queuedMessageId)
     if (!editing) return
-    removeQueuedAgentMessage({ threadId, queuedMessageId })
-      .then((result) => {
-        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
-        setEditorPlainText(editor, result.removedMessage?.text ?? editing.draftText)
-        setEditorText(result.removedMessage?.text ?? editing.draftText)
-      })
-      .catch((error) => {
-        console.error('[AgentInput] 编辑排队消息失败:', error)
-        toast.error('编辑排队消息失败')
-      })
+    setEditingQueuedMessage({
+      item: editing.queuedMessage,
+      expectedRevision: messageQueueSnapshot.revision,
+      previousDraft: editor.getJSON(),
+    })
+    setPlusPanelOpen(false)
+    setEditorMessageParts(editor, editing.queuedMessage.messageParts, editing.draftText)
+    setEditorText(editor.getText())
+    editor.commands.focus('end')
   }, [editor, messageQueueSnapshot, setMessageQueues, threadId])
 
   const handlePromoteQueuedMessageToGuidance = useCallback((queuedMessageId: string) => {
-    promoteQueuedAgentMessageToGuidance({ threadId, queuedMessageId })
+    promoteQueuedAgentMessageToGuidance({
+      threadId,
+      queuedMessageId,
+      expectedRevision: messageQueueSnapshot.revision,
+      queueOperationId: crypto.randomUUID(),
+    })
       .then((result) => {
         setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+        if (!result.ok) toast.error('队列已发生变化，设置引导未执行')
       })
       .catch((error) => {
         console.error('[AgentInput] 设置引导失败:', error)
         toast.error('设置引导失败')
       })
-  }, [setMessageQueues, threadId])
+  }, [messageQueueSnapshot.revision, setMessageQueues, threadId])
 
   const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
     setThinkingLevel(value)
@@ -1027,6 +1177,7 @@ export function AgentInput({
   }, [])
 
   const handleOpenPlusPanel = async () => {
+    if (editingQueuedMessageRef.current) return
     if (plusPanelOpen) {
       setPlusPanelOpen(false)
       return
@@ -1050,14 +1201,8 @@ export function AgentInput({
         }
       })
       .finally(() => setDesktopContextCaptureLoading(false))
-    // 打开即刷新插件列表；失败仅 toast，不阻塞面板（沿用原 handleOpenPlugins 行为）
-    try {
-      const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
-      setInstalledPlugins(normalizeListPluginsResult(result))
-    } catch {
-      toast.error('获取插件列表失败')
-    }
   }
+  stopNowRef.current = () => { void handleStop() }
 
   // 面板根抢焦点：把焦点从 tiptap 编辑器收到面板根，
   // 使 ↑/↓/Enter/Esc 由面板捕获，不会冒泡成编辑器光标移动
@@ -1068,17 +1213,10 @@ export function AgentInput({
     queueMicrotask(() => plusPanelRef.current?.focus())
   }, [plusPanelOpen])
 
-  // 插件按名称排序后平铺（不分组）
-  const pluginItems = useMemo(
-    () => [...installedPlugins].sort((a, b) => a.name.localeCompare(b.name)),
-    [installedPlugins],
-  )
   const hasDesktopContextTarget = Boolean(availableDesktopContextTarget)
   const showDesktopContextSection = desktopContextView.showPlusPanelSection
-  const desktopContextIndex = 2
-  const pluginStartIndex = hasDesktopContextTarget ? 3 : 2
-  // 整个面板可选项序列：[文件, 图片, 当前应用?, ...插件]，totalPlusItems 驱动 ↑/↓ 导航边界
-  const totalPlusItems = pluginStartIndex + pluginItems.length
+  const desktopContextIndex = 1
+  const totalPlusItems = hasDesktopContextTarget ? 2 : 1
 
   // 列表变化（插件加载完成）时夹紧 activeIndex，避免悬空指向已不存在的项
   useEffect(() => {
@@ -1094,8 +1232,7 @@ export function AgentInput({
   }, [activeIndex, plusPanelOpen])
 
   const activatePlusItem = useCallback((index: number) => {
-    // 索引 0/1 = 文件 / 图片（沿用原 attachMenu：二者都打开文件选择）
-    if (index === 0 || index === 1) {
+    if (index === 0) {
       setPlusPanelOpen(false)
       void handleAttach()
       return
@@ -1110,26 +1247,11 @@ export function AgentInput({
       toast.success(`已将 ${availableDesktopContextTarget.app.name} 附加到对话`)
       return
     }
-    const plugin = pluginItems[index - pluginStartIndex]
-    if (!plugin) return
-    setPlusPanelOpen(false)
-    // 插件引用：插入 pluginMention node（label 带 % 前缀，作为输入/发送/气泡三段统一 token）
-    if (editor) {
-      editor.commands.focus('end')
-      editor.commands.insertContent({
-        type: 'pluginMention',
-        attrs: { id: plugin.name, label: `%${plugin.displayName || plugin.name}` },
-      })
-      editor.commands.insertContent(' ')
-    }
   }, [
     availableDesktopContextTarget,
-    editor,
     handleAttach,
     hasDesktopContextTarget,
     onSelectDesktopContextTarget,
-    pluginItems,
-    pluginStartIndex,
   ])
 
   const handlePlusPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1145,6 +1267,11 @@ export function AgentInput({
     } else if (event.key === 'Escape') {
       event.preventDefault()
       setPlusPanelOpen(false)
+      if (streamingRef.current) {
+        lastEscapeAtRef.current = Date.now()
+        toast.info('再次按 Esc 停止当前输出', { duration: 900 })
+      }
+      queueMicrotask(() => editor?.commands.focus('end'))
     }
   }
 
@@ -1162,10 +1289,17 @@ export function AgentInput({
         <div>
           <LumeComposer
             tone={composerState.tone}
-            scale="compact"
-            className="rounded-[1.6rem]"
+            className="rounded-[1.45rem]"
             editorSlot={
               <>
+                {editingQueuedMessage ? (
+                  <div className="mb-2 flex items-center justify-between rounded-lg bg-[var(--lume-accent-soft)] px-2.5 py-1.5 text-xs text-[var(--lume-text-secondary)]">
+                    <span>正在编辑排队消息</span>
+                    <Button variant="ghost" type="button" className="h-6 px-2 text-xs" onClick={() => finishQueueEdit(true)}>
+                      取消
+                    </Button>
+                  </div>
+                ) : null}
                 <AgentMessageQueueList
                   snapshot={messageQueueSnapshot}
                   onReorder={handleQueueReorder}
@@ -1180,18 +1314,25 @@ export function AgentInput({
               </>
             }
             topContent={
-              pendingAttachments.length > 0 ? (
+              editingQueuedMessage?.item.messageAttachments?.length ? (
                 <div className="px-3 pb-2 pt-3">
-                  <AgentAttachmentGrid
+                  <PendingAttachmentList
+                    attachments={editingQueuedMessage.item.messageAttachments}
+                    hideRemove
+                    onRemove={() => undefined}
+                  />
+                </div>
+              ) : !editingQueuedMessage && pendingAttachments.length > 0 ? (
+                <div className="px-3 pb-2 pt-3">
+                  <PendingAttachmentList
                     attachments={pendingAttachments}
-                    removable
                     onRemove={onRemovePendingAttachment}
                   />
                 </div>
               ) : undefined
             }
             supportingContent={
-              selectedDesktopContextTarget || roleRecommendations.length > 0 ? (
+              !editingQueuedMessage && selectedDesktopContextTarget ? (
                 <div className="space-y-2 px-3 pb-2">
                   {selectedDesktopContextTarget ? (
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1200,12 +1341,6 @@ export function AgentInput({
                         onClear={desktopContextTarget ? onClearDesktopContextTarget : () => setLocalDesktopContextTarget(undefined)}
                       />
                     </div>
-                  ) : null}
-                  {roleRecommendations.length > 0 ? (
-                    <AgentRoleRecommendationChips
-                      recommendations={roleRecommendations}
-                      onSelect={applyRoleRecommendation}
-                    />
                   ) : null}
                 </div>
               ) : undefined
@@ -1216,6 +1351,7 @@ export function AgentInput({
                   <Button
                     variant="ghost"
                     onClick={handleOpenPlusPanel}
+                    disabled={Boolean(editingQueuedMessage)}
                     className="inline-flex size-8 items-center justify-center rounded-lg border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_72%,transparent)] text-[var(--lume-text-secondary)] transition-colors duration-150 ease-out hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
                     title="添加"
                     type="button"
@@ -1235,19 +1371,20 @@ export function AgentInput({
                           添加到对话
                         </div>
                         {[
-                          { index: 0, icon: <FileText size={15} />, label: '文件' },
-                          { index: 1, icon: <Image size={15} />, label: '图片' },
+                          { index: 0, icon: <FileText size={15} />, label: '文件或图片' },
                         ].map((row) => (
-                          <div
+                          <Button
+                            variant="ghost"
+                            type="button"
                             key={row.index}
                             data-plus-item={row.index}
                             onMouseEnter={() => setActiveIndex(row.index)}
                             onClick={() => activatePlusItem(row.index)}
-                            className={cn(plusItemClass(activeIndex === row.index), 'text-sm text-[var(--text-1)]')}
+                            className={cn(plusItemClass(activeIndex === row.index), 'h-auto w-full justify-start rounded-none text-sm text-[var(--text-1)]')}
                           >
                             <span className="text-[var(--text-3)]">{row.icon}</span>
                             {row.label}
-                          </div>
+                          </Button>
                         ))}
                         {showDesktopContextSection && (
                           <>
@@ -1313,50 +1450,15 @@ export function AgentInput({
                             )}
                           </>
                         )}
-                        <div className="border-t border-[var(--lume-border-subtle)]" />
-                        <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
-                          已安装插件 · {pluginItems.length}
-                        </div>
-                        {pluginItems.length === 0 ? (
-                          <div className="px-3 py-3 text-sm text-[var(--text-3)]">
-                            暂无已安装的插件
-                          </div>
-                        ) : (
-                          <div className="max-h-[200px] overflow-y-auto pb-1">
-                            {pluginItems.map((plugin, i) => {
-                              const index = i + pluginStartIndex
-                              return (
-                                <div
-                                  key={plugin.name}
-                                  data-plus-item={index}
-                                  onMouseEnter={() => setActiveIndex(index)}
-                                  onClick={() => activatePlusItem(index)}
-                                  className={plusItemClass(activeIndex === index)}
-                                >
-                                  <Puzzle size={14} className="shrink-0 text-[var(--text-3)]" />
-                                  <div className="min-w-0 flex-1">
-                                    <div className="truncate text-sm text-[var(--text-1)]">
-                                      {plugin.displayName || plugin.name}
-                                    </div>
-                                    <div className="truncate text-xs text-[var(--text-3)]">
-                                      {plugin.description ? plugin.description : `v${plugin.version}`}
-                                    </div>
-                                  </div>
-                                  <div className="shrink-0 text-xs text-[var(--text-3)]">
-                                    v{plugin.version}
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
                       </div>
                     </>
                   )}
                 </div>
-                <ModelPicker threadId={threadId} />
-                <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />
-                <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
+                <fieldset disabled={Boolean(editingQueuedMessage)} className="contents">
+                  <ModelPicker threadId={threadId} />
+                  <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />
+                  <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
+                </fieldset>
               </>
             }
             trailingTools={<ContextWindowIndicator progress={contextWindowProgress} />}
@@ -1379,11 +1481,10 @@ export function AgentInput({
                   disabled={!submitState.canSubmit}
                   className={getLumeComposerPrimaryActionClassName({
                     enabled: submitState.canSubmit,
-                    size: 'compact',
                   })}
-                  title={submitState.action === 'queue' ? '加入消息队列' : '发送'}
+                  title={editingQueuedMessage ? '保存排队消息' : submitState.action === 'queue' ? '加入消息队列' : '发送'}
                 >
-                  {submitState.label}
+                  {editingQueuedMessage ? '保存' : submitState.label}
                   <Send size={12} />
                 </Button>
               )
@@ -1404,44 +1505,37 @@ export function AgentInput({
   )
 }
 
-function AgentRoleRecommendationChips({
-  recommendations,
-  onSelect,
-}: {
-  recommendations: AgentInputRoleRecommendation[]
-  onSelect: (recommendation: AgentInputRoleRecommendation) => void
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="inline-flex h-6 items-center gap-1 rounded-full border border-[color:color-mix(in_oklab,var(--brand)_22%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] px-2 text-[11px] font-medium text-[var(--text-2)]">
-        <Bot size={11} />
-        推荐角色
-      </span>
-      {recommendations.map((recommendation) => (
-        <Button
-                variant="ghost"
-          key={recommendation.role.id}
-          type="button"
-          onClick={() => onSelect(recommendation)}
-          className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_86%,transparent)] px-2 text-[11px] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_38%,var(--border-strong))] hover:text-[var(--text-1)]"
-          title={`使用 ${recommendation.role.id} agent`}
-        >
-          <span className="truncate font-medium">{recommendation.label}</span>
-          <span className="shrink-0 text-[var(--text-3)]">命中 {recommendation.score}</span>
-        </Button>
-      ))}
-    </div>
-  )
-}
-
-function setEditorPlainText(editor: NonNullable<ReturnType<typeof useEditor>>, text: string): void {
-  editor.commands.setContent(
-    text.split('\n').map((line) => ({
-      type: 'paragraph',
-      content: line.length > 0 ? [{ type: 'text', text: line }] : undefined,
-    })),
-  )
-  editor.commands.focus('end')
+function setEditorMessageParts(
+  editor: NonNullable<ReturnType<typeof useEditor>>,
+  parts: AgentQueuedMessage['messageParts'],
+  fallbackText: string,
+): void {
+  const paragraphs: Array<{ type: 'paragraph'; content?: Array<Record<string, unknown>> }> = [
+    { type: 'paragraph', content: [] },
+  ]
+  const activeContent = () => (paragraphs.at(-1)!.content ??= [])
+  for (const part of parts ?? [{ type: 'text' as const, text: fallbackText }]) {
+    if (part.type === 'capability_ref') {
+      activeContent().push({
+        type: 'capabilityMention',
+        attrs: {
+          id: part.uri,
+          label: part.uri,
+          uri: part.uri,
+          occurrenceId: part.occurrenceId,
+          kind: part.uri.startsWith('lume-plugin://')
+            ? 'plugin'
+            : part.uri.slice('lume-skill://'.length).includes(':') ? 'plugin-skill' : 'skill',
+        },
+      })
+      continue
+    }
+    part.text.split('\n').forEach((text, index) => {
+      if (index > 0) paragraphs.push({ type: 'paragraph', content: [] })
+      if (text) activeContent().push({ type: 'text', text })
+    })
+  }
+  editor.commands.setContent({ type: 'doc', content: paragraphs }, { emitUpdate: false })
 }
 
 function createPendingAttachmentId(): string {

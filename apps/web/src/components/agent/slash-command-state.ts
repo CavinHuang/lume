@@ -1,4 +1,4 @@
-import type { SkillMeta, SkillStorageScope } from '@lume/shared'
+import type { AgentInvocableCapabilityItem } from '@lume/shared'
 
 export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent' | 'plugin'
 export type MentionSection = 'capability' | 'skill' | 'agent' | 'file' | 'plugin'
@@ -13,14 +13,15 @@ export interface MentionItem {
   meta?: string
   /** 选中即执行：不插入编辑器文本，直接触发 onCommandExecute(id) */
   executeOnSelect?: boolean
+  uri?: string
+  kind?: AgentInvocableCapabilityItem['kind']
+  iconUrl?: string
+  disabled?: boolean
+  disabledReason?: string
 }
 
 type CommonSlashCommand = Pick<MentionItem, 'id' | 'label' | 'type' | 'title' | 'subtitle' | 'section' | 'executeOnSelect'> & {
   keywords: string[]
-}
-
-type SuggestionSkill = SkillMeta & {
-  storageScope?: SkillStorageScope
 }
 
 const COMMON_SLASH_COMMANDS: CommonSlashCommand[] = [
@@ -74,88 +75,67 @@ function includesQuery(values: Array<string | undefined>, normalizedQuery: strin
   return values.some((value) => value?.toLowerCase().includes(normalizedQuery))
 }
 
-export function formatSkillSuggestionMeta(skill: SuggestionSkill) {
-  if (!skill.storageScope) return skill.version ?? '个人'
-  const scopeLabel = skill.storageScope === 'user'
+function formatCapabilityMeta(capability: AgentInvocableCapabilityItem) {
+  const scopeLabel = capability.scope === 'user'
     ? '用户全局'
-    : skill.storageScope === 'project'
+    : capability.scope === 'project'
       ? '当前项目'
-      : skill.storageScope === 'plugin'
-        ? '插件'
-        : 'Lume 工作区'
-  return skill.version ? `${scopeLabel} · ${skill.version}` : scopeLabel
+      : capability.scope === 'workspace'
+        ? 'Lume 工作区'
+        : capability.scope === 'workspace-plugin'
+          ? '工作区插件'
+          : '全局插件'
+  return capability.version ? `${scopeLabel} · ${capability.version}` : scopeLabel
 }
 
-export function buildSlashSuggestionItems(skills: SuggestionSkill[], query: string): MentionItem[] {
+function formatCapabilityUnavailableReason(reason: AgentInvocableCapabilityItem['unavailableReason']): string | undefined {
+  if (reason === 'disabled') return '未启用'
+  if (reason === 'needs-review') return '需要权限审核'
+  if (reason === 'no-invocable-skills') return '没有可调用技能'
+  if (reason === 'legacy-definition') return '暂不支持从输入框调用'
+  if (reason === 'ambiguous') return '存在同名冲突'
+  if (reason === 'not-in-workspace') return '当前工作区不可用'
+  return undefined
+}
+
+export function buildSlashSuggestionItems(capabilities: AgentInvocableCapabilityItem[], query: string): MentionItem[] {
   const normalizedQuery = query.trim().toLowerCase()
 
   const commonCommands = COMMON_SLASH_COMMANDS
     .filter((item) => includesQuery([item.id, item.title, item.subtitle, ...item.keywords], normalizedQuery))
     .map(({ keywords: _keywords, ...item }) => item)
 
-  const skillItems = skills
-    .filter((skill) => {
+  const capabilityItems = capabilities
+    .filter((capability) => {
       return includesQuery(
-        [skill.slug, skill.name, skill.description, skill.whenToUse, skill.version, skill.icon],
+        [capability.uri, capability.displayName, capability.description, capability.version, capability.pluginId, capability.skillSlug],
         normalizedQuery,
       )
     })
-    .slice(0, normalizedQuery ? 8 : 6)
-    .map((skill) => ({
-      id: skill.slug,
-      label: skill.slug,
-      type: 'skill' as const,
-      title: `/${skill.slug}`,
-      subtitle: skill.description ?? (skill.name && skill.name !== skill.slug ? skill.name : '工作区技能'),
-      section: 'skill' as const,
-      meta: formatSkillSuggestionMeta(skill),
-    }))
+    .map((capability) => {
+      const unavailableReason = formatCapabilityUnavailableReason(capability.unavailableReason)
+      return {
+        id: capability.uri,
+        label: capability.displayName,
+        type: capability.kind === 'plugin' ? 'plugin' as const : 'skill' as const,
+        title: capability.displayName,
+        subtitle: capability.description ?? capability.uri,
+        section: capability.kind === 'skill' ? 'skill' as const : 'plugin' as const,
+        meta: unavailableReason ?? formatCapabilityMeta(capability),
+        uri: capability.uri,
+        kind: capability.kind,
+        iconUrl: capability.icon?.url,
+        disabled: !capability.callable,
+        disabledReason: unavailableReason,
+      }
+    })
 
-  return [...commonCommands, ...skillItems]
-}
+  const sectionLimit = normalizedQuery ? 12 : 10
+  const skillItems = capabilityItems.filter((item) => item.section === 'skill').slice(0, sectionLimit)
+  const pluginItems = capabilityItems
+    .filter((item) => item.section === 'plugin')
+    .sort((left, right) => Number(right.kind === 'plugin') - Number(left.kind === 'plugin'))
+    .slice(0, sectionLimit)
 
-export function normalizeSlashSuggestionItems(items: MentionItem[]): MentionItem[] {
-  const normalizedItems = items.map((item) => {
-    if (item.type !== 'skill') return item
-    return {
-      ...item,
-      label: item.label || item.id,
-      title: item.title ?? `/${item.label || item.id}`,
-      subtitle: item.subtitle ?? '工作区技能',
-      section: item.section ?? 'skill',
-      meta: item.meta ?? '个人',
-    }
-  })
-
-  if (normalizedItems.some((item) => item.type === 'command')) {
-    return normalizedItems
-  }
-
-  return [...getCommonSlashSuggestionItems(), ...normalizedItems]
-}
-
-export interface PluginMentionSource {
-  name: string
-  displayName?: string
-  description?: string
-}
-
-/**
- * 构造插件 mention 建议项（% 触发）。
- * label 带 % 前缀，作为输入框/发送/气泡三段统一的 token（%插件名）。
- */
-export function buildPluginSuggestionItems(plugins: PluginMentionSource[], query: string): MentionItem[] {
-  const normalizedQuery = query.trim().toLowerCase()
-  return plugins
-    .filter((plugin) => !normalizedQuery
-      || [plugin.name, plugin.displayName, plugin.description].some((value) => value?.toLowerCase().includes(normalizedQuery)))
-    .slice(0, 10)
-    .map((plugin) => ({
-      id: plugin.name,
-      label: `%${plugin.displayName || plugin.name}`,
-      type: 'plugin' as const,
-      title: plugin.displayName || plugin.name,
-      subtitle: plugin.description ?? '插件',
-      section: 'plugin' as const,
-    }))
+  return [...commonCommands, ...skillItems, ...pluginItems]
 }

@@ -60,6 +60,7 @@ const GROUP_META: Record<FileSource, { label: string; empty: string }> = {
 export function UnifiedFileTree({
   workspace,
   workspaceSlug,
+  workspaceProjectPath,
   fileContextId,
   openFunctions,
   onWorkspaceChange,
@@ -67,12 +68,13 @@ export function UnifiedFileTree({
 }: {
   workspace: ThreadFileWorkspace
   workspaceSlug?: string
+  workspaceProjectPath?: string
   fileContextId?: string
   openFunctions: RightPanelFunction[]
   onWorkspaceChange: (workspace: ThreadFileWorkspace) => void
   onOpenFile: (ref: FileRef) => void
 }) {
-  const treeCacheIdentity = getUnifiedFileTreeCacheIdentity(workspaceSlug, fileContextId)
+  const treeCacheIdentity = getUnifiedFileTreeCacheIdentity(workspaceSlug, fileContextId, workspaceProjectPath)
   const [cache, setCache] = useState<Record<string, FileEntry[]>>(() => workspace.directoryCache as Record<string, FileEntry[]>)
   const [loadingKeys, setLoadingKeys] = useState<string[]>([])
   const [query, setQuery] = useState(workspace.search.query)
@@ -181,7 +183,13 @@ export function UnifiedFileTree({
   }, [commitCache, commitWorkspace])
 
   useEffect(() => {
-    for (const root of roots) void load(root)
+    const projectRoot = roots.find((root) => root.source === 'project')
+    if (projectRoot) {
+      const nextCache = invalidateSourceDirectoryCache(cacheRef.current, 'project')
+      cacheRef.current = nextCache
+      setCache(nextCache)
+    }
+    for (const root of roots) void load(root, root.source === 'project')
   }, [roots])
 
   useEffect(() => {
@@ -544,6 +552,13 @@ export function UnifiedFileTree({
           const entries = query.trim()
             ? searchResults[root.source] ?? []
             : sourceRoots.flatMap((candidate) => cache[fileRefKey(candidate)] ?? [])
+          const emptyLabel = root.source === 'project'
+            ? sourceRoots.length === 0
+              ? '未绑定项目目录'
+              : workspace.sourceStatus.project === 'error'
+                ? '项目目录读取失败，请刷新重试'
+                : '项目目录为空'
+            : GROUP_META[root.source].empty
           return (
             <div key={root.source}>
               <Button
@@ -568,7 +583,7 @@ export function UnifiedFileTree({
                       </div>
                     ))
                     : entries.map((entry) => renderEntry(entry))
-                  : <div className="px-7 py-2 text-[11px] text-foreground/38">{loadingKeys.includes(fileRefKey(root)) ? '加载中…' : GROUP_META[root.source].empty}</div>
+                  : <div className="px-7 py-2 text-[11px] text-foreground/38">{loadingKeys.includes(fileRefKey(root)) ? '加载中…' : emptyLabel}</div>
               )}
               <span className="sr-only">{groupKey}</span>
             </div>

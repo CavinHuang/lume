@@ -13,6 +13,7 @@ import type {
   AgentQueuedMessage,
   AgentRemoveQueuedMessageInput,
   AgentReorderMessageQueueInput,
+  AgentUpdateQueuedMessageInput,
   AgentThreadMessageDispatchResult,
   AgentMessageAppendedEvent,
   AgentToolPolicy,
@@ -64,7 +65,7 @@ import { buildAgentContentLogData, buildAgentSendStartLogData } from "./agent-lo
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
 import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
-import { AgentRuntimeKernel, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
+import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
@@ -72,6 +73,9 @@ import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";
+import { normalizeAgentUserMessage } from "./agent-user-message-parts";
+import { materializeCapabilityReferences } from "./invocable-capability-catalog";
+import { getAgentSubmissionStore } from "./agent-submission-store";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -141,6 +145,7 @@ const STALE_RUN_PROGRESS_TAIL_COUNT = 10;
 const VISIBLE_HISTORY_CONTINUATION_TAIL_COUNT = 8;
 
 const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmitter>({
+  validateQueued: validateQueuedAgentDispatch,
   execute: async (dispatch) => {
     try {
       await sendAgentMessage(dispatch.input, dispatch.emit);
@@ -154,8 +159,117 @@ const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmi
   },
   onDispatchError: (dispatch, error) => {
     dispatch.emit.onError(error instanceof Error ? error.message : String(error));
+  },
+  onQueuedBlocked: (dispatch, error) => {
+    writeLogRecord({
+      level: "warn",
+      kind: "trace",
+      context: "agent.queue",
+      event: "agent.queue.blocked",
+      message: "queued agent message blocked during validation",
+      status: "error",
+      traceId: dispatch.input.traceContext?.traceId,
+      submissionId: dispatch.input.traceContext?.submissionId,
+      threadId: dispatch.threadId,
+      origin: dispatch.input.traceContext?.origin,
+      data: { queuedMessageId: dispatch.id, reason: error instanceof Error ? error.message : String(error) }
+    });
   }
 });
+
+async function validateQueuedAgentDispatch(
+  dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInput, AgentStreamEmitter>
+): Promise<void> {
+  const threadMeta = getAgentThreadMeta(dispatch.threadId);
+  const workspaceId = dispatch.input.workspaceId ?? threadMeta?.workspaceId;
+  const workspace = workspaceId ? getAgentWorkspace(workspaceId) : undefined;
+  const normalized = normalizeAgentUserMessage({
+    userMessage: dispatch.input.userMessage,
+    messageParts: dispatch.input.messageParts,
+  });
+  const projection = await materializeCapabilityReferences({
+    workspaceSlug: workspace?.slug,
+    cwd: workspace?.projectPath,
+    references: normalized.capabilityReferences,
+    modelMessage: normalized.modelMessage,
+  });
+  const previous = dispatch.input.messageMetadata?.capabilityFingerprints;
+  if (Array.isArray(previous) && stableFingerprintList(previous) !== stableFingerprintList(projection.fingerprints)) {
+    throw new Error("capability_changed");
+  }
+  dispatch.input.messageMetadata = {
+    ...(dispatch.input.messageMetadata ?? {}),
+    capabilityFingerprints: projection.fingerprints,
+  };
+}
+
+export async function prepareAgentDispatchInput(input: AgentSendInput): Promise<AgentSendInput> {
+  const threadMeta = getAgentThreadMeta(input.threadId);
+  const workspaceId = input.workspaceId ?? threadMeta?.workspaceId;
+  const workspace = workspaceId ? getAgentWorkspace(workspaceId) : undefined;
+  const normalized = normalizeAgentUserMessage({
+    userMessage: input.userMessage,
+    messageParts: input.messageParts,
+  });
+  try {
+    const projection = await materializeCapabilityReferences({
+      workspaceSlug: workspace?.slug,
+      cwd: workspace?.projectPath,
+      references: normalized.capabilityReferences,
+      modelMessage: normalized.modelMessage,
+    });
+    if (projection.references.length > 0) {
+      writeLogRecord({
+        level: "info",
+        kind: "trace",
+        context: "agent.capability",
+        event: "capability.reference.resolved",
+        message: "structured capability references resolved",
+        status: "ok",
+        traceId: input.traceContext?.traceId,
+        submissionId: input.traceContext?.submissionId,
+        threadId: input.threadId,
+        origin: input.traceContext?.origin,
+        data: { references: projection.references.map((item) => item.uri) }
+      });
+    }
+    return projection.references.length > 0
+      ? {
+          ...input,
+          messageMetadata: {
+            ...(input.messageMetadata ?? {}),
+            capabilityFingerprints: projection.fingerprints,
+          },
+        }
+      : input;
+  } catch (error) {
+    writeLogRecord({
+      level: "warn",
+      kind: "trace",
+      context: "agent.capability",
+      event: "capability.reference.rejected",
+      message: "structured capability reference rejected",
+      status: "error",
+      traceId: input.traceContext?.traceId,
+      submissionId: input.traceContext?.submissionId,
+      threadId: input.threadId,
+      origin: input.traceContext?.origin,
+      data: { reason: error instanceof Error ? error.name : "unknown" }
+    });
+    throw error;
+  }
+}
+
+function stableFingerprintList(value: unknown[]): string {
+  const normalized: Array<{ uri: string; fingerprint: string }> = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (typeof record.uri !== "string" || typeof record.fingerprint !== "string") continue;
+    normalized.push({ uri: record.uri, fingerprint: record.fingerprint });
+  }
+  return JSON.stringify(normalized.sort((left, right) => left.uri.localeCompare(right.uri)));
+}
 
 function mergeToolPolicies(
   base: AgentToolPolicy | undefined,
@@ -168,8 +282,11 @@ function mergeToolPolicies(
   const baseDeny = Array.isArray(base?.deny) ? base.deny.filter((v): v is string => typeof v === "string") : [];
   const overlayAllow = Array.isArray(overlay?.allow) ? overlay.allow.filter((v): v is string => typeof v === "string") : [];
   const overlayDeny = Array.isArray(overlay?.deny) ? overlay.deny.filter((v): v is string => typeof v === "string") : [];
-  const allow = Array.from(new Set([...baseAllow, ...overlayAllow]));
-  const deny = Array.from(new Set([...baseDeny, ...overlayDeny]));
+  const allow = baseAllow.length > 0 && overlayAllow.length > 0
+    ? Array.from(new Set(baseAllow.filter((tool) => overlayAllow.includes(tool))))
+    : Array.from(new Set(baseAllow.length > 0 ? baseAllow : overlayAllow));
+  const allowConflict = baseAllow.length > 0 && overlayAllow.length > 0 && allow.length === 0;
+  const deny = Array.from(new Set([...baseDeny, ...overlayDeny, ...(allowConflict ? ["*"] : [])]));
   if (allow.length === 0 && deny.length === 0) {
     return undefined;
   }
@@ -618,6 +735,31 @@ export async function sendAgentMessage(
   const threadMeta = getAgentThreadMeta(threadId);
   const effectiveWorkspaceId = input.workspaceId ?? threadMeta?.workspaceId;
   const effectiveWorkspace = effectiveWorkspaceId ? getAgentWorkspace(effectiveWorkspaceId) : undefined;
+  const normalizedUserMessage = normalizeAgentUserMessage({
+    userMessage,
+    messageParts: input.messageParts,
+  });
+  const isManualCompactCommand = input.messageMetadata?.manualCommand === "compact";
+  let modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, normalizedUserMessage.modelMessage);
+  if (!isManualCompactCommand && normalizedUserMessage.modelMessage.trim() === "/compact") {
+    modelFacingUserMessage = `The user entered the literal text /compact without selecting the compact action. Respond to it as ordinary text.`;
+  }
+  const capabilityProjection = await materializeCapabilityReferences({
+    workspaceSlug: effectiveWorkspace?.slug,
+    cwd: effectiveWorkspace?.projectPath,
+    references: normalizedUserMessage.capabilityReferences,
+    modelMessage: normalizedUserMessage.modelMessage,
+  });
+  const expectedFingerprints = input.messageMetadata?.capabilityFingerprints;
+  if (
+    Array.isArray(expectedFingerprints)
+    && stableFingerprintList(expectedFingerprints) !== stableFingerprintList(capabilityProjection.fingerprints)
+  ) {
+    throw new Error("capability_changed");
+  }
+  if (capabilityProjection.context) {
+    modelFacingUserMessage = [capabilityProjection.context, modelFacingUserMessage].filter(Boolean).join("\n\n");
+  }
   const shouldRecomputeInheritedSelection = threadMeta?.modelSelectionSource === "inherited"
     && input.channelId === undefined
     && input.modelRef === undefined;
@@ -647,7 +789,6 @@ export async function sendAgentMessage(
     : effectiveSelection.modelRef;
   const hasExplicitSendSelection = input.modelRef !== undefined || input.channelId !== undefined || input.modelId !== undefined;
 
-  const isManualCompactCommand = userMessage.trim() === "/compact";
   const shouldAppendUserMessage = (options.appendUserMessage ?? true)
     && input.messageMetadata?.hiddenFromChat !== true
     && !isManualCompactCommand;
@@ -661,7 +802,7 @@ export async function sendAgentMessage(
 
   const routingTrace = resolveAgentRuntimeRoutingTrace({
     workspaceSlug: stateWorkspaceSlug,
-    userMessage,
+    userMessage: normalizedUserMessage.modelMessage,
     availableTools: ROUTING_HEURISTIC_TOOLS
   });
   const routingToolPolicy = resolveSoftToolPolicyForPreferredRoute(routingTrace.preferredCapabilityRoute);
@@ -673,17 +814,25 @@ export async function sendAgentMessage(
     ...(input.messageMetadata ?? {}),
     ...(input.traceContext ? { traceContext: input.traceContext } : {}),
     ...(input.messageAttachments?.length ? { messageAttachments: input.messageAttachments } : {}),
-    ...(isManualCompactCommand ? {
-      hiddenFromChat: true,
-      manualCommand: "compact"
+    ...(input.messageParts ? { messageParts: normalizedUserMessage.parts } : {}),
+    ...(normalizedUserMessage.capabilityReferences.length ? {
+      capabilityReferences: normalizedUserMessage.capabilityReferences.map((reference) => reference.uri),
+      capabilityFingerprints: capabilityProjection.fingerprints,
+      capabilityReferenceViews: capabilityProjection.references,
     } : {}),
     capabilityLanes: routingTrace.capabilityLanes,
     preferredCapabilityRoute: routingTrace.preferredCapabilityRoute,
     capabilityRoutingReason: routingTrace.reason,
-    toolPolicy: mergeToolPolicies(existingToolPolicy, routingToolPolicy)
+    toolPolicy: mergeToolPolicies(
+      mergeToolPolicies(existingToolPolicy, routingToolPolicy),
+      capabilityProjection.allowedTools
+        ? capabilityProjection.allowedTools.length > 0
+          ? { allow: capabilityProjection.allowedTools }
+          : { deny: ["*"] }
+        : undefined,
+    )
   };
   let runtimeMessageMetadata: Record<string, unknown> = effectiveMessageMetadata;
-  let modelFacingUserMessage = userMessage;
 
   const sendStartTime = Date.now();
   const correlation = {
@@ -782,8 +931,6 @@ export async function sendAgentMessage(
       });
     }
   }
-  modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, userMessage);
-
   const sessionStateManager = getSessionStateManager();
   const runtimeStatusManager = getAgentRuntimeStatusManager();
   sessionStateManager.getOrCreate(threadId);
@@ -1031,6 +1178,41 @@ export function appendAgentMessage(
     onExecutionStarted?: () => void;
   }
 ): AgentThreadMessageDispatchResult {
+  const submissionStore = input.clientSubmissionId ? getAgentSubmissionStore() : undefined;
+  const submission = submissionStore?.begin(input);
+  if (submission?.existing) {
+    const receipt = submission.receipt;
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.submission",
+      event: "submission.deduplicated",
+      message: "duplicate logical submission resolved from durable receipt",
+      status: "ok",
+      threadId: input.threadId,
+      data: { clientSubmissionId: receipt.clientSubmissionId, receiptStatus: receipt.status }
+    });
+    if (receipt.status === "queued") {
+      const queued = agentRuntimeKernel.listQueued(input.threadId)
+        .find((item) => item.id === receipt.queuedMessageId);
+      if (queued) {
+        return {
+          ok: true,
+          mode: "queued",
+          queuedCount: agentRuntimeKernel.listQueued(input.threadId).length,
+          queuedMessage: toQueuedMessage(queued)
+        };
+      }
+    }
+    if (["accepted", "started", "completed"].includes(receipt.status)) {
+      return {
+        ok: true,
+        mode: "sent",
+        queuedCount: agentRuntimeKernel.listQueued(input.threadId).length
+      };
+    }
+    throw new Error(`提交 ${receipt.clientSubmissionId} 已终结：${receipt.status}`);
+  }
   const traceContext = {
     ...input.traceContext,
     submissionId: input.traceContext?.submissionId ?? randomUUID(),
@@ -1050,25 +1232,66 @@ export function appendAgentMessage(
     threadId: input.threadId,
     origin: traceContext.origin
   });
-  return agentRuntimeKernel.dispatch({ ...input, traceContext }, emit, options);
+  const clientSubmissionId = input.clientSubmissionId;
+  const trackedEmit: AgentStreamEmitter = clientSubmissionId
+    ? {
+        ...emit,
+        onComplete: (payload) => {
+          submissionStore!.transition(clientSubmissionId, "completed");
+          emit.onComplete(payload);
+        },
+        onError: (error) => {
+          submissionStore!.transition(clientSubmissionId, "failed", "runtime_failed");
+          emit.onError(error);
+        }
+      }
+    : emit;
+  try {
+    const result = agentRuntimeKernel.dispatch({ ...input, traceContext }, trackedEmit, {
+      onExecutionStarted: () => {
+        options?.onExecutionStarted?.();
+        if (clientSubmissionId) {
+          queueMicrotask(() => submissionStore!.start(clientSubmissionId, { ...input, traceContext }));
+        }
+      }
+    });
+    if (clientSubmissionId) submissionStore!.accept(clientSubmissionId, result, { ...input, traceContext });
+    return result;
+  } catch (error) {
+    if (clientSubmissionId) submissionStore!.transition(clientSubmissionId, "rejected", "dispatch_rejected");
+    throw error;
+  }
+}
+
+export function getAgentSubmissionReceipt(clientSubmissionId: string) {
+  return getAgentSubmissionStore().get(clientSubmissionId);
 }
 
 export function listAgentMessageQueue(threadId: string): AgentMessageQueueSnapshot {
   return {
     threadId,
+    revision: agentRuntimeKernel.getQueueRevision(threadId),
     queuedMessages: agentRuntimeKernel.listQueued(threadId).map(toQueuedMessage),
     pendingGuidance: runGuidanceStore.listPending(threadId)
   };
 }
 
 export function reorderAgentMessageQueue(input: AgentReorderMessageQueueInput): AgentMessageQueueOperationResult {
-  agentRuntimeKernel.reorderQueued(input.threadId, input.orderedMessageIds);
-  return finishQueueOperation(input.threadId);
+  return runQueueOperation(input.queueOperationId, input.threadId, () => {
+    agentRuntimeKernel.reorderQueued(input.threadId, input.orderedMessageIds, input.expectedRevision);
+  });
 }
 
 export function removeQueuedAgentMessage(input: AgentRemoveQueuedMessageInput): AgentMessageQueueOperationResult {
-  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId);
+  return runQueueOperation(input.queueOperationId, input.threadId, () => removeQueuedAgentMessageUnchecked(input));
+}
+
+function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
+  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   if (removed) {
+    if (removed.input.clientSubmissionId) {
+      getAgentSubmissionStore().transition(removed.input.clientSubmissionId, "rejected", "queue_removed");
+    }
     writeLogRecord({
       level: "info",
       kind: "trace",
@@ -1083,15 +1306,29 @@ export function removeQueuedAgentMessage(input: AgentRemoveQueuedMessageInput): 
       data: { queuedMessageId: removed.id }
     });
   }
-  return finishQueueOperation(input.threadId, {
-    ...(removed ? { removedMessage: toQueuedMessage(removed) } : {})
-  });
+  return { ...(removed ? { removedMessage: toQueuedMessage(removed) } : {}) };
 }
 
 export function promoteQueuedAgentMessageToGuidance(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): AgentMessageQueueOperationResult {
-  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId);
+  const candidate = agentRuntimeKernel.listQueued(input.threadId).find((item) => item.id === input.queuedMessageId);
+  if (
+    !candidate
+    || candidate.input.messageAttachments?.length
+    || candidate.input.messageParts?.some((part) => part.type === "capability_ref")
+    || typeof candidate.input.messageMetadata?.desktopContextSnapshotId === "string"
+    || !candidate.input.userMessage.trim()
+  ) {
+    return { ok: false, snapshot: listAgentMessageQueue(input.threadId) };
+  }
+  return runQueueOperation(input.queueOperationId, input.threadId, () => promoteQueuedAgentMessageToGuidanceUnchecked(input));
+}
+
+function promoteQueuedAgentMessageToGuidanceUnchecked(
+  input: AgentPromoteQueuedMessageToGuidanceInput
+): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
+  const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   const promotedGuidance = removed ? runGuidanceStore.addQueuedDispatch(removed) : undefined;
   if (removed) {
     writeLogRecord({
@@ -1108,8 +1345,33 @@ export function promoteQueuedAgentMessageToGuidance(
       data: { queuedMessageId: removed.id, guidanceId: promotedGuidance?.id }
     });
   }
-  return finishQueueOperation(input.threadId, {
-    ...(promotedGuidance ? { promotedGuidance } : {})
+  return { ...(promotedGuidance ? { promotedGuidance } : {}) };
+}
+
+export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): AgentMessageQueueOperationResult {
+  return runQueueOperation(input.queueOperationId, input.threadId, () => {
+    const current = agentRuntimeKernel.listQueued(input.threadId)
+      .find((item) => item.id === input.queuedMessageId);
+    const { capabilityFingerprints: _staleFingerprints, ...messageMetadata } = current?.input.messageMetadata ?? {};
+    const updated = agentRuntimeKernel.updateQueued(input.threadId, input.queuedMessageId, input.expectedRevision, {
+      userMessage: input.userMessage,
+      ...(input.messageParts ? { messageParts: input.messageParts } : {}),
+      ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
+      messageMetadata
+    });
+    if (!updated) {
+      throw new AgentRuntimeKernelQueueConflictError(agentRuntimeKernel.getQueueRevision(input.threadId));
+    }
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.queue",
+      event: "agent.queue.resumed",
+      message: "queued agent message updated and resumed",
+      status: "ok",
+      threadId: input.threadId,
+      data: { queuedMessageId: input.queuedMessageId }
+    });
   });
 }
 
@@ -1120,6 +1382,7 @@ export async function waitForAgentRuntimeKernelIdleForTest(): Promise<void> {
 export function resetAgentRuntimeKernelForTest(): void {
   agentRuntimeKernel.resetForTest();
   runGuidanceStore.resetForTest();
+  queueOperationResults.clear();
 }
 
 function finishQueueOperation(
@@ -1136,6 +1399,41 @@ function finishQueueOperation(
     snapshot,
     ...extra
   };
+}
+
+const queueOperationResults = new Map<string, AgentMessageQueueOperationResult>();
+
+function runQueueOperation(
+  operationId: string,
+  threadId: string,
+  mutate: () => void | Omit<AgentMessageQueueOperationResult, "ok" | "snapshot">
+): AgentMessageQueueOperationResult {
+  const cached = queueOperationResults.get(operationId);
+  if (cached) return cached;
+  let result: AgentMessageQueueOperationResult;
+  try {
+    const extra = mutate() ?? {};
+    result = finishQueueOperation(threadId, extra);
+  } catch (error) {
+    if (!(error instanceof AgentRuntimeKernelQueueConflictError)) throw error;
+    result = { ok: false, conflict: true, snapshot: listAgentMessageQueue(threadId) };
+    writeLogRecord({
+      level: "warn",
+      kind: "trace",
+      context: "agent.queue",
+      event: "agent.queue.update_conflict",
+      message: "queued agent message operation rejected by revision conflict",
+      status: "error",
+      threadId,
+      data: { operationId, currentRevision: error.currentRevision }
+    });
+  }
+  queueOperationResults.set(operationId, result);
+  if (queueOperationResults.size > 256) {
+    const oldest = queueOperationResults.keys().next().value;
+    if (oldest) queueOperationResults.delete(oldest);
+  }
+  return result;
 }
 
 function emitAgentMessageQueueChanged(threadId: string, snapshot = listAgentMessageQueue(threadId)): void {
@@ -1158,7 +1456,25 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
     id: dispatch.id,
     threadId: dispatch.threadId,
     text: dispatch.text,
-    createdAt: dispatch.createdAt
+    createdAt: dispatch.createdAt,
+    revision: dispatch.revision,
+    status: dispatch.status,
+    ...(dispatch.blockedReason ? { blockedReason: dispatch.blockedReason } : {}),
+    ...(dispatch.input.messageParts ? { messageParts: dispatch.input.messageParts } : {}),
+    ...(dispatch.input.messageAttachments ? { messageAttachments: dispatch.input.messageAttachments } : {}),
+    ...(dispatch.input.clientSubmissionId ? { clientSubmissionId: dispatch.input.clientSubmissionId } : {}),
+    ...(dispatch.input.modelRef ? { modelRef: dispatch.input.modelRef } : {}),
+    ...(dispatch.input.channelId ? { channelId: dispatch.input.channelId } : {}),
+    ...(dispatch.input.modelId ? { modelId: dispatch.input.modelId } : {}),
+    ...(dispatch.input.permissionMode ? { permissionMode: dispatch.input.permissionMode } : {}),
+    ...(dispatch.input.thinkingLevel ? { thinkingLevel: dispatch.input.thinkingLevel } : {}),
+    ...(dispatch.input.workspaceId ? { workspaceId: dispatch.input.workspaceId } : {}),
+    ...(typeof dispatch.input.messageMetadata?.desktopContextSnapshotId === "string"
+      ? { desktopContextSnapshotId: dispatch.input.messageMetadata.desktopContextSnapshotId }
+      : {}),
+    ...(Array.isArray(dispatch.input.messageMetadata?.capabilityFingerprints)
+      ? { capabilityFingerprints: dispatch.input.messageMetadata.capabilityFingerprints as Array<{ uri: string; fingerprint: string }> }
+      : {})
   };
 }
 

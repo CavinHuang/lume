@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useEditor } from '@tiptap/react'
+import { ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Mention from '@tiptap/extension-mention'
@@ -11,13 +11,12 @@ import {
   currentWorkspaceIdAtom,
   tabsAtom,
   activeTabIdAtom,
-  agentRuntimeEventsAtom,
   agentStreamingStatesAtom,
   agentPlanModePhaseAtom,
+  welcomeCapabilitySeedAtom,
   welcomePromptSeedAtom,
 } from '@/atoms'
-import { sidecarCall, agentSend, getQuickInputContext, openFileDialog, onSidecarEvent } from '@/lib/desktop-api'
-import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
+import { sidecarCall, agentSend, getQuickInputContext, isTerminalAgentSubmissionError, openFileDialog, onSidecarEvent } from '@/lib/desktop-api'
 import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
@@ -39,7 +38,10 @@ import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-
 import { LumeWelcomeSurface } from './LumeWelcomeSurface'
 import { buildWelcomeSurfaceViewModel, DEFAULT_WELCOME_SUGGESTIONS } from './welcome-surface-view-model'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
-import { createSuggestionRenderer } from '@/components/agent/editor-mention-suggestions'
+import { createCapabilityReferencePasteHandler, createSuggestionRenderer } from '@/components/agent/editor-mention-suggestions'
+import { extractClipboardFiles, handleAttachmentPaste } from '@/components/agent/editor-attachment-paste'
+import { CapabilityMentionNodeView } from '@/components/agent/CapabilityMentionNodeView'
+import { serializeAgentEditorMessage } from '@/components/agent/agent-editor-message-parts'
 import { attachmentDataUrl, isImageAttachment } from '@/components/agent/AgentAttachmentGrid'
 import {
   captureAgentInputDesktopContextState,
@@ -72,11 +74,11 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setTabs = useSetAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
-  const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setCurrentWorkspaceId = useAtom(currentWorkspaceIdAtom)[1]
   const [welcomePromptSeed, setWelcomePromptSeed] = useAtom(welcomePromptSeedAtom)
+  const [welcomeCapabilitySeed, setWelcomeCapabilitySeed] = useAtom(welcomeCapabilitySeedAtom)
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(
     initialWorkspaceId ?? currentWorkspaceId ?? null
@@ -87,6 +89,8 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
   const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
   const [sending, setSending] = useState(false)
+  const sendingRef = useRef(sending)
+  sendingRef.current = sending
   const [editorText, setEditorText] = useState('')
   const [pendingFiles, setPendingFiles] = useState<WelcomePendingFile[]>([])
   const [welcomeSuggestions, setWelcomeSuggestions] = useState<AgentWelcomeSuggestion[]>(DEFAULT_WELCOME_SUGGESTIONS)
@@ -177,6 +181,12 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
 
   const mentionSuggestionOpenRef = useRef(false)
   const workspaceSlugRef = useRef<string | null>(workspaceSlug)
+  const pendingWelcomeSubmissionRef = useRef<{
+    id: string
+    identity: string
+    meta?: AgentThreadMeta
+  } | null>(null)
+  const attachmentPasteInProgressRef = useRef(false)
   const setMentionSuggestionOpen = useCallback((open: boolean) => {
     mentionSuggestionOpenRef.current = open
   }, [])
@@ -186,26 +196,57 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   }, [workspaceSlug])
 
   const getWorkspaceSlug = () => workspaceSlugRef.current
+  const slashCommandExecuteRef = useRef<(id: string) => void>(() => undefined)
+  const executeSlashCommand = useCallback((id: string) => slashCommandExecuteRef.current(id), [])
+  const handleCapabilityReferencePaste = createCapabilityReferencePasteHandler('__welcome__', getWorkspaceSlug)
 
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ undoRedo: false, bold: false, italic: false, strike: false }),
-      Placeholder.configure({ placeholder: '输入 /命令 $技能，或直接描述你想完成的任务...' }),
-      Mention.configure({
-        HTMLAttributes: {
-          class: 'mention bg-orange-500/10 text-orange-600 dark:text-orange-400 px-0.5 rounded font-medium text-[13px]',
+      StarterKit.configure({ bold: false, italic: false, strike: false }),
+      Placeholder.configure({ placeholder: '描述你想完成的任务，使用 / 选择技能或插件…' }),
+      Mention.extend({
+        name: 'capabilityMention',
+        addAttributes() {
+          return {
+            ...this.parent?.(),
+            uri: { default: null },
+            kind: { default: null },
+            occurrenceId: { default: null },
+            iconUrl: { default: null },
+          }
         },
-        suggestion: createSuggestionRenderer('/', '__welcome__', '/', getWorkspaceSlug, setMentionSuggestionOpen),
-      }),
-      Mention.extend({ name: 'skillMention' }).configure({
-        HTMLAttributes: {
-          class: 'mention bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-0.5 rounded font-medium text-[13px]',
+        addNodeView() {
+          return ReactNodeViewRenderer(CapabilityMentionNodeView)
         },
-        suggestion: createSuggestionRenderer('$', '__welcome__', '$', getWorkspaceSlug, setMentionSuggestionOpen),
+      }).configure({
+        HTMLAttributes: { class: 'capability-mention' },
+        renderText: ({ node }) => node.attrs.uri ?? '',
+        suggestion: createSuggestionRenderer('/', '__welcome__', '/', getWorkspaceSlug, setMentionSuggestionOpen, executeSlashCommand),
       }),
     ],
     editorProps: {
       attributes: { class: 'outline-none min-h-[80px] max-h-[200px] overflow-y-auto text-[14px] leading-relaxed' },
+      handlePaste(view, event) {
+        if (extractClipboardFiles(event.clipboardData).length > 0 && sendingRef.current) {
+          event.preventDefault()
+          toast.error('消息正在提交，请稍后粘贴附件')
+          return true
+        }
+        if (handleAttachmentPaste(event, {
+          onStart: () => { attachmentPasteInProgressRef.current = true },
+          onAttachments: (attachments) => {
+            setPendingFiles((prev) => [...prev, ...attachments])
+            toast.success(`已粘贴 ${attachments.length} 个附件`)
+          },
+          onError: (error) => {
+            console.error('[WelcomeView] 粘贴附件失败:', error)
+            toast.error('粘贴附件失败')
+          },
+          onSettled: () => { attachmentPasteInProgressRef.current = false },
+        })) return true
+
+        return handleCapabilityReferencePaste(view, event)
+      },
       handleKeyDown(_, event) {
         if (event.key === 'Enter' && !event.shiftKey && !sending && !mentionSuggestionOpenRef.current) {
           event.preventDefault()
@@ -226,12 +267,37 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   useEffect(() => {
     if (!editor || !welcomePromptSeed) return
     editor.commands.clearContent()
-    editor.commands.insertContent(welcomePromptSeed)
+    if (welcomeCapabilitySeed && welcomePromptSeed.startsWith(welcomeCapabilitySeed.uri)) {
+      editor.commands.insertContent({
+        type: 'doc',
+        content: [{
+          type: 'paragraph',
+          content: [
+            {
+              type: 'capabilityMention',
+              attrs: {
+                id: welcomeCapabilitySeed.uri,
+                label: welcomeCapabilitySeed.label,
+                uri: welcomeCapabilitySeed.uri,
+                occurrenceId: crypto.randomUUID(),
+                kind: welcomeCapabilitySeed.kind,
+                iconUrl: welcomeCapabilitySeed.iconUrl ?? null,
+              },
+            },
+            { type: 'text', text: welcomePromptSeed.slice(welcomeCapabilitySeed.uri.length) },
+          ],
+        }],
+      })
+    } else {
+      editor.commands.insertContent(welcomePromptSeed)
+    }
     editor.commands.focus('end')
+    setWelcomeCapabilitySeed(null)
     setWelcomePromptSeed(null)
-  }, [editor, setWelcomePromptSeed, welcomePromptSeed])
+  }, [editor, setWelcomeCapabilitySeed, setWelcomePromptSeed, welcomeCapabilitySeed, welcomePromptSeed])
 
   const handleWelcomeSuggestionSelect = useCallback((prompt: string) => {
+    setWelcomeCapabilitySeed(null)
     if (!editor) {
       setWelcomePromptSeed(prompt)
       return
@@ -239,11 +305,16 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
     editor.commands.clearContent()
     editor.commands.insertContent(prompt)
     editor.commands.focus('end')
-  }, [editor, setWelcomePromptSeed])
+  }, [editor, setWelcomeCapabilitySeed, setWelcomePromptSeed])
 
   const handleSend = async () => {
     if (!editor || sending) return
-    const rawText = editor.getText().trim()
+    if (attachmentPasteInProgressRef.current) {
+      toast.info('正在读取粘贴的附件，请稍候')
+      return
+    }
+    const serialized = serializeAgentEditorMessage(editor.getJSON())
+    const rawText = serialized.userMessage
     if (!rawText && pendingFiles.length === 0) return
     const text = rawText || '请解读这些附件。'
 
@@ -262,18 +333,52 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         setSelectedDesktopContextTarget(state.target)
       }
 
-      const meta = await sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.CREATE_THREAD, {
-        workspaceId: selectedWorkspaceId ?? undefined,
+      const submissionIdentity = JSON.stringify({
+        userMessage: text,
+        messageParts: serialized.messageParts,
+        attachments: pendingFiles.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
+        selectedWorkspaceId,
         modelRef,
         channelId,
         modelId,
+        permissionMode,
+        thinkingLevel,
+        desktopContextSnapshotId: desktopContextTargetForSend?.snapshotId,
       })
+      if (
+        pendingWelcomeSubmissionRef.current
+        && pendingWelcomeSubmissionRef.current.identity !== submissionIdentity
+      ) {
+        const previousAttempt = pendingWelcomeSubmissionRef.current
+        const aborted = await sidecarCall<{ ok: true; aborted: boolean }>(AGENT_IPC_CHANNELS.ABORT_SUBMISSION, {
+          clientSubmissionId: pendingWelcomeSubmissionRef.current.id,
+        }).catch(() => undefined)
+        if (aborted?.aborted && previousAttempt.meta) {
+          await sidecarCall(AGENT_IPC_CHANNELS.DELETE_THREAD, { threadId: previousAttempt.meta.id })
+            .catch(() => undefined)
+        }
+        pendingWelcomeSubmissionRef.current = null
+      }
+      const attempt = pendingWelcomeSubmissionRef.current?.identity === submissionIdentity
+        ? pendingWelcomeSubmissionRef.current
+        : { id: crypto.randomUUID(), identity: submissionIdentity }
+      pendingWelcomeSubmissionRef.current = attempt
+      const clientSubmissionId = attempt.id
+
+      const meta = attempt.meta ?? await sidecarCall<AgentThreadMeta>(AGENT_IPC_CHANNELS.CREATE_THREAD, {
+          workspaceId: selectedWorkspaceId ?? undefined,
+          modelRef,
+          channelId,
+          modelId,
+        })
+      attempt.meta = meta
 
       let messageAttachments: AgentMessageAttachmentInput[] = []
       if (pendingFiles.length > 0) {
         const savedFiles = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
           threadId: meta.id,
           workspaceSlug,
+          clientSubmissionId,
           files: pendingFiles.map((file) => ({
             filename: file.filename,
             ...(file.sourcePath ? { sourcePath: file.sourcePath } : {}),
@@ -288,9 +393,27 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
             mediaType: file.mediaType,
             size: file.size,
             threadPath: saved?.threadPath ?? file.filename,
+            ...(saved?.ref ? { fileRef: saved.ref } : {}),
           }
         })
       }
+
+      await agentSend({
+        threadId: meta.id,
+        userMessage: text,
+        clientSubmissionId,
+        ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
+          ? { messageParts: serialized.messageParts }
+          : {}),
+        thinkingLevel,
+        permissionMode,
+        ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+        ...(desktopContextTargetForSend
+          ? { messageMetadata: createDesktopContextMessageMetadata(desktopContextTargetForSend) }
+          : {}),
+        ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
+      } as any)
+      pendingWelcomeSubmissionRef.current = null
 
       setTabs((prev) => {
         const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
@@ -313,34 +436,13 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         setPlanModePhase((prev) => ({ ...prev, [meta.id]: { threadId: meta.id, phase: 'planning' } }))
       }
 
-      const createdAt = new Date().toISOString()
-      setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
-        id: `optimistic:${meta.id}:${createdAt}`,
-        type: 'message.user.submitted',
-        threadId: meta.id,
-        runId: `optimistic:${meta.id}:${createdAt}`,
-        createdAt,
-        text,
-        ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-      }))
-
-      await agentSend({
-        threadId: meta.id,
-        userMessage: text,
-        thinkingLevel,
-        permissionMode,
-        ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
-        ...(desktopContextTargetForSend
-          ? { messageMetadata: createDesktopContextMessageMetadata(desktopContextTargetForSend) }
-          : {}),
-        ...(selectedWorkspaceId ? { workspaceId: selectedWorkspaceId } : {}),
-      } as any)
       editor.commands.clearContent()
       setEditorText('')
       setPendingFiles([])
     } catch (err) {
       console.error('[WelcomeView] 发送失败:', err)
       toast.error('发送失败，请重试')
+      if (isTerminalAgentSubmissionError(err)) pendingWelcomeSubmissionRef.current = null
     } finally {
       setSending(false)
     }
@@ -374,11 +476,22 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
     }
   }
 
-  const handlePluginSelect = useCallback((pluginName: string) => {
-    if (!editor) return
-    editor.commands.insertContent(`$${pluginName} `)
-    editor.commands.focus('end')
-  }, [editor])
+  slashCommandExecuteRef.current = (id: string) => {
+    if (id !== 'reload-plugins') return
+    if (
+      editor?.getText().trim() !== '/reload-plugins'
+      || pendingFiles.length > 0
+      || Boolean(selectedDesktopContextTarget)
+    ) {
+      toast.error('请先清空正文、附件和当前应用上下文，再执行该动作')
+      return
+    }
+    editor.commands.clearContent()
+    setEditorText('')
+    void sidecarCall(AGENT_IPC_CHANNELS.RELOAD_PLUGINS, {})
+      .then(() => toast.success('插件已重新加载'))
+      .catch(() => toast.error('重载插件失败'))
+  }
 
   const handleAttachMenuOpen = useCallback(async () => {
     setDesktopContextCaptureLoading(true)
@@ -454,19 +567,6 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
             onCreateWorkspaceClick={() => setCreateWorkspaceOpen(true)}
           />
         }
-        modelPicker={
-          <WelcomeModelPicker
-            variant="hero"
-            selectedChannelId={channelId}
-            selectedModelRef={modelRef}
-            workspaceSlug={workspaceSlug}
-            onModelChange={(ref, chId, mId) => {
-              setModelRef(ref)
-              setChannelId(chId)
-              setModelId(mId)
-            }}
-          />
-        }
         composerModelPicker={
           <WelcomeModelPicker
             variant="composer"
@@ -493,7 +593,6 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         onSend={handleSend}
         onAttach={handleAttach}
         onAttachMenuOpen={handleAttachMenuOpen}
-        onPluginSelect={handlePluginSelect}
         desktopContextTarget={capturedDesktopContextTarget}
         selectedDesktopContextTarget={selectedDesktopContextTarget}
         desktopContextCaptureLoading={desktopContextCaptureLoading}
@@ -503,7 +602,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         onRequestDesktopContextPermissions={handleRequestDesktopContextPermissions}
         onSelectDesktopContextTarget={setSelectedDesktopContextTarget}
         onClearDesktopContextTarget={() => setSelectedDesktopContextTarget(undefined)}
-        suggestions={welcomeSuggestions}
+        suggestions={!hasText && !selectedDesktopContextTarget ? welcomeSuggestions : []}
         onSuggestionSelect={handleWelcomeSuggestionSelect}
         onRemovePendingFile={(index) =>
           setPendingFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index))

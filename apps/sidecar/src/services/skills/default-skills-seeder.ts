@@ -6,7 +6,8 @@
  * 2) LUME_DEFAULT_SKILLS_DIR (desktop/runtime injected directory)
  * 3) <sidecar cwd>/default-skills (dev fallback)
  *
- * Strategy: additive sync only (do not overwrite user-customized skills).
+ * Strategy: add missing skills and upgrade bundled skills only when their
+ * declared version increases. Unversioned user skills are preserved.
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -71,13 +72,7 @@ export function safeTargetPath(root: string, relativePath: string): string | nul
 
 export function extractDefaultSkillsArchive(archivePath: string, userDir: string): void {
   const buffer = readFileSync(archivePath);
-  const existingSkills = new Set(
-    existsSync(userDir)
-      ? readdirSync(userDir, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => entry.name)
-      : []
-  );
+  const entries: Array<{ name: string; typeflag: string; content: Buffer }> = [];
   let offset = 0;
 
   while (offset + 512 <= buffer.length) {
@@ -93,8 +88,31 @@ export function extractDefaultSkillsArchive(archivePath: string, userDir: string
     const content = buffer.subarray(offset, offset + size);
     offset += Math.ceil(size / 512) * 512;
 
+    entries.push({ name, typeflag, content });
+  }
+
+  const bundledVersions = new Map<string, string>();
+  for (const entry of entries) {
+    const parts = entry.name.split("/").filter(Boolean);
+    if (parts.length === 2 && parts[1] === "SKILL.md") {
+      bundledVersions.set(parts[0]!, readVersionFromContent(entry.content.toString("utf8")));
+    }
+  }
+
+  const installableSkills = new Set<string>();
+  for (const entry of entries) {
+    const skillName = entry.name.split("/").filter(Boolean)[0];
+    if (!skillName || installableSkills.has(skillName)) continue;
+    const target = join(userDir, skillName);
+    if (!existsSync(target) || isNewerBundledVersion(bundledVersions.get(skillName) ?? "0", readSkillVersion(target))) {
+      installableSkills.add(skillName);
+    }
+  }
+
+  for (const entry of entries) {
+    const { name, typeflag, content } = entry;
     const skillName = name.split("/").filter(Boolean)[0];
-    if (!skillName || existingSkills.has(skillName)) {
+    if (!skillName || !installableSkills.has(skillName)) {
       continue;
     }
 
@@ -111,6 +129,31 @@ export function extractDefaultSkillsArchive(archivePath: string, userDir: string
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, content);
   }
+}
+
+function readVersionFromContent(content: string): string {
+  const match = content.match(/^---\s*\n[\s\S]*?^version:\s*["']?([^"'\n]+)["']?/m);
+  return match?.[1]?.trim() ?? "0";
+}
+
+function readSkillVersion(skillDir: string): string {
+  try {
+    return readVersionFromContent(readFileSync(join(skillDir, "SKILL.md"), "utf8"));
+  } catch {
+    return "0";
+  }
+}
+
+function isNewerBundledVersion(bundled: string, installed: string): boolean {
+  if (bundled === "0" || installed === "0") return false;
+  const bundledParts = bundled.split(".").map(Number);
+  const installedParts = installed.split(".").map(Number);
+  const length = Math.max(bundledParts.length, installedParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (bundledParts[index] ?? 0) - (installedParts[index] ?? 0);
+    if (difference !== 0) return difference > 0;
+  }
+  return false;
 }
 
 export function seedDefaultSkills(): void {
@@ -133,7 +176,7 @@ export function seedDefaultSkills(): void {
     for (const entry of entries) {
       const sourcePath = join(source.path, entry.name);
       const target = join(userDir, entry.name);
-      if (existsSync(target)) continue;
+      if (existsSync(target) && !isNewerBundledVersion(readSkillVersion(sourcePath), readSkillVersion(target))) continue;
       cpSync(sourcePath, target, { recursive: true });
       log.info("default skill synced", { skillSlug: entry.name });
     }

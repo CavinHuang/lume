@@ -10,10 +10,11 @@ import {
 function createSnapshot(): AgentMessageQueueSnapshot {
   return {
     threadId: 'thread-a',
+    revision: 3,
     queuedMessages: [
-      { id: 'queued-1', threadId: 'thread-a', text: 'first', createdAt: 1 },
-      { id: 'queued-2', threadId: 'thread-a', text: 'second', createdAt: 2 },
-      { id: 'queued-3', threadId: 'thread-a', text: 'third', createdAt: 3 },
+      { id: 'queued-1', threadId: 'thread-a', text: 'first', createdAt: 1, revision: 3, status: 'queued' },
+      { id: 'queued-2', threadId: 'thread-a', text: 'second', createdAt: 2, revision: 3, status: 'queued' },
+      { id: 'queued-3', threadId: 'thread-a', text: 'third', createdAt: 3, revision: 3, status: 'queued' },
     ],
     pendingGuidance: [],
   }
@@ -23,6 +24,7 @@ describe('agent message queue state', () => {
   test('creates an empty snapshot for a thread', () => {
     expect(createEmptyAgentMessageQueueSnapshot('thread-a')).toEqual({
       threadId: 'thread-a',
+      revision: 0,
       queuedMessages: [],
       pendingGuidance: [],
     })
@@ -73,12 +75,13 @@ describe('agent message queue state', () => {
     expect(reorderQueuedMessages(snapshot, 'queued-1', 'missing')).toBe(snapshot)
   })
 
-  test('starts editing by removing the queued message and returning its text', () => {
+  test('starts editing without removing the queued message', () => {
     const result = startEditingQueuedMessage(createSnapshot(), 'queued-2')
 
     expect(result?.draftText).toBe('second')
     expect(result?.snapshot.queuedMessages.map((item) => item.id)).toEqual([
       'queued-1',
+      'queued-2',
       'queued-3',
     ])
   })

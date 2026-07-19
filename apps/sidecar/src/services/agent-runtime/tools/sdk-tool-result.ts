@@ -6,12 +6,13 @@ export function createSdkJsonResultTool(config: {
   inputSchema: ToolInputSchema;
   isReadOnly?: boolean;
   isConcurrencySafe?: boolean;
+  runtimeMetadata?: Record<string, unknown>;
   call: (
     input: Record<string, unknown>,
     context: { cwd: string; abortSignal?: AbortSignal }
   ) => Promise<unknown>;
 }): ToolDefinition {
-  return defineTool({
+  const tool = defineTool({
     name: config.name,
     description: config.description,
     inputSchema: config.inputSchema,
@@ -25,4 +26,7 @@ export function createSdkJsonResultTool(config: {
       return { data };
     }
   });
+  return config.runtimeMetadata
+    ? { ...tool, runtimeMetadata: config.runtimeMetadata }
+    : tool;
 }

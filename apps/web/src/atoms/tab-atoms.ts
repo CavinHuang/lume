@@ -26,6 +26,16 @@ export const tabsAtom = atom<Tab[]>([])
 export const activeTabIdAtom = atomWithStorage<string | null>('active-tab-id', null)
 export const sidebarCollapsedAtom = atomWithStorage('sidebar-collapsed', false)
 export const welcomePromptSeedAtom = atom<string | null>(null)
+export const welcomeCapabilitySeedAtom = atom<{
+  uri: string
+  label: string
+  kind: 'plugin' | 'skill' | 'plugin-skill'
+  iconUrl?: string
+} | null>(null)
+export const capabilityDetailTargetAtom = atom<{
+  uri: string
+  kind: 'skill' | 'plugin' | 'plugin-skill'
+} | null>(null)
 export const settingsInitialTabAtom = atom<string | null>(null)
 export const archiveInitialViewAtom = atom<'archive' | 'trash' | null>(null)
 

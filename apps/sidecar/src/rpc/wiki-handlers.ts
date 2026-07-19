@@ -59,6 +59,9 @@ export function createWikiHandlers(): Record<string, RpcHandler> {
       if ("state" in result && result.state === "committed") { wiki.index.rebuild(); wiki.runLint(); }
       return result;
     },
+    [WIKI_IPC_CHANNELS.GET_DRAFT_STATUS]: async (params) => service().coordinator.getDraftStatus(
+      string(object(params, WIKI_IPC_CHANNELS.GET_DRAFT_STATUS).draftId, "draftId")
+    ),
     [WIKI_IPC_CHANNELS.CANCEL_DRAFT]: async (params) => {
       service().coordinator.cancelDraft(string(object(params, WIKI_IPC_CHANNELS.CANCEL_DRAFT).draftId, "draftId"));
       return { ok: true };

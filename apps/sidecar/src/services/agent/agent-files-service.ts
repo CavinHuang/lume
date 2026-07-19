@@ -43,7 +43,7 @@ import {
 } from "../infra/config-paths";
 import { getMemoryV2ScopePaths } from "../memory-v2/paths";
 import { listMemorySourceFilesForScope } from "../memory-v2/source-files";
-import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { resolveAgentThreadLumeWorkDir, resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
 import { getAgentThreadMeta } from "./agent-thread-manager";
 import { getAgentWorkspace, getAgentWorkspaceBySlug } from "./agent-workspace-manager";
 import {
@@ -78,7 +78,7 @@ function isWithin(basePath: string, targetPath: string): boolean {
 function resolveSessionDir(workspaceSlug: string | undefined, sessionId: string): string {
   validatePathSegment(sessionId, "sessionId");
   try {
-    return resolveAgentThreadWorkdir(sessionId).lumeWorkDir;
+    return resolveAgentThreadLumeWorkDir(sessionId);
   } catch (error) {
     if (!workspaceSlug) throw error;
     validatePathSegment(workspaceSlug, "workspaceSlug");
@@ -97,18 +97,19 @@ function resolveWorkspaceRootDir(workspaceSlug: string): string {
 }
 
 function getThreadAttachmentScope(workspaceSlug: string | undefined, sessionId: string): ThreadAttachmentScope {
-  try {
-    const resolved = resolveAgentThreadWorkdir(sessionId);
+  const thread = getAgentThreadMeta(sessionId);
+  if (thread) {
+    const fileContextId = thread.fileContextId?.trim() || thread.id;
+    resolveAgentThreadLumeWorkDir(sessionId);
     return {
       kind: "thread",
-      workspaceSlug: workspaceSlug ?? resolved.fileContextId,
+      workspaceSlug: workspaceSlug ?? fileContextId,
       threadId: sessionId,
-      fileContextId: resolved.fileContextId
+      fileContextId
     };
-  } catch (error) {
-    if (!workspaceSlug) throw error;
-    return { kind: "thread", workspaceSlug, threadId: sessionId };
   }
+  if (!workspaceSlug) throw new Error(`Agent 线程不存在: ${sessionId}`);
+  return { kind: "thread", workspaceSlug, threadId: sessionId };
 }
 
 function resolveExistingProjectTarget(workspaceSlug: string, targetPath?: string): string {
@@ -1356,44 +1357,66 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
   const scope = getThreadAttachmentScope(input.workspaceSlug, input.threadId);
   assertAttachmentMetadataHealthy(scope);
 
-  for (const file of input.files) {
-    const targetPath = resolve(join(sessionDir, file.filename));
-    if (!isWithin(sessionDir, targetPath)) {
-      throw new Error(`文件路径越界: ${file.filename}`);
-    }
-    mkdirSync(dirname(targetPath), { recursive: true });
-    if (file.sourcePath && file.sourcePath.trim()) {
-      const resolvedSourcePath = resolve(file.sourcePath);
-      if (!existsSync(resolvedSourcePath) || !statSync(resolvedSourcePath).isFile()) {
-        throw new Error(`源文件不存在: ${file.filename}`);
+  try {
+    for (const file of input.files) {
+      const targetPath = input.clientSubmissionId
+        ? resolveUniqueAttachmentTarget(sessionDir, file.filename)
+        : resolve(join(sessionDir, file.filename));
+      if (!isWithin(sessionDir, targetPath)) {
+        throw new Error(`文件路径越界: ${file.filename}`);
       }
-      copyFileSync(resolvedSourcePath, targetPath);
-    } else if (file.data) {
-      const buffer = Buffer.from(file.data, "base64");
-      writeFileSync(targetPath, buffer);
-    } else {
-      throw new Error(`缺少文件内容: ${file.filename}`);
-    }
-    const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, targetPath);
-    results.push({
-      filename: file.filename,
-      targetPath,
-      threadPath,
-      ...(scope.fileContextId ? {
-        ref: { source: "session" as const, scopeId: scope.fileContextId, relativePath: threadPath }
-      } : {})
-    });
-    if (file.sourcePath && file.sourcePath.trim() && isExternalSourcePath(input.workspaceSlug, file.sourcePath, input.threadId)) {
-      upsertAttachmentMeta(scope, targetPath, {
-        label: "外部附加",
-        absoluteSourcePath: resolve(file.sourcePath)
+      mkdirSync(dirname(targetPath), { recursive: true });
+      if (file.sourcePath && file.sourcePath.trim()) {
+        const resolvedSourcePath = resolve(file.sourcePath);
+        if (!existsSync(resolvedSourcePath) || !statSync(resolvedSourcePath).isFile()) {
+          throw new Error(`源文件不存在: ${file.filename}`);
+        }
+        copyFileSync(resolvedSourcePath, targetPath);
+      } else if (file.data) {
+        const buffer = Buffer.from(file.data, "base64");
+        writeFileSync(targetPath, buffer);
+      } else {
+        throw new Error(`缺少文件内容: ${file.filename}`);
+      }
+      const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, targetPath);
+      results.push({
+        filename: file.filename,
+        targetPath,
+        threadPath,
+        ...(scope.fileContextId ? {
+          ref: { source: "session" as const, scopeId: scope.fileContextId, relativePath: threadPath }
+        } : {})
       });
-    } else {
-      deleteAttachmentMeta(scope, targetPath);
+      if (file.sourcePath && file.sourcePath.trim() && isExternalSourcePath(input.workspaceSlug, file.sourcePath, input.threadId)) {
+        upsertAttachmentMeta(scope, targetPath, {
+          label: "外部附加",
+          absoluteSourcePath: resolve(file.sourcePath)
+        });
+      } else {
+        deleteAttachmentMeta(scope, targetPath);
+      }
     }
+  } catch (error) {
+    for (const saved of results) {
+      if (existsSync(saved.targetPath)) rmSync(saved.targetPath, { force: true });
+      deleteAttachmentMeta(scope, saved.targetPath);
+    }
+    throw error;
   }
 
   return results;
+}
+
+function resolveUniqueAttachmentTarget(sessionDir: string, filename: string): string {
+  const initial = resolve(join(sessionDir, filename));
+  if (!existsSync(initial)) return initial;
+  const extension = extname(filename);
+  const stem = basename(filename, extension);
+  for (let suffix = 2; suffix < 10_000; suffix += 1) {
+    const candidate = resolve(join(sessionDir, `${stem} (${suffix})${extension}`));
+    if (!existsSync(candidate)) return candidate;
+  }
+  throw new Error(`无法为附件分配唯一文件名: ${filename}`);
 }
 
 export function saveFilesToWorkspace(input: WorkspaceSaveFilesInput): AgentSavedFile[] {

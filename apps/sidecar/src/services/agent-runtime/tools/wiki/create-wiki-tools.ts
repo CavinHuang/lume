@@ -5,6 +5,17 @@ import type { WikiService } from "../../../wiki/wiki-service";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
 
 export function createWikiReadTools(scope: WikiSearchScope): ToolDefinition[] {
+  const runtimeMetadata = {
+    source: "lume",
+    category: "read",
+    capability: "filesystem",
+    riskLevel: "low",
+    sideEffects: "local_read",
+    allowedInPlanMode: true,
+    isReadOnly: true,
+    isConcurrencySafe: true,
+    requiresApprovalByDefault: false
+  } as const;
   return [
     createSdkJsonResultTool({
       name: "wiki.search",
@@ -12,6 +23,7 @@ export function createWikiReadTools(scope: WikiSearchScope): ToolDefinition[] {
       inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number", minimum: 1, maximum: 50 } }, required: ["query"] },
       isReadOnly: true,
       isConcurrencySafe: true,
+      runtimeMetadata,
       async call(input) {
         const { service, subject } = await getWikiContext(scope);
         return service.search({ query: String(input.query ?? ""), scope, maxResults: typeof input.maxResults === "number" ? input.maxResults : 10 }, subject);
@@ -23,6 +35,7 @@ export function createWikiReadTools(scope: WikiSearchScope): ToolDefinition[] {
       inputSchema: { type: "object", properties: { pageId: { type: "string" } }, required: ["pageId"] },
       isReadOnly: true,
       isConcurrencySafe: true,
+      runtimeMetadata,
       async call(input) {
         const { service, subject } = await getWikiContext(scope);
         return service.read(String(input.pageId ?? ""), scope, subject);
@@ -34,6 +47,7 @@ export function createWikiReadTools(scope: WikiSearchScope): ToolDefinition[] {
       inputSchema: { type: "object", properties: { pageId: { type: "string" }, depth: { type: "number", minimum: 1, maximum: 3 } }, required: ["pageId"] },
       isReadOnly: true,
       isConcurrencySafe: true,
+      runtimeMetadata,
       async call(input) {
         const { service, subject } = await getWikiContext(scope);
         return service.followLinks(String(input.pageId ?? ""), scope, subject, typeof input.depth === "number" ? input.depth : 1);
@@ -42,14 +56,20 @@ export function createWikiReadTools(scope: WikiSearchScope): ToolDefinition[] {
   ];
 }
 
-export function createWikiProposalTool(scope: WikiSearchScope): ToolDefinition {
-  return createSdkJsonResultTool({
+export function createWikiProposalTool(
+  scope: WikiSearchScope,
+  options: { createOnly?: boolean } = {}
+): ToolDefinition {
+  const createOnly = options.createOnly === true;
+  const tool = createSdkJsonResultTool({
     name: "wiki.propose_changes",
-    description: "创建一个待用户确认的 Wiki 变更草案。它只写入 staging，不会修改正式 Wiki，也不能代替用户确认。更新前必须先 wiki.read 并提供 expectedHash。",
+    description: createOnly
+      ? "为用户明确要求沉淀的内容创建一个待确认的新 Wiki 页面草案。它只写入 staging，不会修改正式 Wiki；创建后必须等待用户在确认卡中确认。"
+      : "创建一个待用户确认的 Wiki 变更草案。它只写入 staging，不会修改正式 Wiki，也不能代替用户确认。更新前必须先 wiki.read 并提供 expectedHash。",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["create", "update"] },
+        action: { type: "string", enum: createOnly ? ["create"] : ["create", "update"] },
         title: { type: "string" },
         body: { type: "string" },
         pageType: { type: "string", enum: ["topic", "decision", "synthesis"] },
@@ -61,10 +81,22 @@ export function createWikiProposalTool(scope: WikiSearchScope): ToolDefinition {
     },
     isReadOnly: false,
     isConcurrencySafe: false,
+    runtimeMetadata: {
+      source: "lume",
+      category: "control",
+      capability: "planning",
+      riskLevel: "low",
+      sideEffects: "local_write",
+      allowedInPlanMode: true,
+      isReadOnly: false,
+      isConcurrencySafe: false,
+      requiresApprovalByDefault: false
+    },
     async call(input) {
-      const { service, subject } = await getWikiContext(scope);
       const action = input.action === "update" ? "update" : input.action === "create" ? "create" : undefined;
       if (!action) throw new Error("action 必须是 create 或 update");
+      if (createOnly && action === "update") throw new Error("当前会话只能新建 Wiki 草案；请在 Wiki 会话中读取原页面后再更新");
+      const { service, subject } = await getWikiContext(scope);
       const pageType = input.pageType === "topic" || input.pageType === "decision" || input.pageType === "synthesis"
         ? input.pageType
         : undefined;
@@ -81,6 +113,7 @@ export function createWikiProposalTool(scope: WikiSearchScope): ToolDefinition {
       }, scope, subject);
     }
   });
+  return tool;
 }
 
 async function getWikiContext(scope: WikiSearchScope): Promise<{ service: WikiService; subject: WikiTrustedSubject }> {

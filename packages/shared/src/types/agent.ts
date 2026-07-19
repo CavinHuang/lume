@@ -10,6 +10,7 @@ import type { LumeRuntimeEvent } from "./runtime-event"
 import type { LumeConfigThinkingLevel } from "./lume-config"
 import type { WikiSearchScope } from "./wiki"
 import type { McpTransportType } from "./mcp"
+import type { PluginMarketplaceAsset } from "./plugin-market"
 export type { SDKMessage } from "@lume/agent-sdk"
 export type {
   CallMcpToolDiagnosticRequest,
@@ -304,6 +305,40 @@ export interface EditableSkillMeta extends SkillMeta {
   storageScope: SkillStorageScope
   managementSurface?: SkillManagementSurface
   sourceType?: SkillSourceType
+}
+
+export type AgentInvocableCapabilityKind = 'skill' | 'plugin' | 'plugin-skill'
+
+export interface AgentInvocableCapabilityItem {
+  kind: AgentInvocableCapabilityKind
+  uri: string
+  displayName: string
+  description?: string
+  source: string
+  scope: SkillStorageScope | 'global-plugin' | 'workspace-plugin'
+  version?: string
+  fingerprint?: string
+  callable: boolean
+  unavailableReason?:
+    | 'ambiguous'
+    | 'disabled'
+    | 'legacy-definition'
+    | 'needs-review'
+    | 'not-in-workspace'
+    | 'no-invocable-skills'
+  pluginId?: string
+  skillSlug?: string
+  icon?: PluginMarketplaceAsset
+}
+
+export interface ListInvocableCapabilitiesInput {
+  workspaceSlug?: string
+  cwd?: string
+}
+
+export interface ListInvocableCapabilitiesResult {
+  capabilities: AgentInvocableCapabilityItem[]
+  diagnostics: AgentPluginDiagnostic[]
 }
 
 /** 工作区能力摘要（MCP + Skill 计数） */
@@ -767,10 +802,36 @@ export interface AgentTraceContext {
 /**
  * Agent 发送消息的输入参数
  */
+export type AgentUserMessagePart =
+  | {
+      type: 'text'
+      text: string
+    }
+  | {
+      type: 'capability_ref'
+      occurrenceId: string
+      uri: string
+    }
+
+export interface AgentCapabilityReferenceView {
+  uri: string
+  kind: AgentInvocableCapabilityKind
+  displayName: string
+  icon?: PluginMarketplaceAsset
+  callable: boolean
+}
+
 export interface AgentSendInput {
   threadId: string
   /** 用户消息内容 */
   userMessage: string
+  /**
+   * 结构化用户消息。缺失时 userMessage 被视为单个普通文本 part；
+   * capability_ref 是唯一可授权显式技能/插件调用的 part。
+   */
+  messageParts?: AgentUserMessagePart[]
+  /** 客户端逻辑提交 ID；transport 结果未知时复用，明确拒绝后重新生成。 */
+  clientSubmissionId?: string
   /** 规范化模型引用（provider/model），优先于 channelId/modelId */
   modelRef?: string
   /** 渠道 ID（用于解析 provider/baseUrl/api key） */
@@ -820,6 +881,51 @@ export interface AgentQueuedMessage {
   threadId: string
   text: string
   createdAt: number
+  revision: number
+  status: 'queued' | 'validating' | 'blocked'
+  blockedReason?: string
+  messageParts?: AgentUserMessagePart[]
+  messageAttachments?: AgentMessageAttachmentInput[]
+  clientSubmissionId?: string
+  modelRef?: string
+  channelId?: string
+  modelId?: string
+  permissionMode?: AgentSendInput['permissionMode']
+  thinkingLevel?: LumeConfigThinkingLevel
+  workspaceId?: string
+  desktopContextSnapshotId?: string
+  capabilityFingerprints?: Array<{ uri: string; fingerprint: string }>
+}
+
+export type AgentSubmissionReceiptStatus =
+  | 'preparing'
+  | 'accepted'
+  | 'queued'
+  | 'started'
+  | 'completed'
+  | 'rejected'
+  | 'failed'
+  | 'interrupted'
+  | 'restart_dropped'
+
+export interface AgentSubmissionReceipt {
+  clientSubmissionId: string
+  payloadHash: string
+  threadId: string
+  status: AgentSubmissionReceiptStatus
+  mode?: 'sent' | 'queued'
+  queuedMessageId?: string
+  createdAt: number
+  updatedAt: number
+  errorCode?: string
+}
+
+export interface AgentGetSubmissionReceiptInput {
+  clientSubmissionId: string
+}
+
+export interface AgentGetSubmissionReceiptResult {
+  receipt?: AgentSubmissionReceipt
 }
 
 export interface AgentPendingGuidance {
@@ -832,6 +938,7 @@ export interface AgentPendingGuidance {
 
 export interface AgentMessageQueueSnapshot {
   threadId: string
+  revision: number
   queuedMessages: AgentQueuedMessage[]
   pendingGuidance: AgentPendingGuidance[]
 }
@@ -843,20 +950,37 @@ export interface AgentMessageQueueInput {
 export interface AgentReorderMessageQueueInput {
   threadId: string
   orderedMessageIds: string[]
+  expectedRevision: number
+  queueOperationId: string
 }
 
 export interface AgentRemoveQueuedMessageInput {
   threadId: string
   queuedMessageId: string
+  expectedRevision: number
+  queueOperationId: string
 }
 
 export interface AgentPromoteQueuedMessageToGuidanceInput {
   threadId: string
   queuedMessageId: string
+  expectedRevision: number
+  queueOperationId: string
+}
+
+export interface AgentUpdateQueuedMessageInput {
+  threadId: string
+  queuedMessageId: string
+  expectedRevision: number
+  queueOperationId: string
+  userMessage: string
+  messageParts?: AgentUserMessagePart[]
+  messageAttachments?: AgentMessageAttachmentInput[]
 }
 
 export interface AgentMessageQueueOperationResult {
-  ok: true
+  ok: boolean
+  conflict?: boolean
   snapshot: AgentMessageQueueSnapshot
   removedMessage?: AgentQueuedMessage
   promotedGuidance?: AgentPendingGuidance
@@ -1444,6 +1568,7 @@ export interface AgentMessageAttachmentInput {
 export interface AgentSaveFilesInput {
   workspaceSlug: string
   threadId: string
+  clientSubmissionId?: string
   files: Array<{ filename: string; data?: string; sourcePath?: string }>
 }
 
@@ -1632,10 +1757,16 @@ export const AGENT_IPC_CHANNELS = {
   APPEND_THREAD_MESSAGE: 'agent:append-thread-message',
   /** 获取当前线程消息队列 */
   LIST_MESSAGE_QUEUE: 'agent:list-message-queue',
+  /** 查询幂等提交 receipt */
+  GET_SUBMISSION_RECEIPT: 'agent:get-submission-receipt',
+  /** 终结未接受的提交并释放 prepared attachment lease */
+  ABORT_SUBMISSION: 'agent:abort-submission',
   /** 重排当前线程消息队列 */
   REORDER_MESSAGE_QUEUE: 'agent:reorder-message-queue',
   /** 删除一条排队消息 */
   REMOVE_QUEUED_MESSAGE: 'agent:remove-queued-message',
+  /** 以 revision/CAS 更新一条排队消息 */
+  UPDATE_QUEUED_MESSAGE: 'agent:update-queued-message',
   /** 将排队消息提升为下一次工具调用前的引导 */
   PROMOTE_QUEUED_MESSAGE_TO_GUIDANCE: 'agent:promote-queued-message-to-guidance',
   /** 中止 Agent 线程执行 */
@@ -1667,6 +1798,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_SKILLS: 'agent:get-skills',
   /** 获取可在设置页编辑的 Skill 列表 */
   LIST_EDITABLE_SKILLS: 'agent:list-editable-skills',
+  /** 获取当前运行时真正可显式调用的 Skill/插件目录 */
+  LIST_INVOCABLE_CAPABILITIES: 'agent:list-invocable-capabilities',
   /** 获取可在设置页编辑的单个 Skill 内容 */
   GET_EDITABLE_SKILL: 'agent:get-editable-skill',
   /** 保存工作区 Skill */

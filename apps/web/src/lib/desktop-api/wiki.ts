@@ -3,6 +3,7 @@ import type {
   WikiCapabilityMatrix,
   WikiChangeDraft,
   WikiConfirmDraftInput,
+  WikiDraftStatus,
   WikiCreateEditDraftInput,
   WikiCreateImportDraftInput,
   WikiLintFinding,
@@ -26,6 +27,7 @@ export const followWikiLinks = (pageId: string, scope: WikiSearchScope, depth = 
 export const createWikiImportDraft = (input: WikiCreateImportDraftInput) => sidecarCall<WikiChangeDraft>(WIKI_IPC_CHANNELS.CREATE_IMPORT_DRAFT, input)
 export const createWikiEditDraft = (input: WikiCreateEditDraftInput) => sidecarCall<WikiChangeDraft>(WIKI_IPC_CHANNELS.CREATE_EDIT_DRAFT, input)
 export const applyWikiDraft = (input: WikiConfirmDraftInput) => sidecarCall<WikiBatch | WikiPendingReview>(WIKI_IPC_CHANNELS.APPLY_DRAFT, input)
+export const getWikiDraftStatus = (draftId: string) => sidecarCall<WikiDraftStatus>(WIKI_IPC_CHANNELS.GET_DRAFT_STATUS, { draftId })
 export const cancelWikiDraft = (draftId: string) => sidecarCall<{ ok: true }>(WIKI_IPC_CHANNELS.CANCEL_DRAFT, { draftId })
 export const listWikiPending = () => sidecarCall<WikiPendingReview[]>(WIKI_IPC_CHANNELS.LIST_PENDING, {})
 export const resolveWikiPending = (id: string, action: 'accept' | 'reject') => sidecarCall<unknown>(WIKI_IPC_CHANNELS.RESOLVE_PENDING, { id, action })

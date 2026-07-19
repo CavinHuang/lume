@@ -21,6 +21,10 @@ test("应优先加载传入的 skillsDirectories", async () => {
     });
 
     expect(skills.map((item) => item.name)).toContain("planner");
+    expect(skills.find((item) => item.name === "planner")?.invocationDescriptor).toMatchObject({
+      argumentToken: "${ARG}",
+      context: "inline",
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

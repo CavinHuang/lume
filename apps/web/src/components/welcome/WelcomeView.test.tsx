@@ -5,7 +5,6 @@ import { Provider, createStore } from 'jotai'
 import {
   activeTabIdAtom,
   agentPlanModePhaseAtom,
-  agentRuntimeEventsAtom,
   agentSidePanelViewAtom,
   agentStreamingStatesAtom,
   agentThreadsAtom,
@@ -24,6 +23,12 @@ let effectivePermissionMode: 'default' | 'acceptEdits' | 'dontAsk' | 'bypassPerm
 
 const mockEditor = {
   getText: () => editorText,
+  getJSON: () => ({
+    type: 'doc',
+    content: editorText
+      ? [{ type: 'paragraph', content: [{ type: 'text', text: editorText }] }]
+      : [{ type: 'paragraph' }],
+  }),
   commands: {
     clearContent: () => {
       editorText = ''
@@ -66,6 +71,8 @@ const getQuickInputContextMock = mock(async () => ({ status: 'unavailable' }))
 
 mock.module('@tiptap/react', () => ({
   useEditor: () => mockEditor,
+  NodeViewWrapper: ({ children }: { children?: React.ReactNode }) => React.createElement('span', null, children),
+  ReactNodeViewRenderer: () => ({}),
   ReactRenderer: class ReactRenderer {
     element = null
     updateProps() {}
@@ -97,14 +104,22 @@ mock.module('@/lib/desktop-api', () => ({
     ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
   agentSend: (...args: Parameters<typeof agentSendMock>) =>
     ((globalThis as any).__lumeDesktopAgentSend ?? agentSendMock)(...args),
+  isTerminalAgentSubmissionError: () => false,
   openFileDialog: () =>
     (globalThis as any).__lumeDesktopOpenFileDialog?.() ?? Promise.resolve({ files: [] }),
   openFolderDialog: async () => ({ path: null }),
   getQuickInputContext: () => getQuickInputContextMock(),
   openInSystem: async () => undefined,
+  openFileRefInSystem: async () => undefined,
+  openGuardedFileRefInSystem: async () => undefined,
   revealPathInSystem: async () => undefined,
+  revealFileRefInSystem: async () => undefined,
+  revealGuardedFileRefInSystem: async () => undefined,
   saveFilePathDialog: async () => ({ path: null }),
+  saveGuardedFileRefAs: async () => ({ path: null }),
   copyFile: async () => undefined,
+  createFilePreviewScope: async () => ({ token: 'preview', url: 'lume-file://preview', expiresAt: 0 }),
+  revokeFilePreviewScope: async () => undefined,
   writeClipboardText: async () => undefined,
   onSidecarEvent: async () => () => {},
   executeTaskContract: (...args: unknown[]) =>
@@ -588,7 +603,7 @@ describe('WelcomeView', () => {
     }
   })
 
-  test('mirrors the selected model into both welcome pickers and uses it for new threads', async () => {
+  test('uses the model selected in the welcome composer for new threads', async () => {
     const store = createStore()
     store.set(agentWorkspacesAtom, [
       {
@@ -621,8 +636,6 @@ describe('WelcomeView', () => {
         await flush()
       })
 
-      expect(latestSurfaceProps.modelPicker.props.selectedModelRef).toBe('openai/gpt-5-mini')
-      expect(latestSurfaceProps.modelPicker.props.selectedChannelId).toBe('channel-openai')
       expect(latestSurfaceProps.composerModelPicker.props.selectedModelRef).toBe('openai/gpt-5-mini')
       expect(latestSurfaceProps.composerModelPicker.props.selectedChannelId).toBe('channel-openai')
 
@@ -827,7 +840,12 @@ describe('WelcomeView', () => {
         }
       }
       if (command === AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD) {
-        return [{ filename: 'screen.png', targetPath: '/thread/screen.png', threadPath: 'screen.png' }]
+        return [{
+          filename: 'screen.png',
+          targetPath: '/thread/screen.png',
+          threadPath: 'screen.png',
+          ref: { source: 'session', scopeId: 'created-thread', relativePath: 'screen.png' },
+        }]
       }
       throw new Error(`Unexpected sidecarCall: ${command}`)
     })
@@ -873,6 +891,7 @@ describe('WelcomeView', () => {
       expect(saveCall?.[1]).toEqual({
         threadId: 'created-thread',
         workspaceSlug: 'default-workspace',
+        clientSubmissionId: expect.any(String),
         files: [{ filename: 'screen.png', sourcePath: '/tmp/screen.png', data: 'abc123' }],
       })
 
@@ -885,15 +904,7 @@ describe('WelcomeView', () => {
             mediaType: 'image/png',
             size: 12,
             threadPath: 'screen.png',
-          }),
-        ],
-      }))
-      expect(store.get(agentRuntimeEventsAtom)['created-thread']?.events[0]).toEqual(expect.objectContaining({
-        type: 'message.user.submitted',
-        attachments: [
-          expect.objectContaining({
-            filename: 'screen.png',
-            threadPath: 'screen.png',
+            fileRef: { source: 'session', scopeId: 'created-thread', relativePath: 'screen.png' },
           }),
         ],
       }))

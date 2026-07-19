@@ -1,24 +1,23 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, GitFork, History, ListChecks, ListCollapse, Loader2, Puzzle, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, Gauge, GitFork, History, ListChecks, ListCollapse, Loader2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { activeTabIdAtom, agentThreadsAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
-import { agentSend, getThreadMessageVersions, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardText } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardText } from '@/lib/desktop-api'
 import { parseThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
-import { resolveAbsolutePath } from '@/components/agent/file-link-actions'
-import { lumeFileUrl } from '@/components/right-panel/file-preview-utils'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding } from './thread-file-env'
-import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type FileRef } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
 import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
+import { createThreadImagePreviewScope } from './thread-image-preview'
 import { getMermaidCodeFromPreNode, isMermaidPreStreaming } from './markdown-mermaid'
 import {
   buildExpressionActionSendInput,
@@ -471,7 +470,11 @@ function UserMessageBlock({
               autoFocus
             />
           ) : (
-            <UserAgentRoleInvocationContent text={message.text} />
+            <UserAgentRoleInvocationContent
+              text={message.text}
+              messageParts={message.messageParts}
+              capabilityReferences={message.capabilityReferences}
+            />
           )}
         </div>
         <div className="pointer-events-none flex -translate-y-1 items-center gap-1 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/user-message:pointer-events-auto group-hover/user-message:translate-y-0 group-hover/user-message:opacity-100 group-focus-within/user-message:pointer-events-auto group-focus-within/user-message:translate-y-0 group-focus-within/user-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
@@ -594,17 +597,20 @@ function useThreadImageAttachmentSrcs(
     }
 
     let cancelled = false
+    const scopeTokens = new Set<string>()
     setSrcById({})
     void Promise.all(imageAttachments.map(async (attachment) => {
       try {
-        // 解析 thread 文件绝对路径，再编码为 lume-file:// 协议 URL（main 流式读取，不 base64）
-        const abs = await resolveAbsolutePath({
-          source: 'thread',
-          relPath: attachment.threadPath,
+        const scope = await createThreadImagePreviewScope(attachment, {
           threadId,
           ...(workspaceSlug ? { workspaceSlug } : {}),
         })
-        return [attachment.id, lumeFileUrl(abs)] as const
+        if (cancelled) {
+          void revokeFilePreviewScope(scope.token).catch(() => undefined)
+          return [attachment.id, undefined] as const
+        }
+        scopeTokens.add(scope.token)
+        return [attachment.id, scope.url] as const
       } catch (error) {
         console.error('[RuntimeEventContentBlock] 加载附件图片失败:', error)
         return [attachment.id, undefined] as const
@@ -616,17 +622,31 @@ function useThreadImageAttachmentSrcs(
 
     return () => {
       cancelled = true
+      for (const token of scopeTokens) {
+        void revokeFilePreviewScope(token).catch(() => undefined)
+      }
     }
   }, [attachments, threadId, workspaceSlug])
 
   return srcById
 }
 
-export function UserAgentRoleInvocationContent({ text }: { text: string }) {
+export function UserAgentRoleInvocationContent({
+  text,
+  messageParts,
+  capabilityReferences,
+}: {
+  text: string
+  messageParts?: AgentUserMessagePart[]
+  capabilityReferences?: AgentCapabilityReferenceView[]
+}) {
+  if (messageParts?.some((part) => part.type === 'capability_ref')) {
+    return <CapabilityMessageText text={text} messageParts={messageParts} capabilityReferences={capabilityReferences} />
+  }
   const invocation = parseAgentRoleInstructionMessage(text)
 
   if (!invocation) {
-    return <PluginChipText text={text} />
+    return <CapabilityMessageText text={text} />
   }
 
   return (
@@ -645,7 +665,7 @@ export function UserAgentRoleInvocationContent({ text }: { text: string }) {
         </span>
       </div>
       {invocation.task && (
-        <PluginChipText
+        <CapabilityMessageText
           text={invocation.task}
           className="text-[15px] leading-[22px] text-[var(--lume-text-primary)]"
         />
@@ -654,31 +674,96 @@ export function UserAgentRoleInvocationContent({ text }: { text: string }) {
   )
 }
 
-/**
- * 用户消息文本里的插件引用 chip 化：把 %插件名 token 渲染成带 Puzzle 图标的紫色 chip，
- * 与输入框 PluginMentionNodeView 同款视觉；其余文本段原样输出。
- */
-function PluginChipText({ text, className }: { text: string; className?: string }) {
-  const segments = text.split(/(%[^\s%]+)/g)
+function CapabilityMessageText({
+  text,
+  messageParts,
+  capabilityReferences,
+  className,
+}: {
+  text: string
+  messageParts?: AgentUserMessagePart[]
+  capabilityReferences?: AgentCapabilityReferenceView[]
+  className?: string
+}) {
+  const setCapabilityDetailTarget = useSetAtom(capabilityDetailTargetAtom)
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const referencesByUri = new Map(capabilityReferences?.map((item) => [item.uri, item]) ?? [])
+  const parts = messageParts ?? [{ type: 'text' as const, text }]
+  const openCapabilityDetail = (reference: AgentCapabilityReferenceView | undefined, uri: string) => {
+    if (!reference?.callable) {
+      toast.info('此能力当前不可用')
+      return
+    }
+    setCapabilityDetailTarget({ uri, kind: reference.kind })
+    setTabs((current) => current.some((tab) => tab.id === '__skills__')
+      ? current
+      : [...current, { id: '__skills__', type: 'skills', title: '技能 / 插件' }])
+    setActiveTabId('__skills__')
+  }
   return (
-    <div className={cn('whitespace-pre-wrap [overflow-wrap:anywhere]', className)}>
-      {segments.map((segment, index) => {
-        const match = segment.match(/^%([^\s%]+)$/)
-        if (match) {
-          return (
-            <span
-              key={index}
-              className="inline-flex items-center gap-1 rounded bg-[var(--lume-accent-soft)] px-1 py-0.5 align-baseline font-medium text-[var(--brand)]"
-            >
-              <Puzzle size={11} className="shrink-0" />
-              {match[1]}
-            </span>
-          )
-        }
-        return segment ? <span key={index}>{segment}</span> : null
+    <div
+      className={cn('whitespace-pre-wrap [overflow-wrap:anywhere]', className)}
+      onCopy={copyCapabilitySelection}
+    >
+      {parts.map((part, index) => {
+        if (part.type === 'text') return part.text ? <span key={index}>{part.text}</span> : null
+        const reference = referencesByUri.get(part.uri)
+        const isPlugin = reference?.kind === 'plugin'
+        return (
+          <Button
+            type="button"
+            variant="ghost"
+            key={part.occurrenceId}
+            title={part.uri}
+            data-capability-uri={part.uri}
+            data-capability-callable={reference?.callable ?? false}
+            onClick={() => openCapabilityDetail(reference, part.uri)}
+            className={cn(
+              'mx-0.5 inline-flex h-auto max-w-[260px] items-center gap-1 rounded-md border px-1.5 py-0.5 align-baseline text-[13px] font-medium',
+              reference?.callable === false
+                ? 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] text-[var(--lume-text-muted)]'
+                : 'border-[color:color-mix(in_oklab,var(--lume-accent)_20%,var(--lume-border-subtle))] bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]',
+            )}
+          >
+            {isPlugin && reference?.icon?.url ? (
+              <CapabilityPluginIcon src={reference.icon.url} />
+            ) : isPlugin ? (
+              <Package size={12} className="shrink-0" />
+            ) : (
+              <BookOpen size={12} className="shrink-0" />
+            )}
+            <span className="truncate">{reference?.displayName ?? part.uri}</span>
+          </Button>
+        )
       })}
     </div>
   )
+}
+
+function copyCapabilitySelection(event: ClipboardEvent<HTMLDivElement>) {
+  const selection = window.getSelection()
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+  if (!selection || !range || selection.isCollapsed) return
+  let text = selection.toString()
+  let changed = false
+  for (const chip of event.currentTarget.querySelectorAll<HTMLElement>('[data-capability-uri]')) {
+    if (!range.intersectsNode(chip)) continue
+    const uri = chip.dataset.capabilityUri
+    const label = chip.textContent
+    if (!uri || !label || !text.includes(label)) continue
+    text = text.replace(label, uri)
+    changed = true
+  }
+  if (!changed) return
+  event.preventDefault()
+  event.clipboardData.setData('text/plain', text)
+}
+
+function CapabilityPluginIcon({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <Package size={12} className="shrink-0" />
+  return <img src={src} alt="" className="size-3.5 shrink-0 rounded object-contain" onError={() => setFailed(true)} />
 }
 
 export function formatMessageAttachmentSize(size: number): string {
@@ -1093,6 +1178,9 @@ function StandardAssistantContent({
     if (segment.kind === 'image_tools') {
       return <ImageGenerationGroup key={`images:${segment.blocks[0]?.id ?? 'empty'}`} blocks={segment.blocks} />
     }
+    if (segment.kind === 'wiki_proposal') {
+      return <WikiProposalBlock key={segment.block.id} block={segment.block} />
+    }
     const block = segment.block
     return (
       <RuntimeEventAssistantBlockItem
@@ -1160,6 +1248,22 @@ function ImageGenerationGroup({
   )
 }
 
+function WikiProposalBlock({
+  block,
+}: {
+  block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }>
+}) {
+  return (
+    <div data-wiki-proposal-result="true" className="w-full max-w-[460px]">
+      <ToolResultRenderer
+        toolName={block.toolCall.toolName}
+        input={asRecord(block.toolCall.input)}
+        result={parseToolCallOutput(block.toolCall.output)}
+      />
+    </div>
+  )
+}
+
 function parseToolCallOutput(output: unknown): unknown {
   if (typeof output !== 'string') return output
   try {
@@ -1191,6 +1295,9 @@ function MinimalAssistantContent({
       {segments.map((segment) => {
         if (segment.kind === 'image_tools') {
           return <ImageGenerationGroup key={`images:${segment.blocks[0]?.id ?? 'empty'}`} blocks={segment.blocks} />
+        }
+        if (segment.kind === 'wiki_proposal') {
+          return <WikiProposalBlock key={segment.block.id} block={segment.block} />
         }
         if (segment.kind === 'inline') {
           const block = segment.block
@@ -2052,14 +2159,14 @@ function AssistantMessageFooter({
   }
 
   return (
-    <div className="pointer-events-none flex min-h-6 w-full -translate-y-1 items-center justify-between gap-3 pt-2 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
-      <div className="flex min-w-0 items-center gap-4">
+    <div className="assistant-message-footer pointer-events-none flex min-h-6 w-full -translate-y-1 items-center justify-between gap-3 pt-2 text-[var(--lume-text-muted)] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover/agent-message:pointer-events-auto group-hover/agent-message:translate-y-0 group-hover/agent-message:opacity-100 group-focus-within/agent-message:pointer-events-auto group-focus-within/agent-message:translate-y-0 group-focus-within/agent-message:opacity-100 motion-reduce:translate-y-0 motion-reduce:transition-none">
+      <div className="assistant-footer-actions flex min-w-0 items-center gap-4">
         {canCopy && (
           <CopyMessageButton
             text={copyText}
             label="复制"
             copiedLabel="已复制"
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)] data-[state=copied]:text-[var(--lume-success)]"
+            className="assistant-footer-action inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)] data-[state=copied]:text-[var(--lume-success)]"
             iconSize={15}
             strokeWidth={1.8}
           />
@@ -2070,7 +2177,7 @@ function AssistantMessageFooter({
             type="button"
             disabled={forking}
             onClick={() => void handleFork()}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="assistant-footer-action inline-flex shrink-0 items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)] disabled:cursor-not-allowed disabled:opacity-50"
             title="创建分支"
             aria-label="创建分支"
           >
@@ -2087,7 +2194,7 @@ function AssistantMessageFooter({
               ref={downloadTriggerRef}
               type="button"
               onClick={() => setDownloadMenuOpen((current) => !current)}
-              className="inline-flex items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)]"
+              className="assistant-footer-action inline-flex items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)]"
               title="下载"
               aria-label="下载"
               aria-haspopup="menu"
@@ -2108,7 +2215,7 @@ function AssistantMessageFooter({
           </div>
         )}
         {completedTimeLabel && (
-          <span className="inline-flex shrink-0 items-center rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[var(--lume-text-muted)]">
+          <span className="assistant-footer-completed-at inline-flex shrink-0 items-center rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 text-[var(--lume-text-muted)]">
             {completedTimeLabel}
           </span>
         )}
@@ -2154,26 +2261,26 @@ function AssistantTokenUsageMetrics({ usage }: { usage: FooterTokenUsage }) {
       aria-label={usage.title}
     >
       {usage.inputTokens !== undefined && (
-        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+        <span className="assistant-footer-metric-input inline-flex items-center gap-1 whitespace-nowrap">
           <span className="text-[15px] leading-none">↑</span>
           <span>{usage.inputTokens.toLocaleString()}</span>
         </span>
       )}
       {usage.outputTokens !== undefined && (
-        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+        <span className="assistant-footer-metric-output inline-flex items-center gap-1 whitespace-nowrap">
           <span className="text-[15px] leading-none">↓</span>
           <span>{usage.outputTokens.toLocaleString()}</span>
         </span>
       )}
       {usage.cachedTokens !== undefined && (
-        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+        <span className="assistant-footer-metric-cached inline-flex items-center gap-1 whitespace-nowrap">
           <span className="text-[15px] leading-none">↺</span>
           <span>{usage.cachedTokens.toLocaleString()}</span>
         </span>
       )}
       {usage.contextPercent !== undefined && (
-        <span className="inline-flex items-center gap-1 whitespace-nowrap">
-          <Copy size={13} strokeWidth={1.8} />
+        <span className="assistant-footer-metric-context inline-flex items-center gap-1 whitespace-nowrap" title={`上下文占用 ${usage.contextPercent}%`}>
+          <Gauge size={14} strokeWidth={1.8} />
           <span>{usage.contextPercent}%</span>
         </span>
       )}

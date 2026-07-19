@@ -417,7 +417,7 @@ describe("agent-prompt-builder", () => {
     expect(dynamic).toContain("obsidian-bridge (Obsidian Bridge)");
     expect(dynamic).toContain("obsidian-bridge:vault-doctor");
     expect(dynamic).toContain("mcp:obsidian-bridge:obsidian-bridge");
-    expect(dynamic).toContain("$pluginId");
+    expect(dynamic).not.toContain("$pluginId");
   });
 
   test("buildDynamicContext injects the same rooted file reference protocol for main and minimal subagents", () => {

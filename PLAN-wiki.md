@@ -76,8 +76,8 @@ _Locked via grill — by Codex + user_
    - 前三个是只读工具；`wiki.propose_changes` 只能创建 staging draft 并返回确认卡所需数据。不得向模型暴露绕过确认的 `wiki.apply` 或任意 Wiki 文件写工具。sidecar 保存不可变 draft；apply/resolve/undo RPC 只接收 `draftId + expectedRevision + sidecar 签发的一次性确认 nonce`，绝不接受 renderer 提交的路径、diff 或操作列表，nonce 使用后或过期后失效。
    - Wiki 根是 Agent runtime 的受保护域，而不是普通 `privateWriteRoot`：在 permission mode、用户 allow rule 和 session bypass 之前，tool execution gateway 必须拒绝通用 `Read/Write/Edit/Glob/Grep`、文件移动/删除、node-repl、MCP 文件工具及 shell 对 Wiki 根的直接访问，只有 Wiki service capability 可读写。`bypassPermissions` 不能绕过该 gate。
    - 对 Bash/node-repl 等不透明命令执行器，完整能力发布前必须具备可验证的允许根沙箱，使进程只看到当前项目、线程文件上下文和用户显式挂载目录，中央 Wiki 根不在 mount/allowlist 中。仅靠命令字符串匹配或隐藏路径不算完成；不能为了 Wiki 让普通编码会话在某个平台静默失去 Bash 等核心工具。
-   - 用明确的 capability matrix 分两阶段发布：Phase A 允许 Wiki UI 通过 coordinator 导入/编辑，并允许从 Wiki 打开的专用 Ask Wiki 会话调用 `wiki.search/read/follow_links`；该会话复用普通聊天 UI、历史和工具调用展示，但使用 sidecar 固定的只读 Wiki tool profile，不带通用文件工具、Bash/node-repl 或 `wiki.propose_changes`。普通 Agent 会话不自动附加 Wiki scope，也不获得 Wiki tools，因此原有编码能力不受影响。
-   - Phase B 只有在当前平台的 protected-root gate、允许根沙箱和兼容性测试全部通过后才开启：普通桌面直接会话可默认按当前 workspace UUID 获得 Wiki 只读检索，显式 Wiki-scoped 会话可使用 `wiki.propose_changes`。未通过的平台永久保持 Phase A 并显示能力说明，不以删减普通会话核心工具作为降级方案。
+   - 用明确的 capability matrix 分两阶段发布：Phase A 允许 Wiki UI 通过 coordinator 导入/编辑，并允许从 Wiki 打开的专用 Ask Wiki 会话调用 `wiki.search/read/follow_links`；该会话复用普通聊天 UI、历史和工具调用展示，但使用 sidecar 固定的只读 Wiki tool profile，不带通用文件工具、Bash/node-repl 或 `wiki.propose_changes`。普通 Agent 会话不获得 Wiki 读取工具；仅当本地 workspace 直接会话的当前用户消息明确要求写入 Wiki 时，按当前 workspace UUID 临时获得 create-only `wiki.propose_changes`，只能生成 staging 草案并由确认卡收口，不能读取或更新既有页面。
+   - Phase B 只有在当前平台的 protected-root gate、允许根沙箱和兼容性测试全部通过后才开启：普通桌面直接会话可默认按当前 workspace UUID 获得 Wiki 只读检索，并在用户明确要求写入时使用 `wiki.propose_changes`；显式 Wiki-scoped 会话也可使用完整提案能力。未通过的平台永久保持 Phase A 的读取限制并显示能力说明，不以删减普通会话核心工具作为降级方案。
    - 普通对话永不预加载整座 Wiki，Phase B 也只按问题调用工具。“向 Wiki 提问”写入由 sidecar 校验的 scope attachment（当前页面、文件夹、工作区或全部 Wiki）；Phase A/Phase B 的 profile 选择完全由受信任的启动入口和平台能力决定，renderer 不能把普通会话自行升级为 Wiki-scoped profile。
    - 在 sidecar 建立持久化 `WikiAclStore`。主体从受信任的 thread source、IM account/thread binding 和 workspace UUID 推导；renderer 传入的 `chatType/workspace/scope attachment` 只是请求，必须由 sidecar 与线程元数据复核，不能作为授权事实。桌面直接会话默认只读当前 workspace UUID；inbox、全部 Wiki 和跨工作区需要显式 scope。IM 私聊默认无授权，群聊/频道默认禁用；授权只能绑定特定 workspace UUID，不能给外部渠道开放全库。过滤必须发生在搜索、读取、rerank 和 prompt assembly 之前。
    - 页面范围与来源授权是两个串联 gate：可信主体先得到 workspace scope；页面只有在其 `primary_workspace_id/associated_workspace_ids` 命中 scope 时可见；原始 provenance 还必须拥有同一 workspace UUID 的有效 source grant 才可读。桌面本地 owner UI 可管理全库，但 Agent/IM 检索不能借此绕过。确定状态转换如下：
@@ -139,7 +139,7 @@ _Locked via grill — by Codex + user_
 - **正常批次自动应用，高风险送审。** 用户确认收录后不逐文件确认，但覆盖用户内容、删除、冲突和低置信度合并必须审核；所有提交可查看 diff，并在前置条件成立时撤销。
 - **Lume 原生，Obsidian 可选。** Markdown/Wiki links/frontmatter 保持 Vault 兼容，但不依赖 Obsidian、插件、Sync 或 Publish。
 - **Markdown 编辑而非块编辑器。** 首版提供渲染阅读、Markdown 编辑、元数据表单和自然语言修改；用 block ownership 保护用户编辑。
-- **问答复用聊天 UI/runtime，但使用分阶段 capability profile。** Phase A 只有专用 Ask Wiki 只读会话能检索 Wiki，普通编码会话不附加 Wiki；Phase B 在平台隔离验收后才开放普通会话按当前 workspace 检索和 `wiki.propose_changes`，不重复建设聊天产品。
+- **问答复用聊天 UI/runtime，但使用分阶段 capability profile。** Phase A 只有专用 Ask Wiki 只读会话能检索 Wiki；普通编码会话只在用户明确要求沉淀时获得 create-only 提案并等待确认。Phase B 在平台隔离验收后开放普通会话按当前 workspace 检索和完整提案，不重复建设聊天产品。
 - **本地单用户首版。** 不处理云同步、多人实时编辑、组织 ACL 或合并冲突服务；仍需处理 Obsidian 等外部本地编辑造成的并发。
 - **不做原生图谱。** 首版以双向链接、反向链接、相关页面和 lint 提供结构；需要节点图时可用 Obsidian。
 - **不复用线程右侧面板。** 当前面板只支持 agent thread；Wiki 使用功能页内 inspector，避免把本任务扩大为全局面板架构重写。

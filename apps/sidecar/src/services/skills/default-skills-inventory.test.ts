@@ -189,6 +189,10 @@ const RUNTIME_BACKED_SKILL_TOOLS = new Set([
   "read_file",
   "web_fetch",
   "web_search",
+  "wiki.follow_links",
+  "wiki.propose_changes",
+  "wiki.read",
+  "wiki.search",
   "write_file"
 ]);
 

@@ -97,8 +97,12 @@ export class SourceMutationQueue {
   }
 }
 
-export function getUnifiedFileTreeCacheIdentity(workspaceSlug?: string, fileContextId?: string): string {
-  return `${workspaceSlug ?? ''}\0${fileContextId ?? ''}`
+export function getUnifiedFileTreeCacheIdentity(
+  workspaceSlug?: string,
+  fileContextId?: string,
+  workspaceProjectPath?: string,
+): string {
+  return `${workspaceSlug ?? ''}\0${fileContextId ?? ''}\0${workspaceProjectPath ?? ''}`
 }
 
 export function getRovingTreeTabStopKey(selectedKey: string | null, visibleKeys: string[]): string | null {

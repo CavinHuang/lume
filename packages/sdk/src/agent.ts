@@ -47,13 +47,11 @@ import {
 } from './session.js'
 import { createHookRegistry, type HookRegistry } from './hooks.js'
 import {
-  getUserInvocableSkills,
+  getAllSkills,
   initBundledSkills,
-  registerSkill,
-  unregisterSkill,
+  SkillRegistry,
 } from './skills/index.js'
-import { recordSkillUsage } from './skills/evolution.js'
-import type { SkillDefinition } from './skills/types.js'
+import { createSkillTool } from './tools/skill-tool.js'
 import { createProvider, type LLMProvider, type ApiType } from './providers/index.js'
 import type { NormalizedMessageParam } from './providers/types.js'
 import {
@@ -75,20 +73,6 @@ import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
-
-interface ManualSkillInvocation {
-  skill: SkillDefinition
-  args: string
-}
-
-interface ResolvedManualSkillInvocation {
-  prompt: string
-  allowedTools?: string[]
-}
-
-interface PendingManualSkillInvocation {
-  skill: SkillDefinition
-}
 
 function toSessionMessage(
   role: SessionMessage['role'],
@@ -112,49 +96,6 @@ function normalizePromptInput(prompt: QueryInput): string | ContentBlockParam[] 
     return prompt.message.content as string | ContentBlockParam[]
   }
   return prompt as string | ContentBlockParam[]
-}
-
-function findManualSkillInvocation(prompt: string): ManualSkillInvocation | null {
-  const trimmed = prompt.trim()
-  if (!trimmed.startsWith('/') && !trimmed.startsWith('$')) return null
-
-  let commandText = trimmed.slice(1).trim()
-  if (!commandText) return null
-
-  const lowerPrefix = commandText.toLowerCase()
-  if (lowerPrefix === 'skill') return null
-  if (lowerPrefix.startsWith('skill ')) {
-    commandText = commandText.slice('skill'.length).trimStart()
-  }
-  if (!commandText) return null
-
-  const candidates = getUserInvocableSkills()
-    .flatMap((skill) => [skill.name, ...(skill.aliases || [])].map((name) => ({
-      name: name.trim(),
-      skill,
-    })))
-    .filter((candidate) => candidate.name.length > 0)
-    .sort((a, b) => b.name.length - a.name.length)
-
-  const lowerCommandText = commandText.toLowerCase()
-  for (const candidate of candidates) {
-    const lowerName = candidate.name.toLowerCase()
-    if (lowerCommandText === lowerName || lowerCommandText.startsWith(`${lowerName} `)) {
-      return {
-        skill: candidate.skill,
-        args: commandText.slice(candidate.name.length).trim(),
-      }
-    }
-  }
-
-  return null
-}
-
-function buildMissingSkillArgumentPrompt(skill: SkillDefinition): string {
-  const hint = skill.argumentHint?.trim()
-  return hint
-    ? `请提供 /${skill.name} 需要的参数：${hint}`
-    : `请提供 /${skill.name} 需要的参数。`
 }
 
 function createDisconnectedMcpConnection(
@@ -329,7 +270,7 @@ export class Agent {
   private lastContextUsage: ContextUsageResult | null = null
   private disabledMcpServers = new Set<string>()
   private queuedSdkEvents: SDKMessage[] = []
-  private pendingManualSkillInvocation: PendingManualSkillInvocation | null = null
+  private readonly skillRegistry: SkillRegistry
 
   constructor(options: AgentOptions = {}) {
     this.baseOptions = { ...options }
@@ -338,6 +279,7 @@ export class Agent {
     this.provider = createProvider('anthropic-messages', {})
     this.hookRegistry = createHookRegistry()
     initBundledSkills()
+    this.skillRegistry = new SkillRegistry(getAllSkills())
     this.setupDone = this.setup()
   }
 
@@ -468,7 +410,7 @@ export class Agent {
 
   private unregisterPluginSkills(): void {
     for (const name of this.pluginSkillNames) {
-      unregisterSkill(name)
+      this.skillRegistry.unregister(name)
     }
     this.pluginSkillNames.clear()
   }
@@ -483,7 +425,7 @@ export class Agent {
         names: skills.map((s) => s.name),
       });
       for (const skill of skills) {
-        registerSkill(skill)
+        this.skillRegistry.register(skill)
         this.pluginSkillNames.add(skill.name)
       }
     }
@@ -491,7 +433,7 @@ export class Agent {
 
   private unregisterExplicitSkills(): void {
     for (const name of this.explicitSkillNames) {
-      unregisterSkill(name)
+      this.skillRegistry.unregister(name)
     }
     this.explicitSkillNames.clear()
   }
@@ -499,14 +441,14 @@ export class Agent {
   private registerExplicitSkills(): void {
     this.unregisterExplicitSkills()
     for (const skill of this.cfg.skills || []) {
-      registerSkill(skill)
+      this.skillRegistry.register(skill)
       this.explicitSkillNames.add(skill.name)
     }
   }
 
   private unregisterFileSkills(): void {
     for (const name of this.fileSkillNames) {
-      unregisterSkill(name)
+      this.skillRegistry.unregister(name)
     }
     this.fileSkillNames.clear()
   }
@@ -519,7 +461,7 @@ export class Agent {
     this.unregisterFileSkills()
     const skills = await loadFilesystemSkills(input)
     for (const skill of skills) {
-      registerSkill(skill)
+      this.skillRegistry.register(skill)
       this.fileSkillNames.add(skill.name)
     }
   }
@@ -557,15 +499,19 @@ export class Agent {
 
   private buildBaseToolPool(options: AgentOptions = this.cfg): ToolDefinition[] {
     const pluginTools = this.getPluginTools()
+    const bindSkillRegistry = (tool: ToolDefinition) => tool.name === 'Skill'
+      ? createSkillTool(this.skillRegistry)
+      : tool
+    const baseTools = getAllBaseTools().map(bindSkillRegistry)
     const raw = options.tools
     let pool: ToolDefinition[]
 
     if (!raw || (typeof raw === 'object' && !Array.isArray(raw) && 'type' in raw)) {
-      pool = [...getAllBaseTools(), ...pluginTools]
+      pool = [...baseTools, ...pluginTools]
     } else if (Array.isArray(raw) && raw.length > 0 && typeof raw[0] === 'string') {
-      pool = filterTools([...getAllBaseTools(), ...pluginTools], raw as string[])
+      pool = filterTools([...baseTools, ...pluginTools], raw as string[])
     } else {
-      pool = [...(raw as ToolDefinition[]), ...pluginTools]
+      pool = [...(raw as ToolDefinition[]).map(bindSkillRegistry), ...pluginTools]
     }
 
     return filterTools(pool, undefined, options.disallowedTools)
@@ -987,43 +933,7 @@ export class Agent {
     }
 
     const normalizedPrompt = normalizePromptInput(prompt)
-    const parsedManualSkillInvocation = typeof normalizedPrompt === 'string'
-      ? findManualSkillInvocation(normalizedPrompt)
-      : null
-    const pendingManualSkillInvocation = typeof normalizedPrompt === 'string' && !parsedManualSkillInvocation
-      ? this.pendingManualSkillInvocation
-      : null
-    const manualSkillInput = pendingManualSkillInvocation && typeof normalizedPrompt === 'string' && normalizedPrompt.trim()
-      ? {
-        skill: pendingManualSkillInvocation.skill,
-        args: normalizedPrompt.trim(),
-      }
-      : parsedManualSkillInvocation
-    const missingSkillArgumentInvocation =
-      parsedManualSkillInvocation
-      && !parsedManualSkillInvocation.args
-      && parsedManualSkillInvocation.skill.argumentHint?.trim()
-        ? parsedManualSkillInvocation
-        : null
-    const missingSkillArgumentPrompt = missingSkillArgumentInvocation
-      ? buildMissingSkillArgumentPrompt(missingSkillArgumentInvocation.skill)
-      : null
-    if (missingSkillArgumentInvocation) {
-      this.pendingManualSkillInvocation = { skill: missingSkillArgumentInvocation.skill }
-    } else if (pendingManualSkillInvocation && manualSkillInput) {
-      this.pendingManualSkillInvocation = null
-    } else if (parsedManualSkillInvocation) {
-      this.pendingManualSkillInvocation = null
-    }
-    const manualSkillInvocation = manualSkillInput && !missingSkillArgumentPrompt
-      ? await this.resolveManualSkillInvocation(manualSkillInput, {
-        cwd,
-        provider,
-        model: opts.model || this.modelId,
-        options: opts,
-      })
-      : null
-    const modelFacingPrompt = manualSkillInvocation?.prompt ?? normalizedPrompt
+    const modelFacingPrompt = normalizedPrompt
     const isManualCompactCommand = typeof normalizedPrompt === 'string' && normalizedPrompt.trim() === '/compact'
     const runtimeMessage = !isManualCompactCommand && opts.runtimeContext?.trim()
       ? toSessionMessage('runtime', opts.runtimeContext.trim())
@@ -1041,37 +951,6 @@ export class Agent {
         timestamp: userMessage.timestamp,
       })
       await this.persistCurrentSession(cwd, opts)
-    }
-    if (missingSkillArgumentPrompt) {
-      const uuid = crypto.randomUUID()
-      const timestamp = new Date().toISOString()
-      const assistantMessage = {
-        role: 'assistant' as const,
-        content: [{ type: 'text' as const, text: missingSkillArgumentPrompt }],
-      }
-      this.sessionMessages.push(toSessionMessage('assistant', assistantMessage))
-      this.messageLog.push({
-        type: 'assistant',
-        message: assistantMessage,
-        uuid,
-        timestamp,
-      })
-      this.history = normalizeHistoryFromSessionMessages(this.sessionMessages)
-      const persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
-      yield {
-        type: 'assistant',
-        uuid,
-        session_id: this.sid,
-        parent_tool_use_id: null,
-        message: assistantMessage,
-      } as SDKMessage
-      if (persistedSessionEvent) {
-        yield persistedSessionEvent
-      }
-      return
-    }
-    if (manualSkillInvocation?.allowedTools?.length) {
-      tools = filterTools(tools, manualSkillInvocation.allowedTools)
     }
 
     const engine = new QueryEngine({
@@ -1102,9 +981,10 @@ export class Agent {
       permissionMode: opts.permissionMode,
       promptSuggestions: opts.promptSuggestions,
       additionalDirectories: opts.additionalDirectories,
+      skillRegistry: this.skillRegistry,
       initialization: {
         slashCommands: this.getInitializationCommands().map((command) => command.name),
-        skills: getUserInvocableSkills().map((skill) => skill.name),
+        skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
         plugins: this.loadedPlugins.map((plugin) => ({
           name: plugin.name,
           path: plugin.path,
@@ -1295,7 +1175,6 @@ export class Agent {
     this.messageLog = []
     this.sessionMessages = []
     this.fileCheckpointState = {}
-    this.pendingManualSkillInvocation = null
   }
 
   async interrupt(): Promise<void> {
@@ -1337,43 +1216,6 @@ export class Agent {
     return this.apiType
   }
 
-  private async resolveManualSkillInvocation(
-    invocation: ManualSkillInvocation,
-    context: {
-      cwd: string
-      provider: LLMProvider
-      model: string
-      options: AgentOptions
-    },
-  ): Promise<ResolvedManualSkillInvocation | null> {
-    const contentBlocks = await invocation.skill.getPrompt(invocation.args, {
-      cwd: context.cwd,
-      provider: context.provider,
-      model: context.model,
-      apiType: this.apiType,
-      sessionId: this.sid,
-      additionalDirectories: context.options.additionalDirectories,
-      sandbox: context.options.sandbox,
-      toolConfig: context.options.toolConfig,
-      permissionMode: context.options.permissionMode,
-    })
-    const promptText = contentBlocks
-      .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-      .map((block) => block.text)
-      .join('\n\n')
-
-    await recordSkillUsage({
-      skillName: invocation.skill.name,
-      skillPath: invocation.skill.sourcePath,
-      sessionId: this.sid,
-    }).catch(() => undefined)
-
-    return {
-      prompt: promptText,
-      allowedTools: invocation.skill.allowedTools,
-    }
-  }
-
   async stopTask(taskId: string): Promise<void> {
     const { getTask } = await import('./tools/task-tools.js')
     const task = getTask(taskId)
@@ -1391,13 +1233,8 @@ export class Agent {
       { name: '/reload-plugins', description: 'Reload plugins from disk' },
     ]
     const fileAndPluginCommands = commandDefinitionsToSlashCommands(this.loadedCommands)
-    const skills = getUserInvocableSkills().map((skill) => ({
-      name: `/${skill.name}`,
-      description: skill.description,
-      argumentHint: skill.argumentHint,
-    }))
     const byName = new Map<string, SlashCommand>()
-    for (const command of [...builtins, ...fileAndPluginCommands, ...skills]) {
+    for (const command of [...builtins, ...fileAndPluginCommands]) {
       byName.set(command.name, {
         name: command.name,
         description: command.description,
@@ -1429,7 +1266,7 @@ export class Agent {
         apiKeySource: this.apiCredentials.key ? 'configured' : 'missing',
       },
       slash_commands: commands.map((command) => command.name),
-      skills: getUserInvocableSkills().map((skill) => skill.name),
+      skills: this.skillRegistry.getUserInvocable().map((skill) => skill.name),
       plugins: this.loadedPlugins.map((plugin) => ({
         name: plugin.name,
         path: plugin.path,
@@ -1475,10 +1312,10 @@ export class Agent {
         tokens: init.commands.reduce((sum, command) => sum + Math.ceil((command.name.length + command.description.length) / 4), 0),
       },
       skills: {
-        totalSkills: getUserInvocableSkills().length,
-        includedSkills: getUserInvocableSkills().length,
-        tokens: getUserInvocableSkills().reduce((sum, skill) => sum + Math.ceil((skill.name.length + skill.description.length) / 4), 0),
-        skillFrontmatter: getUserInvocableSkills().map((skill) => ({
+        totalSkills: this.skillRegistry.getUserInvocable().length,
+        includedSkills: this.skillRegistry.getUserInvocable().length,
+        tokens: this.skillRegistry.getUserInvocable().reduce((sum, skill) => sum + Math.ceil((skill.name.length + skill.description.length) / 4), 0),
+        skillFrontmatter: this.skillRegistry.getUserInvocable().map((skill) => ({
           name: skill.name,
           source: 'runtime',
           tokens: Math.ceil((skill.name.length + skill.description.length) / 4),

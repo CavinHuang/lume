@@ -8,6 +8,7 @@ export type AssistantSegment =
   | { kind: 'inline'; block: RuntimeAssistantBlock }
   | { kind: 'process'; blocks: RuntimeAssistantBlock[] }
   | { kind: 'image_tools'; blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>> }
+  | { kind: 'wiki_proposal'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
 
 export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]): AssistantSegment[] {
   const segments: AssistantSegment[] = []
@@ -29,6 +30,12 @@ export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]):
   }
 
   for (const block of blocks) {
+    if (block.type === 'tool_call' && isCompletedWikiProposal(block)) {
+      flushProcess()
+      flushImages()
+      segments.push({ kind: 'wiki_proposal', block })
+      continue
+    }
     if (block.type === 'tool_call' && block.toolCall.toolName === 'image_gen') {
       flushProcess()
       imageBuffer.push(block)
@@ -50,6 +57,7 @@ export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]):
 export type StandardAssistantSegment =
   | { kind: 'inline'; block: RuntimeAssistantBlock }
   | { kind: 'image_tools'; blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>> }
+  | { kind: 'wiki_proposal'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
 
 /** 标准模式只合并相邻图片生成调用，其余块保持原有逐块展示。 */
 export function groupAssistantBlocksForStandard(blocks: RuntimeAssistantBlock[]): StandardAssistantSegment[] {
@@ -64,6 +72,11 @@ export function groupAssistantBlocksForStandard(blocks: RuntimeAssistantBlock[])
   }
 
   for (const block of blocks) {
+    if (block.type === 'tool_call' && isCompletedWikiProposal(block)) {
+      flushImages()
+      segments.push({ kind: 'wiki_proposal', block })
+      continue
+    }
     if (block.type === 'tool_call' && block.toolCall.toolName === 'image_gen') {
       imageBuffer.push(block)
       continue
@@ -73,4 +86,11 @@ export function groupAssistantBlocksForStandard(blocks: RuntimeAssistantBlock[])
   }
   flushImages()
   return segments
+}
+
+function isCompletedWikiProposal(
+  block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }>,
+): boolean {
+  return block.toolCall.toolName === 'wiki.propose_changes'
+    && block.toolCall.status === 'completed'
 }

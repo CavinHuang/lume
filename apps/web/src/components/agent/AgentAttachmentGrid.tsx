@@ -130,8 +130,9 @@ export function AgentAttachmentGrid<T extends AgentAttachmentGridItem>({
         return canMenu ? (
           <FileLinkContextMenu
             key={attachment.id}
-            context={{ source: 'thread', relPath: attachment.threadPath!, threadId: env.threadId, workspaceSlug: env.workspaceSlug }}
+            context={{ source: 'thread', relPath: attachment.threadPath!, threadId: env.threadId, workspaceSlug: env.workspaceSlug, fileRef: attachment.fileRef }}
             onPreview={() => (image ? onOpenImage?.(attachment) : onOpenFile?.(attachment))}
+            isImage={image}
           >
             {attachNode}
           </FileLinkContextMenu>

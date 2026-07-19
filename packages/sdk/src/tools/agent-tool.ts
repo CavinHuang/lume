@@ -137,7 +137,9 @@ export const AgentTool: ToolDefinition = {
     // Find agent definition
     const agentDef = registeredAgents[agentType] || BUILTIN_AGENTS[agentType]
 
-    const defaultSkill = agentDef?.defaultSkillName ? getSkill(agentDef.defaultSkillName) : undefined
+    const defaultSkill = agentDef?.defaultSkillName
+      ? context.skillRegistry?.get(agentDef.defaultSkillName) ?? getSkill(agentDef.defaultSkillName)
+      : undefined
 
     // Determine tools for subagent
     let tools = getAllBaseTools()

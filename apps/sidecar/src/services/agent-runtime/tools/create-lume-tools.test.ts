@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { createLumeRuntimeTools } from "./create-lume-tools";
+import { createLumeRuntimeTools, createOrdinaryWikiTools, isExplicitWikiWriteInstruction } from "./create-lume-tools";
+import { createToolDescriptorsFromDefinitions } from "./tool-source";
+import { ToolRegistry } from "./tool-registry";
+import { ToolResolver } from "./tool-resolver";
 
 function baseInput() {
   return {
@@ -11,6 +14,65 @@ function baseInput() {
 }
 
 describe("create-lume-tools", () => {
+  test("recognizes only explicit Wiki write instructions", () => {
+    expect(isExplicitWikiWriteInstruction("把上面的 P0 和 P1 沉淀到 Wiki")).toBeTrue();
+    expect(isExplicitWikiWriteInstruction("save this to the knowledge base")).toBeTrue();
+    expect(isExplicitWikiWriteInstruction("搜索一下 Wiki")).toBeFalse();
+    expect(isExplicitWikiWriteInstruction("保存当前文件")).toBeFalse();
+  });
+
+  test("offers a create-only Wiki proposal in Phase A for an explicit write request", () => {
+    const tools = createOrdinaryWikiTools({
+      profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
+      phaseBEnabled: false,
+      originalUserInstruction: "把这段内容写入 Wiki"
+    });
+
+    expect(tools.map((tool) => tool.name)).toEqual(["wiki.propose_changes"]);
+    expect(tools[0]?.description).toContain("新 Wiki 页面草案");
+    expect(tools[0]?.runtimeMetadata).toMatchObject({
+      category: "control",
+      capability: "planning",
+      sideEffects: "local_write",
+      allowedInPlanMode: true,
+      isReadOnly: false
+    });
+  });
+
+  test("does not expose Wiki tools in an ordinary Phase A conversation without write intent", () => {
+    const tools = createOrdinaryWikiTools({
+      profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
+      phaseBEnabled: false,
+      originalUserInstruction: "继续分析这个问题"
+    });
+
+    expect(tools).toEqual([]);
+  });
+
+  test("keeps all Phase B Wiki tools visible in plan mode with explicit side-effect metadata", () => {
+    const tools = createOrdinaryWikiTools({
+      profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
+      phaseBEnabled: true,
+      originalUserInstruction: "重新试试写入 wiki"
+    });
+    const registry = new ToolRegistry();
+    registry.registerMany(createToolDescriptorsFromDefinitions(tools, "lume"));
+
+    const resolved = new ToolResolver(registry).resolve({ permissionMode: "plan" });
+
+    expect(resolved.map((tool) => tool.name)).toEqual([
+      "wiki.search",
+      "wiki.read",
+      "wiki.follow_links",
+      "wiki.propose_changes"
+    ]);
+    expect(resolved.find((tool) => tool.name === "wiki.propose_changes")?.metadata).toMatchObject({
+      sideEffects: "local_write",
+      allowedInPlanMode: true,
+      isReadOnly: false
+    });
+  });
+
   test("includes the IM reply tool for all runtime threads", () => {
     const result = createLumeRuntimeTools(baseInput());
 

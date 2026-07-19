@@ -23,6 +23,7 @@ import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createWikiProposalTool, createWikiReadTools } from "./wiki/create-wiki-tools";
 import { resolveTrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
+import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -61,6 +62,26 @@ export interface CreateLumeRuntimeToolsInput {
 export interface CreateLumeRuntimeToolsOutput {
   customTools: ToolDefinition[];
   availableToolNames: string[];
+}
+
+const WIKI_TARGET_PATTERN = /(?:wiki|知识库|knowledge\s*base)/i;
+const WIKI_WRITE_PATTERN = /(?:沉淀|保存|写入|写到|记到|存到|归档|收录|加入|导入|放进|整理进|persist|save|write|archive|add|import)/i;
+
+export function isExplicitWikiWriteInstruction(instruction?: string): boolean {
+  return Boolean(instruction && WIKI_TARGET_PATTERN.test(instruction) && WIKI_WRITE_PATTERN.test(instruction));
+}
+
+export function createOrdinaryWikiTools(input: {
+  profile?: TrustedWikiRuntimeProfile;
+  phaseBEnabled?: boolean;
+  originalUserInstruction?: string;
+}): ToolDefinition[] {
+  if (!input.profile || input.profile.explicit) return [];
+  const tools = input.phaseBEnabled ? createWikiReadTools(input.profile.scope) : [];
+  if (isExplicitWikiWriteInstruction(input.originalUserInstruction)) {
+    tools.push(createWikiProposalTool(input.profile.scope, { createOnly: !input.phaseBEnabled }));
+  }
+  return tools;
 }
 
 export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): CreateLumeRuntimeToolsOutput {
@@ -145,11 +166,11 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const nodeReplTools = computerUseSurface === "sky"
     ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
     : allNodeReplTools;
-  const ordinaryWikiTools = input.wikiPhaseBEnabled
-    && wikiProfile
-    && !wikiProfile.explicit
-    ? createWikiReadTools(wikiProfile.scope)
-    : [];
+  const ordinaryWikiTools = createOrdinaryWikiTools({
+    profile: wikiProfile,
+    phaseBEnabled: input.wikiPhaseBEnabled,
+    originalUserInstruction: input.originalUserInstruction
+  });
   const customTools = [
     ...memoryTools,
     ...cronTools,

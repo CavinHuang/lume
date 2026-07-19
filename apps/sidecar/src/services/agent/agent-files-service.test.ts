@@ -334,6 +334,42 @@ describe("agent-files-service file ops", () => {
     expect(resolveWorkspaceSlugBySessionId(sessionId)).toBe(workspaceSlug);
   });
 
+  test("未绑定项目目录的线程附件仍应保存到 file context", () => {
+    const configDir = createTempConfigDir();
+    const workspace = createAgentWorkspace("unbound workspace");
+    const thread = createAgentThread("attachment thread", undefined, workspace.id);
+
+    const [saved] = saveFilesToAgentSession({
+      workspaceSlug: workspace.slug,
+      threadId: thread.id,
+      clientSubmissionId: "submission-unbound",
+      files: [{ filename: "image.png", data: Buffer.from("image").toString("base64") }]
+    });
+
+    const sessionDir = getAgentSessionPath(workspace.slug, thread.id);
+    const legacyDir = join(configDir, "agent-workspaces", workspace.slug, "threads", thread.id);
+    expect(sessionDir).toContain(join("agent-file-contexts", thread.id));
+    expect(saved?.targetPath).toBe(join(sessionDir, "image.png"));
+    expect(existsSync(join(sessionDir, "image.png"))).toBeTrue();
+    expect(existsSync(join(legacyDir, "image.png"))).toBeFalse();
+  });
+
+  test("已迁移线程应自动恢复重新出现在旧目录中的附件", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "recovery-project");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("recovery workspace", { projectPath });
+    const thread = createAgentThread("recovery thread", undefined, workspace.id);
+    const sessionDir = getAgentSessionPath(workspace.slug, thread.id);
+    const legacyDir = join(configDir, "agent-workspaces", workspace.slug, "threads", thread.id);
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(join(legacyDir, "image.png"), "image");
+
+    expect(getAgentSessionPath(workspace.slug, thread.id)).toBe(sessionDir);
+    expect(existsSync(join(sessionDir, "image.png"))).toBeTrue();
+    expect(existsSync(legacyDir)).toBeFalse();
+  });
+
   test("应支持重命名文件", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-c";
@@ -442,6 +478,48 @@ describe("agent-files-service file ops", () => {
       absoluteSourcePath: sourcePath
     });
     expect(existsSync(join(sessionDir, "brief.md"))).toBeTrue();
+  });
+
+  test("新 composer 附件不应覆盖会话中的同名文件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-unique-attachment";
+    const sessionId = "session-unique-attachment";
+    saveFilesToAgentSession({
+      workspaceSlug,
+      threadId: sessionId,
+      files: [{ filename: "brief.md", data: Buffer.from("existing").toString("base64") }]
+    });
+
+    const [saved] = saveFilesToAgentSession({
+      workspaceSlug,
+      threadId: sessionId,
+      clientSubmissionId: "submission-unique",
+      files: [{ filename: "brief.md", data: Buffer.from("new").toString("base64") }]
+    });
+
+    expect(saved?.threadPath).toBe("brief (2).md");
+    expect(existsSync(join(getAgentSessionPath(workspaceSlug, sessionId), "brief.md"))).toBeTrue();
+    expect(existsSync(join(getAgentSessionPath(workspaceSlug, sessionId), "brief (2).md"))).toBeTrue();
+  });
+
+  test("批量附件 prepare 失败时应清理本次已复制的文件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-partial-attachment";
+    const sessionId = "session-partial-attachment";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+
+    expect(() => saveFilesToAgentSession({
+      workspaceSlug,
+      threadId: sessionId,
+      clientSubmissionId: "submission-partial",
+      files: [
+        { filename: "first.md", data: Buffer.from("first").toString("base64") },
+        { filename: "missing.md" }
+      ]
+    })).toThrow("缺少文件内容");
+
+    expect(existsSync(join(sessionDir, "first.md"))).toBeFalse();
+    expect(existsSync(join(sessionDir, "missing.md"))).toBeFalse();
   });
 
   test("agent 产出文件不应保留旧的外部附加元信息", () => {

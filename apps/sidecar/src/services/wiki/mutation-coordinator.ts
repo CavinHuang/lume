@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { WikiBatch, WikiChangeDraft, WikiConfirmDraftInput, WikiDraftOperation, WikiPendingReview } from "@lume/shared";
+import type { WikiBatch, WikiChangeDraft, WikiConfirmDraftInput, WikiDraftOperation, WikiDraftStatus, WikiPendingReview } from "@lume/shared";
 import { WikiAclStore } from "./acl-store";
 import { sha256, WikiMarkdownStore } from "./markdown-store";
 import { ensureWikiDirectory, processIsAlive, resolveWikiPath } from "./path-security";
@@ -64,6 +64,20 @@ export class WikiMutationCoordinator {
   cancelDraft(draftId: string): void {
     const path = resolveWikiPath(this.root, join(".lume/staging", draftId));
     if (existsSync(path)) rmSync(path, { recursive: true, force: true });
+  }
+
+  getDraftStatus(draftId: string): WikiDraftStatus {
+    if (this.listPending().some((item) => item.draft.id === draftId)) {
+      return { draftId, state: "pending_review" };
+    }
+    const operationsDir = ensureWikiDirectory(this.root, ".lume/operations");
+    const applied = readdirSync(operationsDir)
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => JSON.parse(readFileSync(resolveWikiPath(this.root, join(".lume/operations", name)), "utf8")) as WikiBatch)
+      .some((batch) => batch.draftId === draftId && (batch.state === "committed" || batch.state === "undone"));
+    if (applied) return { draftId, state: "applied" };
+    const stagedDraftPath = resolveWikiPath(this.root, join(".lume/staging", draftId, "draft.json"));
+    return { draftId, state: existsSync(stagedDraftPath) ? "pending" : "unavailable" };
   }
 
   listPending(): WikiPendingReview[] {

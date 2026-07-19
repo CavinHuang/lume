@@ -1,6 +1,6 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared"
 import { toast } from "sonner"
-import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, writeClipboardText, sidecarCall, openGuardedFileRefInSystem, revealGuardedFileRefInSystem, saveGuardedFileRefAs, type SaveFilePathFilter } from "@/lib/desktop-api"
+import { openInSystem, revealPathInSystem, saveFilePathDialog, copyFile, writeClipboardImage, writeClipboardText, sidecarCall, openGuardedFileRefInSystem, revealGuardedFileRefInSystem, saveGuardedFileRefAs, type SaveFilePathFilter } from "@/lib/desktop-api"
 import type { FileLinkContext } from "./file-link-types"
 
 function joinPath(dir: string, rel: string): string {
@@ -15,6 +15,10 @@ function isAbsolutePath(p: string): boolean {
 export async function resolveAbsolutePath(ctx: FileLinkContext): Promise<string> {
   if (ctx.guardedRef) {
     const result = await sidecarCall<{ path: string }>(AGENT_IPC_CHANNELS.RESOLVE_GUARDED_FILE_REF, { guardedRef: ctx.guardedRef })
+    return result.path
+  }
+  if (ctx.fileRef) {
+    const result = await sidecarCall<{ path: string }>(AGENT_IPC_CHANNELS.RESOLVE_FILE_REF, { ref: ctx.fileRef })
     return result.path
   }
   if (ctx.source === "local") return ctx.relPath
@@ -61,6 +65,7 @@ export interface FileLinkActions {
   revealInFolder: () => Promise<void>
   copyRelativePath: () => Promise<void>
   copyAbsolutePath: () => Promise<void>
+  copyImage: () => Promise<void>
   saveAs: () => Promise<void>
   copyProtocolReference: () => Promise<void>
 }
@@ -115,6 +120,18 @@ export function resolveFileLinkActions(ctx: FileLinkContext): FileLinkActions {
         toast.success(`已保存到 ${target}`)
       } catch (e) {
         toast.error(`保存失败：${errMsg(e)}`)
+      }
+    },
+    async copyImage() {
+      try {
+        await writeClipboardImage(ctx.guardedRef
+          ? { guardedRef: ctx.guardedRef }
+          : ctx.fileRef
+            ? { ref: ctx.fileRef }
+            : { path: await resolveAbsolutePath(ctx) })
+        toast.success("已复制图片")
+      } catch (e) {
+        toast.error(`复制图片失败：${errMsg(e)}`)
       }
     },
     async copyProtocolReference() {

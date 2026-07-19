@@ -13,6 +13,7 @@ import { InfoExtractResult } from './info-extract-result'
 import { ImageGenResult } from './image-gen-result'
 import { TodoResult } from './todo-result'
 import { DefaultResult } from './default-result'
+import { WikiProposalResult } from './wiki-proposal-result'
 
 interface ToolResultRendererProps {
   toolName: string
@@ -38,6 +39,7 @@ export function ToolResultRenderer({ toolName, input, result, imagePresentation 
     case 'info_extract': return <InfoExtractResult input={input} result={result} />
     case 'image_gen': return <ImageGenResult input={input} result={result} presentation={imagePresentation} />
     case 'TodoWrite': return <TodoResult input={input} result={result} />
+    case 'wiki.propose_changes': return <WikiProposalResult result={result} />
     default: return <DefaultResult toolName={toolName} input={input} result={result} />
   }
 }

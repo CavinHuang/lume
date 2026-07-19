@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildCommandLine, buildSandboxEnvironment, getProcessSandboxSupport, probeProcessSandbox, spawnWithProcessSandbox } from "./process-sandbox";
+import { buildCommandLine, buildSandboxEnvironment, getProcessSandboxSupport, probeProcessSandbox, pruneMissingMxcDaclRecoveryEntries, spawnWithProcessSandbox } from "./process-sandbox";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -24,6 +24,30 @@ describe("OS process sandbox", () => {
 
     expect(env.Path).toBe(`${root};C:\\Windows\\System32`);
     expect(source.Path).toBe("C:\\Windows\\System32");
+  });
+
+  test("prunes only dead MXC recovery entries whose targets no longer exist", () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-mxc-dacl-state-"));
+    roots.push(root);
+    const stale = join(root, "pid-2147483647-deadbeef.json");
+    const live = join(root, `pid-${process.pid}-feedface.json`);
+    const recoverable = join(root, "pid-2147483646-cafebabe.json");
+    const missingTarget = join(root, "already-removed");
+    const existingTarget = join(root, "still-present");
+    mkdirSync(existingTarget);
+    const state = (pid: number, target = missingTarget) => JSON.stringify({
+      pid,
+      image_name: "wxc-exec.exe",
+      applied: [{ canonical_path: target }]
+    });
+    writeFileSync(stale, state(2147483647));
+    writeFileSync(live, state(process.pid));
+    writeFileSync(recoverable, state(2147483646, existingTarget));
+
+    expect(pruneMissingMxcDaclRecoveryEntries(root)).toBe(1);
+    expect(existsSync(stale)).toBeFalse();
+    expect(existsSync(live)).toBeTrue();
+    expect(existsSync(recoverable)).toBeTrue();
   });
 
   test("proves allowed read/write and denied-root enforcement when MXC is supported", async () => {

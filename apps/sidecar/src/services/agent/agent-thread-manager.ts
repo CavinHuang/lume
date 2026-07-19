@@ -31,6 +31,7 @@ import {
 } from "../infra/config-paths";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
+import { getAgentSubmissionStore } from "./agent-submission-store";
 import {
   getVisibleAgentMessages,
   syncVersionStoreFromMessages
@@ -621,6 +622,7 @@ export function deleteAgentThread(id: string): void {
     });
   }
 
+  getAgentSubmissionStore().deleteThread(id);
   log.info("deleted agent thread", { threadId: removed.id });
 }
 

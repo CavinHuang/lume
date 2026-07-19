@@ -777,6 +777,7 @@ export interface ToolContext {
   hookRegistry?: import('./hooks.js').HookRegistry
   onSubagentStart?: (params: { runId: string; parentThreadId: string; agentType: string; task: string }) => void
   onSubagentEnd?: (params: { runId: string; status: 'completed' | 'errored' | 'aborted'; output?: string; error?: string }) => Promise<void> | void
+  skillRegistry?: import('./skills/registry.js').SkillRegistry
 }
 
 export interface ToolResult {
@@ -1417,6 +1418,7 @@ export interface QueryEngineConfig {
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
+  skillRegistry?: import('./skills/registry.js').SkillRegistry
   currentUserMessageId?: string
   fileCheckpointState?: import('./utils/file-checkpoints.js').FileCheckpointState
   mcpServerStatuses?: Array<{ name: string; status: string }>

@@ -19,8 +19,11 @@ mock.module('@/lib/desktop-api', () => ({
   copyFile: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
   localFilePreviewUrl: (path: string) => `asset://${path}`,
+  openGuardedFileRefInSystem: async () => undefined,
   openInSystem: async () => undefined,
+  revealGuardedFileRefInSystem: async () => undefined,
   revealPathInSystem: async () => undefined,
+  saveGuardedFileRefAs: async () => ({ path: null }),
   saveFilePathDialog: async () => ({ path: null }),
   saveTextFileDialog: async () => undefined,
   sidecarCall: async () => undefined,
@@ -112,6 +115,36 @@ describe('RuntimeEventContentBlock tool results', () => {
     expect(markup).toContain('data-image-generation-group="2"')
     expect(markup.match(/data-tool-result-renderer="image_gen"/g)).toHaveLength(2)
     expect(markup).not.toContain('已完成')
+  })
+
+  test('renders a completed Wiki proposal immediately outside collapsed tool output', () => {
+    const message: RuntimeMessageView = {
+      id: 'assistant-wiki',
+      type: 'assistant',
+      text: '',
+      thinking: '',
+      status: 'completed',
+      toolCalls: [],
+      blocks: [{
+        type: 'tool_call',
+        id: 'tool:wiki-1',
+        toolCall: {
+          id: 'wiki-1',
+          toolName: 'wiki.propose_changes',
+          input: { action: 'create' },
+          status: 'completed',
+          output: JSON.stringify({ data: { id: 'draft-1' } }),
+        },
+      }],
+    }
+
+    const markup = renderToStaticMarkup(
+      <RuntimeEventContentBlock message={message} threadId="thread-wiki" />,
+    )
+
+    expect(markup).toContain('data-wiki-proposal-result="true"')
+    expect(markup).toContain('data-tool-result-renderer="wiki.propose_changes"')
+    expect(markup).not.toContain('1 个工具调用')
   })
 })
 

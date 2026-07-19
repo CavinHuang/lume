@@ -6,6 +6,7 @@
 export type {
   SkillDefinition,
   SkillContentBlock,
+  SkillInvocationDescriptor,
   SkillResult,
 } from './types.js'
 export type {
@@ -19,6 +20,7 @@ export type {
 
 // Registry
 export {
+  SkillRegistry,
   registerSkill,
   getSkill,
   getAllSkills,

@@ -162,6 +162,21 @@ export function closeFileTab(
   }
 }
 
+export function setFilePreviewScope(
+  state: ThreadFileWorkspace,
+  scopeKey: string,
+  token: string | null,
+): ThreadFileWorkspace {
+  if (token && !scopeKey.startsWith('temporary:') && !state.openTabs.some((tab) => tab.id === scopeKey)) {
+    return state
+  }
+  if (state.previewScopes[scopeKey] === token || (!token && !state.previewScopes[scopeKey])) return state
+  const previewScopes = { ...state.previewScopes }
+  if (token) previewScopes[scopeKey] = token
+  else delete previewScopes[scopeKey]
+  return { ...state, previewScopes }
+}
+
 function sameScope(left: FileRef, right: FileRef): boolean {
   return left.source === right.source && left.scopeId === right.scopeId
 }

@@ -1311,7 +1311,7 @@ function CreateAutomationDialog({
         <Textarea
           value={draft.prompt}
           onChange={(event) => setDraft({ ...draft, prompt: event.target.value })}
-          placeholder="添加提示词，例如：在 $sentry 中查找崩溃"
+          placeholder="添加提示词，例如：使用已配置的 Sentry 查找崩溃"
           className="min-h-[200px] flex-1 resize-none bg-transparent px-5 py-4 text-[14px] leading-6 text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)]"
         />
 

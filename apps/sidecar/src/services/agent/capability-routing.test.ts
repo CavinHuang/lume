@@ -38,7 +38,7 @@ describe("capability-routing", () => {
     expect(decision.reason).toContain("loaded skill metadata");
   });
 
-  test("显式 $plugin 调用应优先 skills，即使请求里包含搜索意图", () => {
+  test("旧 $plugin 文本不再覆盖正常意图路由", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "$lume-chrome 打开百度并搜索 glm",
       availableTools: ["Skill", "browser", "WebSearch", "WebFetch", "read"],
@@ -51,8 +51,8 @@ describe("capability-routing", () => {
       ]
     });
 
-    expect(decision.preferredLane).toBe("skills");
-    expect(decision.reason).toContain("explicit skill");
+    expect(decision.preferredLane).toBe("web");
+    expect(decision.reason).toContain("web");
   });
 
   test("whenToUse 可参与 skill 路由匹配，manual-only skill 不参与", () => {

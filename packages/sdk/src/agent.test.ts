@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createAgent } from "./agent.js"
+import { SkillTool } from "./tools/skill-tool.js"
 import type { ToolDefinition } from "./types.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
 import { forkSession, getSessionMessages, saveSession } from "./session.js"
@@ -102,6 +103,34 @@ describe("Agent runtime tool resolver", () => {
 
     await agent.close()
   })
+
+  test("binds an explicitly supplied Skill tool to the agent skill registry", async () => {
+    const root = mkdtempSync(join(tmpdir(), "sdk-agent-explicit-skill-tool-"))
+    tempDirs.push(root)
+    mkdirSync(join(root, "agent-wiki"), { recursive: true })
+    writeFileSync(
+      join(root, "agent-wiki", "SKILL.md"),
+      "---\nname: Wiki\ndescription: Manage the wiki\n---\nIngest into wiki: ${ARG}",
+      "utf-8",
+    )
+
+    const agent = createAgent({
+      persistSession: false,
+      tools: [SkillTool],
+      skillsDirectories: [root],
+    })
+    await agent.getInitializationResult()
+
+    const skillTool = (agent as any).toolPool.find((item: ToolDefinition) => item.name === "Skill") as ToolDefinition
+    const result = await skillTool.call(
+      { skill: "lume-workspace-demo:agent-wiki", args: "draft" },
+      { cwd: root },
+    )
+
+    expect(result.is_error).toBeUndefined()
+    expect(result.content).toContain("Ingest into wiki: draft")
+    await agent.close()
+  })
 })
 
 describe("Agent compact command", () => {
@@ -170,19 +199,22 @@ describe("Agent skill slash commands", () => {
     for await (const _event of agent.query("/skill hot-skill one")) {
       // drain query
     }
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("First prompt: one")
+    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("/skill hot-skill one")
+    expect((agent as any).skillRegistry.get("hot-skill")?.invocationDescriptor.promptTemplate).toBe("First prompt: ${ARG}")
 
     writeSkill("Updated prompt: ${ARG}")
     for await (const _event of agent.query("/skill hot-skill two")) {
       // drain query
     }
-    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("Updated prompt: two")
+    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("/skill hot-skill two")
+    expect((agent as any).skillRegistry.get("hot-skill")?.invocationDescriptor.promptTemplate).toBe("Updated prompt: ${ARG}")
 
     rmSync(skillDir, { recursive: true, force: true })
     for await (const _event of agent.query("refresh after deletion")) {
       // drain query
     }
     expect(getSkill("hot-skill")).toBeUndefined()
+    expect((agent as any).skillRegistry.get("hot-skill")).toBeUndefined()
 
     await agent.close()
   })
@@ -215,6 +247,30 @@ describe("Agent skill slash commands", () => {
     await agentB.close()
   })
 
+  test("isolates same-slug skills across concurrent agents", async () => {
+    const rootA = mkdtempSync(join(tmpdir(), "sdk-agent-owner-a-"))
+    const rootB = mkdtempSync(join(tmpdir(), "sdk-agent-owner-b-"))
+    tempDirs.push(rootA, rootB)
+    for (const [root, description] of [[rootA, "owner A"], [rootB, "owner B"]]) {
+      mkdirSync(join(root, "shared-skill"), { recursive: true })
+      writeFileSync(
+        join(root, "shared-skill", "SKILL.md"),
+        `---\nname: Shared Skill\ndescription: ${description}\n---\n${description}.`,
+        "utf-8",
+      )
+    }
+
+    const agentA = createAgent({ persistSession: false, tools: [], skillsDirectories: [rootA] })
+    const agentB = createAgent({ persistSession: false, tools: [], skillsDirectories: [rootB] })
+    await Promise.all([agentA.getInitializationResult(), agentB.getInitializationResult()])
+
+    expect((agentA as any).skillRegistry.get("shared-skill")?.description).toBe("owner A")
+    expect((agentB as any).skillRegistry.get("shared-skill")?.description).toBe("owner B")
+    await agentA.close()
+    expect((agentB as any).skillRegistry.get("shared-skill")?.description).toBe("owner B")
+    await agentB.close()
+  })
+
   test("preserves skill argument hints in initialization commands", async () => {
     const agent = createAgent({
       persistSession: false,
@@ -230,15 +286,11 @@ describe("Agent skill slash commands", () => {
 
     const init = await agent.getInitializationResult()
 
-    expect(init.commands.find((command) => command.name === "/code-review")).toMatchObject({
-      name: "/code-review",
-      description: "Review code changes",
-      argumentHint: "path to review",
-    })
+    expect(init.commands.find((command) => command.name === "/code-review")).toBeUndefined()
     await agent.close()
   })
 
-  test("expands /skill manual invocations before the provider turn", async () => {
+  test("treats legacy /skill syntax as literal text", async () => {
     const provider = new CapturingProvider()
     const agent = createAgent({
       persistSession: false,
@@ -258,7 +310,7 @@ describe("Agent skill slash commands", () => {
       // drain query
     }
 
-    expect(provider.requests[0]?.messages[0]?.content).toBe("Review target: src/index.ts")
+    expect(provider.requests[0]?.messages[0]?.content).toBe("/skill code-review src/index.ts")
     await agent.close()
   })
 
@@ -303,11 +355,11 @@ describe("Agent skill slash commands", () => {
       // drain query
     }
 
-    expect(provider.requests[0]?.messages[0]?.content).toBe("Explicit target: src/index.ts")
+    expect(provider.requests[0]?.messages[0]?.content).toBe("/skill code-review src/index.ts")
     await agent.close()
   })
 
-  test("expands $skill manual invocations before the provider turn", async () => {
+  test("treats legacy $skill syntax as literal text", async () => {
     const provider = new CapturingProvider()
     const agent = createAgent({
       persistSession: false,
@@ -327,11 +379,11 @@ describe("Agent skill slash commands", () => {
       // drain query
     }
 
-    expect(provider.requests[0]?.messages[0]?.content).toBe("Review target: src/index.ts")
+    expect(provider.requests[0]?.messages[0]?.content).toBe("$code-review src/index.ts")
     await agent.close()
   })
 
-  test("applies manual skill allowed tools from the first provider turn", async () => {
+  test("does not apply skill tool restrictions from legacy slash text", async () => {
     const provider = new CapturingProvider()
     const agent = createAgent({
       persistSession: false,
@@ -352,11 +404,11 @@ describe("Agent skill slash commands", () => {
       // drain query
     }
 
-    expect(provider.requests[0]?.tools?.map((item) => item.name)).toEqual(["Read"])
+    expect(provider.requests[0]?.tools?.map((item) => item.name)).toEqual(["Read", "Write"])
     await agent.close()
   })
 
-  test("asks for argumentHint when a manual skill invocation omits args", async () => {
+  test("does not request skill arguments from legacy slash text", async () => {
     const provider = new CapturingProvider()
     const agent = createAgent({
       persistSession: false,
@@ -378,27 +430,17 @@ describe("Agent skill slash commands", () => {
       askEvents.push(event)
     }
 
-    expect(provider.requests).toHaveLength(0)
-    expect(askEvents).toContainEqual(expect.objectContaining({
-      type: "assistant",
-      message: {
-        role: "assistant",
-        content: [expect.objectContaining({
-          type: "text",
-          text: expect.stringContaining("path to review"),
-        })],
-      },
-    }))
+    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("/code-review")
 
     for await (const _event of agent.query("src/index.ts")) {
       // drain query
     }
 
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("Review target: src/index.ts")
+    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("src/index.ts")
     await agent.close()
   })
 
-  test("asks for argumentHint when a $skill invocation omits args", async () => {
+  test("does not request skill arguments from legacy dollar text", async () => {
     const provider = new CapturingProvider()
     const agent = createAgent({
       persistSession: false,
@@ -420,23 +462,13 @@ describe("Agent skill slash commands", () => {
       askEvents.push(event)
     }
 
-    expect(provider.requests).toHaveLength(0)
-    expect(askEvents).toContainEqual(expect.objectContaining({
-      type: "assistant",
-      message: {
-        role: "assistant",
-        content: [expect.objectContaining({
-          type: "text",
-          text: expect.stringContaining("path to review"),
-        })],
-      },
-    }))
+    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("$code-review")
 
     for await (const _event of agent.query("src/index.ts")) {
       // drain query
     }
 
-    expect(provider.requests[0]?.messages.at(-1)?.content).toBe("Review target: src/index.ts")
+    expect(provider.requests[1]?.messages.at(-1)?.content).toBe("src/index.ts")
     await agent.close()
   })
 })

@@ -11,7 +11,8 @@ import {
   openFileTab,
   normalizeLineSelection,
   reconcileThreadFileWorkspaces,
-  removeFileRef,
+    removeFileRef,
+    setFilePreviewScope,
   settleFileTreeReveal,
   rewriteFileRefPrefix,
 } from './right-panel-files-state'
@@ -115,6 +116,16 @@ describe('right-panel-files-state', () => {
     state = openFileTab(state, ref('again.ts'))
     state = closeFileTab(state, state.openTabs[0]!.id, ['files', 'browser', 'review'])
     expect(state.activeItem).toEqual({ kind: 'function', type: 'review' })
+  })
+
+  test('ignores a late image preview scope after its tab has closed', () => {
+    let state = openFileTab(createThreadFileWorkspace({ fileContextId: 'scope-1' }), ref('result.png'))
+    const tabId = state.openTabs[0]!.id
+    state = closeFileTab(state, tabId, ['files'])
+
+    expect(setFilePreviewScope(state, tabId, 'late-token')).toBe(state)
+    expect(state.openTabs).toEqual([])
+    expect(state.previewScopes).toEqual({})
   })
 
   test('uses the shortest distinguishing parent path for duplicate basenames', () => {

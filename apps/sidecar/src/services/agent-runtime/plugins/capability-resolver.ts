@@ -114,6 +114,12 @@ async function resolveSkills(
         definition: {
           ...skill,
           name: namespaced,
+          ...(skill.invocationDescriptor ? {
+            invocationDescriptor: {
+              ...skill.invocationDescriptor,
+              promptTemplate: expandPluginPathToken(skill.invocationDescriptor.promptTemplate, plugin.root),
+            },
+          } : {}),
           async getPrompt(args, context) {
             const blocks = await getPrompt(args, context);
             const pluginRoot = plugin.root.replaceAll("\\", "/");

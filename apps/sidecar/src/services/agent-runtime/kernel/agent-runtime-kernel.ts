@@ -12,6 +12,9 @@ export interface AgentRuntimeKernelQueuedDispatch<TInput extends { threadId: str
   threadId: string;
   text: string;
   createdAt: number;
+  revision: number;
+  status: "queued" | "validating" | "blocked";
+  blockedReason?: string;
 }
 
 export interface AgentRuntimeKernelQueuedMessage {
@@ -19,6 +22,8 @@ export interface AgentRuntimeKernelQueuedMessage {
   threadId: string;
   text: string;
   createdAt: number;
+  revision: number;
+  status: "queued" | "validating" | "blocked";
 }
 
 export interface AgentRuntimeKernelDispatchResult {
@@ -32,6 +37,8 @@ export interface AgentRuntimeKernelOptions<TInput extends { threadId: string; us
   execute: (dispatch: AgentRuntimeKernelDispatch<TInput, TEmit>) => Promise<void>;
   onDispatchError: (dispatch: AgentRuntimeKernelDispatch<TInput, TEmit>, error: unknown) => void;
   onQueuedCountChange?: (threadId: string, queuedCount: number) => void;
+  validateQueued?: (dispatch: AgentRuntimeKernelQueuedDispatch<TInput, TEmit>) => Promise<void>;
+  onQueuedBlocked?: (dispatch: AgentRuntimeKernelQueuedDispatch<TInput, TEmit>, error: unknown) => void;
   createQueuedDispatchId?: () => string;
   now?: () => number;
 }
@@ -39,6 +46,7 @@ export interface AgentRuntimeKernelOptions<TInput extends { threadId: string; us
 export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: string }, TEmit> {
   private readonly activeThreads = new Set<string>();
   private readonly queuedDispatches = new Map<string, Array<AgentRuntimeKernelQueuedDispatch<TInput, TEmit>>>();
+  private readonly queueRevisions = new Map<string, number>();
   private readonly running = new Set<Promise<void>>();
 
   constructor(private readonly options: AgentRuntimeKernelOptions<TInput, TEmit>) {}
@@ -53,12 +61,14 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
       emit,
       onExecutionStarted: options?.onExecutionStarted
     };
-    if (this.activeThreads.has(input.threadId)) {
+    if (this.activeThreads.has(input.threadId) || this.getQueuedCount(input.threadId) > 0) {
       const queue = this.queuedDispatches.get(input.threadId) ?? [];
       const queuedDispatch = this.createQueuedDispatch(dispatch);
       queue.push(queuedDispatch);
       this.queuedDispatches.set(input.threadId, queue);
+      this.touchQueue(input.threadId);
       this.syncQueuedCount(input.threadId);
+      if (!this.activeThreads.has(input.threadId)) this.scheduleStartNext(input.threadId);
       return {
         ok: true,
         mode: "queued",
@@ -79,7 +89,12 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     return [...(this.queuedDispatches.get(threadId) ?? [])];
   }
 
-  reorderQueued(threadId: string, orderedIds: string[]): Array<AgentRuntimeKernelQueuedDispatch<TInput, TEmit>> {
+  getQueueRevision(threadId: string): number {
+    return this.queueRevisions.get(threadId) ?? 0;
+  }
+
+  reorderQueued(threadId: string, orderedIds: string[], expectedRevision = this.getQueueRevision(threadId)): Array<AgentRuntimeKernelQueuedDispatch<TInput, TEmit>> {
+    this.assertExpectedRevision(threadId, expectedRevision);
     const queue = this.queuedDispatches.get(threadId) ?? [];
     if (queue.length === 0) {
       return [];
@@ -92,11 +107,14 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     const remaining = queue.filter((item) => !orderedIdSet.has(item.id));
     const nextQueue = [...ordered, ...remaining];
     this.queuedDispatches.set(threadId, nextQueue);
+    this.touchQueue(threadId);
     this.syncQueuedCount(threadId);
+    if (!this.activeThreads.has(threadId)) this.scheduleStartNext(threadId);
     return [...nextQueue];
   }
 
-  removeQueued(threadId: string, queuedDispatchId: string): AgentRuntimeKernelQueuedDispatch<TInput, TEmit> | null {
+  removeQueued(threadId: string, queuedDispatchId: string, expectedRevision = this.getQueueRevision(threadId)): AgentRuntimeKernelQueuedDispatch<TInput, TEmit> | null {
+    this.assertExpectedRevision(threadId, expectedRevision);
     const queue = this.queuedDispatches.get(threadId) ?? [];
     const index = queue.findIndex((item) => item.id === queuedDispatchId);
     if (index < 0) {
@@ -108,6 +126,7 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     } else {
       this.queuedDispatches.set(threadId, nextQueue);
     }
+    this.touchQueue(threadId);
     this.syncQueuedCount(threadId);
     return queue[index] ?? null;
   }
@@ -118,7 +137,29 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     }
     const queue = this.queuedDispatches.get(threadId) ?? [];
     this.queuedDispatches.set(threadId, [...dispatches, ...queue]);
+    this.touchQueue(threadId);
     this.syncQueuedCount(threadId);
+    if (!this.activeThreads.has(threadId)) this.scheduleStartNext(threadId);
+  }
+
+  updateQueued(
+    threadId: string,
+    queuedDispatchId: string,
+    expectedRevision: number,
+    update: Pick<TInput, "userMessage"> & Partial<TInput>
+  ): AgentRuntimeKernelQueuedDispatch<TInput, TEmit> | null {
+    this.assertExpectedRevision(threadId, expectedRevision);
+    const queue = this.queuedDispatches.get(threadId) ?? [];
+    const item = queue.find((candidate) => candidate.id === queuedDispatchId);
+    if (!item || (item.status !== "queued" && item.status !== "blocked")) return null;
+    item.input = { ...item.input, ...update };
+    item.text = update.userMessage;
+    item.status = "queued";
+    delete item.blockedReason;
+    this.touchQueue(threadId);
+    this.syncQueuedCount(threadId);
+    if (!this.activeThreads.has(threadId)) this.scheduleStartNext(threadId);
+    return item;
   }
 
   async waitForIdleForTest(): Promise<void> {
@@ -130,6 +171,7 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
   resetForTest(): void {
     this.activeThreads.clear();
     this.queuedDispatches.clear();
+    this.queueRevisions.clear();
     this.running.clear();
   }
 
@@ -152,17 +194,7 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
       this.options.onDispatchError(dispatch, error);
     } finally {
       this.activeThreads.delete(threadId);
-      const queue = this.queuedDispatches.get(threadId) ?? [];
-      const next = queue.shift();
-      if (queue.length === 0) {
-        this.queuedDispatches.delete(threadId);
-      } else {
-        this.queuedDispatches.set(threadId, queue);
-      }
-      this.syncQueuedCount(threadId);
-      if (next) {
-        this.startDispatch(next);
-      }
+      await this.startNextQueued(threadId);
     }
   }
 
@@ -182,7 +214,9 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
       id: this.options.createQueuedDispatchId?.() ?? randomUUID(),
       threadId: dispatch.input.threadId,
       text: dispatch.input.userMessage,
-      createdAt: this.options.now?.() ?? Date.now()
+      createdAt: this.options.now?.() ?? Date.now(),
+      revision: this.getQueueRevision(dispatch.input.threadId),
+      status: "queued"
     };
   }
 
@@ -193,7 +227,66 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
       id: dispatch.id,
       threadId: dispatch.threadId,
       text: dispatch.text,
-      createdAt: dispatch.createdAt
+      createdAt: dispatch.createdAt,
+      revision: dispatch.revision,
+      status: dispatch.status,
+      ...(dispatch.blockedReason ? { blockedReason: dispatch.blockedReason } : {})
     };
+  }
+
+  private async startNextQueued(threadId: string): Promise<void> {
+    if (this.activeThreads.has(threadId)) return;
+    const queue = this.queuedDispatches.get(threadId) ?? [];
+    const next = queue[0];
+    if (!next || next.status === "blocked" || next.status === "validating") return;
+    next.status = "validating";
+    this.touchQueue(threadId);
+    this.syncQueuedCount(threadId);
+    try {
+      await this.options.validateQueued?.(next);
+    } catch (error) {
+      next.status = "blocked";
+      next.blockedReason = error instanceof Error ? error.message : String(error);
+      this.touchQueue(threadId);
+      this.syncQueuedCount(threadId);
+      this.options.onQueuedBlocked?.(next, error);
+      return;
+    }
+    const latestQueue = this.queuedDispatches.get(threadId) ?? [];
+    if (latestQueue[0]?.id !== next.id) return;
+    latestQueue.shift();
+    if (latestQueue.length === 0) this.queuedDispatches.delete(threadId);
+    else this.queuedDispatches.set(threadId, latestQueue);
+    next.status = "queued";
+    delete next.blockedReason;
+    this.touchQueue(threadId);
+    this.syncQueuedCount(threadId);
+    this.startDispatch(next);
+  }
+
+  private scheduleStartNext(threadId: string): void {
+    const task = this.startNextQueued(threadId).finally(() => this.running.delete(task));
+    this.running.add(task);
+  }
+
+  private touchQueue(threadId: string): number {
+    const revision = this.getQueueRevision(threadId) + 1;
+    this.queueRevisions.set(threadId, revision);
+    for (const item of this.queuedDispatches.get(threadId) ?? []) item.revision = revision;
+    return revision;
+  }
+
+  private assertExpectedRevision(threadId: string, expectedRevision: number): void {
+    const currentRevision = this.getQueueRevision(threadId);
+    if (expectedRevision !== currentRevision) {
+      throw new AgentRuntimeKernelQueueConflictError(currentRevision);
+    }
+  }
+}
+
+export class AgentRuntimeKernelQueueConflictError extends Error {
+  constructor(readonly currentRevision: number) {
+    super(`queue revision conflict: expected current revision ${currentRevision}`);
+    this.name = "AgentRuntimeKernelQueueConflictError";
   }
 }

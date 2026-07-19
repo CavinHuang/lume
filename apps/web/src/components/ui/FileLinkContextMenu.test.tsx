@@ -38,6 +38,15 @@ describe("buildFileLinkMenuItems", () => {
     expect(labels[0]).toBe("用系统应用打开")
   })
 
+  test("image context includes copy image", () => {
+    const ctx: FileLinkContext = { source: "thread", relPath: "result.png", threadId: "t1" }
+    const labels = buildFileLinkMenuItems(ctx, { isImage: true })
+      .filter((item) => item.kind === "item")
+      .map((item) => item.label)
+
+    expect(labels).toContain("复制图片")
+  })
+
   test("protocol directories expose guarded applicable actions without save-as", () => {
     const ctx: FileLinkContext = {
       source: "thread",

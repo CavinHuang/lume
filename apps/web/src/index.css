@@ -66,6 +66,56 @@
 }
 .input:focus { border-color: var(--color-foreground); }
 
+/* 输入框变窄时保留单行工具栏，用图标承载模型、权限和思考入口。 */
+.lume-composer {
+  container-type: inline-size;
+}
+
+@container (max-width: 540px) {
+  .lume-composer-footer {
+    flex-wrap: nowrap;
+    gap: 0.375rem;
+  }
+
+  .lume-composer-leading-tools {
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+  }
+
+  .lume-composer-control-trigger {
+    padding-inline: 0.5rem;
+  }
+
+  .lume-composer-control-label,
+  .lume-composer-control-status {
+    display: none;
+  }
+}
+
+/* 消息操作栏按自身宽度逐步收起次要信息，始终保留核心动作和上下文占比。 */
+.assistant-message-footer {
+  container-type: inline-size;
+}
+
+@container (max-width: 680px) {
+  .assistant-footer-completed-at,
+  .assistant-footer-metric-cached {
+    display: none;
+  }
+
+  .assistant-footer-actions {
+    gap: 0.625rem;
+  }
+}
+
+@container (max-width: 540px) {
+  .assistant-footer-metric-input,
+  .assistant-footer-metric-output,
+  .assistant-footer-action > span {
+    display: none;
+  }
+}
+
 /* x-markdown dark mode — 变量由 dark.css 的 .x-markdown-dark 选择器提供 */
 
 /* x-markdown 宽度约束 — 表格和代码块不超出父容器 */

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react"
-import { AGENT_IPC_CHANNELS, type FileRef } from "@lume/shared"
+import type { FileRef } from "@lume/shared"
 import { Button } from "@/components/ui/button"
-import { createFilePreviewScope, revokeFilePreviewScope, sidecarCall } from "@/lib/desktop-api"
-import { useThreadFileEnv, type ThreadFileEnv } from "../thread-file-env"
+import { revokeFilePreviewScope } from "@/lib/desktop-api"
+import { useThreadFileEnv } from "../thread-file-env"
+import { createThreadImagePreviewScope } from "../thread-image-preview"
 import { cn } from "@/lib/utils"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Maximize2, Minimize2, X } from "lucide-react"
+import { FileLinkContextMenu } from "@/components/ui/FileLinkContextMenu"
 
 export interface ImageGenImage {
   threadPath: string
@@ -27,41 +29,7 @@ interface Props {
   presentation?: "default" | "gallery"
 }
 
-interface ImageGenPreviewScope {
-  token: string
-  url: string
-  expiresAt: number
-}
-
-interface ImageGenPreviewDeps {
-  convertLegacyFileRef: (input: {
-    recordKind: "thread-attachment"
-    threadId: string
-    workspaceSlug?: string
-    legacyRelativePath: string
-  }) => Promise<FileRef>
-  createPreviewScope: (input: { ref: FileRef; kind: "media-file" }) => Promise<ImageGenPreviewScope>
-}
-
-const defaultPreviewDeps: ImageGenPreviewDeps = {
-  convertLegacyFileRef: (input) => sidecarCall<FileRef>(AGENT_IPC_CHANNELS.CONVERT_LEGACY_FILE_REF, input),
-  createPreviewScope: (input) => createFilePreviewScope(input),
-}
-
-export async function createImageGenPreviewScope(
-  image: ImageGenImage,
-  env: ThreadFileEnv,
-  deps: ImageGenPreviewDeps = defaultPreviewDeps,
-): Promise<ImageGenPreviewScope> {
-  if (!env.threadId) throw new Error("图片预览缺少 threadId")
-  const ref = image.fileRef ?? await deps.convertLegacyFileRef({
-    recordKind: "thread-attachment",
-    threadId: env.threadId,
-    ...(env.workspaceSlug ? { workspaceSlug: env.workspaceSlug } : {}),
-    legacyRelativePath: image.threadPath,
-  })
-  return deps.createPreviewScope({ ref, kind: "media-file" })
-}
+export const createImageGenPreviewScope = createThreadImagePreviewScope
 
 /** 使用绑定 FileRef 的临时预览作用域，兼容 file-context 与旧版 threadPath。 */
 function useImageSrcs(
@@ -167,11 +135,17 @@ export function ImageGenResult({ result, presentation = "default" }: Props) {
                   图片加载失败
                 </div>
               ) : src ? (
-                <img
-                  src={src}
-                  alt={img.filename}
-                  className="h-full w-full object-contain"
-                />
+                <FileLinkContextMenu
+                  context={{ source: "thread", relPath: img.threadPath, threadId: env.threadId, workspaceSlug: env.workspaceSlug, fileRef: img.fileRef }}
+                  isImage
+                  directTrigger
+                >
+                  <img
+                    src={src}
+                    alt={img.filename}
+                    className="h-full w-full object-contain"
+                  />
+                </FileLinkContextMenu>
               ) : (
                 <div
                   data-image-generation-loading="true"
@@ -220,13 +194,21 @@ export function ImageGenResult({ result, presentation = "default" }: Props) {
           </div>
           {previewSrc && (
             <div className={originalSize ? "min-h-full min-w-full" : "flex h-full w-full items-center justify-center"}>
-              <img
-                src={previewSrc}
-                alt={previewImage?.filename ?? "生成的图片"}
-                className={originalSize ? "max-w-none" : "max-h-full max-w-full object-contain"}
-                onClick={(event) => event.stopPropagation()}
-                onDoubleClick={() => setOriginalSize((value) => !value)}
-              />
+              {previewImage && (
+                <FileLinkContextMenu
+                  context={{ source: "thread", relPath: previewImage.threadPath, threadId: env.threadId, workspaceSlug: env.workspaceSlug, fileRef: previewImage.fileRef }}
+                  isImage
+                  directTrigger
+                >
+                  <img
+                    src={previewSrc}
+                    alt={previewImage.filename}
+                    className={originalSize ? "max-w-none" : "max-h-full max-w-full object-contain"}
+                    onClick={(event) => event.stopPropagation()}
+                    onDoubleClick={() => setOriginalSize((value) => !value)}
+                  />
+                </FileLinkContextMenu>
+              )}
             </div>
           )}
         </DialogContent>

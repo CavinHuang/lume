@@ -8,7 +8,12 @@
 import type { ToolDefinition, ToolResult, ToolContext } from '../types.js'
 import type { SkillDefinition } from '../skills/types.js'
 import { recordSkillUsage } from '../skills/evolution.js'
-import { getModelInvocableSkills, getSkill, getUserInvocableSkills } from '../skills/registry.js'
+import {
+  SkillRegistry,
+  getModelInvocableSkills,
+  getSkill,
+  getUserInvocableSkills,
+} from '../skills/registry.js'
 
 function formatSkillPromptName(skill: SkillDefinition): string {
   const displayName = skill.aliases
@@ -17,7 +22,20 @@ function formatSkillPromptName(skill: SkillDefinition): string {
   return displayName ? `${skill.name} (${displayName})` : skill.name
 }
 
-export const SkillTool: ToolDefinition = {
+interface SkillLookup {
+  get(name: string): SkillDefinition | undefined
+  getUserInvocable(): SkillDefinition[]
+  getModelInvocable(): SkillDefinition[]
+}
+
+const globalSkillLookup: SkillLookup = {
+  get: getSkill,
+  getUserInvocable: getUserInvocableSkills,
+  getModelInvocable: getModelInvocableSkills,
+}
+
+export function createSkillTool(registry: SkillRegistry | SkillLookup = globalSkillLookup): ToolDefinition {
+  return {
   name: 'Skill',
   description:
     'Execute a skill within the current conversation. ' +
@@ -41,10 +59,10 @@ export const SkillTool: ToolDefinition = {
 
   isReadOnly: () => false,
   isConcurrencySafe: () => false,
-  isEnabled: () => getUserInvocableSkills().length > 0,
+  isEnabled: () => registry.getUserInvocable().length > 0,
 
   async prompt(): Promise<string> {
-    const skills = getModelInvocableSkills()
+    const skills = registry.getModelInvocable()
     if (skills.length === 0) return ''
 
     const lines = skills.map((s) => {
@@ -77,9 +95,9 @@ export const SkillTool: ToolDefinition = {
       }
     }
 
-    const skill = getSkill(skillName)
+    const skill = registry.get(skillName)
     if (!skill) {
-      const available = getUserInvocableSkills()
+      const available = registry.getUserInvocable()
         .map((s) => s.name)
         .join(', ')
       return {
@@ -155,4 +173,7 @@ export const SkillTool: ToolDefinition = {
       }
     }
   },
+  }
 }
+
+export const SkillTool: ToolDefinition = createSkillTool()

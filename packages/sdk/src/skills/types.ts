@@ -2,7 +2,8 @@
  * Skill System Types
  *
  * Skills are reusable prompt templates that extend agent capabilities.
- * They can be invoked by the model via the Skill tool or by users via /skillname.
+ * They can be invoked by the model via the Skill tool or referenced by users with
+ * a structured lume-skill://skill capability selected from the slash panel.
  */
 
 import type { ToolContext } from '../types.js'
@@ -14,6 +15,18 @@ import type { HookConfig } from '../hooks.js'
 export type SkillContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
+/** Serializable invocation data used for side-effect-free host previews. */
+export interface SkillInvocationDescriptor {
+  promptTemplate: string
+  argumentToken: '${ARG}'
+  allowedTools?: string[]
+  model?: string
+  context: 'inline' | 'fork'
+  agent?: string
+  version?: string
+  fingerprint: string
+}
 
 /**
  * Bundled skill definition.
@@ -67,6 +80,9 @@ export interface SkillDefinition {
 
   /** Subagent type for forked execution */
   agent?: string
+
+  /** Static invocation data required for explicit composer references. */
+  invocationDescriptor?: SkillInvocationDescriptor
 
   /**
    * Generate the prompt content blocks for this skill.

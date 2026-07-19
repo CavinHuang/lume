@@ -15,9 +15,11 @@ export function resolveTrustedWikiRuntimeProfile(input: {
   if (input.threadMeta?.wikiProfile?.kind === "ask-wiki") {
     return { scope: input.threadMeta.wikiProfile.scope, explicit: true };
   }
+  const threadType = input.threadType ?? "main";
+  const chatType = input.chatType ?? "direct";
   if (
-    input.threadType !== "main"
-    || input.chatType !== "direct"
+    threadType !== "main"
+    || chatType !== "direct"
     || input.threadMeta?.source
     || !input.workspaceExists
     || !input.workspaceId

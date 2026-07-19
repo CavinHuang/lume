@@ -579,6 +579,5 @@ function renderEnabledPluginLines(plugins: EnabledPluginContextItem[]): string[]
     }
   }
 
-  lines.push("- To activate plugin instructions explicitly, prefix a message with $pluginId.");
   return lines;
 }

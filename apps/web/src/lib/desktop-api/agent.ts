@@ -30,6 +30,9 @@ import type {
   AgentRemoveQueuedMessageInput,
   AgentReorderMessageQueueInput,
   AgentThreadMessageDispatchResult,
+  AgentUpdateQueuedMessageInput,
+  AgentGetSubmissionReceiptInput,
+  AgentGetSubmissionReceiptResult,
 } from '@lume/shared'
 
 export const agentSend = async (input: AgentSendInput) => {
@@ -46,10 +49,43 @@ export const agentSend = async (input: AgentSendInput) => {
     threadId: input.threadId,
     data: { messageLength: input.userMessage.length },
   })
-  const result = await invoke<AgentThreadMessageDispatchResult>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE,
-    params: { ...input, traceContext },
-  })
+  let result: AgentThreadMessageDispatchResult
+  try {
+    result = await invoke<AgentThreadMessageDispatchResult>('sidecar_call', {
+      method: AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE,
+      params: { ...input, traceContext },
+    })
+  } catch (error) {
+    if (!input.clientSubmissionId) throw error
+    const lookup = await getAgentSubmissionReceipt({ clientSubmissionId: input.clientSubmissionId })
+      .catch(() => undefined)
+    const receipt = lookup?.receipt
+    if (receipt && ['rejected', 'failed', 'interrupted', 'restart_dropped'].includes(receipt.status)) {
+      const terminalError = new Error(`提交已终结：${receipt.status}`) as Error & { submissionTerminal?: boolean }
+      terminalError.submissionTerminal = true
+      throw terminalError
+    }
+    if (!receipt || !['accepted', 'queued', 'started', 'completed'].includes(receipt.status)) throw error
+    result = {
+      ok: true,
+      mode: receipt.mode ?? (receipt.status === 'queued' ? 'queued' : 'sent'),
+      queuedCount: receipt.status === 'queued' ? 1 : 0,
+      ...(receipt.queuedMessageId
+        ? {
+            queuedMessage: {
+              id: receipt.queuedMessageId,
+              threadId: receipt.threadId,
+              text: input.userMessage,
+              createdAt: receipt.createdAt,
+              revision: 0,
+              status: 'queued' as const,
+              ...(input.messageParts ? { messageParts: input.messageParts } : {}),
+              ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
+            },
+          }
+        : {}),
+    }
+  }
   writeWebLogEvent({
     level: 'info',
     kind: 'trace',
@@ -63,6 +99,10 @@ export const agentSend = async (input: AgentSendInput) => {
     data: { mode: result.mode, queuedCount: result.queuedCount },
   })
   return result
+}
+
+export function isTerminalAgentSubmissionError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { submissionTerminal?: unknown }).submissionTerminal === true)
 }
 
 export const onSidecarEvent = (
@@ -189,6 +229,18 @@ export const reorderAgentMessageQueue = (input: AgentReorderMessageQueueInput) =
 export const removeQueuedAgentMessage = (input: AgentRemoveQueuedMessageInput) =>
   invoke<AgentMessageQueueOperationResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.REMOVE_QUEUED_MESSAGE,
+    params: input,
+  })
+
+export const getAgentSubmissionReceipt = (input: AgentGetSubmissionReceiptInput) =>
+  invoke<AgentGetSubmissionReceiptResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.GET_SUBMISSION_RECEIPT,
+    params: input,
+  })
+
+export const updateQueuedAgentMessage = (input: AgentUpdateQueuedMessageInput) =>
+  invoke<AgentMessageQueueOperationResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.UPDATE_QUEUED_MESSAGE,
     params: input,
   })
 

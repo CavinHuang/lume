@@ -36,6 +36,7 @@ export const rightPanelLayoutAtom = atomWithStorage<RightPanelLayoutState>(
 
 export interface RightPanelFileLayoutPreferences {
   treeWidth: number
+  treeCollapsed?: boolean
 }
 
 export const rightPanelFileLayoutPreferencesAtom = atomWithStorage<RightPanelFileLayoutPreferences>(

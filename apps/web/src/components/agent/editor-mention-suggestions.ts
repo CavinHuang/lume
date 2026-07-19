@@ -1,12 +1,15 @@
 import { ReactRenderer } from '@tiptap/react'
 import { sidecarCall } from '@/lib/desktop-api'
 import { MentionList } from './MentionList'
-import { buildSlashSuggestionItems, buildPluginSuggestionItems, formatSkillSuggestionMeta, type PluginMentionSource } from './slash-command-state'
+import { buildSlashSuggestionItems } from './slash-command-state'
 import type { MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
 import type { MentionItem } from './slash-command-state'
-import type { AgentListPluginsResult, EditableSkillMeta, WorkspaceMcpConfig } from '@lume/shared'
+import type { ListInvocableCapabilitiesResult } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import type { EditorOptions } from '@tiptap/core'
+
+type PasteEditorView = Parameters<NonNullable<EditorOptions['editorProps']['handlePaste']>>[0]
 
 export { type MentionItem } from './slash-command-state'
 
@@ -23,13 +26,6 @@ async function fetchThreadCwd(threadId: string, workspaceSlug: string): Promise<
   }
 }
 
-function buildListEditableSkillsPayload(workspaceSlug: string, cwd: string | null) {
-  return {
-    workspaceSlug,
-    ...(cwd ? { cwd } : {}),
-  }
-}
-
 /** 获取各类 mention 的建议列表 */
 export async function fetchSuggestions(
   trigger: string,
@@ -39,64 +35,66 @@ export async function fetchSuggestions(
 ): Promise<MentionItem[]> {
   try {
     if (trigger === '/') {
-      if (!workspaceSlug) return []
-      const cwd = await fetchThreadCwd(threadId, workspaceSlug)
-      const [skillsResult, mcpResult] = await Promise.all([
-        sidecarCall<EditableSkillMeta[]>(
-          AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
-          buildListEditableSkillsPayload(workspaceSlug, cwd),
-        ),
-        sidecarCall<WorkspaceMcpConfig>(AGENT_IPC_CHANNELS.GET_MCP_CONFIG, { workspaceSlug }),
-      ])
-      const skills = Array.isArray(skillsResult) ? skillsResult : []
-      const slashItems = buildSlashSuggestionItems(skills, query)
-      const normalizedQuery = query.trim().toLowerCase()
-      const mcpItems = Object.entries(mcpResult?.servers ?? {})
-        .filter(([name, entry]) => entry.enabled && (!normalizedQuery || name.toLowerCase().includes(normalizedQuery)))
-        .slice(0, 5)
-        .map(([name]) => ({ id: name, label: name, type: 'mcp' as const }))
-      return [...slashItems, ...mcpItems]
-    }
-
-    if (trigger === '$') {
-      if (!workspaceSlug) return []
-      const cwd = await fetchThreadCwd(threadId, workspaceSlug)
-      const skillsResult = await sidecarCall<EditableSkillMeta[]>(
-        AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
-        buildListEditableSkillsPayload(workspaceSlug, cwd),
+      const cwd = workspaceSlug && threadId ? await fetchThreadCwd(threadId, workspaceSlug) : null
+      const result = await sidecarCall<ListInvocableCapabilitiesResult>(
+        AGENT_IPC_CHANNELS.LIST_INVOCABLE_CAPABILITIES,
+        {
+          ...(workspaceSlug ? { workspaceSlug } : {}),
+          ...(cwd ? { cwd } : {}),
+        },
       )
-      const skills = Array.isArray(skillsResult) ? skillsResult : []
-      const normalizedQuery = query.trim().toLowerCase()
-      return skills
-        .filter((skill) => {
-          if (!normalizedQuery) return true
-          return [skill.slug, skill.name, skill.description, skill.whenToUse, skill.version].some(
-            (v) => v?.toLowerCase().includes(normalizedQuery),
-          )
-        })
-        .slice(0, 10)
-        .map((skill) => ({
-          id: skill.slug,
-          label: skill.slug,
-          type: 'skill' as const,
-          title: `$${skill.slug}`,
-          subtitle: skill.description ?? skill.whenToUse ?? skill.name,
-          section: 'skill' as const,
-          meta: formatSkillSuggestionMeta(skill),
-        }))
-    }
-
-    if (trigger === '%') {
-      const result = await sidecarCall<AgentListPluginsResult>(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
-      const plugins: PluginMentionSource[] = Array.isArray(result)
-        ? result
-        : (result?.plugins ?? [])
-      return buildPluginSuggestionItems(plugins, query)
+      const items = buildSlashSuggestionItems(result.capabilities ?? [], query)
+      return threadId === '__welcome__'
+        ? items.filter((item) => item.id !== 'clear' && item.id !== 'compact')
+        : items
     }
   } catch {
-    // 静默
+    if (trigger === '/') {
+      const items = buildSlashSuggestionItems([], query)
+      return threadId === '__welcome__'
+        ? items.filter((item) => item.id !== 'clear' && item.id !== 'compact')
+        : items
+    }
   }
   return []
+}
+
+export function createCapabilityReferencePasteHandler(
+  threadId: string,
+  getWorkspaceSlug: () => string | null,
+) {
+  return (view: PasteEditorView, event: ClipboardEvent): boolean => {
+    const text = event.clipboardData?.getData('text/plain') ?? ''
+    if (
+      text !== text.trim()
+      || (!text.startsWith('lume-skill://') && !text.startsWith('lume-plugin://'))
+    ) return false
+
+    event.preventDefault()
+    void fetchSuggestions('/', text, threadId, getWorkspaceSlug())
+      .then((items) => {
+        if (view.isDestroyed) return
+        const item = items.find((candidate) => candidate.uri === text && !candidate.disabled)
+        const nodeType = view.state.schema.nodes.capabilityMention
+        if (!item || !nodeType) {
+          view.dispatch(view.state.tr.replaceSelectionWith(view.state.schema.text(text)))
+          return
+        }
+        const node = nodeType.create({
+          id: item.id,
+          label: item.label,
+          uri: item.uri,
+          kind: item.kind,
+          occurrenceId: crypto.randomUUID(),
+          iconUrl: item.iconUrl ?? null,
+        })
+        view.dispatch(view.state.tr.replaceSelectionWith(node))
+      })
+      .catch(() => {
+        if (!view.isDestroyed) view.dispatch(view.state.tr.replaceSelectionWith(view.state.schema.text(text)))
+      })
+    return true
+  }
 }
 
 /** 用 DOM 定位的浮动面板渲染 mention 建议 */
@@ -107,9 +105,15 @@ export function createSuggestionRenderer(
   getWorkspaceSlug: () => string | null,
   setSuggestionOpen: (open: boolean) => void,
   onCommandExecute?: (id: string) => void,
+  onEscape?: () => void,
 ) {
   return {
     char,
+    allow: ({ state, range }: { state: { doc: { textBetween: (from: number, to: number) => string } }; range: { from: number } }) => {
+      if (char !== '/') return true
+      const previous = state.doc.textBetween(Math.max(0, range.from - 1), range.from)
+      return previous.length === 0 || /\s/.test(previous)
+    },
     items: ({ query }: { query: string }) => fetchSuggestions(trigger, query, threadId, getWorkspaceSlug()),
     render: () => {
       let component: ReactRenderer<MentionListRef> | null = null
@@ -124,7 +128,7 @@ export function createSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: char as '@' | '/' | '#' | '$' | '%', getWorkspaceSlug, onCommandExecute },
+            props: { ...props, trigger: char as '@' | '/' | '#', getWorkspaceSlug, onCommandExecute },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
@@ -141,6 +145,7 @@ export function createSuggestionRenderer(
           if (props.event.key === 'Escape') {
             setSuggestionOpen(false)
             wrapper?.remove()
+            onEscape?.()
             return true
           }
           return component?.ref?.onKeyDown(props) ?? false
@@ -160,7 +165,7 @@ function updatePosition(wrapper: HTMLDivElement, props: SuggestionProps, char: s
   const rect = props.clientRect?.()
   if (!rect) return
 
-  if (char === '/' || char === '$' || char === '%') {
+  if (char === '/') {
     const editorEl = props.editor.view.dom
     const composer = editorEl.closest('[data-tone]') as HTMLElement | null
     const composerRect = composer?.getBoundingClientRect()

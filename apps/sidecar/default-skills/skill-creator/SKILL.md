@@ -26,7 +26,7 @@ description: "一句话描述 skill 的作用（模型靠这句话判断是否�
 when_to_use: "具体触发条件，越精确越好"
 allowed_tools: ["read_file", "bash"]  # 可选，限制 skill 执行时可用的工具
 version: "1.0"
-disable_model_invocation: false  # true 则只允许用户手动 /skill 触发
+disable_model_invocation: false  # true 则只允许用户在 / 面板选择 lume-skill://skill 触发
 argument_hint: "请告诉我要分析的文件路径"  # 可选，提示用户传什么参数
 ---
 

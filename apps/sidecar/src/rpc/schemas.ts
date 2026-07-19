@@ -1,3 +1,4 @@
+import { parseLumeCapabilityReference } from "@lume/agent-sdk";
 import { normalizeMcpTransport, type InspectMarketSourceRef, type PluginSourceRef, type SkillMarketSourceRef } from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "./validation";
 
@@ -45,9 +46,23 @@ const agentMessageAttachmentInputSchema = z.object({
   fileRef: rendererFileRefSchema.optional()
 });
 
+const agentUserMessagePartSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("text"),
+    text: z.string()
+  }).strict(),
+  z.object({
+    type: z.literal("capability_ref"),
+    occurrenceId: z.string().trim().min(1).max(128),
+    uri: z.string().min(1).max(2048)
+  }).strict()
+]);
+
 export const agentSendInputSchema = z.object({
   threadId: z.string().min(1),
   userMessage: z.string(),
+  messageParts: z.array(agentUserMessagePartSchema).optional(),
+  clientSubmissionId: z.string().uuid().optional(),
   modelRef: z.string().optional(),
   channelId: z.string().optional(),
   modelId: z.string().optional(),
@@ -72,6 +87,41 @@ export const agentSendInputSchema = z.object({
     parentSpanId: z.string().uuid().optional(),
     linkedTraceId: z.string().uuid().optional()
   }).strict().optional()
+}).superRefine((input, ctx) => {
+  if (!input.messageParts) return;
+  const visibleMessage = input.messageParts
+    .map((part) => part.type === "text" ? part.text : part.uri)
+    .join("");
+  if (visibleMessage !== input.userMessage) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["messageParts"],
+      message: "messageParts 必须逐字还原 userMessage"
+    });
+  }
+  const occurrenceIds = new Set<string>();
+  input.messageParts.forEach((part, index) => {
+    if (part.type !== "capability_ref") return;
+    if (occurrenceIds.has(part.occurrenceId)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["messageParts", index, "occurrenceId"],
+        message: "capability_ref occurrenceId 必须唯一"
+      });
+    }
+    occurrenceIds.add(part.occurrenceId);
+    try {
+      if (!parseLumeCapabilityReference(part.uri)) {
+        throw new Error("not a Lume capability reference");
+      }
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        path: ["messageParts", index, "uri"],
+        message: "capability_ref uri 必须是规范的 Lume 引用"
+      });
+    }
+  });
 });
 
 export const agentAppendInputSchema = agentSendInputSchema;
@@ -507,14 +557,32 @@ export const agentThreadIdInputSchema = z.object({
   threadId: idSchema
 });
 
+export const agentSubmissionReceiptInputSchema = z.object({
+  clientSubmissionId: idSchema
+});
+
 export const agentReorderMessageQueueInputSchema = z.object({
   threadId: idSchema,
-  orderedMessageIds: z.array(idSchema)
+  orderedMessageIds: z.array(idSchema),
+  expectedRevision: z.number().int().min(0),
+  queueOperationId: idSchema
 });
 
 export const agentQueuedMessageInputSchema = z.object({
   threadId: idSchema,
-  queuedMessageId: idSchema
+  queuedMessageId: idSchema,
+  expectedRevision: z.number().int().min(0),
+  queueOperationId: idSchema
+});
+
+export const agentUpdateQueuedMessageInputSchema = z.object({
+  threadId: idSchema,
+  queuedMessageId: idSchema,
+  expectedRevision: z.number().int().min(0),
+  queueOperationId: idSchema,
+  userMessage: z.string().max(1_000_000),
+  messageParts: z.array(agentUserMessagePartSchema).optional(),
+  messageAttachments: z.array(agentMessageAttachmentInputSchema).optional()
 });
 
 export const agentRecentThreadMessagesInputSchema = z.object({
@@ -905,6 +973,11 @@ export const listEditableSkillsInputSchema = z.object({
   cwd: z.string().optional()
 }).strict();
 
+export const listInvocableCapabilitiesInputSchema = z.object({
+  workspaceSlug: idSchema.optional(),
+  cwd: z.string().trim().min(1).optional()
+}).strict();
+
 export const editableSkillInputSchema = z.object({
   workspaceSlug: idSchema,
   skillSlug: idSchema,
@@ -1187,6 +1260,7 @@ export const searchWorkspaceFilesInputSchema = z.object({
 export const saveFilesToThreadInputSchema = z.object({
   workspaceSlug: optionalIdSchema,
   threadId: idSchema,
+  clientSubmissionId: idSchema.optional(),
   files: z.array(z.object({
     filename: z.string().min(1),
     data: z.string().optional(),

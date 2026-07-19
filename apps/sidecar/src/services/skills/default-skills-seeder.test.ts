@@ -58,12 +58,46 @@ describe("default-skills-seeder", () => {
     expect(readFileSync(join(targetDir, "alpha", "SKILL.md"), "utf-8")).toBe("User edited");
   });
 
+  test("extractDefaultSkillsArchive upgrades an older bundled skill by version", () => {
+    const archivePath = join(tempDir, "default-skills.tar");
+    const targetDir = join(tempDir, "default-skills");
+    mkdirSync(join(targetDir, "alpha"), { recursive: true });
+    writeFileSync(join(targetDir, "alpha", "SKILL.md"), skillContent("2.0", "Old instructions"));
+    writeFileSync(archivePath, createTar([
+      { name: "alpha/", type: "5" },
+      { name: "alpha/SKILL.md", content: skillContent("3.0", "New instructions") }
+    ]));
+
+    extractDefaultSkillsArchive(archivePath, targetDir);
+
+    expect(readFileSync(join(targetDir, "alpha", "SKILL.md"), "utf-8")).toContain("New instructions");
+  });
+
+  test("extractDefaultSkillsArchive preserves an equal or newer installed version", () => {
+    const archivePath = join(tempDir, "default-skills.tar");
+    const targetDir = join(tempDir, "default-skills");
+    mkdirSync(join(targetDir, "alpha"), { recursive: true });
+    writeFileSync(join(targetDir, "alpha", "SKILL.md"), skillContent("3.1", "Keep installed"));
+    writeFileSync(archivePath, createTar([
+      { name: "alpha/", type: "5" },
+      { name: "alpha/SKILL.md", content: skillContent("3.0", "Bundled instructions") }
+    ]));
+
+    extractDefaultSkillsArchive(archivePath, targetDir);
+
+    expect(readFileSync(join(targetDir, "alpha", "SKILL.md"), "utf-8")).toContain("Keep installed");
+  });
+
   test("safeTargetPath rejects tar path traversal entries", () => {
     expect(safeTargetPath(tempDir, "../outside.txt")).toBeNull();
     expect(safeTargetPath(tempDir, "alpha/../../outside.txt")).toBeNull();
     expect(safeTargetPath(tempDir, "alpha/SKILL.md")).toBe(join(tempDir, "alpha", "SKILL.md"));
   });
 });
+
+function skillContent(version: string, body: string): string {
+  return `---\nname: "Alpha"\nversion: "${version}"\n---\n\n${body}`;
+}
 
 function createTar(entries: Array<{ name: string; content?: string; type?: string }>): Buffer {
   const chunks: Buffer[] = [];

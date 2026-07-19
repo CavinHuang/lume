@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { toast } from 'sonner'
 import {
   Check,
   Code2,
@@ -23,7 +24,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
+import { activeTabIdAtom, agentWorkspacesAtom, capabilityDetailTargetAtom, currentWorkspaceIdAtom, tabsAtom, welcomeCapabilitySeedAtom, welcomePromptSeedAtom } from '@/atoms'
 import {
   deleteWorkspaceSkill,
   getEffectiveLumeConfig,
@@ -42,6 +43,7 @@ import {
   uninstallPlugin,
   updatePlugin,
   updatePluginsConfig,
+  writeClipboardText,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import type {
@@ -108,6 +110,9 @@ export function SkillsMarketView() {
   const setTabs = useSetAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
+  const setWelcomeCapabilitySeed = useSetAtom(welcomeCapabilitySeedAtom)
+  const capabilityDetailTarget = useAtomValue(capabilityDetailTargetAtom)
+  const setCapabilityDetailTarget = useSetAtom(capabilityDetailTargetAtom)
   const setBridgeWizardOpen = useSetAtom(bridgeWizardOpenAtom)
   const setBridgeWizardPlugin = useSetAtom(bridgeWizardPluginAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
@@ -346,7 +351,15 @@ export function SkillsMarketView() {
     const marketItem = pluginDetail?.item.kind === 'plugin' ? pluginDetail.item.plugin : selectedPlugin
     if (!marketItem) return
     const workspaceId = workspace?.id ?? null
-    setWelcomePromptSeed(buildPluginTryPrompt(marketItem.pluginId))
+    const prompt = buildPluginTryPrompt(marketItem.pluginId)
+    const uri = prompt.split(' ', 1)[0] ?? ''
+    setWelcomeCapabilitySeed({
+      uri,
+      kind: 'plugin',
+      label: marketItem.displayName || marketItem.pluginId,
+      ...(marketItem.marketplace?.icon?.url ? { iconUrl: marketItem.marketplace.icon.url } : {}),
+    })
+    setWelcomePromptSeed(prompt)
     setTabs((previous) => upsertWelcomeTab(previous, workspaceId))
     setActiveTabId('__welcome__')
   }
@@ -383,6 +396,25 @@ export function SkillsMarketView() {
       setPluginDetailLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!capabilityDetailTarget || loading || !workspaceSlug) return
+    setCapabilityDetailTarget(null)
+    if (capabilityDetailTarget.kind === 'skill') {
+      const slug = decodeURIComponent(capabilityDetailTarget.uri.slice('lume-skill://'.length))
+      const item = skills.find((candidate) => candidate.slug === slug)
+      if (item) void handleOpenSkillDetail(item)
+      else toast.info('此技能当前没有可打开的详情')
+      return
+    }
+    const encodedPluginId = capabilityDetailTarget.kind === 'plugin'
+      ? capabilityDetailTarget.uri.slice('lume-plugin://'.length)
+      : capabilityDetailTarget.uri.slice('lume-skill://'.length).split(':', 1)[0] ?? ''
+    const pluginId = decodeURIComponent(encodedPluginId)
+    const item = plugins.find((candidate) => candidate.pluginId === pluginId)
+    if (item) void handleOpenPluginDetail(item)
+    else toast.info('此插件当前没有可打开的详情')
+  }, [capabilityDetailTarget, loading, plugins, setCapabilityDetailTarget, skills, workspaceSlug])
 
   const handleAddSource = async (draft: {
     connectionMode: 'local' | 'remote'
@@ -1329,7 +1361,7 @@ function SkillFileContentPreview({ file }: { file: SkillFileTreeNode | null }) {
 
   const handleCopy = useCallback(async () => {
     if (!content) return
-    await navigator.clipboard.writeText(content)
+    await writeClipboardText(content)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1600)
   }, [content])

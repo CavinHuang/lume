@@ -23,6 +23,15 @@ describe("trusted Wiki runtime profile", () => {
     });
 
     expect(resolveTrustedWikiRuntimeProfile({
+      threadMeta: { workspaceId: "workspace-1" },
+      workspaceId: "workspace-1",
+      workspaceExists: true
+    })).toEqual({
+      scope: { kind: "workspace", workspaceId: "workspace-1" },
+      explicit: false
+    });
+
+    expect(resolveTrustedWikiRuntimeProfile({
       threadMeta: { workspaceId: "workspace-2" },
       workspaceId: "workspace-1",
       workspaceExists: true,

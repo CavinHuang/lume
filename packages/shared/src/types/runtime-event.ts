@@ -1,4 +1,4 @@
-import type { AgentMessageAttachmentInput, FileRef, FileReferenceBinding } from "./agent";
+import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding } from "./agent";
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
@@ -79,6 +79,8 @@ export interface UserMessageSubmittedRuntimeEvent extends RuntimeEventBase {
   versionGroupId?: string;
   versionIndex?: number;
   versionCount?: number;
+  messageParts?: AgentUserMessagePart[];
+  capabilityReferences?: AgentCapabilityReferenceView[];
 }
 
 export interface AssistantDeltaRuntimeEvent extends RuntimeEventBase {

@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'fs/promises'
 import { homedir } from 'os'
 import { isAbsolute, join, resolve } from 'path'
+import { createHash } from 'crypto'
 import type { SkillDefinition } from './types.js'
 import {
   parseBooleanFrontmatter,
@@ -150,6 +151,16 @@ export async function loadFilesystemSkills(
         if (!body) continue
         const displayName = pickFrontmatterString(parsed.frontmatter, 'name')
         const aliases = displayName && displayName !== skillName ? [displayName] : undefined
+        const allowedTools = pickFrontmatterList(
+          parsed.frontmatter,
+          'allowed_tools',
+          'allowedTools',
+          'allowed-tools',
+        )
+        const model = pickFrontmatterString(parsed.frontmatter, 'model')
+        const version = pickFrontmatterString(parsed.frontmatter, 'version')
+        const context = parsed.frontmatter.context === 'fork' ? 'fork' : 'inline'
+        const agent = pickFrontmatterString(parsed.frontmatter, 'agent')
 
         skills.push({
           name: skillName,
@@ -161,14 +172,9 @@ export async function loadFilesystemSkills(
           ...(aliases ? { aliases } : {}),
           whenToUse: pickFrontmatterString(parsed.frontmatter, 'when_to_use', 'whenToUse', 'when-to-use'),
           argumentHint: pickFrontmatterString(parsed.frontmatter, 'argument_hint', 'argumentHint', 'argument-hint'),
-          version: pickFrontmatterString(parsed.frontmatter, 'version'),
-          allowedTools: pickFrontmatterList(
-            parsed.frontmatter,
-            'allowed_tools',
-            'allowedTools',
-            'allowed-tools',
-          ),
-          model: pickFrontmatterString(parsed.frontmatter, 'model'),
+          version,
+          allowedTools,
+          model,
           userInvocable: pickFrontmatterBoolean(
             parsed.frontmatter,
             true,
@@ -183,8 +189,18 @@ export async function loadFilesystemSkills(
             'disableModelInvocation',
             'disable-model-invocation',
           ),
-          context: parsed.frontmatter.context === 'fork' ? 'fork' : 'inline',
-          agent: pickFrontmatterString(parsed.frontmatter, 'agent'),
+          context,
+          agent,
+          invocationDescriptor: {
+            promptTemplate: body,
+            argumentToken: '${ARG}',
+            ...(allowedTools.length > 0 ? { allowedTools } : {}),
+            ...(model ? { model } : {}),
+            context,
+            ...(agent ? { agent } : {}),
+            ...(version ? { version } : {}),
+            fingerprint: createHash('sha256').update(raw).digest('hex'),
+          },
           getPrompt: async (args) => [{ type: 'text', text: body.replaceAll('${ARG}', args) }],
         })
       } catch {

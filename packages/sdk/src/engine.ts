@@ -1349,6 +1349,7 @@ export class QueryEngine {
       toolConfig: this.config.toolConfig,
       permissionMode: this.config.permissionMode,
       hookRegistry: this.hookRegistry,
+      skillRegistry: this.config.skillRegistry,
       emitEvent: (event) => {
         events.push(event)
       },
@@ -1696,7 +1697,7 @@ export class QueryEngine {
       (sum, tool) => sum + Math.ceil((tool.description.length + tool.name.length) / 4),
       0,
     )
-    const skills = getUserInvocableSkills()
+    const skills = this.config.skillRegistry?.getUserInvocable() ?? getUserInvocableSkills()
     const skillFrontmatter = skills.map((skill) => ({
       name: skill.name,
       source: 'runtime',

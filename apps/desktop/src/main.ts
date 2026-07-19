@@ -1024,6 +1024,18 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'write_clipboard_text':
       clipboard.writeText(payload.text ?? '')
       return null
+    case 'write_clipboard_image': {
+      const resolved = payload.guardedRef
+        ? await sidecarHost.call('agent:resolve-guarded-file-ref', { guardedRef: payload.guardedRef }) as { path: string }
+        : payload.ref
+          ? await sidecarHost.call('agent:resolve-file-ref', { ref: payload.ref }) as { path: string }
+          : { path: resolveExistingPath(payload.path) }
+      ensureFile(resolved.path, '图片文件不存在')
+      const image = nativeImage.createFromPath(resolved.path)
+      if (image.isEmpty()) throw new Error('无法读取图片内容')
+      clipboard.writeImage(image)
+      return null
+    }
     case 'write_web_log':
       getLoggingService().emit({
         level: payload.level ?? 'info',

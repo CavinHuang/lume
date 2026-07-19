@@ -4,32 +4,11 @@ import { AGENT_IPC_CHANNELS } from '@lume/shared'
 mock.restore()
 
 const sidecarCallMock = mock(async (channel: string, _payload?: Record<string, unknown>) => {
-  if (channel === AGENT_IPC_CHANNELS.GET_SKILLS) {
-    return [
-      {
-        slug: 'workspace-review',
-        name: 'Workspace Review',
-        description: 'Review workspace code',
-      },
-    ]
-  }
-  if (channel === AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS) {
-    return [
-      {
-        slug: 'global-writer',
-        name: 'Global Writer',
-        description: 'Write reusable drafts',
-        whenToUse: 'When writing from any workspace',
-        storageScope: 'user',
-        version: '1.2.3',
-      },
-      {
-        slug: 'workspace-review',
-        name: 'Workspace Review',
-        description: 'Review workspace code',
-        storageScope: 'workspace',
-      },
-    ]
+  if (channel === AGENT_IPC_CHANNELS.LIST_INVOCABLE_CAPABILITIES) {
+    return { capabilities: [
+      { uri: 'lume-skill://global-writer', kind: 'skill', displayName: 'Global Writer', description: 'Write reusable drafts', source: 'filesystem', scope: 'user', version: '1.2.3', callable: true },
+      { uri: 'lume-plugin://review', kind: 'plugin', displayName: 'Review Plugin', source: 'plugin', scope: 'global-plugin', callable: true },
+    ], diagnostics: [] }
   }
   if (channel === AGENT_IPC_CHANNELS.GET_THREAD_PATH) {
     return '/tmp/thread-1'
@@ -44,8 +23,6 @@ const sidecarCallMock = mock(async (channel: string, _payload?: Record<string, u
   sidecarCall: sidecarCallMock,
   getMcpConfig: mock(async () => ({ servers: {} })),
   getMcpStatus: mock(async () => ({ servers: {} })),
-  listEditableSkills: async (workspaceSlug: string) =>
-    sidecarCallMock(AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS, { workspaceSlug }),
 }
 
 function getDesktopApiMocks() {
@@ -60,7 +37,6 @@ mock.module('@/lib/desktop-api', () => ({
   getMcpConfig: (...args: unknown[]) => getDesktopApiMocks().getMcpConfig?.(...args),
   getMcpStatus: (...args: unknown[]) => getDesktopApiMocks().getMcpStatus?.(...args),
   listSkillVersions: (...args: unknown[]) => getDesktopApiMocks().listSkillVersions?.(...args),
-  listEditableSkills: (...args: unknown[]) => getDesktopApiMocks().listEditableSkills?.(...args),
   restoreSkillVersion: (...args: unknown[]) => getDesktopApiMocks().restoreSkillVersion?.(...args),
   saveWorkspaceSkill: (...args: unknown[]) => getDesktopApiMocks().saveWorkspaceSkill?.(...args),
   sidecarCall: (...args: Parameters<typeof sidecarCallMock>) => getDesktopApiMocks().sidecarCall?.(...args),
@@ -74,42 +50,28 @@ describe('fetchSuggestions', () => {
       sidecarCall: sidecarCallMock,
       getMcpConfig: mock(async () => ({ servers: {} })),
       getMcpStatus: mock(async () => ({ servers: {} })),
-      listEditableSkills: async (workspaceSlug: string) =>
-        sidecarCallMock(AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS, { workspaceSlug }),
     }
     sidecarCallMock.mockClear()
   })
 
-  test('uses editable skills for dollar skill suggestions', async () => {
+  test('does not expose the removed dollar trigger', async () => {
     const items = await fetchSuggestions('$', 'writer', 'thread-1', 'workspace-1')
-
-    expect(sidecarCallMock).toHaveBeenCalledWith(
-      AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
-      { workspaceSlug: 'workspace-1', cwd: '/tmp/thread-1' },
-    )
-    expect(items).toEqual([
-      expect.objectContaining({
-        id: 'global-writer',
-        label: 'global-writer',
-        title: '$global-writer',
-        subtitle: 'Write reusable drafts',
-        meta: '用户全局 · 1.2.3',
-      }),
-    ])
+    expect(items).toEqual([])
+    expect(sidecarCallMock).not.toHaveBeenCalled()
   })
 
-  test('uses editable skills for slash manual skill suggestions', async () => {
-    const items = await fetchSuggestions('/', 'any workspace', 'thread-1', 'workspace-1')
+  test('uses the authoritative invocable catalog for slash suggestions', async () => {
+    const items = await fetchSuggestions('/', 'writer', 'thread-1', 'workspace-1')
 
     expect(sidecarCallMock).toHaveBeenCalledWith(
-      AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS,
+      AGENT_IPC_CHANNELS.LIST_INVOCABLE_CAPABILITIES,
       { workspaceSlug: 'workspace-1', cwd: '/tmp/thread-1' },
     )
     expect(items).toEqual([
       expect.objectContaining({
-        id: 'global-writer',
-        label: 'global-writer',
-        title: '/global-writer',
+        id: 'lume-skill://global-writer',
+        label: 'Global Writer',
+        uri: 'lume-skill://global-writer',
         subtitle: 'Write reusable drafts',
         meta: '用户全局 · 1.2.3',
       }),

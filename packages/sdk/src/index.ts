@@ -27,6 +27,17 @@
 
 export { Agent, createAgent, query } from './agent.js'
 export { QueryController } from './query-controller.js'
+export {
+  LumeCapabilityReferenceError,
+  formatLumePluginReference,
+  formatLumeSkillReference,
+  normalizeLumeCapabilityReferences,
+  parseLumeCapabilityReference,
+} from './capability-references.js'
+export type {
+  LumeCapabilityReference,
+  LumeCapabilityReferenceErrorCode,
+} from './capability-references.js'
 
 // --------------------------------------------------------------------------
 // Tool Helper (Zod-based tool creation, compatible with official SDK)
@@ -254,6 +265,7 @@ export {
 // --------------------------------------------------------------------------
 
 export {
+  SkillRegistry,
   registerSkill,
   getSkill,
   getAllSkills,
@@ -273,6 +285,7 @@ export {
 export type {
   SkillDefinition,
   SkillContentBlock,
+  SkillInvocationDescriptor,
   SkillResult,
   ApplySkillImprovementResult,
   SkillImprovementMessage,

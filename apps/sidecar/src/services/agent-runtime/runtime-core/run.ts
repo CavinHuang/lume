@@ -12,10 +12,6 @@ import {
   LSPTool,
   NotebookEditTool,
   registerAgents,
-  registerSkill,
-  unregisterSkill,
-  getSkill,
-  hasSkill,
   type SDKMessage,
   type Agent,
   type AgentDefinition,
@@ -1548,21 +1544,6 @@ export async function createRuntimeCoreSession(
     sandbox: input.processSandbox,
   });
 
-  // Register plugin skills (resolver already namespaced skill.name as `${pluginId}:${original}`).
-  const registeredPluginSkillNames = new Set<string>();
-  for (const skill of runtimePluginAssembly.skills) {
-    if (hasSkill(skill.name)) {
-      log.warn(`[plugin] skill "${skill.name}" already registered, skipping duplicate`);
-      continue;
-    }
-    registerSkill(skill);
-    registeredPluginSkillNames.add(skill.name);
-  }
-  log.info("Plugin skill registration complete", {
-    sessionId: input.lumeSessionId,
-    totalRegistered: registeredPluginSkillNames.size,
-    skills: Array.from(registeredPluginSkillNames),
-  });
   // Phase MCP Merge-A/B: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
   // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
   // Merge-B: §8.1 start gate (authorizeConnect → checkSensitiveCapability, mcpServer key) +
@@ -1778,6 +1759,7 @@ export async function createRuntimeCoreSession(
     includePartialMessages: true,
     skillsDirectories: resolveSkillDirectories(input.cwd, input.workspaceSlug),
     shouldLoadFilesystemSkill: createRuntimeSkillFilter(input.workspaceSlug),
+    skills: runtimePluginAssembly.skills,
     resolveRuntimeTools: (tools) => ToolRuntime.resolveDynamicTools({
       tools,
       requiredTools: boundSubagentReportTool ? [boundSubagentReportTool] : undefined,
@@ -1857,9 +1839,6 @@ export async function createRuntimeCoreSession(
       }
       clearRuntimeToolDescriptors(input.lumeSessionId);
       clearRuntimeFileAccessLedger(input.lumeSessionId);
-      for (const name of registeredPluginSkillNames) {
-        unregisterSkill(name);
-      }
     }
   };
 

@@ -1,4 +1,4 @@
-import type { AgentMessageAttachmentInput, FileReferenceBinding, ImPeerKind, ImProvider, LumeRuntimeEvent } from '@lume/shared'
+import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, ImPeerKind, ImProvider, LumeRuntimeEvent } from '@lume/shared'
 
 export interface RuntimeToolCallView {
   id: string
@@ -77,6 +77,8 @@ export interface RuntimeUserMessageView {
   text: string
   createdAt: string
   attachments?: AgentMessageAttachmentInput[]
+  messageParts?: AgentUserMessagePart[]
+  capabilityReferences?: AgentCapabilityReferenceView[]
   messageId?: string
   versionGroupId?: string
   versionIndex?: number

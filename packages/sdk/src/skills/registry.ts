@@ -7,6 +7,74 @@
 
 import type { SkillDefinition } from './types.js'
 
+/** Agent/session-owned skill lookup. It never falls back to another owner. */
+export class SkillRegistry {
+  private readonly skills = new Map<string, SkillDefinition>()
+  private readonly normalizedNames = new Map<string, string>()
+  private readonly aliases = new Map<string, string>()
+
+  constructor(definitions: SkillDefinition[] = []) {
+    for (const definition of definitions) this.register(definition)
+  }
+
+  register(definition: SkillDefinition): void {
+    const normalizedName = normalizeSkillKey(definition.name)
+    const previousName = this.normalizedNames.get(normalizedName) ?? definition.name
+    const previous = this.skills.get(previousName)
+    if (previous) {
+      this.unregisterAliases(previous)
+      if (previousName !== definition.name) this.skills.delete(previousName)
+    }
+    this.skills.set(definition.name, definition)
+    this.normalizedNames.set(normalizedName, definition.name)
+    for (const alias of definition.aliases ?? []) {
+      this.aliases.set(normalizeSkillKey(alias), definition.name)
+    }
+  }
+
+  get(name: string): SkillDefinition | undefined {
+    const direct = this.skills.get(name)
+    if (direct) return direct
+    const normalized = normalizeSkillKey(name)
+    const canonical = this.normalizedNames.get(normalized)
+    if (canonical) return this.skills.get(canonical)
+    const alias = this.aliases.get(normalized)
+    if (alias) return this.skills.get(alias)
+    const unprefixed = stripWorkspacePrefix(name)
+    return unprefixed === name ? undefined : this.get(unprefixed)
+  }
+
+  getAll(): SkillDefinition[] {
+    return Array.from(this.skills.values())
+  }
+
+  getUserInvocable(): SkillDefinition[] {
+    return this.getAll().filter((skill) => skill.userInvocable !== false && (!skill.isEnabled || skill.isEnabled()))
+  }
+
+  getModelInvocable(): SkillDefinition[] {
+    return this.getUserInvocable().filter((skill) => skill.disableModelInvocation !== true)
+  }
+
+  unregister(name: string): boolean {
+    const skill = this.get(name)
+    if (!skill) return false
+    this.normalizedNames.delete(normalizeSkillKey(skill.name))
+    this.unregisterAliases(skill)
+    return this.skills.delete(skill.name)
+  }
+
+  clear(): void {
+    this.skills.clear()
+    this.normalizedNames.clear()
+    this.aliases.clear()
+  }
+
+  private unregisterAliases(skill: SkillDefinition): void {
+    for (const alias of skill.aliases ?? []) this.aliases.delete(normalizeSkillKey(alias))
+  }
+}
+
 /** Internal skill store */
 const skills: Map<string, SkillDefinition> = new Map()
 

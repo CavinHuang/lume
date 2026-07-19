@@ -565,6 +565,7 @@ describe("agent-service", () => {
     await sendAgentMessage({
       threadId: thread.id,
       userMessage: "/compact",
+      messageMetadata: { hiddenFromChat: true, manualCommand: "compact" },
       channelId: "channel-test",
       modelId: "provider/model-test"
     }, {
@@ -674,6 +675,28 @@ describe("agent-service", () => {
       .toContain("用户发送的继续指令：继续");
     expect((runAgentRuntimeCalls.at(-1) as { runtime?: { visibleUserMessage?: string } })?.runtime?.visibleUserMessage)
       .toBe("继续");
+  });
+
+  test("手写 /compact 未携带结构化动作标记时按普通文本发送", async () => {
+    const { createAgentThread, getAgentThreadMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("literal compact text", "channel-test");
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "/compact",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+    expect(getAgentThreadMessages(thread.id).some((message) => (
+      message.role === "user" && message.content === "/compact"
+    ))).toBe(true);
   });
 
   test("sendAgentMessage 在进程重启后应把裸继续扩展为未完成 run 的恢复指令", async () => {
@@ -874,13 +897,14 @@ describe("agent-service", () => {
     ]);
   });
 
-  test("队列 API 应支持列表、重排和删除排队消息", async () => {
+  test("队列 API 应支持列表、重排、CAS 编辑和删除排队消息", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const {
       appendAgentMessage,
       listAgentMessageQueue,
       removeQueuedAgentMessage,
       reorderAgentMessageQueue,
+      updateQueuedAgentMessage,
       waitForAgentRuntimeKernelIdleForTest
     } = await import("./agent-service");
     const thread = createAgentThread("queue operations", "channel-test");
@@ -916,32 +940,58 @@ describe("agent-service", () => {
       modelId: "provider/model-test"
     }, createEmit());
 
-    expect(listAgentMessageQueue(thread.id).queuedMessages.map((item) => item.text)).toEqual(["second", "third"]);
+    const beforeReorder = listAgentMessageQueue(thread.id);
+    expect(beforeReorder.queuedMessages.map((item) => item.text)).toEqual(["second", "third"]);
 
     const reordered = reorderAgentMessageQueue({
       threadId: thread.id,
       orderedMessageIds: [
         third.queuedMessage?.id ?? "",
         second.queuedMessage?.id ?? ""
-      ]
+      ],
+      expectedRevision: beforeReorder.revision,
+      queueOperationId: "reorder-test"
     });
 
     expect(reordered.snapshot.queuedMessages.map((item) => item.text)).toEqual(["third", "second"]);
 
+    const staleUpdate = updateQueuedAgentMessage({
+      threadId: thread.id,
+      queuedMessageId: second.queuedMessage?.id ?? "",
+      expectedRevision: beforeReorder.revision,
+      queueOperationId: "update-stale-test",
+      userMessage: "must not apply",
+      messageParts: [{ type: "text", text: "must not apply" }]
+    });
+    expect(staleUpdate.ok).toBe(false);
+
+    const updated = updateQueuedAgentMessage({
+      threadId: thread.id,
+      queuedMessageId: second.queuedMessage?.id ?? "",
+      expectedRevision: staleUpdate.snapshot.revision,
+      queueOperationId: "update-test",
+      userMessage: "second edited",
+      messageParts: [{ type: "text", text: "second edited" }]
+    });
+    expect(updated.ok).toBe(true);
+    expect(updated.snapshot.queuedMessages.at(-1)?.text).toBe("second edited");
+
     const removed = removeQueuedAgentMessage({
       threadId: thread.id,
-      queuedMessageId: third.queuedMessage?.id ?? ""
+      queuedMessageId: third.queuedMessage?.id ?? "",
+      expectedRevision: updated.snapshot.revision,
+      queueOperationId: "remove-test"
     });
 
     expect(removed.removedMessage?.text).toBe("third");
-    expect(removed.snapshot.queuedMessages.map((item) => item.text)).toEqual(["second"]);
+    expect(removed.snapshot.queuedMessages.map((item) => item.text)).toEqual(["second edited"]);
 
     await waitForQueuedRunRelease("hold:first");
     await waitForAgentRuntimeKernelIdleForTest();
 
     expect(appended.filter((event) => event.message.role === "user").map((event) => event.message.content)).toEqual([
       "hold:first",
-      "second"
+      "second edited"
     ]);
   });
 
@@ -986,9 +1036,12 @@ describe("agent-service", () => {
       modelId: "provider/model-test"
     }, createEmit());
 
+    const beforePromote = listAgentMessageQueue(thread.id);
     const promoted = promoteQueuedAgentMessageToGuidance({
       threadId: thread.id,
-      queuedMessageId: guidance.queuedMessage?.id ?? ""
+      queuedMessageId: guidance.queuedMessage?.id ?? "",
+      expectedRevision: beforePromote.revision,
+      queueOperationId: "promote-test"
     });
 
     expect(promoted.promotedGuidance?.text).toBe("guidance");
@@ -1000,6 +1053,7 @@ describe("agent-service", () => {
 
     expect(listAgentMessageQueue(thread.id)).toEqual({
       threadId: thread.id,
+      revision: expect.any(Number),
       queuedMessages: [],
       pendingGuidance: []
     });

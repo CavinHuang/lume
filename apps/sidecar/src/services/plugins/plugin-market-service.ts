@@ -933,7 +933,7 @@ export class PluginMarketService {
       ...installMetadata,
       capabilities: summarizeCapabilities(plugin),
       permissions: summarizePermissions(plugin.permissions),
-      ...(plugin.marketplace ? { marketplace: summarizeMarketplace(plugin.root, plugin.marketplace) } : {}),
+      ...(plugin.marketplace ? { marketplace: summarizePluginMarketplace(plugin.root, plugin.marketplace) } : {}),
       diagnostics: plugin.diagnostics as AgentPluginDiagnostic[],
     };
   }
@@ -999,7 +999,7 @@ function truncateReadme(markdown: string, path: string): PluginReadmePreview {
   };
 }
 
-function summarizeMarketplace(
+export function summarizePluginMarketplace(
   pluginRoot: string,
   marketplace: NonNullable<NormalizedPlugin["marketplace"]>,
 ): PluginMarketplaceMetadata {

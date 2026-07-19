@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 /**
  * ModelPicker - 线程模型覆盖选择器
  *
@@ -215,12 +216,12 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
         {activeChannel && (
           <ChannelProviderIcon provider={activeChannel.provider} size={14} />
         )}
-        <span className="max-w-[160px] truncate">{summary.label}</span>
+        <span className="lume-composer-control-label max-w-[160px] truncate">{summary.label}</span>
         <ChevronDown size={12} className={composerControlChevronClassName} />
       </Button>
 
       {summary.hasLoadedChannels && summary.isUnavailable && (
-        <span className="inline-flex h-6 items-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-warning)_28%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 text-[10.5px] font-medium text-[var(--lume-warning)]">
+        <span className="lume-composer-control-status inline-flex h-6 items-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-warning)_28%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 text-[10.5px] font-medium text-[var(--lume-warning)]">
           当前模型不可用
         </span>
       )}
@@ -228,11 +229,11 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
       {/* Dropdown */}
       {open && (
         <div
-          className={cn(composerControlMenuClassName, 'z-[120] max-h-[360px] min-w-[260px] overflow-y-auto')}
+          className={cn(composerControlMenuClassName, 'z-[120] min-w-[260px] overflow-hidden')}
         >
           {/* Search */}
-          <div className="border-b border-[var(--border)] p-1.5">
-            <div className="flex items-center gap-1.5 rounded-lg bg-[var(--surface-2)] px-2 py-1">
+          <div className="border-b border-[var(--border)] p-1">
+            <div className="flex h-8 items-center gap-1.5 rounded-md bg-[var(--surface-2)] px-2">
               <Search size={13} className="text-muted-foreground/50 shrink-0" />
               <Input
                 ref={searchInputRef}
@@ -240,30 +241,32 @@ export function ModelPicker({ threadId }: ModelPickerProps) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索模型..."
-                className="flex-1 border-0 bg-transparent px-0 text-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/50 focus-visible:ring-0"
+                className="h-7 flex-1 border-0 bg-transparent px-0 py-0 text-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/50 focus-visible:ring-0"
               />
             </div>
           </div>
 
-          {filteredGroups.length > 0 ? (
-            <ModelOptionList
-              groups={filteredGroups}
-              onSelect={handleSelect}
-              renderBadge={(option) => (
-                isDefaultModelOption(option, defaultStrategy)
-                  ? (
-                      <span className="shrink-0 rounded-full border border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--brand)]">
-                        默认
-                      </span>
-                    )
-                  : null
-              )}
-            />
-          ) : (
-            <div className="py-6 text-center text-xs text-muted-foreground/50">
-              没有匹配的模型
-            </div>
-          )}
+          <ScrollArea className="max-h-[304px]">
+            {filteredGroups.length > 0 ? (
+              <ModelOptionList
+                groups={filteredGroups}
+                onSelect={handleSelect}
+                renderBadge={(option) => (
+                  isDefaultModelOption(option, defaultStrategy)
+                    ? (
+                        <span className="shrink-0 rounded-full border border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--brand)]">
+                          默认
+                        </span>
+                      )
+                    : null
+                )}
+              />
+            ) : (
+              <div className="py-6 text-center text-xs text-muted-foreground/50">
+                没有匹配的模型
+              </div>
+            )}
+          </ScrollArea>
 
           {canRestoreDefault && (
             <div className="border-t border-border/50 p-1">

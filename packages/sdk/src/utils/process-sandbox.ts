@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
@@ -121,12 +121,80 @@ export function spawnWithProcessSandbox(
     commandLine: buildCommandLine(executable, args),
   }
 
+  if (process.platform === 'win32') pruneMissingMxcDaclRecoveryEntries()
+
   return spawnSandboxFromConfig(
     config,
     { usePty: false },
     resolve(options.cwd),
     env,
   )
+}
+
+/**
+ * MXC keeps a crash-recovery journal before mutating Windows DACLs. If a
+ * sandbox-owned temporary directory is deleted after the owner exits, older
+ * MXC builds keep retrying that now-impossible restore and fail every later
+ * spawn with code 126. Remove only dead-owner entries whose every target is
+ * already absent; entries for live owners or existing targets remain intact.
+ */
+export function pruneMissingMxcDaclRecoveryEntries(stateDir = resolveMxcDaclStateDir()): number {
+  if (!stateDir || !existsSync(stateDir)) return 0
+  let removed = 0
+  try {
+    for (const entry of readdirSync(stateDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !/^pid-\d+-[a-f0-9]+\.json$/i.test(entry.name)) continue
+      const filePath = join(stateDir, entry.name)
+      try {
+        const state = JSON.parse(readFileSync(filePath, 'utf8')) as {
+          pid?: unknown
+          image_name?: unknown
+          applied?: Array<{ canonical_path?: unknown }>
+        }
+        if (
+          typeof state.pid !== 'number'
+          || state.image_name !== 'wxc-exec.exe'
+          || isProcessAlive(state.pid)
+          || !Array.isArray(state.applied)
+          || state.applied.length === 0
+          || !state.applied.every((item) => typeof item.canonical_path === 'string' && isDefinitelyMissing(item.canonical_path))
+        ) continue
+        rmSync(filePath)
+        removed += 1
+      } catch {
+        // MXC owns the schema; preserve malformed or concurrently changing files.
+      }
+    }
+  } catch {
+    return removed
+  }
+  return removed
+}
+
+function isDefinitelyMissing(path: string): boolean {
+  try {
+    lstatSync(path)
+    return false
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'ENOENT'
+  }
+}
+
+function resolveMxcDaclStateDir(): string | undefined {
+  const explicit = process.env.MXC_DACL_STATE_DIR?.trim()
+  if (explicit) return resolve(explicit)
+  const localAppData = process.env.LOCALAPPDATA?.trim()
+  return localAppData ? join(localAppData, 'Microsoft', 'MXC', 'dacl-restore') : undefined
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return !(error instanceof Error && 'code' in error && error.code === 'ESRCH')
+  }
 }
 
 export async function probeProcessSandbox(

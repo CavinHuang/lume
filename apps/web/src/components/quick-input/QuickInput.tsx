@@ -21,7 +21,7 @@ import type { DesktopContextTarget } from '@lume/shared'
 
 /**
  * 快速输入窗口主体：管理 threadId 与 workspace，装配全局监听器，
- * Esc 隐藏窗口，「新建对话」与 workspace 切换都会重建会话。
+ * 「新建对话」与 workspace 切换都会重建会话；窗口通过 Alt+L 或窗口按钮关闭。
  */
 export function QuickInput() {
   useGlobalAgentListeners()
@@ -101,17 +101,6 @@ export function QuickInput() {
     setDesktopContextTarget(undefined)
     setMessageMetadata(undefined)
   }
-
-  // Esc 隐藏窗口
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        invoke('quick_input_hide').catch(() => {})
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [])
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden rounded-[10px] bg-[var(--lume-bg-app)] text-[var(--lume-text-primary)]">

@@ -1,25 +1,25 @@
 import { describe, expect, test } from 'bun:test'
-import { buildSlashSuggestionItems, getCommonSlashSuggestionItems, normalizeSlashSuggestionItems } from './slash-command-state'
+import { buildSlashSuggestionItems, getCommonSlashSuggestionItems } from './slash-command-state'
 
 describe('buildSlashSuggestionItems', () => {
   test('returns common slash commands ahead of workspace skills', () => {
     const items = buildSlashSuggestionItems([
-      { slug: 'using-superpowers', name: 'Using Superpowers', description: 'Bootstrap the workflow' },
-      { slug: 'debug', name: 'Debug', description: 'Investigate runtime failures' },
+      { uri: 'lume-skill://using-superpowers', kind: 'skill', displayName: 'Using Superpowers', description: 'Bootstrap the workflow', source: 'filesystem', scope: 'workspace', callable: true },
+      { uri: 'lume-skill://debug', kind: 'skill', displayName: 'Debug', description: 'Investigate runtime failures', source: 'filesystem', scope: 'workspace', callable: true },
     ], '')
 
     expect(items.slice(0, 2).map((item) => item.title)).toEqual(['/clear', '/compact'])
-    expect(items.some((item) => item.title === '/using-superpowers' && item.section === 'skill')).toBe(true)
+    expect(items.some((item) => item.uri === 'lume-skill://using-superpowers' && item.section === 'skill')).toBe(true)
   })
 
   test('filters both quick actions and skills with the same query', () => {
     const items = buildSlashSuggestionItems([
-      { slug: 'debug', name: 'Debug', description: 'Investigate runtime failures' },
-      { slug: 'review', name: 'Review', description: 'Review recent changes' },
+      { uri: 'lume-skill://debug', kind: 'skill', displayName: 'Debug', description: 'Investigate runtime failures', source: 'filesystem', scope: 'workspace', callable: true },
+      { uri: 'lume-plugin://review', kind: 'plugin', displayName: 'Review', description: 'Review recent changes', source: 'plugin', scope: 'global-plugin', callable: true },
     ], 'deb')
 
     expect(items).toEqual([
-      expect.objectContaining({ title: '/debug', section: 'skill' }),
+      expect.objectContaining({ uri: 'lume-skill://debug', section: 'skill' }),
     ])
   })
 
@@ -31,18 +31,30 @@ describe('buildSlashSuggestionItems', () => {
     ])
   })
 
-  test('normalizes legacy skill-only mention items for slash rendering', () => {
-    const items = normalizeSlashSuggestionItems([
-      { id: 'pdf', label: 'pdf', type: 'skill' },
-    ])
+  test('keeps unavailable capabilities visible with a reason', () => {
+    const items = buildSlashSuggestionItems([
+      { uri: 'lume-plugin://review', kind: 'plugin', displayName: 'Review', source: 'plugin', scope: 'global-plugin', callable: false, unavailableReason: 'disabled' },
+    ], 'review')
+    expect(items).toEqual([expect.objectContaining({ disabled: true, disabledReason: '未启用', meta: '未启用' })])
+  })
 
-    expect(items[0]).toEqual(expect.objectContaining({ title: '/clear', section: 'capability' }))
-    expect(items).toContainEqual(expect.objectContaining({
-      id: 'pdf',
-      title: '/pdf',
-      section: 'skill',
-      subtitle: '工作区技能',
+  test('reserves panel capacity for plugins when skills exceed the section limit', () => {
+    const skills = Array.from({ length: 14 }, (_, index) => ({
+      uri: `lume-skill://skill-${index}`,
+      kind: 'skill' as const,
+      displayName: `Skill ${index}`,
+      source: 'filesystem',
+      scope: 'workspace' as const,
+      callable: true,
     }))
+    const items = buildSlashSuggestionItems([
+      ...skills,
+      { uri: 'lume-plugin://demo', kind: 'plugin', displayName: 'Demo Plugin', source: 'plugin', scope: 'global-plugin', callable: true },
+      { uri: 'lume-skill://demo:review', kind: 'plugin-skill', displayName: 'Review', source: 'plugin', scope: 'global-plugin', callable: true, pluginId: 'demo' },
+    ], '')
+
+    expect(items.some((item) => item.uri === 'lume-plugin://demo' && item.section === 'plugin')).toBe(true)
+    expect(items.some((item) => item.kind === 'plugin-skill' && item.section === 'plugin')).toBe(true)
   })
 })
 

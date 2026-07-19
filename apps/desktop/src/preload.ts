@@ -11,6 +11,7 @@ const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'open_external',
   'read_clipboard_text',
   'write_clipboard_text',
+  'write_clipboard_image',
   'write_web_log',
   'write_web_log_batch',
   'desktop_list_log_files',

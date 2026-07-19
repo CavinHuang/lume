@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { XMarkdown } from '@ant-design/x-markdown'
-import { Copy, ExternalLink, FolderSearch, RotateCw } from 'lucide-react'
+import { Copy, ExternalLink, FolderSearch, PanelLeftClose, PanelLeftOpen, RotateCw } from 'lucide-react'
 import type { FileEntry, FileRef, GuardedFileRef } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
@@ -34,6 +34,8 @@ export function RightPanelFilePreview({
   onOpenFile,
   onMissing,
   onPreviewScopeChange,
+  treeCollapsed = false,
+  onToggleTree,
 }: {
   fileRef: FileRef | null
   guardedRef?: GuardedFileRef
@@ -42,6 +44,8 @@ export function RightPanelFilePreview({
   onOpenFile: (ref: RightPanelFileTarget) => void
   onMissing?: (ref: FileRef) => void
   onPreviewScopeChange?: (token: string | null) => void
+  treeCollapsed?: boolean
+  onToggleTree?: () => void
 }) {
   const requestId = useRef(0)
   const [payload, setPayload] = useState<PreviewPayload | null>(null)
@@ -137,7 +141,18 @@ export function RightPanelFilePreview({
   }, [fileRef, guardedRef, kind, lineSelection, onMissing, onPreviewScopeChange, refreshKey])
 
   if (!fileRef) {
-    return <div className="flex h-full items-center justify-center text-[13px] text-foreground/45">选择文件以预览</div>
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {onToggleTree && (
+          <div className="flex h-10 shrink-0 items-center border-b border-border/60 px-2.5">
+            <Button variant="ghost" size="icon-sm" onClick={onToggleTree} title={treeCollapsed ? '展开文件树' : '收起文件树'}>
+              {treeCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+            </Button>
+          </div>
+        )}
+        <div className="flex min-h-0 flex-1 items-center justify-center text-[13px] text-foreground/45">选择文件以预览</div>
+      </div>
+    )
   }
   const desktop = isDesktopRuntime()
   const title = (
@@ -149,6 +164,11 @@ export function RightPanelFilePreview({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-2.5">
+        {onToggleTree && (
+          <Button variant="ghost" size="icon-sm" onClick={onToggleTree} title={treeCollapsed ? '展开文件树' : '收起文件树'}>
+            {treeCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+          </Button>
+        )}
         <FileTypeIcon filename={fileRef.relativePath} size={15} />
         {guardedRef ? (
           <FileLinkContextMenu context={{ source: 'thread', relPath: fileRef.relativePath, guardedRef }} inline>
@@ -178,7 +198,15 @@ export function RightPanelFilePreview({
             {metadata && <span className="mt-2 block text-[11px]">{metadata.size === undefined ? '大小未知' : formatBytes(metadata.size)} · {metadata.modifiedAt ? new Date(metadata.modifiedAt).toLocaleString() : '修改时间未知'}</span>}
           </PreviewStatus>
         ) : kind === 'image' ? (
-          imageScope ? <img src={imageScope.url} alt={basename(fileRef.relativePath)} onError={() => setError('图片预览加载失败')} className={imageOriginalSize ? 'm-auto max-w-none' : 'm-auto max-h-full max-w-full object-contain'} /> : null
+          imageScope ? (
+            <FileLinkContextMenu
+              context={{ source: 'thread', relPath: fileRef.relativePath, fileRef, guardedRef }}
+              isImage
+              directTrigger
+            >
+              <img src={imageScope.url} alt={basename(fileRef.relativePath)} onError={() => setError('图片预览加载失败')} className={imageOriginalSize ? 'm-auto max-w-none' : 'm-auto max-h-full max-w-full object-contain'} />
+            </FileLinkContextMenu>
+          ) : null
         ) : payload ? (
           <div className={kind === 'text' || sourceMode ? 'h-full' : 'h-full p-4'}>
             {payload.truncated && <p className={kind === 'text' || sourceMode ? 'm-0 px-3 py-2 text-[12px] text-amber-600' : 'mb-3 text-[12px] text-amber-600'}>文件超过 512 KB，仅显示前 512 KB。</p>}

@@ -119,7 +119,10 @@ function migrateLegacyThreadRoot(thread: AgentThreadMeta, workspace?: AgentWorks
   const fileContextId = getThreadFileContextId(thread);
   const target = join(getAgentFileContextsDir(), fileContextId);
   const marker = join(target, MIGRATION_MARKER);
-  if (existsSync(marker)) return target;
+  if (existsSync(marker)) {
+    recoverPostMigrationLegacyRoot(thread, workspace, target);
+    return target;
+  }
   const source = findLegacyThreadRoot(thread.id, workspace);
   if (!source) {
     ensureFileContextDirs(fileContextId);
@@ -152,6 +155,79 @@ function migrateLegacyThreadRoot(thread: AgentThreadMeta, workspace?: AgentWorks
   } catch (error) {
     log.warn("file context migration failed; continuing with legacy directory", { error, threadId: thread.id });
     return source;
+  }
+}
+
+function recoverPostMigrationLegacyRoot(
+  thread: AgentThreadMeta,
+  workspace: AgentWorkspace | undefined,
+  target: string
+): void {
+  const source = findLegacyThreadRoot(thread.id, workspace);
+  if (!source || resolve(source) === resolve(target)) return;
+
+  try {
+    withIndexMutationLock(`${target}.migration.lock`, () => {
+      if (!existsSync(source)) return;
+      const result = moveMissingLegacyEntries(source, target);
+      if (result.moved > 0) {
+        log.info("recovered files left in legacy thread root after migration", {
+          threadId: thread.id,
+          moved: result.moved
+        });
+      }
+      if (result.conflicts > 0) {
+        log.warn("legacy thread root recovery left conflicting entries in place", {
+          threadId: thread.id,
+          conflicts: result.conflicts
+        });
+      }
+    });
+  } catch (error) {
+    log.warn("legacy thread root recovery failed", {
+      threadId: thread.id,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+function moveMissingLegacyEntries(sourceDir: string, targetDir: string): { moved: number; conflicts: number } {
+  mkdirSync(targetDir, { recursive: true });
+  let moved = 0;
+  let conflicts = 0;
+
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = join(sourceDir, entry.name);
+    const targetPath = join(targetDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      conflicts += 1;
+      continue;
+    }
+    if (!existsSync(targetPath)) {
+      movePathAcrossDevices(sourcePath, targetPath);
+      moved += 1;
+      continue;
+    }
+    if (entry.isDirectory() && statSync(targetPath).isDirectory()) {
+      const nested = moveMissingLegacyEntries(sourcePath, targetPath);
+      moved += nested.moved;
+      conflicts += nested.conflicts;
+      continue;
+    }
+    conflicts += 1;
+  }
+
+  if (readdirSync(sourceDir).length === 0) rmSync(sourceDir, { recursive: true, force: true });
+  return { moved, conflicts };
+}
+
+function movePathAcrossDevices(sourcePath: string, targetPath: string): void {
+  try {
+    renameSync(sourcePath, targetPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+    cpSync(sourcePath, targetPath, { recursive: true, errorOnExist: true });
+    rmSync(sourcePath, { recursive: true, force: true });
   }
 }
 
@@ -204,7 +280,12 @@ export function resolveAgentThreadWorkdir(threadId: string): ResolvedAgentWorkdi
 }
 
 export function resolveAgentThreadLumeWorkDir(threadId: string): string {
-  return resolveAgentThreadWorkdir(threadId).lumeWorkDir;
+  const thread = getAgentThreadMeta(threadId);
+  if (!thread) {
+    throw new Error(`Agent 线程不存在: ${threadId}`);
+  }
+  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
+  return migrateLegacyThreadRoot(thread, workspace);
 }
 
 export function resolveLegacyWorkspaceDirForMetadata(workspaceSlug: string): string {

@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentMessageAttachmentInput, SDKMessage } from '@lume/shared'
+import type { AgentCapabilityReferenceView, AgentMessage, AgentMessageAttachmentInput, AgentUserMessagePart, SDKMessage } from '@lume/shared'
 import type { RuntimeAssistantTokenUsageView, RuntimeMessageView } from './runtime-message-view'
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 80
@@ -224,7 +224,7 @@ export function projectVisibleThreadMessages(visibleThreadMessages: AgentMessage
     const createdAt = new Date(message.createdAt).toISOString()
     projected.push(...projectPersistedCompactionMessages(message, createdAt))
     if (message.role === 'user') {
-      projected.push(withPersistedUserAttachments({
+      projected.push(withPersistedUserMessage({
         id: message.id,
         type: 'user',
         text: message.content,
@@ -304,6 +304,8 @@ function withPersistedUserMessage(
   message: Extract<RuntimeMessageView, { type: 'user' }>,
   visible: AgentMessage,
 ): Extract<RuntimeMessageView, { type: 'user' }> {
+  const messageParts = readPersistedMessageParts(visible.metadata)
+  const capabilityReferences = readPersistedCapabilityReferences(visible.metadata)
   return withPersistedUserAttachments({
     ...message,
     id: visible.id,
@@ -312,7 +314,35 @@ function withPersistedUserMessage(
     versionGroupId: visible.versionGroupId,
     versionIndex: visible.versionIndex,
     versionCount: visible.versionCount,
+    ...(messageParts.length > 0 ? { messageParts } : {}),
+    ...(capabilityReferences.length > 0 ? { capabilityReferences } : {}),
   }, visible)
+}
+
+function readPersistedMessageParts(metadata: Record<string, unknown> | undefined): AgentUserMessagePart[] {
+  const raw = metadata?.messageParts
+  if (!Array.isArray(raw)) return []
+  return raw.filter((item): item is AgentUserMessagePart => {
+    if (!item || typeof item !== 'object') return false
+    const part = item as Record<string, unknown>
+    return (part.type === 'text' && typeof part.text === 'string')
+      || (part.type === 'capability_ref'
+        && typeof part.occurrenceId === 'string'
+        && typeof part.uri === 'string')
+  })
+}
+
+function readPersistedCapabilityReferences(metadata: Record<string, unknown> | undefined): AgentCapabilityReferenceView[] {
+  const raw = metadata?.capabilityReferenceViews
+  if (!Array.isArray(raw)) return []
+  return raw.filter((item): item is AgentCapabilityReferenceView => (
+    item !== null
+    && typeof item === 'object'
+    && typeof (item as AgentCapabilityReferenceView).uri === 'string'
+    && typeof (item as AgentCapabilityReferenceView).displayName === 'string'
+    && typeof (item as AgentCapabilityReferenceView).kind === 'string'
+    && typeof (item as AgentCapabilityReferenceView).callable === 'boolean'
+  ))
 }
 
 function readPersistedMessageAttachments(metadata: Record<string, unknown> | undefined): AgentMessageAttachmentInput[] {

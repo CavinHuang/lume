@@ -277,6 +277,11 @@ export interface WikiConfirmDraftInput {
   nonce: string;
 }
 
+export interface WikiDraftStatus {
+  draftId: string;
+  state: "pending" | "pending_review" | "applied" | "unavailable";
+}
+
 export interface WikiSnapshot {
   rootPath: string;
   pages: WikiPageRef[];
@@ -313,6 +318,7 @@ export const WIKI_IPC_CHANNELS = {
   CREATE_IMPORT_DRAFT: "wiki:create-import-draft",
   CREATE_EDIT_DRAFT: "wiki:create-edit-draft",
   APPLY_DRAFT: "wiki:apply-draft",
+  GET_DRAFT_STATUS: "wiki:get-draft-status",
   CANCEL_DRAFT: "wiki:cancel-draft",
   LIST_PENDING: "wiki:list-pending",
   RESOLVE_PENDING: "wiki:resolve-pending",

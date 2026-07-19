@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AgentRuntimeKernel } from "./agent-runtime-kernel";
+import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError } from "./agent-runtime-kernel";
 
 interface TestInput {
   threadId: string;
@@ -50,7 +50,9 @@ describe("AgentRuntimeKernel", () => {
         id: "queue-2",
         threadId: "thread-a",
         text: "second",
-        createdAt: 123
+        createdAt: 123,
+        revision: 1,
+        status: "queued"
       }
     });
     expect(started).toEqual(["first"]);
@@ -200,5 +202,61 @@ describe("AgentRuntimeKernel", () => {
 
     expect(started).toEqual(["first", "second"]);
     expect(errors).toEqual(["first failed"]);
+  });
+
+  test("队列 mutation 使用 revision/CAS，冲突不修改原队列", async () => {
+    let release!: () => void;
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      execute: async (dispatch) => dispatch.input.userMessage === "first"
+        ? new Promise<void>((resolve) => { release = resolve; })
+        : undefined,
+      onDispatchError: () => undefined,
+    });
+    kernel.dispatch({ threadId: "thread-a", userMessage: "first" }, { onError: () => undefined });
+    const queued = kernel.dispatch({ threadId: "thread-a", userMessage: "queued" }, { onError: () => undefined });
+    const revision = kernel.getQueueRevision("thread-a");
+
+    kernel.updateQueued("thread-a", queued.queuedMessage!.id, revision, { userMessage: "updated" });
+    expect(kernel.listQueued("thread-a")[0]?.text).toBe("updated");
+    expect(() => kernel.removeQueued("thread-a", queued.queuedMessage!.id, revision))
+      .toThrow(AgentRuntimeKernelQueueConflictError);
+    expect(kernel.listQueued("thread-a")[0]?.text).toBe("updated");
+
+    release();
+    await kernel.waitForIdleForTest();
+  });
+
+  test("队首校验失败应暂停 FIFO，更新后从原队首恢复", async () => {
+    const started: string[] = [];
+    let release!: () => void;
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      validateQueued: async (dispatch) => {
+        if (dispatch.input.userMessage === "bad") throw new Error("capability_changed");
+      },
+      execute: async (dispatch) => {
+        started.push(dispatch.input.userMessage);
+        if (dispatch.input.userMessage === "first") {
+          await new Promise<void>((resolve) => { release = resolve; });
+        }
+      },
+      onDispatchError: () => undefined,
+    });
+    kernel.dispatch({ threadId: "thread-a", userMessage: "first" }, { onError: () => undefined });
+    const bad = kernel.dispatch({ threadId: "thread-a", userMessage: "bad" }, { onError: () => undefined });
+    kernel.dispatch({ threadId: "thread-a", userMessage: "later" }, { onError: () => undefined });
+
+    release();
+    await waitFor(() => kernel.listQueued("thread-a")[0]?.status === "blocked");
+    expect(started).toEqual(["first"]);
+    expect(kernel.listQueued("thread-a").map((item) => item.text)).toEqual(["bad", "later"]);
+
+    kernel.updateQueued(
+      "thread-a",
+      bad.queuedMessage!.id,
+      kernel.getQueueRevision("thread-a"),
+      { userMessage: "recovered" },
+    );
+    await kernel.waitForIdleForTest();
+    expect(started).toEqual(["first", "recovered", "later"]);
   });
 });

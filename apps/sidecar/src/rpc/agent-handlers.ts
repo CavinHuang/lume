@@ -38,16 +38,20 @@ import {
   emptyTrash,
 } from "../services/agent/agent-thread-manager";
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
+import { getAgentSubmissionStore } from "../services/agent/agent-submission-store";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import {
   appendAgentMessage,
   sendAgentMessage,
   generateAgentTitle,
   generateWelcomeSuggestions,
+  getAgentSubmissionReceipt,
   listAgentMessageQueue,
   promoteQueuedAgentMessageToGuidance,
+  prepareAgentDispatchInput,
   removeQueuedAgentMessage,
   reorderAgentMessageQueue,
+  updateQueuedAgentMessage,
   stopAgent,
   submitAgentToolPermission,
   submitAskUserQuestionAnswers
@@ -158,6 +162,7 @@ import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
 import { createDefaultPluginMarketService } from "../services/plugins/plugin-market-service";
 import { createDefaultPluginBridgeService } from "../services/plugins/plugin-bridge-service";
+import { listInvocableCapabilities } from "../services/agent/invocable-capability-catalog";
 import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/config-paths";
 import { createLogger, writeLogRecord } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
@@ -210,7 +215,9 @@ import {
   agentRecentThreadMessagesInputSchema,
   agentReorderMessageQueueInputSchema,
   agentSendInputSchema,
+  agentSubmissionReceiptInputSchema,
   agentThreadIdInputSchema,
+  agentUpdateQueuedMessageInputSchema,
   agentTruncateThreadInputSchema,
   agentUpdateThreadTitleInputSchema,
   agentUpdateThreadModelSelectionInputSchema,
@@ -235,6 +242,7 @@ import {
   legacyResourceExportInputSchema,
   legacyFileRefConversionInputSchema,
   listEditableSkillsInputSchema,
+  listInvocableCapabilitiesInputSchema,
   listDirectoryInputSchema,
   marketCatalogInputSchema,
   marketDetailInputSchema,
@@ -516,6 +524,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
             versionGroupId?: string;
             versionIndex?: number;
             versionCount?: number;
+            metadata?: Record<string, unknown>;
           };
         };
         if (appended.message?.role === "user" && typeof appended.message.content === "string") {
@@ -532,7 +541,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
               messageId: appended.message.id,
               versionGroupId: appended.message.versionGroupId,
               versionIndex: appended.message.versionIndex,
-              versionCount: appended.message.versionCount
+              versionCount: appended.message.versionCount,
+              messageParts: appended.message.metadata?.messageParts,
+              capabilityReferences: appended.message.metadata?.capabilityReferenceViews
             }
           });
         }
@@ -1062,6 +1073,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS]: async (params) => {
       const input = validateInput(listEditableSkillsInputSchema, params, AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS);
       return listEditableSkills(input);
+    },
+    [AGENT_IPC_CHANNELS.LIST_INVOCABLE_CAPABILITIES]: async (params) => {
+      const input = validateInput(
+        listInvocableCapabilitiesInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.LIST_INVOCABLE_CAPABILITIES
+      );
+      return listInvocableCapabilities(input);
     },
     [AGENT_IPC_CHANNELS.GET_EDITABLE_SKILL]: async (params) => {
       const input = validateInput(editableSkillInputSchema, params, AGENT_IPC_CHANNELS.GET_EDITABLE_SKILL);
@@ -1605,16 +1624,21 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const resolved = resolveGuardedFileRef(input.guardedRef);
       return { path: resolved.absolutePath, relativePath: resolved.relativePath };
     },
-    [AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]: async (params) =>
-      saveFilesToAgentThread(
-        (() => {
-          const input = validateInput(saveFilesToThreadInputSchema, params, AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD);
-          return {
-            ...input,
-            workspaceSlug: resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug)
-          };
-        })()
-      ),
+    [AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD]: async (params) => {
+      const input = validateInput(saveFilesToThreadInputSchema, params, AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD);
+      if (input.clientSubmissionId) {
+        const prepared = getAgentSubmissionStore().getPreparedAttachmentFiles(input.clientSubmissionId);
+        if (prepared.length > 0) return prepared;
+      }
+      const saved = saveFilesToAgentThread({
+        ...input,
+        workspaceSlug: resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug)
+      });
+      if (input.clientSubmissionId) {
+        getAgentSubmissionStore().prepareAttachmentLease(input.clientSubmissionId, input.threadId, saved);
+      }
+      return saved;
+    },
     [AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD]: async (params) =>
       copyFolderToSession(
         (() => {
@@ -1764,7 +1788,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       if (approvalDispatch) {
         return approvalDispatch;
       }
-      const sendInput = await runtimeOrchestrator.resolvePlanContinuationInput(input);
+      const sendInput = await prepareAgentDispatchInput(
+        await runtimeOrchestrator.resolvePlanContinuationInput(input)
+      );
       if (sendInput.permissionMode === "plan") {
         context.notifyPlanModePhaseChange(sendInput.threadId, "planning");
       }
@@ -1790,10 +1816,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     },
     [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentAppendInputSchema, params, AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE) as AgentSendInput;
-      return appendAgentMessageForContext(input, createAgentStreamEmitter(input.threadId, {
-        workspaceSlug: resolveWorkspaceSlugForThread(input.threadId, input.workspaceId)
+      const preparedInput = await prepareAgentDispatchInput(input);
+      return appendAgentMessageForContext(preparedInput, createAgentStreamEmitter(preparedInput.threadId, {
+        workspaceSlug: resolveWorkspaceSlugForThread(preparedInput.threadId, preparedInput.workspaceId)
       }), {
-        onExecutionStarted: createExecutionStartCallback(input)
+        onExecutionStarted: createExecutionStartCallback(preparedInput)
       });
     },
     [AGENT_IPC_CHANNELS.LIST_MESSAGE_QUEUE]: async (params) => {
@@ -1815,6 +1842,41 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.REMOVE_QUEUED_MESSAGE
       );
       return removeQueuedAgentMessage(input);
+    },
+    [AGENT_IPC_CHANNELS.GET_SUBMISSION_RECEIPT]: async (params) => {
+      const input = validateInput(
+        agentSubmissionReceiptInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_SUBMISSION_RECEIPT
+      );
+      const receipt = getAgentSubmissionReceipt(input.clientSubmissionId);
+      return receipt ? { receipt } : {};
+    },
+    [AGENT_IPC_CHANNELS.ABORT_SUBMISSION]: async (params) => {
+      const input = validateInput(
+        agentSubmissionReceiptInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.ABORT_SUBMISSION
+      );
+      const store = getAgentSubmissionStore();
+      const receipt = store.get(input.clientSubmissionId);
+      let aborted = false;
+      if (receipt?.status === "preparing") {
+        store.transition(input.clientSubmissionId, "rejected", "client_aborted");
+        aborted = true;
+      } else if (!receipt) {
+        store.abortAttachmentLease(input.clientSubmissionId);
+        aborted = true;
+      }
+      return { ok: true, aborted };
+    },
+    [AGENT_IPC_CHANNELS.UPDATE_QUEUED_MESSAGE]: async (params) => {
+      const input = validateInput(
+        agentUpdateQueuedMessageInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.UPDATE_QUEUED_MESSAGE
+      );
+      return updateQueuedAgentMessage(input);
     },
     [AGENT_IPC_CHANNELS.PROMOTE_QUEUED_MESSAGE_TO_GUIDANCE]: async (params) => {
       const input = validateInput(

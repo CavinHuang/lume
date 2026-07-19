@@ -256,7 +256,7 @@ export function AgentView({
   }, [activeTaskApproval?.contractId, threadId])
 
   return (
-    <div className="flex-1 flex min-h-0 relative">
+    <div className="relative flex min-h-0 min-w-0 flex-1">
       {/* 主列 */}
       <ThreadFileEnvProvider value={{ threadId, workspaceSlug, fileContextId: rightPanelBinding.fileContextId }}>
         <div className="flex-1 flex flex-col min-w-0 min-h-0">

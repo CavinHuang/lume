@@ -67,6 +67,9 @@ export const revokeFilePreviewScope = (token: string) =>
 export { isDesktopRuntime }
 export const writeClipboardText = (text: string) =>
   invoke<void>('write_clipboard_text', { text })
+export type ClipboardImageSource = { path: string } | { ref: FileRef } | { guardedRef: GuardedFileRef }
+export const writeClipboardImage = (source: ClipboardImageSource) =>
+  invoke<void>('write_clipboard_image', source)
 export const localFilePreviewUrl = (path: string) => convertFileSrc(path)
 
 let pendingDesktopUpdate: Update | null = null

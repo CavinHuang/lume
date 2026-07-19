@@ -44,16 +44,24 @@ mock.module('@/lib/desktop-api', () => ({
   localFilePreviewUrl: (path: string) => `asset://${path}`,
   openExternal: async () => undefined,
   openFileDialog: async () => undefined,
+  openFileRefInSystem: async () => undefined,
+  openGuardedFileRefInSystem: async () => undefined,
   openFolderDialog: async () => undefined,
   openInSystem: async () => undefined,
   readTextFile: async () => '',
+  revealFileRefInSystem: async () => undefined,
+  revealGuardedFileRefInSystem: async () => undefined,
   revealPathInSystem: async () => undefined,
+  createFilePreviewScope: async () => ({ token: 'preview', url: 'lume-file://preview', expiresAt: 0 }),
+  revokeFilePreviewScope: async () => undefined,
   saveFilePathDialog: async () => undefined,
+  saveGuardedFileRefAs: async () => ({ path: null }),
   saveTextFileDialog: async () => undefined,
   sidecarHealthcheck: async () => undefined,
   sidecarCall: async () => undefined,
   statFilePaths: async () => ({ files: [] }),
   submitTaskApproval: async () => undefined,
+  writeClipboardImage: async () => undefined,
   writeClipboardText: async () => undefined,
   writeBinaryFile: async () => undefined,
 }))
@@ -345,6 +353,8 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
     expect(markup).toContain('输出 233 tokens')
     expect(markup).toContain('缓存 1,500 tokens')
     expect(markup).toContain('上下文 0%')
+    expect(markup).toContain('title="上下文占用 0%"')
+    expect(markup).toContain('assistant-footer-metric-context')
     expect(markup).toContain('↑')
     expect(markup).toContain('↓')
     expect(markup).toContain('↺')

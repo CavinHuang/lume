@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LumePluginManifest } from "@lume/agent-sdk";
 import { DEFAULT_PLUGIN_STATE_PATH, FilePluginStateStore } from "./plugin-state-store.js";
-import { PluginRegistry, type RegisteredPlugin } from "./plugin-registry.js";
+import { PluginRegistry, type PluginRegistryListResult, type RegisteredPlugin } from "./plugin-registry.js";
 
 export interface ResolvedPlugin {
   name: string;
@@ -65,8 +65,17 @@ export class SidecarPluginManager {
    */
   async listRegistered(config: {
     enabled: string[];
+    disabled?: string[];
     directories: string[];
   }): Promise<RegisteredPlugin[]> {
+    return (await this.listRegisteredResult(config)).plugins;
+  }
+
+  async listRegisteredResult(config: {
+    enabled: string[];
+    disabled?: string[];
+    directories: string[];
+  }): Promise<PluginRegistryListResult> {
     const registry = new PluginRegistry({
       installedRoot: this.pluginRoot,
       legacyGlobalRoot: this.pluginRoot,
@@ -75,10 +84,10 @@ export class SidecarPluginManager {
     });
     const result = await registry.list({
       enabled: config.enabled,
-      disabled: [],
+      disabled: config.disabled ?? [],
       directories: config.directories,
     });
-    return result.plugins;
+    return result;
   }
 
   async buildInterceptorContexts(config: {

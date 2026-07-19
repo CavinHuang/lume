@@ -92,6 +92,15 @@ describe('unified-file-tree-state', () => {
     expect(previewReadCalls).toBe(2)
   })
 
+  test('changing a workspace project binding invalidates the shared tree cache identity', () => {
+    const unbound = getUnifiedFileTreeCacheIdentity('workspace', 'context-1')
+    const bound = getUnifiedFileTreeCacheIdentity('workspace', 'context-1', 'D:/projects/demo')
+    const relocated = getUnifiedFileTreeCacheIdentity('workspace', 'context-1', 'D:/projects/demo-next')
+
+    expect(bound).not.toBe(unbound)
+    expect(relocated).not.toBe(bound)
+  })
+
   test('gives the selected row or first visible fallback the single tree tab stop', () => {
     expect(getRovingTreeTabStopKey(null, ['first', 'second'])).toBe('first')
     expect(getRovingTreeTabStopKey('selected', ['first', 'selected'])).toBe('selected')

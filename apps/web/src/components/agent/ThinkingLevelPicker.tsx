@@ -68,7 +68,7 @@ export function ThinkingLevelPicker({ value, onChange, inline }: ThinkingLevelPi
         className={composerControlTriggerClassName}
       >
         <Brain size={14} />
-        <span>思考: {current.label}</span>
+        <span className="lume-composer-control-label">思考: {current.label}</span>
         <ChevronDown size={12} className={composerControlChevronClassName} />
       </Button>
 

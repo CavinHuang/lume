@@ -1,15 +1,15 @@
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { Blocks, Bot, Box, File, Hash, TerminalSquare, ArrowLeft, Loader2, Puzzle } from 'lucide-react'
-import { normalizeSlashSuggestionItems, type MentionItem } from './slash-command-state'
+import { Blocks, Bot, File, Hash, TerminalSquare, ArrowLeft, Loader2, Package, BookOpen } from 'lucide-react'
+import { type MentionItem } from './slash-command-state'
 import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
 import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
 
 import { Button } from '@/components/ui/button'
 interface MentionListProps {
   items: MentionItem[]
-  command: (item: { id: string; label: string }) => void
-  trigger?: '@' | '/' | '#' | '$' | '%'
+  command: (item: MentionItem & { occurrenceId?: string }) => void
+  trigger?: '@' | '/' | '#'
   getWorkspaceSlug?: () => string | null
   /** 选中即执行命令（executeOnSelect）时触发，替代插入 mention 文本 */
   onCommandExecute?: (id: string) => void
@@ -26,7 +26,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     const [mcpRows, setMcpRows] = useState<McpServerRow[]>([])
     const [mcpLoading, setMcpLoading] = useState(false)
     const [mcpSelectedIndex, setMcpSelectedIndex] = useState(0)
-    const displayItems = trigger === '/' ? normalizeSlashSuggestionItems(items) : items
+    const displayItems = items
 
     useEffect(() => setSelectedIndex(0), [items])
 
@@ -51,6 +51,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     const selectItem = useCallback((index: number) => {
       const item = displayItems[index]
       if (!item) return
+      if (item.disabled) return
       if (item.id === 'mcp' && item.type === 'command') {
         setPanelMode('mcp-status')
         setMcpSelectedIndex(0)
@@ -61,7 +62,10 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         onCommandExecute(item.id)
         return
       }
-      command({ id: item.id, label: item.label })
+      command({
+        ...item,
+        ...(item.uri ? { occurrenceId: crypto.randomUUID() } : {}),
+      })
     }, [displayItems, command, fetchMcpData, onCommandExecute])
 
     useImperativeHandle(ref, () => ({
@@ -96,7 +100,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
           setSelectedIndex((i) => (i + 1) % displayItems.length)
           return true
         }
-        if (event.key === 'Enter') {
+        if (event.key === 'Enter' || event.key === 'Tab') {
           selectItem(selectedIndex)
           return true
         }
@@ -168,9 +172,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         ? '继续输入关键词搜索 Agent 或文件'
         : trigger === '#'
           ? '继续输入关键词搜索 MCP 服务'
-          : trigger === '$'
-            ? '继续输入关键词搜索技能'
-            : '继续输入关键词搜索技能或 slash 能力'
+          : '继续输入关键词搜索动作、技能或插件'
       return (
         <div className="min-w-[280px] rounded-[1.25rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] p-3 shadow-[0_22px_52px_-32px_hsl(var(--shadow-panel)/0.45)]">
           <p className="text-[12px] font-medium text-[var(--text-2)]">没有匹配项</p>
@@ -179,16 +181,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       )
     }
 
-    const iconMap = {
-      agent: <Bot size={13} className="text-[var(--brand)]" />,
-      file: <File size={13} className="text-blue-500" />,
-      skill: <Box size={16} className="text-[var(--text-2)]" />,
-      mcp: <Hash size={13} className="text-purple-500" />,
-      command: <TerminalSquare size={16} className="text-[var(--text-2)]" />,
-      plugin: <Puzzle size={13} className="text-[var(--brand)]" />,
-    }
-
-    if (trigger === '/' || trigger === '$' || trigger === '%') {
+    if (trigger === '/') {
       let previousSection: MentionItem['section'] | undefined
 
       return (
@@ -200,13 +193,15 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
               return (
                 <div key={`${item.type}:${item.id}`}>
-                  {showSectionHeader && item.section === 'skill' ? (
+                  {showSectionHeader ? (
                     <div className="px-0.5 py-1 text-[12px] font-medium text-[var(--text-3)]">
-                      技能
+                      {getMentionSectionLabel(item.section)}
                     </div>
                   ) : null}
                   <Button
                 variant="ghost"
+                    disabled={item.disabled}
+                    title={item.disabledReason}
                     className={cn(
                       'grid min-h-8 w-full grid-cols-[24px_minmax(0,auto)_minmax(0,1fr)_auto] items-center gap-2 rounded-[0.75rem] py-1 pl-0.5 pr-1 text-left transition-colors',
                       index === selectedIndex
@@ -217,7 +212,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                     onMouseEnter={() => setSelectedIndex(index)}
                   >
                     <span className="flex h-6 w-6 items-center justify-center text-[var(--text-2)]">
-                      {iconMap[item.type]}
+                      <MentionItemIcon item={item} />
                     </span>
                     <span className="truncate text-[12px] font-medium leading-none text-[var(--text-1)]">
                       {item.title ?? item.label}
@@ -229,7 +224,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                     ) : (
                       <span />
                     )}
-                    {item.section === 'skill' && item.meta ? (
+                    {item.meta ? (
                       <span className="pl-2 text-[12px] leading-none text-[var(--text-3)]">
                         {item.meta}
                       </span>
@@ -243,14 +238,12 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       )
     }
 
-    const panelTitle = trigger === '@' ? 'Agents & Files' : trigger === '#' ? 'MCP Servers' : trigger === '$' ? 'Skills' : 'Slash Commands'
+    const panelTitle = trigger === '@' ? 'Agents & Files' : trigger === '#' ? 'MCP Servers' : 'Slash Commands'
     const panelDescription = trigger === '@'
       ? '选择专业 Agent 或引用当前工作区文件'
       : trigger === '#'
         ? '选择可用的 MCP 服务与工具入口'
-        : trigger === '$'
-          ? '选择工作区技能快速插入'
-          : '常用能力和工作区技能都可以在这里快速插入'
+        : '动作、技能和插件都可以在这里选择'
     let previousSection: MentionItem['section'] | undefined
 
     return (
@@ -277,6 +270,8 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                 ) : null}
                 <Button
                 variant="ghost"
+                  disabled={item.disabled}
+                  title={item.disabledReason}
                   className={cn(
                     'group w-full justify-start rounded-[1rem] border px-3 py-2.5 text-left transition-all',
                     index === selectedIndex
@@ -288,7 +283,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                 >
                   <div className="flex items-start gap-3">
                     <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--surface-3)_74%,transparent)]">
-                      {iconMap[item.type]}
+                      <MentionItemIcon item={item} />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -330,11 +325,24 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 )
 
 function getMentionSectionLabel(section: MentionItem['section']): string {
-  if (section === 'capability') return '常用能力'
+  if (section === 'capability') return '动作'
   if (section === 'agent') return 'Agents'
   if (section === 'file') return 'Files'
-  if (section === 'plugin') return 'Plugins'
-  return 'Workspace Skills'
+  if (section === 'plugin') return '插件'
+  return '技能'
+}
+
+function MentionItemIcon({ item }: { item: MentionItem }) {
+  const [failed, setFailed] = useState(false)
+  if (item.type === 'plugin' && item.iconUrl && !failed) {
+    return <img src={item.iconUrl} alt="" className="size-4 rounded object-contain" onError={() => setFailed(true)} />
+  }
+  if (item.type === 'plugin') return <Package size={16} />
+  if (item.type === 'skill') return <BookOpen size={16} />
+  if (item.type === 'agent') return <Bot size={16} />
+  if (item.type === 'file') return <File size={16} />
+  if (item.type === 'mcp') return <Hash size={16} />
+  return <TerminalSquare size={16} />
 }
 
 function getMcpStatusDotClass(status: McpUiStatus): string {

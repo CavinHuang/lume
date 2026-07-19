@@ -73,10 +73,17 @@ describe('wiki stores and security', () => {
     const page = parseWikiPage(markdown)
     const target = `inbox/${page.fileKey}.md`
     const draft = coordinator.stageDraft({ origin: 'ui', risk: 'low', riskReasons: [], title: 'Create', operations: [{ kind: 'create', pageId: page.id, beforeHash: null, targetRelativePath: target, markdown }], sources: [], diffs: [{ path: target, beforeHash: null, afterHash: page.hash, preview: 'create' }], pageVisibilityWorkspaceIds: [], sourceGrantWorkspaceIds: [] })
+    expect(coordinator.getDraftStatus(draft.id).state).toBe('pending')
     expect(() => coordinator.applyDraft({ draftId: draft.id, expectedRevision: 1, nonce: 'forged' })).toThrow()
     const batch = coordinator.applyDraft({ draftId: draft.id, expectedRevision: 1, nonce: draft.nonce })
     expect('state' in batch && batch.state).toBe('committed')
+    expect(coordinator.getDraftStatus(draft.id).state).toBe('applied')
     expect(new WikiMarkdownStore(vault).readById(page.id)?.title).toBe('Draft')
+
+    const cancelled = coordinator.stageDraft({ origin: 'ui', risk: 'low', riskReasons: [], title: 'Cancel', operations: [], sources: [], diffs: [], pageVisibilityWorkspaceIds: [], sourceGrantWorkspaceIds: [] })
+    expect(coordinator.getDraftStatus(cancelled.id).state).toBe('pending')
+    coordinator.cancelDraft(cancelled.id)
+    expect(coordinator.getDraftStatus(cancelled.id).state).toBe('unavailable')
   })
 
   test('resumes an interrupted journal without replaying completed files', () => {

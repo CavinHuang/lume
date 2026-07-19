@@ -60,7 +60,7 @@ export function PermissionModePicker({ value, onChange }: PermissionModePickerPr
         title={`权限模式: ${current.label}`}
       >
         <CurrentIcon size={14} />
-        <span>{current.label}</span>
+        <span className="lume-composer-control-label">{current.label}</span>
         <ChevronDown size={12} className={composerControlChevronClassName} />
       </Button>
 

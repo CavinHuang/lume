@@ -1,38 +1,37 @@
 ---
 name: "Wiki 知识库"
-description: "管理用户的个人知识库——Ingest 摄入新内容、Query 检索已有知识、Lint 健康检查"
-when_to_use: "当用户说「存到 Wiki」「归档」「记到知识库」「保存到 Wiki」「检查 Wiki」「Wiki 健康检查」「整理知识库」时触发"
-allowed_tools: ["read_file", "write_file", "edit_file", "list_directory", "glob", "grep", "bash"]
-version: "2.0"
+description: "通过受保护的 Wiki 工具检索知识，或为用户明确要求沉淀的内容创建待确认草案"
+when_to_use: "当用户说「存到 Wiki」「归档到 Wiki」「记到知识库」「保存到 Wiki」「查询 Wiki」「整理知识库」时触发"
+allowed_tools: ["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]
+version: "3.0"
 ---
 
-## Wiki 三层架构
+## 安全边界
 
-用户的知识库位于 **~/.lume/wiki/**，采用三层架构：
+- Wiki 是受保护知识域，不能用 `Read`、`Write`、`Edit`、`Glob`、`Grep`、`Bash` 或任何通用文件工具直接访问。
+- 不要探测 `~/.lume/wiki`，也不要把失败后的草稿写到 session、workspace 或其他目录冒充已沉淀。
+- 正式写入必须经过 `wiki.propose_changes` 创建 sidecar staging 草案，再由用户点击确认卡。模型不能代替用户确认。
+- 当前运行没有某个 Wiki 工具时，明确说明能力暂不可用，并引导用户使用 Lume「Wiki → 导入」；不要改用文件写入兜底。
 
-1. **raw/**（原始来源）：用户投喂的原材料——只读，永远不修改
-2. **Wiki 页面**（分类目录下的 .md 文件）：从 raw 中提取、综合、交叉引用后生成的编译产物
-3. **_index.md + _log.md**：全局索引 + 操作日志
+## 操作一：沉淀内容
 
-核心理念：**Wiki 不是文件存档，而是编译好的知识。** Ingest 不只是"存一篇"，而是整合——一个新来源可能更新 5-15 个已有页面。
+1. 先确认用户明确要求写入 Wiki，而不是只在讨论什么内容值得沉淀。
+2. 提炼稳定、可复用的结论，保留必要上下文和不确定性；不要原样复制整段聊天。
+3. 若 `wiki.search` / `wiki.read` 可用，先检查是否应更新已有页面。更新必须先读取页面，并向提案提供 `pageId` 与 `expectedHash`。
+4. 若只有 `wiki.propose_changes` 可用，只能新建页面草案，不要猜测已有页面内容。
+5. 调用 `wiki.propose_changes` 后，告诉用户草案尚未进入正式 Wiki，等待用户在确认卡中确认或取消。
 
-## 操作一：Ingest（摄入）
+页面类型：
 
-1. 了解现有结构
-2. 保存原始来源到 raw/
-3. 阅读理解 + 交叉比对
-4. 整合写入（新建或更新已有页面）
-5. 更新交叉引用
-6. 更新 _index.md
-7. 追加 _log.md
-8. 告知用户
+- `topic`：长期维护的主题知识。
+- `decision`：包含背景、选择、理由和后果的决策记录。
+- `synthesis`：从对话或多条材料提炼出的综合结论；默认优先使用。
 
-## 操作二：Lint（健康检查）
+## 操作二：查询与整理
 
-检查矛盾、孤页、缺失引用、过时内容、缺失交叉引用、数据缺口。
+- 使用 `wiki.search` 找相关页面，`wiki.read` 读取页面与来源，必要时用 `wiki.follow_links` 沿链接扩展。
+- 不要预加载整座 Wiki；按用户问题最小化检索。
+- 发现矛盾、孤页、缺失引用或过时内容时可以提出整理建议；只有用户明确要求修改时才创建提案。
+- 当前没有 Wiki 读取工具时，不得声称已经检查或整合了既有知识。
 
-## 注意事项
-- 不要问用户存到哪里，自己判断分类
-- 不要原封不动复制，要整合、提炼、补充交叉引用
-- 不要跳过 raw/ 保存
-- 不要忘记更新已有页面
+核心理念：**Wiki 不是文件存档，而是经过确认、可持续维护的知识。**

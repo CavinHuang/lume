@@ -74,7 +74,7 @@ import { ConfigTool } from './config-tool.js'
 import { createTodoTool } from './todo-tool.js'
 
 // Skill
-import { SkillTool } from './skill-tool.js'
+import { SkillTool, createSkillTool } from './skill-tool.js'
 
 /**
  * All built-in tools (30+).
@@ -262,6 +262,7 @@ export {
   createTodoTool,
   // Skill
   SkillTool,
+  createSkillTool,
 }
 
 // Re-export helpers

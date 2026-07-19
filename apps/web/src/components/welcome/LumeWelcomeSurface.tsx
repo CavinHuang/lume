@@ -1,26 +1,18 @@
 import type { Editor } from '@tiptap/react'
 import { EditorContent } from '@tiptap/react'
-import { Loader2, LoaderCircle, Image, FileText, MonitorOff, Plus, Send, Puzzle } from 'lucide-react'
+import { Loader2, LoaderCircle, FileText, MonitorOff, Plus, Send } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { LumeComposer } from '@/components/composer/LumeComposer'
+import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
-import { AgentAttachmentGrid } from '@/components/agent/AgentAttachmentGrid'
-import { sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, type AgentListPluginsResult, type AgentPluginListItem, type AgentWelcomeSuggestion, type DesktopContextTarget } from '@lume/shared'
+import { PendingAttachmentList } from '@/components/agent/PendingAttachmentList'
+import { type AgentWelcomeSuggestion, type DesktopContextTarget } from '@lume/shared'
 import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
 import { DesktopContextPlusItem } from '@/components/agent/DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from '@/components/agent/DesktopContextSelectionChip'
 
 import { Button } from '@/components/ui/button'
-type InstalledPluginSummary = Pick<AgentPluginListItem, 'name' | 'version' | 'description' | 'displayName'>
-
-function normalizeListPluginsResult(result: unknown): InstalledPluginSummary[] {
-  if (Array.isArray(result)) return result as InstalledPluginSummary[]
-  return (result as Partial<AgentListPluginsResult>).plugins ?? []
-}
-
 interface PendingFile {
   id: string
   filename: string
@@ -33,7 +25,6 @@ interface PendingFile {
 interface LumeWelcomeSurfaceProps {
   model: WelcomeSurfaceViewModel
   workspaceSelector: ReactNode
-  modelPicker: ReactNode
   composerModelPicker: ReactNode
   permissionModePicker: ReactNode
   thinkingLevelPicker: ReactNode
@@ -45,7 +36,6 @@ interface LumeWelcomeSurfaceProps {
   onAttach: () => void
   onAttachMenuOpen?: () => void | Promise<void>
   onRemovePendingFile: (index: number) => void
-  onPluginSelect?: (pluginName: string) => void
   desktopContextTarget?: DesktopContextTarget
   selectedDesktopContextTarget?: DesktopContextTarget
   desktopContextCaptureLoading?: boolean
@@ -63,7 +53,6 @@ interface LumeWelcomeSurfaceProps {
 export function LumeWelcomeSurface({
   model,
   workspaceSelector,
-  modelPicker,
   composerModelPicker,
   permissionModePicker,
   thinkingLevelPicker,
@@ -75,7 +64,6 @@ export function LumeWelcomeSurface({
   onAttach,
   onAttachMenuOpen,
   onRemovePendingFile,
-  onPluginSelect,
   desktopContextTarget,
   selectedDesktopContextTarget,
   desktopContextCaptureLoading = false,
@@ -90,24 +78,6 @@ export function LumeWelcomeSurface({
   onSuggestionSelect,
 }: LumeWelcomeSurfaceProps) {
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
-  const [pluginsPopoverOpen, setPluginsPopoverOpen] = useState(false)
-  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginSummary[]>([])
-
-  const handleOpenPlugins = async () => {
-    setAttachMenuOpen(false)
-    try {
-      const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_PLUGINS, {})
-      setInstalledPlugins(normalizeListPluginsResult(result))
-      setPluginsPopoverOpen(true)
-    } catch {
-      // silent
-    }
-  }
-
-  const handleSelectPlugin = (pluginName: string) => {
-    setPluginsPopoverOpen(false)
-    onPluginSelect?.(pluginName)
-  }
 
   const handleToggleAttachMenu = () => {
     const nextOpen = !attachMenuOpen
@@ -147,7 +117,6 @@ export function LumeWelcomeSurface({
               className="mt-5 flex flex-wrap items-center justify-center gap-3"
             >
               {workspaceSelector}
-              {modelPicker}
             </div>
           </section>
 
@@ -159,15 +128,7 @@ export function LumeWelcomeSurface({
           >
             <LumeComposer
               tone={composerState.tone}
-              scale="hero"
               className={cn('w-full overflow-visible', sending && 'opacity-90')}
-              shellStyle={{
-                borderColor: 'color-mix(in oklab, var(--brand) 24%, var(--border-strong))',
-                background: 'color-mix(in oklab, var(--surface-1) 98%, transparent)',
-                boxShadow: 'none',
-              }}
-              editorClassName="px-4 pb-2 pt-4"
-              footerClassName="px-3 py-1.5"
               editorSlot={
                 <EditorContent
                   editor={editor}
@@ -177,9 +138,8 @@ export function LumeWelcomeSurface({
               topContent={
                 pendingFiles.length > 0 ? (
                   <div className="px-4 pb-3 pt-4">
-                    <AgentAttachmentGrid
+                    <PendingAttachmentList
                       attachments={pendingFiles}
-                      removable
                       removeDisabled={sending}
                       onRemove={(id) => {
                         if (sending) return
@@ -210,7 +170,7 @@ export function LumeWelcomeSurface({
                       title="添加"
                       onClick={handleToggleAttachMenu}
                       disabled={sending}
-                      className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,transparent)] hover:text-[var(--text-1)]"
+                      className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--lume-accent)_18%,transparent)] hover:text-[var(--text-1)]"
                     >
                       <Plus size={15} />
                     </Button>
@@ -226,24 +186,6 @@ export function LumeWelcomeSurface({
                           >
                             <FileText size={15} className="text-[var(--text-3)]" />
                             文件
-                          </Button>
-                          <Button
-                variant="ghost"
-                            type="button"
-                            onClick={() => { setAttachMenuOpen(false); onAttach() }}
-                            className="flex w-full items-center justify-start gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
-                          >
-                            <Image size={15} className="text-[var(--text-3)]" />
-                            图片
-                          </Button>
-                          <Button
-                variant="ghost"
-                            type="button"
-                            onClick={handleOpenPlugins}
-                            className="flex w-full items-center justify-start gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
-                          >
-                            <Puzzle size={15} className="text-[var(--text-3)]" />
-                            插件
                           </Button>
                           <div className="border-t border-[var(--lume-border-subtle)]" />
                           <div className="px-3 py-2 text-xs font-medium text-[var(--text-3)]">
@@ -295,49 +237,7 @@ export function LumeWelcomeSurface({
                         </div>
                       </>
                     )}
-                    {pluginsPopoverOpen && (
-                      <>
-                        <div className="fixed inset-0 z-40" onClick={() => setPluginsPopoverOpen(false)} />
-                        <div className="absolute bottom-full left-0 z-50 mb-2 w-[260px] overflow-hidden rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] shadow-[0_8px_30px_rgba(28,32,58,0.16)]">
-                          <div className="px-3 py-2 text-[11px] font-medium text-[var(--text-3)]">
-                            已安装插件
-                          </div>
-                          {installedPlugins.length === 0 ? (
-                            <div className="px-3 py-3 text-[13px] text-[var(--text-3)]">
-                              暂无已安装的插件
-                            </div>
-                          ) : (
-                            <div className="max-h-[200px] overflow-y-auto">
-                              {installedPlugins.map((plugin) => (
-                                <Button
-                variant="ghost"
-                                  key={plugin.name}
-                                  type="button"
-                                  onClick={() => handleSelectPlugin(plugin.name)}
-                                  className="flex w-full items-center justify-start gap-2.5 px-3 py-2.5 text-left text-[13px] text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_60%,transparent)]"
-                                >
-                                  <Puzzle size={14} className="shrink-0 text-[var(--text-3)]" />
-                                  <div className="min-w-0 flex-1">
-                                    <div className="truncate text-[13px] text-[var(--text-1)]">
-                                      {plugin.name}
-                                    </div>
-                                    <div className="truncate text-[11px] text-[var(--text-3)]">
-                                      v{plugin.version}
-                                      {plugin.description ? ` · ${plugin.description}` : ''}
-                                    </div>
-                                  </div>
-                                </Button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
                   </div>
-                </>
-              }
-              trailingTools={
-                <>
                   {composerModelPicker}
                   {permissionModePicker}
                   {thinkingLevelPicker}
@@ -345,24 +245,20 @@ export function LumeWelcomeSurface({
               }
               actionSlot={
                 composerState.showBusy ? (
-                  <div className="inline-flex size-8 items-center justify-center rounded-lg bg-[var(--brand)] text-[var(--brand-foreground)]">
+                  <div className="inline-flex h-8 min-w-[76px] items-center justify-center gap-2 rounded-full bg-[var(--lume-accent)] px-3 text-[12px] font-medium text-[var(--lume-accent-foreground)]">
                     <Loader2 size={15} className="animate-spin" />
+                    发送中
                   </div>
                 ) : (
                   <Button
-                variant="ghost"
                     type="button"
                     aria-label="发送"
                     title="发送"
                     onClick={onSend}
                     disabled={!composerState.canSend}
-                    className={cn(
-                      'inline-flex size-8 items-center justify-center rounded-lg font-medium transition-all',
-                      composerState.canSend
-                        ? 'bg-[var(--brand)] text-[var(--brand-foreground)] hover:bg-[color:color-mix(in_oklab,var(--brand)_88%,var(--brand-2))]'
-                        : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--surface-3)_84%,transparent)] text-[var(--text-3)]',
-                    )}
+                    className={getLumeComposerPrimaryActionClassName({ enabled: composerState.canSend })}
                   >
+                    发送
                     <Send size={15} />
                   </Button>
                 )
@@ -386,7 +282,7 @@ export function LumeWelcomeSurface({
                   title={suggestion.prompt}
                   onClick={() => onSuggestionSelect?.(suggestion.prompt)}
                   disabled={sending}
-                  className="inline-flex max-w-full items-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_46%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_82%,transparent)] px-3 py-1.5 text-[13px] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_20%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex max-w-full items-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_46%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_82%,transparent)] px-3 py-1.5 text-[13px] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--lume-accent)_20%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] hover:text-[var(--text-1)] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span className="truncate">{suggestion.title}</span>
                 </Button>
@@ -404,7 +300,7 @@ export function LumeWelcomeSurface({
 
 function HeroMark() {
   return (
-    <div className="relative flex h-12 w-12 items-center justify-center text-[var(--brand)]">
+    <div className="relative flex h-12 w-12 items-center justify-center text-[var(--lume-accent)]">
       <span className="absolute h-10 w-[2px] rounded-full bg-current" />
       <span className="absolute h-10 w-[2px] rotate-45 rounded-full bg-current" />
       <span className="absolute h-10 w-[2px] rotate-90 rounded-full bg-current" />

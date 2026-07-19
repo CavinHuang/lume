@@ -3,6 +3,7 @@ import type { AgentMessageQueueSnapshot } from '@lume/shared'
 export function createEmptyAgentMessageQueueSnapshot(threadId: string): AgentMessageQueueSnapshot {
   return {
     threadId,
+    revision: 0,
     queuedMessages: [],
     pendingGuidance: [],
   }
@@ -46,14 +47,12 @@ export function reorderQueuedMessages(
 export function startEditingQueuedMessage(
   snapshot: AgentMessageQueueSnapshot,
   queuedMessageId: string,
-): { draftText: string; snapshot: AgentMessageQueueSnapshot } | null {
+): { draftText: string; queuedMessage: AgentMessageQueueSnapshot['queuedMessages'][number]; snapshot: AgentMessageQueueSnapshot } | null {
   const queuedMessage = snapshot.queuedMessages.find((item) => item.id === queuedMessageId)
   if (!queuedMessage) return null
   return {
     draftText: queuedMessage.text,
-    snapshot: {
-      ...snapshot,
-      queuedMessages: snapshot.queuedMessages.filter((item) => item.id !== queuedMessageId),
-    },
+    queuedMessage,
+    snapshot,
   }
 }

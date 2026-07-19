@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -36,6 +36,7 @@ export interface WikiRuntimeCapability {
 
 interface ShellToolCandidate {
   command: string;
+  executable: string;
   readonlyPaths: string[];
   searchPath: string;
 }
@@ -297,6 +298,7 @@ function discoverShellCompatibility(): ShellToolGroup[] {
   return ["node", "git", "rg", "bun", "python"].flatMap((command) => {
     const candidates = resolveExecutablesOnPath(command).map((executable) => ({
       command,
+      executable,
       readonlyPaths: getExecutableReadonlyPaths(executable),
       searchPath: dirname(executable)
     })).sort((left, right) => getCandidatePreference(left) - getCandidatePreference(right));
@@ -306,6 +308,7 @@ function discoverShellCompatibility(): ShellToolGroup[] {
 
 function getCandidatePreference(candidate: ShellToolCandidate): number {
   if (process.platform !== "win32") return 0;
+  if (candidate.command === "node" && isVoltaShim(candidate.executable)) return 2;
   return candidate.readonlyPaths.every((path) => isPathWithin(homedir(), path)) ? 0 : 1;
 }
 
@@ -320,7 +323,40 @@ function resolveExecutablesOnPath(command: string): string[] {
       if (existsSync(candidate)) candidates.push(resolve(candidate));
     }
   }
+  if (process.platform === "win32" && command === "node") {
+    candidates.push(...resolveVoltaNodeImages());
+  }
   return [...new Set(candidates)];
+}
+
+export function resolveVoltaNodeImages(
+  root = process.env.LOCALAPPDATA?.trim()
+    ? join(process.env.LOCALAPPDATA.trim(), "Volta", "tools", "image", "node")
+    : undefined
+): string[] {
+  if (!root) return [];
+  if (!existsSync(root)) return [];
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^\d+(?:\.\d+){1,3}$/.test(entry.name))
+      .map((entry) => ({ version: entry.name, executable: join(root, entry.name, "node.exe") }))
+      .filter((item) => existsSync(item.executable))
+      .sort((left, right) => compareNumericVersions(right.version, left.version))
+      .map((item) => resolve(item.executable));
+  } catch {
+    return [];
+  }
+}
+
+function compareNumericVersions(left: string, right: string): number {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
 }
 
 function getExecutableReadonlyPaths(executable: string): string[] {
@@ -337,8 +373,19 @@ function getExecutableReadonlyPaths(executable: string): string[] {
     }
   }
   const localAppData = process.env.LOCALAPPDATA?.trim();
-  if (localAppData && executable.toLowerCase().includes("volta")) roots.push(join(localAppData, "Volta"));
+  const voltaRoot = localAppData ? join(localAppData, "Volta") : undefined;
+  if (voltaRoot && executable.toLowerCase().includes("volta") && !isPathWithin(voltaRoot, executable)) {
+    roots.push(voltaRoot);
+  }
   return uniqueExistingPaths(roots);
+}
+
+function isVoltaShim(executable: string): boolean {
+  if (process.platform !== "win32") return false;
+  const normalized = resolve(executable).toLowerCase();
+  const localAppData = process.env.LOCALAPPDATA?.trim();
+  return normalized.includes("\\volta\\")
+    && !(localAppData && isPathWithin(join(localAppData, "Volta", "tools", "image", "node"), executable));
 }
 
 function isImplicitExecutableRoot(path: string): boolean {

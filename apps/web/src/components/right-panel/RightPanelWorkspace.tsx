@@ -41,6 +41,8 @@ const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
   review: '审查', terminal: '终端', browser: '浏览器', files: '文件',
 }
 
+type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
+
 export function RightPanelWorkspace() {
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
@@ -56,7 +58,8 @@ export function RightPanelWorkspace() {
   const threadId = activeTab?.type === 'agent' ? activeTab.threadId : undefined
   const thread = threads.find((item) => item.id === threadId)
   const workspaceId = thread?.workspaceId ?? currentWorkspaceId ?? undefined
-  const workspaceSlug = agentWorkspaces.find((item) => item.id === workspaceId)?.slug
+  const agentWorkspace = agentWorkspaces.find((item) => item.id === workspaceId)
+  const workspaceSlug = agentWorkspace?.slug
   const binding = useMemo(() => ({ workspaceId, fileContextId: thread?.fileContextId ?? thread?.id }), [workspaceId, thread?.fileContextId, thread?.id])
 
   useEffect(() => {
@@ -88,10 +91,14 @@ export function RightPanelWorkspace() {
     return () => { void unlisten.then((dispose) => dispose()) }
   }, [setRuntime])
 
-  const updateRuntime = useCallback((next: ThreadFileWorkspace) => {
+  const updateRuntime = useCallback((update: ThreadFileWorkspaceUpdate) => {
     if (!threadId) return
-    setRuntime((current) => ({ ...current, [threadId]: next }))
-  }, [setRuntime, threadId])
+    setRuntime((current) => {
+      const previous = current[threadId] ?? createThreadFileWorkspace(binding)
+      const next = typeof update === 'function' ? update(previous) : update
+      return next === previous ? current : { ...current, [threadId]: next }
+    })
+  }, [binding, setRuntime, threadId])
 
   if (!threadId || !layout.open) return null
 
@@ -135,9 +142,9 @@ export function RightPanelWorkspace() {
   }
 
   return (
-    <aside className={cn('relative z-[60] flex h-full shrink-0 flex-col border-l border-[var(--lume-border-subtle)] bg-[var(--lume-bg-app)] pb-2 pr-2 transition-[width] duration-200', resizing && 'transition-none')} style={{ width }}>
+    <aside className={cn('relative z-[60] flex h-full shrink-0 flex-col bg-[var(--lume-bg-app)] transition-[width] duration-200', resizing && 'transition-none')} style={{ width }}>
       {!compact && <div role="separator" aria-orientation="vertical" aria-label="调整右侧面板宽度" onPointerDown={startResize} className="absolute left-0 top-0 z-20 h-full w-2 -translate-x-1 cursor-col-resize touch-none" />}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--lume-bg-panel)] px-2 pb-2">
         {compact ? (
           <div className="flex min-h-0 flex-1 items-center justify-center text-[var(--lume-text-muted)]"><PanelRightOpen size={18} /></div>
         ) : (
@@ -157,12 +164,13 @@ export function RightPanelWorkspace() {
                 persisted={persistedWorkspace}
                 runtime={runtimeWorkspace}
                 workspaceSlug={workspaceSlug}
+                workspaceProjectPath={agentWorkspace?.projectPath}
                 fileContextId={binding.fileContextId}
                 openFunctions={openFunctions}
                 onRuntimeChange={updateRuntime}
                 onPersistedChange={updatePersisted}
               />
-            ) : <RightPanelLauncher onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })} />}
+            ) : <RightPanelLauncher expanded={layout.mode === 'expanded'} onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })} />}
           </>
         )}
       </div>
@@ -170,19 +178,20 @@ export function RightPanelWorkspace() {
   )
 }
 
-function RightPanelActiveContent({ persisted, runtime, workspaceSlug, fileContextId, openFunctions, onRuntimeChange, onPersistedChange }: {
+function RightPanelActiveContent({ persisted, runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, onPersistedChange }: {
   persisted: ThreadRightPanelWorkspace
   runtime: ThreadFileWorkspace
   workspaceSlug?: string
+  workspaceProjectPath?: string
   fileContextId?: string
   openFunctions: RightPanelFunction[]
-  onRuntimeChange: (workspace: ThreadFileWorkspace) => void
+  onRuntimeChange: (workspace: ThreadFileWorkspaceUpdate) => void
   onPersistedChange: (workspace: ThreadRightPanelWorkspace) => void
 }) {
   const active = runtime.activeItem
   if (!active) return <PlaceholderRightPanelTab label="" />
   if (active.kind === 'file' || active.type === 'files') {
-    return <FilesRightPanelWorkspace workspace={runtime} workspaceSlug={workspaceSlug} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
+    return <FilesRightPanelWorkspace workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
   }
   const tabState = persisted.tabs[active.type]
   if (tabState?.type === 'browser') {

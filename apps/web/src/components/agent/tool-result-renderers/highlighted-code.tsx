@@ -11,6 +11,7 @@ import { highlightCode, highlightToTokens } from '@lume/ui'
 import type { HighlightToken, HighlightTokensResult } from '@lume/ui'
 import { cn } from '@/lib/utils'
 import { Check, Copy } from 'lucide-react'
+import { writeClipboardText } from '@/lib/desktop-api'
 
 interface HighlightedCodeProps {
   code: string
@@ -102,7 +103,7 @@ export function HighlightedCode({
 
   const handleCopy = React.useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(trimmedCode)
+      await writeClipboardText(trimmedCode)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
