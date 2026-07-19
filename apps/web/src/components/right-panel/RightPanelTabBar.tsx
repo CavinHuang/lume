@@ -1,4 +1,4 @@
-import { ClipboardCheck, FolderOpen, Globe, List, Plus, Terminal, X, type LucideIcon } from 'lucide-react'
+import { FolderOpen, Globe, List, Plus, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import {
@@ -27,8 +27,6 @@ export type RightPanelTabItem =
   | { kind: 'file'; id: string; tab: RightPanelFileTab; label: string }
 
 const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: LucideIcon; shortcut?: string }> = {
-  review: { label: '审查', Icon: ClipboardCheck, shortcut: '^⇧G' },
-  terminal: { label: '终端', Icon: Terminal },
   browser: { label: '浏览器', Icon: Globe, shortcut: '⌘T' },
   files: { label: '文件', Icon: FolderOpen, shortcut: '⌘P' },
 }

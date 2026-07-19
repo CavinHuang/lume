@@ -355,11 +355,14 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
     customThemePalettes,
     agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
     logging: sanitizeLoggingSettings({ ...current.logging, ...(input.logging ?? {}) }),
-    windowBehavior: {
-      minimizeToTray: input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray,
-      closeToTray: input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray,
-      showTray: input.windowBehavior?.showTray ?? current.windowBehavior.showTray
-    },
+    windowBehavior: (() => {
+      const showTray = input.windowBehavior?.showTray ?? current.windowBehavior.showTray;
+      return {
+        minimizeToTray: showTray && (input.windowBehavior?.minimizeToTray ?? current.windowBehavior.minimizeToTray),
+        closeToTray: showTray && (input.windowBehavior?.closeToTray ?? current.windowBehavior.closeToTray),
+        showTray
+      };
+    })(),
     updateSettings: {
       autoCheckUpdates: input.updateSettings?.autoCheckUpdates ?? current.updateSettings.autoCheckUpdates,
       notifyAfterDownload: input.updateSettings?.notifyAfterDownload ?? current.updateSettings.notifyAfterDownload,

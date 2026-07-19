@@ -14,9 +14,9 @@ export function AppShell() {
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
   const rightPanelLayout = useAtomValue(rightPanelLayoutAtom)
-  const rightPanelExpanded = rightPanelLayout.open
-    && rightPanelLayout.mode === 'expanded'
-    && tabs.some((tab) => tab.id === activeTabId && tab.type === 'agent')
+  const activeAgent = tabs.some((tab) => tab.id === activeTabId && tab.type === 'agent')
+  const rightPanelVisible = rightPanelLayout.open && activeAgent
+  const rightPanelExpanded = rightPanelVisible && rightPanelLayout.mode === 'expanded'
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -34,7 +34,10 @@ export function AppShell() {
       <TitleBar />
       <div className={cn('flex min-h-0 flex-1 gap-1.5 pl-2', rightPanelExpanded ? 'pr-0' : 'pr-2')}>
         <LeftSidebar />
-        <div className="flex-1 min-w-0 overflow-hidden rounded-[10px] bg-[var(--lume-bg-panel)]">
+        <div className={cn(
+          'min-w-0 flex-1 overflow-hidden rounded-[10px] bg-[var(--lume-bg-panel)]',
+          rightPanelVisible && 'mr-[-6px] rounded-r-none',
+        )}>
           <MainArea />
         </div>
         <RightPanelWorkspace />

@@ -101,6 +101,40 @@ const applyWorkspaceToggle = (
     }
   }
 ).applyWorkspaceToggle
+const deriveRecentTrayThreads = (
+  LeftSidebarModule as {
+    deriveRecentTrayThreads?: typeof LeftSidebarModule.deriveRecentTrayThreads
+  }
+).deriveRecentTrayThreads
+
+describe('LeftSidebar tray conversations', () => {
+  test('keeps the five latest active root conversations without pin reordering', () => {
+    const thread = (id: string, updatedAt: number, extra = {}) => ({
+      id,
+      title: id,
+      createdAt: 1,
+      updatedAt,
+      ...extra,
+    })
+    expect(deriveRecentTrayThreads?.([
+      thread('old', 1),
+      thread('child', 9, { parentThreadId: 'root' }),
+      thread('archived', 10, { status: 'archived' }),
+      thread('six', 2, { pinned: true }),
+      thread('five', 3),
+      thread('four', 4),
+      thread('three', 5),
+      thread('two', 6),
+      thread('one', 7),
+    ])).toEqual([
+      { id: 'one', title: 'one', updatedAt: 7 },
+      { id: 'two', title: 'two', updatedAt: 6 },
+      { id: 'three', title: 'three', updatedAt: 5 },
+      { id: 'four', title: 'four', updatedAt: 4 },
+      { id: 'five', title: 'five', updatedAt: 3 },
+    ])
+  })
+})
 
 describe('LeftSidebar welcome tab state', () => {
   test('retargets an existing welcome tab to the currently selected workspace before reopening it', () => {

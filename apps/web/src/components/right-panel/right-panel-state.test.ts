@@ -16,18 +16,20 @@ describe('right-panel-state', () => {
     let workspace = createEmptyRightPanelWorkspace()
     workspace = openRightPanelTab(workspace, 'files')
     workspace = openRightPanelTab(workspace, 'files')
-    workspace = openRightPanelTab(workspace, 'review')
+    workspace = openRightPanelTab(workspace, 'browser')
 
-    expect(Object.keys(workspace.tabs)).toEqual(['files', 'review'])
-    expect(RIGHT_PANEL_FUNCTION_ORDER.filter((type) => workspace.tabs[type])).toEqual(['review', 'files'])
-    expect(getAvailableRightPanelFunctions(workspace)).toEqual(['terminal', 'browser'])
+    expect(Object.keys(workspace.tabs)).toEqual(['files', 'browser'])
+    expect(RIGHT_PANEL_FUNCTION_ORDER.filter((type) => workspace.tabs[type])).toEqual(['browser', 'files'])
+    expect(getAvailableRightPanelFunctions(workspace)).toEqual([])
   })
 
   test('closing a function only changes persisted function presence', () => {
-    let workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'review')
+    let workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'browser')
     workspace = openRightPanelTab(workspace, 'files')
 
-    expect(closeRightPanelTab(workspace, 'files')).toEqual({ tabs: { review: { type: 'review' } } })
+    expect(closeRightPanelTab(workspace, 'files')).toEqual({
+      tabs: { browser: { type: 'browser', url: '', addressInput: '', zoom: 1, deviceToolbarVisible: false } },
+    })
   })
 
   test('files storage state contains no runtime navigation or file tabs', () => {
@@ -58,7 +60,6 @@ describe('right-panel-state', () => {
       },
     })).toEqual({
       tabs: {
-        review: { type: 'review' },
         browser: { type: 'browser', url: '', addressInput: '', zoom: 1, deviceToolbarVisible: false },
       },
     })

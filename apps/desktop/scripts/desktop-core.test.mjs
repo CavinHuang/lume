@@ -32,11 +32,14 @@ import {
   validateMigrationTarget,
   validateWereadUrl,
   resolveExistingPath,
+  resolveWindowBehaviorAction,
+  normalizeWindowBehavior,
   writeLauncherConfigAt,
   computeToggleAction,
   computeQuickInputBounds,
   getQuickInputUrl,
   buildTrayMenuTemplate,
+  truncateTrayTitle,
   deriveTemplateImageBuffer,
 } from '../src/desktop-core.ts'
 
@@ -68,8 +71,8 @@ test('window behavior loads from existing settings without changing ~/.lume layo
     }))
 
     assert.deepEqual(readWindowBehaviorFromConfigDir(dir), {
-      minimizeToTray: true,
-      closeToTray: true,
+      minimizeToTray: false,
+      closeToTray: false,
       showTray: false,
     })
 
@@ -219,6 +222,19 @@ test('external URLs are restricted to web and WeRead links', () => {
   assert.equal(validateExternalUrl('weread://reading?bId=123'), 'weread://reading?bId=123')
   assert.throws(() => validateExternalUrl('file:///tmp/secret'), /only http\/https\/weread urls are allowed/)
   assert.throws(() => validateExternalUrl('javascript:alert(1)'), /only http\/https\/weread urls are allowed/)
+})
+
+test('window behavior resolves platform semantics and tray failure fallbacks', () => {
+  const behavior = { minimizeToTray: true, closeToTray: true, showTray: true }
+  assert.equal(resolveWindowBehaviorAction({ platform: 'win32', eventType: 'close', trayAvailable: true, isQuitting: false, windowBehavior: behavior }), 'hide-to-tray')
+  assert.equal(resolveWindowBehaviorAction({ platform: 'win32', eventType: 'close', trayAvailable: false, isQuitting: false, windowBehavior: behavior }), 'quit-app')
+  assert.equal(resolveWindowBehaviorAction({ platform: 'darwin', eventType: 'close', trayAvailable: false, isQuitting: false, windowBehavior: behavior }), 'close-window')
+  assert.equal(resolveWindowBehaviorAction({ platform: 'darwin', eventType: 'minimize', trayAvailable: false, isQuitting: false, windowBehavior: behavior }), 'native-minimize')
+  assert.deepEqual(normalizeWindowBehavior({ showTray: false, minimizeToTray: true, closeToTray: true }), {
+    minimizeToTray: false,
+    closeToTray: false,
+    showTray: false,
+  })
 })
 
 test('WeRead auth window only accepts the expected weread skills URL', () => {
@@ -475,20 +491,37 @@ test("getQuickInputUrl builds dev and packaged entry urls with the view flag", (
   );
 });
 
-test('tray menu template toggles Show/Hide label by window visibility', () => {
-  const hidden = buildTrayMenuTemplate({ windowVisible: false })
+test('tray menu template exposes recent conversations and explicit window actions', () => {
+  const hidden = buildTrayMenuTemplate({
+    windowVisible: false,
+    currentThreadId: 'thread-2',
+    recentThreads: [
+      { id: 'thread-1', title: '第一个会话', updatedAt: 2 },
+      { id: 'thread-2', title: '第二个会话', updatedAt: 1 },
+    ],
+  })
   assert.deepEqual(hidden.map((i) => i.label ?? i.type), [
-    'Show Lume', 'separator', '快速输入', '新建笔记', 'separator', '打开设置', '检查更新', 'separator', 'Quit',
+    '打开 Lume', 'separator', '新建对话', '快速输入', 'separator', '最近对话', '第一个会话', '✓ 第二个会话',
+    'separator', '打开设置', '检查更新', 'separator', '退出 Lume',
   ])
-  assert.equal(hidden[0].action, 'toggle-window')
-  assert.equal(hidden[2].action, 'quick-input')
-  assert.equal(hidden[3].action, 'new-note')
-  assert.equal(hidden[5].action, 'open-settings')
-  assert.equal(hidden[6].action, 'check-update')
-  assert.equal(hidden[8].action, 'quit')
+  assert.equal(hidden[0].action, 'show-window')
+  assert.equal(hidden[2].action, 'new-thread')
+  assert.equal(hidden[3].action, 'quick-input')
+  assert.equal(hidden[6].threadId, 'thread-1')
+  assert.equal(hidden[7].label, '✓ 第二个会话')
+  assert.equal(hidden[9].action, 'open-settings')
+  assert.equal(hidden[10].action, 'check-update')
+  assert.equal(hidden[12].action, 'quit')
 
   const visible = buildTrayMenuTemplate({ windowVisible: true })
-  assert.equal(visible[0].label, 'Hide Lume')
+  assert.equal(visible[0].label, '隐藏 Lume')
+  assert.equal(visible[0].action, 'hide-window')
+  assert.equal(visible[6].enabled, false)
+})
+
+test('tray titles stay within fourteen Chinese characters of visual width', () => {
+  assert.equal(truncateTrayTitle('一二三四五六七八九十一二三四五六'), '一二三四五六七八九十一二三四…')
+  assert.equal(truncateTrayTitle('short title'), 'short title')
 })
 
 test('deriveTemplateImageBuffer produces black pixels preserving original alpha', () => {

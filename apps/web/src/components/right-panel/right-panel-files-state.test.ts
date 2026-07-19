@@ -103,9 +103,9 @@ describe('right-panel-files-state', () => {
     const withoutEntry = { ...state, activeItem: { kind: 'file', tabId: state.openTabs[0]!.id } as const }
     expect(withoutEntry.openTabs).toHaveLength(1)
 
-    const closed = closeFileTab(withoutEntry, withoutEntry.openTabs[0]!.id, ['files', 'review'])
+    const closed = closeFileTab(withoutEntry, withoutEntry.openTabs[0]!.id, ['files', 'browser'])
     expect(closed.openTabs).toEqual([])
-    expect(closed.activeItem).toEqual({ kind: 'function', type: 'review' })
+    expect(closed.activeItem).toEqual({ kind: 'function', type: 'browser' })
   })
 
   test('closing the last file falls back only to an open function in fixed order', () => {
@@ -114,8 +114,8 @@ describe('right-panel-files-state', () => {
     expect(state.activeItem).toBeNull()
 
     state = openFileTab(state, ref('again.ts'))
-    state = closeFileTab(state, state.openTabs[0]!.id, ['files', 'browser', 'review'])
-    expect(state.activeItem).toEqual({ kind: 'function', type: 'review' })
+    state = closeFileTab(state, state.openTabs[0]!.id, ['files', 'browser'])
+    expect(state.activeItem).toEqual({ kind: 'function', type: 'browser' })
   })
 
   test('ignores a late image preview scope after its tab has closed', () => {

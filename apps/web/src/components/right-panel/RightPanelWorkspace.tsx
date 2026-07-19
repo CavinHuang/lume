@@ -38,7 +38,7 @@ import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
 import { BrowserRightPanelTab } from './BrowserRightPanelTab'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
-  review: '审查', terminal: '终端', browser: '浏览器', files: '文件',
+  browser: '浏览器', files: '文件',
 }
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
@@ -120,8 +120,8 @@ export function RightPanelWorkspace() {
 
   const compact = layout.mode === 'compact'
   const width = compact ? '72px' : layout.mode === 'expanded'
-    ? 'min(900px, 70vw)'
-    : `clamp(360px, ${layout.width ?? RIGHT_PANEL_DEFAULT_WIDTH}px, min(900px, 70vw))`
+    ? '70vw'
+    : `clamp(360px, ${layout.width ?? RIGHT_PANEL_DEFAULT_WIDTH}px, 70vw)`
 
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || compact) return
@@ -142,9 +142,9 @@ export function RightPanelWorkspace() {
   }
 
   return (
-    <aside className={cn('relative z-[60] flex h-full shrink-0 flex-col bg-[var(--lume-bg-app)] transition-[width] duration-200', resizing && 'transition-none')} style={{ width }}>
+    <aside className={cn('relative z-[60] flex h-full shrink-0 flex-col border-l border-[var(--lume-border-subtle)] bg-[var(--lume-bg-app)] transition-[width] duration-200', resizing && 'transition-none')} style={{ width }}>
       {!compact && <div role="separator" aria-orientation="vertical" aria-label="调整右侧面板宽度" onPointerDown={startResize} className="absolute left-0 top-0 z-20 h-full w-2 -translate-x-1 cursor-col-resize touch-none" />}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--lume-bg-panel)] px-2 pb-2">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--lume-bg-panel)] pb-2 pr-2">
         {compact ? (
           <div className="flex min-h-0 flex-1 items-center justify-center text-[var(--lume-text-muted)]"><PanelRightOpen size={18} /></div>
         ) : (
@@ -170,7 +170,7 @@ export function RightPanelWorkspace() {
                 onRuntimeChange={updateRuntime}
                 onPersistedChange={updatePersisted}
               />
-            ) : <RightPanelLauncher expanded={layout.mode === 'expanded'} onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })} />}
+            ) : <RightPanelLauncher onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })} />}
           </>
         )}
       </div>

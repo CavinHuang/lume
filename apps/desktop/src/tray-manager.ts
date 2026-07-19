@@ -36,28 +36,29 @@ function buildTrayIcon(iconPath: string): NativeImage {
 
 export function createTray(options: {
   iconPath: string
-  onClickToggle: () => void
-  onAction: (action: TrayMenuAction) => void
+  onClickShow: () => void
+  onAction: (action: TrayMenuAction, threadId?: string) => void
 }) {
   if (tray) return tray
   const icon = buildTrayIcon(options.iconPath)
   tray = new Tray(icon)
   tray.setToolTip('Lume')
-  tray.on('click', () => options.onClickToggle())
+  if (process.platform !== 'darwin') tray.on('click', () => options.onClickShow())
   rebuildMenu({ windowVisible: false }, options.onAction)
   return tray
 }
 
 export function rebuildMenu(
-  state: { windowVisible: boolean },
-  onAction: (action: TrayMenuAction) => void,
+  state: Parameters<typeof buildTrayMenuTemplate>[0],
+  onAction: (action: TrayMenuAction, threadId?: string) => void,
 ) {
   if (!tray) return
   const template = buildTrayMenuTemplate(state).map((item) => {
     if (item.type === 'separator') return { type: 'separator' as const }
     return {
       label: item.label,
-      click: () => item.action && onAction(item.action as TrayMenuAction),
+      enabled: item.enabled,
+      click: () => item.action && onAction(item.action as TrayMenuAction, item.threadId),
     }
   })
   tray.setContextMenu(Menu.buildFromTemplate(template))

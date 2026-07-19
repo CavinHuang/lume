@@ -55,13 +55,14 @@ import {
   getQuickInputUrl,
   parseJsonFile,
   readWindowBehaviorFromConfigDir,
+  normalizeWindowBehavior,
+  resolveWindowBehaviorAction,
   resolveQuickInputContextCapture,
   resolveRememberedDesktopTarget,
   resolveExistingPath,
   resolveConfigDirValue,
   restoreMainWindow,
   shouldCaptureRememberedDesktopTarget,
-  shouldHideToTray as shouldHideToTrayCore,
   validateExternalUrl,
   validateMigrationTarget,
   validateWereadUrl,
@@ -125,6 +126,7 @@ const QUIET_SIDECAR_RPC_METHODS = new Set([
 ])
 const SLOW_RPC_MS = 2_000
 const RENDERER_DELIVERY_ACK_TIMEOUT_MS = 10_000
+const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 15_000
 const TEXT_FILE_LIMIT = 512 * 1024
 const SIDE_CAR_EVENT_CHANNEL = 'sidecar:event'
 const DATA_MIGRATE_PROGRESS_CHANNEL = 'data:migrate-progress'
@@ -143,6 +145,14 @@ const DESKTOP_ACTION_HUD_COMPLETED_MS = 1_600
 const DESKTOP_ACTION_HUD_STALE_MS = 30_000
 
 let mainWindow = null
+let mainWindowCreationPromise: Promise<any> | null = null
+let mainWindowGeneration = 0
+let rendererReadyGeneration = 0
+let acceptedWindowBehaviorRevision = -1
+let pendingTrayNavigation: { generation: number; payload: any } | null = null
+let recentTrayThreads: Array<{ id: string; title: string; updatedAt: number }> = []
+let currentTrayThreadId: string | null = null
+let trayRefreshTimer: ReturnType<typeof setTimeout> | null = null
 let wereadWindow = null
 // 隐藏渲染窗口复用实例：render:request 拦截后调用其 renderUrl 并经 render:result 回送 sidecar。
 let pageRenderer: PageRenderer | null = null
@@ -665,19 +675,26 @@ function getBundledPluginsDirPath() {
   return resolve(REPO_ROOT, 'apps', 'sidecar', 'bundled-plugins')
 }
 
-function handleTrayAction(action) {
+function handleTrayAction(action, threadId?) {
   switch (action) {
-    case 'toggle-window':
-      toggleMainWindow()
+    case 'show-window':
+      ensureMainWindowVisible().catch(logTrayActionError)
+      return
+    case 'hide-window':
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide()
+      refreshTrayMenu()
       return
     case 'quick-input':
       toggleQuickInput().catch((error) => writeMainLog('error', 'desktop.quick_input', 'quick_input.toggle_failed', 'quick input toggle failed', { data: { error } }))
       return
-    case 'new-note':
-      showMainWindowThenSend({ action: 'new-note' })
+    case 'new-thread':
+      showMainWindowThenSend({ action: 'new-thread' }).catch(logTrayActionError)
+      return
+    case 'open-thread':
+      if (threadId) showMainWindowThenSend({ action: 'open-thread', threadId }).catch(logTrayActionError)
       return
     case 'open-settings':
-      showMainWindowThenSend({ action: 'open-settings' })
+      showMainWindowThenSend({ action: 'open-settings' }).catch(logTrayActionError)
       return
     case 'check-update':
       checkForUpdateNow()
@@ -689,11 +706,20 @@ function handleTrayAction(action) {
   }
 }
 
-function showMainWindowThenSend(payload) {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  if (!mainWindow.isVisible()) restoreMainWindow(mainWindow)
-  mainWindow.webContents.send('lume:event:tray-action', payload)
-  refreshTrayMenu()
+function logTrayActionError(error) {
+  writeMainLog('error', 'desktop.tray', 'tray.action_failed', 'tray action failed', { data: { error } })
+}
+
+async function showMainWindowThenSend(payload) {
+  const { win, generation } = await ensureMainWindowVisible()
+  if (rendererReadyGeneration === generation) {
+    win.webContents.send('lume:event:tray-action', payload)
+  } else {
+    if (pendingTrayNavigation?.generation === generation) {
+      writeMainLog('info', 'desktop.lifecycle', 'navigation.replaced', 'pending navigation intent replaced')
+    }
+    pendingTrayNavigation = { generation, payload }
+  }
 }
 
 function checkForUpdateNow() {
@@ -705,54 +731,46 @@ function checkForUpdateNow() {
 
 function ensureTray() {
   if (trayManager.isTrayAvailable()) return
-  trayManager.createTray({
-    iconPath: getAssetPath(process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
-    onClickToggle: () => toggleMainWindow(),
-    onAction: handleTrayAction,
-  })
-}
-
-function shouldHideToTray(eventType) {
-  return shouldHideToTrayCore({
-    eventType,
-    trayAvailable: trayManager.isTrayAvailable(),
-    isQuitting,
-    windowBehavior,
-  })
+  try {
+    trayManager.createTray({
+      iconPath: getAssetPath(process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
+      onClickShow: () => ensureMainWindowVisible().catch(logTrayActionError),
+      onAction: handleTrayAction,
+    })
+  } catch (error) {
+    writeMainLog('warn', 'desktop.tray', 'tray.create_failed', 'tray creation failed', { data: { error } })
+  }
 }
 
 async function showMainWindow() {
   await captureQuickInputContext()
-  restoreMainWindow(mainWindow)
-  refreshTrayMenu()
+  await ensureMainWindowVisible()
 }
 
-function refreshTrayMenu() {
+function refreshTrayMenu(immediate = false) {
+  if (!immediate) {
+    if (trayRefreshTimer) clearTimeout(trayRefreshTimer)
+    trayRefreshTimer = setTimeout(() => { trayRefreshTimer = null; refreshTrayMenu(true) }, 100)
+    return
+  }
   const windowVisible = Boolean(mainWindow) && !mainWindow.isDestroyed() && mainWindow.isVisible()
-  trayManager.rebuildMenu({ windowVisible }, handleTrayAction)
-}
-
-function toggleMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  const visible = mainWindow.isVisible() && mainWindow.isFocused()
-  if (visible) mainWindow.hide()
-  else restoreMainWindow(mainWindow)
-  refreshTrayMenu()
+  trayManager.rebuildMenu({ windowVisible, recentThreads: recentTrayThreads, currentThreadId: currentTrayThreadId }, handleTrayAction)
 }
 
 function attachWindowBehavior(win) {
   win.on('minimize', (event) => {
-    if (!shouldHideToTray('minimize')) return
-    event.preventDefault()
-    win.hide()
-    refreshTrayMenu()
+    if (resolveWindowBehaviorAction({ platform: process.platform, eventType: 'minimize', trayAvailable: trayManager.isTrayAvailable(), isQuitting, windowBehavior }) === 'hide-to-tray') {
+      event.preventDefault(); win.hide(); refreshTrayMenu()
+    }
   })
 
   win.on('close', (event) => {
-    if (!shouldHideToTray('close')) return
-    event.preventDefault()
-    win.hide()
-    refreshTrayMenu()
+    const action = resolveWindowBehaviorAction({ platform: process.platform, eventType: 'close', trayAvailable: trayManager.isTrayAvailable(), isQuitting, windowBehavior })
+    if (action === 'hide-to-tray') { event.preventDefault(); win.hide(); refreshTrayMenu(); return }
+    if (action === 'quit-app') {
+      event.preventDefault()
+      if (!isQuitting) { isQuitting = true; queueMicrotask(() => app.quit()) }
+    }
   })
 
   win.on('blur', () => {
@@ -795,6 +813,35 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
 }
 
 async function createMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
+  if (mainWindowCreationPromise) return mainWindowCreationPromise
+  const generation = ++mainWindowGeneration
+  acceptedWindowBehaviorRevision = -1
+  rendererReadyGeneration = 0
+  mainWindowCreationPromise = createMainWindowForGeneration(generation)
+  try {
+    return await mainWindowCreationPromise
+  } catch (error) {
+    if (mainWindowGeneration === generation && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.destroy()
+      mainWindow = null
+    }
+    writeMainLog('error', 'desktop.lifecycle', 'window.create_failed', 'main window creation failed', { data: { generation, error } })
+    throw error
+  } finally {
+    mainWindowCreationPromise = null
+  }
+}
+
+async function ensureMainWindowVisible() {
+  const win = await createMainWindow()
+  if (win.isDestroyed() || mainWindow !== win) throw new Error('main window became unavailable')
+  restoreMainWindow(win)
+  refreshTrayMenu()
+  return { win, generation: mainWindowGeneration }
+}
+
+async function createMainWindowForGeneration(generation) {
   const win = new BrowserWindow({
     title: 'Lume',
     icon: createWindowIcon(),
@@ -827,6 +874,12 @@ async function createMainWindow() {
   })
   win.setMenuBarVisibility(false)
 
+  const readyPromise = new Promise<void>((resolveReady, rejectReady) => {
+    const timeout = setTimeout(() => rejectReady(new Error('main window ready timeout')), 15_000)
+    win.once('ready-to-show', () => { clearTimeout(timeout); resolveReady() })
+    win.once('closed', () => { clearTimeout(timeout); rejectReady(new Error('main window closed before ready')) })
+  })
+
   if (app.isPackaged) {
     const webEntry = getWebEntryPath()
     ensureFile(webEntry, 'missing packaged web entry')
@@ -839,14 +892,21 @@ async function createMainWindow() {
     win.webContents.openDevTools({ mode: 'detach' })
   }
 
-  win.once('ready-to-show', () => {
-    win.show()
-    refreshTrayMenu()
-  })
   win.on('closed', () => {
-    if (mainWindow === win) mainWindow = null
+    if (mainWindow === win && mainWindowGeneration === generation) {
+      mainWindow = null
+      rendererReadyGeneration = 0
+      if (pendingTrayNavigation?.generation === generation) pendingTrayNavigation = null
+      refreshTrayMenu()
+    }
   })
-
+  await readyPromise
+  if (mainWindow !== win || mainWindowGeneration !== generation || win.isDestroyed()) {
+    writeMainLog('warn', 'desktop.lifecycle', 'window.stale_generation', 'discarded stale main window ready event')
+    throw new Error('stale main window generation')
+  }
+  win.show()
+  refreshTrayMenu()
   return win
 }
 
@@ -966,12 +1026,53 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return { ...(result && typeof result === 'object' ? result : {}), traceId, submissionId }
     }
     case 'desktop_sync_window_behavior': {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.id !== context.ownerWebContentsId) throw new Error('main window sender required')
+      if (payload?.generation !== mainWindowGeneration || !Number.isSafeInteger(payload?.revision) || payload.revision <= acceptedWindowBehaviorRevision) return null
       const previous = windowBehavior
-      windowBehavior = payload.windowBehavior ?? windowBehavior
+      windowBehavior = normalizeWindowBehavior(payload.windowBehavior ?? windowBehavior)
+      acceptedWindowBehaviorRevision = payload.revision
       if (previous?.showTray !== windowBehavior?.showTray) {
         if (windowBehavior?.showTray) ensureTray()
         else trayManager.destroyTray()
       }
+      return null
+    }
+    case 'desktop_get_main_window_generation': {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.id !== context.ownerWebContentsId) throw new Error('main window sender required')
+      return { generation: mainWindowGeneration }
+    }
+    case 'desktop_renderer_ready': {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.id !== context.ownerWebContentsId) throw new Error('main window sender required')
+      if (payload?.generation !== mainWindowGeneration) return null
+      rendererReadyGeneration = mainWindowGeneration
+      if (pendingTrayNavigation?.generation === mainWindowGeneration) {
+        const pending = pendingTrayNavigation
+        pendingTrayNavigation = null
+        mainWindow.webContents.send('lume:event:tray-action', pending.payload)
+      }
+      return null
+    }
+    case 'desktop_sync_tray_state': {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.id !== context.ownerWebContentsId) throw new Error('main window sender required')
+      if (payload?.generation !== mainWindowGeneration) return null
+      const serialized = JSON.stringify(payload)
+      const rejectTrayState = () => {
+        writeMainLog('warn', 'desktop.tray', 'tray.sync_rejected', 'invalid tray state rejected')
+        throw new Error('invalid tray state')
+      }
+      if (Buffer.byteLength(serialized, 'utf8') > 8_192 || !Array.isArray(payload.threads) || payload.threads.length > 5) rejectTrayState()
+      const ids = new Set<string>()
+      const threads = payload.threads.map((thread) => {
+        if (!thread || typeof thread.id !== 'string' || thread.id.length < 1 || thread.id.length > 128 || ids.has(thread.id)
+          || typeof thread.title !== 'string' || thread.title.length > 256
+          || !Number.isFinite(thread.updatedAt) || thread.updatedAt < 0) rejectTrayState()
+        ids.add(thread.id)
+        return { id: thread.id, title: thread.title, updatedAt: thread.updatedAt }
+      })
+      if (payload.currentThreadId != null && (typeof payload.currentThreadId !== 'string' || payload.currentThreadId.length < 1 || payload.currentThreadId.length > 128)) rejectTrayState()
+      recentTrayThreads = threads
+      currentTrayThreadId = payload.currentThreadId ?? null
+      refreshTrayMenu()
       return null
     }
     case 'quick_input_hide':
@@ -1778,8 +1879,33 @@ ipcMain.handle('lume:update:download', async (event) => {
 ipcMain.handle('lume:update:install', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
-  autoUpdater.quitAndInstall(true, true)
-  return null
+  return new Promise<never>((_resolveInstall, rejectInstall) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const cleanup = () => {
+      if (timeout) clearTimeout(timeout)
+      autoUpdater.removeListener('error', onError)
+    }
+    const onError = (error) => {
+      cleanup()
+      isQuitting = false
+      rejectInstall(error instanceof Error ? error : new Error(String(error)))
+    }
+
+    autoUpdater.once('error', onError)
+    timeout = setTimeout(() => {
+      onError(new Error('更新安装器未能接管应用退出'))
+    }, UPDATE_INSTALL_HANDOFF_TIMEOUT_MS)
+    timeout.unref?.()
+
+    // quitAndInstall 会自行启动安装器并退出应用。保持 IPC pending，避免调用方在
+    // 安装器接管前继续执行普通 relaunch，从而再次启动尚未替换的旧实例。
+    isQuitting = true
+    try {
+      autoUpdater.quitAndInstall(true, true)
+    } catch (error) {
+      onError(error)
+    }
+  })
 })
 
 // Windows 任务栏图标/分组依赖 AppUserModelId，必须在 ready 事件前设置；

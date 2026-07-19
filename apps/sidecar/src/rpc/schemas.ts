@@ -1500,7 +1500,8 @@ export const updateGeneralSettingsInputSchema = z.object({
   customThemePalettes: z.array(customThemePaletteSchema).max(12).optional(),
   windowBehavior: z.object({
     minimizeToTray: z.boolean().optional(),
-    closeToTray: z.boolean().optional()
+    closeToTray: z.boolean().optional(),
+    showTray: z.boolean().optional()
   }).optional(),
   updateSettings: z.object({
     autoCheckUpdates: z.boolean().optional(),

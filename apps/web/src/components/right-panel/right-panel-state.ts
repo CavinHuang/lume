@@ -1,14 +1,12 @@
-export type RightPanelFunction = 'review' | 'terminal' | 'browser' | 'files'
+export type RightPanelFunction = 'browser' | 'files'
 
-export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['review', 'terminal', 'browser', 'files']
+export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['browser', 'files']
 
 export interface ThreadRightPanelWorkspace {
   tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>
 }
 
 export type RightPanelTabState =
-  | { type: 'review' }
-  | { type: 'terminal' }
   | BrowserTabState
   | FilesTabState
 
@@ -31,10 +29,6 @@ export function createEmptyRightPanelWorkspace(): ThreadRightPanelWorkspace {
 export function createDefaultRightPanelTab(type: RightPanelFunction): RightPanelTabState {
   if (type === 'browser') {
     return { type, url: '', addressInput: '', zoom: 1, deviceToolbarVisible: false }
-  }
-
-  if (type === 'files') {
-    return { type }
   }
 
   return { type }
@@ -124,10 +118,6 @@ function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightP
         ? value.deviceToolbarVisible
         : false,
     }
-  }
-
-  if (type === 'files') {
-    return { type }
   }
 
   return { type }

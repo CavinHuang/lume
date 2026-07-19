@@ -70,3 +70,32 @@ All prior material findings are now addressed:
 The remaining open risks are appropriately limited to native menu sizing, platform icon appearance, and implementation overlap with existing uncommitted changes. The plan is sound enough to implement.
 
 VERDICT: APPROVED
+
+## Act 3 — Build
+
+### Round 1 — Codex build
+
+- Builder thread: `019f7a53-9da5-7f53-9a30-e08df3998af1`
+- Result: failed — the foreground build reached the mandatory 10-minute timeout (exit 124).
+- Builder report: not produced.
+- Workspace changes: none were left by the timed-out build.
+
+### Claude's verdict
+
+Build did not complete and there is no diff or proof output to review. Per the codex-build timeout guard, no automatic retry was attempted.
+
+### Direct implementation takeover
+
+The user approved a direct implementation after the delegated builder timed out. Stale full-write builder processes were terminated, their partial changes were reviewed and completed directly, and no commit was created for the implementation.
+
+- Implemented platform-specific window action resolution, tray-setting invariants, generation-safe main-window recreation, renderer-ready navigation delivery, strict main-window-only tray synchronization, recent-five conversation navigation, compact native menu labels, and dedicated Windows/macOS tray assets.
+- Simplified the old focus-sensitive tray toggle into explicit show/hide actions and removed the incorrect “新建笔记” action in favor of the existing new-conversation flow.
+- Proof: `bun test apps/desktop/scripts/desktop-core.test.mjs apps/desktop/scripts/electron-security.test.mjs apps/web/src/components/app-shell/LeftSidebar.test.ts apps/web/src/components/settings/general-settings-state.test.ts apps/sidecar/src/services/system/general-settings-service.test.ts` — 111 passed, 0 failed.
+- Typecheck: `@lume/desktop`, `@lume/web`, and `@lume/sidecar` all exited with code 0.
+- Remaining manual verification: native menu width and tray icon appearance on real Windows/macOS DPI and theme combinations.
+
+### Post-build visual adjustment
+
+At the user's request, the tray now directly reuses the existing Lume logo assets (`icon.ico` on Windows and `icon.png` converted to a macOS Template Image) instead of dedicated tray-only assets. The unused generated tray assets were removed.
+
+The native checkbox menu type was also removed from recent conversations because it made the operating system reserve a wide checkmark gutter for the entire menu. The active conversation now uses a compact `✓` text prefix instead.

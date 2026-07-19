@@ -1,5 +1,4 @@
 export const RIGHT_PANEL_MIN_WIDTH = 360
-export const RIGHT_PANEL_MAX_WIDTH = 900
 export const RIGHT_PANEL_MAX_VIEWPORT_RATIO = 0.7
 export const RIGHT_PANEL_DEFAULT_WIDTH = 520
 export const FILE_WORKSPACE_WIDE_MIN_WIDTH = 680
@@ -9,7 +8,7 @@ export const FILE_TREE_MIN_PREVIEW_WIDTH = 320
 export const FILE_TREE_DEFAULT_WIDTH = 260
 
 export function getRightPanelMaxWidth(viewportWidth: number): number {
-  return Math.min(RIGHT_PANEL_MAX_WIDTH, Math.round(viewportWidth * RIGHT_PANEL_MAX_VIEWPORT_RATIO))
+  return Math.round(viewportWidth * RIGHT_PANEL_MAX_VIEWPORT_RATIO)
 }
 
 export function clampRightPanelWidth(width: number, viewportWidth: number): number {

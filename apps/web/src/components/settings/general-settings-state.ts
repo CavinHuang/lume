@@ -137,11 +137,14 @@ export function mergeGeneralSettings(
       ...base.logging,
       ...(updates.logging ?? {}),
     },
-    windowBehavior: {
-      minimizeToTray: updates.windowBehavior?.minimizeToTray ?? base.windowBehavior.minimizeToTray,
-      closeToTray: updates.windowBehavior?.closeToTray ?? base.windowBehavior.closeToTray,
-      showTray: updates.windowBehavior?.showTray ?? base.windowBehavior.showTray,
-    },
+    windowBehavior: (() => {
+      const showTray = updates.windowBehavior?.showTray ?? base.windowBehavior.showTray
+      return {
+        minimizeToTray: showTray && (updates.windowBehavior?.minimizeToTray ?? base.windowBehavior.minimizeToTray),
+        closeToTray: showTray && (updates.windowBehavior?.closeToTray ?? base.windowBehavior.closeToTray),
+        showTray,
+      }
+    })(),
     updateSettings: {
       autoCheckUpdates: updates.updateSettings?.autoCheckUpdates ?? base.updateSettings.autoCheckUpdates,
       notifyAfterDownload: updates.updateSettings?.notifyAfterDownload ?? base.updateSettings.notifyAfterDownload,

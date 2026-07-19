@@ -45,6 +45,7 @@ describe('general settings state', () => {
       themePalette: 'mint',
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
+      logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: false,
@@ -69,6 +70,7 @@ describe('general settings state', () => {
       themePalette: 'mint',
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
+      logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: false,
         closeToTray: true,
@@ -89,6 +91,7 @@ describe('general settings state', () => {
       themePalette: 'iris',
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
+      logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false,
@@ -107,6 +110,7 @@ describe('general settings state', () => {
       themePalette: 'iris',
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
+      logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: true,
         closeToTray: false,
@@ -118,6 +122,19 @@ describe('general settings state', () => {
         installOnlyWhenIdle: true,
         lastUpdateCheckAt: null,
       },
+    })
+  })
+
+  test('disabling the tray clears dependent window behavior flags', () => {
+    expect(mergeGeneralSettings({
+      ...GENERAL_SETTINGS_DEFAULTS,
+      windowBehavior: { showTray: true, minimizeToTray: true, closeToTray: true },
+    }, {
+      windowBehavior: { showTray: false },
+    }).windowBehavior).toEqual({
+      showTray: false,
+      minimizeToTray: false,
+      closeToTray: false,
     })
   })
 

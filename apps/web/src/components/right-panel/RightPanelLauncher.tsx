@@ -1,10 +1,9 @@
-import { ClipboardCheck, FolderOpen, Globe, Terminal, type LucideIcon } from 'lucide-react'
+import { FolderOpen, Globe, type LucideIcon } from 'lucide-react'
 import type { RightPanelFunction } from './right-panel-state'
 
 import { Button } from '@/components/ui/button'
 interface RightPanelLauncherProps {
   onOpen: (type: RightPanelFunction) => void
-  expanded?: boolean
 }
 
 const LAUNCHER_ITEMS: Array<{
@@ -13,15 +12,13 @@ const LAUNCHER_ITEMS: Array<{
   shortcut?: string
   Icon: LucideIcon
 }> = [
-  { type: 'review', label: '审查', shortcut: '^⇧G', Icon: ClipboardCheck },
-  { type: 'terminal', label: '终端', Icon: Terminal },
   { type: 'browser', label: '浏览器', shortcut: '⌘T', Icon: Globe },
   { type: 'files', label: '文件', shortcut: '⌘P', Icon: FolderOpen },
 ]
 
-export function RightPanelLauncher({ onOpen, expanded = false }: RightPanelLauncherProps) {
+export function RightPanelLauncher({ onOpen }: RightPanelLauncherProps) {
   return (
-    <div className={expanded ? 'flex min-h-0 flex-1 items-end' : 'flex min-h-0 flex-1 items-end px-7 pb-14'}>
+    <div className="flex min-h-0 flex-1 items-end px-7 pb-14">
       <div className="flex w-full flex-col gap-2">
         {LAUNCHER_ITEMS.map(({ type, label, shortcut, Icon }) => (
           <Button

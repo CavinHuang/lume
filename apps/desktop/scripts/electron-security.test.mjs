@@ -526,9 +526,9 @@ test("showMainWindow pre-captures desktop context before Lume steals focus", () 
   assert.notEqual(end, -1, "attachWindowBehavior marker is missing");
   const body = mainSource.slice(start, end);
   const captureIndex = body.indexOf("captureQuickInputContext()");
-  const restoreIndex = body.indexOf("restoreMainWindow(mainWindow)");
+  const restoreIndex = body.indexOf("ensureMainWindowVisible()");
   assert.notEqual(captureIndex, -1, "showMainWindow does not capture desktop context");
-  assert.notEqual(restoreIndex, -1, "showMainWindow does not restore the main window");
+  assert.notEqual(restoreIndex, -1, "showMainWindow does not ensure the main window is visible");
   assert.equal(captureIndex < restoreIndex, true, "desktop context must be captured before Lume receives focus");
 });
 

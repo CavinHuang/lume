@@ -136,6 +136,15 @@ describe("general-settings-service", () => {
       }
     });
 
+    const withoutTray = await updatePersistedGeneralSettings({
+      windowBehavior: { showTray: false }
+    });
+    expect(withoutTray.windowBehavior).toEqual({
+      minimizeToTray: false,
+      closeToTray: false,
+      showTray: false
+    });
+
     const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
       proxy?: { enabled?: boolean };
       generalSettings?: {
@@ -165,9 +174,9 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
-        minimizeToTray: true,
-        closeToTray: true,
-        showTray: true
+        minimizeToTray: false,
+        closeToTray: false,
+        showTray: false
       },
       updateSettings: {
         autoCheckUpdates: true,

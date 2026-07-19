@@ -1,5 +1,5 @@
 import { useAtom, useSetAtom } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
   agentThreadsAtom,
@@ -14,7 +14,7 @@ import {
 } from '@/atoms'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { sidecarCall } from '@/lib/desktop-api'
+import { getMainWindowGeneration, markDesktopRendererReady, sidecarCall, syncDesktopTrayState } from '@/lib/desktop-api'
 import type { Tab } from '@/atoms/tab-atoms'
 import type { AgentThreadMeta, AgentWorkspace, AgentWorkspaceRemovalImpact, AgentWorkspaceRemoveMode } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
@@ -32,6 +32,14 @@ import {
   toggleWorkspaceExpansion,
 } from './left-sidebar-state'
 
+export function deriveRecentTrayThreads(threads: AgentThreadMeta[]) {
+  return threads
+    .filter((thread) => !thread.parentThreadId && thread.status !== 'archived' && thread.status !== 'trashed')
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 5)
+    .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }))
+}
+
 export function LeftSidebar() {
   const [threads, setThreads] = useAtom(agentThreadsAtom)
   const [collapsed, setCollapsed] = useAtom(sidebarCollapsedAtom)
@@ -44,6 +52,7 @@ export function LeftSidebar() {
   const setArchiveInitialView = useSetAtom(archiveInitialViewAtom)
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
+  const [desktopGeneration, setDesktopGeneration] = useState<number | null>(null)
   const [confirmState, setConfirmState] = useState<{
     open: boolean
     title: string
@@ -66,6 +75,23 @@ export function LeftSidebar() {
       .then((result) => setThreads(Array.isArray(result) ? result : []))
       .catch(console.error)
   }, [setThreads])
+
+  useEffect(() => {
+    getMainWindowGeneration()
+      .then(({ generation }) => markDesktopRendererReady(generation).then(() => setDesktopGeneration(generation)))
+      .catch(() => {})
+  }, [])
+
+  const recentTrayThreads = useMemo(() => deriveRecentTrayThreads(threads), [threads])
+  const trayStateSignature = JSON.stringify([
+    recentTrayThreads.map(({ id, title }) => [id, title]),
+    activeTabId,
+  ])
+  useEffect(() => {
+    if (desktopGeneration == null) return
+    const currentThreadId = threads.some((thread) => thread.id === activeTabId) ? activeTabId : null
+    syncDesktopTrayState(desktopGeneration, recentTrayThreads, currentThreadId).catch(() => {})
+  }, [desktopGeneration, trayStateSignature])
 
   useEffect(() => {
     setExpandedWorkspaceIds((previous) =>
@@ -127,12 +153,18 @@ export function LeftSidebar() {
 
   useEffect(() => {
     const electronAPI = (window as unknown as { electronAPI?: { listen?: (channel: string, listener: (payload: { action: string }) => void) => (() => void) | undefined } }).electronAPI
-    const off = electronAPI?.listen?.('tray-action', ({ action }) => {
+    const off = electronAPI?.listen?.('tray-action', ({ action, threadId }: { action: string; threadId?: string }) => {
       if (action === 'open-settings') openSettings()
-      else if (action === 'new-note') handleNewThread()
+      else if (action === 'new-thread') handleNewThread()
+      else if (action === 'open-thread' && threadId) {
+        if (threads.some((thread) => thread.id === threadId)) openThread(threadId)
+        else sidecarCall<AgentThreadMeta[]>('agent:list-threads', {})
+          .then((result) => setThreads(Array.isArray(result) ? result : []))
+          .catch(console.error)
+      }
     })
     return () => off?.()
-  }, [])
+  }, [threads, tabs])
 
   const openAutomation = () => {
     const automationId = '__automation__'

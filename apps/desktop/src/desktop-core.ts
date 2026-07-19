@@ -77,21 +77,42 @@ export function resolveConfigDirValue(value, cwd = process.cwd()) {
   return isAbsolute(trimmed) ? trimmed : resolve(cwd, trimmed)
 }
 
-export function shouldHideToTray({ eventType, trayAvailable, isQuitting, windowBehavior }) {
-  if (!trayAvailable || isQuitting) return false
-  if (eventType === 'minimize') return Boolean(windowBehavior?.minimizeToTray)
-  if (eventType === 'close') return Boolean(windowBehavior?.closeToTray)
-  return false
+export type WindowBehaviorAction = 'native-minimize' | 'hide-to-tray' | 'close-window' | 'quit-app'
+
+export function normalizeWindowBehavior(behavior) {
+  const showTray = typeof behavior?.showTray === 'boolean' ? behavior.showTray : true
+  return {
+    minimizeToTray: showTray && Boolean(behavior?.minimizeToTray),
+    closeToTray: showTray && Boolean(behavior?.closeToTray),
+    showTray,
+  }
+}
+
+export function resolveWindowBehaviorAction({ platform, eventType, trayAvailable, isQuitting, windowBehavior }): WindowBehaviorAction {
+  if (isQuitting) return eventType === 'minimize' ? 'native-minimize' : 'close-window'
+  const canHide = trayAvailable && windowBehavior?.showTray !== false
+  if (eventType === 'minimize') {
+    return canHide && windowBehavior?.minimizeToTray ? 'hide-to-tray' : 'native-minimize'
+  }
+  if (eventType === 'close') {
+    if (canHide && windowBehavior?.closeToTray) return 'hide-to-tray'
+    return platform === 'darwin' ? 'close-window' : 'quit-app'
+  }
+  return 'close-window'
+}
+
+export function shouldHideToTray(input) {
+  return resolveWindowBehaviorAction({ platform: process.platform, ...input }) === 'hide-to-tray'
 }
 
 export function readWindowBehaviorFromConfigDir(configDir) {
   const settings = parseJsonFile(join(configDir, 'settings.json'))
   const behavior = settings?.generalSettings?.windowBehavior
-  return {
+  return normalizeWindowBehavior({
     minimizeToTray: typeof behavior?.minimizeToTray === 'boolean' ? behavior.minimizeToTray : false,
     closeToTray: typeof behavior?.closeToTray === 'boolean' ? behavior.closeToTray : false,
     showTray: typeof behavior?.showTray === 'boolean' ? behavior.showTray : true,
-  }
+  })
 }
 
 export function restoreMainWindow(win) {
@@ -679,25 +700,65 @@ export function getQuickInputUrl(opts: {
   return `${opts.devServerUrl}/?view=quick-input`
 }
 
-export type TrayMenuAction = 'toggle-window' | 'quick-input' | 'new-note' | 'open-settings' | 'check-update' | 'quit'
+export type TrayMenuAction = 'show-window' | 'hide-window' | 'quick-input' | 'new-thread' | 'open-thread' | 'open-settings' | 'check-update' | 'quit'
+
+export interface RecentTrayThread {
+  id: string
+  title: string
+  updatedAt: number
+}
 
 export interface TrayMenuItem {
   label?: string
   action?: TrayMenuAction
+  threadId?: string
+  enabled?: boolean
   type?: 'separator'
 }
 
-export function buildTrayMenuTemplate({ windowVisible }: { windowVisible: boolean }): TrayMenuItem[] {
+export function truncateTrayTitle(value: string, maxColumns = 28): string {
+  const title = value.trim() || '未命名对话'
+  let columns = 0
+  let result = ''
+  for (const char of title) {
+    const code = char.codePointAt(0) ?? 0
+    const width = code >= 0x2e80 ? 2 : 1
+    if (columns + width > maxColumns) return `${result}…`
+    result += char
+    columns += width
+  }
+  return result
+}
+
+export function buildTrayMenuTemplate({
+  windowVisible,
+  recentThreads = [],
+  currentThreadId = null,
+}: {
+  windowVisible: boolean
+  recentThreads?: RecentTrayThread[]
+  currentThreadId?: string | null
+}): TrayMenuItem[] {
+  const recentItems: TrayMenuItem[] = recentThreads.length > 0
+    ? recentThreads.slice(0, 5).map((thread) => ({
+      label: `${thread.id === currentThreadId ? '✓ ' : ''}${truncateTrayTitle(thread.title)}`,
+      action: 'open-thread',
+      threadId: thread.id,
+    }))
+    : [{ label: '暂无最近对话', enabled: false }]
   return [
-    { label: windowVisible ? 'Hide Lume' : 'Show Lume', action: 'toggle-window' },
+    { label: windowVisible ? '隐藏 Lume' : '打开 Lume', action: windowVisible ? 'hide-window' : 'show-window' },
     { type: 'separator' },
+    { label: '新建对话', action: 'new-thread' },
     { label: '快速输入', action: 'quick-input' },
-    { label: '新建笔记', action: 'new-note' },
+    { type: 'separator' },
+    { label: '最近对话', enabled: false },
+    ...recentItems,
     { type: 'separator' },
     { label: '打开设置', action: 'open-settings' },
     { label: '检查更新', action: 'check-update' },
     { type: 'separator' },
-    { label: 'Quit', action: 'quit' },
+    { label: '退出 Lume', action: 'quit' },
   ]
 }
 

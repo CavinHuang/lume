@@ -13,8 +13,9 @@ import {
 } from './right-panel-layout'
 
 describe('right-panel-layout', () => {
-  test('limits draggable width to min width and 70vw capped at 900px', () => {
-    expect(getRightPanelMaxWidth(1600)).toBe(900)
+  test('limits draggable width to 70% of the actual Lume window width', () => {
+    expect(getRightPanelMaxWidth(1600)).toBe(1120)
+    expect(getRightPanelMaxWidth(2400)).toBe(1680)
     expect(getRightPanelMaxWidth(1000)).toBe(700)
     expect(clampRightPanelWidth(240, 1200)).toBe(RIGHT_PANEL_MIN_WIDTH)
     expect(clampRightPanelWidth(920, 1200)).toBe(840)

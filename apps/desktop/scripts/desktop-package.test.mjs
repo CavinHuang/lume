@@ -56,6 +56,21 @@ test('Windows installer lets users choose the installation directory', () => {
   assert.equal(pkg.build.nsis?.allowToChangeInstallationDirectory, true)
 })
 
+test('update installation keeps renderer IPC pending until the updater takes over', () => {
+  const main = readFileSync(resolve(DESKTOP_ROOT, 'src/main.ts'), 'utf8')
+  const handlerStart = main.indexOf("ipcMain.handle('lume:update:install'")
+  const handlerEnd = main.indexOf('// Windows 任务栏图标', handlerStart)
+  const handler = main.slice(handlerStart, handlerEnd)
+
+  assert.notEqual(handlerStart, -1)
+  assert.notEqual(handlerEnd, -1)
+  assert.match(handler, /new Promise<never>/)
+  assert.match(handler, /isQuitting = true/)
+  assert.match(handler, /autoUpdater\.quitAndInstall\(true, true\)/)
+  assert.doesNotMatch(handler, /autoUpdater\.quitAndInstall\(true, true\)\s*\n\s*return null/)
+  assertContainsBefore(handler, 'isQuitting = true', 'autoUpdater.quitAndInstall(true, true)')
+})
+
 test('desktop package includes node-repl resources', () => {
   assert.deepEqual(
     pkg.build.extraResources.find((entry) => entry.to === 'node-repl'),

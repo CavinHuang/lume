@@ -76,16 +76,30 @@ async function clearBrowserCaches(input: ClearCacheInput): Promise<ClearCacheRes
 export const getGeneralSettings = () =>
   sidecarCall<GeneralSettings>(GENERAL_SETTINGS_IPC_CHANNELS.GET, {})
 
+let windowBehaviorRevision = 0
+
 export const updateGeneralSettings = (input: UpdateGeneralSettingsInput) =>
   sidecarCall<GeneralSettings>(GENERAL_SETTINGS_IPC_CHANNELS.UPDATE, input)
     .then(async (settings) => {
       if (input.windowBehavior) {
+        const { generation } = await desktopCall<{ generation: number }>('desktop_get_main_window_generation')
         await desktopCall('desktop_sync_window_behavior', {
           windowBehavior: settings.windowBehavior,
+          generation,
+          revision: ++windowBehaviorRevision,
         })
       }
       return settings
     })
+
+export const getMainWindowGeneration = () =>
+  desktopCall<{ generation: number }>('desktop_get_main_window_generation')
+
+export const markDesktopRendererReady = (generation: number) =>
+  desktopCall('desktop_renderer_ready', { generation })
+
+export const syncDesktopTrayState = (generation: number, threads: Array<{ id: string; title: string; updatedAt: number }>, currentThreadId: string | null) =>
+  desktopCall('desktop_sync_tray_state', { generation, threads, currentThreadId })
 
 export const getProxySettings = () =>
   sidecarCall<AgentProxyStatus>(AGENT_IPC_CHANNELS.GET_PROXY_SETTINGS, {})
