@@ -109,6 +109,44 @@ jobs:
             ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Configure macOS signing and notarization
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD APPLE_API_KEY_P8_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+
+          certificate_path="$RUNNER_TEMP/lume-developer-id.p12"
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          keychain_path="$RUNNER_TEMP/lume-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 -D > "$certificate_path"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$api_key_path"
+          chmod 600 "$certificate_path" "$api_key_path"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+
+          echo "CSC_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY=$api_key_path" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
+          echo "LUME_COMPUTER_USE_CODESIGN_MODE=identity" >> "$GITHUB_ENV"
       - name: Download JS assets
         uses: actions/download-artifact@v4
         with:
@@ -125,7 +163,7 @@ jobs:
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
           node scripts/build-node-repl-resources.mjs
-          node scripts/build-desktop-host-resources.mjs
+          node scripts/build-desktop-host-resources.mjs --require-stable-signing
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
@@ -137,20 +175,34 @@ jobs:
         run: |
           LUME_DESKTOP_TARGET=aarch64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
           LUME_DESKTOP_TARGET=x86_64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
-      - name: Smoke installed macOS app
+      - name: Verify and smoke installed macOS app
         shell: bash
         run: |
           set -euo pipefail
-          dmg="$(find apps/desktop/dist-release -maxdepth 1 -name '*.dmg' | head -n 1)"
-          mount_dir="$(mktemp -d)"
           app_dir="$(mktemp -d)"
-          hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -quiet
-          cp -R "$mount_dir"/*.app "$app_dir/"
-          hdiutil detach "$mount_dir" -quiet
-          app="$(find "$app_dir" -maxdepth 1 -name '*.app' | head -n 1)"
-          xattr -dr com.apple.quarantine "$app" || true
+          launch_app=""
+          for dmg in apps/desktop/dist-release/*.dmg; do
+            mount_dir="$(mktemp -d)"
+            hdiutil attach "$dmg" -mountpoint "$mount_dir" -nobrowse -quiet
+            mounted_app="$(find "$mount_dir" -maxdepth 1 -name '*.app' | head -n 1)"
+            copied_app="$app_dir/$(basename "$dmg" .dmg).app"
+            ditto "$mounted_app" "$copied_app"
+            hdiutil detach "$mount_dir" -quiet
+
+            codesign --verify --deep --strict --verbose=2 "$copied_app"
+            xcrun stapler validate "$copied_app"
+            spctl --assess --type execute --verbose=4 "$copied_app"
+            if [[ "$dmg" == *arm64.dmg ]]; then
+              launch_app="$copied_app"
+            fi
+          done
+
+          if [ -z "$launch_app" ]; then
+            echo "Missing arm64 app for launch smoke"
+            exit 1
+          fi
           log="$(mktemp)"
-          LUME_DESKTOP_STARTUP_LOG="$log" "$app/Contents/MacOS/Lume" &
+          LUME_DESKTOP_STARTUP_LOG="$log" "$launch_app/Contents/MacOS/Lume" &
           pid="$!"
           for _ in {1..90}; do
             if grep -q "sidecar ready" "$log"; then

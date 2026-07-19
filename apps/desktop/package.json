@@ -80,7 +80,9 @@
     ],
     "mac": {
       "icon": "assets/icon.icns",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "notarize": true
     },
     "win": {
       "icon": "assets/icon.ico",

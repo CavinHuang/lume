@@ -56,6 +56,27 @@ test('Windows installer lets users choose the installation directory', () => {
   assert.equal(pkg.build.nsis?.allowToChangeInstallationDirectory, true)
 })
 
+test('macOS release requires Developer ID signing, notarization, and Gatekeeper verification', () => {
+  const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
+
+  assert.equal(pkg.build.mac?.hardenedRuntime, true)
+  assert.equal(pkg.build.mac?.notarize, true)
+  for (const secret of [
+    'MACOS_CERTIFICATE_P12_BASE64',
+    'MACOS_CERTIFICATE_PASSWORD',
+    'APPLE_API_KEY_P8_BASE64',
+    'APPLE_API_KEY_ID',
+    'APPLE_API_ISSUER',
+  ]) {
+    assert.match(workflow, new RegExp(`secrets\\.${secret}`))
+  }
+  assert.match(workflow, /build-desktop-host-resources\.mjs --require-stable-signing/)
+  assert.match(workflow, /codesign --verify --deep --strict/)
+  assert.match(workflow, /xcrun stapler validate/)
+  assert.match(workflow, /spctl --assess --type execute/)
+  assert.doesNotMatch(workflow, /xattr -dr com\.apple\.quarantine/)
+})
+
 test('update installation keeps renderer IPC pending until the updater takes over', () => {
   const main = readFileSync(resolve(DESKTOP_ROOT, 'src/main.ts'), 'utf8')
   const handlerStart = main.indexOf("ipcMain.handle('lume:update:install'")
