@@ -200,7 +200,7 @@ function spawnSidecar(entry) {
   }
 
   const sidecarRuntime = process.env.LUME_ELECTRON_EXECUTABLE
-    ? { executable: process.env.LUME_ELECTRON_EXECUTABLE, args: ['--no-stdio-init', entry] }
+    ? { executable: process.env.LUME_ELECTRON_EXECUTABLE, args: [entry] }
     : { executable: runningInElectron ? 'node' : process.execPath, args: [entry] }
   const processChild = spawn(sidecarRuntime.executable, sidecarRuntime.args, {
     cwd: dirname(entry),
