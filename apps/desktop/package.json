@@ -35,6 +35,7 @@
       "output": "dist-package"
     },
     "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "afterPack": "scripts/after-pack.cjs",
     "files": [
       "dist/main/main.mjs",
       "dist/preload/preload.cjs",
@@ -86,7 +87,7 @@
       "icon": "assets/icon.icns",
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
-      "identity": "-",
+      "identity": null,
       "notarize": false
     },
     "dmg": {

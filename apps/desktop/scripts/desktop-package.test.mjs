@@ -59,10 +59,19 @@ test('Windows installer lets users choose the installation directory', () => {
 test('macOS release uses a verified ad-hoc signature and includes first-launch instructions', () => {
   const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
   const installGuide = resolve(DESKTOP_ROOT, 'assets/mac-install-guide.txt')
+  const afterPackPath = resolve(DESKTOP_ROOT, 'scripts/after-pack.cjs')
 
   assert.equal(pkg.build.mac?.hardenedRuntime, true)
-  assert.equal(pkg.build.mac?.identity, '-')
+  assert.equal(pkg.build.mac?.identity, null)
   assert.equal(pkg.build.mac?.notarize, false)
+  assert.equal(pkg.build.afterPack, 'scripts/after-pack.cjs')
+  assert.equal(existsSync(afterPackPath), true)
+  const afterPack = readFileSync(afterPackPath, 'utf8')
+  assert.match(afterPack, /electronPlatformName !== 'darwin'/)
+  assert.match(afterPack, /'--deep'/)
+  assert.match(afterPack, /'--sign',\s*'-'/)
+  assert.match(afterPack, /'--options',\s*'runtime'/)
+  assert.match(afterPack, /'--timestamp=none'/)
   assert.equal(existsSync(installGuide), true)
   assert.equal(
     pkg.build.dmg?.contents.some((entry) => entry.type === 'file' && entry.path === 'assets/mac-install-guide.txt'),
