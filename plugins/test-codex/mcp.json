@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "test-server": {
-      "command": "echo",
-      "args": ["hello from test-codex plugin"]
-    }
-  }
-}

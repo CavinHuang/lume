@@ -34,3 +34,5 @@ tmp-ui-audit/
 
 # Skill 运行时使用日志，每次运行变更，不入库
 **/usage.jsonl
+.spec-workflow
+.superpowers
