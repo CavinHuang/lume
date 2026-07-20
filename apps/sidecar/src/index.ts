@@ -205,20 +205,6 @@ async function handleRpcLine(line: string): Promise<void> {
 }
 
 async function boot(): Promise<void> {
-  // 单例守卫必须在所有 runner 之前：新实例接管并终止旧 sidecar，根治多进程并发导致
-  // 每个自动化任务同一时间被执行 N 次（runningJobs 是进程内去重，无跨进程互斥）。
-  try {
-    const { acquireSingleInstance } = await import("./services/infra/single-instance");
-    acquireSingleInstance();
-  } catch (error) {
-    writeLogRecord({
-      level: "error",
-      context: "sidecar.lifecycle",
-      event: "sidecar.single_instance_failed",
-      message: "sidecar single-instance guard failed",
-      error: { message: error instanceof Error ? error.message : String(error) }
-    });
-  }
   writeLogRecord({
     level: "info",
     context: "sidecar.lifecycle",
@@ -234,6 +220,28 @@ async function boot(): Promise<void> {
     message: "sidecar native runtime ready",
     data: { capabilities: native.capabilities }
   });
+
+  rpcTransport.listen((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    void handleRpcLine(trimmed);
+  });
+  writeNotification("system.ready", { native });
+
+  // 单例守卫仍然早于所有 runner：ready 只表示 RPC/native 已可用，
+  // 不让单例检查或可选启动项阻塞桌面端握手。
+  try {
+    const { acquireSingleInstance } = await import("./services/infra/single-instance");
+    acquireSingleInstance();
+  } catch (error) {
+    writeLogRecord({
+      level: "error",
+      context: "sidecar.lifecycle",
+      event: "sidecar.single_instance_failed",
+      message: "sidecar single-instance guard failed",
+      error: { message: error instanceof Error ? error.message : String(error) }
+    });
+  }
   void initProxySettings().catch((error) => {
     writeLogRecord({
       level: "error",
@@ -325,12 +333,6 @@ async function boot(): Promise<void> {
     process.exit(0);
   });
 
-  rpcTransport.listen((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    void handleRpcLine(trimmed);
-  });
-  writeNotification("system.ready", { native });
 }
 
 void boot().catch((error) => {
