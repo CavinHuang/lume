@@ -76,6 +76,13 @@ app.whenReady().then(() => {
     } catch {
       return
     }
+    if (payload.method === 'system.log-batch') {
+      const batchId = payload.params?.batchId
+      if (typeof batchId === 'string') {
+        child.postMessage(JSON.stringify({ method: 'system.log-ack', params: { batchId } }))
+      }
+      return
+    }
     if (payload.method === 'system.ready') {
       child.postMessage(JSON.stringify({ method: 'system.wiki-privileged-credential', params: { credential: wikiCredential } }))
       child.postMessage(JSON.stringify({ id: 1, method: 'healthcheck', params: null }))
