@@ -1,5 +1,7 @@
 import { app, utilityProcess } from 'electron'
+import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { createInterface } from 'node:readline'
 import { Worker } from 'node:worker_threads'
 import { dirname } from 'node:path'
 
@@ -59,12 +61,7 @@ app.whenReady().then(() => {
     finishWhenHealthy()
   })
 
-  child = utilityProcess.fork(sidecarPath, [], {
-    cwd: dirname(sidecarPath),
-    env: process.env,
-    serviceName: 'Lume Sidecar Smoke',
-    stdio: 'pipe',
-  })
+  child = spawnSidecar(sidecarPath)
 
   let stderr = ''
   child.stderr?.on('data', (chunk) => {
@@ -173,3 +170,25 @@ app.whenReady().then(() => {
 }).catch((error) => {
   finish(1, `[smoke-utility-sidecar] Electron startup failed: ${error.stack ?? error}`)
 })
+
+function spawnSidecar(entry) {
+  if (process.platform !== 'win32') {
+    return utilityProcess.fork(entry, [], {
+      cwd: dirname(entry),
+      env: process.env,
+      serviceName: 'Lume Sidecar Smoke',
+      stdio: 'pipe',
+    })
+  }
+
+  const processChild = spawn(process.execPath, ['--no-stdio-init', entry], {
+    cwd: dirname(entry),
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  const lines = createInterface({ input: processChild.stdout, crlfDelay: Infinity })
+  lines.on('line', (line) => processChild.emit('message', line))
+  processChild.postMessage = (message) => processChild.stdin.write(`${message}\n`)
+  return processChild
+}
