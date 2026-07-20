@@ -20,13 +20,22 @@ export function resolveTrustedWikiRuntimeProfile(input: {
   if (
     threadType !== "main"
     || chatType !== "direct"
+    || !input.threadMeta
     || input.threadMeta?.source
-    || !input.workspaceExists
-    || !input.workspaceId
-    || input.threadMeta?.workspaceId !== input.workspaceId
   ) {
     return undefined;
   }
+  if (!input.workspaceId && !input.threadMeta.workspaceId) {
+    return {
+      scope: { kind: "inbox" },
+      explicit: false
+    };
+  }
+  if (
+    !input.workspaceExists
+    || !input.workspaceId
+    || input.threadMeta.workspaceId !== input.workspaceId
+  ) return undefined;
   return {
     scope: { kind: "workspace", workspaceId: input.workspaceId },
     explicit: false

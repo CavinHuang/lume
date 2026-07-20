@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -89,10 +89,15 @@ if (!nativeLibrary) {
   process.exit(1);
 }
 
-copyFileSync(nativeLibrary, desktopOutfile);
-copyFileSync(nativeLibrary, packageOutfile);
+copyIfChanged(nativeLibrary, desktopOutfile);
+copyIfChanged(nativeLibrary, packageOutfile);
 console.error(`[natives-binary] wrote ${desktopOutfile}`);
 console.error(`[natives-binary] wrote ${packageOutfile}`);
+
+function copyIfChanged(source, destination) {
+  if (existsSync(destination) && readFileSync(source).equals(readFileSync(destination))) return;
+  copyFileSync(source, destination);
+}
 
 function findNativeLibrary(dir) {
   for (const entry of readdirSync(dir)) {

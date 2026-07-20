@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lume Infographic"
+  short_description: "Turn information-dense answers into built-in infographics"
+  default_prompt: "Use $lume-infographic to add one useful infographic when it improves understanding."

@@ -53,4 +53,18 @@ describe("trusted Wiki runtime profile", () => {
       chatType: "group"
     })).toBeUndefined();
   });
+
+  test("uses the Wiki inbox for a local direct thread without a workspace", () => {
+    expect(resolveTrustedWikiRuntimeProfile({
+      threadMeta: {},
+      workspaceExists: false
+    })).toEqual({
+      scope: { kind: "inbox" },
+      explicit: false
+    });
+
+    expect(resolveTrustedWikiRuntimeProfile({
+      workspaceExists: false
+    })).toBeUndefined();
+  });
 });

@@ -105,8 +105,8 @@ describe('getAssistantCopyText', () => {
   })
 
   test('removes internal file reference prefixes while preserving line ranges', () => {
-    expect(getAssistantCopyText('查看 `@project/src/app.ts#L3-L8`。')).toBe('查看 `src/app.ts#L3-L8`。')
-    expect(getAssistantCopyText('[配置](@session/output/config%20file.json)')).toBe('[配置](output/config%20file.json)')
+    expect(getAssistantCopyText('查看 `@project/src/app.ts#L3-L8`。')).toBe('查看 `项目/src/app.ts#L3-L8`。')
+    expect(getAssistantCopyText('[配置](@session/output/config%20file.json)')).toBe('[配置](会话/output/config%20file.json)')
   })
 })
 

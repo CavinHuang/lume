@@ -4,21 +4,30 @@ export const WIKI_CAPABILITIES: WikiCapabilityMatrix = {
   phase: "A",
   runtimeStatus: "idle",
   uiMutation: true,
-  askWikiReadOnly: true,
+  askWikiRead: true,
+  askWikiProposal: false,
+  askWikiApply: false,
   ordinaryAgentRead: false,
-  agentProposals: false,
+  ordinaryAgentProposal: false,
   protectedRootGate: true,
   allowedRootSandbox: false,
-  reason: "全局 protected-root 硬门已启用；Bash、node-repl 与外部进程的操作系统级允许根沙箱尚未验收，因此保持 Phase A，不给普通编码会话附加 Wiki scope。"
+  reason: "Wiki 读取可用；安全提案通道尚未完成，Agent 暂时不能创建 Wiki 草案。"
 };
 
 export function markWikiPhaseBAvailable(reason: string): void {
   WIKI_CAPABILITIES.phase = "B";
   WIKI_CAPABILITIES.runtimeStatus = "ready";
   WIKI_CAPABILITIES.ordinaryAgentRead = true;
-  WIKI_CAPABILITIES.agentProposals = true;
   WIKI_CAPABILITIES.allowedRootSandbox = true;
   WIKI_CAPABILITIES.reason = reason;
+}
+
+export function markWikiProposalSecurityGateAvailable(): void {
+  WIKI_CAPABILITIES.askWikiProposal = true;
+  WIKI_CAPABILITIES.ordinaryAgentProposal = true;
+  WIKI_CAPABILITIES.reason = WIKI_CAPABILITIES.phase === "B"
+    ? "操作系统沙箱与 Wiki 安全提案通道已通过验证。"
+    : "Wiki 安全提案通道已就绪；普通会话读取仍等待操作系统沙箱验证。";
 }
 
 export function markWikiPhaseAUnavailable(reason: string): void {

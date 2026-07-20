@@ -1,11 +1,17 @@
-import { attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
+import { isImageAttachment } from './AgentAttachmentGrid'
+import {
+  validatePendingAttachmentBatch,
+  type PendingAttachmentLike,
+  type PendingAttachmentRejectionReason,
+} from './pending-attachment-validation'
+import { stageAttachmentFile } from '@/lib/desktop-api/native'
 
 export interface PastedPendingAttachment {
   id: string
   filename: string
   mediaType: string
   size: number
-  data: string
+  stagedAttachmentId: string
   previewUrl?: string
 }
 
@@ -14,6 +20,9 @@ export function handleAttachmentPaste(
   handlers: {
     onStart?: (fileCount: number) => void
     onAttachments: (attachments: PastedPendingAttachment[]) => void
+    existingAttachments?: readonly PendingAttachmentLike[]
+    onRejected?: (items: Array<{ file: File; reason: PendingAttachmentRejectionReason }>) => void
+    stageFile?: typeof stageAttachmentFile
     onError: (error: unknown) => void
     onSettled?: () => void
   },
@@ -22,8 +31,17 @@ export function handleAttachmentPaste(
   if (files.length === 0) return false
 
   event.preventDefault()
-  handlers.onStart?.(files.length)
-  void createPendingAttachmentsFromFiles(files)
+  const candidates = files.map((file) => ({ filename: file.name || '剪贴板文件', size: file.size, file }))
+  const validation = validatePendingAttachmentBatch(handlers.existingAttachments ?? [], candidates)
+  handlers.onRejected?.(validation.rejected.map(({ attachment, reason }) => ({ file: attachment.file, reason })))
+  const acceptedFiles = validation.accepted.map((attachment) => attachment.file)
+  if (acceptedFiles.length === 0) {
+    handlers.onSettled?.()
+    return true
+  }
+
+  handlers.onStart?.(acceptedFiles.length)
+  void createPendingAttachmentsFromFiles(acceptedFiles, { stageFile: handlers.stageFile })
     .then(handlers.onAttachments)
     .catch(handlers.onError)
     .finally(handlers.onSettled)
@@ -47,38 +65,30 @@ export async function createPendingAttachmentsFromFiles(
   options: {
     createId?: () => string
     now?: number
+    stageFile?: typeof stageAttachmentFile
   } = {},
 ): Promise<PastedPendingAttachment[]> {
   const createId = options.createId ?? createPendingAttachmentId
   const now = options.now ?? Date.now()
+  const stageFile = options.stageFile ?? stageAttachmentFile
 
   return Promise.all(files.map(async (file, index) => {
     const id = createId()
     const mediaType = file.type || 'application/octet-stream'
     const filename = resolvePastedFilename(file, index, now)
-    const data = await fileToBase64(file)
+    const staged = await stageFile({ id, file, filename, mediaType })
 
     return {
       id,
       filename,
       mediaType,
       size: file.size,
-      data,
-      ...(isImageAttachment({ filename, mediaType })
-        ? { previewUrl: attachmentDataUrl(mediaType, data) }
+      stagedAttachmentId: staged.stagedAttachmentId,
+      ...(isImageAttachment({ filename, mediaType }) && staged.previewUrl
+        ? { previewUrl: staged.previewUrl }
         : {}),
     }
   }))
-}
-
-async function fileToBase64(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer())
-  let binary = ''
-  const chunkSize = 0x8000
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
-  }
-  return btoa(binary)
 }
 
 function resolvePastedFilename(file: File, index: number, now: number): string {

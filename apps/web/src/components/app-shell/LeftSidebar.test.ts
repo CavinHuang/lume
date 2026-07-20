@@ -106,6 +106,7 @@ const deriveRecentTrayThreads = (
     deriveRecentTrayThreads?: typeof LeftSidebarModule.deriveRecentTrayThreads
   }
 ).deriveRecentTrayThreads
+const confirmTrayThreadNavigation = LeftSidebarModule.confirmTrayThreadNavigation
 
 describe('LeftSidebar tray conversations', () => {
   test('keeps the five latest active root conversations without pin reordering', () => {
@@ -133,6 +134,63 @@ describe('LeftSidebar tray conversations', () => {
       { id: 'four', title: 'four', updatedAt: 4 },
       { id: 'five', title: 'five', updatedAt: 3 },
     ])
+  })
+
+  test('authoritatively confirms a tray thread and immediately syncs the selected snapshot', async () => {
+    const threads = [
+      { id: 'target', title: '目标', createdAt: 1, updatedAt: 3 },
+      { id: 'other', title: '其他', createdAt: 1, updatedAt: 2 },
+    ]
+    const syncCalls: unknown[][] = []
+    const result = await confirmTrayThreadNavigation({
+      threadId: 'target',
+      generation: 7,
+      activeThreadId: 'other',
+      listThreads: async () => threads,
+      syncTrayState: async (...args) => { syncCalls.push(args) },
+    })
+
+    expect(result.target?.id).toBe('target')
+    expect(syncCalls).toEqual([[7, [
+      { id: 'target', title: '目标', updatedAt: 3 },
+      { id: 'other', title: '其他', updatedAt: 2 },
+    ], 'target']])
+  })
+
+  test('removes a locally stale target even when the authoritative tray signature is unchanged', async () => {
+    const authoritative = [{ id: 'other', title: '其他', createdAt: 1, updatedAt: 2 }]
+    const syncCalls: unknown[][] = []
+    const result = await confirmTrayThreadNavigation({
+      threadId: 'deleted-locally-still-present',
+      generation: 8,
+      activeThreadId: 'other',
+      listThreads: async () => authoritative,
+      syncTrayState: async (...args) => { syncCalls.push(args) },
+    })
+
+    expect(result.target).toBeNull()
+    expect(syncCalls).toEqual([[8, [{ id: 'other', title: '其他', updatedAt: 2 }], 'other']])
+  })
+
+  test('fails closed without changing the tray snapshot when authority confirmation fails or times out', async () => {
+    let syncCount = 0
+    const syncTrayState = async () => { syncCount += 1 }
+    await expect(confirmTrayThreadNavigation({
+      threadId: 'target',
+      generation: 9,
+      activeThreadId: null,
+      listThreads: async () => { throw new Error('offline') },
+      syncTrayState,
+    })).rejects.toThrow('offline')
+    await expect(confirmTrayThreadNavigation({
+      threadId: 'target',
+      generation: 9,
+      activeThreadId: null,
+      listThreads: () => new Promise(() => {}),
+      syncTrayState,
+      timeoutMs: 0,
+    })).rejects.toThrow('timed out')
+    expect(syncCount).toBe(0)
   })
 })
 

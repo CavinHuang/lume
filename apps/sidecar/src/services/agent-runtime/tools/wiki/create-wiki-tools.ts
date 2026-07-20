@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
-import type { WikiSearchScope, WikiTrustedSubject } from "@lume/shared";
+import type { WikiBlockPatch, WikiSearchScope, WikiTrustedSubject } from "@lume/shared";
 import { listAgentWorkspaces } from "../../../agent/agent-workspace-manager";
 import type { WikiService } from "../../../wiki/wiki-service";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
@@ -58,7 +58,7 @@ export function createWikiReadTools(scope: WikiSearchScope): ToolDefinition[] {
 
 export function createWikiProposalTool(
   scope: WikiSearchScope,
-  options: { createOnly?: boolean } = {}
+  options: { createOnly?: boolean; creatorThreadId?: string; creatorProfile?: "ask-wiki" | "ordinary-agent" } = {}
 ): ToolDefinition {
   const createOnly = options.createOnly === true;
   const tool = createSdkJsonResultTool({
@@ -69,15 +69,28 @@ export function createWikiProposalTool(
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: createOnly ? ["create"] : ["create", "update"] },
+        action: { type: "string", enum: createOnly ? ["create"] : ["create", "update", "replace_page"] },
         title: { type: "string" },
         body: { type: "string" },
         pageType: { type: "string", enum: ["topic", "decision", "synthesis"] },
         pageId: { type: "string" },
         expectedHash: { type: "string" },
+        patches: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              blockId: { type: "string" },
+              expectedContentHash: { type: "string" },
+              action: { type: "string", enum: ["update", "delete"] },
+              content: { type: "string" },
+            },
+            required: ["blockId", "expectedContentHash", "action"],
+          },
+        },
         primaryWorkspaceId: { type: ["string", "null"] }
       },
-      required: ["action", "title", "body"]
+      required: ["action"]
     },
     isReadOnly: false,
     isConcurrencySafe: false,
@@ -93,27 +106,51 @@ export function createWikiProposalTool(
       requiresApprovalByDefault: false
     },
     async call(input) {
-      const action = input.action === "update" ? "update" : input.action === "create" ? "create" : undefined;
-      if (!action) throw new Error("action 必须是 create 或 update");
+      const action = input.action === "update" || input.action === "create" || input.action === "replace_page" ? input.action : undefined;
+      if (!action) throw new Error("action 必须是 create、update 或 replace_page");
       if (createOnly && action === "update") throw new Error("当前会话只能新建 Wiki 草案；请在 Wiki 会话中读取原页面后再更新");
+      if (createOnly && action === "replace_page") throw new Error("当前会话只能新建 Wiki 草案；整页重写只能在 Wiki 会话中送审");
       const { service, subject } = await getWikiContext(scope);
       const pageType = input.pageType === "topic" || input.pageType === "decision" || input.pageType === "synthesis"
         ? input.pageType
         : undefined;
-      return service.createAgentProposalDraft({
+      const draft = service.createAgentProposalDraft({
         action,
-        title: String(input.title ?? ""),
-        body: String(input.body ?? ""),
+        ...(typeof input.title === "string" ? { title: input.title } : {}),
+        ...(typeof input.body === "string" ? { body: input.body } : {}),
+        ...(Array.isArray(input.patches) ? { patches: input.patches.map(parseBlockPatch) } : {}),
         ...(pageType ? { pageType } : {}),
         ...(typeof input.pageId === "string" ? { pageId: input.pageId } : {}),
         ...(typeof input.expectedHash === "string" ? { expectedHash: input.expectedHash } : {}),
         ...(typeof input.primaryWorkspaceId === "string" || input.primaryWorkspaceId === null
           ? { primaryWorkspaceId: input.primaryWorkspaceId }
           : {})
-      }, scope, subject);
+      }, scope, subject, {
+        subjectId: subject.subjectId,
+        ...(options.creatorThreadId ? { threadId: options.creatorThreadId } : {}),
+        profile: options.creatorProfile ?? "ordinary-agent",
+        scope,
+        channel: "agent",
+      });
+      return service.coordinator.getProposalSummary(draft.id);
     }
   });
   return tool;
+}
+
+function parseBlockPatch(value: unknown): WikiBlockPatch {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("patch 必须是对象");
+  const input = value as Record<string, unknown>;
+  const action = input.action === "update" || input.action === "delete" ? input.action : undefined;
+  if (!action || typeof input.blockId !== "string" || typeof input.expectedContentHash !== "string") {
+    throw new Error("patch 缺少 blockId、expectedContentHash 或合法 action");
+  }
+  return {
+    blockId: input.blockId,
+    expectedContentHash: input.expectedContentHash,
+    action,
+    ...(typeof input.content === "string" ? { content: input.content } : {}),
+  };
 }
 
 async function getWikiContext(scope: WikiSearchScope): Promise<{ service: WikiService; subject: WikiTrustedSubject }> {

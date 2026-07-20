@@ -11,12 +11,16 @@ export function getRightPanelMaxWidth(viewportWidth: number): number {
   return Math.round(viewportWidth * RIGHT_PANEL_MAX_VIEWPORT_RATIO)
 }
 
-export function clampRightPanelWidth(width: number, viewportWidth: number): number {
-  return Math.min(getRightPanelMaxWidth(viewportWidth), Math.max(RIGHT_PANEL_MIN_WIDTH, Math.round(width)))
+export function clampRightPanelWidth(width: number, viewportWidth: number, maxWidth?: number): number {
+  const resolvedMaxWidth = Math.max(
+    RIGHT_PANEL_MIN_WIDTH,
+    Math.min(getRightPanelMaxWidth(viewportWidth), maxWidth ?? Number.POSITIVE_INFINITY),
+  )
+  return Math.min(resolvedMaxWidth, Math.max(RIGHT_PANEL_MIN_WIDTH, Math.round(width)))
 }
 
-export function getRightPanelDragWidth(input: { clientX: number; viewportWidth: number }): number {
-  return clampRightPanelWidth(input.viewportWidth - input.clientX, input.viewportWidth)
+export function getRightPanelDragWidth(input: { clientX: number; viewportWidth: number; maxWidth?: number }): number {
+  return clampRightPanelWidth(input.viewportWidth - input.clientX, input.viewportWidth, input.maxWidth)
 }
 
 export function getRightPanelFileTreeMaxWidth(containerWidth: number): number {

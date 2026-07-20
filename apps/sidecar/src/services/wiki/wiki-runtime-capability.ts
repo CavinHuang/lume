@@ -198,7 +198,10 @@ async function verifyRuntimeSandbox(input: {
   const selectedIndexes = input.toolGroups.map(() => 0);
   const maxAttempts = input.toolGroups.reduce((total, group) => total + group.candidates.length, 1);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const selected = input.toolGroups.map((group, index) => group.candidates[selectedIndexes[index]!]!);
+    const selected = input.toolGroups.flatMap((group, index) => {
+      const candidate = group.candidates[selectedIndexes[index]!];
+      return candidate ? [candidate] : [];
+    });
     const sandbox = createRuntimeSandbox(input.wikiRoot, input.readwritePaths, selected);
     const command = [
       "echo LUME_SANDBOX_OK",
@@ -210,15 +213,24 @@ async function verifyRuntimeSandbox(input: {
     try {
       const result = await runShellProbe(command, input.probeRoot, sandbox);
       if (result.code === 0 && result.stdout.includes("LUME_SANDBOX_OK")) {
+        const skipped = input.toolGroups
+          .filter((group, index) => selectedIndexes[index]! >= group.candidates.length)
+          .map((group) => group.command);
         return {
           verified: true,
-          reason: `操作系统沙箱与 shell 兼容性探针通过${processProbe.isolationTier ? `（${processProbe.isolationTier}）` : ""}`,
+          reason: [
+            `操作系统沙箱与 shell 兼容性探针通过${processProbe.isolationTier ? `（${processProbe.isolationTier}）` : ""}`,
+            skipped.length > 0 ? `已跳过不兼容工具：${skipped.join("、")}` : ""
+          ].filter(Boolean).join("；"),
           selected
         };
       }
       const failedGroupIndex = resolveFailedToolGroup(result, selected, input.toolGroups);
-      if (failedGroupIndex >= 0 && selectedIndexes[failedGroupIndex]! + 1 < input.toolGroups[failedGroupIndex]!.candidates.length) {
-        selectedIndexes[failedGroupIndex] = selectedIndexes[failedGroupIndex]! + 1;
+      if (advanceShellToolSelection(
+        selectedIndexes,
+        input.toolGroups.map((group) => group.candidates.length),
+        failedGroupIndex
+      )) {
         continue;
       }
       return {
@@ -230,6 +242,19 @@ async function verifyRuntimeSandbox(input: {
     }
   }
   return { verified: false, reason: "没有可用的沙箱工具链组合" };
+}
+
+export function advanceShellToolSelection(
+  selectedIndexes: number[],
+  candidateCounts: number[],
+  failedGroupIndex: number
+): boolean {
+  if (failedGroupIndex < 0 || failedGroupIndex >= selectedIndexes.length) return false;
+  const candidateCount = candidateCounts[failedGroupIndex] ?? 0;
+  const selectedIndex = selectedIndexes[failedGroupIndex] ?? candidateCount;
+  if (selectedIndex >= candidateCount) return false;
+  selectedIndexes[failedGroupIndex] = selectedIndex + 1;
+  return true;
 }
 
 function createRuntimeSandbox(

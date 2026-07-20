@@ -48,8 +48,7 @@ export function rebuildMenu(
 }
 
 export function destroyTray() {
-  if (tray) {
-    tray.destroy()
-    tray = null
-  }
+  const current = tray
+  tray = null
+  current?.destroy()
 }

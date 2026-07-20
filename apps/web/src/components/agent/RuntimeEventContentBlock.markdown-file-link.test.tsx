@@ -72,7 +72,7 @@ describe('RuntimeEventContentBlock markdown file links', () => {
   test('renders strict project references with compact paths and separate line labels', () => {
     const markup = renderToStaticMarkup(
       <ThreadFileEnvProvider value={{ threadId: 'thread-1', workspaceSlug: 'demo', fileContextId: 'context-1' }}>
-        <MessageFileReferenceBindingProvider value={{ workspaceSlug: 'demo', projectRootFingerprint: 'a'.repeat(64), fileContextId: 'context-1' }}>
+        <MessageFileReferenceBindingProvider value={{ workspaceSlug: 'demo', projectRootFingerprint: 'a'.repeat(64), fileContextId: 'context-1' }} protocolVersion={1}>
           <MarkdownCode onOpenThreadFile={() => 'opened'}>
             @project/very/long/nested/component/folder/Component.tsx#L42-L48
           </MarkdownCode>
@@ -81,7 +81,7 @@ describe('RuntimeEventContentBlock markdown file links', () => {
     )
 
     expect(markup).toContain('data-agent-file-reference="true"')
-    expect(markup).toContain('data-file-reference-copy-text="very/long/nested/component/folder/Component.tsx#L42-L48"')
+    expect(markup).toContain('data-file-reference-copy-text="项目/very/long/nested/component/folder/Component.tsx#L42-L48"')
     expect(markup).toContain('…/folder/Component.tsx')
     expect(markup).toContain('L42–48')
     expect(markup).not.toContain('&gt;@project/')
@@ -90,12 +90,12 @@ describe('RuntimeEventContentBlock markdown file links', () => {
   test('supports encoded explicit markdown targets and directory icons', () => {
     const linkMarkup = renderToStaticMarkup(
       <ThreadFileEnvProvider value={{ threadId: 'thread-1', fileContextId: 'context-1' }}>
-        <MessageFileReferenceBindingProvider value={{ fileContextId: 'context-1' }}>
+        <MessageFileReferenceBindingProvider value={{ fileContextId: 'context-1' }} protocolVersion={1}>
           <MarkdownAnchor href="@session/output/config%20file.json" onOpenThreadFile={() => 'opened'}>config</MarkdownAnchor>
         </MessageFileReferenceBindingProvider>
       </ThreadFileEnvProvider>,
     )
-    expect(linkMarkup).toContain('data-file-reference-copy-text="output/config file.json"')
+    expect(linkMarkup).toContain('data-file-reference-copy-text="会话/output/config file.json"')
     expect(linkMarkup).toContain('config file.json')
 
     const directoryMarkup = renderToStaticMarkup(
@@ -103,6 +103,19 @@ describe('RuntimeEventContentBlock markdown file links', () => {
     )
     expect(directoryMarkup).toContain('lucide-folder')
     expect(directoryMarkup).toContain('data-invalid="true"')
+  })
+
+  test('fails closed for unsupported future protocol versions', () => {
+    const markup = renderToStaticMarkup(
+      <MessageFileReferenceBindingProvider
+        value={{ workspaceSlug: 'demo', projectRootFingerprint: 'a'.repeat(64), fileContextId: 'context-1' }}
+        protocolVersion={2}
+      >
+        <MarkdownCode onOpenThreadFile={() => 'opened'}>@project/src/app.ts</MarkdownCode>
+      </MessageFileReferenceBindingProvider>,
+    )
+    expect(markup).toContain('@project/src/app.ts')
+    expect(markup).not.toContain('data-agent-file-reference="true"')
   })
 
   test('marks inherited session references unavailable in a fork without touching legacy links', () => {

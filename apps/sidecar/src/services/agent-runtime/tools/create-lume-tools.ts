@@ -51,6 +51,7 @@ export interface CreateLumeRuntimeToolsInput {
   includeCitations: boolean;
   automationExecution?: boolean;
   wikiPhaseBEnabled?: boolean;
+  wikiProposalEnabled?: boolean;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
@@ -74,12 +75,18 @@ export function isExplicitWikiWriteInstruction(instruction?: string): boolean {
 export function createOrdinaryWikiTools(input: {
   profile?: TrustedWikiRuntimeProfile;
   phaseBEnabled?: boolean;
+  proposalEnabled?: boolean;
+  creatorThreadId?: string;
   originalUserInstruction?: string;
 }): ToolDefinition[] {
   if (!input.profile || input.profile.explicit) return [];
   const tools = input.phaseBEnabled ? createWikiReadTools(input.profile.scope) : [];
-  if (isExplicitWikiWriteInstruction(input.originalUserInstruction)) {
-    tools.push(createWikiProposalTool(input.profile.scope, { createOnly: !input.phaseBEnabled }));
+  if (input.proposalEnabled && isExplicitWikiWriteInstruction(input.originalUserInstruction)) {
+    tools.push(createWikiProposalTool(input.profile.scope, {
+      createOnly: !input.phaseBEnabled,
+      creatorThreadId: input.creatorThreadId,
+      creatorProfile: "ordinary-agent",
+    }));
   }
   return tools;
 }
@@ -96,7 +103,10 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   if (wikiProfile?.explicit) {
     const customTools = [
       ...createWikiReadTools(wikiProfile.scope),
-      ...(input.wikiPhaseBEnabled ? [createWikiProposalTool(wikiProfile.scope)] : [])
+      ...(input.wikiProposalEnabled ? [createWikiProposalTool(wikiProfile.scope, {
+        creatorThreadId: input.threadId,
+        creatorProfile: "ask-wiki",
+      })] : [])
     ];
     return { customTools, availableToolNames: customTools.map((tool) => tool.name) };
   }
@@ -169,6 +179,8 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const ordinaryWikiTools = createOrdinaryWikiTools({
     profile: wikiProfile,
     phaseBEnabled: input.wikiPhaseBEnabled,
+    proposalEnabled: input.wikiProposalEnabled,
+    creatorThreadId: input.threadId,
     originalUserInstruction: input.originalUserInstruction
   });
   const customTools = [

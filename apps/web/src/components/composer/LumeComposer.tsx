@@ -89,7 +89,7 @@ export function LumeComposer({
     <div
       data-tone={tone}
       className={cn(
-        'lume-composer relative overflow-visible rounded-[1.45rem] border backdrop-blur transition-[border-color,box-shadow,transform,background-color] duration-200 ease-out focus-within:border-[color:color-mix(in_oklab,var(--lume-accent)_42%,var(--lume-border-strong))] focus-within:shadow-[0_12px_36px_-28px_hsl(var(--lume-shadow-panel)/0.7)] motion-reduce:transition-none',
+        'lume-composer relative overflow-visible rounded-[14px] border backdrop-blur transition-[border-color,box-shadow,transform,background-color] duration-200 ease-out focus-within:border-[color:color-mix(in_oklab,var(--lume-accent)_42%,var(--lume-border-strong))] focus-within:shadow-[0_12px_36px_-28px_hsl(var(--lume-shadow-panel)/0.7)] motion-reduce:transition-none',
         className,
       )}
       style={{ ...palette.shell, ...shellStyle }}

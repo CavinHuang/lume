@@ -43,7 +43,7 @@ const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
 
-export function RightPanelWorkspace() {
+export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
   const [persisted, setPersisted] = useAtom(rightPanelWorkspacesAtom)
@@ -60,11 +60,19 @@ export function RightPanelWorkspace() {
   const workspaceId = thread?.workspaceId ?? currentWorkspaceId ?? undefined
   const agentWorkspace = agentWorkspaces.find((item) => item.id === workspaceId)
   const workspaceSlug = agentWorkspace?.slug
-  const binding = useMemo(() => ({ workspaceId, fileContextId: thread?.fileContextId ?? thread?.id }), [workspaceId, thread?.fileContextId, thread?.id])
+  const binding = useMemo(() => ({
+    workspaceId,
+    fileContextId: thread?.fileContextId ?? thread?.id,
+    projectBindingKey: agentWorkspace?.realpathKey ?? agentWorkspace?.projectPath,
+  }), [agentWorkspace?.projectPath, agentWorkspace?.realpathKey, workspaceId, thread?.fileContextId, thread?.id])
 
   useEffect(() => {
     const result = reconcileThreadFileWorkspaces(runtime, getEffectiveThreadFileBindings(threads, currentWorkspaceId).map((item) => ({
       ...item,
+      projectBindingKey: (() => {
+        const workspace = agentWorkspaces.find((candidate) => candidate.id === item.workspaceId)
+        return workspace?.realpathKey ?? workspace?.projectPath
+      })(),
       openFunctions: getOpenRightPanelFunctions(sanitizeRightPanelWorkspace(persisted[item.id] ?? createEmptyRightPanelWorkspace()).tabs),
     })))
     if (result.revokedScopeTokens.length > 0
@@ -73,7 +81,7 @@ export function RightPanelWorkspace() {
       setRuntime(result.workspaces)
       result.revokedScopeTokens.forEach((token) => void revokeFilePreviewScope(token).catch(() => undefined))
     }
-  }, [currentWorkspaceId, persisted, threads])
+  }, [agentWorkspaces, currentWorkspaceId, persisted, threads])
 
   useEffect(() => {
     const unlisten = onSidecarEvent((method) => {
@@ -119,16 +127,17 @@ export function RightPanelWorkspace() {
   const action = (value: Parameters<typeof dispatch>[0]) => dispatch(value)
 
   const compact = layout.mode === 'compact'
-  const width = compact ? '72px' : layout.mode === 'expanded'
-    ? '70vw'
-    : `clamp(360px, ${layout.width ?? RIGHT_PANEL_DEFAULT_WIDTH}px, 70vw)`
+  const resolvedMaxWidth = Math.max(360, Math.round(maxWidth))
+  const width = compact ? 72 : layout.mode === 'expanded'
+    ? resolvedMaxWidth
+    : Math.min(layout.width ?? RIGHT_PANEL_DEFAULT_WIDTH, resolvedMaxWidth)
 
   const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || compact) return
     event.preventDefault()
     const move = (next: PointerEvent) => setLayout((current) => ({
       ...current, open: true, mode: 'normal',
-      width: getRightPanelDragWidth({ clientX: next.clientX, viewportWidth: window.innerWidth }),
+      width: getRightPanelDragWidth({ clientX: next.clientX, viewportWidth: window.innerWidth, maxWidth: resolvedMaxWidth }),
     }))
     const stop = () => {
       setResizing(false)
@@ -144,7 +153,7 @@ export function RightPanelWorkspace() {
   return (
     <aside className={cn('relative z-[60] flex h-full shrink-0 flex-col border-l border-[var(--lume-border-subtle)] bg-[var(--lume-bg-app)] transition-[width] duration-200', resizing && 'transition-none')} style={{ width }}>
       {!compact && <div role="separator" aria-orientation="vertical" aria-label="调整右侧面板宽度" onPointerDown={startResize} className="absolute left-0 top-0 z-20 h-full w-2 -translate-x-1 cursor-col-resize touch-none" />}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--lume-bg-panel)] pb-2 pr-2">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--lume-bg-panel)]">
         {compact ? (
           <div className="flex min-h-0 flex-1 items-center justify-center text-[var(--lume-text-muted)]"><PanelRightOpen size={18} /></div>
         ) : (

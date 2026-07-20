@@ -134,6 +134,7 @@ interface RuntimeCoreResolvedModel {
   baseUrl?: string;
   contextWindow?: number;
   maxTokens?: number;
+  input?: string[];
 }
 
 export interface CreateRuntimeCoreSessionInput {
@@ -182,6 +183,7 @@ export interface CreateRuntimeCoreSessionInput {
   applyWorkflowHookEffects?: (result: LumeWorkflowHookExecutionResult) => Promise<void> | void;
   trace?: ContextAssemblyInput["trace"];
   wikiPhaseBEnabled?: boolean;
+  wikiProposalEnabled?: boolean;
   processSandbox?: SandboxSettings;
 }
 
@@ -791,6 +793,7 @@ function buildRuntimeCoreTools(input: {
   /** Plugin MCP tool definitions (Phase MCP Merge-A) from the plugin-scoped MCP manager. */
   pluginMcpTools?: ToolDefinition[];
   wikiPhaseBEnabled?: boolean;
+  wikiProposalEnabled?: boolean;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
   const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
@@ -848,7 +851,8 @@ function buildRuntimeCoreTools(input: {
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {}),
-    wikiPhaseBEnabled: input.wikiPhaseBEnabled
+    wikiPhaseBEnabled: input.wikiPhaseBEnabled,
+    wikiProposalEnabled: input.wikiProposalEnabled
   });
   const askWikiOnly = getAgentThreadMeta(input.sessionId)?.wikiProfile?.kind === "ask-wiki";
 
@@ -1641,6 +1645,7 @@ export async function createRuntimeCoreSession(
     pluginCommandTools: pluginAssembly.commandToolDefinitions,
     pluginMcpTools: pluginMcpRuntime.tools,
     wikiPhaseBEnabled: input.wikiPhaseBEnabled,
+    wikiProposalEnabled: input.wikiProposalEnabled,
     mcpTools: replaceMcpResourceTools(workspaceMcpRuntime.tools, pluginAwareMcpResourceTools),
     mcpDiagnostics: [
       ...(workspaceMcpRuntime.diagnostics ?? []),
@@ -1692,6 +1697,7 @@ export async function createRuntimeCoreSession(
     threadType: input.threadType,
     chatType: input.chatType,
     permissionMode: input.permissionMode,
+    automationExecution: isAutomationExecution(input.messageMetadata),
     agentSystemPrompt: boundSubagentIdentity
       ? [
           subagentDefinition?.prompt,
@@ -1846,7 +1852,7 @@ export async function createRuntimeCoreSession(
     userMessage: contextAssembly.userMessageForModel,
     contentBlocks: contextAssembly.userMessageContentBlocks,
     attachments: input.messageAttachments,
-    provider: input.provider,
+    visionSupported: input.resolvedModel?.input?.includes("image") === true,
     workspaceSlug: input.workspaceSlug,
     threadId: input.lumeSessionId
   });

@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding } from "./agent";
+import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding, FileReferenceProtocolVersion } from "./agent";
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
@@ -43,6 +43,7 @@ export interface RuntimeEventBase {
   parentToolUseId?: string;
   /** Frozen once for the logical reply and propagated to every runtime projection. */
   fileReferenceBinding?: FileReferenceBinding;
+  fileReferenceProtocolVersion?: FileReferenceProtocolVersion;
 }
 
 export interface ContextBudgetRuntimeSnapshot {

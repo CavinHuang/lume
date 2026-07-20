@@ -157,11 +157,24 @@ export interface WikiFollowLinksInput {
 }
 
 export interface WikiDiff {
+  pageId: string;
   path: string;
+  previousPath?: string;
   beforeHash: string | null;
   afterHash: string | null;
   preview: string;
 }
+
+export interface WikiBlockPatch {
+  blockId: string;
+  expectedContentHash: string;
+  action: "update" | "delete";
+  content?: string;
+}
+
+export type WikiContentMutation =
+  | { kind: "block_patch"; patches: WikiBlockPatch[] }
+  | { kind: "replace_page" };
 
 export interface WikiDraftOperation {
   kind: "create" | "update" | "move" | "delete";
@@ -170,6 +183,15 @@ export interface WikiDraftOperation {
   targetRelativePath: string;
   previousRelativePath?: string;
   markdown?: string;
+  contentMutation?: WikiContentMutation;
+}
+
+export interface WikiDraftCreator {
+  subjectId: string;
+  threadId?: string;
+  profile: "owner-ui" | "ask-wiki" | "ordinary-agent" | "system";
+  scope: WikiSearchScope;
+  channel: "ui" | "agent" | "import" | "lifecycle" | "undo";
 }
 
 export interface WikiStagedSource {
@@ -182,6 +204,7 @@ export interface WikiChangeDraft {
   id: string;
   revision: number;
   nonce: string;
+  creator: WikiDraftCreator;
   expiresAt: string;
   origin: "ui" | "import" | "agent" | "lint" | "undo";
   risk: WikiDraftRisk;
@@ -192,6 +215,52 @@ export interface WikiChangeDraft {
   diffs: WikiDiff[];
   pageVisibilityWorkspaceIds: string[];
   sourceGrantWorkspaceIds: string[];
+  undoOfBatchId?: string;
+  privacyPurgeSourceIds?: string[];
+}
+
+export type WikiPrivacySelector =
+  | { kind: "source"; sourceId: string }
+  | { kind: "page"; pageId: string }
+  | { kind: "thread"; threadId: string }
+  | { kind: "message"; threadId: string; messageId: string }
+  | { kind: "workspace"; workspaceId: string }
+  | { kind: "content_hash"; contentHash: string };
+
+export interface WikiPrivacyImpactPreview {
+  selector: WikiPrivacySelector;
+  sourceIds: string[];
+  pageIds: string[];
+  sharedPayloads: Array<{ blobHash: string; selectedSourceIds: string[]; retainedSourceIds: string[] }>;
+  stagingDraftIds: string[];
+  snapshotBatchIds: string[];
+  requiresSharedPayloadConfirmation: boolean;
+}
+
+export interface WikiCreatePrivacyPurgeDraftInput {
+  selector: WikiPrivacySelector;
+  confirmSharedPayloads?: boolean;
+}
+
+export interface WikiProposalOperationSummaryV1 {
+  kind: WikiDraftOperation["kind"];
+  contentMutationKind?: WikiContentMutation["kind"];
+  pageId: string;
+  beforeHash: string | null;
+  targetRelativePath: string;
+}
+
+export interface WikiProposalSummaryV1 {
+  schemaVersion: 1;
+  draftId: string;
+  revision: number;
+  expiresAt: string;
+  risk: WikiDraftRisk;
+  reasons: string[];
+  title: string;
+  operationSummaries: WikiProposalOperationSummaryV1[];
+  boundedDiffPreviews: Array<{ pageId: string; path: string; preview: string }>;
+  diffHash: string;
 }
 
 export interface WikiBatch {
@@ -199,6 +268,7 @@ export interface WikiBatch {
   draftId: string;
   state: "prepared" | "applying" | "committed" | "failed" | "undone";
   fencingToken: number;
+  revision: number;
   actor: string;
   origin: WikiChangeDraft["origin"];
   risk: WikiDraftRisk;
@@ -206,6 +276,7 @@ export interface WikiBatch {
   committedAt?: string;
   diffs: WikiDiff[];
   affectedPageIds: string[];
+  irreversible?: boolean;
   error?: string;
 }
 
@@ -277,6 +348,36 @@ export interface WikiConfirmDraftInput {
   nonce: string;
 }
 
+export interface WikiApplyDraftCommandInput {
+  draftId: string;
+  expectedRevision: number;
+  diffHash: string;
+}
+
+export interface WikiResolvePendingCommandInput {
+  pendingId: string;
+  action: "accept" | "reject";
+  expectedRevision: number;
+  diffHash: string;
+}
+
+export interface WikiUndoSummaryV1 {
+  schemaVersion: 1;
+  batchId: string;
+  expectedBatchRevision: number;
+  expectedCurrentStateHash: string;
+}
+
+export interface WikiUndoBatchCommandInput extends Omit<WikiUndoSummaryV1, "schemaVersion"> {}
+
+export interface WikiPendingReviewSummary {
+  id: string;
+  draft: WikiProposalSummaryV1;
+  createdAt: string;
+  reason: string;
+  requiresRegeneration?: boolean;
+}
+
 export interface WikiDraftStatus {
   draftId: string;
   state: "pending" | "pending_review" | "applied" | "unavailable";
@@ -285,15 +386,20 @@ export interface WikiDraftStatus {
 export interface WikiSnapshot {
   rootPath: string;
   pages: WikiPageRef[];
-  pending: WikiPendingReview[];
+  pending: WikiPendingReviewSummary[];
   findings: WikiLintFinding[];
   generation: number;
+  searchMode: "lexical-only" | "hybrid";
   recentBatches: WikiBatch[];
   semanticCheck: {
     enabled: boolean;
     lastSuccessfulAt?: string;
     status: "never" | "due" | "running" | "completed" | "unavailable" | "failed";
     message?: string;
+    generation?: number;
+    model?: string;
+    durationMs?: number;
+    findingCounts?: Record<WikiLintSeverity, number>;
   };
   capabilities: WikiCapabilityMatrix;
 }
@@ -302,9 +408,11 @@ export interface WikiCapabilityMatrix {
   phase: "A" | "B";
   runtimeStatus: "idle" | "preparing" | "ready" | "unavailable";
   uiMutation: boolean;
-  askWikiReadOnly: boolean;
+  askWikiRead: boolean;
+  askWikiProposal: boolean;
+  askWikiApply: false;
   ordinaryAgentRead: boolean;
-  agentProposals: boolean;
+  ordinaryAgentProposal: boolean;
   protectedRootGate: boolean;
   allowedRootSandbox: boolean;
   reason: string;
@@ -324,8 +432,23 @@ export const WIKI_IPC_CHANNELS = {
   RESOLVE_PENDING: "wiki:resolve-pending",
   UNDO_BATCH: "wiki:undo-batch",
   RUN_LINT: "wiki:run-lint",
+  PREVIEW_PRIVACY_PURGE: "wiki:preview-privacy-purge",
+  CREATE_PRIVACY_PURGE_DRAFT: "wiki:create-privacy-purge-draft",
   ARCHIVE_WORKSPACE: "wiki:archive-workspace",
   CREATE_ASK_THREAD: "wiki:create-ask-thread",
   GET_CAPABILITIES: "wiki:get-capabilities",
-  PREPARE_RUNTIME: "wiki:prepare-runtime"
+  PREPARE_RUNTIME: "wiki:prepare-runtime",
+  PRIVILEGED_GET_PROPOSAL_SUMMARY: "wiki:privileged-get-proposal-summary",
+  PRIVILEGED_APPLY_DRAFT: "wiki:privileged-apply-draft",
+  PRIVILEGED_RESOLVE_PENDING: "wiki:privileged-resolve-pending",
+  PRIVILEGED_GET_UNDO_SUMMARY: "wiki:privileged-get-undo-summary",
+  PRIVILEGED_UNDO_BATCH: "wiki:privileged-undo-batch"
+} as const;
+
+export const WIKI_DESKTOP_COMMANDS = {
+  GET_PROPOSAL_SUMMARY: "desktop_wiki_get_proposal_summary",
+  APPLY_DRAFT: "desktop_wiki_apply_draft",
+  RESOLVE_PENDING: "desktop_wiki_resolve_pending",
+  GET_UNDO_SUMMARY: "desktop_wiki_get_undo_summary",
+  UNDO_BATCH: "desktop_wiki_undo_batch"
 } as const;

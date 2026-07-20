@@ -58,10 +58,10 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'integrations', label: 'MCP', icon: Puzzle },
   { id: 'im-integrations', label: 'IM 集成', icon: MessageCircle },
   { id: 'web-search', label: '网络搜索', icon: Search },
-  { id: 'updates', label: '版本与更新', icon: RefreshCw },
   { id: 'data', label: '数据管理', icon: HardDrive },
   { id: 'logs', label: '应用日志', icon: ScrollText },
   { id: 'archive', label: '归档', icon: Archive },
+  { id: 'updates', label: '版本与更新', icon: RefreshCw },
 ]
 
 export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {

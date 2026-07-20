@@ -1,8 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { ReactNodeViewRenderer, useEditor } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
-import Placeholder from '@tiptap/extension-placeholder'
-import Mention from '@tiptap/extension-mention'
+import { useEditor } from '@tiptap/react'
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
 import {
@@ -13,10 +10,11 @@ import {
   activeTabIdAtom,
   agentStreamingStatesAtom,
   agentPlanModePhaseAtom,
+  agentThreadPermissionModesAtom,
   welcomeCapabilitySeedAtom,
   welcomePromptSeedAtom,
 } from '@/atoms'
-import { sidecarCall, agentSend, getQuickInputContext, isTerminalAgentSubmissionError, openFileDialog, onSidecarEvent } from '@/lib/desktop-api'
+import { abortStagedAttachment, sidecarCall, agentSend, getQuickInputContext, isTerminalAgentSubmissionError, openFileDialog, onSidecarEvent } from '@/lib/desktop-api'
 import { PermissionModePicker } from '@/components/agent/PermissionModePicker'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
@@ -40,9 +38,10 @@ import { buildWelcomeSurfaceViewModel, DEFAULT_WELCOME_SUGGESTIONS } from './wel
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { createCapabilityReferencePasteHandler, createSuggestionRenderer } from '@/components/agent/editor-mention-suggestions'
 import { extractClipboardFiles, handleAttachmentPaste } from '@/components/agent/editor-attachment-paste'
-import { CapabilityMentionNodeView } from '@/components/agent/CapabilityMentionNodeView'
+import { createPromptEditorExtensions } from '@/components/agent/prompt-editor-extensions'
 import { serializeAgentEditorMessage } from '@/components/agent/agent-editor-message-parts'
-import { attachmentDataUrl, isImageAttachment } from '@/components/agent/AgentAttachmentGrid'
+import { isImageAttachment } from '@/components/agent/AgentAttachmentGrid'
+import { pendingAttachmentRejectionMessage, validatePendingAttachmentBatch } from '@/components/agent/pending-attachment-validation'
 import {
   captureAgentInputDesktopContextState,
   createDesktopContextMessageMetadata,
@@ -55,6 +54,9 @@ import {
 interface WelcomeViewProps {
   workspaceId?: string
   desktopContextTarget?: DesktopContextTarget
+  compact?: boolean
+  draftSurface?: 'welcome' | 'quick-input'
+  onThreadCreated?: (thread: AgentThreadMeta) => void
 }
 
 interface WelcomePendingFile {
@@ -64,10 +66,17 @@ interface WelcomePendingFile {
   size: number
   sourcePath?: string
   data?: string
+  stagedAttachmentId?: string
   previewUrl?: string
 }
 
-export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTarget: initialDesktopContextTarget }: WelcomeViewProps) {
+export function WelcomeView({
+  workspaceId: initialWorkspaceId,
+  desktopContextTarget: initialDesktopContextTarget,
+  compact = false,
+  draftSurface = 'welcome',
+  onThreadCreated,
+}: WelcomeViewProps) {
   const setThreads = useSetAtom(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const setWorkspaces = useSetAtom(agentWorkspacesAtom)
@@ -76,6 +85,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
+  const setThreadPermissionModes = useSetAtom(agentThreadPermissionModesAtom)
   const setCurrentWorkspaceId = useAtom(currentWorkspaceIdAtom)[1]
   const [welcomePromptSeed, setWelcomePromptSeed] = useAtom(welcomePromptSeedAtom)
   const [welcomeCapabilitySeed, setWelcomeCapabilitySeed] = useAtom(welcomeCapabilitySeedAtom)
@@ -93,6 +103,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   sendingRef.current = sending
   const [editorText, setEditorText] = useState('')
   const [pendingFiles, setPendingFiles] = useState<WelcomePendingFile[]>([])
+  const pendingFilesRef = useRef<WelcomePendingFile[]>([])
   const [welcomeSuggestions, setWelcomeSuggestions] = useState<AgentWelcomeSuggestion[]>(DEFAULT_WELCOME_SUGGESTIONS)
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget>()
@@ -117,6 +128,8 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
 
   const workspaceSlug = selectedWorkspace?.slug ?? null
   const configWorkspaceSlug = workspaceSlug ?? undefined
+  const draftStorageKey = `lume-composer-draft:${draftSurface}:${selectedWorkspaceId ?? 'none'}`
+  const draftStorageKeyRef = useRef(draftStorageKey)
 
   useEffect(() => {
     let cancelled = false
@@ -190,6 +203,32 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const setMentionSuggestionOpen = useCallback((open: boolean) => {
     mentionSuggestionOpenRef.current = open
   }, [])
+  const addPendingFiles = useCallback((files: WelcomePendingFile[]) => {
+    const result = validatePendingAttachmentBatch(pendingFilesRef.current, files)
+    if (result.accepted.length > 0) {
+      const next = [...pendingFilesRef.current, ...result.accepted]
+      pendingFilesRef.current = next
+      setPendingFiles(next)
+      toast.success(`已添加 ${result.accepted.length} 个附件`)
+    }
+    result.rejected.forEach(({ attachment, reason }) => {
+      if (attachment.stagedAttachmentId) void abortStagedAttachment(attachment.stagedAttachmentId).catch(() => undefined)
+      toast.error(`${attachment.filename}：${pendingAttachmentRejectionMessage(reason)}`)
+    })
+  }, [])
+  const removePendingFile = useCallback((index: number) => {
+    const removed = pendingFilesRef.current[index]
+    if (removed?.stagedAttachmentId) void abortStagedAttachment(removed.stagedAttachmentId).catch(() => undefined)
+    const next = pendingFilesRef.current.filter((_, itemIndex) => itemIndex !== index)
+    pendingFilesRef.current = next
+    setPendingFiles(next)
+  }, [])
+
+  useEffect(() => () => {
+    pendingFilesRef.current.forEach((file) => {
+      if (file.stagedAttachmentId) void abortStagedAttachment(file.stagedAttachmentId).catch(() => undefined)
+    })
+  }, [])
 
   useEffect(() => {
     workspaceSlugRef.current = workspaceSlug
@@ -201,29 +240,10 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   const handleCapabilityReferencePaste = createCapabilityReferencePasteHandler('__welcome__', getWorkspaceSlug)
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ bold: false, italic: false, strike: false }),
-      Placeholder.configure({ placeholder: '描述你想完成的任务，使用 / 选择技能或插件…' }),
-      Mention.extend({
-        name: 'capabilityMention',
-        addAttributes() {
-          return {
-            ...this.parent?.(),
-            uri: { default: null },
-            kind: { default: null },
-            occurrenceId: { default: null },
-            iconUrl: { default: null },
-          }
-        },
-        addNodeView() {
-          return ReactNodeViewRenderer(CapabilityMentionNodeView)
-        },
-      }).configure({
-        HTMLAttributes: { class: 'capability-mention' },
-        renderText: ({ node }) => node.attrs.uri ?? '',
-        suggestion: createSuggestionRenderer('/', '__welcome__', '/', getWorkspaceSlug, setMentionSuggestionOpen, executeSlashCommand),
-      }),
-    ],
+    extensions: createPromptEditorExtensions({
+      placeholder: '描述你想完成的任务，使用 / 选择技能或插件…',
+      capabilitySuggestion: createSuggestionRenderer('/', '__welcome__', '/', getWorkspaceSlug, setMentionSuggestionOpen, executeSlashCommand),
+    }),
     editorProps: {
       attributes: { class: 'outline-none min-h-[80px] max-h-[200px] overflow-y-auto text-[14px] leading-relaxed' },
       handlePaste(view, event) {
@@ -233,15 +253,18 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
           return true
         }
         if (handleAttachmentPaste(event, {
+          existingAttachments: pendingFilesRef.current,
           onStart: () => { attachmentPasteInProgressRef.current = true },
           onAttachments: (attachments) => {
-            setPendingFiles((prev) => [...prev, ...attachments])
-            toast.success(`已粘贴 ${attachments.length} 个附件`)
+            addPendingFiles(attachments)
           },
           onError: (error) => {
             console.error('[WelcomeView] 粘贴附件失败:', error)
             toast.error('粘贴附件失败')
           },
+          onRejected: (items) => items.forEach(({ file, reason }) => {
+            toast.error(`${file.name || '剪贴板文件'}：${pendingAttachmentRejectionMessage(reason)}`)
+          }),
           onSettled: () => { attachmentPasteInProgressRef.current = false },
         })) return true
 
@@ -261,8 +284,35 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
     },
     onUpdate({ editor }) {
       setEditorText(editor.getText())
+      try {
+        localStorage.setItem(draftStorageKeyRef.current, JSON.stringify({
+          revision: Date.now(),
+          doc: editor.getJSON(),
+        }))
+      } catch {
+        // Draft persistence is best effort; the editor remains authoritative.
+      }
     },
   })
+
+  useEffect(() => {
+    if (!editor) return
+    draftStorageKeyRef.current = draftStorageKey
+    try {
+      const stored = localStorage.getItem(draftStorageKey)
+      if (!stored) {
+        editor.commands.clearContent()
+        setEditorText('')
+        return
+      }
+      const parsed = JSON.parse(stored) as { doc?: unknown }
+      if (!parsed.doc) return
+      editor.commands.setContent(parsed.doc as Parameters<typeof editor.commands.setContent>[0])
+      setEditorText(editor.getText())
+    } catch {
+      localStorage.removeItem(draftStorageKey)
+    }
+  }, [draftStorageKey, editor])
 
   useEffect(() => {
     if (!editor || !welcomePromptSeed) return
@@ -380,18 +430,23 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
           workspaceSlug,
           clientSubmissionId,
           files: pendingFiles.map((file) => ({
-            filename: file.filename,
-            ...(file.sourcePath ? { sourcePath: file.sourcePath } : {}),
-            ...(file.data ? { data: file.data } : {}),
-          })),
-        })
-        messageAttachments = pendingFiles.map((file, index) => {
-          const saved = savedFiles.find((savedFile) => savedFile.filename === file.filename) ?? savedFiles[index]
-          return {
             id: file.id,
             filename: file.filename,
             mediaType: file.mediaType,
             size: file.size,
+            ...(file.sourcePath ? { sourcePath: file.sourcePath } : {}),
+            ...(file.data ? { data: file.data } : {}),
+            ...(file.stagedAttachmentId ? { stagedAttachmentId: file.stagedAttachmentId } : {}),
+          })),
+        })
+        messageAttachments = pendingFiles.map((file, index) => {
+          const saved = savedFiles.find((savedFile) => savedFile.id === file.id) ?? savedFiles[index]
+          return {
+            id: file.id,
+            filename: file.filename,
+            mediaType: saved?.mediaType ?? file.mediaType,
+            size: saved?.size ?? file.size,
+            ...(saved?.contentHash ? { contentHash: saved.contentHash } : {}),
             threadPath: saved?.threadPath ?? file.filename,
             ...(saved?.ref ? { fileRef: saved.ref } : {}),
           }
@@ -415,6 +470,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
       } as any)
       pendingWelcomeSubmissionRef.current = null
 
+      setThreadPermissionModes((prev) => ({ ...prev, [meta.id]: permissionMode }))
       setTabs((prev) => {
         const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
         return [
@@ -438,11 +494,24 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
 
       editor.commands.clearContent()
       setEditorText('')
+      localStorage.removeItem(draftStorageKey)
+      pendingFilesRef.current.forEach((file) => {
+        if (file.stagedAttachmentId) void abortStagedAttachment(file.stagedAttachmentId).catch(() => undefined)
+      })
+      pendingFilesRef.current = []
       setPendingFiles([])
+      onThreadCreated?.(meta)
     } catch (err) {
       console.error('[WelcomeView] 发送失败:', err)
       toast.error('发送失败，请重试')
-      if (isTerminalAgentSubmissionError(err)) pendingWelcomeSubmissionRef.current = null
+      if (isTerminalAgentSubmissionError(err)) {
+        const failedAttempt = pendingWelcomeSubmissionRef.current
+        pendingWelcomeSubmissionRef.current = null
+        if (failedAttempt?.meta) {
+          await sidecarCall(AGENT_IPC_CHANNELS.DELETE_THREAD, { threadId: failedAttempt.meta.id })
+            .catch(() => undefined)
+        }
+      }
     } finally {
       setSending(false)
     }
@@ -452,24 +521,21 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
     try {
       const result = await openFileDialog()
       if (result.files.length === 0) return
-      setPendingFiles((prev) => [
-        ...prev,
-        ...result.files.map((file) => {
+      addPendingFiles(result.files.map((file) => {
           const mediaType = file.mediaType || 'application/octet-stream'
           return {
-            id: createWelcomePendingFileId(),
+            id: file.id || createWelcomePendingFileId(),
             filename: file.filename,
             mediaType,
             size: file.size,
-            sourcePath: file.sourcePath,
-            ...(file.data ? { data: file.data } : {}),
-            ...(isImageAttachment({ filename: file.filename, mediaType })
-              ? { previewUrl: attachmentDataUrl(mediaType, file.data) }
+            ...(file.stagedAttachmentId
+              ? { stagedAttachmentId: file.stagedAttachmentId }
+              : { sourcePath: file.sourcePath }),
+            ...(isImageAttachment({ filename: file.filename, mediaType }) && file.previewUrl
+              ? { previewUrl: file.previewUrl }
               : {}),
           }
-        }),
-      ])
-      toast.success(`已添加 ${result.files.length} 个文件`)
+        }))
     } catch (err) {
       console.error('[WelcomeView] 文件选择失败:', err)
       toast.error('文件选择失败')
@@ -558,6 +624,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
   return (
     <>
       <LumeWelcomeSurface
+        compact={compact}
         model={welcomeSurfaceModel}
         workspaceSelector={
           <WorkspaceSelector
@@ -604,9 +671,7 @@ export function WelcomeView({ workspaceId: initialWorkspaceId, desktopContextTar
         onClearDesktopContextTarget={() => setSelectedDesktopContextTarget(undefined)}
         suggestions={!hasText && !selectedDesktopContextTarget ? welcomeSuggestions : []}
         onSuggestionSelect={handleWelcomeSuggestionSelect}
-        onRemovePendingFile={(index) =>
-          setPendingFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
-        }
+        onRemovePendingFile={removePendingFile}
       />
       <CreateWorkspaceDialog
         open={createWorkspaceOpen}

@@ -753,17 +753,18 @@ describe('runtime-event-message-projection', () => {
       fileContextId: 'context-1',
     }
     const messages = projectRuntimeEventMessages([
-      event({ type: 'run.started', fileReferenceBinding }),
-      event({ type: 'assistant.delta', delta: 'See `@project/src/app.ts#L4`.', fileReferenceBinding }),
+      event({ type: 'run.started', fileReferenceBinding, fileReferenceProtocolVersion: 1 }),
+      event({ type: 'assistant.delta', delta: 'See `@project/src/app.ts#L4`.', fileReferenceBinding, fileReferenceProtocolVersion: 1 }),
       event({
         type: 'plan.preview',
         fileReferenceBinding,
+        fileReferenceProtocolVersion: 1,
         contractId: 'plan-bound',
         title: 'Bound plan',
         markdown: 'Inspect `@session/plans/plan.md`.',
         stepCount: 1,
       } as any),
-      event({ type: 'run.completed', fileReferenceBinding }),
+      event({ type: 'run.completed', fileReferenceBinding, fileReferenceProtocolVersion: 1 }),
     ])
 
     const assistant = messages.find((message) => message.type === 'assistant')
@@ -771,6 +772,7 @@ describe('runtime-event-message-projection', () => {
       type: 'assistant',
       status: 'completed',
       fileReferenceBinding,
+      fileReferenceProtocolVersion: 1,
     })
     expect((assistant as Extract<RuntimeMessageView, { type: 'assistant' }>).blocks.some((block) => (
       block.type === 'plan_preview' && block.id === 'plan:plan-bound'

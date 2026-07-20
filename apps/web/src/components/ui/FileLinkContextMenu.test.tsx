@@ -55,6 +55,7 @@ describe("buildFileLinkMenuItems", () => {
       isDirectory: true,
       guardedRef: {
         ref: { source: "project", scopeId: "ws", relativePath: "src/components" },
+        expectedKind: "directory",
         guard: {
           kind: "project",
           workspaceSlug: "ws",

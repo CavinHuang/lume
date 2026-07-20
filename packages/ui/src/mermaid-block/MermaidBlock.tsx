@@ -29,6 +29,8 @@ interface MermaidBlockProps {
   code: string
   /** 由宿主注入剪贴板写入，避免共享组件绕过桌面 IPC */
   onCopy: (code: string) => Promise<void>
+  /** 由宿主将 SVG 栅格化后写入系统图片剪贴板 */
+  onCopyImage: (svg: string) => Promise<void>
 }
 
 /** 防抖间隔（ms） */
@@ -39,6 +41,8 @@ const FADE_MS = 250
 const ZOOM_MIN = 0.25
 const ZOOM_MAX = 3
 const ZOOM_STEP = 0.15
+const HEIGHT_MIN = 220
+const HEIGHT_MAX = 1200
 
 function isDarkMode(): boolean {
   return document.documentElement.classList.contains('dark')
@@ -67,6 +71,13 @@ const copyIconPath = (
   </>
 )
 const checkIconPath = <polyline points="20 6 9 17 4 12" />
+const imageIconPath = (
+  <>
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="8.5" cy="8.5" r="1.5" />
+    <path d="m21 15-5-5L5 21" />
+  </>
+)
 const zoomInPath = (
   <>
     <circle cx="11" cy="11" r="8" />
@@ -101,14 +112,26 @@ export async function copyMermaidCode(
   await onCopy(code)
 }
 
+export async function copyMermaidImage(
+  svg: string,
+  onCopyImage: (svg: string) => Promise<void>,
+): Promise<void> {
+  await onCopyImage(svg)
+}
+
+export function getResizedMermaidHeight(startHeight: number, deltaY: number): number {
+  return clamp(startHeight + deltaY, HEIGHT_MIN, HEIGHT_MAX)
+}
+
 export function stripStylesheetImports(svg: string): string {
   return svg.replace(/@import\s+url\((?:'[^']*'|"[^"]*"|[^)]*)\)\s*;?/gi, '')
 }
 
-export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactElement {
+export function MermaidBlock({ code, onCopy, onCopyImage }: MermaidBlockProps): React.ReactElement {
   const [svgHtml, setSvgHtml] = React.useState<string | null>(null)
   const [svgVisible, setSvgVisible] = React.useState(false)
-  const [copied, setCopied] = React.useState(false)
+  const [copied, setCopied] = React.useState<'code' | 'image' | null>(null)
+  const [contentHeight, setContentHeight] = React.useState<number | null>(null)
   const [transform, setTransform] = React.useState<ViewTransform>(INITIAL_TRANSFORM)
 
   const codeRef = React.useRef(code)
@@ -117,6 +140,8 @@ export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactEl
   const generationRef = React.useRef(0)
   const dragRef = React.useRef<{ startX: number; startY: number; startTx: number; startTy: number } | null>(null)
   const svgContainerRef = React.useRef<HTMLDivElement>(null)
+  const contentRef = React.useRef<HTMLDivElement>(null)
+  const resizeRef = React.useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null)
 
   codeRef.current = code
 
@@ -221,12 +246,48 @@ export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactEl
   const handleCopy = React.useCallback(async () => {
     try {
       await copyMermaidCode(code, onCopy)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      setCopied('code')
+      setTimeout(() => setCopied(null), 2000)
     } catch (error) {
       console.error('[MermaidBlock] 复制失败:', error)
     }
   }, [code, onCopy])
+
+  const handleCopyImage = React.useCallback(async () => {
+    if (!svgHtml) return
+    try {
+      await copyMermaidImage(svgHtml, onCopyImage)
+      setCopied('image')
+      setTimeout(() => setCopied(null), 2000)
+    } catch (error) {
+      console.error('[MermaidBlock] 复制图片失败:', error)
+    }
+  }, [onCopyImage, svgHtml])
+
+  const handleResizeStart = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || !contentRef.current) return
+    event.preventDefault()
+    resizeRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: contentRef.current.getBoundingClientRect().height,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }, [])
+
+  const handleResizeMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const resize = resizeRef.current
+    if (!resize || resize.pointerId !== event.pointerId) return
+    setContentHeight(getResizedMermaidHeight(resize.startHeight, event.clientY - resize.startY))
+  }, [])
+
+  const handleResizeEnd = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (resizeRef.current?.pointerId !== event.pointerId) return
+    resizeRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [])
 
   const zoomPercent = Math.round(transform.scale * 100)
 
@@ -249,9 +310,15 @@ export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactEl
               </button>
             </div>
           )}
+          {svgVisible && (
+            <button type="button" onClick={handleCopyImage} className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-foreground/10 transition-colors text-muted-foreground hover:text-foreground">
+              <svg {...ICON_ATTRS}>{copied === 'image' ? checkIconPath : imageIconPath}</svg>
+              <span>{copied === 'image' ? '已复制' : '复制图片'}</span>
+            </button>
+          )}
           <button type="button" onClick={handleCopy} className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-foreground/10 transition-colors text-muted-foreground hover:text-foreground">
-            <svg {...ICON_ATTRS}>{copied ? checkIconPath : copyIconPath}</svg>
-            <span>{copied ? '已复制' : '复制'}</span>
+            <svg {...ICON_ATTRS}>{copied === 'code' ? checkIconPath : copyIconPath}</svg>
+            <span>{copied === 'code' ? '已复制' : '复制源码'}</span>
           </button>
         </div>
       </div>
@@ -262,7 +329,11 @@ export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactEl
         SVG 层：永远 absolute（不影响布局）
         两层只通过 opacity 交叉淡入淡出
       */}
-      <div className="relative h-[clamp(280px,45vw,520px)] overflow-hidden">
+      <div
+        ref={contentRef}
+        className="relative overflow-hidden"
+        style={{ height: contentHeight ?? 'clamp(280px,45vw,520px)' }}
+      >
         {/* 源码层 —— 始终在文档流中，流式输出时自然增长 */}
         <pre
           className="h-full overflow-auto p-4 m-0 text-[13px] leading-[1.6] bg-muted/30 text-foreground/80"
@@ -300,6 +371,18 @@ export function MermaidBlock({ code, onCopy }: MermaidBlockProps): React.ReactEl
             </div>
           </div>
         )}
+      </div>
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="调整 Mermaid 图表高度"
+        className="group/resize flex h-2 touch-none cursor-row-resize items-center justify-center bg-muted/30"
+        onPointerDown={handleResizeStart}
+        onPointerMove={handleResizeMove}
+        onPointerUp={handleResizeEnd}
+        onPointerCancel={handleResizeEnd}
+      >
+        <span className="h-0.5 w-10 rounded-full bg-foreground/15 transition-colors group-hover/resize:bg-foreground/30" />
       </div>
     </div>
   )

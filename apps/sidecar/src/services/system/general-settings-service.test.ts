@@ -383,6 +383,20 @@ describe("general-settings-service", () => {
     expect(existsSync(indexFile)).toBeFalse();
   });
 
+  test("vectorIndex 只清理 Wiki 派生索引并保留页面、来源与待审核项", () => {
+    const indexFile = writeConfigFile(["wiki", ".lume", "index", "wiki.sqlite"], "index");
+    const pageFile = writeConfigFile(["wiki", "inbox", "page.md"], "page");
+    const sourceFile = writeConfigFile(["wiki", ".lume", "sources", "records", "source.md"], "source");
+    const pendingFile = writeConfigFile(["wiki", ".lume", "pending", "pending.json"], "pending");
+
+    clearGeneralSettingsCaches({ vectorIndex: true });
+
+    expect(existsSync(indexFile)).toBeFalse();
+    expect(existsSync(pageFile)).toBeTrue();
+    expect(existsSync(sourceFile)).toBeTrue();
+    expect(existsSync(pendingFile)).toBeTrue();
+  });
+
   test("pluginsCache 清理 plugins/cache 与 plugins/data", () => {
     const cacheFile = writeConfigFile(["plugins", "cache", "p.json"], "{}");
     const dataFile = writeConfigFile(["plugins", "data", "p.json"], "{}");

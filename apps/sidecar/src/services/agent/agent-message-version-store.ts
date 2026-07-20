@@ -6,7 +6,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { join } from "node:path";
-import type { FileReferenceBinding, SDKMessage } from "@lume/shared";
+import type { FileReferenceBinding, FileReferenceProtocolVersion, SDKMessage } from "@lume/shared";
 import { getAgentSessionDataDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
 
@@ -35,6 +35,7 @@ export interface AgentMessageVersionRecord {
   metadata?: Record<string, unknown>;
   sdkMessages?: SDKMessage[];
   fileReferenceBinding?: FileReferenceBinding;
+  fileReferenceProtocolVersion?: FileReferenceProtocolVersion;
 }
 
 export interface AgentMessageVersionStore {

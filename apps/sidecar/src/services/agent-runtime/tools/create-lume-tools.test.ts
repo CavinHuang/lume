@@ -21,10 +21,21 @@ describe("create-lume-tools", () => {
     expect(isExplicitWikiWriteInstruction("保存当前文件")).toBeFalse();
   });
 
-  test("offers a create-only Wiki proposal in Phase A for an explicit write request", () => {
+  test("keeps Wiki proposals disabled until the proposal security gate passes", () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
       phaseBEnabled: false,
+      originalUserInstruction: "把这段内容写入 Wiki"
+    });
+
+    expect(tools).toEqual([]);
+  });
+
+  test("offers a create-only Wiki proposal after the proposal security gate passes", () => {
+    const tools = createOrdinaryWikiTools({
+      profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
+      phaseBEnabled: false,
+      proposalEnabled: true,
       originalUserInstruction: "把这段内容写入 Wiki"
     });
 
@@ -53,6 +64,7 @@ describe("create-lume-tools", () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
       phaseBEnabled: true,
+      proposalEnabled: true,
       originalUserInstruction: "重新试试写入 wiki"
     });
     const registry = new ToolRegistry();

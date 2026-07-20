@@ -1,4 +1,5 @@
 import type { Api, KnownProvider, Model } from "../runner/model-types";
+import { findModelMeta } from "@lume/shared";
 import { resolveModelCandidatesForChannel } from "../../channel/model-selection";
 import { adaptModelCapabilities, resolveAgentThinkingLevel } from "../runner/model-capabilities";
 import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "../runner/provider-routing";
@@ -12,7 +13,7 @@ export interface ResolvedPiChannelModel {
 
 export function resolvePiChannelModel(params: {
   channel: {
-    models: Array<{ id: string; enabled: boolean; alias?: string; name: string }>;
+    models: Array<{ id: string; enabled: boolean; alias?: string; name: string; capabilities?: { vision?: boolean } }>;
     defaultModelId?: string;
     fallbackModelIds?: string[];
   };
@@ -28,13 +29,15 @@ export function resolvePiChannelModel(params: {
       baseUrl: params.baseUrl
     });
     for (const provider of prioritizeProvidersForBaseUrl(candidates, params.baseUrl)) {
+      const channelModel = params.channel.models.find((item) => item.id === candidateModelId || item.alias === candidateModelId);
       return {
         provider,
         resolvedModelId: modelId,
         model: createFallbackModel(
           provider,
           modelId,
-          shouldApplyChannelBaseUrl(provider, params.baseUrl) ? params.baseUrl : undefined
+          shouldApplyChannelBaseUrl(provider, params.baseUrl) ? params.baseUrl : undefined,
+          channelModel?.capabilities?.vision ?? findModelMeta(modelId)?.capabilities.vision
         )
       };
     }
@@ -59,14 +62,16 @@ export function resolvePiChannelModel(params: {
     model: createFallbackModel(
       fallbackProvider,
       modelId,
-      shouldApplyChannelBaseUrl(fallbackProvider, params.baseUrl) ? params.baseUrl : undefined
+      shouldApplyChannelBaseUrl(fallbackProvider, params.baseUrl) ? params.baseUrl : undefined,
+      params.channel.models.find((item) => item.id === firstModelId || item.alias === firstModelId)?.capabilities?.vision
+        ?? findModelMeta(modelId)?.capabilities.vision
     )
   };
 }
 
 export const resolveRuntimeCoreChannelModel = resolvePiChannelModel;
 
-function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?: string): Model<Api> {
+function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?: string, vision = false): Model<Api> {
   const normalizedBaseUrl = baseUrl?.trim() || resolveFallbackBaseUrl(provider);
   const api =
     provider === "anthropic"
@@ -81,7 +86,7 @@ function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?:
     api,
     baseUrl: normalizedBaseUrl,
     reasoning: supportsReasoning(provider, normalizedBaseUrl),
-    input: ["text"],
+    input: vision ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 200000,
     maxTokens: 32768

@@ -3,7 +3,7 @@ name: "Wiki 知识库"
 description: "通过受保护的 Wiki 工具检索知识，或为用户明确要求沉淀的内容创建待确认草案"
 when_to_use: "当用户说「存到 Wiki」「归档到 Wiki」「记到知识库」「保存到 Wiki」「查询 Wiki」「整理知识库」时触发"
 allowed_tools: ["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]
-version: "3.0"
+version: "3.1"
 ---
 
 ## 安全边界
@@ -12,6 +12,7 @@ version: "3.0"
 - 不要探测 `~/.lume/wiki`，也不要把失败后的草稿写到 session、workspace 或其他目录冒充已沉淀。
 - 正式写入必须经过 `wiki.propose_changes` 创建 sidecar staging 草案，再由用户点击确认卡。模型不能代替用户确认。
 - 当前运行没有某个 Wiki 工具时，明确说明能力暂不可用，并引导用户使用 Lume「Wiki → 导入」；不要改用文件写入兜底。
+- `wiki.*` 是 Lume 运行时内置工具，不是 MCP server；MCP servers 列表为空不能用于判断 Wiki 是否可用，只能以当前工具 schema 中是否存在 `wiki.*` 为准。
 
 ## 操作一：沉淀内容
 
@@ -32,6 +33,6 @@ version: "3.0"
 - 使用 `wiki.search` 找相关页面，`wiki.read` 读取页面与来源，必要时用 `wiki.follow_links` 沿链接扩展。
 - 不要预加载整座 Wiki；按用户问题最小化检索。
 - 发现矛盾、孤页、缺失引用或过时内容时可以提出整理建议；只有用户明确要求修改时才创建提案。
-- 当前没有 Wiki 读取工具时，不得声称已经检查或整合了既有知识。
+- 当前没有 Wiki 读取工具时，不得声称已经检查或整合了既有知识；需要查询时，引导用户到 Lume「Wiki → 向 Wiki 提问」开启受保护的 Wiki 专用会话。
 
 核心理念：**Wiki 不是文件存档，而是经过确认、可持续维护的知识。**

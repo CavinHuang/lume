@@ -3,11 +3,14 @@ import { attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
 import type { PendingMessageAttachment } from './AgentInput'
 
 export interface DesktopDroppedFile {
+  id?: string
   filename: string
   mediaType: string
   size: number
   sourcePath: string
+  stagedAttachmentId?: string
   data?: string
+  previewUrl?: string
 }
 
 export type DragDropPayload =
@@ -33,15 +36,18 @@ export async function createPendingAttachmentsFromSourcePaths(
   const result = await statPaths(paths)
   return result.files.map((file) => {
     const mediaType = file.mediaType || 'application/octet-stream'
+    const legacyData = 'data' in file ? file.data : undefined
     return {
-      id: createId(),
+      id: file.id || createId(),
       filename: file.filename,
       mediaType,
       size: file.size,
-      sourcePath: file.sourcePath,
-      ...(file.data ? { data: file.data } : {}),
-      ...(isImageAttachment({ filename: file.filename, mediaType })
-        ? { previewUrl: attachmentDataUrl(mediaType, file.data) }
+      ...(file.stagedAttachmentId
+        ? { stagedAttachmentId: file.stagedAttachmentId }
+        : { sourcePath: file.sourcePath }),
+      ...(legacyData ? { data: legacyData } : {}),
+      ...(isImageAttachment({ filename: file.filename, mediaType }) && (file.previewUrl || legacyData)
+        ? { previewUrl: file.previewUrl ?? attachmentDataUrl(mediaType, legacyData) }
         : {}),
     }
   })

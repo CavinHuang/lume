@@ -9,9 +9,9 @@ import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, generalS
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
-import { agentSend, getThreadMessageVersions, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardText } from '@/lib/desktop-api'
-import { parseThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
-import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding } from './thread-file-env'
+import { agentSend, getThreadMessageVersions, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
+import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
+import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
 import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
@@ -19,6 +19,9 @@ import { toast } from 'sonner'
 import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
 import { createThreadImagePreviewScope } from './thread-image-preview'
 import { getMermaidCodeFromPreNode, isMermaidPreStreaming } from './markdown-mermaid'
+import { getInfographicCodeFromPreNode, isInfographicPreStreaming } from './markdown-infographic'
+import { InfographicBlock } from './InfographicBlock'
+import { mermaidSvgToPngDataUrl } from '@/lib/mermaid-image'
 import {
   buildExpressionActionSendInput,
   deriveExpressionActions,
@@ -174,7 +177,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   )
 
   return (
-    <MessageFileReferenceBindingProvider value={message.fileReferenceBinding} consumerThreadId={threadId}>
+    <MessageFileReferenceBindingProvider value={message.fileReferenceBinding} consumerThreadId={threadId} protocolVersion={message.fileReferenceProtocolVersion}>
     <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
       {showAssistantAvatar && (
         <div
@@ -1765,6 +1768,16 @@ async function copyMermaidToClipboard(code: string): Promise<void> {
   }
 }
 
+async function copyMermaidImageToClipboard(svg: string): Promise<void> {
+  try {
+    await writeClipboardImage({ dataUrl: await mermaidSvgToPngDataUrl(svg) })
+  } catch (error) {
+    console.error('[MarkdownPre] 复制 Mermaid 图片失败:', error)
+    toast.error('复制图片失败')
+    throw error
+  }
+}
+
 export function MarkdownPre({
   children,
   domNode,
@@ -1776,7 +1789,23 @@ export function MarkdownPre({
     if (streamStatus === 'loading' || isMermaidPreStreaming(domNode)) {
       return <pre {...rest}>{children}</pre>
     }
-    return <MermaidBlock code={mermaidCode} onCopy={copyMermaidToClipboard} />
+    return (
+      <MermaidBlock
+        code={mermaidCode}
+        onCopy={copyMermaidToClipboard}
+        onCopyImage={copyMermaidImageToClipboard}
+      />
+    )
+  }
+
+  const infographicCode = getInfographicCodeFromPreNode(domNode)
+  if (infographicCode !== null) {
+    return (
+      <InfographicBlock
+        code={infographicCode}
+        streaming={streamStatus === 'loading' || isInfographicPreStreaming(domNode)}
+      />
+    )
   }
 
   return <pre {...rest}>{children}</pre>
@@ -1792,8 +1821,12 @@ export function MarkdownCode({
   ...rest
 }: MarkdownCodeProps & { onOpenThreadFile?: OpenThreadFile }) {
   const binding = useMessageFileReferenceBinding()
+  const protocolVersion = useMessageFileReferenceProtocolVersion()
   const text = flattenText(children)
-  const reference = !block ? parseThreadFileReference(text) : null
+  const reference = !block ? parseMessageThreadFileReference(text, {
+    bindingPresent: Boolean(binding),
+    protocolVersion,
+  }) : null
 
   if (reference && onOpenThreadFile) {
     return <AgentFileReference reference={reference} binding={binding} onOpen={onOpenThreadFile} />
@@ -1810,8 +1843,9 @@ export function MarkdownAnchor({
   ...rest
 }: MarkdownAnchorProps & { onOpenThreadFile?: OpenThreadFile }) {
   const binding = useMessageFileReferenceBinding()
+  const protocolVersion = useMessageFileReferenceProtocolVersion()
   const reference = typeof href === 'string' && (href.startsWith('@project/') || href.startsWith('@session/'))
-    ? parseThreadFileReference(href, { markdownHref: true })
+    ? parseMessageThreadFileReference(href, { bindingPresent: Boolean(binding), protocolVersion, markdownHref: true })
     : null
   if (reference && onOpenThreadFile) {
     return <AgentFileReference reference={reference} binding={binding} onOpen={onOpenThreadFile} />

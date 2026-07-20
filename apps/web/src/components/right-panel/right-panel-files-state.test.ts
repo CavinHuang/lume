@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { FileRef, GuardedFileRef } from '@lume/shared'
+import type { FileRef } from '@lume/shared'
 import {
   closeFileTab,
   createFileTreeRevealRequest,
@@ -37,32 +37,22 @@ describe('right-panel-files-state', () => {
     )
   })
 
-  test('retains mandatory guards and relocates the same tab while clearing omitted anchors', () => {
-    const guardedRef: GuardedFileRef = {
-      ref: { source: 'project', scopeId: 'demo', relativePath: 'src/app.ts' },
-      guard: {
-        kind: 'project',
-        workspaceSlug: 'demo',
-        expectedProjectRootFingerprint: 'a'.repeat(64),
-        consumerThreadId: 'thread-1',
-      },
-    }
-    let state = openFileTab(createThreadFileWorkspace({ workspaceId: 'workspace-1' }), guardedRef, {
+  test('stores a resolved plain FileRef and relocates the same tab while clearing omitted anchors', () => {
+    const resolvedRef = { source: 'project' as const, scopeId: 'demo', relativePath: 'src/app.ts' }
+    let state = openFileTab(createThreadFileWorkspace({ workspaceId: 'workspace-1' }), resolvedRef, {
       lineSelection: { start: 8, end: 4 },
       navigationRevision: 4,
     })
     expect(state.openTabs[0]).toMatchObject({
-      guardedRef,
       lineSelection: { start: 8, end: 8 },
       navigationRevision: 4,
     })
 
-    state = openFileTab(state, guardedRef, { lineSelection: { start: 12, end: 14 }, navigationRevision: 5 })
+    state = openFileTab(state, resolvedRef, { lineSelection: { start: 12, end: 14 }, navigationRevision: 5 })
     expect(state.openTabs).toHaveLength(1)
-    expect(state.openTabs[0]).toMatchObject({ guardedRef, lineSelection: { start: 12, end: 14 }, navigationRevision: 5 })
+    expect(state.openTabs[0]).toMatchObject({ ref: resolvedRef, lineSelection: { start: 12, end: 14 }, navigationRevision: 5 })
 
-    state = openFileTab(state, guardedRef, { navigationRevision: 6 })
-    expect(state.openTabs[0]!.guardedRef).toEqual(guardedRef)
+    state = openFileTab(state, resolvedRef, { navigationRevision: 6 })
     expect(state.openTabs[0]!.lineSelection).toBeUndefined()
   })
 
@@ -172,6 +162,26 @@ describe('right-panel-files-state', () => {
     expect(result.workspaces.keep!.activeItem).toEqual({ kind: 'function', type: 'browser' })
     expect(result.workspaces.keep!.directoryCache).toEqual({})
     expect(result.revokedScopeTokens).toEqual(['token-1', 'token-2'])
+  })
+
+  test('project rebinding clears project tabs, cache, selection and preview scopes', () => {
+    let state = createThreadFileWorkspace({ workspaceId: 'workspace-1', fileContextId: 'context-1', projectBindingKey: 'old-root' })
+    const projectRef = ref('src/app.ts', 'project', 'workspace-1')
+    state = openFileTab(state, projectRef)
+    state = {
+      ...state,
+      selectedRef: projectRef,
+      temporaryPreviewRef: projectRef,
+      directoryCache: { project: [] },
+      previewScopes: { [state.openTabs[0]!.id]: 'scope-token' },
+    }
+    const result = reconcileThreadFileWorkspaces({ thread: state }, [{
+      id: 'thread', workspaceId: 'workspace-1', fileContextId: 'context-1', projectBindingKey: 'new-root', openFunctions: ['files'],
+    }])
+    expect(result.workspaces.thread).toMatchObject({
+      openTabs: [], selectedRef: null, temporaryPreviewRef: null, directoryCache: {}, previewScopes: {},
+    })
+    expect(result.revokedScopeTokens).toEqual(['scope-token'])
   })
 
   test('uses the current workspace binding for threads without an explicit workspace', () => {

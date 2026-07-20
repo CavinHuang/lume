@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@ant-design/x-markdown": "^2.5.0",
+    "@antv/infographic": "0.2.19",
     "@base-ui/react": "^1.4.0",
     "@fontsource-variable/geist": "^5.2.8",
     "@fontsource/inter": "^5.2.8",

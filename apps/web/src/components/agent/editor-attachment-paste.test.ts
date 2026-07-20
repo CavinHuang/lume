@@ -28,7 +28,7 @@ describe('editor attachment paste helpers', () => {
     } as unknown as DataTransfer)).toEqual([file])
   })
 
-  test('creates image previews and base64 file payloads', async () => {
+  test('streams files into desktop staging without creating base64 payloads', async () => {
     const image = new File([new Uint8Array([1, 2, 3])], '', { type: 'image/png' })
     const text = new File(['hello'], 'notes.txt', { type: 'text/plain' })
     const ids = ['image-id', 'text-id']
@@ -36,6 +36,10 @@ describe('editor attachment paste helpers', () => {
     const attachments = await createPendingAttachmentsFromFiles([image, text], {
       createId: () => ids.shift() ?? 'unexpected-id',
       now: 123,
+      stageFile: async ({ id }) => ({
+        stagedAttachmentId: `stage-${id}`,
+        ...(id === 'image-id' ? { previewUrl: 'file:///staging/image.png' } : {}),
+      }),
     })
 
     expect(attachments).toEqual([
@@ -44,15 +48,15 @@ describe('editor attachment paste helpers', () => {
         filename: 'pasted-image-123-1.png',
         mediaType: 'image/png',
         size: 3,
-        data: 'AQID',
-        previewUrl: 'data:image/png;base64,AQID',
+        stagedAttachmentId: 'stage-image-id',
+        previewUrl: 'file:///staging/image.png',
       },
       {
         id: 'text-id',
         filename: 'notes.txt',
         mediaType: text.type,
         size: 5,
-        data: 'aGVsbG8=',
+        stagedAttachmentId: 'stage-text-id',
       },
     ])
   })
@@ -68,6 +72,7 @@ describe('editor attachment paste helpers', () => {
         clipboardData: { files: [file], items: [] },
         preventDefault: () => { prevented = true },
       } as unknown as ClipboardEvent, {
+        stageFile: async ({ id }) => ({ stagedAttachmentId: `stage-${id}` }),
         onAttachments: resolve,
         onError: () => resolve([]),
         onSettled: () => {
@@ -80,7 +85,7 @@ describe('editor attachment paste helpers', () => {
 
     expect((await attachments)[0]).toEqual(expect.objectContaining({
       filename: 'notes.txt',
-      data: 'aGVsbG8=',
+      stagedAttachmentId: expect.any(String),
     }))
     await settledPromise
     expect(prevented).toBeTrue()

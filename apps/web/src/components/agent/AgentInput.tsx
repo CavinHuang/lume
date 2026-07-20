@@ -1,8 +1,5 @@
-import { useEditor, EditorContent, ReactRenderer, ReactNodeViewRenderer } from '@tiptap/react'
-import StarterKit from '@tiptap/starter-kit'
+import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import { cn } from '@/lib/utils'
-import Placeholder from '@tiptap/extension-placeholder'
-import Mention from '@tiptap/extension-mention'
 import { Send, Square, FileText, Plus, LoaderCircle, MonitorOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
@@ -43,7 +40,6 @@ import {
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { MentionList } from './MentionList'
-import { CapabilityMentionNodeView } from './CapabilityMentionNodeView'
 import { serializeAgentEditorMessage } from './agent-editor-message-parts'
 import { ModelPicker } from './ModelPicker'
 import { PermissionModePicker } from './PermissionModePicker'
@@ -55,6 +51,7 @@ import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/component
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
 import { cancelPendingDebouncedAgentInputSend, createDebouncedAgentInputSend } from './agent-input-send-debounce'
+import { pendingAttachmentRejectionMessage } from './pending-attachment-validation'
 import {
   deriveAgentInputSubmitState,
   resolveAgentInputConfigWorkspaceSlug,
@@ -73,6 +70,7 @@ import {
 } from './agent-message-queue-state'
 import { type MentionItem } from './slash-command-state'
 import { createCapabilityReferencePasteHandler, createSuggestionRenderer } from './editor-mention-suggestions'
+import { createPromptEditorExtensions } from './prompt-editor-extensions'
 import { extractClipboardFiles, handleAttachmentPaste } from './editor-attachment-paste'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { buildContextWindowProgress } from './runtime-state-projections'
@@ -82,7 +80,7 @@ import {
   applyAgentRoleMentions,
   buildAgentRoleMentionItems,
 } from './agent-input-role-recommendations'
-import { attachmentDataUrl, isImageAttachment } from './AgentAttachmentGrid'
+import { isImageAttachment } from './AgentAttachmentGrid'
 import { PendingAttachmentList } from './PendingAttachmentList'
 import { DesktopContextPlusItem } from './DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from './DesktopContextSelectionChip'
@@ -119,6 +117,7 @@ export interface PendingMessageAttachment {
   size: number
   sourcePath?: string
   data?: string
+  stagedAttachmentId?: string
   previewUrl?: string
 }
 
@@ -301,6 +300,8 @@ export function AgentInput({
   streamingRef.current = streaming
   const addPendingAttachmentsRef = useRef(onAddPendingAttachments)
   addPendingAttachmentsRef.current = onAddPendingAttachments
+  const pendingAttachmentsRef = useRef(pendingAttachments)
+  pendingAttachmentsRef.current = pendingAttachments
   const attachmentPasteInProgressRef = useRef(false)
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
@@ -486,35 +487,11 @@ export function AgentInput({
   const handleCapabilityReferencePaste = createCapabilityReferencePasteHandler(threadId, getWorkspaceSlug)
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ bold: false, italic: false, strike: false }),
-      Placeholder.configure({ placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent 或文件' }),
-      Mention.configure({
-        HTMLAttributes: {
-          class: 'mention bg-blue-500/10 text-blue-600 dark:text-blue-400 px-0.5 rounded font-medium text-[13px]',
-        },
-        suggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen, handleLocalSuggestionEscape),
-      }),
-      Mention.extend({
-        name: 'capabilityMention',
-        addAttributes() {
-          return {
-            ...this.parent?.(),
-            uri: { default: null },
-            kind: { default: null },
-            occurrenceId: { default: null },
-            iconUrl: { default: null },
-          }
-        },
-        addNodeView() {
-          return ReactNodeViewRenderer(CapabilityMentionNodeView)
-        },
-      }).configure({
-        HTMLAttributes: { class: 'capability-mention' },
-        renderText: ({ node }) => node.attrs.uri ?? '',
-        suggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable, handleLocalSuggestionEscape),
-      }),
-    ],
+    extensions: createPromptEditorExtensions({
+      placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent 或文件',
+      agentSuggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen, handleLocalSuggestionEscape),
+      capabilitySuggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable, handleLocalSuggestionEscape),
+    }),
     editorProps: {
       attributes: {
         class:
@@ -532,15 +509,18 @@ export function AgentInput({
           return true
         }
         if (handleAttachmentPaste(event, {
+          existingAttachments: pendingAttachmentsRef.current,
           onStart: () => { attachmentPasteInProgressRef.current = true },
           onAttachments: (attachments) => {
             addPendingAttachmentsRef.current(attachments)
-            toast.success(`已粘贴 ${attachments.length} 个附件`)
           },
           onError: (error) => {
             console.error('[AgentInput] 粘贴附件失败:', error)
             toast.error('粘贴附件失败')
           },
+          onRejected: (items) => items.forEach(({ file, reason }) => {
+            toast.error(`${file.name || '剪贴板文件'}：${pendingAttachmentRejectionMessage(reason)}`)
+          }),
           onSettled: () => { attachmentPasteInProgressRef.current = false },
         })) return true
 
@@ -871,18 +851,23 @@ export function AgentInput({
           threadId,
           clientSubmissionId,
           files: pendingAttachments.map((attachment) => ({
-            filename: attachment.filename,
-            ...(attachment.sourcePath ? { sourcePath: attachment.sourcePath } : {}),
-            ...(attachment.data ? { data: attachment.data } : {}),
-          })),
-        })
-        messageAttachments = pendingAttachments.map((attachment, index) => {
-          const saved = savedFiles.find((file) => file.filename === attachment.filename) ?? savedFiles[index]
-          return {
             id: attachment.id,
             filename: attachment.filename,
             mediaType: attachment.mediaType,
             size: attachment.size,
+            ...(attachment.sourcePath ? { sourcePath: attachment.sourcePath } : {}),
+            ...(attachment.data ? { data: attachment.data } : {}),
+            ...(attachment.stagedAttachmentId ? { stagedAttachmentId: attachment.stagedAttachmentId } : {}),
+          })),
+        })
+        messageAttachments = pendingAttachments.map((attachment, index) => {
+          const saved = savedFiles.find((file) => file.id === attachment.id) ?? savedFiles[index]
+          return {
+            id: attachment.id,
+            filename: attachment.filename,
+            mediaType: saved?.mediaType ?? attachment.mediaType,
+            size: saved?.size ?? attachment.size,
+            ...(saved?.contentHash ? { contentHash: saved.contentHash } : {}),
             threadPath: saved?.threadPath ?? attachment.filename,
             ...(saved?.ref ? { fileRef: saved.ref } : {}),
           }
@@ -1130,18 +1115,18 @@ export function AgentInput({
       onAddPendingAttachments(result.files.map((file) => {
         const mediaType = file.mediaType || 'application/octet-stream'
         return {
-          id: createPendingAttachmentId(),
+          id: file.id || createPendingAttachmentId(),
           filename: file.filename,
           mediaType,
           size: file.size,
-          sourcePath: file.sourcePath,
-          ...(file.data ? { data: file.data } : {}),
-          ...(isImageAttachment({ filename: file.filename, mediaType })
-            ? { previewUrl: attachmentDataUrl(mediaType, file.data) }
+          ...(file.stagedAttachmentId
+            ? { stagedAttachmentId: file.stagedAttachmentId }
+            : { sourcePath: file.sourcePath }),
+          ...(isImageAttachment({ filename: file.filename, mediaType }) && file.previewUrl
+            ? { previewUrl: file.previewUrl }
             : {}),
         }
       }))
-      toast.success(`已添加 ${result.files.length} 个文件`)
     } catch (error) {
       console.error('[AgentInput] 文件选择失败:', error)
       toast.error('文件选择失败')

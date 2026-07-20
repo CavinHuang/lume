@@ -174,12 +174,14 @@ describe("agent-message-versioning-service", () => {
         content: "`@project/src/app.ts`",
         createdAt: 2,
         fileReferenceBinding,
+        fileReferenceProtocolVersion: 1,
       },
     });
 
     expect(assistant?.fileReferenceBinding).toEqual(fileReferenceBinding);
     expect(getVisibleAgentMessages("session-file-binding").at(-1)?.fileReferenceBinding).toEqual(fileReferenceBinding);
     expect(getAgentMessageVersions("session-file-binding", assistant?.versionGroupId ?? "")[0]?.fileReferenceBinding).toEqual(fileReferenceBinding);
+    expect(getAgentMessageVersions("session-file-binding", assistant?.versionGroupId ?? "")[0]?.fileReferenceProtocolVersion).toBe(1);
   });
 
   test("createUserMessageVersion 应保留用户原始 sdkMessages", () => {

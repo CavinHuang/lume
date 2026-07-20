@@ -1,4 +1,4 @@
-import type { FileRef, FileSource, GuardedFileRef } from '@lume/shared'
+import type { FileRef, FileSource } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import { RIGHT_PANEL_FUNCTION_ORDER, type RightPanelFunction } from './right-panel-state'
 
@@ -9,24 +9,22 @@ export type RightPanelActiveItem =
 export type RightPanelFileTab = {
   id: string
   ref: FileRef
-  guardedRef?: GuardedFileRef
   lineSelection?: ThreadFileLineSelection
   navigationRevision: number
 }
 
-export type RightPanelFileTarget = FileRef | GuardedFileRef
+export type RightPanelFileTarget = FileRef
 
 export interface FileTreeRevealRequest {
   requestId: string
   navigationRevision: number
   ref: FileRef
-  guardedRef?: GuardedFileRef
 }
 
 export type FileSourceLoadState = 'fresh' | 'stale' | 'loading' | 'error'
 
 export interface ThreadFileWorkspace {
-  binding: { workspaceId?: string; fileContextId?: string }
+  binding: { workspaceId?: string; fileContextId?: string; projectBindingKey?: string }
   activeItem: RightPanelActiveItem | null
   selectedRef: FileRef | null
   temporaryPreviewRef: FileRef | null
@@ -90,8 +88,7 @@ export function openFileTab(
   target: RightPanelFileTarget,
   options: FileRefIdentityOptions & { lineSelection?: ThreadFileLineSelection; navigationRevision?: number } = {},
 ): ThreadFileWorkspace {
-  const guardedRef = isGuardedFileRef(target) ? target : undefined
-  const ref = guardedRef?.ref ?? target as FileRef
+  const ref = target
   const lineSelection = normalizeLineSelection(options.lineSelection)
   const key = fileRefKey(ref, options)
   const existing = state.openTabs.find((tab) => fileRefKey(tab.ref, options) === key)
@@ -101,7 +98,6 @@ export function openFileTab(
       ...state,
       openTabs: state.openTabs.map((tab) => tab.id === existing.id ? {
         ...tab,
-        ...(guardedRef ? { guardedRef } : {}),
         lineSelection,
         navigationRevision,
       } : tab),
@@ -113,7 +109,6 @@ export function openFileTab(
   const tab: RightPanelFileTab = {
     id: `file:${encodeURIComponent(key)}`,
     ref: normalized,
-    ...(guardedRef ? { guardedRef: { ...guardedRef, ref: normalized as GuardedFileRef['ref'] } as GuardedFileRef } : {}),
     lineSelection,
     navigationRevision: options.navigationRevision ?? 1,
   }
@@ -129,10 +124,6 @@ export function normalizeLineSelection(selection?: ThreadFileLineSelection): Thr
   const start = Math.max(1, Math.trunc(selection.start))
   const end = Math.max(start, Math.trunc(selection.end))
   return { start, end }
-}
-
-export function isGuardedFileRef(value: RightPanelFileTarget): value is GuardedFileRef {
-  return Boolean(value && typeof value === 'object' && 'guard' in value && 'ref' in value)
 }
 
 export function closeFileTab(
@@ -265,7 +256,7 @@ export function disambiguateFileTabLabels(tabs: RightPanelFileTab[]): Record<str
 
 export function reconcileThreadFileWorkspaces(
   workspaces: Record<string, ThreadFileWorkspace>,
-  threads: Array<{ id: string; workspaceId?: string; fileContextId?: string; openFunctions?: RightPanelFunction[] }>,
+  threads: Array<{ id: string; workspaceId?: string; fileContextId?: string; projectBindingKey?: string; openFunctions?: RightPanelFunction[] }>,
 ): { workspaces: Record<string, ThreadFileWorkspace>; revokedScopeTokens: string[] } {
   const threadById = new Map(threads.map((thread) => [thread.id, thread]))
   const next: Record<string, ThreadFileWorkspace> = {}
@@ -277,7 +268,9 @@ export function reconcileThreadFileWorkspaces(
       revokedScopeTokens.push(...Object.values(state.previewScopes))
       continue
     }
-    const rebound = state.binding.workspaceId !== thread.workspaceId || state.binding.fileContextId !== thread.fileContextId
+    const rebound = state.binding.workspaceId !== thread.workspaceId
+      || state.binding.fileContextId !== thread.fileContextId
+      || state.binding.projectBindingKey !== thread.projectBindingKey
     if (!rebound) {
       next[threadId] = state
       continue
@@ -296,7 +289,7 @@ export function reconcileThreadFileWorkspaces(
       : state.activeItem
     next[threadId] = {
       ...state,
-      binding: { workspaceId: thread.workspaceId, fileContextId: thread.fileContextId },
+      binding: { workspaceId: thread.workspaceId, fileContextId: thread.fileContextId, projectBindingKey: thread.projectBindingKey },
       activeItem,
       openTabs,
       selectedRef: state.selectedRef?.source === 'session' && state.selectedRef.scopeId === thread.fileContextId ? state.selectedRef : null,
@@ -319,13 +312,12 @@ export function createFileTreeRevealRequest(
   timeoutMs = 10_000,
 ): { request: FileTreeRevealRequest; completion: Promise<RevealSettlement> } {
   const requestId = crypto.randomUUID()
-  const guardedRef = isGuardedFileRef(target) ? target : undefined
-  const ref = guardedRef?.ref ?? target as FileRef
+  const ref = target
   let resolveCompletion!: (value: RevealSettlement) => void
   const completion = new Promise<RevealSettlement>((resolve) => { resolveCompletion = resolve })
   const timeout = setTimeout(() => settleFileTreeReveal(requestId, { status: 'unavailable' }), timeoutMs)
   revealSettlements.set(requestId, { resolve: resolveCompletion, timeout })
-  return { request: { requestId, navigationRevision, ref, ...(guardedRef ? { guardedRef } : {}) }, completion }
+  return { request: { requestId, navigationRevision, ref }, completion }
 }
 
 export function settleFileTreeReveal(requestId: string, result: RevealSettlement): void {
@@ -345,13 +337,14 @@ export function getFileTreeRevealDirectories(target: FileRef): FileRef[] {
 }
 
 export function getEffectiveThreadFileBindings(
-  threads: Array<{ id: string; workspaceId?: string; fileContextId?: string }>,
+  threads: Array<{ id: string; workspaceId?: string; fileContextId?: string; projectBindingKey?: string }>,
   currentWorkspaceId?: string | null,
-): Array<{ id: string; workspaceId?: string; fileContextId: string }> {
+): Array<{ id: string; workspaceId?: string; fileContextId: string; projectBindingKey?: string }> {
   return threads.map((thread) => ({
     id: thread.id,
     workspaceId: thread.workspaceId ?? currentWorkspaceId ?? undefined,
     fileContextId: thread.fileContextId ?? thread.id,
+    projectBindingKey: thread.projectBindingKey,
   }))
 }
 

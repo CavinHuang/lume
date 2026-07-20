@@ -1,4 +1,4 @@
-import type { FileReferenceBinding, LumeRuntimeEvent } from '@lume/shared'
+import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent } from '@lume/shared'
 import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
@@ -18,6 +18,7 @@ export interface ProjectionState {
   // id 冲突 → AgentMessages 列表 React key 撞车（duplicate/omit + 跳变）。
   assistantSegmentByRun: Map<string, number>
   fileReferenceBinding?: FileReferenceBinding
+  fileReferenceProtocolVersion?: FileReferenceProtocolVersion
 }
 
 /**
@@ -51,6 +52,10 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   if (event.fileReferenceBinding) {
     state.fileReferenceBinding = event.fileReferenceBinding
     if (state.currentAssistant) state.currentAssistant.fileReferenceBinding = event.fileReferenceBinding
+  }
+  if (event.fileReferenceProtocolVersion) {
+    state.fileReferenceProtocolVersion = event.fileReferenceProtocolVersion
+    if (state.currentAssistant) state.currentAssistant.fileReferenceProtocolVersion = event.fileReferenceProtocolVersion
   }
 
   if (event.type === 'run.started') {
@@ -461,6 +466,7 @@ interface MutableAssistantMessage {
   thinking: string
   messageId?: string
   fileReferenceBinding?: FileReferenceBinding
+  fileReferenceProtocolVersion?: FileReferenceProtocolVersion
   completedAt?: string
   status: RuntimeAssistantMessageView['status']
   error?: string
@@ -474,10 +480,10 @@ interface MutableAssistantMessage {
 }
 
 function createBoundAssistant(state: ProjectionState, id: string): MutableAssistantMessage {
-  return createAssistantMessage(id, state.fileReferenceBinding)
+  return createAssistantMessage(id, state.fileReferenceBinding, state.fileReferenceProtocolVersion)
 }
 
-function createAssistantMessage(id: string, fileReferenceBinding?: FileReferenceBinding): MutableAssistantMessage {
+function createAssistantMessage(id: string, fileReferenceBinding?: FileReferenceBinding, fileReferenceProtocolVersion?: FileReferenceProtocolVersion): MutableAssistantMessage {
   return {
     id,
     text: '',
@@ -488,6 +494,7 @@ function createAssistantMessage(id: string, fileReferenceBinding?: FileReference
     blocks: [],
     currentContentSegmentStart: 0,
     ...(fileReferenceBinding ? { fileReferenceBinding } : {}),
+    ...(fileReferenceProtocolVersion ? { fileReferenceProtocolVersion } : {}),
   }
 }
 
@@ -596,6 +603,7 @@ function snapshotAssistant(assistant: MutableAssistantMessage | null): RuntimeMe
     thinking: assistant.thinking,
     ...(assistant.messageId ? { messageId: assistant.messageId } : {}),
     ...(assistant.fileReferenceBinding ? { fileReferenceBinding: assistant.fileReferenceBinding } : {}),
+    ...(assistant.fileReferenceProtocolVersion ? { fileReferenceProtocolVersion: assistant.fileReferenceProtocolVersion } : {}),
     ...(assistant.completedAt ? { completedAt: assistant.completedAt } : {}),
     blocks: assistant.blocks,
     status: assistant.status,

@@ -64,6 +64,7 @@ mock.module('sonner', () => ({
 }))
 
 mock.module('@/lib/desktop-api', () => ({
+  abortStagedAttachment: async () => undefined,
   sidecarCall: (...args: Parameters<typeof sidecarCallMock>) =>
     ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
   agentSend: (...args: unknown[]) =>
@@ -87,6 +88,7 @@ mock.module('@/lib/desktop-api', () => ({
   saveGuardedFileRefAs: () => Promise.resolve({ path: '/tmp/lume.txt' }),
   saveTextFileDialog: () => Promise.resolve({ path: '/tmp/lume.txt' }),
   writeClipboardText: () => Promise.resolve(undefined),
+  writeClipboardImage: () => Promise.resolve(undefined),
   statFilePaths: () =>
     (globalThis as any).__lumeDesktopStatFilePaths?.() ?? Promise.resolve({ files: [] }),
   openExternal: () => Promise.resolve(undefined),
@@ -576,7 +578,7 @@ describe('AgentView plan approval tab behavior', () => {
       expect(validationResolvers).toHaveLength(2)
 
       await act(async () => {
-        validationResolvers[1]!({ ok: true, entry: { name: 'new.ts', path: 'src/new.ts', isDirectory: false } })
+        validationResolvers[1]!({ ok: true, entry: { name: 'new.ts', path: 'src/new.ts', isDirectory: false, ref: secondRef.ref } })
         await flush()
       })
       expect(await second).toBe('opened')
@@ -584,7 +586,7 @@ describe('AgentView plan approval tab behavior', () => {
         .toEqual(['src/new.ts'])
 
       await act(async () => {
-        validationResolvers[0]!({ ok: true, entry: { name: 'old.ts', path: 'src/old.ts', isDirectory: false } })
+        validationResolvers[0]!({ ok: true, entry: { name: 'old.ts', path: 'src/old.ts', isDirectory: false, ref: firstRef.ref } })
         await flush()
       })
       expect(await first).toBe('superseded')

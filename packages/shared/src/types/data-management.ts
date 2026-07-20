@@ -84,7 +84,7 @@ export const DATA_CATEGORY_META: DataCategoryMeta[] = [
   {
     key: "business",
     label: "业务数据",
-    subtitle: "读书 · 自动化 · 日程",
+    subtitle: "读书 · 自动化 · 日程 · Wiki",
     rebuildable: false,
     sensitive: false,
   },

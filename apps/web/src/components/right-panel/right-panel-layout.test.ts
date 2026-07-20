@@ -27,6 +27,12 @@ describe('right-panel-layout', () => {
     expect(getRightPanelDragWidth({ clientX: 1240, viewportWidth: 1280 })).toBe(RIGHT_PANEL_MIN_WIDTH)
   })
 
+  test('respects the layout reserve supplied by the app shell', () => {
+    expect(clampRightPanelWidth(900, 1280, 460)).toBe(460)
+    expect(getRightPanelDragWidth({ clientX: 100, viewportWidth: 1280, maxWidth: 460 })).toBe(460)
+    expect(clampRightPanelWidth(200, 1024, 300)).toBe(RIGHT_PANEL_MIN_WIDTH)
+  })
+
   test('switches layout at the exact 680px container boundary', () => {
     expect(FILE_WORKSPACE_WIDE_MIN_WIDTH).toBe(680)
     expect(isWideFileWorkspace(679)).toBe(false)

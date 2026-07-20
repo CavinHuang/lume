@@ -9,11 +9,16 @@ export function buildRuntimeUserMessageInput(input: {
   userMessage: string;
   contentBlocks?: ContentBlockParam[];
   attachments?: AgentMessageAttachmentInput[];
-  provider: string;
+  visionSupported: boolean;
   workspaceSlug?: string;
   threadId: string;
 }): RuntimeUserMessageInput {
-  const extraBlocks = supportsImageContentBlocks(input.provider) ? input.contentBlocks ?? [] : [];
+  const hasImageInput = (input.contentBlocks?.some((block) => block.type === "image") ?? false)
+    || (input.attachments?.some((attachment) => attachment.mediaType.toLowerCase().startsWith("image/")) ?? false);
+  if (hasImageInput && !input.visionSupported) {
+    throw new Error("当前模型不支持图片输入，请切换支持视觉的模型");
+  }
+  const extraBlocks = input.contentBlocks ?? [];
   const imageBlocks = buildImageAttachmentBlocks(input);
   if (!extraBlocks.length && !imageBlocks.length) {
     return input.userMessage;
@@ -30,13 +35,14 @@ export function buildRuntimeUserMessageInput(input: {
 
 function buildImageAttachmentBlocks(input: {
   attachments?: AgentMessageAttachmentInput[];
-  provider: string;
+  visionSupported: boolean;
   workspaceSlug?: string;
   threadId: string;
 }): ContentBlockParam[] {
-  if (!supportsImageContentBlocks(input.provider) || !input.workspaceSlug || !input.attachments?.length) {
+  if (!input.attachments?.length) {
     return [];
   }
+  if (!input.workspaceSlug) throw new Error("图片附件缺少工作区绑定，无法读取");
 
   const blocks: ContentBlockParam[] = [];
   for (const attachment of input.attachments) {
@@ -49,9 +55,7 @@ function buildImageAttachmentBlocks(input: {
       threadId: input.threadId,
       threadPath: attachment.threadPath
     });
-    if (!data) {
-      continue;
-    }
+    if (!data) throw new Error(`图片附件不可读取：${attachment.filename}`);
 
     blocks.push({
       type: "image",
@@ -76,9 +80,4 @@ function readAttachmentBase64(input: {
   } catch {
     return null;
   }
-}
-
-function supportsImageContentBlocks(provider: string): boolean {
-  const normalized = provider.trim().toLowerCase();
-  return normalized === "anthropic" || normalized === "anthropic-compatible" || normalized === "openai";
 }

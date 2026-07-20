@@ -11,9 +11,6 @@ mock.restore()
 // 因此按 AgentView.test.tsx 的既有模式重写：mock.module 拦截依赖、createRoot + act 渲染、
 // 通过捕获 mock 组件的 props / 全局 listener 来驱动交互。
 
-const createThreadMock = mock(
-  async (workspaceId?: string) => ({ id: `thread-${workspaceId ?? 'none'}-1` }),
-)
 const invokeMock = mock(async (..._args: unknown[]) => undefined)
 
 // 捕获 AgentView 拿到的 threadId（验证状态正确传给子组件）
@@ -23,6 +20,13 @@ let latestAgentViewDesktopContextTarget: Record<string, unknown> | undefined
 let latestAgentViewOnMessageMetadataConsumed: (() => void) | undefined
 let latestAgentViewOnSelectDesktopContextTarget: ((target: Record<string, unknown>) => void) | undefined
 let latestAgentViewOnClearDesktopContextTarget: (() => void) | undefined
+let latestWelcomeViewProps: {
+  workspaceId?: string
+  desktopContextTarget?: Record<string, unknown>
+  compact?: boolean
+  draftSurface?: string
+  onThreadCreated?: (thread: { id: string }) => void
+} | undefined
 
 // 捕获 ui/Button 的 onClick + children 文本（fake DOM 无法触发真实 click，
 // 改为 mock Button 后直接调用捕获的 handler，等同 AgentView.test.tsx 直接调 prop handler 的做法）
@@ -33,10 +37,6 @@ const capturedButtons: CapturedButton[] = []
 // 其他测试文件（如 AgentView.test.tsx）也 mock 了 @/lib/desktop-api 但未导出 createThread，
 // 会污染本文件对 createThread 的命名导入。按 bun 官方 issue #12823/#7823 的推荐做法，
 // 这里 await mock.module 确保本文件的 factory 在动态 import 前已注册并覆盖。
-await mock.module('@/lib/desktop-api', () => ({
-  createThread: (...args: Parameters<typeof createThreadMock>) =>
-    createThreadMock(...args),
-}))
 await mock.module('@/lib/desktop-runtime/core', () => ({
   invoke: (...args: Parameters<typeof invokeMock>) => invokeMock(...args),
 }))
@@ -44,7 +44,7 @@ await mock.module('@/hooks/useGlobalAgentListeners', () => ({
   useGlobalAgentListeners: () => {},
 }))
 await mock.module('@/hooks/useWorkspaceBootstrap', () => ({
-  useWorkspaceBootstrap: () => {},
+  useWorkspaceBootstrap: () => true,
 }))
 await mock.module('@/components/agent/AgentView', () => ({
   AgentView: ({
@@ -69,6 +69,12 @@ await mock.module('@/components/agent/AgentView', () => ({
     latestAgentViewOnSelectDesktopContextTarget = onSelectDesktopContextTarget
     latestAgentViewOnClearDesktopContextTarget = onClearDesktopContextTarget
     return React.createElement('div', null, `thread:${threadId}`)
+  },
+}))
+await mock.module('@/components/welcome/WelcomeView', () => ({
+  WelcomeView: (props: typeof latestWelcomeViewProps) => {
+    latestWelcomeViewProps = props
+    return React.createElement('div', null, 'threadless-composer')
   },
 }))
 await mock.module('@/components/ui/button', () => ({
@@ -303,7 +309,6 @@ describe('QuickInput', () => {
   let rootRef: { current: Root | null }
 
   beforeEach(() => {
-    createThreadMock.mockClear()
     invokeMock.mockClear()
     latestAgentViewThreadId = null
     latestAgentViewMessageMetadata = undefined
@@ -311,6 +316,7 @@ describe('QuickInput', () => {
     latestAgentViewOnMessageMetadataConsumed = undefined
     latestAgentViewOnSelectDesktopContextTarget = undefined
     latestAgentViewOnClearDesktopContextTarget = undefined
+    latestWelcomeViewProps = undefined
     capturedButtons.length = 0
     const env = installFakeDom()
     fakeDoc = env.container.ownerDocument as unknown as FakeDocument
@@ -327,7 +333,7 @@ describe('QuickInput', () => {
     cleanup()
   })
 
-  test('workspace 就绪后创建首个会话并渲染 AgentView', async () => {
+  test('workspace 就绪后保持 threadless，首条提交接收后才渲染 AgentView', async () => {
     const store = makeStore()
     const container = fakeDoc.createElement('div')
 
@@ -342,9 +348,19 @@ describe('QuickInput', () => {
       await flush()
     })
 
-    // createThread 被调用且参数为 currentWorkspaceId
-    expect(createThreadMock.mock.calls.some((c) => c[0] === 'ws-1')).toBe(true)
-    // AgentView 拿到 createThread 返回的 threadId
+    expect(latestAgentViewThreadId).toBeNull()
+    expect(latestWelcomeViewProps).toMatchObject({
+      workspaceId: 'ws-1',
+      compact: true,
+      draftSurface: 'quick-input',
+    })
+    expect(container.textContent).toContain('threadless-composer')
+
+    await act(async () => {
+      latestWelcomeViewProps?.onThreadCreated?.({ id: 'thread-ws-1-1' })
+      await flush()
+    })
+
     expect(latestAgentViewThreadId).toBe('thread-ws-1-1')
     expect(container.textContent).toContain('thread:thread-ws-1-1')
   })
@@ -375,12 +391,7 @@ describe('QuickInput', () => {
       await flush()
     })
 
-    expect(latestAgentViewMessageMetadata).toEqual({
-      desktopContextSnapshotId: 'snapshot-before-focus',
-      desktopApp: { id: 'wechat.exe', name: '微信' },
-      desktopWindow: { id: 'win:wechat', title: '项目群' },
-    })
-    expect(latestAgentViewDesktopContextTarget).toEqual({
+    expect(latestWelcomeViewProps?.desktopContextTarget).toEqual({
       snapshotId: 'snapshot-before-focus',
       app: { id: 'wechat.exe', name: '微信' },
       window: { id: 'win:wechat', title: '项目群' },
@@ -446,6 +457,11 @@ describe('QuickInput', () => {
     })
 
     await act(async () => {
+      latestWelcomeViewProps?.onThreadCreated?.({ id: 'thread-conversation' })
+      await flush()
+    })
+
+    await act(async () => {
       latestAgentViewOnMessageMetadataConsumed?.()
       await flush()
     })
@@ -476,6 +492,11 @@ describe('QuickInput', () => {
           <QuickInput />
         </Provider>,
       )
+      await flush()
+    })
+
+    await act(async () => {
+      latestWelcomeViewProps?.onThreadCreated?.({ id: 'thread-conversation' })
       await flush()
     })
 
@@ -518,6 +539,11 @@ describe('QuickInput', () => {
       await flush()
     })
 
+    await act(async () => {
+      latestWelcomeViewProps?.onThreadCreated?.({ id: 'thread-conversation' })
+      await flush()
+    })
+
     const wordTarget = {
       snapshotId: 'snapshot-word',
       app: { id: 'word.exe', name: 'Word' },
@@ -536,7 +562,7 @@ describe('QuickInput', () => {
     expect(latestAgentViewDesktopContextTarget).toEqual(wordTarget)
   })
 
-  test('点击「新建对话」按钮再次创建会话', async () => {
+  test('点击「新建对话」返回新的 threadless 输入态', async () => {
     const store = makeStore()
     const container = fakeDoc.createElement('div')
 
@@ -551,9 +577,11 @@ describe('QuickInput', () => {
       await flush()
     })
 
-    // 初始 effect 已触发一次 createThread
-    expect(createThreadMock.mock.calls.length).toBeGreaterThanOrEqual(1)
-    createThreadMock.mockClear()
+    await act(async () => {
+      latestWelcomeViewProps?.onThreadCreated?.({ id: 'thread-existing' })
+      await flush()
+    })
+    expect(latestAgentViewThreadId).toBe('thread-existing')
 
     // 通过 mock Button 捕获的 onClick 模拟点击「新建对话」
     const newThreadBtn = capturedButtons.find((b) => b.text.includes('新建对话'))
@@ -562,10 +590,11 @@ describe('QuickInput', () => {
       newThreadBtn!.onClick?.()
       await flush()
     })
-    expect(createThreadMock.mock.calls.length).toBeGreaterThanOrEqual(1)
+    expect(container.textContent).toContain('threadless-composer')
+    expect(latestWelcomeViewProps?.draftSurface).toBe('quick-input')
   })
 
-  test('按 Esc 触发 quick_input_hide', async () => {
+  test('单次 Esc 不隐藏 Quick Input', async () => {
     const store = makeStore()
     const container = fakeDoc.createElement('div')
 
@@ -586,8 +615,6 @@ describe('QuickInput', () => {
       fakeDoc.dispatchEvent('keydown', { key: 'Escape' })
       await flush()
     })
-    expect(
-      invokeMock.mock.calls.some((c) => c[0] === 'quick_input_hide'),
-    ).toBe(true)
+    expect(invokeMock.mock.calls.some((c) => c[0] === 'quick_input_hide')).toBe(false)
   })
 })

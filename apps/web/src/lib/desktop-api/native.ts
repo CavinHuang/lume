@@ -16,11 +16,13 @@ export interface SaveFilePathFilter {
 }
 
 export interface DesktopSelectedFile {
+  id: string
   filename: string
   mediaType: string
   size: number
   sourcePath: string
-  data?: string
+  stagedAttachmentId?: string
+  previewUrl?: string
 }
 
 export const healthcheck = () => invoke('healthcheck')
@@ -29,6 +31,39 @@ export const openFileDialog = () =>
   invoke<{ files: DesktopSelectedFile[] }>('open_file_dialog')
 export const statFilePaths = (paths: string[]) =>
   invoke<{ files: DesktopSelectedFile[] }>('stat_file_paths', { paths })
+
+const ATTACHMENT_STAGE_CHUNK_BYTES = 256 * 1024
+
+export async function stageAttachmentFile(input: {
+  id: string
+  file: File
+  filename: string
+  mediaType: string
+}): Promise<{ stagedAttachmentId: string; previewUrl?: string }> {
+  const begun = await invoke<{ stagedAttachmentId: string }>('attachment_stage_begin', {
+    attachmentId: input.id,
+    filename: input.filename,
+    mediaType: input.mediaType,
+    size: input.file.size,
+  })
+  try {
+    for (let offset = 0; offset < input.file.size; offset += ATTACHMENT_STAGE_CHUNK_BYTES) {
+      const chunk = new Uint8Array(await input.file.slice(offset, offset + ATTACHMENT_STAGE_CHUNK_BYTES).arrayBuffer())
+      await invoke('attachment_stage_append', {
+        stagedAttachmentId: begun.stagedAttachmentId,
+        offset,
+        chunk,
+      })
+    }
+    return await invoke('attachment_stage_finish', { stagedAttachmentId: begun.stagedAttachmentId })
+  } catch (error) {
+    await invoke('attachment_stage_abort', { stagedAttachmentId: begun.stagedAttachmentId }).catch(() => undefined)
+    throw error
+  }
+}
+
+export const abortStagedAttachment = (stagedAttachmentId: string) =>
+  invoke<void>('attachment_stage_abort', { stagedAttachmentId })
 export const openFolderDialog = () =>
   invoke<{ path: string | null }>('open_folder_dialog')
 export const getQuickInputContext = () =>
@@ -67,7 +102,7 @@ export const revokeFilePreviewScope = (token: string) =>
 export { isDesktopRuntime }
 export const writeClipboardText = (text: string) =>
   invoke<void>('write_clipboard_text', { text })
-export type ClipboardImageSource = { path: string } | { ref: FileRef } | { guardedRef: GuardedFileRef }
+export type ClipboardImageSource = { path: string } | { ref: FileRef } | { guardedRef: GuardedFileRef } | { dataUrl: string }
 export const writeClipboardImage = (source: ClipboardImageSource) =>
   invoke<void>('write_clipboard_image', source)
 export const localFilePreviewUrl = (path: string) => convertFileSrc(path)

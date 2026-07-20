@@ -262,7 +262,7 @@ function resolveCacheTargetPaths(key: SidecarCacheCleanupKey): string[] {
         join(tmpdir(), "lume-logs")
       ]));
     case "vectorIndex": {
-      const paths = [getGlobalVectorIndexDir()];
+      const paths = [getGlobalVectorIndexDir(), join(configDir, "wiki", ".lume", "index")];
       try {
         const workspacesDir = getAgentWorkspacesDir();
         for (const slug of readdirSync(workspacesDir)) {
@@ -284,6 +284,7 @@ function assertSafeCacheTarget(targetPath: string): void {
     join(configDir, "cache"),
     join(configDir, "logs"),
     join(configDir, "memory", "index"),
+    join(configDir, "wiki", ".lume", "index"),
     join(configDir, "plugins", "cache"),
     join(configDir, "plugins", "data"),
     join(configDir, "agent-workspaces"),

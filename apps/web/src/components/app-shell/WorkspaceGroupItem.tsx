@@ -186,7 +186,7 @@ export const WorkspaceGroupItem = memo(function WorkspaceGroupItem({
                   e.stopPropagation()
                   onNewThread(id)
                 }}
-                className="absolute right-8 top-1/2 size-6 -translate-y-1/2 rounded-md p-0 text-[var(--lume-text-secondary)] opacity-0 transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)] group-hover/workspace:opacity-100"
+                className="absolute right-8 top-1/2 size-6 -translate-y-1/2 rounded-md p-0 text-[var(--lume-text-secondary)] opacity-0 transition-colors duration-150 ease-out hover:bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] hover:text-[var(--lume-text-primary)] active:not-aria-[haspopup]:-translate-y-1/2 group-hover/workspace:opacity-100"
               >
                 <Plus size={13} />
               </Button>

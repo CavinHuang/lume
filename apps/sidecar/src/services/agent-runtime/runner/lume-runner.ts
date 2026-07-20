@@ -45,6 +45,7 @@ import {
 import type { LumeRunState } from "./run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createWikiProtectedSandbox, resolveWikiRuntimeCapability } from "../../wiki/wiki-runtime-capability";
+import { WIKI_CAPABILITIES } from "../../wiki/wiki-capabilities";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -328,7 +329,8 @@ export class LumeRunner {
         provider: prepared.modelResolution.model.provider,
         baseUrl: prepared.modelResolution.model.baseUrl,
         contextWindow: prepared.modelResolution.model.contextWindow,
-        maxTokens: prepared.modelResolution.model.maxTokens
+        maxTokens: prepared.modelResolution.model.maxTokens,
+        input: prepared.modelResolution.model.input
       },
       apiKey: prepared.apiKey,
       workspaceId: runtime.workspaceId,
@@ -358,6 +360,7 @@ export class LumeRunner {
       applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
       trace: this.observer.getContextAssemblyTrace(),
       wikiPhaseBEnabled: wikiCapability.phaseBEnabled,
+      wikiProposalEnabled: WIKI_CAPABILITIES.askWikiProposal,
       processSandbox: wikiCapability.sandbox
     });
     this.latestMemoryContextUsedItems = runtimeSession.memoryContextUsedItems ?? [];

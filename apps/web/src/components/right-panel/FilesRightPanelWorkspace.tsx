@@ -134,7 +134,6 @@ export function FilesRightPanelWorkspace({
       <div className={cn('min-h-0 min-w-0 flex-1', !wide && showTree && 'hidden')}>
         <RightPanelFilePreview
           fileRef={previewRef}
-          guardedRef={activeTab?.guardedRef}
           lineSelection={activeTab?.lineSelection}
           navigationRevision={activeTab?.navigationRevision}
           onOpenFile={openFile}

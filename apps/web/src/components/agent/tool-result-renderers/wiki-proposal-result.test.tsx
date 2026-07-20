@@ -5,25 +5,22 @@ import { ToolResultRenderer } from './index'
 import { parseWikiChangeDraft, proposalStatusFromDraftStatus, WikiProposalResult, WikiProposalSettledSummary } from './wiki-proposal-result'
 
 const draft = {
-  id: 'draft-1',
+  schemaVersion: 1,
+  draftId: 'draft-1',
   revision: 1,
-  nonce: 'nonce-1',
   expiresAt: '2026-07-19T00:00:00.000Z',
-  origin: 'agent',
   risk: 'low',
-  riskReasons: [],
+  reasons: [],
   title: 'Agent 建议新建 Lume Wiki 设计',
-  operations: [{ kind: 'create', pageId: 'page-1', beforeHash: null, targetRelativePath: 'workspaces/lume/page.md', markdown: '# Lume Wiki' }],
-  sources: [],
-  diffs: [{ path: 'workspaces/lume/page.md', beforeHash: null, afterHash: 'hash-1', preview: '新建页面' }],
-  pageVisibilityWorkspaceIds: ['workspace-1'],
-  sourceGrantWorkspaceIds: [],
+  operationSummaries: [{ kind: 'create', pageId: 'page-1', beforeHash: null, targetRelativePath: 'workspaces/lume/page.md' }],
+  boundedDiffPreviews: [{ pageId: 'page-1', path: 'workspaces/lume/page.md', preview: '新建页面' }],
+  diffHash: 'diff-hash-1',
 }
 
 describe('WikiProposalResult', () => {
   test('parses both direct and SDK-wrapped Wiki drafts', () => {
-    expect(parseWikiChangeDraft(draft)?.id).toBe('draft-1')
-    expect(parseWikiChangeDraft({ data: draft })?.nonce).toBe('nonce-1')
+    expect(parseWikiChangeDraft(draft)?.draftId).toBe('draft-1')
+    expect(parseWikiChangeDraft({ data: draft })?.diffHash).toBe('diff-hash-1')
     expect(parseWikiChangeDraft('invalid')).toBeNull()
   })
 
@@ -33,7 +30,7 @@ describe('WikiProposalResult', () => {
     expect(markup).toContain('Agent 建议新建 Lume Wiki 设计')
     expect(markup).toContain('尚未写入正式 Wiki')
     expect(markup).toContain('正在确认草案状态')
-    expect(markup).not.toContain('nonce-1')
+    expect(markup).not.toContain('nonce')
   })
 
   test('maps durable draft states to non-actionable proposal states', () => {

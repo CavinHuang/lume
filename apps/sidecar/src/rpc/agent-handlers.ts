@@ -103,7 +103,7 @@ import {
   renameWorkspaceFile,
   renameWorkspaceRootFile,
   resolveWorkspaceSlugByThreadId,
-  saveFilesToAgentThread,
+  saveFilesToAgentThreadStreamed,
   saveFilesToWorkspace,
   saveFilesToWorkspaceRoot,
   searchAgentWorkspaceFiles,
@@ -1630,7 +1630,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         const prepared = getAgentSubmissionStore().getPreparedAttachmentFiles(input.clientSubmissionId);
         if (prepared.length > 0) return prepared;
       }
-      const saved = saveFilesToAgentThread({
+      const saved = await saveFilesToAgentThreadStreamed({
         ...input,
         workspaceSlug: resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug)
       });

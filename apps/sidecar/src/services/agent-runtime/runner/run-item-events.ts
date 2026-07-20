@@ -1,3 +1,4 @@
+import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
 import type { LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
 import type { LumeRunItem } from "./run-items";
 import type { LumeRunState } from "./run-state";
@@ -89,7 +90,11 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
     });
   }
 
-  return events.map((event) => ({ ...event, fileReferenceBinding: run.fileReferenceBinding }));
+  return events.map((event) => ({
+    ...event,
+    fileReferenceBinding: run.fileReferenceBinding,
+    fileReferenceProtocolVersion: run.fileReferenceProtocolVersion ?? FILE_REFERENCE_PROTOCOL_VERSION
+  }));
 }
 
 function withInferredSubagentOwner(items: LumeRunItem[], index: number): LumeRunItem {

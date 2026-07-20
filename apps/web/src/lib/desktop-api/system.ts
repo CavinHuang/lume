@@ -101,6 +101,9 @@ export const markDesktopRendererReady = (generation: number) =>
 export const syncDesktopTrayState = (generation: number, threads: Array<{ id: string; title: string; updatedAt: number }>, currentThreadId: string | null) =>
   desktopCall('desktop_sync_tray_state', { generation, threads, currentThreadId })
 
+export const reportDesktopTrayNavigationConfirmationFailed = (generation: number, threadId: string, reason: 'timeout' | 'query_failed') =>
+  desktopCall('desktop_report_tray_navigation_confirmation_failed', { generation, threadId, reason })
+
 export const getProxySettings = () =>
   sidecarCall<AgentProxyStatus>(AGENT_IPC_CHANNELS.GET_PROXY_SETTINGS, {})
 

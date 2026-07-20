@@ -261,6 +261,24 @@ function resolveSessionType(ctx: Pick<SystemPromptContext, "sessionType" | "chat
   return inferSessionType(ctx);
 }
 
+export function buildContentPresentationSection(
+  ctx: Pick<SystemPromptContext, "sessionType" | "chatType" | "sessionId" | "permissionMode" | "automationExecution">
+): string | null {
+  if (ctx.permissionMode === "plan") return null;
+  if ((ctx.chatType ?? "direct") !== "direct") return null;
+  if (resolveSessionType(ctx) !== "main") return null;
+
+  const surface = ctx.automationExecution ? "自动化任务的最终结果" : "主对话的最终回复";
+  return `## Content Presentation
+
+在${surface}中，按信息密度和结构关系选择表达形式，不按篇幅长短机械触发。
+- 当多维对比、连续阶段、时间线、层级、关联网络、指标组合或分类概览用视觉布局能显著降低理解成本时，调用已加载的 \`lume-infographic\` Skill，并遵循其安全 DSL。
+- “至少三个要点”只表示可以评估信息图，不构成强制触发；普通列表、表格或文字更清楚时不要生成。
+- 信息图只能补充正文，不能替代必要解释；每次回复最多输出一个 \`infographic\` fenced code block。
+- 不要在代码说明、纯叙述、翻译、单一结论、错误输出、工具结果或内部推理中生成信息图。
+- Skill 不可用或没有合适模板时保持文字或表格，不要猜测 DSL。`;
+}
+
 export function resolveSystemPromptMode(
   ctx: Pick<SystemPromptContext, "promptMode" | "sessionType" | "chatType" | "sessionId">
 ): SystemPromptMode {
@@ -337,6 +355,11 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
 
   sections.push(buildKnowledgeMaintenanceSection());
   sections.push(buildConversationStyleSection());
+
+  const contentPresentationSection = buildContentPresentationSection(ctx);
+  if (contentPresentationSection) {
+    sections.push(contentPresentationSection);
+  }
 
   sections.push(buildTodoSection());
 

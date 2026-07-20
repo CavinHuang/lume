@@ -1,4 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -70,14 +70,19 @@ if (!existsSync(BUILT_BINARY)) {
   process.exit(1);
 }
 
-rmSync(OUT_DIR, { recursive: true, force: true });
 if (process.platform === "darwin") {
+  rmSync(OUT_DIR, { recursive: true, force: true });
   writeMacAppBundle();
 } else {
   mkdirSync(OUT_DIR, { recursive: true });
-  copyFileSync(BUILT_BINARY, OUT_FILE);
-  copyFileSync(CURSOR_LICENSE, resolve(OUT_DIR, "LICENSE.open-codex-computer-use"));
+  copyIfChanged(BUILT_BINARY, OUT_FILE);
+  copyIfChanged(CURSOR_LICENSE, resolve(OUT_DIR, "LICENSE.open-codex-computer-use"));
   console.error(`[desktop-host] wrote ${OUT_FILE}`);
+}
+
+function copyIfChanged(source, destination) {
+  if (existsSync(destination) && readFileSync(source).equals(readFileSync(destination))) return;
+  copyFileSync(source, destination);
 }
 
 function resolveTargetId(platform, arch) {

@@ -35,6 +35,7 @@ export interface ContextAssemblyInput {
   threadType?: AgentSendInput["threadType"];
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
+  automationExecution?: boolean;
   agentSystemPrompt?: string;
   messageAttachments?: AgentMessageAttachmentInput[];
   lumeWorkDir?: string;
@@ -134,7 +135,8 @@ export class ContextAssembler {
       chatType: input.chatType,
       availableTools: input.availableTools,
       memoryCitationsMode: memoryRuntimeConfig.citationsMode,
-      permissionMode: input.permissionMode
+      permissionMode: input.permissionMode,
+      automationExecution: input.automationExecution
     }).trim();
     const agentSystemPrompt = input.agentSystemPrompt?.trim();
 

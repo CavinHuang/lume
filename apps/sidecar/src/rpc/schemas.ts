@@ -1,5 +1,5 @@
 import { parseLumeCapabilityReference } from "@lume/agent-sdk";
-import { normalizeMcpTransport, type InspectMarketSourceRef, type PluginSourceRef, type SkillMarketSourceRef } from "@lume/shared";
+import { AGENT_ATTACHMENT_LIMITS, normalizeMcpTransport, type InspectMarketSourceRef, type PluginSourceRef, type SkillMarketSourceRef } from "@lume/shared";
 import { idSchema, optionalIdSchema, z } from "./validation";
 
 const relativeThreadPathSchema = z.string()
@@ -20,6 +20,7 @@ const rendererFileRefSchema = z.object({
 
 const guardedProjectFileRefSchema = z.object({
   ref: rendererFileRefSchema.extend({ source: z.literal("project") }).strict(),
+  expectedKind: z.enum(["file", "directory"]),
   guard: z.object({
     kind: z.literal("project"),
     workspaceSlug: idSchema,
@@ -30,6 +31,7 @@ const guardedProjectFileRefSchema = z.object({
 
 const guardedSessionFileRefSchema = z.object({
   ref: rendererFileRefSchema.extend({ source: z.literal("session") }).strict(),
+  expectedKind: z.enum(["file", "directory"]),
   guard: z.object({
     kind: z.literal("session"),
     consumerThreadId: idSchema,
@@ -42,6 +44,7 @@ const agentMessageAttachmentInputSchema = z.object({
   filename: z.string().min(1),
   mediaType: z.string().min(1),
   size: z.number().int().min(0),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   threadPath: relativeThreadPathSchema,
   fileRef: rendererFileRefSchema.optional()
 });
@@ -1262,12 +1265,15 @@ export const saveFilesToThreadInputSchema = z.object({
   threadId: idSchema,
   clientSubmissionId: idSchema.optional(),
   files: z.array(z.object({
+    id: idSchema.optional(),
     filename: z.string().min(1),
-    data: z.string().optional(),
+    mediaType: z.string().min(1).optional(),
+    size: z.number().int().min(0).max(AGENT_ATTACHMENT_LIMITS.maxFileBytes).optional(),
+    data: z.string().max(Math.ceil(AGENT_ATTACHMENT_LIMITS.maxFileBytes * 4 / 3) + 4).optional(),
     sourcePath: z.string().min(1).optional()
-  }).refine((file) => !!file.data || !!file.sourcePath, {
+  }).refine((file) => file.data !== undefined || !!file.sourcePath, {
     message: "文件必须提供 data 或 sourcePath"
-  }))
+  })).max(AGENT_ATTACHMENT_LIMITS.maxCount)
 });
 
 export const saveFilesToWorkspaceInputSchema = z.object({

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, lstatSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import YAML from "yaml";
-import type { WikiBlockOwner, WikiPageFrontmatter, WikiPageRecord, WikiPageType, WikiWorkspaceSnapshot } from "@lume/shared";
+import type { WikiBlockOwner, WikiBlockPatch, WikiPageFrontmatter, WikiPageRecord, WikiPageType, WikiWorkspaceSnapshot } from "@lume/shared";
 import { WIKI_SCHEMA_VERSION } from "@lume/shared";
 import { assertWikiSegment, assertWikiUuid, ensureWikiDirectory, resolveWikiPath } from "./path-security";
 
@@ -74,8 +74,37 @@ export function createWikiPageMarkdown(input: {
 }
 
 function defaultBody(sourceIds: string[]): string {
-  const marker = JSON.stringify({ block_id: randomUUID(), owner: "agent", revision: 1, source_ids: sourceIds, content_hash: sha256("") });
-  return `# 摘要\n\n<!-- lume:block ${marker} -->\n\n# 已知内容\n\n# 用户批注\n\n# 开放问题\n\n# 相关页面\n`;
+  return createManagedWikiBody({ sourceIds });
+}
+
+export function createManagedWikiBody(input: {
+  summary?: string;
+  known?: string;
+  userNotes?: string;
+  openQuestions?: string;
+  related?: string;
+  sourceIds?: string[];
+} = {}): string {
+  const sourceIds = input.sourceIds ?? [];
+  return [
+    serializeOwnedBlock("agent", `# 摘要\n\n${input.summary?.trim() ?? ""}\n`, sourceIds),
+    serializeOwnedBlock("agent", `# 已知内容\n\n${input.known?.trim() ?? ""}\n`, sourceIds),
+    serializeOwnedBlock("user", `# 用户批注\n\n${input.userNotes?.trim() ?? ""}\n`, []),
+    serializeOwnedBlock("agent", `# 开放问题\n\n${input.openQuestions?.trim() ?? ""}\n`, sourceIds),
+    serializeOwnedBlock("agent", `# 相关页面\n\n${input.related?.trim() ?? ""}\n`, sourceIds),
+  ].join("");
+}
+
+function serializeOwnedBlock(owner: WikiBlockOwner, content: string, sourceIds: string[], marker?: WikiBlockMarker): string {
+  const normalized = content.trimEnd() + "\n";
+  const value: WikiBlockMarker = {
+    block_id: marker?.block_id ?? randomUUID(),
+    owner,
+    revision: marker ? marker.revision + 1 : 1,
+    source_ids: sourceIds,
+    content_hash: sha256(normalized),
+  };
+  return `<!-- lume:block ${JSON.stringify(value)} -->\n${normalized}`;
 }
 
 export function serializeWikiPage(frontmatter: WikiPageFrontmatter, body: string): string {
@@ -139,18 +168,131 @@ export interface WikiBlockMarker {
   content_hash: string;
 }
 
-export function parseBlockMarkers(markdown: string): WikiBlockMarker[] {
-  const markers: WikiBlockMarker[] = [];
-  for (const match of markdown.matchAll(BLOCK_MARKER)) {
+export interface WikiBlockRegion extends WikiBlockMarker {
+  markerStart: number;
+  contentStart: number;
+  contentEnd: number;
+  content: string;
+}
+
+export function parseBlockRegions(markdown: string): WikiBlockRegion[] {
+  const matches = [...markdown.matchAll(BLOCK_MARKER)];
+  return matches.map((match, index) => {
+    let raw: WikiBlockMarker;
     try {
-      const raw = JSON.parse(match[1] ?? "{}") as WikiBlockMarker;
+      raw = JSON.parse(match[1] ?? "{}") as WikiBlockMarker;
       if (raw.owner !== "agent" && raw.owner !== "user") throw new Error();
-      markers.push(raw);
+      if (!raw.block_id || !Number.isInteger(raw.revision) || raw.revision < 1 || !Array.isArray(raw.source_ids) || !raw.content_hash) throw new Error();
     } catch {
       throw new Error("Wiki block ownership marker 无法解析");
     }
+    const markerStart = match.index ?? 0;
+    const contentStart = markerStart + match[0].length + (markdown.slice(markerStart + match[0].length).startsWith("\n") ? 1 : 0);
+    const contentEnd = matches[index + 1]?.index ?? markdown.length;
+    return { ...raw, markerStart, contentStart, contentEnd, content: markdown.slice(contentStart, contentEnd) };
+  });
+}
+
+export function parseBlockMarkers(markdown: string): WikiBlockMarker[] {
+  return parseBlockRegions(markdown).map(({ markerStart: _markerStart, contentStart: _contentStart, contentEnd: _contentEnd, content: _content, ...marker }) => marker);
+}
+
+export function applyWikiBlockPatches(body: string, patches: WikiBlockPatch[]): string {
+  const regions = parseBlockRegions(body);
+  const byId = new Map(regions.map((region) => [region.block_id, region]));
+  const replacements = patches.map((patch) => {
+    const region = byId.get(patch.blockId);
+    if (!region) throw new Error(`WIKI_BLOCK_NOT_FOUND: ${patch.blockId}`);
+    if (region.owner !== "agent") throw new Error(`WIKI_USER_BLOCK_PROTECTED: ${patch.blockId}`);
+    if (region.content_hash !== patch.expectedContentHash || sha256(region.content) !== patch.expectedContentHash) {
+      throw new Error(`WIKI_BLOCK_STALE: ${patch.blockId}`);
+    }
+    const replacement = patch.action === "delete"
+      ? ""
+      : serializeOwnedBlock("agent", patch.content ?? "", region.source_ids, region);
+    return { start: region.markerStart, end: region.contentEnd, replacement };
+  }).sort((left, right) => right.start - left.start);
+  let next = body;
+  for (const replacement of replacements) {
+    next = `${next.slice(0, replacement.start)}${replacement.replacement}${next.slice(replacement.end)}`;
   }
-  return markers;
+  return next;
+}
+
+export function removePurgedSourceBlocks(body: string, sourceIds: string[]): string {
+  const selected = new Set(sourceIds);
+  const replacements = parseBlockRegions(body).flatMap((region) => {
+    if (region.owner !== "agent" || !region.source_ids.some((sourceId) => selected.has(sourceId))) return [];
+    const remainingSourceIds = region.source_ids.filter((sourceId) => !selected.has(sourceId));
+    return [{
+      start: region.markerStart,
+      end: region.contentEnd,
+      replacement: remainingSourceIds.length === 0
+        ? ""
+        : serializeOwnedBlock("agent", region.content, remainingSourceIds, region),
+    }];
+  }).sort((left, right) => right.start - left.start);
+  let next = body;
+  for (const replacement of replacements) {
+    next = `${next.slice(0, replacement.start)}${replacement.replacement}${next.slice(replacement.end)}`;
+  }
+  return next;
+}
+
+export function promoteExternallyEditedBlocks(body: string): { body: string; changed: boolean; ambiguous: boolean } {
+  try {
+    const regions = parseBlockRegions(body);
+    if (regions.length === 0) return { body, changed: false, ambiguous: true };
+    const replacements = regions.flatMap((region) => {
+      if (sha256(region.content) === region.content_hash) return [];
+      return [{
+        start: region.markerStart,
+        end: region.contentEnd,
+        replacement: serializeOwnedBlock("user", region.content, region.source_ids, { ...region, owner: "user" }),
+      }];
+    }).sort((left, right) => right.start - left.start);
+    let next = body;
+    for (const replacement of replacements) next = `${next.slice(0, replacement.start)}${replacement.replacement}${next.slice(replacement.end)}`;
+    return { body: next, changed: replacements.length > 0, ambiguous: false };
+  } catch {
+    return { body, changed: false, ambiguous: true };
+  }
+}
+
+export function hasUnsafeWikiOwnership(body: string): boolean {
+  try {
+    const regions = parseBlockRegions(body);
+    return regions.length === 0 || regions.some((region) => region.owner === "agent" && sha256(region.content) !== region.content_hash);
+  } catch {
+    return true;
+  }
+}
+
+export function promoteEditedWikiBlocksToUser(previousBody: string, editedBody: string): { body: string; ambiguous: boolean } {
+  try {
+    const previous = parseBlockRegions(previousBody);
+    const edited = parseBlockRegions(editedBody);
+    const previousById = new Map(previous.map((region) => [region.block_id, region]));
+    if (previous.length === 0 || edited.length !== previous.length || edited.some((region) => !previousById.has(region.block_id))) {
+      return { body: editedBody, ambiguous: true };
+    }
+    const replacements = edited.flatMap((region) => {
+      const before = previousById.get(region.block_id)!;
+      if (before.content === region.content && before.owner === region.owner && before.content_hash === region.content_hash) return [];
+      return [{
+        start: region.markerStart,
+        end: region.contentEnd,
+        replacement: serializeOwnedBlock("user", region.content, region.source_ids, { ...region, owner: "user" }),
+      }];
+    }).sort((left, right) => right.start - left.start);
+    let body = editedBody;
+    for (const replacement of replacements) {
+      body = `${body.slice(0, replacement.start)}${replacement.replacement}${body.slice(replacement.end)}`;
+    }
+    return { body, ambiguous: false };
+  } catch {
+    return { body: editedBody, ambiguous: true };
+  }
 }
 
 export function extractWikiLinks(markdown: string): string[] {
@@ -166,12 +308,16 @@ export class WikiMarkdownStore {
     }
   }
 
-  listPages(): WikiPageRecord[] {
+  listPages(protectUnsafe = true): WikiPageRecord[] {
     this.ensureLayout();
     const records: WikiPageRecord[] = [];
     for (const base of ["inbox", "workspaces", "archived-workspaces"]) this.scan(base, records);
     const protectedIds = this.protectedPageIds();
     for (const record of records) {
+      if (protectUnsafe && hasUnsafeWikiOwnership(record.body) && !protectedIds.has(record.id)) {
+        this.markProtected(record.id, "检测到非 coordinator ownership 变化或缺失 marker");
+        protectedIds.add(record.id);
+      }
       if (!protectedIds.has(record.id)) continue;
       record.protected = true;
       record.frontmatter = { ...record.frontmatter, protected: true };

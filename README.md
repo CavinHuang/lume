@@ -135,7 +135,7 @@ Lume 作为主线程协调者，理解任务需求后把工作分发给最合适
 | **分析** | `agent-analyst` · `agent-quant` · `agent-researcher` |
 | **创作** | `agent-artist` · `agent-designer` · `agent-docsmith` · `image-gen` |
 | **知识** | `agent-wiki` · `brainstorming` · `find-skills` |
-| **系统** | `lume-self-evolution` · `skill-creator` · `tool-builder` · `system-info` · `ui-stylist` |
+| **系统** | `lume-self-evolution` · `skill-creator` · `system-info` · `ui-stylist` |
 
 所有 Skill 支持**热加载**——修改或添加 `SKILL.md` 即可即时生效，无需重启。配合自我进化机制，Skill 会越用越精准。
 

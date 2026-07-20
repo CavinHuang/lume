@@ -32,7 +32,7 @@ describe("message attachment model input", () => {
 
     const input = buildRuntimeUserMessageInput({
       userMessage: "请解读图片",
-      provider: "openai",
+      visionSupported: true,
       workspaceSlug,
       threadId,
       attachments: [{
@@ -66,7 +66,7 @@ describe("message attachment model input", () => {
 
     const input = buildRuntimeUserMessageInput({
       userMessage: "请根据当前微信回复",
-      provider: "openai",
+      visionSupported: true,
       workspaceSlug,
       threadId,
       contentBlocks: [{
@@ -101,7 +101,7 @@ describe("message attachment model input", () => {
     ]);
   });
 
-  test("非图片或不可读取附件应保留文本输入降级", () => {
+  test("非图片附件保留文本输入并由文件工具按需读取", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-text";
     const threadId = "thread-text";
@@ -109,7 +109,7 @@ describe("message attachment model input", () => {
 
     const input = buildRuntimeUserMessageInput({
       userMessage: "请解读附件",
-      provider: "openai",
+      visionSupported: true,
       workspaceSlug,
       threadId,
       attachments: [
@@ -119,13 +119,6 @@ describe("message attachment model input", () => {
           mediaType: "text/markdown",
           size: 3,
           threadPath: "brief.md"
-        },
-        {
-          id: "att-2",
-          filename: "missing.png",
-          mediaType: "image/png",
-          size: 3,
-          threadPath: "missing.png"
         }
       ]
     });
@@ -133,16 +126,37 @@ describe("message attachment model input", () => {
     expect(input).toBe("请解读附件");
   });
 
-  test("暂未启用图片 content block 的 provider 应保留文本输入", () => {
+  test("不可读取图片应明确失败而不是静默跳过", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-missing-image";
+    const threadId = "thread-missing-image";
+    getAgentSessionPath(workspaceSlug, threadId);
+
+    expect(() => buildRuntimeUserMessageInput({
+      userMessage: "请解读图片",
+      visionSupported: true,
+      workspaceSlug,
+      threadId,
+      attachments: [{
+        id: "att-missing",
+        filename: "missing.png",
+        mediaType: "image/png",
+        size: 3,
+        threadPath: "missing.png"
+      }]
+    })).toThrow("图片附件不可读取");
+  });
+
+  test("不支持视觉的模型应在运行前明确拒绝图片", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-deepseek";
     const threadId = "thread-deepseek";
     const sessionDir = getAgentSessionPath(workspaceSlug, threadId);
     writeFileSync(join(sessionDir, "screen.png"), "fake-image");
 
-    const input = buildRuntimeUserMessageInput({
+    expect(() => buildRuntimeUserMessageInput({
       userMessage: "请解读图片",
-      provider: "deepseek",
+      visionSupported: false,
       workspaceSlug,
       threadId,
       attachments: [{
@@ -152,8 +166,6 @@ describe("message attachment model input", () => {
         size: 10,
         threadPath: "screen.png"
       }]
-    });
-
-    expect(input).toBe("请解读图片");
+    })).toThrow("当前模型不支持图片输入");
   });
 });

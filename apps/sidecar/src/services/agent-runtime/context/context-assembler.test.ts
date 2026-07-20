@@ -160,6 +160,21 @@ describe("ContextAssembler", () => {
     expect(result.trace.tokenUsageEstimate).toBeGreaterThan(0);
   });
 
+  test("propagates automation execution into the content presentation policy", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "automation-thread",
+      runId: "automation-run",
+      userMessage: "生成本周经营摘要",
+      resolvedModelId: "test-model",
+      availableTools: ["Skill"],
+      tokenBudget: 8_000,
+      automationExecution: true
+    });
+
+    expect(result.systemPrompt).toContain("自动化任务的最终结果");
+    expect(result.systemPrompt).toContain("lume-infographic");
+  });
+
   test("keeps stable prompt fingerprints while per-turn runtime state changes", async () => {
     const base = {
       threadId: "cache-thread",

@@ -17,7 +17,7 @@ describe('message file reference schemas', () => {
   })
 
   test('plain and guarded endpoint inputs stay structurally separate', () => {
-    const guardedRef = { ref: projectRef, guard: projectGuard }
+    const guardedRef = { ref: projectRef, guard: projectGuard, expectedKind: 'file' }
     expect(guardedFileRefInputSchema.safeParse({ guardedRef }).success).toBe(true)
     expect(fileRefInputSchema.safeParse({ ref: projectRef }).success).toBe(true)
     expect(guardedFileRefInputSchema.safeParse({ ref: projectRef }).success).toBe(false)

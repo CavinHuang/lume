@@ -220,6 +220,8 @@ export interface AgentThreadMessage {
   sdkMessages?: SDKMessage[]
   /** 该逻辑回复创建时冻结的文件引用授权绑定；旧消息不回填。 */
   fileReferenceBinding?: FileReferenceBinding
+  /** 生成该消息时使用的文件引用协议版本。 */
+  fileReferenceProtocolVersion?: FileReferenceProtocolVersion
   /** 同一逻辑消息链的版本组 ID */
   versionGroupId?: string
   /** 当前消息在版本组中的 1-based 版本序号 */
@@ -901,6 +903,7 @@ export type AgentSubmissionReceiptStatus =
   | 'preparing'
   | 'accepted'
   | 'queued'
+  | 'paused'
   | 'started'
   | 'completed'
   | 'rejected'
@@ -1472,6 +1475,9 @@ export interface FileReferenceBinding {
   fileContextId: string
 }
 
+export type FileReferenceProtocolVersion = 1
+export const FILE_REFERENCE_PROTOCOL_VERSION: FileReferenceProtocolVersion = 1
+
 export interface ProjectFileRefGuard {
   kind: 'project'
   workspaceSlug: string
@@ -1487,13 +1493,14 @@ export interface SessionFileRefGuard {
 
 /** Message-authored references are intentionally distinct from ordinary file-tree FileRefs. */
 export type GuardedFileRef =
-  | { ref: FileRef & { source: 'project' }; guard: ProjectFileRefGuard }
-  | { ref: FileRef & { source: 'session' }; guard: SessionFileRefGuard }
+  | { ref: FileRef & { source: 'project' }; guard: ProjectFileRefGuard; expectedKind: 'file' | 'directory' }
+  | { ref: FileRef & { source: 'session' }; guard: SessionFileRefGuard; expectedKind: 'file' | 'directory' }
 
 export type GuardedFileRefErrorCode =
   | 'NOT_FOUND'
   | 'OUT_OF_SCOPE'
   | 'BINDING_CHANGED'
+  | 'KIND_MISMATCH'
   | 'UNAVAILABLE'
   | 'IO_ERROR'
 
@@ -1559,6 +1566,8 @@ export interface AgentMessageAttachmentInput {
   filename: string
   mediaType: string
   size: number
+  /** Sidecar-calculated SHA-256 of the immutable attachment snapshot. */
+  contentHash?: string
   threadPath: string
   /** New records carry the server-issued reference; threadPath remains for legacy records/runtime input. */
   fileRef?: FileRef
@@ -1569,15 +1578,32 @@ export interface AgentSaveFilesInput {
   workspaceSlug: string
   threadId: string
   clientSubmissionId?: string
-  files: Array<{ filename: string; data?: string; sourcePath?: string }>
+  files: Array<{
+    id?: string
+    filename: string
+    mediaType?: string
+    size?: number
+    data?: string
+    sourcePath?: string
+  }>
 }
+
+export const AGENT_ATTACHMENT_LIMITS = {
+  maxCount: 10,
+  maxFileBytes: 25 * 1024 * 1024,
+  maxTotalBytes: 50 * 1024 * 1024,
+} as const
 
 /** Agent 已保存文件信息 */
 export interface AgentSavedFile {
+  id?: string
   filename: string
   targetPath: string
   threadPath?: string
   ref?: FileRef
+  mediaType?: string
+  size?: number
+  contentHash?: string
 }
 
 /** 读取线程文件二进制数据的输入 */

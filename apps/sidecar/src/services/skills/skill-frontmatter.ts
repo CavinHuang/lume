@@ -59,14 +59,17 @@ export function parseSkillFrontmatter(content: string, slug: string): SkillMeta 
   }
   if (!isRecord(parsed)) return meta;
 
+  const metadata = isRecord(parsed.metadata) ? parsed.metadata : {};
+
   const name = pickString(parsed, "name");
   const description = pickString(parsed, "description");
-  const whenToUse = pickString(parsed, "when_to_use", "whenToUse", "when-to-use");
+  const whenToUse = pickString(parsed, "when_to_use", "whenToUse", "when-to-use")
+    ?? pickString(metadata, "when_to_use", "whenToUse", "when-to-use");
   const allowedTools = pickStringList(parsed, "allowed_tools", "allowedTools", "allowed-tools");
   const argumentHint = pickString(parsed, "argument_hint", "argumentHint", "argument-hint");
   const disableModelInvocation = pickBoolean(parsed, "disable_model_invocation", "disableModelInvocation");
   const icon = pickString(parsed, "icon");
-  const version = pickString(parsed, "version");
+  const version = pickString(parsed, "version") ?? pickString(metadata, "version");
 
   return {
     ...meta,

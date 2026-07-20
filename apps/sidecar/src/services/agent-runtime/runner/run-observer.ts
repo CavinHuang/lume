@@ -8,6 +8,7 @@ import type {
   RuntimeUsageContextSnapshot,
   SDKMessage
 } from "@lume/shared";
+import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
 import type { TaskContractPlanPreview } from "../plan/task-contract-write-tool";
 import type { ContextAssemblyInput } from "../context/context-assembler";
@@ -162,6 +163,7 @@ export class LumeRunObserver {
       workspaceId: input.workspaceId,
       workspaceSlug: input.workspaceSlug,
       fileReferenceBinding: input.fileReferenceBinding,
+      fileReferenceProtocolVersion: FILE_REFERENCE_PROTOCOL_VERSION,
       rootAgentId: input.rootAgentId ?? "runtime-core",
       currentAgentId: input.currentAgentId ?? "runtime-core",
       status: "running",
@@ -507,7 +509,12 @@ export class LumeRunObserver {
     if (!emit) return;
     const sequence = this.nextRuntimeSequenceByRun.get(event.runId) ?? 0;
     this.nextRuntimeSequenceByRun.set(event.runId, sequence + 1);
-    emit({ ...event, fileReferenceBinding: this.state.fileReferenceBinding, sequence });
+    emit({
+      ...event,
+      fileReferenceBinding: this.state.fileReferenceBinding,
+      fileReferenceProtocolVersion: this.state.fileReferenceProtocolVersion ?? FILE_REFERENCE_PROTOCOL_VERSION,
+      sequence
+    });
   }
 
   private rememberSubagentParentToolCall(message: SDKMessage & Record<string, unknown>): void {

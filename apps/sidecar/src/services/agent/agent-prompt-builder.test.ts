@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildContentPresentationSection,
   buildBuiltinAgents,
   buildDynamicContext,
   buildSystemPromptAppend,
@@ -215,6 +216,25 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("## Automation Non-Interactive Mode");
     expect(prompt).toContain("禁止调用 AskUserQuestion");
     expect(prompt).toContain("E_AUTOMATION_INTERACTION_DISABLED");
+  });
+
+  test("内容生产仅在主对话和自动化最终回复中按信息密度启用 Infographic", () => {
+    const direct = buildContentPresentationSection({ sessionId: "main", sessionType: "main", chatType: "direct" });
+    const automation = buildContentPresentationSection({
+      sessionId: "automation",
+      sessionType: "main",
+      chatType: "direct",
+      automationExecution: true
+    });
+
+    expect(direct).toContain("不按篇幅长短机械触发");
+    expect(direct).toContain("`lume-infographic` Skill");
+    expect(direct).toContain("最多输出一个 `infographic`");
+    expect(automation).toContain("自动化任务的最终结果");
+    expect(buildContentPresentationSection({ sessionId: "plan", permissionMode: "plan" })).toBeNull();
+    expect(buildContentPresentationSection({ sessionId: "sub", sessionType: "subagent" })).toBeNull();
+    expect(buildContentPresentationSection({ sessionId: "group", chatType: "group" })).toBeNull();
+    expect(buildContentPresentationSection({ sessionId: "channel", chatType: "channel" })).toBeNull();
   });
 
   test("buildSystemPromptAppend 应包含 loaded context policy", () => {

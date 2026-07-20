@@ -44,68 +44,24 @@ export class AgentSubmissionStore {
     }
     this.#db = new Database(input.dbPath);
     this.#now = input.now ?? Date.now;
-    this.#db.exec(`
-      PRAGMA journal_mode = WAL;
-      CREATE TABLE IF NOT EXISTS agent_submission (
-        client_submission_id TEXT PRIMARY KEY,
-        payload_hash TEXT NOT NULL,
-        thread_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        mode TEXT,
-        queued_message_id TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        error_code TEXT
-      );
-      CREATE INDEX IF NOT EXISTS agent_submission_thread_updated
-        ON agent_submission(thread_id, updated_at);
-      CREATE TABLE IF NOT EXISTS agent_attachment_lease (
-        client_submission_id TEXT NOT NULL,
-        thread_id TEXT NOT NULL,
-        target_path TEXT NOT NULL,
-        filename TEXT NOT NULL,
-        thread_path TEXT,
-        ref_json TEXT,
-        status TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY (client_submission_id, target_path)
-      );
-      CREATE TABLE IF NOT EXISTS agent_submission_outbox (
-        client_submission_id TEXT PRIMARY KEY,
-        thread_id TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        status TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-    `);
-    const leaseColumns = this.#db.prepare("PRAGMA table_info(agent_attachment_lease)")
-      .all() as unknown as Array<{ name: string }>;
-    if (!leaseColumns.some((column) => column.name === "thread_id")) {
-      this.#db.exec("ALTER TABLE agent_attachment_lease ADD COLUMN thread_id TEXT NOT NULL DEFAULT '';");
-    }
+    this.#db.exec("PRAGMA journal_mode = WAL;");
+    migrateSubmissionStore(this.#db);
     const now = this.#now();
-    const staleLeases = this.#db.prepare(
-      "SELECT target_path FROM agent_attachment_lease WHERE status = 'prepared'",
-    ).all() as unknown as Array<{ target_path: string }>;
-    for (const lease of staleLeases) {
-      if (existsSync(lease.target_path)) rmSync(lease.target_path, { force: true });
-    }
     this.#db.prepare(`
-      UPDATE agent_attachment_lease SET status = 'aborted', updated_at = ? WHERE status = 'prepared'
+      UPDATE agent_submission
+      SET status = 'paused', updated_at = ?, error_code = 'sidecar_restarted'
+      WHERE status = 'queued'
     `).run(now);
     this.#db.prepare(`
       UPDATE agent_submission
-      SET status = CASE WHEN status = 'queued' THEN 'restart_dropped' ELSE 'interrupted' END,
-          updated_at = ?,
-          error_code = 'sidecar_restarted'
-      WHERE status IN ('preparing', 'accepted', 'started', 'queued')
+      SET status = 'interrupted', updated_at = ?, error_code = 'sidecar_restarted'
+      WHERE status IN ('preparing', 'accepted', 'started')
     `).run(now);
     this.#db.prepare(`
       UPDATE agent_submission_outbox
-      SET status = 'interrupted', updated_at = ?
-      WHERE status IN ('pending', 'started')
+      SET status = CASE WHEN status = 'queued' THEN 'paused' ELSE 'interrupted' END,
+          updated_at = ?
+      WHERE status IN ('pending', 'started', 'queued')
     `).run(now);
   }
 
@@ -143,7 +99,7 @@ export class AgentSubmissionStore {
         this.#now(),
         id,
       );
-      if (result.mode === "sent" && input) this.insertOutbox(id, input, "pending");
+      if (input) this.insertOutbox(id, input, result.mode === "queued" ? "queued" : "pending");
       if (result.mode === "sent") this.commitAttachmentLease(id);
       this.#db.exec("COMMIT");
     } catch (error) {
@@ -185,21 +141,30 @@ export class AgentSubmissionStore {
 
   getPreparedAttachmentFiles(id: string): AgentSavedFile[] {
     const rows = this.#db.prepare(`
-      SELECT filename, target_path, thread_path, ref_json
+      SELECT attachment_id, filename, target_path, thread_path, ref_json,
+             media_type, size_bytes, content_hash
       FROM agent_attachment_lease
       WHERE client_submission_id = ? AND status = 'prepared'
       ORDER BY created_at, target_path
     `).all(id) as unknown as Array<{
+      attachment_id: string | null;
       filename: string;
       target_path: string;
       thread_path: string | null;
       ref_json: string | null;
+      media_type: string | null;
+      size_bytes: number | null;
+      content_hash: string | null;
     }>;
     return rows.map((row) => ({
+      ...(row.attachment_id ? { id: row.attachment_id } : {}),
       filename: row.filename,
       targetPath: row.target_path,
       ...(row.thread_path ? { threadPath: row.thread_path } : {}),
       ...(row.ref_json ? { ref: JSON.parse(row.ref_json) } : {}),
+      ...(row.media_type ? { mediaType: row.media_type } : {}),
+      ...(row.size_bytes !== null ? { size: row.size_bytes } : {}),
+      ...(row.content_hash ? { contentHash: row.content_hash } : {}),
     }));
   }
 
@@ -207,21 +172,55 @@ export class AgentSubmissionStore {
     const now = this.#now();
     const insert = this.#db.prepare(`
       INSERT OR IGNORE INTO agent_attachment_lease
-        (client_submission_id, thread_id, target_path, filename, thread_path, ref_json, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
+        (client_submission_id, thread_id, target_path, attachment_id, filename, thread_path,
+         ref_json, media_type, size_bytes, content_hash, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
     `);
     for (const file of files) {
       insert.run(
         id,
         threadId,
         file.targetPath,
+        file.id ?? null,
         file.filename,
         file.threadPath ?? null,
         file.ref ? JSON.stringify(file.ref) : null,
+        file.mediaType ?? null,
+        file.size ?? null,
+        file.contentHash ?? null,
         now,
         now,
       );
     }
+  }
+
+  getQueuedInputs(threadId: string): AgentSendInput[] {
+    const rows = this.#db.prepare(`
+      SELECT payload_json FROM agent_submission_outbox
+      WHERE thread_id = ? AND status IN ('queued', 'paused')
+      ORDER BY created_at
+    `).all(threadId) as unknown as Array<{ payload_json: string }>;
+    return rows.map((row) => JSON.parse(row.payload_json) as AgentSendInput);
+  }
+
+  countQueued(threadId: string): number {
+    const row = this.#db.prepare(`
+      SELECT COUNT(*) AS count FROM agent_submission_outbox
+      WHERE thread_id = ? AND status IN ('queued', 'paused')
+    `).get(threadId) as unknown as { count: number };
+    return row.count;
+  }
+
+  resumeQueued(threadId: string): void {
+    const now = this.#now();
+    this.#db.prepare(`UPDATE agent_submission SET status = 'queued', updated_at = ?, error_code = NULL WHERE thread_id = ? AND status = 'paused'`).run(now, threadId);
+    this.#db.prepare(`UPDATE agent_submission_outbox SET status = 'queued', updated_at = ? WHERE thread_id = ? AND status = 'paused'`).run(now, threadId);
+  }
+
+  pauseQueued(threadId: string): void {
+    const now = this.#now();
+    this.#db.prepare(`UPDATE agent_submission SET status = 'paused', updated_at = ? WHERE thread_id = ? AND status = 'queued'`).run(now, threadId);
+    this.#db.prepare(`UPDATE agent_submission_outbox SET status = 'paused', updated_at = ? WHERE thread_id = ? AND status = 'queued'`).run(now, threadId);
   }
 
   abortAttachmentLease(id: string): void {
@@ -319,6 +318,75 @@ export class AgentSubmissionStore {
         status = excluded.status,
         updated_at = excluded.updated_at
     `).run(id, input.threadId, JSON.stringify(input), status, now, now);
+  }
+}
+
+function migrateSubmissionStore(db: DatabaseSyncLike): void {
+  db.exec(`
+    BEGIN IMMEDIATE;
+    CREATE TABLE IF NOT EXISTS agent_submission (
+      client_submission_id TEXT PRIMARY KEY,
+      payload_hash TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      mode TEXT,
+      queued_message_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      error_code TEXT
+    );
+    CREATE INDEX IF NOT EXISTS agent_submission_thread_updated
+      ON agent_submission(thread_id, updated_at);
+    CREATE TABLE IF NOT EXISTS agent_attachment_lease (
+      client_submission_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL DEFAULT '',
+      target_path TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      thread_path TEXT,
+      ref_json TEXT,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (client_submission_id, target_path)
+    );
+    CREATE TABLE IF NOT EXISTS agent_submission_outbox (
+      client_submission_id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    COMMIT;
+  `);
+
+  const version = (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
+  if (version < 2) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      ensureColumn(db, "agent_attachment_lease", "thread_id", "TEXT NOT NULL DEFAULT ''");
+      ensureColumn(db, "agent_attachment_lease", "attachment_id", "TEXT");
+      ensureColumn(db, "agent_attachment_lease", "media_type", "TEXT");
+      ensureColumn(db, "agent_attachment_lease", "size_bytes", "INTEGER");
+      ensureColumn(db, "agent_attachment_lease", "content_hash", "TEXT");
+      db.exec("PRAGMA user_version = 2;");
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  const integrity = db.prepare("PRAGMA quick_check").get() as unknown as Record<string, string>;
+  if (!Object.values(integrity).includes("ok")) {
+    throw new Error("agent-submissions.sqlite 完整性检查失败");
+  }
+}
+
+function ensureColumn(db: DatabaseSyncLike, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as Array<{ name: string }>;
+  if (!columns.some((item) => item.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
   }
 }
 

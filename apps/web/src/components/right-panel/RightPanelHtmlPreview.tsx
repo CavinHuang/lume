@@ -81,9 +81,7 @@ export function RightPanelHtmlPreview({
       if (message.kind === 'local') {
         const target = resolveHtmlPreviewLocalRef(fileRef, message.href)
         if (target) {
-          onOpenFile(guardedRef
-            ? { ...guardedRef, ref: { ...guardedRef.ref, relativePath: target.relativePath } } as GuardedFileRef
-            : target)
+          onOpenFile(target)
         }
         return
       }

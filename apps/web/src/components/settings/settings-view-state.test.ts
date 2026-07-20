@@ -30,17 +30,15 @@ describe('settings view state', () => {
     expect(ids.indexOf('reading')).toBeLessThan(ids.indexOf('integrations'))
   })
 
-  test('includes application logs after update settings', () => {
+  test('keeps data management immediately before application logs', () => {
     const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
     expect(ids).toContain('logs')
-    expect(ids.indexOf('logs')).toBe(ids.indexOf('updates') + 2)
+    expect(ids.indexOf('logs')).toBe(ids.indexOf('data') + 1)
   })
 
-  test('places data management between updates and logs', () => {
+  test('places update settings last', () => {
     const ids = SETTINGS_NAV_ITEMS.map((item) => item.id)
-    expect(ids).toContain('data')
-    expect(ids.indexOf('data')).toBe(ids.indexOf('updates') + 1)
-    expect(ids.indexOf('logs')).toBe(ids.indexOf('data') + 1)
+    expect(ids.at(-1)).toBe('updates')
   })
 
   test('data page title is 数据管理', () => {

@@ -1,11 +1,17 @@
 import {
   cpSync,
+  closeSync,
   copyFileSync,
+  createReadStream,
+  createWriteStream,
   existsSync,
+  fstatSync,
   lstatSync,
+  openSync,
   type Dirent,
   renameSync,
   readFileSync,
+  readSync,
   realpathSync,
   mkdirSync,
   readdirSync,
@@ -18,6 +24,7 @@ import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
 import type {
   AttachWorkspaceResourceToThreadInput,
   AttachWorkspaceResourceToThreadResult,
@@ -35,6 +42,7 @@ import type {
   WorkspaceCopyFolderInput,
   WorkspaceSaveFilesInput
 } from "@lume/shared";
+import { AGENT_ATTACHMENT_LIMITS } from "@lume/shared";
 import {
   getAgentThreadRootPath,
   getAgentFileContextRootPath,
@@ -208,6 +216,13 @@ export class GuardedFileRefError extends Error {
   }
 }
 
+export class AuthorizedFileRefError extends Error {
+  constructor(readonly code: Exclude<GuardedFileRefErrorCode, "BINDING_CHANGED" | "KIND_MISMATCH">, message: string) {
+    super(message);
+    this.name = "AuthorizedFileRefError";
+  }
+}
+
 export function createProjectRootFingerprint(projectRoot: string): string {
   const canonical = realpathSync(projectRoot);
   const platformKey = process.platform === "win32" ? canonical.toLowerCase() : canonical;
@@ -229,16 +244,16 @@ export function createFileReferenceBinding(threadId: string): FileReferenceBindi
 export function resolveGuardedFileRef(guarded: GuardedFileRef): ResolvedAuthorizedFileRef {
   assertCurrentGuardBinding(guarded);
   try {
-    return resolveAuthorizedFileRef(guarded.ref);
+    const resolved = resolveAuthorizedFileRef(guarded.ref);
+    const isDirectory = statSync(resolved.absolutePath).isDirectory();
+    if ((guarded.expectedKind === "directory") !== isDirectory) {
+      throw new GuardedFileRefError("KIND_MISMATCH", guarded.expectedKind === "directory" ? "目标不是目录" : "目标不是文件");
+    }
+    return resolved;
   } catch (error) {
     if (error instanceof GuardedFileRefError) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    if (/不存在|ENOENT/i.test(message)) throw new GuardedFileRefError("NOT_FOUND", message);
-    if (/超出|符号链接|junction|安全相对路径|越过授权/i.test(message)) {
-      throw new GuardedFileRefError("OUT_OF_SCOPE", message);
-    }
-    if (/尚未绑定|授权根目录不存在/i.test(message)) throw new GuardedFileRefError("UNAVAILABLE", message);
-    throw new GuardedFileRefError("IO_ERROR", message);
+    if (error instanceof AuthorizedFileRefError) throw new GuardedFileRefError(error.code, error.message);
+    throw new GuardedFileRefError("IO_ERROR", error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -291,24 +306,24 @@ export function statGuardedFileRef(guarded: GuardedFileRef): FileEntry {
 
 export function readGuardedFileRef(guarded: GuardedFileRef): { content: string; truncated: boolean } {
   const resolved = resolveGuardedFileRef(guarded);
-  if (!statSync(resolved.absolutePath).isFile()) throw new GuardedFileRefError("OUT_OF_SCOPE", "目标不是文件");
+  if (!statSync(resolved.absolutePath).isFile()) throw new GuardedFileRefError("KIND_MISMATCH", "目标不是文件");
   return readPreviewableText(resolved.absolutePath);
 }
 
 export function listGuardedFileRefDirectory(guarded: GuardedFileRef): FileEntry[] {
   const resolved = resolveGuardedFileRef(guarded);
-  if (!statSync(resolved.absolutePath).isDirectory()) throw new GuardedFileRefError("OUT_OF_SCOPE", "目标不是目录");
+  if (!statSync(resolved.absolutePath).isDirectory()) throw new GuardedFileRefError("KIND_MISMATCH", "目标不是目录");
   return listResolvedDirectory(resolved);
 }
 
 export function normalizeAuthorizedRelativePath(input: string): string {
   if (input.includes("\0") || isAbsolute(input) || /^[a-zA-Z]:/.test(input) || input.startsWith("\\\\")) {
-    throw new Error("FileRef 路径必须是安全相对路径");
+    throw new AuthorizedFileRefError("OUT_OF_SCOPE", "FileRef 路径必须是安全相对路径");
   }
   const parts: string[] = [];
   for (const part of input.replace(/\\/g, "/").split("/")) {
     if (!part || part === ".") continue;
-    if (part === "..") throw new Error("FileRef 路径不能越过授权根目录");
+    if (part === "..") throw new AuthorizedFileRefError("OUT_OF_SCOPE", "FileRef 路径不能越过授权根目录");
     parts.push(part);
   }
   return parts.join("/");
@@ -320,31 +335,57 @@ function resolveFileRefRoot(ref: FileRef): string {
   if (ref.source === "legacy") return resolveWorkspaceResourcesDir(ref.scopeId);
   if (ref.source === "project") {
     const workspace = getAgentWorkspaceBySlug(ref.scopeId);
-    if (!workspace?.projectPath) throw new Error("项目尚未绑定本地目录");
+    if (!workspace?.projectPath) throw new AuthorizedFileRefError("UNAVAILABLE", "项目尚未绑定本地目录");
     return workspace.projectPath;
   }
   if (ref.scopeId === "global") return getMemoryV2ScopePaths({ scope: "global" }).root;
   if (ref.scopeId.startsWith("workspace:")) {
     return getMemoryV2ScopePaths({ scope: "workspace", workspaceSlug: ref.scopeId.slice("workspace:".length) }).root;
   }
-  throw new Error("memory FileRef scopeId 非法");
+  throw new AuthorizedFileRefError("OUT_OF_SCOPE", "memory FileRef scopeId 非法");
 }
 
 /** Resolve a renderer-safe FileRef and reject symlink/junction traversal at every existing segment. */
 export function resolveAuthorizedFileRef(ref: FileRef): ResolvedAuthorizedFileRef {
   const relativePath = normalizeAuthorizedRelativePath(ref.relativePath);
   const lexicalRoot = resolve(resolveFileRefRoot(ref));
-  if (!existsSync(lexicalRoot)) throw new Error("FileRef 授权根目录不存在");
-  const rootPath = realpathSync(lexicalRoot);
+  if (!existsSync(lexicalRoot)) throw new AuthorizedFileRefError("UNAVAILABLE", "FileRef 授权根目录不存在");
+  let rootPath: string;
+  try {
+    rootPath = realpathSync(lexicalRoot);
+  } catch (error) {
+    throw mapAuthorizedFileSystemError(error, "FileRef 授权根目录不可用", "UNAVAILABLE");
+  }
   let cursor = rootPath;
   for (const segment of relativePath.split("/").filter(Boolean)) {
     cursor = join(cursor, segment);
-    if (!existsSync(cursor)) throw new Error("FileRef 目标不存在");
-    if (lstatSync(cursor).isSymbolicLink()) throw new Error("FileRef 不允许符号链接或 junction");
+    if (!existsSync(cursor)) throw new AuthorizedFileRefError("NOT_FOUND", "FileRef 目标不存在");
+    try {
+      if (lstatSync(cursor).isSymbolicLink()) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "FileRef 不允许符号链接或 junction");
+    } catch (error) {
+      if (error instanceof AuthorizedFileRefError) throw error;
+      throw mapAuthorizedFileSystemError(error, "FileRef 目标不可用");
+    }
   }
-  const absolutePath = relativePath ? realpathSync(cursor) : rootPath;
-  if (!isWithin(rootPath, absolutePath)) throw new Error("FileRef 目标超出授权根目录");
+  let absolutePath: string;
+  try {
+    absolutePath = relativePath ? realpathSync(cursor) : rootPath;
+  } catch (error) {
+    throw mapAuthorizedFileSystemError(error, "FileRef 目标不可用");
+  }
+  if (!isWithin(rootPath, absolutePath)) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "FileRef 目标超出授权根目录");
   return { ref: { ...ref, relativePath }, relativePath, rootPath, absolutePath };
+}
+
+function mapAuthorizedFileSystemError(
+  error: unknown,
+  fallbackMessage: string,
+  fallbackCode: AuthorizedFileRefError["code"] = "IO_ERROR"
+): AuthorizedFileRefError {
+  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+  if (code === "ENOENT" || code === "ENOTDIR") return new AuthorizedFileRefError("NOT_FOUND", fallbackMessage);
+  if (code === "EACCES" || code === "EPERM") return new AuthorizedFileRefError("OUT_OF_SCOPE", fallbackMessage);
+  return new AuthorizedFileRefError(fallbackCode, fallbackMessage);
 }
 
 export function listAuthorizedFileRefDirectory(ref: FileRef): FileEntry[] {
@@ -1356,9 +1397,11 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
   const results: AgentSavedFile[] = [];
   const scope = getThreadAttachmentScope(input.workspaceSlug, input.threadId);
   assertAttachmentMetadataHealthy(scope);
+  const preparedFiles = prepareAgentAttachmentFiles(input.files);
 
   try {
-    for (const file of input.files) {
+    for (const prepared of preparedFiles) {
+      const { file, bytes, mediaType, contentHash } = prepared;
       const targetPath = input.clientSubmissionId
         ? resolveUniqueAttachmentTarget(sessionDir, file.filename)
         : resolve(join(sessionDir, file.filename));
@@ -1366,23 +1409,16 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
         throw new Error(`文件路径越界: ${file.filename}`);
       }
       mkdirSync(dirname(targetPath), { recursive: true });
-      if (file.sourcePath && file.sourcePath.trim()) {
-        const resolvedSourcePath = resolve(file.sourcePath);
-        if (!existsSync(resolvedSourcePath) || !statSync(resolvedSourcePath).isFile()) {
-          throw new Error(`源文件不存在: ${file.filename}`);
-        }
-        copyFileSync(resolvedSourcePath, targetPath);
-      } else if (file.data) {
-        const buffer = Buffer.from(file.data, "base64");
-        writeFileSync(targetPath, buffer);
-      } else {
-        throw new Error(`缺少文件内容: ${file.filename}`);
-      }
+      writeFileSync(targetPath, bytes);
       const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, targetPath);
       results.push({
+        ...(file.id ? { id: file.id } : {}),
         filename: file.filename,
         targetPath,
         threadPath,
+        mediaType,
+        size: bytes.byteLength,
+        contentHash,
         ...(scope.fileContextId ? {
           ref: { source: "session" as const, scopeId: scope.fileContextId, relativePath: threadPath }
         } : {})
@@ -1405,6 +1441,212 @@ export function saveFilesToAgentSession(input: AgentSaveFilesInput): AgentSavedF
   }
 
   return results;
+}
+
+/** Desktop attachment path: copy through bounded streams instead of buffering each file in memory. */
+export async function saveFilesToAgentSessionStreamed(input: AgentSaveFilesInput): Promise<AgentSavedFile[]> {
+  if (input.files.some((file) => !file.sourcePath?.trim())) return saveFilesToAgentSession(input);
+  if (input.files.length > AGENT_ATTACHMENT_LIMITS.maxCount) {
+    throw new Error(`每条消息最多添加 ${AGENT_ATTACHMENT_LIMITS.maxCount} 个附件`);
+  }
+
+  const opened = input.files.map((file) => openStreamedAttachmentSource(file));
+  const totalBytes = opened.reduce((total, item) => total + item.size, 0);
+  if (totalBytes > AGENT_ATTACHMENT_LIMITS.maxTotalBytes) {
+    opened.forEach((item) => closeSync(item.fd));
+    throw new Error("附件总大小不能超过 50 MB");
+  }
+
+  const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
+  const scope = getThreadAttachmentScope(input.workspaceSlug, input.threadId);
+  const results: AgentSavedFile[] = [];
+  const temporaryPaths: string[] = [];
+  assertAttachmentMetadataHealthy(scope);
+
+  try {
+    for (const item of opened) {
+      const targetPath = input.clientSubmissionId
+        ? resolveUniqueAttachmentTarget(sessionDir, item.file.filename)
+        : resolve(join(sessionDir, item.file.filename));
+      if (!isWithin(sessionDir, targetPath)) throw new Error(`文件路径越界: ${item.file.filename}`);
+      mkdirSync(dirname(targetPath), { recursive: true });
+      const temporaryPath = `${targetPath}.${randomUUID()}.part`;
+      temporaryPaths.push(temporaryPath);
+      const hash = createHash("sha256");
+      let copiedBytes = 0;
+      const reader = createReadStream(item.sourcePath, { fd: item.fd, autoClose: false, start: 0 });
+      reader.on("data", (chunk: Buffer) => {
+        copiedBytes += chunk.byteLength;
+        hash.update(chunk);
+      });
+      await pipeline(reader, createWriteStream(temporaryPath, { flags: "wx" }));
+      const after = fstatSync(item.fd);
+      if (copiedBytes !== item.size || after.size !== item.size
+        || after.dev !== item.dev || after.ino !== item.ino || after.mtimeMs !== item.mtimeMs) {
+        throw new Error(`源文件在读取时发生变化: ${item.file.filename}`);
+      }
+      renameSync(temporaryPath, targetPath);
+      temporaryPaths.splice(temporaryPaths.indexOf(temporaryPath), 1);
+      const threadPath = toThreadRelativePath(input.workspaceSlug, input.threadId, targetPath);
+      results.push({
+        ...(item.file.id ? { id: item.file.id } : {}),
+        filename: item.file.filename,
+        targetPath,
+        threadPath,
+        mediaType: item.mediaType,
+        size: item.size,
+        contentHash: hash.digest("hex"),
+        ...(scope.fileContextId ? {
+          ref: { source: "session" as const, scopeId: scope.fileContextId, relativePath: threadPath }
+        } : {})
+      });
+      if (isExternalSourcePath(input.workspaceSlug, item.sourcePath, input.threadId)) {
+        upsertAttachmentMeta(scope, targetPath, { label: "外部附加", absoluteSourcePath: item.sourcePath });
+      } else {
+        deleteAttachmentMeta(scope, targetPath);
+      }
+    }
+    return results;
+  } catch (error) {
+    for (const path of temporaryPaths) if (existsSync(path)) rmSync(path, { force: true });
+    for (const saved of results) {
+      if (existsSync(saved.targetPath)) rmSync(saved.targetPath, { force: true });
+      deleteAttachmentMeta(scope, saved.targetPath);
+    }
+    throw error;
+  } finally {
+    opened.forEach((item) => closeSync(item.fd));
+  }
+}
+
+function openStreamedAttachmentSource(file: AgentSaveFilesInput["files"][number]): {
+  file: AgentSaveFilesInput["files"][number];
+  sourcePath: string;
+  fd: number;
+  dev: number;
+  ino: number;
+  mtimeMs: number;
+  size: number;
+  mediaType: string;
+} {
+  const sourcePath = resolve(file.sourcePath!);
+  if (!existsSync(sourcePath)) throw new Error(`源文件不存在: ${file.filename}`);
+  const linkMetadata = lstatSync(sourcePath);
+  if (linkMetadata.isSymbolicLink() || !linkMetadata.isFile()) throw new Error(`只允许附加普通文件: ${file.filename}`);
+  const fd = openSync(sourcePath, "r");
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile() || stats.dev !== linkMetadata.dev || stats.ino !== linkMetadata.ino) {
+      throw new Error(`源文件在读取前发生变化: ${file.filename}`);
+    }
+    if (stats.size > AGENT_ATTACHMENT_LIMITS.maxFileBytes) throw new Error(`${file.filename} 超过 25 MB`);
+    if (file.size !== undefined && file.size !== stats.size) throw new Error(`${file.filename} 在添加后发生变化，请重新选择`);
+    const header = Buffer.alloc(Math.min(stats.size, 1024));
+    if (header.byteLength > 0) readSync(fd, header, 0, header.byteLength, 0);
+    const detectedImageType = detectImageMediaType(header);
+    const declaredMediaType = file.mediaType?.trim().toLowerCase();
+    if (declaredMediaType?.startsWith("image/") && detectedImageType !== declaredMediaType) {
+      throw new Error(`${file.filename} 的图片内容与类型不匹配`);
+    }
+    return {
+      file,
+      sourcePath,
+      fd,
+      dev: stats.dev,
+      ino: stats.ino,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+      mediaType: detectedImageType ?? declaredMediaType ?? "application/octet-stream"
+    };
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+}
+
+function prepareAgentAttachmentFiles(files: AgentSaveFilesInput["files"]): Array<{
+  file: AgentSaveFilesInput["files"][number];
+  bytes: Buffer;
+  mediaType: string;
+  contentHash: string;
+}> {
+  if (files.length > AGENT_ATTACHMENT_LIMITS.maxCount) {
+    throw new Error(`每条消息最多添加 ${AGENT_ATTACHMENT_LIMITS.maxCount} 个附件`);
+  }
+
+  let totalBytes = 0;
+  return files.map((file) => {
+    const bytes = file.sourcePath?.trim()
+      ? readAttachmentSourceSnapshot(file.sourcePath, file.filename)
+      : decodeAttachmentBase64(file.data, file.filename);
+    if (bytes.byteLength > AGENT_ATTACHMENT_LIMITS.maxFileBytes) {
+      throw new Error(`${file.filename} 超过 25 MB`);
+    }
+    if (file.size !== undefined && file.size !== bytes.byteLength) {
+      throw new Error(`${file.filename} 在添加后发生变化，请重新选择`);
+    }
+    totalBytes += bytes.byteLength;
+    if (totalBytes > AGENT_ATTACHMENT_LIMITS.maxTotalBytes) {
+      throw new Error("附件总大小不能超过 50 MB");
+    }
+
+    const detectedImageType = detectImageMediaType(bytes);
+    const declaredMediaType = file.mediaType?.trim().toLowerCase();
+    if (declaredMediaType?.startsWith("image/") && detectedImageType !== declaredMediaType) {
+      throw new Error(`${file.filename} 的图片内容与类型不匹配`);
+    }
+    return {
+      file,
+      bytes,
+      mediaType: detectedImageType ?? declaredMediaType ?? "application/octet-stream",
+      contentHash: createHash("sha256").update(bytes).digest("hex"),
+    };
+  });
+}
+
+function readAttachmentSourceSnapshot(sourcePath: string, filename: string): Buffer {
+  const resolvedSourcePath = resolve(sourcePath);
+  if (!existsSync(resolvedSourcePath)) throw new Error(`源文件不存在: ${filename}`);
+  const linkMetadata = lstatSync(resolvedSourcePath);
+  if (linkMetadata.isSymbolicLink() || !linkMetadata.isFile()) {
+    throw new Error(`只允许附加普通文件: ${filename}`);
+  }
+
+  const fd = openSync(resolvedSourcePath, "r");
+  try {
+    const openedMetadata = fstatSync(fd);
+    if (!openedMetadata.isFile()
+      || (linkMetadata.dev !== openedMetadata.dev || linkMetadata.ino !== openedMetadata.ino)) {
+      throw new Error(`源文件在读取前发生变化: ${filename}`);
+    }
+    if (openedMetadata.size > AGENT_ATTACHMENT_LIMITS.maxFileBytes) {
+      throw new Error(`${filename} 超过 25 MB`);
+    }
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function decodeAttachmentBase64(data: string | undefined, filename: string): Buffer {
+  if (data === undefined) throw new Error(`缺少文件内容: ${filename}`);
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) {
+    throw new Error(`文件内容编码无效: ${filename}`);
+  }
+  const bytes = Buffer.from(data, "base64");
+  if (bytes.toString("base64") !== data) throw new Error(`文件内容编码无效: ${filename}`);
+  return bytes;
+}
+
+function detectImageMediaType(bytes: Buffer): string | undefined {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (bytes.length >= 2 && bytes.subarray(0, 2).toString("ascii") === "BM") return "image/bmp";
+  const textPrefix = bytes.subarray(0, Math.min(bytes.length, 1024)).toString("utf8").replace(/^\uFEFF/, "").trimStart();
+  if (/^(?:<\?xml[^>]*>\s*)?<svg(?:\s|>)/i.test(textPrefix)) return "image/svg+xml";
+  return undefined;
 }
 
 function resolveUniqueAttachmentTarget(sessionDir: string, filename: string): string {
@@ -1615,4 +1857,5 @@ export function attachWorkspaceResourceToThread(
 }
 
 export const saveFilesToAgentThread = saveFilesToAgentSession;
+export const saveFilesToAgentThreadStreamed = saveFilesToAgentSessionStreamed;
 export const copyFolderToThread = copyFolderToSession;

@@ -25,7 +25,7 @@ import type {
   AgentWelcomeSuggestionsResult,
   LumeRuntimeEvent
 } from "@lume/shared";
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { fetchTitle, getAdapter } from "../../providers";
 import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
@@ -1067,7 +1067,7 @@ export async function sendAgentMessage(
       const visibleAssistantMessage = createAssistantMessageVersion({
         sessionId: threadId,
         turnId: activeTurnId,
-        message: { ...latestAssistantMessage, fileReferenceBinding }
+        message: { ...latestAssistantMessage, fileReferenceBinding, fileReferenceProtocolVersion: FILE_REFERENCE_PROTOCOL_VERSION }
       });
       if (visibleAssistantMessage) {
         visibleAssistantMessageId = visibleAssistantMessage.id;

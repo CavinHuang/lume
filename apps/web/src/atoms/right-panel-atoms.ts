@@ -1,6 +1,6 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { FileRef, GuardedFileRef } from '@lume/shared'
+import type { FileRef } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import {
   closeFileTab,
@@ -49,7 +49,7 @@ export const rightPanelFileWorkspacesAtom = atom<Record<string, ThreadFileWorksp
 
 type RightPanelWorkspaceAction =
   | { type: 'activate-function'; threadId: string; function: RightPanelFunction; binding?: ThreadFileWorkspace['binding'] }
-  | { type: 'open-file'; threadId: string; ref: FileRef | GuardedFileRef; binding?: ThreadFileWorkspace['binding']; lineSelection?: ThreadFileLineSelection; navigationRevision?: number }
+  | { type: 'open-file'; threadId: string; ref: FileRef; binding?: ThreadFileWorkspace['binding']; lineSelection?: ThreadFileLineSelection; navigationRevision?: number }
   | { type: 'reveal-directory'; threadId: string; request: NonNullable<ThreadFileWorkspace['revealRequest']>; binding?: ThreadFileWorkspace['binding'] }
   | { type: 'close-function'; threadId: string; function: RightPanelFunction }
   | { type: 'close-file'; threadId: string; tabId: string }

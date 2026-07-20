@@ -29,6 +29,8 @@ import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/rende
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
 import type { LumeLogDigestPolicy } from "@lume/shared";
+import { installWikiPrivilegedCredential } from "./services/wiki/privileged-auth";
+import { markWikiProposalSecurityGateAvailable } from "./services/wiki/wiki-capabilities";
 
 const rpcTransport = createProcessRpcTransport();
 const SETTINGS_ACK_TIMEOUT_MS = 10_000;
@@ -122,6 +124,12 @@ async function handleRpcLine(line: string): Promise<void> {
 
   if (method === "system.logging-policy") {
     setLogDigestPolicy(payload.params as LumeLogDigestPolicy);
+    return;
+  }
+
+  if (method === "system.wiki-privileged-credential") {
+    installWikiPrivilegedCredential((payload.params as { credential?: unknown } | null)?.credential);
+    markWikiProposalSecurityGateAvailable();
     return;
   }
 

@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { XMarkdown } from '@ant-design/x-markdown'
 import type { GeneralSettings, UpdateGeneralSettingsInput } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -39,7 +40,7 @@ import {
 } from './version-update-state'
 import { APP_VERSION } from '@/lib/app-version'
 
-const logoUrl = new URL('../../assets/imgs/logo.png', import.meta.url).href
+const logoUrl = new URL('../../assets/imgs/logo-update.png', import.meta.url).href
 
 interface DownloadProgress {
   downloadedBytes: number
@@ -312,13 +313,15 @@ export function VersionUpdateSettings() {
         </div>
 
         <div className="rounded-[8px] bg-[var(--surface-2)] p-4 text-[13px] leading-6 text-[var(--text-2)]">
-          {errorMessage ? (
-            <p className="text-[var(--danger)]">{errorMessage}</p>
-          ) : releaseBody ? (
-            <ReleaseNotes body={releaseBody} />
-          ) : (
-            <p>发布说明会在检查更新后显示。</p>
-          )}
+          <div className="agent-message-scrollbar max-h-[360px] overflow-y-auto overscroll-contain pr-2">
+            {errorMessage ? (
+              <p className="text-[var(--danger)]">{errorMessage}</p>
+            ) : releaseBody ? (
+              <ReleaseNotes body={releaseBody} />
+            ) : (
+              <p>发布说明会在检查更新后显示。</p>
+            )}
+          </div>
           {releaseDate && <p className="mt-3 text-[12px] text-[var(--text-3)]">发布于 {formatDate(releaseDate)}</p>}
         </div>
       </section>
@@ -432,22 +435,14 @@ function ToggleRow({
 }
 
 function ReleaseNotes({ body }: { body: string }) {
-  const lines = body
-    .split('\n')
-    .map((line) => line.replace(/^[-*]\s*/, '').trim())
-    .filter(Boolean)
-    .slice(0, 5)
-
-  if (lines.length === 0) {
-    return <p>此版本没有发布说明。</p>
-  }
-
+  const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
   return (
-    <ul className="list-disc space-y-1 pl-5">
-      {lines.map((line) => (
-        <li key={line}>{line}</li>
-      ))}
-    </ul>
+    <XMarkdown
+      className="x-markdown text-[13px] leading-6"
+      rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
+    >
+      {body}
+    </XMarkdown>
   )
 }
 

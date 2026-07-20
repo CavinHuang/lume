@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { WikiChangeDraft, WikiDraftStatus } from '@lume/shared'
+import type { WikiDraftStatus, WikiProposalSummaryV1 } from '@lume/shared'
 import { Check, FilePlus2, LoaderCircle, ShieldAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -14,7 +14,7 @@ type SettledProposalStatus = Extract<ProposalStatus, 'applied' | 'pending_review
 
 const settledDraftStatuses = new Map<string, ProposalStatus>()
 
-export function parseWikiChangeDraft(result: unknown): WikiChangeDraft | null {
+export function parseWikiChangeDraft(result: unknown): WikiProposalSummaryV1 | null {
   let candidate = result
   if (typeof candidate === 'string') {
     try { candidate = JSON.parse(candidate) } catch { return null }
@@ -22,14 +22,15 @@ export function parseWikiChangeDraft(result: unknown): WikiChangeDraft | null {
   if (isRecord(candidate) && isRecord(candidate.data)) candidate = candidate.data
   if (!isRecord(candidate)) return null
   if (
-    typeof candidate.id !== 'string'
+    candidate.schemaVersion !== 1
+    || typeof candidate.draftId !== 'string'
     || typeof candidate.revision !== 'number'
-    || typeof candidate.nonce !== 'string'
     || typeof candidate.title !== 'string'
-    || !Array.isArray(candidate.operations)
-    || !Array.isArray(candidate.diffs)
+    || !Array.isArray(candidate.operationSummaries)
+    || !Array.isArray(candidate.boundedDiffPreviews)
+    || typeof candidate.diffHash !== 'string'
   ) return null
-  return candidate as unknown as WikiChangeDraft
+  return candidate as unknown as WikiProposalSummaryV1
 }
 
 export function WikiProposalResult({ result }: Props) {
@@ -38,23 +39,23 @@ export function WikiProposalResult({ result }: Props) {
 
   useEffect(() => {
     if (!draft) return
-    const cached = settledDraftStatuses.get(draft.id)
+    const cached = settledDraftStatuses.get(draft.draftId)
     if (cached) {
       setStatus(cached)
       return
     }
     let active = true
     setStatus('checking')
-    void getWikiDraftStatus(draft.id).then((current) => {
+    void getWikiDraftStatus(draft.draftId).then((current) => {
       if (!active) return
       const next = proposalStatusFromDraftStatus(current)
-      if (isSettled(next)) settledDraftStatuses.set(draft.id, next)
+      if (isSettled(next)) settledDraftStatuses.set(draft.draftId, next)
       setStatus(next)
     }).catch(() => {
       if (active) setStatus('pending')
     })
     return () => { active = false }
-  }, [draft?.id])
+  }, [draft?.draftId])
 
   if (!draft) {
     return (
@@ -67,13 +68,9 @@ export function WikiProposalResult({ result }: Props) {
   const confirm = async () => {
     setStatus('applying')
     try {
-      const applied = await applyWikiDraft({
-        draftId: draft.id,
-        expectedRevision: draft.revision,
-        nonce: draft.nonce,
-      })
+      const applied = await applyWikiDraft(draft.draftId)
       const next = 'draft' in applied ? 'pending_review' : 'applied'
-      settledDraftStatuses.set(draft.id, next)
+      settledDraftStatuses.set(draft.draftId, next)
       setStatus(next)
       toast.success(next === 'pending_review' ? '变更已进入待审核' : '已沉淀到 Wiki')
     } catch (error) {
@@ -85,8 +82,8 @@ export function WikiProposalResult({ result }: Props) {
   const cancel = async () => {
     setStatus('cancelling')
     try {
-      await cancelWikiDraft(draft.id)
-      settledDraftStatuses.set(draft.id, 'cancelled')
+      await cancelWikiDraft(draft.draftId)
+      settledDraftStatuses.set(draft.draftId, 'cancelled')
       setStatus('cancelled')
       toast.success('已取消 Wiki 草案')
     } catch (error) {
@@ -97,7 +94,7 @@ export function WikiProposalResult({ result }: Props) {
 
   const settled = isSettled(status)
   const busy = status === 'applying' || status === 'cancelling'
-  const operationLabel = draft.operations.length === 1 ? '1 个页面变更' : `${draft.operations.length} 个页面变更`
+  const operationLabel = draft.operationSummaries.length === 1 ? '1 个页面变更' : `${draft.operationSummaries.length} 个页面变更`
 
   if (settled) {
     return <WikiProposalSettledSummary title={draft.title} status={status} />
@@ -110,10 +107,10 @@ export function WikiProposalResult({ result }: Props) {
         <div className="min-w-0 flex-1">
           <div className="font-medium text-[var(--text-1)]">{draft.title}</div>
           <div className="mt-1 text-xs text-[var(--text-3)]">{operationLabel} · 尚未写入正式 Wiki</div>
-          {draft.riskReasons.length > 0 && (
+          {draft.reasons.length > 0 && (
             <div className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300">
               <ShieldAlert className="mt-0.5 shrink-0" size={13} />
-              <span>{draft.riskReasons.join('；')}</span>
+              <span>{draft.reasons.join('；')}</span>
             </div>
           )}
         </div>

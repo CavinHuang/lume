@@ -14,7 +14,13 @@ import {
 } from '@/atoms'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { getMainWindowGeneration, markDesktopRendererReady, sidecarCall, syncDesktopTrayState } from '@/lib/desktop-api'
+import {
+  getMainWindowGeneration,
+  markDesktopRendererReady,
+  reportDesktopTrayNavigationConfirmationFailed,
+  sidecarCall,
+  syncDesktopTrayState,
+} from '@/lib/desktop-api'
 import type { Tab } from '@/atoms/tab-atoms'
 import type { AgentThreadMeta, AgentWorkspace, AgentWorkspaceRemovalImpact, AgentWorkspaceRemoveMode } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
@@ -40,7 +46,45 @@ export function deriveRecentTrayThreads(threads: AgentThreadMeta[]) {
     .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }))
 }
 
-export function LeftSidebar() {
+export async function confirmTrayThreadNavigation({
+  threadId,
+  generation,
+  activeThreadId,
+  listThreads,
+  syncTrayState,
+  timeoutMs = 5_000,
+}: {
+  threadId: string
+  generation: number
+  activeThreadId: string | null
+  listThreads: () => Promise<AgentThreadMeta[]>
+  syncTrayState: typeof syncDesktopTrayState
+  timeoutMs?: number
+}) {
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  const authoritative = await Promise.race([
+    listThreads(),
+    new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error('tray navigation confirmation timed out')), timeoutMs)
+    }),
+  ]).finally(() => {
+    if (timeout) clearTimeout(timeout)
+  })
+  if (!Array.isArray(authoritative)) throw new Error('invalid authoritative thread list')
+
+  const target = authoritative.find((thread) => (
+    thread.id === threadId
+    && !thread.parentThreadId
+    && thread.status !== 'archived'
+    && thread.status !== 'trashed'
+  )) ?? null
+  const currentThreadId = target?.id
+    ?? (authoritative.some((thread) => thread.id === activeThreadId) ? activeThreadId : null)
+  await syncTrayState(generation, deriveRecentTrayThreads(authoritative), currentThreadId)
+  return { threads: authoritative, target }
+}
+
+export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boolean } = {}) {
   const [threads, setThreads] = useAtom(agentThreadsAtom)
   const [collapsed, setCollapsed] = useAtom(sidebarCollapsedAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
@@ -108,15 +152,7 @@ export function LeftSidebar() {
     pinnedWorkspaceIds: pinnedIds,
   })
 
-  const openThread = (threadId: string, workspaceId?: string) => {
-    if (threadId === '__welcome__') {
-      handleNewThread(workspaceId)
-      return
-    }
-
-    const thread = threads.find((item) => item.id === threadId)
-    if (!thread) return
-
+  const openResolvedThread = (thread: AgentThreadMeta) => {
     setActiveTabId(thread.id)
     if (!tabs.find((tab) => tab.id === thread.id)) {
       setTabs((previous) => [
@@ -131,6 +167,16 @@ export function LeftSidebar() {
         },
       ])
     }
+  }
+
+  const openThread = (threadId: string, workspaceId?: string) => {
+    if (threadId === '__welcome__') {
+      handleNewThread(workspaceId)
+      return
+    }
+
+    const thread = threads.find((item) => item.id === threadId)
+    if (thread) openResolvedThread(thread)
   }
 
   const handleNewThread = (targetWorkspaceId = currentWorkspaceId ?? undefined) => {
@@ -153,18 +199,30 @@ export function LeftSidebar() {
 
   useEffect(() => {
     const electronAPI = (window as unknown as { electronAPI?: { listen?: (channel: string, listener: (payload: { action: string }) => void) => (() => void) | undefined } }).electronAPI
-    const off = electronAPI?.listen?.('tray-action', ({ action, threadId }: { action: string; threadId?: string }) => {
+    const off = electronAPI?.listen?.('tray-action', ({ action, threadId, generation }: { action: string; threadId?: string; generation?: number }) => {
       if (action === 'open-settings') openSettings()
       else if (action === 'new-thread') handleNewThread()
-      else if (action === 'open-thread' && threadId) {
-        if (threads.some((thread) => thread.id === threadId)) openThread(threadId)
-        else sidecarCall<AgentThreadMeta[]>('agent:list-threads', {})
-          .then((result) => setThreads(Array.isArray(result) ? result : []))
-          .catch(console.error)
+      else if (action === 'open-thread' && threadId && Number.isSafeInteger(generation)) {
+        void confirmTrayThreadNavigation({
+          threadId,
+          generation: generation as number,
+          activeThreadId: activeTabId,
+          listThreads: () => sidecarCall<AgentThreadMeta[]>('agent:list-threads', {}),
+          syncTrayState: syncDesktopTrayState,
+        }).then(({ threads: authoritative, target }) => {
+          setThreads(authoritative)
+          if (target) openResolvedThread(target)
+        }).catch((error) => {
+          reportDesktopTrayNavigationConfirmationFailed(
+            generation as number,
+            threadId,
+            error instanceof Error && error.message.includes('timed out') ? 'timeout' : 'query_failed',
+          ).catch(() => {})
+        })
       }
     })
     return () => off?.()
-  }, [threads, tabs])
+  }, [activeTabId, tabs])
 
   const openAutomation = () => {
     const automationId = '__automation__'
@@ -394,7 +452,7 @@ export function LeftSidebar() {
   return (
     <>
       <LumeSidebar
-        collapsed={collapsed}
+        collapsed={collapsed || forceCollapsed}
         allExpanded={allExpanded}
         model={model}
         onSetCollapsed={setCollapsed}

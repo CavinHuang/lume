@@ -14,6 +14,7 @@ export type ThreadFileNavigationStatus =
   | 'not_found'
   | 'out_of_scope'
   | 'binding_changed'
+  | 'kind_mismatch'
   | 'unavailable'
   | 'io_error'
 
@@ -58,7 +59,7 @@ export function AgentFileReference({
       ? `L${reference.lineSelection.start}`
       : `L${reference.lineSelection.start}–${reference.lineSelection.end}`
     : ''
-  const fullLabel = `${sourceLabel}：${reference.copyText}`
+  const fullLabel = `${sourceLabel}：${reference.relativePath}${reference.isDirectory ? '/' : ''}${lineLabel ? `#${lineLabel}` : ''}`
   const label = compactPath(reference.relativePath, reference.isDirectory)
 
   const open = async () => {
@@ -73,6 +74,7 @@ export function AgentFileReference({
     if (result === 'not_found') setInvalidReason('文件不存在')
     if (result === 'out_of_scope') setInvalidReason('文件超出授权范围')
     if (result === 'binding_changed') setInvalidReason('文件绑定已改变')
+    if (result === 'kind_mismatch') setInvalidReason('文件类型与引用声明不一致')
     if (result === 'unavailable' || result === 'io_error') toast.error('暂时无法打开文件引用')
   }
 
@@ -112,7 +114,7 @@ export function AgentFileReference({
     <FileLinkContextMenu
       context={{
         source: 'thread',
-        relPath: reference.copyText,
+        relPath: `${reference.relativePath}${reference.isDirectory ? '/' : ''}`,
         threadId: consumerThreadId,
         workspaceSlug: env.workspaceSlug,
         ...(guardedRef ? { guardedRef } : {}),
@@ -137,6 +139,7 @@ function buildGuardedFileRef(
     if (!binding.workspaceSlug || !binding.projectRootFingerprint) return undefined
     return {
       ref: { source: 'project', scopeId: binding.workspaceSlug, relativePath: reference.relativePath },
+      expectedKind: reference.isDirectory ? 'directory' : 'file',
       guard: {
         kind: 'project',
         workspaceSlug: binding.workspaceSlug,
@@ -148,6 +151,7 @@ function buildGuardedFileRef(
   if (reference.source === 'session') {
     return {
       ref: { source: 'session', scopeId: binding.fileContextId, relativePath: reference.relativePath },
+      expectedKind: reference.isDirectory ? 'directory' : 'file',
       guard: { kind: 'session', consumerThreadId, expectedFileContextId: binding.fileContextId },
     }
   }

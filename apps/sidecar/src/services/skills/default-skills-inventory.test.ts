@@ -64,6 +64,19 @@ describe("default skills inventory", () => {
     expect(content).toContain("不要输出当前渲染器不支持的 `accTitle`");
   });
 
+  test("bundles one compact Lume Infographic skill with the safe renderer dialect", () => {
+    const { content, meta } = readDefaultSkill("lume-infographic");
+
+    expect(meta.name).toBe("lume-infographic");
+    expect(meta.description).toContain("不按内容长度触发");
+    expect(meta.whenToUse).toContain("信息图比普通文字、列表或表格更清晰");
+    expect(content).toContain("每次回复最多输出一张");
+    expect(content).toContain("relation-dagre-flow-tb-badge-card");
+    expect(content).toContain("禁止 HTML、外链脚本、URL");
+    expect(content).not.toContain("unpkg.com");
+    expect(content).not.toContain("write_file");
+  });
+
   test("bundles an auto-invocable gallery-share skill backed by local Reading share cards", () => {
     const { content, meta } = readDefaultSkill("gallery-share");
 

@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, ImPeerKind, ImProvider, LumeRuntimeEvent } from '@lume/shared'
+import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LumeRuntimeEvent } from '@lume/shared'
 
 export interface RuntimeToolCallView {
   id: string
@@ -54,6 +54,7 @@ export interface RuntimeAssistantMessageView {
   thinking: string
   messageId?: string
   fileReferenceBinding?: FileReferenceBinding
+  fileReferenceProtocolVersion?: FileReferenceProtocolVersion
   completedAt?: string
   blocks: RuntimeAssistantBlock[]
   status: 'streaming' | 'completed' | 'failed'

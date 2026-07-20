@@ -1,5 +1,7 @@
 # 托盘设置重设计 实施计划
 
+> **已被取代。** 本文只保留历史实施过程；当前行为与验收以桌面端实现、相关行为测试及 `docs/release/v0.1.6-tray-window-verification.md` 为准，请勿继续执行本文未完成的 checkbox。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 给 macOS/Win/Linux 桌面端的系统托盘加上「显示托盘」总开关、丰富的右键菜单、template 单色图标、左键切换显隐。

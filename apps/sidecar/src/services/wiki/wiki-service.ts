@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, watch } from "node:fs";
 import { basename, extname, join, relative } from "node:path";
 import { extractArticleMarkdown } from "@lume/agent-sdk";
 import type {
-  WikiChangeDraft, WikiCreateEditDraftInput, WikiCreateImportDraftInput,
+  WikiBlockPatch, WikiChangeDraft, WikiCreateEditDraftInput, WikiCreateImportDraftInput,
   WikiPageRecord, WikiReadResult, WikiSearchInput, WikiSearchResult, WikiSnapshot,
-  WikiPageType, WikiSourceKind, WikiTrustedSubject, WikiWorkspaceSnapshot
+  WikiCreatePrivacyPurgeDraftInput, WikiDraftCreator, WikiPageType, WikiPrivacyImpactPreview, WikiPrivacySelector,
+  WikiSourceKind, WikiTrustedSubject, WikiWorkspaceSnapshot
 } from "@lume/shared";
 import { getAgentThreadMessages, getAgentThreadMeta, createAgentThread } from "../agent/agent-thread-manager";
 import { getAgentWorkspace, listAgentWorkspaces } from "../agent/agent-workspace-manager";
@@ -16,10 +17,11 @@ import { pageAllowed, sourceAllowed } from "./acl-store";
 import { WikiIndexService } from "./index-service";
 import { WikiHealthStore } from "./health-store";
 import { WikiLintService } from "./lint-service";
-import { createWikiPageMarkdown, extractWikiLinks, parseWikiPage, serializeWikiPage, sha256, wikiPageRelativePath } from "./markdown-store";
+import { applyWikiBlockPatches, createManagedWikiBody, createWikiPageMarkdown, extractWikiLinks, parseWikiPage, promoteEditedWikiBlocksToUser, removePurgedSourceBlocks, serializeWikiPage, sha256, wikiPageRelativePath } from "./markdown-store";
 import { WikiMutationCoordinator } from "./mutation-coordinator";
 import { assertExternalPathWithin } from "./path-security";
 import { WikiSafeHttpFetchService } from "./safe-http-fetch";
+import { WikiSourceStore } from "./source-store";
 import { WIKI_CAPABILITIES } from "./wiki-capabilities";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -27,9 +29,10 @@ const MAX_BATCH_BYTES = 250 * 1024 * 1024;
 const MAX_FILES = 500;
 
 export interface WikiAgentProposalInput {
-  action: "create" | "update";
-  title: string;
-  body: string;
+  action: "create" | "update" | "replace_page";
+  title?: string;
+  body?: string;
+  patches?: WikiBlockPatch[];
   pageType?: Exclude<WikiPageType, "source">;
   pageId?: string;
   expectedHash?: string;
@@ -50,26 +53,31 @@ export class WikiService {
     this.index = new WikiIndexService(this.root, this.coordinator.markdown);
     this.health = new WikiHealthStore(this.root);
     this.safeFetch = input.safeFetch ?? new WikiSafeHttpFetchService();
+    this.startExternalEditWatcher();
   }
   private readonly safeFetch: WikiSafeHttpFetchService;
+  private externalEditTimer?: ReturnType<typeof setTimeout>;
 
   ownerSubject(): WikiTrustedSubject { return { kind: "desktop_owner", subjectId: "local-owner", workspaceIds: [], allowInbox: true, allowAll: true }; }
 
   getSnapshot(): WikiSnapshot {
     this.coordinator.markdown.ensureLayout();
     this.coordinator.recoverInterrupted();
+    this.coordinator.reconcileExternalOwnership();
     const pages = this.coordinator.markdown.listPages();
     const generation = this.index.ensureFresh();
-    if (this.findings.length === 0) this.findings = new WikiLintService(this.coordinator.markdown).run(generation);
+    if (this.findings.length === 0) this.findings = new WikiLintService(this.coordinator.markdown, undefined, new Set(listAgentWorkspaces().map((workspace) => workspace.id))).run(generation);
+    this.scheduleSemanticHealth(pages, generation);
     return {
-      rootPath: this.root, pages, pending: this.coordinator.listPending(), findings: this.findings, generation,
+      rootPath: this.root, pages, pending: this.coordinator.listPendingSummaries(), findings: this.findings, generation, searchMode: this.index.searchMode(),
       recentBatches: this.coordinator.listBatches(),
-      semanticCheck: this.health.evaluate(generation, this.findings),
+      semanticCheck: this.health.snapshot(),
       capabilities: WIKI_CAPABILITIES
     };
   }
 
-  search(input: WikiSearchInput, subject = this.ownerSubject()): WikiSearchResult[] {
+  async search(input: WikiSearchInput, subject = this.ownerSubject()): Promise<WikiSearchResult[]> {
+    this.coordinator.reconcileExternalOwnership();
     const visible = this.coordinator.markdown.listPages().filter((page) => page.status !== "trashed"
       && (input.scope.kind !== "page" || page.id === input.scope.pageId)
       && pageAllowed(page.frontmatter, subject, input.scope));
@@ -77,6 +85,7 @@ export class WikiService {
   }
 
   read(pageId: string, scope: WikiSearchInput["scope"], subject = this.ownerSubject()): WikiReadResult {
+    this.coordinator.reconcileExternalOwnership();
     const pages = this.coordinator.markdown.listPages();
     const page = pages.find((item) => item.id === pageId);
     if (!page || (scope.kind === "page" && scope.pageId !== page.id) || !pageAllowed(page.frontmatter, subject, scope)) throw new Error("Wiki 页面不存在或未授权");
@@ -119,7 +128,7 @@ export class WikiService {
     const title = input.title?.trim() || captures[0]?.manifest.title || "未命名 Wiki 页面";
     const body = buildImportedBody(captures.map((capture) => ({ title: capture.manifest.title, sourceId: capture.manifest.id, text: capture.text })));
     const markdown = existing
-      ? serializeWikiPage({ ...existing.frontmatter, title, updated: new Date().toISOString(), revision: existing.revision + 1, source_ids: [...new Set([...existing.frontmatter.source_ids, ...sourceIds])] }, `${existing.body.trimEnd()}\n\n${body}`)
+      ? serializeWikiPage({ ...existing.frontmatter, title, updated: new Date().toISOString(), revision: existing.revision + 1, source_ids: [...new Set([...existing.frontmatter.source_ids, ...sourceIds])] }, `${existing.body}${body}`)
       : createWikiPageMarkdown({ type: input.pageType ?? (captures.length === 1 ? "source" : "synthesis"), title, primaryWorkspace: primary, associatedWorkspaceIds, sourceIds, body });
     const page = parseWikiPage(markdown);
     const targetRelativePath = existing?.path ?? wikiPageRelativePath(page.frontmatter);
@@ -129,7 +138,7 @@ export class WikiService {
       origin, risk: riskReasons.length ? "high" : "low", riskReasons, title,
       operations: [{ kind: existing ? "update" : "create", pageId: page.id, beforeHash: existing?.hash ?? null, targetRelativePath, markdown }],
       sources: captures.map((capture) => ({ manifest: capture.manifest, grants })),
-      diffs: [{ path: targetRelativePath, beforeHash: existing?.hash ?? null, afterHash: sha256(markdown), preview: existing ? `更新 ${existing.title}` : `新建 ${title}` }],
+      diffs: [{ pageId: page.id, path: targetRelativePath, beforeHash: existing?.hash ?? null, afterHash: sha256(markdown), preview: existing ? `更新 ${existing.title}` : `新建 ${title}` }],
       pageVisibilityWorkspaceIds: [input.primaryWorkspaceId, ...associatedWorkspaceIds].filter(Boolean) as string[], sourceGrantWorkspaceIds: grants,
       payloads: Object.fromEntries(captures.filter((capture) => capture.payload).map((capture) => [capture.manifest.id, capture.payload!]))
     });
@@ -140,19 +149,24 @@ export class WikiService {
     if (!current || current.hash !== input.expectedHash) throw new Error("页面已在其他编辑器中变化，请重新加载");
     const primary = input.primaryWorkspaceId ? workspaceSnapshot(input.primaryWorkspaceId) : null;
     const associatedWorkspaceIds = validateWorkspaceIds(input.associatedWorkspaceIds).filter((id) => id !== primary?.id);
+    const ownership = promoteEditedWikiBlocksToUser(current.body, input.body);
     const frontmatter = {
       ...current.frontmatter, title: input.title.trim(), type: input.type,
       primary_workspace_id: primary?.id ?? null, primary_workspace_snapshot: primary,
       associated_workspace_ids: associatedWorkspaceIds, aliases: input.aliases, tags: input.tags,
-      updated: new Date().toISOString(), revision: current.revision + 1
+      updated: new Date().toISOString(), revision: current.revision + 1,
+      ...(ownership.ambiguous ? { protected: true } : {}),
     };
-    const markdown = serializeWikiPage(frontmatter, input.body);
+    const markdown = serializeWikiPage(frontmatter, ownership.body);
     const target = wikiPageRelativePath(frontmatter);
     return this.coordinator.stageDraft({
-      origin: "ui", risk: current.protected ? "high" : "low",
-      riskReasons: current.protected ? ["页面因外部编辑冲突处于 protected 状态"] : [], title: `保存 ${frontmatter.title}`,
+      origin: "ui", risk: current.protected || ownership.ambiguous ? "high" : "low",
+      riskReasons: [
+        ...(current.protected ? ["页面因外部编辑冲突处于 protected 状态"] : []),
+        ...(ownership.ambiguous ? ["ownership marker 被删除或无法判定，整页进入 protected 状态"] : []),
+      ], title: `保存 ${frontmatter.title}`,
       operations: [{ kind: target === current.path ? "update" : "move", pageId: current.id, beforeHash: current.hash, targetRelativePath: target, previousRelativePath: current.path, markdown }],
-      sources: [], diffs: [{ path: target, beforeHash: current.hash, afterHash: sha256(markdown), preview: `保存 revision ${frontmatter.revision}` }],
+      sources: [], diffs: [{ pageId: current.id, path: target, ...(target !== current.path ? { previousPath: current.path } : {}), beforeHash: current.hash, afterHash: sha256(markdown), preview: `保存 revision ${frontmatter.revision}` }],
       pageVisibilityWorkspaceIds: [frontmatter.primary_workspace_id, ...frontmatter.associated_workspace_ids].filter(Boolean) as string[], sourceGrantWorkspaceIds: []
     });
   }
@@ -160,22 +174,23 @@ export class WikiService {
   createAgentProposalDraft(
     input: WikiAgentProposalInput,
     scope: WikiSearchInput["scope"],
-    subject: WikiTrustedSubject
+    subject: WikiTrustedSubject,
+    creator: WikiDraftCreator,
   ): WikiChangeDraft {
     if (input.action === "update") {
       if (!input.pageId || !input.expectedHash) throw new Error("更新提案需要 pageId 与 expectedHash");
+      if (!input.patches?.length) throw new Error("WIKI_BLOCK_PATCH_REQUIRED: 更新提案需要 patches");
       const current = this.read(input.pageId, scope, subject).page;
       if (current.hash !== input.expectedHash) throw new Error("Wiki 页面已变化，请重新读取后再提案");
       const frontmatter = {
         ...current.frontmatter,
-        title: input.title.trim() || current.title,
-        type: input.pageType ?? current.type,
         updated: new Date().toISOString(),
         revision: current.revision + 1
       };
-      const markdown = serializeWikiPage(frontmatter, input.body);
+      const markdown = serializeWikiPage(frontmatter, applyWikiBlockPatches(current.body, input.patches));
       const target = wikiPageRelativePath(frontmatter);
       return this.coordinator.stageDraft({
+        creator,
         origin: "agent",
         risk: current.protected ? "high" : "low",
         riskReasons: current.protected ? ["目标页面处于 protected 状态"] : [],
@@ -186,12 +201,48 @@ export class WikiService {
           beforeHash: current.hash,
           targetRelativePath: target,
           ...(target === current.path ? {} : { previousRelativePath: current.path }),
-          markdown
+          markdown,
+          contentMutation: { kind: "block_patch", patches: input.patches },
         }],
         sources: [],
-        diffs: [{ path: target, beforeHash: current.hash, afterHash: sha256(markdown), preview: `建议更新 revision ${frontmatter.revision}` }],
+        diffs: [{ pageId: current.id, path: target, ...(target !== current.path ? { previousPath: current.path } : {}), beforeHash: current.hash, afterHash: sha256(markdown), preview: `建议更新 revision ${frontmatter.revision}` }],
         pageVisibilityWorkspaceIds: [frontmatter.primary_workspace_id, ...frontmatter.associated_workspace_ids].filter(Boolean) as string[],
         sourceGrantWorkspaceIds: []
+      });
+    }
+
+    if (input.action === "replace_page") {
+      if (!input.pageId || !input.expectedHash || typeof input.body !== "string") throw new Error("整页重写需要 pageId、expectedHash 与 body");
+      const current = this.read(input.pageId, scope, subject).page;
+      if (current.hash !== input.expectedHash) throw new Error("Wiki 页面已变化，请重新读取后再提案");
+      const frontmatter = {
+        ...current.frontmatter,
+        title: input.title?.trim() || current.title,
+        type: input.pageType ?? current.type,
+        updated: new Date().toISOString(),
+        revision: current.revision + 1,
+      };
+      const markdown = serializeWikiPage(frontmatter, createManagedWikiBody({ summary: input.body }));
+      const target = wikiPageRelativePath(frontmatter);
+      return this.coordinator.stageDraft({
+        creator,
+        origin: "agent",
+        risk: "high",
+        riskReasons: ["整页重写只能进入高风险审核"],
+        title: `Agent 建议重写 ${frontmatter.title}`,
+        operations: [{
+          kind: target === current.path ? "update" : "move",
+          pageId: current.id,
+          beforeHash: current.hash,
+          targetRelativePath: target,
+          ...(target === current.path ? {} : { previousRelativePath: current.path }),
+          markdown,
+          contentMutation: { kind: "replace_page" },
+        }],
+        sources: [],
+        diffs: [{ pageId: current.id, path: target, ...(target !== current.path ? { previousPath: current.path } : {}), beforeHash: current.hash, afterHash: sha256(markdown), preview: `建议整页重写 revision ${frontmatter.revision}` }],
+        pageVisibilityWorkspaceIds: [frontmatter.primary_workspace_id, ...frontmatter.associated_workspace_ids].filter(Boolean) as string[],
+        sourceGrantWorkspaceIds: [],
       });
     }
 
@@ -202,7 +253,7 @@ export class WikiService {
         ? null
         : input.primaryWorkspaceId ?? null;
     const primary = primaryWorkspaceId ? workspaceSnapshot(primaryWorkspaceId) : null;
-    const title = input.title.trim();
+    const title = input.title?.trim() ?? "";
     if (!title) throw new Error("新建提案需要标题");
     const markdown = createWikiPageMarkdown({
       type: input.pageType ?? "synthesis",
@@ -210,24 +261,115 @@ export class WikiService {
       primaryWorkspace: primary,
       associatedWorkspaceIds: [],
       sourceIds: [],
-      body: input.body
+      body: createManagedWikiBody({ summary: input.body ?? "" })
     });
     const page = parseWikiPage(markdown);
     const targetRelativePath = wikiPageRelativePath(page.frontmatter);
     return this.coordinator.stageDraft({
+      creator,
       origin: "agent",
       risk: "low",
       riskReasons: [],
       title: `Agent 建议新建 ${title}`,
       operations: [{ kind: "create", pageId: page.id, beforeHash: null, targetRelativePath, markdown }],
       sources: [],
-      diffs: [{ path: targetRelativePath, beforeHash: null, afterHash: sha256(markdown), preview: `建议新建 ${title}` }],
+      diffs: [{ pageId: page.id, path: targetRelativePath, beforeHash: null, afterHash: sha256(markdown), preview: `建议新建 ${title}` }],
       pageVisibilityWorkspaceIds: primaryWorkspaceId ? [primaryWorkspaceId] : [],
       sourceGrantWorkspaceIds: []
     });
   }
 
-  runLint(): ReturnType<WikiLintService["run"]> { this.findings = new WikiLintService(this.coordinator.markdown).run(this.index.ensureFresh()); return this.findings; }
+  runLint(): ReturnType<WikiLintService["run"]> {
+    this.findings = new WikiLintService(this.coordinator.markdown, undefined, new Set(listAgentWorkspaces().map((workspace) => workspace.id))).run(this.index.ensureFresh());
+    this.index.replaceLintFindings(this.findings);
+    return this.findings;
+  }
+
+  previewPrivacyPurge(selector: WikiPrivacySelector): WikiPrivacyImpactPreview {
+    const pages = this.coordinator.markdown.listPages();
+    const manifests = this.coordinator.sources.listManifests();
+    const directPage = selector.kind === "page" ? pages.find((page) => page.id === selector.pageId) : undefined;
+    if (selector.kind === "page" && !directPage) throw new Error("Wiki 页面不存在");
+    const initiallySelected = new Set(manifests.filter((manifest) => sourceMatchesPrivacySelector(manifest, selector, directPage)).map((manifest) => manifest.id));
+    const selected = new Set(initiallySelected);
+    const sharedPayloads: WikiPrivacyImpactPreview["sharedPayloads"] = [];
+    for (const hash of [...new Set(manifests.filter((manifest) => selected.has(manifest.id)).map((manifest) => manifest.blob_hash).filter(Boolean) as string[])]) {
+      const all = this.coordinator.sources.referencesForBlob(hash);
+      const retained = all.filter((sourceId) => !selected.has(sourceId));
+      sharedPayloads.push({ blobHash: hash, selectedSourceIds: all.filter((sourceId) => selected.has(sourceId)), retainedSourceIds: retained });
+    }
+    const pageIds = pages.filter((page) => page.frontmatter.source_ids.some((sourceId) => selected.has(sourceId))).map((page) => page.id);
+    const artifacts = this.coordinator.privacyArtifacts([...selected], pageIds);
+    return {
+      selector,
+      sourceIds: [...selected].sort(),
+      pageIds: pageIds.sort(),
+      sharedPayloads,
+      ...artifacts,
+      requiresSharedPayloadConfirmation: selector.kind === "content_hash" && selected.size > 1,
+    };
+  }
+
+  private scheduleSemanticHealth(pages: WikiPageRecord[], generation: number): void {
+    if (!this.health.begin(generation, this.findings)) return;
+    const startedAt = Date.now();
+    void this.index.runSemanticHealth(pages, generation).then((result) => {
+      this.findings = [
+        ...this.findings.filter((finding) => !["near-duplicate", "knowledge-gap", "stale-decision"].includes(finding.rule)),
+        ...result.findings,
+      ];
+      this.index.replaceLintFindings(this.findings);
+      this.health.complete({ generation, model: result.modelKey, durationMs: Date.now() - startedAt, findings: result.findings });
+    }).catch((error) => this.health.fail(generation, error));
+  }
+
+  private startExternalEditWatcher(): void {
+    try {
+      const watcher = watch(this.root, { recursive: true }, (_event, filename) => {
+        const relativePath = filename?.toString().replaceAll("\\", "/") ?? "";
+        if (!relativePath.endsWith(".md") || relativePath.startsWith(".lume/")) return;
+        if (this.externalEditTimer) clearTimeout(this.externalEditTimer);
+        this.externalEditTimer = setTimeout(() => {
+          this.externalEditTimer = undefined;
+          try { this.coordinator.reconcileExternalOwnership(); } catch { /* Next read retries and fails closed. */ }
+        }, 150);
+        this.externalEditTimer.unref?.();
+      });
+      watcher.unref();
+    } catch {
+      // Demand-driven reconciliation in read/search/snapshot remains the fallback.
+    }
+  }
+
+  createPrivacyPurgeDraft(input: WikiCreatePrivacyPurgeDraftInput): WikiChangeDraft {
+    const preview = this.previewPrivacyPurge(input.selector);
+    if (preview.sourceIds.length === 0) throw new Error("没有匹配的 Wiki 来源可清除");
+    if (preview.requiresSharedPayloadConfirmation && !input.confirmSharedPayloads) {
+      throw new Error("WIKI_PRIVACY_SHARED_CONFIRMATION_REQUIRED: 该内容哈希被多个 provenance 共用");
+    }
+    const selected = new Set(preview.sourceIds);
+    const operations = this.coordinator.markdown.listPages().filter((page) => preview.pageIds.includes(page.id)).map((page) => {
+      const frontmatter = {
+        ...page.frontmatter,
+        source_ids: page.frontmatter.source_ids.filter((sourceId) => !selected.has(sourceId)),
+        updated: new Date().toISOString(),
+        revision: page.revision + 1,
+      };
+      const markdown = serializeWikiPage(frontmatter, removePurgedSourceBlocks(page.body, preview.sourceIds));
+      return { kind: "update" as const, pageId: page.id, beforeHash: page.hash, targetRelativePath: page.path!, markdown, contentMutation: { kind: "replace_page" as const } };
+    });
+    return this.coordinator.stageDraft({
+      origin: "ui",
+      creator: { subjectId: "local-owner", profile: "owner-ui", scope: { kind: "all" }, channel: "lifecycle" },
+      risk: "high",
+      riskReasons: ["永久清除 provenance 与独占支撑内容，需要二次确认"],
+      title: `彻底清除 ${preview.sourceIds.length} 个 Wiki 来源`,
+      operations,
+      sources: [],
+      diffs: operations.map((operation) => ({ pageId: operation.pageId, path: operation.targetRelativePath, beforeHash: operation.beforeHash, afterHash: sha256(operation.markdown), preview: "移除来源引用与由其独占支撑的 Agent 内容" })),
+      pageVisibilityWorkspaceIds: [], sourceGrantWorkspaceIds: [], privacyPurgeSourceIds: preview.sourceIds,
+    });
+  }
 
   archiveWorkspace(workspaceId: string): void {
     const pages = this.coordinator.markdown.listPages().filter((page) => page.primaryWorkspaceId === workspaceId && page.status !== "archived");
@@ -237,13 +379,15 @@ export class WikiService {
       const markdown = serializeWikiPage(fm, page.body);
       return { kind: "move" as const, pageId: page.id, beforeHash: page.hash, previousRelativePath: page.path, targetRelativePath: wikiPageRelativePath(fm), markdown };
     });
-    const draft = this.coordinator.stageDraft({ origin: "ui", risk: "low", riskReasons: [], title: `归档工作区 Wiki: ${workspaceId}`, operations, sources: [], diffs: operations.map((operation) => ({ path: operation.targetRelativePath, beforeHash: operation.beforeHash, afterHash: sha256(operation.markdown), preview: "工作区逻辑归档" })), pageVisibilityWorkspaceIds: [workspaceId], sourceGrantWorkspaceIds: [] });
+    const draft = this.coordinator.stageDraft({ origin: "ui", risk: "low", riskReasons: [], title: `归档工作区 Wiki: ${workspaceId}`, operations, sources: [], diffs: operations.map((operation) => ({ pageId: operation.pageId, path: operation.targetRelativePath, previousPath: operation.previousRelativePath, beforeHash: operation.beforeHash, afterHash: sha256(operation.markdown), preview: "工作区逻辑归档" })), pageVisibilityWorkspaceIds: [workspaceId], sourceGrantWorkspaceIds: [] });
     this.coordinator.applyDraft({ draftId: draft.id, expectedRevision: draft.revision, nonce: draft.nonce }, "workspace-lifecycle");
     this.coordinator.acl.revokeWorkspace(workspaceId, "workspace-lifecycle");
     this.index.rebuild();
   }
 
   createAskThread(scope: WikiSearchInput["scope"]): { threadId: string } {
+    if (scope.kind === "workspace" && !getAgentWorkspace(scope.workspaceId)) throw new Error("Wiki 工作区 scope 不存在");
+    if (scope.kind === "page" && !this.coordinator.markdown.readById(scope.pageId)) throw new Error("Wiki 页面 scope 不存在");
     const workspaceId = scope.kind === "workspace" ? scope.workspaceId : undefined;
     const thread = createAgentThread("向 Wiki 提问", undefined, workspaceId, undefined, undefined, { wikiProfile: { kind: "ask-wiki", scope } });
     return { threadId: thread.id };
@@ -319,7 +463,26 @@ function raw(kind: WikiSourceKind, title: string, text: string, locator: Record<
 function isTextFile(path: string): boolean { return [".md", ".txt", ".json", ".yaml", ".yml", ".csv", ".ts", ".tsx", ".js", ".jsx", ".html", ".css"].includes(extname(path).toLowerCase()); }
 function workspaceSnapshot(id: string): WikiWorkspaceSnapshot { const workspace = getAgentWorkspace(id); if (!workspace) throw new Error(`工作区不存在: ${id}`); return { id: workspace.id, name: workspace.name, slug: workspace.slug }; }
 function validateWorkspaceIds(ids: string[]): string[] { return [...new Set(ids)].map((id) => workspaceSnapshot(id).id); }
-function buildImportedBody(items: Array<{ title: string; sourceId: string; text: string }>): string { return `# 摘要\n\n已显式沉淀 ${items.length} 个不可变来源。\n\n# 已知内容\n\n${items.map((item) => `## ${item.title}\n\n> 来源: ${item.sourceId}\n\n${item.text.slice(0, 20_000)}`).join("\n\n")}\n\n# 用户批注\n\n# 开放问题\n\n# 相关页面\n`; }
+function buildImportedBody(items: Array<{ title: string; sourceId: string; text: string }>): string {
+  return createManagedWikiBody({
+    summary: `已显式沉淀 ${items.length} 个不可变来源。`,
+    known: items.map((item) => `## ${item.title}\n\n> 来源: ${item.sourceId}\n\n${item.text.slice(0, 20_000)}`).join("\n\n"),
+    sourceIds: items.map((item) => item.sourceId),
+  });
+}
+
+function sourceMatchesPrivacySelector(
+  manifest: ReturnType<WikiSourceStore["listManifests"]>[number],
+  selector: WikiPrivacySelector,
+  page?: WikiPageRecord,
+): boolean {
+  if (selector.kind === "source") return manifest.id === selector.sourceId;
+  if (selector.kind === "page") return Boolean(page?.frontmatter.source_ids.includes(manifest.id));
+  if (selector.kind === "thread") return manifest.locator.threadId === selector.threadId || manifest.capture_scope_snapshot.threadId === selector.threadId;
+  if (selector.kind === "message") return manifest.locator.threadId === selector.threadId && manifest.locator.messageId === selector.messageId;
+  if (selector.kind === "workspace") return manifest.locator.workspaceId === selector.workspaceId || manifest.capture_scope_snapshot.workspaceId === selector.workspaceId;
+  return manifest.content_hash === selector.contentHash;
+}
 
 let singleton: WikiService | undefined;
 export function getWikiService(): WikiService { return singleton ??= new WikiService(); }

@@ -26,7 +26,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -39,7 +39,7 @@ import {
   createDesktopProposalOpenRequest,
   createDesktopActionHudHtml,
   createDesktopActionHudView,
-  createFileMetadata,
+  createFileStatMetadata,
   createOpenFileDialogOptions,
   createOpenFolderDialogOptions,
   createUpdateDownloadProgressEvents,
@@ -68,6 +68,11 @@ import {
   validateWereadUrl,
   writeLauncherConfigAt,
 } from './desktop-core'
+import {
+  AttachmentStageRegistry,
+  attachmentStageIdFromPreviewUrl,
+  attachmentStagePreviewUrl,
+} from './attachment-staging'
 import {
   createSecureWebPreferences,
   createWindowOpenAction,
@@ -101,6 +106,15 @@ import { DiagnosticContentStore } from './logging/diagnostic-content-store'
 import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecure } from './logging/log-digest-policy'
 import { SettingsBroker } from './settings/settings-broker'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
+import {
+  createAsyncSingleFlight,
+  createEventRateLimiter,
+  createMainWindowLifecycleState,
+  destroyTrayWithFallback,
+  isMainWindowSender,
+  validateTrayStatePayload,
+  waitForWindowReady,
+} from './tray-window-runtime'
 
 const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -136,6 +150,10 @@ const DESKTOP_CONTEXT_SET_SUSPENDED_METHOD = 'desktop-context:set-suspended'
 const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
 const DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD = 'desktop-context:get-foreground-target'
 const previewScopes = createPreviewScopeRegistry()
+const attachmentStages = new AttachmentStageRegistry({
+  rootDir: join(app.getPath('temp'), 'lume-attachment-staging'),
+})
+const attachmentStageOwners = new Set<number>()
 let previewOwnershipGateRegistered = false
 const DESKTOP_CONTEXT_CAPTURE_WINDOW_METHOD = 'desktop-context:capture-window'
 const DESKTOP_CONTEXT_PROPOSAL_CREATED_METHOD = 'desktop-context:proposal-created'
@@ -145,11 +163,9 @@ const DESKTOP_ACTION_HUD_COMPLETED_MS = 1_600
 const DESKTOP_ACTION_HUD_STALE_MS = 30_000
 
 let mainWindow = null
-let mainWindowCreationPromise: Promise<any> | null = null
-let mainWindowGeneration = 0
-let rendererReadyGeneration = 0
-let acceptedWindowBehaviorRevision = -1
-let pendingTrayNavigation: { generation: number; payload: any } | null = null
+const mainWindowCreation = createAsyncSingleFlight<any>()
+const mainWindowLifecycle = createMainWindowLifecycleState<any>()
+const trayWarningLimiter = createEventRateLimiter()
 let recentTrayThreads: Array<{ id: string; title: string; updatedAt: number }> = []
 let currentTrayThreadId: string | null = null
 let trayRefreshTimer: ReturnType<typeof setTimeout> | null = null
@@ -248,6 +264,33 @@ function writeMainLog(level, context, event, message, extra = {}) {
     message,
     ...extra,
   })
+}
+
+function writeRateLimitedTrayWarning(event, message, ownerWebContentsId, data = {}) {
+  const generation = mainWindowLifecycle.getGeneration()
+  const key = `${event}:${ownerWebContentsId ?? 'unknown'}:${generation}`
+  const decision = trayWarningLimiter.record(key)
+  if (!decision.allowed) return
+  writeMainLog('warn', 'desktop.tray', event, message, {
+    data: {
+      ...data,
+      ownerWebContentsId: ownerWebContentsId ?? null,
+      generation,
+      suppressedCount: decision.suppressedCount,
+    },
+  })
+}
+
+function requireMainWindowSender(context, command) {
+  const mainWindowWebContentsId = mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents.id : null
+  if (isMainWindowSender(mainWindowWebContentsId, context.ownerWebContentsId)) return
+  writeRateLimitedTrayWarning(
+    'tray.sender_rejected',
+    'non-main renderer tray command rejected',
+    context.ownerWebContentsId,
+    { command },
+  )
+  throw new Error('main window sender required')
 }
 
 /** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow 存在时纳入。 */
@@ -609,14 +652,32 @@ function registerFileProtocol() {
   if (!previewOwnershipGateRegistered) {
     previewOwnershipGateRegistered = true
     session.defaultSession.webRequest.onBeforeRequest(
-      { urls: [`${FILE_PROTOCOL}://preview/*`] },
+      { urls: [`${FILE_PROTOCOL}://preview/*`, `${FILE_PROTOCOL}://attachment/*`] },
       (details, callback) => {
+        if (details.url.startsWith(`${FILE_PROTOCOL}://attachment/`)) {
+          const stagedAttachmentId = attachmentStageIdFromPreviewUrl(details.url)
+          callback({ cancel: !stagedAttachmentId || !attachmentStages.owns(stagedAttachmentId, details.webContentsId) })
+          return
+        }
         const token = previewTokenFromUrl(details.url)
         callback({ cancel: !token || !previewScopes.owns(token, details.webContentsId) })
       },
     )
   }
   protocol.handle(FILE_PROTOCOL, async (request) => {
+    if (request.url.startsWith(`${FILE_PROTOCOL}://attachment/`)) {
+      const stagedAttachmentId = attachmentStageIdFromPreviewUrl(request.url)
+      const stage = stagedAttachmentId ? attachmentStages.preview(stagedAttachmentId) : null
+      if (!stage) return new Response('Not Found', { status: 404 })
+      try {
+        const response = await net.fetch(pathToFileURL(stage.path).toString())
+        const headers = new Headers(response.headers)
+        headers.set('content-type', stage.mediaType)
+        return new Response(response.body, { status: response.status, headers })
+      } catch {
+        return new Response('Internal Error', { status: 500 })
+      }
+    }
     if (request.url.startsWith(`${FILE_PROTOCOL}://preview/`)) {
       const token = previewTokenFromUrl(request.url)
       const scope = token ? previewScopes.get(token) : null
@@ -719,13 +780,13 @@ function logTrayActionError(error) {
 
 async function showMainWindowThenSend(payload) {
   const { win, generation } = await ensureMainWindowVisible()
-  if (rendererReadyGeneration === generation) {
-    win.webContents.send('lume:event:tray-action', payload)
+  if (mainWindowLifecycle.isRendererReady(generation)) {
+    win.webContents.send('lume:event:tray-action', { ...payload, generation })
   } else {
-    if (pendingTrayNavigation?.generation === generation) {
+    const queued = mainWindowLifecycle.queueNavigation(generation, payload)
+    if (queued.replaced) {
       writeMainLog('info', 'desktop.lifecycle', 'navigation.replaced', 'pending navigation intent replaced')
     }
-    pendingTrayNavigation = { generation, payload }
   }
 }
 
@@ -749,6 +810,15 @@ function ensureTray() {
   }
 }
 
+function destroyTraySafely() {
+  destroyTrayWithFallback(
+    () => trayManager.destroyTray(),
+    (error) => {
+      writeMainLog('warn', 'desktop.tray', 'tray.destroy_failed', 'tray destruction failed', { data: { error } })
+    },
+  )
+}
+
 async function showMainWindow() {
   await captureQuickInputContext()
   await ensureMainWindowVisible()
@@ -761,7 +831,11 @@ function refreshTrayMenu(immediate = false) {
     return
   }
   const windowVisible = Boolean(mainWindow) && !mainWindow.isDestroyed() && mainWindow.isVisible()
-  trayManager.rebuildMenu({ windowVisible, recentThreads: recentTrayThreads, currentThreadId: currentTrayThreadId }, handleTrayAction)
+  try {
+    trayManager.rebuildMenu({ windowVisible, recentThreads: recentTrayThreads, currentThreadId: currentTrayThreadId }, handleTrayAction)
+  } catch (error) {
+    writeMainLog('warn', 'desktop.tray', 'tray.menu_rebuild_failed', 'tray menu rebuild failed', { data: { error } })
+  }
 }
 
 function attachWindowBehavior(win) {
@@ -820,24 +894,20 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
 }
 
 async function createMainWindow() {
-  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
-  if (mainWindowCreationPromise) return mainWindowCreationPromise
-  const generation = ++mainWindowGeneration
-  acceptedWindowBehaviorRevision = -1
-  rendererReadyGeneration = 0
-  mainWindowCreationPromise = createMainWindowForGeneration(generation)
-  try {
-    return await mainWindowCreationPromise
-  } catch (error) {
-    if (mainWindowGeneration === generation && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.destroy()
-      mainWindow = null
+  return mainWindowCreation.run(async () => {
+    if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
+    const generation = mainWindowLifecycle.beginGeneration()
+    try {
+      return await createMainWindowForGeneration(generation)
+    } catch (error) {
+      if (mainWindowLifecycle.isCurrent(generation) && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.destroy()
+        mainWindow = null
+      }
+      writeMainLog('error', 'desktop.lifecycle', 'window.create_failed', 'main window creation failed', { data: { generation, error } })
+      throw error
     }
-    writeMainLog('error', 'desktop.lifecycle', 'window.create_failed', 'main window creation failed', { data: { generation, error } })
-    throw error
-  } finally {
-    mainWindowCreationPromise = null
-  }
+  })
 }
 
 async function ensureMainWindowVisible() {
@@ -845,7 +915,7 @@ async function ensureMainWindowVisible() {
   if (win.isDestroyed() || mainWindow !== win) throw new Error('main window became unavailable')
   restoreMainWindow(win)
   refreshTrayMenu()
-  return { win, generation: mainWindowGeneration }
+  return { win, generation: mainWindowLifecycle.getGeneration() }
 }
 
 async function createMainWindowForGeneration(generation) {
@@ -867,6 +937,14 @@ async function createMainWindowForGeneration(generation) {
   })
   mainWindow = win
 
+  win.on('closed', () => {
+    const closedCurrentGeneration = mainWindowLifecycle.closeGeneration(generation)
+    if (mainWindow === win && closedCurrentGeneration) {
+      mainWindow = null
+      refreshTrayMenu()
+    }
+  })
+
   attachWindowBehavior(win)
   // 最大化/还原态变化推送给渲染层，驱动按钮图标切换。
   win.on('maximize', () => emitRendererEvent('window-state', { maximized: true }))
@@ -881,34 +959,21 @@ async function createMainWindowForGeneration(generation) {
   })
   win.setMenuBarVisibility(false)
 
-  const readyPromise = new Promise<void>((resolveReady, rejectReady) => {
-    const timeout = setTimeout(() => rejectReady(new Error('main window ready timeout')), 15_000)
-    win.once('ready-to-show', () => { clearTimeout(timeout); resolveReady() })
-    win.once('closed', () => { clearTimeout(timeout); rejectReady(new Error('main window closed before ready')) })
-  })
-
-  if (app.isPackaged) {
-    const webEntry = getWebEntryPath()
-    ensureFile(webEntry, 'missing packaged web entry')
-    await win.loadURL(getPackagedAppUrl())
-  } else {
-    await win.loadURL(getDevServerUrl())
-  }
+  const windowUrl = app.isPackaged
+    ? (() => {
+        const webEntry = getWebEntryPath()
+        ensureFile(webEntry, 'missing packaged web entry')
+        return getPackagedAppUrl()
+      })()
+    : getDevServerUrl()
+  const readyPromise = waitForWindowReady(win)
+  await Promise.all([win.loadURL(windowUrl), readyPromise])
 
   if (!app.isPackaged) {
     win.webContents.openDevTools({ mode: 'detach' })
   }
 
-  win.on('closed', () => {
-    if (mainWindow === win && mainWindowGeneration === generation) {
-      mainWindow = null
-      rendererReadyGeneration = 0
-      if (pendingTrayNavigation?.generation === generation) pendingTrayNavigation = null
-      refreshTrayMenu()
-    }
-  })
-  await readyPromise
-  if (mainWindow !== win || mainWindowGeneration !== generation || win.isDestroyed()) {
+  if (mainWindow !== win || !mainWindowLifecycle.isCurrent(generation) || win.isDestroyed()) {
     writeMainLog('warn', 'desktop.lifecycle', 'window.stale_generation', 'discarded stale main window ready event')
     throw new Error('stale main window generation')
   }
@@ -989,6 +1054,54 @@ async function toggleQuickInput() {
   quickInputWindow.focus()
 }
 
+function requireAttachmentStageOwner(context: { ownerWebContentsId?: number }): number {
+  if (!Number.isSafeInteger(context.ownerWebContentsId)) throw new Error('附件暂存缺少可信窗口身份')
+  return context.ownerWebContentsId!
+}
+
+function stageExistingAttachment(filePath: string, ownerWebContentsId: number) {
+  const metadata = createFileStatMetadata(filePath)
+  const attachmentId = randomUUID()
+  const stage = attachmentStages.grantPath({
+    ownerWebContentsId,
+    attachmentId,
+    sourcePath: filePath,
+    filename: metadata.filename,
+    mediaType: metadata.mediaType,
+  })
+  return {
+    id: attachmentId,
+    filename: stage.filename,
+    mediaType: stage.mediaType,
+    size: stage.size,
+    sourcePath: stage.path,
+    stagedAttachmentId: stage.stagedAttachmentId,
+    ...(stage.mediaType.startsWith('image/') ? { previewUrl: attachmentStagePreviewUrl(stage) } : {}),
+  }
+}
+
+function resolveStagedAttachmentParams(params: unknown, ownerWebContentsId?: number) {
+  const input = params && typeof params === 'object' ? params as Record<string, any> : {}
+  if (!Array.isArray(input.files)) return params ?? null
+  if (input.files.some((file) => !file?.stagedAttachmentId)) {
+    throw new Error('线程附件必须通过受控暂存协议提交')
+  }
+  const owner = requireAttachmentStageOwner({ ownerWebContentsId })
+  return {
+    ...input,
+    files: input.files.map((file: Record<string, any>) => {
+      if (!file.stagedAttachmentId) return file
+      const { stagedAttachmentId, ...rest } = file
+      const sourcePath = attachmentStages.resolve({
+        ownerWebContentsId: owner,
+        stagedAttachmentId: String(stagedAttachmentId),
+        attachmentId: String(file.id ?? ''),
+      })
+      return { ...rest, sourcePath }
+    }),
+  }
+}
+
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
     case 'healthcheck': {
@@ -1003,8 +1116,14 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'sidecar_healthcheck':
       return sidecarHost.call('healthcheck', null)
     case 'sidecar_call': {
+      if (typeof payload.method === 'string' && (payload.method.startsWith('wiki:privileged-') || payload.method === 'system.wiki-privileged-credential')) {
+        throw new Error('Wiki privileged RPC is not available through sidecar_call')
+      }
       if (payload.method !== 'agent:send-thread-message') {
-        return sidecarHost.call(payload.method, payload.params ?? null)
+        const params = payload.method === 'agent:save-files-to-thread'
+          ? resolveStagedAttachmentParams(payload.params, context.ownerWebContentsId)
+          : payload.params ?? null
+        return sidecarHost.call(payload.method, params)
       }
       const origin = resolveRendererTraceOrigin(context.ownerWebContentsId)
       const incoming = payload.params && typeof payload.params === 'object' ? payload.params : {}
@@ -1032,54 +1151,67 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const result = await sidecarHost.call(payload.method, { ...incoming, traceContext }, traceContext)
       return { ...(result && typeof result === 'object' ? result : {}), traceId, submissionId }
     }
+    case 'desktop_wiki_get_proposal_summary':
+      requireMainWindowSender(context, command)
+      return sidecarHost.callWikiPrivileged('wiki:privileged-get-proposal-summary', { draftId: payload.draftId })
+    case 'desktop_wiki_apply_draft':
+      requireMainWindowSender(context, command)
+      return sidecarHost.callWikiPrivileged('wiki:privileged-apply-draft', payload)
+    case 'desktop_wiki_resolve_pending':
+      requireMainWindowSender(context, command)
+      return sidecarHost.callWikiPrivileged('wiki:privileged-resolve-pending', payload)
+    case 'desktop_wiki_get_undo_summary':
+      requireMainWindowSender(context, command)
+      return sidecarHost.callWikiPrivileged('wiki:privileged-get-undo-summary', { batchId: payload.batchId })
+    case 'desktop_wiki_undo_batch':
+      requireMainWindowSender(context, command)
+      return sidecarHost.callWikiPrivileged('wiki:privileged-undo-batch', payload)
     case 'desktop_sync_window_behavior': {
-      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.id !== context.ownerWebContentsId) throw new Error('main window sender required')
-      if (payload?.generation !== mainWindowGeneration || !Number.isSafeInteger(payload?.revision) || payload.revision <= acceptedWindowBehaviorRevision) return null
+      requireMainWindowSender(context, 'desktop_sync_window_behavior')
+      if (!mainWindowLifecycle.acceptWindowBehaviorRevision(payload?.generation, payload?.revision)) return null
       const previous = windowBehavior
       windowBehavior = normalizeWindowBehavior(payload.windowBehavior ?? windowBehavior)
-      acceptedWindowBehaviorRevision = payload.revision
       if (previous?.showTray !== windowBehavior?.showTray) {
         if (windowBehavior?.showTray) ensureTray()
-        else trayManager.destroyTray()
+        else destroyTraySafely()
       }
       return null
     }
     case 'desktop_get_main_window_generation': {
-      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.id !== context.ownerWebContentsId) throw new Error('main window sender required')
-      return { generation: mainWindowGeneration }
+      requireMainWindowSender(context, 'desktop_get_main_window_generation')
+      return { generation: mainWindowLifecycle.getGeneration() }
     }
     case 'desktop_renderer_ready': {
-      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.id !== context.ownerWebContentsId) throw new Error('main window sender required')
-      if (payload?.generation !== mainWindowGeneration) return null
-      rendererReadyGeneration = mainWindowGeneration
-      if (pendingTrayNavigation?.generation === mainWindowGeneration) {
-        const pending = pendingTrayNavigation
-        pendingTrayNavigation = null
-        mainWindow.webContents.send('lume:event:tray-action', pending.payload)
-      }
+      requireMainWindowSender(context, 'desktop_renderer_ready')
+      const ready = mainWindowLifecycle.markRendererReady(payload?.generation)
+      if (!ready.accepted) return null
+      if (ready.payload) mainWindow.webContents.send('lume:event:tray-action', { ...ready.payload, generation: payload.generation })
       return null
     }
     case 'desktop_sync_tray_state': {
-      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.id !== context.ownerWebContentsId) throw new Error('main window sender required')
-      if (payload?.generation !== mainWindowGeneration) return null
-      const serialized = JSON.stringify(payload)
-      const rejectTrayState = () => {
-        writeMainLog('warn', 'desktop.tray', 'tray.sync_rejected', 'invalid tray state rejected')
+      requireMainWindowSender(context, 'desktop_sync_tray_state')
+      const validated = validateTrayStatePayload(payload, mainWindowLifecycle.getGeneration())
+      if (validated.ok === false) {
+        writeRateLimitedTrayWarning('tray.sync_rejected', 'invalid tray state rejected', context.ownerWebContentsId, { reason: validated.reason })
+        if (validated.reason === 'stale_generation') return null
         throw new Error('invalid tray state')
       }
-      if (Buffer.byteLength(serialized, 'utf8') > 8_192 || !Array.isArray(payload.threads) || payload.threads.length > 5) rejectTrayState()
-      const ids = new Set<string>()
-      const threads = payload.threads.map((thread) => {
-        if (!thread || typeof thread.id !== 'string' || thread.id.length < 1 || thread.id.length > 128 || ids.has(thread.id)
-          || typeof thread.title !== 'string' || thread.title.length > 256
-          || !Number.isFinite(thread.updatedAt) || thread.updatedAt < 0) rejectTrayState()
-        ids.add(thread.id)
-        return { id: thread.id, title: thread.title, updatedAt: thread.updatedAt }
-      })
-      if (payload.currentThreadId != null && (typeof payload.currentThreadId !== 'string' || payload.currentThreadId.length < 1 || payload.currentThreadId.length > 128)) rejectTrayState()
-      recentTrayThreads = threads
-      currentTrayThreadId = payload.currentThreadId ?? null
+      recentTrayThreads = validated.value.threads
+      currentTrayThreadId = validated.value.currentThreadId
       refreshTrayMenu()
+      return null
+    }
+    case 'desktop_report_tray_navigation_confirmation_failed': {
+      requireMainWindowSender(context, 'desktop_report_tray_navigation_confirmation_failed')
+      if (payload?.generation !== mainWindowLifecycle.getGeneration()) return null
+      if (typeof payload?.threadId !== 'string' || payload.threadId.length < 1 || payload.threadId.length > 128) throw new Error('invalid tray thread id')
+      if (payload?.reason !== 'timeout' && payload?.reason !== 'query_failed') throw new Error('invalid tray navigation failure reason')
+      writeRateLimitedTrayWarning(
+        'tray.navigation_confirmation_failed',
+        'tray navigation authority confirmation failed',
+        context.ownerWebContentsId,
+        { threadId: payload.threadId, reason: payload.reason },
+      )
       return null
     }
     case 'quick_input_hide':
@@ -1109,15 +1241,54 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       return { ok: true }
     }
     case 'open_file_dialog': {
+      const ownerWebContentsId = requireAttachmentStageOwner(context)
       const result = await dialog.showOpenDialog(mainWindow, createOpenFileDialogOptions())
       return {
-        files: result.canceled ? [] : result.filePaths.map((filePath) => createFileMetadata(filePath)),
+        files: result.canceled ? [] : result.filePaths.map((filePath) => stageExistingAttachment(filePath, ownerWebContentsId)),
       }
     }
-    case 'stat_file_paths':
+    case 'stat_file_paths': {
+      const ownerWebContentsId = requireAttachmentStageOwner(context)
       return {
-        files: (payload.paths ?? []).map((filePath) => createFileMetadata(filePath)),
+        files: (payload.paths ?? []).map((filePath) => stageExistingAttachment(filePath, ownerWebContentsId)),
       }
+    }
+    case 'attachment_stage_begin': {
+      const ownerWebContentsId = requireAttachmentStageOwner(context)
+      const stage = attachmentStages.begin({
+        ownerWebContentsId,
+        attachmentId: String(payload.attachmentId ?? ''),
+        filename: String(payload.filename ?? ''),
+        mediaType: String(payload.mediaType ?? 'application/octet-stream'),
+        size: Number(payload.size),
+      })
+      return { stagedAttachmentId: stage.stagedAttachmentId }
+    }
+    case 'attachment_stage_append': {
+      const ownerWebContentsId = requireAttachmentStageOwner(context)
+      return attachmentStages.append({
+        ownerWebContentsId,
+        stagedAttachmentId: String(payload.stagedAttachmentId ?? ''),
+        offset: Number(payload.offset),
+        chunk: payload.chunk,
+      })
+    }
+    case 'attachment_stage_finish': {
+      const ownerWebContentsId = requireAttachmentStageOwner(context)
+      const stage = attachmentStages.finish({
+        ownerWebContentsId,
+        stagedAttachmentId: String(payload.stagedAttachmentId ?? ''),
+      })
+      return {
+        stagedAttachmentId: stage.stagedAttachmentId,
+        previewUrl: stage.mediaType.startsWith('image/') ? attachmentStagePreviewUrl(stage) : undefined,
+      }
+    }
+    case 'attachment_stage_abort': {
+      const ownerWebContentsId = requireAttachmentStageOwner(context)
+      attachmentStages.abort({ ownerWebContentsId, stagedAttachmentId: String(payload.stagedAttachmentId ?? '') })
+      return null
+    }
     case 'open_folder_dialog': {
       const result = await dialog.showOpenDialog(mainWindow, createOpenFolderDialogOptions())
       return {
@@ -1133,6 +1304,13 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       clipboard.writeText(payload.text ?? '')
       return null
     case 'write_clipboard_image': {
+      if (typeof payload.dataUrl === 'string') {
+        if (!payload.dataUrl.startsWith('data:image/png;base64,')) throw new Error('仅支持 PNG 图片数据')
+        const image = nativeImage.createFromDataURL(payload.dataUrl)
+        if (image.isEmpty()) throw new Error('无法读取图片内容')
+        clipboard.writeImage(image)
+        return null
+      }
       const resolved = payload.guardedRef
         ? await sidecarHost.call('agent:resolve-guarded-file-ref', { guardedRef: payload.guardedRef }) as { path: string }
         : payload.ref
@@ -1426,6 +1604,7 @@ function createSidecarHost({ onNotification }) {
   let nextId = 1
   let pending = new Map()
   let stopRequested = false
+  let wikiPrivilegedCredential = null
 
   function rejectAllPending(error) {
     for (const entry of pending.values()) {
@@ -1534,6 +1713,7 @@ function createSidecarHost({ onNotification }) {
         if (child === runningChild) {
           child = null
           started = null
+          wikiPrivilegedCredential = null
         }
         runningChild.kill()
         settleStart(error)
@@ -1552,6 +1732,18 @@ function createSidecarHost({ onNotification }) {
 
         if (payload && payload.method === SIDECAR_READY_METHOD && payload.id === undefined) {
           didReady = true
+          try {
+            wikiPrivilegedCredential = randomBytes(32).toString('base64url')
+            runningChild.postMessage(JSON.stringify({
+              method: 'system.wiki-privileged-credential',
+              params: { credential: wikiPrivilegedCredential },
+            }))
+          } catch (error) {
+            wikiPrivilegedCredential = null
+            writeMainLog('error', 'desktop.wiki.security', 'credential.delivery_failed', 'failed to initialize Wiki privileged channel', {
+              data: { error },
+            })
+          }
           try {
             runningChild.postMessage(JSON.stringify({
               method: 'system.logging-policy',
@@ -1722,6 +1914,7 @@ function createSidecarHost({ onNotification }) {
         if (child === runningChild) {
           child = null
           started = null
+          wikiPrivilegedCredential = null
         }
       })
     })
@@ -1774,12 +1967,19 @@ function createSidecarHost({ onNotification }) {
     })
   }
 
+  async function callWikiPrivileged(method, request) {
+    await start()
+    if (!wikiPrivilegedCredential) throw new Error('Wiki privileged channel unavailable')
+    return call(method, { credential: wikiPrivilegedCredential, request })
+  }
+
   async function stop() {
     if (!child || child.pid === undefined) return
     stopRequested = true
     const runningChild = child
     child = null
     started = null
+    wikiPrivilegedCredential = null
     rejectAllPending(new Error('sidecar stopped'))
     await new Promise<void>((resolveStop) => {
       const timeout = setTimeout(resolveStop, 3_000)
@@ -1797,13 +1997,22 @@ function createSidecarHost({ onNotification }) {
   return {
     start,
     call,
+    callWikiPrivileged,
     stop,
   }
 }
 
 ipcMain.handle('lume:invoke', async (event, command, payload) => {
   validateIpcSender(event, getTrustedWindows())
-  return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId: event.sender.id })
+  const ownerWebContentsId = event.sender.id
+  if (!attachmentStageOwners.has(ownerWebContentsId)) {
+    attachmentStageOwners.add(ownerWebContentsId)
+    event.sender.once('destroyed', () => {
+      attachmentStageOwners.delete(ownerWebContentsId)
+      attachmentStages.cleanupOwner(ownerWebContentsId)
+    })
+  }
+  return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId })
 })
 ipcMain.handle('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。

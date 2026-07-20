@@ -305,15 +305,25 @@ export function createFileMetadata(filePath) {
   }
 }
 
+export function createFileStatMetadata(filePath) {
+  const stats = statSync(filePath)
+  if (!stats.isFile()) throw new Error(`path is not a file: ${filePath}`)
+  return {
+    filename: filePath.split(/[\\/]/).pop() || 'file',
+    mediaType: mimeTypeForPath(filePath),
+    size: stats.size,
+  }
+}
+
 export function validateExternalUrl(url) {
   let protocol
   try {
     protocol = new URL(url).protocol
   } catch {
-    throw new Error('only http/https/weread urls are allowed')
+    throw new Error('only http/https/weread/obsidian urls are allowed')
   }
-  if (!['http:', 'https:', 'weread:'].includes(protocol)) {
-    throw new Error('only http/https/weread urls are allowed')
+  if (!['http:', 'https:', 'weread:', 'obsidian:'].includes(protocol)) {
+    throw new Error('only http/https/weread/obsidian urls are allowed')
   }
   return url
 }

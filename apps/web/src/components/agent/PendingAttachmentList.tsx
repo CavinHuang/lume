@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { isImageAttachment, type AgentAttachmentGridItem } from './AgentAttachmentGrid'
 
 interface PendingAttachmentListProps<T extends AgentAttachmentGridItem> {
@@ -19,8 +20,9 @@ export function PendingAttachmentList<T extends AgentAttachmentGridItem>({
   if (attachments.length === 0) return null
 
   return (
-    <div className="flex max-h-[112px] flex-wrap gap-2 overflow-y-auto" data-pending-attachments="true">
-      {attachments.map((attachment) => {
+    <ScrollArea className="max-h-[112px]" data-pending-attachments="true">
+      <div className="flex flex-wrap gap-2 pr-2">
+        {attachments.map((attachment) => {
         const image = isImageAttachment(attachment)
         return (
           <div
@@ -52,7 +54,8 @@ export function PendingAttachmentList<T extends AgentAttachmentGridItem>({
             )}
           </div>
         )
-      })}
-    </div>
+        })}
+      </div>
+    </ScrollArea>
   )
 }

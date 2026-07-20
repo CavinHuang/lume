@@ -37,6 +37,53 @@ export class WikiHealthStore {
     return next;
   }
 
+  begin(generation: number, findings: WikiLintFinding[]): boolean {
+    const current = this.read();
+    if (!current.enabled || current.status === "running") return false;
+    const lastSuccessful = current.lastSuccessfulAt ? Date.parse(current.lastSuccessfulAt) : 0;
+    if (lastSuccessful && this.now() - lastSuccessful < WEEK_MS) return false;
+    if (current.lastAttemptGeneration === generation) return false;
+    this.write({
+      ...current,
+      status: "running",
+      generation,
+      lastAttemptAt: new Date(this.now()).toISOString(),
+      lastAttemptGeneration: generation,
+      findingCounts: countFindings(findings),
+      message: "正在后台检查近似重复、陈旧结论和知识空白。",
+    });
+    return true;
+  }
+
+  complete(input: { generation: number; model: string; durationMs: number; findings: WikiLintFinding[] }): void {
+    this.write({
+      enabled: true,
+      status: "completed",
+      generation: input.generation,
+      model: input.model,
+      durationMs: input.durationMs,
+      lastSuccessfulAt: new Date(this.now()).toISOString(),
+      lastAttemptAt: new Date(this.now()).toISOString(),
+      lastAttemptGeneration: input.generation,
+      findingCounts: countFindings(input.findings),
+      message: `语义检查完成，生成 ${input.findings.length} 条待人工处理的发现。`,
+    });
+  }
+
+  fail(generation: number, error: unknown): void {
+    const current = this.read();
+    this.write({
+      ...current,
+      status: "unavailable",
+      generation,
+      lastAttemptAt: new Date(this.now()).toISOString(),
+      lastAttemptGeneration: generation,
+      message: `结构检查已完成；语义检查未执行：${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+
+  snapshot(): WikiSnapshot["semanticCheck"] { return this.read(); }
+
   private read(): PersistedSemanticCheck {
     const path = this.path();
     if (!existsSync(path)) return { enabled: true, status: "never", message: "尚未运行语义检查。" };

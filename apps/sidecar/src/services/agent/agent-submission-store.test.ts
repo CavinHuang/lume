@@ -39,22 +39,23 @@ describe("AgentSubmissionStore", () => {
     store.close();
   });
 
-  test("重启后 queued 标为 restart_dropped，started 标为 interrupted", () => {
+  test("重启后 queued 恢复为 paused，started 标为 interrupted", () => {
     const { root, store } = createStore(100);
-    store.begin({ threadId: "thread-a", userMessage: "queued", clientSubmissionId: "queued-a" });
-    store.accept("queued-a", { ok: true, mode: "queued", queuedCount: 1 });
+    const queuedInput = { threadId: "thread-a", userMessage: "queued", clientSubmissionId: "queued-a" };
+    store.begin(queuedInput);
+    store.accept("queued-a", { ok: true, mode: "queued", queuedCount: 1 }, queuedInput);
     store.begin({ threadId: "thread-a", userMessage: "started", clientSubmissionId: "started-a" });
     store.accept("started-a", { ok: true, mode: "sent", queuedCount: 0 });
     store.transition("started-a", "started");
     store.close();
 
     const reopened = new AgentSubmissionStore({ dbPath: join(root, "submissions.sqlite"), now: () => 200 });
-    expect(reopened.get("queued-a")?.status).toBe("restart_dropped");
+    expect(reopened.get("queued-a")?.status).toBe("paused");
     expect(reopened.get("started-a")?.status).toBe("interrupted");
     reopened.close();
   });
 
-  test("附件 lease 在 sent 时提交，在未 claim 的 queued 重启后清理", () => {
+  test("附件 lease 在 sent 时提交，并为 paused queue 保留", () => {
     const { root, store } = createStore(100);
     const sentPath = join(root, "sent.txt");
     const queuedPath = join(root, "queued.txt");
@@ -63,15 +64,17 @@ describe("AgentSubmissionStore", () => {
     store.prepareAttachmentLease("sent-a", "thread-a", [{ filename: "sent.txt", targetPath: sentPath }]);
     store.prepareAttachmentLease("queued-a", "thread-a", [{ filename: "queued.txt", targetPath: queuedPath }]);
     store.begin({ threadId: "thread-a", userMessage: "sent", clientSubmissionId: "sent-a" });
-    store.begin({ threadId: "thread-a", userMessage: "queued", clientSubmissionId: "queued-a" });
+    const queuedInput = { threadId: "thread-a", userMessage: "queued", clientSubmissionId: "queued-a" };
+    store.begin(queuedInput);
     store.accept("sent-a", { ok: true, mode: "sent", queuedCount: 0 });
-    store.accept("queued-a", { ok: true, mode: "queued", queuedCount: 1 });
+    store.accept("queued-a", { ok: true, mode: "queued", queuedCount: 1 }, queuedInput);
     store.close();
 
     const reopened = new AgentSubmissionStore({ dbPath: join(root, "submissions.sqlite"), now: () => 200 });
     expect(existsSync(sentPath)).toBe(true);
-    expect(existsSync(queuedPath)).toBe(false);
-    expect(reopened.get("queued-a")?.status).toBe("restart_dropped");
+    expect(existsSync(queuedPath)).toBe(true);
+    expect(reopened.get("queued-a")?.status).toBe("paused");
+    expect(reopened.getQueuedInputs("thread-a")).toHaveLength(1);
     reopened.close();
   });
 });

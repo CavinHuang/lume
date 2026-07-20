@@ -37,9 +37,13 @@ import {
 
 test("renderer IPC commands are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("sidecar_call"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_apply_draft"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_resolve_pending"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_undo_batch"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("data_export_zip"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("write_web_log"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("quick_input_get_context"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_report_tray_navigation_confirmation_failed"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("open_guarded_file_ref"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("reveal_guarded_file_ref"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("save_guarded_file_ref_as"), true);
@@ -78,6 +82,19 @@ test("preview scopes bind unguessable tokens to one webContents owner and expire
   assert.equal(registry.owns(scope.token, 7), false);
 });
 
+test("Wiki formal mutations use a main-process credential and reject generic RPC", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.match(mainSource, /payload\.method\.startsWith\('wiki:privileged-'\)/);
+  assert.match(mainSource, /Wiki privileged RPC is not available through sidecar_call/);
+  assert.match(mainSource, /randomBytes\(32\)\.toString\('base64url'\)/);
+  assert.match(mainSource, /system\.wiki-privileged-credential/);
+  assert.match(mainSource, /callWikiPrivileged\('wiki:privileged-apply-draft'/);
+  assert.match(mainSource, /requireMainWindowSender\(context, command\)/);
+  assert.equal(mainSource.includes("LUME_WIKI_PRIVILEGED"), false);
+  const nodeReplSource = readFileSync(resolve(DESKTOP_ROOT, "..", "sidecar", "src", "services", "agent-runtime", "tools", "node-repl", "node-repl-runtime-manager.ts"), "utf8");
+  assert.match(nodeReplSource, /delete env\.LUME_WIKI_PRIVILEGED_CREDENTIAL/);
+});
+
 test("guarded preview scopes retain their mandatory guard for per-request revalidation", () => {
   const registry = createPreviewScopeRegistry();
   const root = mkdtempSync(join(tmpdir(), "lume-preview-guarded-"));
@@ -85,6 +102,7 @@ test("guarded preview scopes retain their mandatory guard for per-request revali
   writeFileSync(entry, "image");
   const guardedRef = {
     ref: { source: "project", scopeId: "demo", relativePath: "image.png" },
+    expectedKind: "file",
     guard: {
       kind: "project",
       workspaceSlug: "demo",
@@ -342,7 +360,7 @@ test("main process opens DevTools only for development windows", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   const devToolsIndex = mainSource.indexOf("win.webContents.openDevTools({ mode: 'detach' })");
   const devGuardIndex = mainSource.indexOf("if (!app.isPackaged) {");
-  const packagedLoadIndex = mainSource.indexOf("await win.loadURL(getPackagedAppUrl())");
+  const packagedLoadIndex = mainSource.indexOf("return getPackagedAppUrl()");
 
   assert.notEqual(devToolsIndex, -1, "development DevTools opener is missing");
   assert.notEqual(devGuardIndex, -1, "DevTools opener must be guarded by app.isPackaged");

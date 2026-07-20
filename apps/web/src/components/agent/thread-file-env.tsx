@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react"
-import type { FileReferenceBinding } from '@lume/shared'
+import type { FileReferenceBinding, FileReferenceProtocolVersion } from '@lume/shared'
 
 export interface ThreadFileEnv {
   threadId?: string
@@ -11,6 +11,7 @@ const ThreadFileEnvContext = createContext<ThreadFileEnv>({})
 const MessageFileReferenceBindingContext = createContext<{
   binding?: FileReferenceBinding
   consumerThreadId?: string
+  protocolVersion?: FileReferenceProtocolVersion | number
 }>({})
 
 export function ThreadFileEnvProvider({
@@ -30,14 +31,16 @@ export function useThreadFileEnv(): ThreadFileEnv {
 export function MessageFileReferenceBindingProvider({
   value,
   consumerThreadId,
+  protocolVersion,
   children,
 }: {
   value?: FileReferenceBinding
   consumerThreadId?: string
+  protocolVersion?: FileReferenceProtocolVersion | number
   children: ReactNode
 }) {
   return (
-    <MessageFileReferenceBindingContext.Provider value={{ binding: value, consumerThreadId }}>
+    <MessageFileReferenceBindingContext.Provider value={{ binding: value, consumerThreadId, protocolVersion }}>
       {children}
     </MessageFileReferenceBindingContext.Provider>
   )
@@ -49,4 +52,8 @@ export function useMessageFileReferenceBinding(): FileReferenceBinding | undefin
 
 export function useMessageFileReferenceConsumerThreadId(): string | undefined {
   return useContext(MessageFileReferenceBindingContext).consumerThreadId
+}
+
+export function useMessageFileReferenceProtocolVersion(): number | undefined {
+  return useContext(MessageFileReferenceBindingContext).protocolVersion
 }

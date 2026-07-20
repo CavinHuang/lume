@@ -10,10 +10,13 @@ import {
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DESKTOP_DIR = resolve(REPO_ROOT, "apps", "desktop");
-const sidecarPath = resolve(DESKTOP_DIR, "resources", "sidecar", "index.mjs");
-const xhrWorkerPath = resolve(DESKTOP_DIR, "resources", "sidecar", "xhr-sync-worker.mjs");
-const skillsArchive = resolve(DESKTOP_DIR, "resources", "default-skills.tar");
-const nativeBinary = resolve(DESKTOP_DIR, "resources", "natives", currentNativeTargetId(), "lume-natives.node");
+const resourcesDir = process.env.LUME_SMOKE_RESOURCES_DIR
+  ? resolve(process.env.LUME_SMOKE_RESOURCES_DIR)
+  : resolve(DESKTOP_DIR, "resources");
+const sidecarPath = resolve(resourcesDir, "sidecar", "index.mjs");
+const xhrWorkerPath = resolve(resourcesDir, "sidecar", "xhr-sync-worker.mjs");
+const skillsArchive = resolve(resourcesDir, "default-skills.tar");
+const nativeBinary = resolve(resourcesDir, "natives", currentNativeTargetId(), "lume-natives.node");
 const sidecarSmokeEntry = resolve(DESKTOP_DIR, "scripts", "smoke-utility-sidecar.mjs");
 const nativeSmokeEntry = resolve(DESKTOP_DIR, "scripts", "smoke-utility-natives.mjs");
 
@@ -45,8 +48,8 @@ const relocatedSidecarDir = resolve(relocatedResourcesDir, "sidecar");
 const relocatedNative = resolve(relocatedResourcesDir, "natives", currentNativeTargetId(), "lume-natives.node");
 mkdirSync(dirname(relocatedNative), { recursive: true });
 cpSync(dirname(sidecarPath), relocatedSidecarDir, { recursive: true });
-cpSync(resolve(DESKTOP_DIR, "resources", "data"), resolve(relocatedResourcesDir, "data"), { recursive: true });
-cpSync(resolve(DESKTOP_DIR, "resources", "package.json"), resolve(relocatedResourcesDir, "package.json"));
+cpSync(resolve(resourcesDir, "data"), resolve(relocatedResourcesDir, "data"), { recursive: true });
+cpSync(resolve(resourcesDir, "package.json"), resolve(relocatedResourcesDir, "package.json"));
 cpSync(nativeBinary, relocatedNative);
 cpSync(skillsArchive, resolve(relocatedResourcesDir, "default-skills.tar"));
 
@@ -77,7 +80,7 @@ function runElectronSmoke(label, entry, extraEnv) {
       ...extraEnv,
     },
     encoding: "utf8",
-    timeout: 25_000,
+    timeout: label === "sidecar bundle" && process.platform === "win32" ? 90_000 : 25_000,
     windowsHide: true,
   });
 

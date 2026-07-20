@@ -23,6 +23,7 @@ interface PendingFile {
 }
 
 interface LumeWelcomeSurfaceProps {
+  compact?: boolean
   model: WelcomeSurfaceViewModel
   workspaceSelector: ReactNode
   composerModelPicker: ReactNode
@@ -51,6 +52,7 @@ interface LumeWelcomeSurfaceProps {
 }
 
 export function LumeWelcomeSurface({
+  compact = false,
   model,
   workspaceSelector,
   composerModelPicker,
@@ -98,9 +100,9 @@ export function LumeWelcomeSurface({
         background: 'var(--background)',
       }}
     >
-      <div className="relative flex flex-1 flex-col items-center justify-center overflow-y-auto">
-        <div className="relative mx-auto flex w-full max-w-[1104px] flex-col items-center px-5 py-10 md:px-7 lg:px-8">
-          <section className="flex w-full max-w-[840px] flex-col items-center text-center">
+      <div className={cn('relative flex flex-1 flex-col items-center overflow-y-auto', compact ? 'justify-end' : 'justify-center')}>
+        <div className={cn('relative mx-auto flex w-full flex-col items-center', compact ? 'max-w-none px-4 py-4' : 'max-w-[1104px] px-5 py-10 md:px-7 lg:px-8')}>
+          {!compact && <section className="flex w-full max-w-[840px] flex-col items-center text-center">
             <HeroMark />
 
             <h1 className="mt-5 text-[28px] font-semibold text-[var(--text-1)] md:text-[32px]">
@@ -118,13 +120,13 @@ export function LumeWelcomeSurface({
             >
               {workspaceSelector}
             </div>
-          </section>
+          </section>}
 
           <div
             {...interactionLockProps}
             data-welcome-lock="composer"
             aria-disabled={sending}
-            className="mt-8 w-full max-w-[840px]"
+            className={cn('w-full', compact ? 'max-w-none' : 'mt-8 max-w-[840px]')}
           >
             <LumeComposer
               tone={composerState.tone}
@@ -272,7 +274,7 @@ export function LumeWelcomeSurface({
               {folderBar}
             </div>
           )}
-          {suggestions && suggestions.length > 0 && (
+          {!compact && suggestions && suggestions.length > 0 && (
             <div className="mt-4 flex w-full max-w-[840px] flex-wrap justify-center gap-2">
               {suggestions.map((suggestion) => (
                 <Button
@@ -289,9 +291,9 @@ export function LumeWelcomeSurface({
               ))}
             </div>
           )}
-          <p className="mt-3 text-center text-[12px] text-[var(--text-3)]">
+          {!compact && <p className="mt-3 text-center text-[12px] text-[var(--text-3)]">
             Lume 可能会犯错，请核查重要信息。
-          </p>
+          </p>}
         </div>
       </div>
     </div>

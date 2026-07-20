@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, ChevronsUp, Folder, MoreHorizontal, RefreshCw, Search, X } from 'lucide-react'
-import { AGENT_IPC_CHANNELS, type FileEntry, type FileIndexEntry, type FileRef, type FileSource, type GuardedFileRef } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type FileEntry, type FileIndexEntry, type FileRef, type FileSource } from '@lume/shared'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -203,21 +203,13 @@ export function UnifiedFileTree({
       && treeCacheIdentityRef.current === requestIdentity
       && workspaceRef.current.revealRequest?.requestId === request.requestId
 
-    const guardedFor = (ref: FileRef): GuardedFileRef | undefined => request.guardedRef
-      ? { ...request.guardedRef, ref: { ...request.guardedRef.ref, relativePath: ref.relativePath } } as GuardedFileRef
-      : undefined
-
     void (async () => {
       try {
         const segments = target.relativePath.split('/').filter(Boolean)
         const directoriesToLoad = getFileTreeRevealDirectories(target)
         let nextCache = cacheRef.current
         for (const directoryRef of directoriesToLoad) {
-          const entries = request.guardedRef
-            ? await sidecarCall<FileEntry[]>(AGENT_IPC_CHANNELS.LIST_GUARDED_FILE_REF_DIRECTORY, {
-                guardedRef: guardedFor(directoryRef),
-              })
-            : await sidecarCall<FileEntry[]>(AGENT_IPC_CHANNELS.LIST_FILE_REF_DIRECTORY, { ref: directoryRef })
+          const entries = await sidecarCall<FileEntry[]>(AGENT_IPC_CHANNELS.LIST_FILE_REF_DIRECTORY, { ref: directoryRef })
           if (!isCurrent()) {
             settleFileTreeReveal(request.requestId, { status: 'superseded' })
             return

@@ -28,9 +28,10 @@ import {
   isFileDragPayload,
   type DragDropPayload,
 } from './agent-file-drop'
-import { sidecarCall } from '@/lib/desktop-api'
+import { abortStagedAttachment, sidecarCall } from '@/lib/desktop-api'
 import type { OpenThreadFile } from './AgentFileReference'
 import { createFileTreeRevealRequest, settleFileTreeReveal } from '@/components/right-panel/right-panel-files-state'
+import { pendingAttachmentRejectionMessage, validatePendingAttachmentBatch } from './pending-attachment-validation'
 interface AgentViewProps {
   threadId: string
   readOnly?: boolean
@@ -45,6 +46,7 @@ function guardedValidationStatus(code: Exclude<GuardedFileRefValidationResult, {
   if (code === 'NOT_FOUND') return 'not_found' as const
   if (code === 'OUT_OF_SCOPE') return 'out_of_scope' as const
   if (code === 'BINDING_CHANGED') return 'binding_changed' as const
+  if (code === 'KIND_MISMATCH') return 'kind_mismatch' as const
   if (code === 'UNAVAILABLE') return 'unavailable' as const
   return 'io_error' as const
 }
@@ -93,26 +95,47 @@ export function AgentView({
   }, [threads, workspaces, currentWsId, threadId])
   const rightPanelBinding = useMemo(() => {
     const thread = threads.find((item) => item.id === threadId)
+    const workspace = workspaces.find((item) => item.id === (thread?.workspaceId ?? currentWsId))
     return {
       workspaceId: thread?.workspaceId ?? currentWsId ?? undefined,
       fileContextId: thread?.fileContextId ?? thread?.id,
+      projectBindingKey: workspace?.realpathKey ?? workspace?.projectPath,
     }
-  }, [currentWsId, threadId, threads])
+  }, [currentWsId, threadId, threads, workspaces])
 
   // 全局拖拽覆盖层
   const [isDragOver, setIsDragOver] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<PendingMessageAttachment[]>([])
+  const pendingAttachmentsRef = useRef<PendingMessageAttachment[]>([])
 
   const addPendingAttachments = useCallback((attachments: PendingMessageAttachment[]) => {
     if (attachments.length === 0) return
-    setPendingAttachments((prev) => [...prev, ...attachments])
+    const result = validatePendingAttachmentBatch(pendingAttachmentsRef.current, attachments)
+    if (result.accepted.length > 0) {
+      const next = [...pendingAttachmentsRef.current, ...result.accepted]
+      pendingAttachmentsRef.current = next
+      setPendingAttachments(next)
+      toast.success(`已添加 ${result.accepted.length} 个附件`)
+    }
+    result.rejected.forEach(({ attachment, reason }) => {
+      if (attachment.stagedAttachmentId) void abortStagedAttachment(attachment.stagedAttachmentId).catch(() => undefined)
+      toast.error(`${attachment.filename}：${pendingAttachmentRejectionMessage(reason)}`)
+    })
   }, [])
 
   const removePendingAttachment = useCallback((id: string) => {
-    setPendingAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
+    const removed = pendingAttachmentsRef.current.find((attachment) => attachment.id === id)
+    if (removed?.stagedAttachmentId) void abortStagedAttachment(removed.stagedAttachmentId).catch(() => undefined)
+    const next = pendingAttachmentsRef.current.filter((attachment) => attachment.id !== id)
+    pendingAttachmentsRef.current = next
+    setPendingAttachments(next)
   }, [])
 
   const clearPendingAttachments = useCallback(() => {
+    pendingAttachmentsRef.current.forEach((attachment) => {
+      if (attachment.stagedAttachmentId) void abortStagedAttachment(attachment.stagedAttachmentId).catch(() => undefined)
+    })
+    pendingAttachmentsRef.current = []
     setPendingAttachments([])
   }, [])
 
@@ -142,8 +165,10 @@ export function AgentView({
       if (navigationRevision !== navigationRevisionRef.current) return 'superseded'
       if (!validation.ok) return guardedValidationStatus(validation.code)
 
+      const resolvedRef = validation.entry.ref
+      if (!resolvedRef) return 'io_error'
       if (validation.entry.isDirectory) {
-        const { request, completion } = createFileTreeRevealRequest(options.guardedRef, navigationRevision)
+        const { request, completion } = createFileTreeRevealRequest(resolvedRef, navigationRevision)
         pendingRevealRequestIdRef.current = request.requestId
         dispatchRightPanel({ type: 'reveal-directory', threadId, request, binding: rightPanelBinding })
         reopenRightPanel()
@@ -156,7 +181,7 @@ export function AgentView({
       dispatchRightPanel({
         type: 'open-file',
         threadId,
-        ref: options.guardedRef,
+        ref: resolvedRef,
         binding: rightPanelBinding,
         lineSelection: options.lineSelection,
         navigationRevision,
@@ -204,8 +229,15 @@ export function AgentView({
   }, [openThreadFilePreview])
 
   useEffect(() => {
+    pendingAttachmentsRef.current.forEach((attachment) => {
+      if (attachment.stagedAttachmentId) void abortStagedAttachment(attachment.stagedAttachmentId).catch(() => undefined)
+    })
+    pendingAttachmentsRef.current = []
     setPendingAttachments([])
     return () => {
+      pendingAttachmentsRef.current.forEach((attachment) => {
+        if (attachment.stagedAttachmentId) void abortStagedAttachment(attachment.stagedAttachmentId).catch(() => undefined)
+      })
       if (pendingRevealRequestIdRef.current) {
         settleFileTreeReveal(pendingRevealRequestIdRef.current, { status: 'superseded' })
         pendingRevealRequestIdRef.current = null
@@ -236,7 +268,6 @@ export function AgentView({
             const attachments = await createPendingAttachmentsFromSourcePaths(payload.paths)
             if (attachments.length === 0) return
             addPendingAttachments(attachments)
-            toast.success(`已添加 ${attachments.length} 个文件`)
           } catch (error) {
             console.error('[AgentView] 桌面文件拖拽读取失败:', error)
             toast.error('文件读取失败')

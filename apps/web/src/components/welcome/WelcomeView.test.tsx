@@ -7,6 +7,7 @@ import {
   agentPlanModePhaseAtom,
   agentSidePanelViewAtom,
   agentStreamingStatesAtom,
+  agentThreadPermissionModesAtom,
   agentThreadsAtom,
   agentWorkspacesAtom,
   currentWorkspaceIdAtom,
@@ -100,6 +101,7 @@ mock.module('sonner', () => ({
 }))
 
 mock.module('@/lib/desktop-api', () => ({
+  abortStagedAttachment: async () => undefined,
   sidecarCall: (...args: Parameters<typeof sidecarCallMock>) =>
     ((globalThis as any).__lumeDesktopSidecarCall ?? sidecarCallMock)(...args),
   agentSend: (...args: Parameters<typeof agentSendMock>) =>
@@ -120,6 +122,7 @@ mock.module('@/lib/desktop-api', () => ({
   copyFile: async () => undefined,
   createFilePreviewScope: async () => ({ token: 'preview', url: 'lume-file://preview', expiresAt: 0 }),
   revokeFilePreviewScope: async () => undefined,
+  writeClipboardImage: async () => undefined,
   writeClipboardText: async () => undefined,
   onSidecarEvent: async () => () => {},
   executeTaskContract: (...args: unknown[]) =>
@@ -785,6 +788,7 @@ describe('WelcomeView', () => {
       }))
       expect(store.get(activeTabIdAtom)).toBe('created-thread')
       expect(store.get(agentStreamingStatesAtom)['created-thread']).toBe('streaming')
+      expect(store.get(agentThreadPermissionModesAtom)['created-thread']).toBe('plan')
       expect(store.get(agentPlanModePhaseAtom)['created-thread']).toEqual({
         threadId: 'created-thread',
         phase: 'planning',
@@ -874,8 +878,6 @@ describe('WelcomeView', () => {
           mediaType: 'image/png',
           size: 12,
           sourcePath: '/tmp/screen.png',
-          data: 'abc123',
-          previewUrl: 'data:image/png;base64,abc123',
         }),
       ])
 
@@ -892,7 +894,13 @@ describe('WelcomeView', () => {
         threadId: 'created-thread',
         workspaceSlug: 'default-workspace',
         clientSubmissionId: expect.any(String),
-        files: [{ filename: 'screen.png', sourcePath: '/tmp/screen.png', data: 'abc123' }],
+        files: [{
+          id: expect.any(String),
+          filename: 'screen.png',
+          mediaType: 'image/png',
+          size: 12,
+          sourcePath: '/tmp/screen.png',
+        }],
       })
 
       expect(agentSendMock).toHaveBeenCalledWith(expect.objectContaining({

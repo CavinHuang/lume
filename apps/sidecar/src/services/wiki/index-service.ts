@@ -1,20 +1,38 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import type { WikiPageRecord, WikiSearchResult } from "@lume/shared";
+import type { DatabaseSync } from "node:sqlite";
+import type { WikiLintFinding, WikiPageRecord, WikiSearchResult } from "@lume/shared";
 import { extractWikiLinks, sha256, WikiMarkdownStore } from "./markdown-store";
 import { ensureWikiDirectory, resolveWikiPath } from "./path-security";
 import { cjkNgrams } from "./search-text";
+import { WikiSourceStore } from "./source-store";
+import { createMemoryV2EmbeddingAttempts, type MemoryV2EmbeddingAttempt } from "../memory-v2/embedding";
+import { dotProduct, toFloat32Array } from "../memory-v2/vector-math";
+
+const require = createRequire(import.meta.url);
 
 export class WikiIndexService {
   private db?: DatabaseSync;
+  private readonly sources: WikiSourceStore;
   private tokenizer: "trigram" | "unicode61" = "unicode61";
-  constructor(readonly root: string, readonly store = new WikiMarkdownStore(root)) {}
+  private mode: "lexical-only" | "hybrid" = "lexical-only";
+  constructor(
+    readonly root: string,
+    readonly store = new WikiMarkdownStore(root),
+    private readonly embeddingAttempts: () => MemoryV2EmbeddingAttempt[] = () => createMemoryV2EmbeddingAttempts(undefined, { includeImplicitLocal: true }),
+  ) {
+    this.sources = new WikiSourceStore(root);
+  }
+
+  searchMode(): "lexical-only" | "hybrid" { return this.mode; }
 
   private open(): DatabaseSync {
     if (this.db) return this.db;
     ensureWikiDirectory(this.root, ".lume/index");
-    this.db = new DatabaseSync(resolveWikiPath(this.root, ".lume/index/wiki.sqlite"));
+    const { DatabaseSync: RuntimeDatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
+    this.db = new RuntimeDatabaseSync(resolveWikiPath(this.root, ".lume/index/wiki.sqlite"));
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
     return this.db;
   }
@@ -26,7 +44,7 @@ export class WikiIndexService {
       DROP TABLE IF EXISTS source_blobs; DROP TABLE IF EXISTS provenance_records; DROP TABLE IF EXISTS tags;
       DROP TABLE IF EXISTS workspace_associations; DROP TABLE IF EXISTS links; DROP TABLE IF EXISTS aliases;
       DROP TABLE IF EXISTS source_citations; DROP TABLE IF EXISTS revisions; DROP TABLE IF EXISTS lint_findings;
-      DROP TABLE IF EXISTS cjk_grams; DROP TABLE IF EXISTS embedding_cache; DROP TABLE IF EXISTS metadata;
+      DROP TABLE IF EXISTS cjk_grams; DROP TABLE IF EXISTS metadata;
       CREATE TABLE pages(id TEXT PRIMARY KEY, file_key TEXT UNIQUE NOT NULL, title TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, body TEXT NOT NULL, hash TEXT NOT NULL, revision INTEGER NOT NULL);
       CREATE TABLE sections(page_id TEXT NOT NULL, heading TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT NOT NULL);
       CREATE TABLE source_blobs(hash TEXT PRIMARY KEY, byte_size INTEGER NOT NULL DEFAULT 0);
@@ -39,7 +57,7 @@ export class WikiIndexService {
       CREATE TABLE revisions(page_id TEXT NOT NULL, revision INTEGER NOT NULL, hash TEXT NOT NULL);
       CREATE TABLE lint_findings(id TEXT PRIMARY KEY, page_id TEXT, rule TEXT NOT NULL, severity TEXT NOT NULL, message TEXT NOT NULL);
       CREATE TABLE cjk_grams(page_id TEXT NOT NULL, gram TEXT NOT NULL, PRIMARY KEY(page_id, gram));
-      CREATE TABLE embedding_cache(model_key TEXT NOT NULL, block_content_hash TEXT NOT NULL, vector BLOB NOT NULL, PRIMARY KEY(model_key, block_content_hash));
+      CREATE TABLE IF NOT EXISTS embedding_cache(model_key TEXT NOT NULL, block_content_hash TEXT NOT NULL, vector BLOB NOT NULL, PRIMARY KEY(model_key, block_content_hash));
       CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE INDEX cjk_grams_gram ON cjk_grams(gram); CREATE INDEX associations_workspace ON workspace_associations(workspace_id, page_id);
     `);
@@ -54,6 +72,10 @@ export class WikiIndexService {
     db.exec("BEGIN IMMEDIATE");
     try {
       for (const page of pages) this.insertPage(db, page);
+      for (const source of this.sources.listManifests()) {
+        db.prepare("INSERT INTO provenance_records VALUES(?,?,?)").run(source.id, source.blob_hash ?? null, this.sources.lifecycleState(source.id));
+        if (source.blob_hash) db.prepare("INSERT OR IGNORE INTO source_blobs VALUES(?,?)").run(source.blob_hash, source.byte_size);
+      }
       const generation = Date.now();
       db.prepare("INSERT INTO metadata(key,value) VALUES('generation',?)").run(String(generation));
       db.prepare("INSERT INTO metadata(key,value) VALUES('tokenizer',?)").run(this.tokenizer);
@@ -82,7 +104,38 @@ export class WikiIndexService {
     }
   }
 
-  search(query: string, visiblePages: WikiPageRecord[], maxResults = 20): WikiSearchResult[] {
+  async search(query: string, visiblePages: WikiPageRecord[], maxResults = 20): Promise<WikiSearchResult[]> {
+    const lexical = this.searchLexical(query, visiblePages, Math.max(maxResults, 50));
+    if (!query.trim() || visiblePages.length === 0) return lexical.slice(0, maxResults);
+    for (const attempt of this.embeddingAttempts()) {
+      try {
+        const semantic = await this.semanticScores(query, visiblePages, attempt);
+        this.mode = "hybrid";
+        return fuseResults(lexical, semantic, visiblePages, maxResults);
+      } catch {
+        // Try the next configured/local provider; lexical search stays available.
+      }
+    }
+    this.mode = "lexical-only";
+    return lexical.slice(0, maxResults);
+  }
+
+  replaceLintFindings(findings: WikiLintFinding[]): void {
+    this.ensureFresh();
+    const db = this.open();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec("DELETE FROM lint_findings");
+      const insert = db.prepare("INSERT INTO lint_findings VALUES(?,?,?,?,?)");
+      for (const finding of findings) insert.run(finding.id, finding.pageId ?? null, finding.rule, finding.severity, finding.message);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  searchLexical(query: string, visiblePages: WikiPageRecord[], maxResults = 20): WikiSearchResult[] {
     if (!query.trim() || visiblePages.length === 0) return [];
     this.ensureFresh();
     const db = this.open();
@@ -123,6 +176,68 @@ export class WikiIndexService {
     }).sort((left, right) => right.score - left.score || left.page.id.localeCompare(right.page.id)).slice(0, maxResults);
   }
 
+  private async semanticScores(query: string, pages: WikiPageRecord[], attempt: MemoryV2EmbeddingAttempt): Promise<Map<string, number>> {
+    const vectors = await this.pageVectors(pages, attempt);
+    const [queryVector] = await attempt.embedTexts([query]);
+    if (!queryVector?.length) throw new Error("Wiki query embedding is unavailable");
+    const needle = toFloat32Array(queryVector);
+    return new Map(pages.map((page) => [page.id, dotProduct(needle, vectors.get(page.id) ?? new Float32Array())]));
+  }
+
+  async runSemanticHealth(pages: WikiPageRecord[], generation: number): Promise<{ modelKey: string; findings: WikiLintFinding[] }> {
+    let lastError: unknown;
+    for (const attempt of this.embeddingAttempts()) {
+      try {
+        if (pages.length === 0) {
+          const probe = await attempt.embedTexts(["Wiki semantic health probe"]);
+          if (!probe[0]?.length) throw new Error("Wiki semantic model probe failed");
+        }
+        const vectors = await this.pageVectors(pages, attempt);
+        const findings: WikiLintFinding[] = [];
+        const candidateGroups = new Map<string, WikiPageRecord[]>();
+        for (const page of pages) {
+          const key = `${page.type}:${page.title.toLocaleLowerCase().replace(/\s+/g, "").slice(0, 4)}`;
+          candidateGroups.set(key, [...(candidateGroups.get(key) ?? []), page]);
+          if ((page.type === "source" || page.type === "synthesis") && extractWikiLinks(page.body).length === 0) {
+            findings.push(semanticFinding("knowledge-gap", "info", "该页面没有链接到长期主题页，可考虑补充关联。", page.id, generation));
+          }
+          if (page.type === "decision" && Date.now() - Date.parse(page.frontmatter.updated) > 180 * 24 * 60 * 60 * 1_000) {
+            findings.push(semanticFinding("stale-decision", "info", "该决策超过 180 天未复核。", page.id, generation));
+          }
+        }
+        for (const group of candidateGroups.values()) {
+          for (let left = 0; left < group.length; left += 1) for (let right = left + 1; right < Math.min(group.length, left + 51); right += 1) {
+            const a = group[left]!; const b = group[right]!;
+            if (dotProduct(vectors.get(a.id)!, vectors.get(b.id)!) >= 0.94) findings.push(semanticFinding("near-duplicate", "warning", `疑似与「${b.title}」重复，请人工判断是否合并。`, a.id, generation));
+          }
+        }
+        return { modelKey: attempt.modelKey, findings: findings.slice(0, 500) };
+      } catch (error) { lastError = error; }
+    }
+    throw lastError instanceof Error ? lastError : new Error("Wiki semantic model unavailable");
+  }
+
+  private async pageVectors(pages: WikiPageRecord[], attempt: MemoryV2EmbeddingAttempt): Promise<Map<string, Float32Array>> {
+    this.ensureFresh();
+    const db = this.open();
+    const vectors = new Map<string, Float32Array>();
+    const missing: WikiPageRecord[] = [];
+    for (const page of pages) {
+      const row = db.prepare("SELECT vector FROM embedding_cache WHERE model_key=? AND block_content_hash=?").get(attempt.modelKey, page.hash) as { vector?: Uint8Array } | undefined;
+      if (row?.vector) vectors.set(page.id, decodeVector(row.vector)); else missing.push(page);
+    }
+    if (missing.length > 0) {
+      const embedded = await attempt.embedTexts(missing.map((page) => `${page.title}\n${page.frontmatter.aliases.join(" ")}\n${page.body}`));
+      if (embedded.length !== missing.length) throw new Error("Wiki embedding response shape is invalid");
+      for (let index = 0; index < missing.length; index += 1) {
+        const page = missing[index]!; const vector = toFloat32Array(embedded[index]!);
+        vectors.set(page.id, vector);
+        db.prepare("INSERT OR REPLACE INTO embedding_cache(model_key,block_content_hash,vector) VALUES(?,?,?)").run(attempt.modelKey, page.hash, Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength));
+      }
+    }
+    return vectors;
+  }
+
   private insertPage(db: DatabaseSync, page: WikiPageRecord): void {
     db.prepare("INSERT INTO pages VALUES(?,?,?,?,?,?,?,?)").run(page.id, page.fileKey, page.title, page.type, page.status, page.body, page.hash, page.revision);
     db.prepare("INSERT INTO pages_fts(page_id,content) VALUES(?,?)").run(page.id, `${page.title}\n${page.frontmatter.aliases.join(" ")}\n${page.body}`);
@@ -141,6 +256,37 @@ export class WikiIndexService {
   }
 }
 
+function decodeVector(value: Uint8Array): Float32Array {
+  const copy = Uint8Array.from(value);
+  return new Float32Array(copy.buffer, copy.byteOffset, Math.floor(copy.byteLength / Float32Array.BYTES_PER_ELEMENT));
+}
+
+function fuseResults(
+  lexical: WikiSearchResult[],
+  semantic: Map<string, number>,
+  pages: WikiPageRecord[],
+  maxResults: number,
+): WikiSearchResult[] {
+  const lexicalById = new Map(lexical.map((item, index) => [item.page.id, { item, rank: index + 1 }]));
+  const semanticRank = [...semantic.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const semanticById = new Map(semanticRank.map(([id, score], index) => [id, { score, rank: index + 1 }]));
+  return pages.map((page) => {
+    const lexicalMatch = lexicalById.get(page.id);
+    const semanticMatch = semanticById.get(page.id);
+    const score = (lexicalMatch ? 1 / (60 + lexicalMatch.rank) : 0) + (semanticMatch ? 1 / (60 + semanticMatch.rank) : 0);
+    return {
+      page,
+      snippet: lexicalMatch?.item.snippet ?? page.body.replace(/\s+/g, " ").slice(0, 240),
+      score,
+      matchedBy: [...new Set([...(lexicalMatch?.item.matchedBy ?? []), ...(semanticMatch ? ["semantic" as const] : [])])],
+    };
+  }).sort((left, right) => right.score - left.score || left.page.id.localeCompare(right.page.id)).slice(0, maxResults);
+}
+
 function pageFingerprint(pages: WikiPageRecord[]): string {
   return sha256(pages.map((page) => `${page.id}:${page.hash}`).sort().join("\n"));
+}
+
+function semanticFinding(rule: string, severity: WikiLintFinding["severity"], message: string, pageId: string, generation: number): WikiLintFinding {
+  return { id: randomUUID(), rule, severity, message, pageId, createdAt: new Date().toISOString(), generation };
 }

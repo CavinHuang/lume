@@ -15,9 +15,9 @@ export interface ParsedThreadFileReference {
 }
 
 const MAX_REFERENCE_LENGTH = 1024
+const MAX_PATH_SEGMENTS = 64
 const MAX_LINE_NUMBER = 2_147_483_647
 const LINE_ANCHOR = /#L(\d+)(?:-L(\d+))?$/
-const ENCODED_BYTE = /%[0-9a-f]{2}/i
 
 export function parseThreadFileReference(
   value: string,
@@ -27,6 +27,17 @@ export function parseThreadFileReference(
   if (value.startsWith('@project/')) return parseStrictReference(value, 'project', options)
   if (value.startsWith('@session/')) return parseStrictReference(value, 'session', options)
   return parseLegacySessionReference(value)
+}
+
+export function parseMessageThreadFileReference(
+  value: string,
+  options: { bindingPresent: boolean; protocolVersion?: number; markdownHref?: boolean },
+): ParsedThreadFileReference | null {
+  if (options.protocolVersion !== undefined && options.protocolVersion !== 1) return null
+  const parsed = parseThreadFileReference(value, { markdownHref: options.markdownHref })
+  if (!parsed) return null
+  if (options.bindingPresent || options.protocolVersion === 1 || parsed.source === 'legacy-session') return parsed
+  return null
 }
 
 function parseStrictReference(
@@ -54,7 +65,7 @@ function parseStrictReference(
   if (isDirectory && lineSelection) return null
   const encodedSegments = encodedPath.split('/')
   if (isDirectory) encodedSegments.pop()
-  if (encodedSegments.length === 0 || encodedSegments.some((segment) => !segment)) return null
+  if (encodedSegments.length === 0 || encodedSegments.length > MAX_PATH_SEGMENTS || encodedSegments.some((segment) => !segment)) return null
 
   const decodedSegments: string[] = []
   for (const encoded of encodedSegments) {
@@ -72,7 +83,6 @@ function parseStrictReference(
       || decoded.includes('/')
       || decoded.includes('\\')
       || /[\0-\x1f\x7f]/.test(decoded)
-      || ENCODED_BYTE.test(decoded)
     ) return null
     decodedSegments.push(decoded)
   }
@@ -88,7 +98,7 @@ function parseStrictReference(
     isDirectory,
     ...(lineSelection ? { lineSelection } : {}),
     protocolReference: value,
-    copyText: `${visiblePath}${lineSuffix}`,
+    copyText: `${source === 'project' ? '项目' : '会话'}/${visiblePath}${lineSuffix}`,
   }
 }
 

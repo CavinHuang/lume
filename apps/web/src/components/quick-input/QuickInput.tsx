@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useAtom, useSetAtom } from 'jotai'
-import { agentThreadsAtom, currentWorkspaceIdAtom } from '@/atoms'
-import { createThread } from '@/lib/desktop-api'
+import { useAtom } from 'jotai'
+import { currentWorkspaceIdAtom } from '@/atoms'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
 import { useWorkspaceBootstrap } from '@/hooks/useWorkspaceBootstrap'
 import { AgentView } from '@/components/agent/AgentView'
+import { WelcomeView } from '@/components/welcome/WelcomeView'
 import {
   createDesktopContextMessageMetadata,
   isLumeShellDesktopContextTarget,
@@ -16,44 +16,19 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { DRAG_REGION, NO_DRAG_REGION } from '@/components/app-shell/app-region'
 import { WindowButtons } from '@/components/app-shell/WindowButtons'
-import { toast } from 'sonner'
 import type { DesktopContextTarget } from '@lume/shared'
 
 /**
  * 快速输入窗口主体：管理 threadId 与 workspace，装配全局监听器，
- * 「新建对话」与 workspace 切换都会重建会话；窗口通过 Alt+L 或窗口按钮关闭。
+ * 首次提交被接收后才建立 thread；窗口通过 Alt+L 或窗口按钮关闭。
  */
 export function QuickInput() {
   useGlobalAgentListeners()
   const workspacesReady = useWorkspaceBootstrap()
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
-  const setAgentThreads = useSetAtom(agentThreadsAtom)
   const [threadId, setThreadId] = useState<string | null>(null)
   const [messageMetadata, setMessageMetadata] = useState<Record<string, unknown> | undefined>()
   const [desktopContextTarget, setDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
-
-  // 创建会话并写入 atom + 本地 threadId。写入 agentThreadsAtom 让 AgentView/AgentInput
-  // 的 thread 解析（workspaceSlug、模型/权限/思考默认值）与主窗口一致。
-  const createAndSetThread = (workspaceId?: string) =>
-    createThread(workspaceId)
-      .then((thread: any) => {
-        const tid = thread?.id ?? null
-        if (tid && thread) {
-          setAgentThreads((prev) => (prev.some((t) => t.id === tid) ? prev : [...prev, thread]))
-        }
-        setThreadId(tid)
-      })
-      .catch((err) => {
-        console.error('[QuickInput] createThread failed:', err)
-        toast.error('创建会话失败')
-      })
-
-  // 项目列表就绪后按持久化选择创建首个会话；null 表示普通会话。
-  useEffect(() => {
-    if (!workspacesReady || threadId) return
-    createAndSetThread(currentWorkspaceId ?? undefined)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacesReady])
 
   useEffect(() => {
     let cancelled = false
@@ -84,12 +59,12 @@ export function QuickInput() {
   }, [])
 
   const handleNewThread = () => {
-    createAndSetThread(currentWorkspaceId ?? undefined)
+    setThreadId(null)
   }
 
   const handleWorkspaceChange = (workspaceId: string | null) => {
     setCurrentWorkspaceId(workspaceId)
-    createAndSetThread(workspaceId ?? undefined)
+    setThreadId(null)
   }
 
   const handleSelectDesktopContextTarget = (target: DesktopContextTarget) => {
@@ -125,7 +100,9 @@ export function QuickInput() {
         </div>
       </header>
       <main className="flex-1 min-h-0 flex min-w-0">
-        {threadId ? (
+        {!workspacesReady ? (
+          <div className="h-full grid flex-1 place-items-center text-[12px] text-muted-foreground">正在加载项目…</div>
+        ) : threadId ? (
           <AgentView
             threadId={threadId}
             messageMetadata={messageMetadata}
@@ -137,7 +114,13 @@ export function QuickInput() {
             onClearDesktopContextTarget={handleClearDesktopContextTarget}
           />
         ) : (
-          <div className="h-full grid place-items-center text-[12px] text-muted-foreground">准备会话…</div>
+          <WelcomeView
+            compact
+            draftSurface="quick-input"
+            workspaceId={currentWorkspaceId ?? undefined}
+            desktopContextTarget={desktopContextTarget}
+            onThreadCreated={(thread) => setThreadId(thread.id)}
+          />
         )}
       </main>
     </div>

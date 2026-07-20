@@ -6,6 +6,12 @@ import { mkdtemp } from "node:fs/promises";
 import { buildNodeReplChildEnv } from "./node-repl-runtime-manager";
 
 describe("node_repl trusted Computer Use runtime", () => {
+  test("never inherits a Wiki privileged credential from a parent environment", () => {
+    const child = buildNodeReplChildEnv({ LUME_WIKI_PRIVILEGED_CREDENTIAL: "secret", KEEP: "value" });
+    expect(child.LUME_WIKI_PRIVILEGED_CREDENTIAL).toBeUndefined();
+    expect(child.KEEP).toBe("value");
+  });
+
   test("grants computerUse only when the bundled trusted client exists", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-node-repl-computer-use-"));
     try {

@@ -37,6 +37,7 @@ function toAgentMessage(
     metadata: record.metadata,
     sdkMessages: record.sdkMessages,
     fileReferenceBinding: record.fileReferenceBinding,
+    fileReferenceProtocolVersion: record.fileReferenceProtocolVersion,
     versionGroupId: record.groupId,
     versionIndex: record.versionIndex,
     versionCount,
@@ -148,7 +149,8 @@ function reconcileSingleVersionStoreFromTranscript(
       model: message.model,
       metadata: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : undefined,
       sdkMessages: message.sdkMessages,
-      fileReferenceBinding: message.fileReferenceBinding
+      fileReferenceBinding: message.fileReferenceBinding,
+      fileReferenceProtocolVersion: message.fileReferenceProtocolVersion
     });
     nextStore.visibleGroupIds.push(groupId);
   }
@@ -434,7 +436,8 @@ export function createAssistantMessageVersion(params: {
       model: params.message.model,
       metadata: params.message.metadata,
       sdkMessages: params.message.sdkMessages,
-      fileReferenceBinding: params.message.fileReferenceBinding
+      fileReferenceBinding: params.message.fileReferenceBinding,
+      fileReferenceProtocolVersion: params.message.fileReferenceProtocolVersion
     };
     const userGroupIndex = store.visibleGroupIds.findIndex((groupIdItem) => {
       const visibleGroup = findGroup(store, groupIdItem);
@@ -466,7 +469,8 @@ export function createAssistantMessageVersion(params: {
     model: params.message.model,
     metadata: params.message.metadata,
     sdkMessages: params.message.sdkMessages,
-    fileReferenceBinding: params.message.fileReferenceBinding
+    fileReferenceBinding: params.message.fileReferenceBinding,
+    fileReferenceProtocolVersion: params.message.fileReferenceProtocolVersion
   };
   store.messages.push(nextRecord);
   group.latestMessageId = messageId;

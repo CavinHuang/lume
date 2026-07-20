@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { getWorkspaceResourcesPath } from "../infra/config-paths";
 import {
   copyFolderToSession,
@@ -30,6 +31,7 @@ import {
   resolveThreadAttachmentPath,
   resolveWorkspaceSlugBySessionId,
   saveFilesToAgentSession,
+  saveFilesToAgentSessionStreamed,
   saveFilesToWorkspaceRoot,
   saveFilesToWorkspace,
   searchAgentWorkspaceFiles,
@@ -222,6 +224,7 @@ describe("agent-files-service file ops", () => {
     const thread = createAgentThread("guarded project", undefined, workspace.id);
     const binding = createFileReferenceBinding(thread.id);
     const guardedRef = {
+      expectedKind: "file" as const,
       ref: { source: "project" as const, scopeId: workspace.slug, relativePath: "bound.txt" },
       guard: {
         kind: "project" as const,
@@ -232,6 +235,7 @@ describe("agent-files-service file ops", () => {
     };
 
     expect(validateGuardedFileRef(guardedRef)).toMatchObject({ ok: true, entry: { name: "bound.txt" } });
+    expect(validateGuardedFileRef({ ...guardedRef, expectedKind: "directory" })).toMatchObject({ ok: false, code: "KIND_MISMATCH" });
     expect(readGuardedFileRef(guardedRef).content).toBe("old");
 
     rmSync(projectPath, { recursive: true, force: true });
@@ -251,6 +255,7 @@ describe("agent-files-service file ops", () => {
     const binding = createFileReferenceBinding(sourceThread.id);
     const fork = createAgentThread("guarded fork", undefined, workspace.id, sourceThread.id, undefined, { fileContextMode: "fork" });
     const guardedRef = {
+      expectedKind: "file" as const,
       ref: { source: "session" as const, scopeId: binding.fileContextId, relativePath: "files/brief.md" },
       guard: {
         kind: "session" as const,
@@ -480,6 +485,35 @@ describe("agent-files-service file ops", () => {
     expect(existsSync(join(sessionDir, "brief.md"))).toBeTrue();
   });
 
+  test("桌面附件应通过流复制并生成稳定 hash", async () => {
+    createTempConfigDir();
+    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-agent-stream-src-"));
+    createdDirs.push(sourceRoot);
+    const sourcePath = join(sourceRoot, "large.bin");
+    const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0x5a);
+    writeFileSync(sourcePath, bytes);
+
+    const [saved] = await saveFilesToAgentSessionStreamed({
+      workspaceSlug: "workspace-stream",
+      threadId: "session-stream",
+      clientSubmissionId: "submission-stream",
+      files: [{
+        id: "attachment-stream",
+        filename: "large.bin",
+        mediaType: "application/octet-stream",
+        size: bytes.byteLength,
+        sourcePath
+      }]
+    });
+
+    expect(saved).toMatchObject({
+      id: "attachment-stream",
+      size: bytes.byteLength,
+      contentHash: createHash("sha256").update(bytes).digest("hex")
+    });
+    expect(existsSync(saved!.targetPath)).toBeTrue();
+  });
+
   test("新 composer 附件不应覆盖会话中的同名文件", () => {
     createTempConfigDir();
     const workspaceSlug = "workspace-unique-attachment";
@@ -520,6 +554,46 @@ describe("agent-files-service file ops", () => {
 
     expect(existsSync(join(sessionDir, "first.md"))).toBeFalse();
     expect(existsSync(join(sessionDir, "missing.md"))).toBeFalse();
+  });
+
+  test("图片声明必须与文件头一致并返回可信元数据", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-image-magic";
+    const sessionId = "session-image-magic";
+
+    expect(() => saveFilesToAgentSession({
+      workspaceSlug,
+      threadId: sessionId,
+      clientSubmissionId: "submission-image-invalid",
+      files: [{
+        id: "attachment-invalid",
+        filename: "fake.png",
+        mediaType: "image/png",
+        size: 4,
+        data: Buffer.from("text").toString("base64")
+      }]
+    })).toThrow("图片内容与类型不匹配");
+
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const [saved] = saveFilesToAgentSession({
+      workspaceSlug,
+      threadId: sessionId,
+      clientSubmissionId: "submission-image-valid",
+      files: [{
+        id: "attachment-valid",
+        filename: "valid.png",
+        mediaType: "image/png",
+        size: pngBytes.byteLength,
+        data: pngBytes.toString("base64")
+      }]
+    });
+
+    expect(saved).toMatchObject({
+      id: "attachment-valid",
+      mediaType: "image/png",
+      size: pngBytes.byteLength
+    });
+    expect(saved?.contentHash).toHaveLength(64);
   });
 
   test("agent 产出文件不应保留旧的外部附加元信息", () => {

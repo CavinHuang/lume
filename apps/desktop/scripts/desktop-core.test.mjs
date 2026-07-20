@@ -219,8 +219,9 @@ test('external URLs are restricted to web and WeRead links', () => {
   assert.equal(validateExternalUrl('https://example.com/path'), 'https://example.com/path')
   assert.equal(validateExternalUrl('http://example.com/path'), 'http://example.com/path')
   assert.equal(validateExternalUrl('weread://reading?bId=123'), 'weread://reading?bId=123')
-  assert.throws(() => validateExternalUrl('file:///tmp/secret'), /only http\/https\/weread urls are allowed/)
-  assert.throws(() => validateExternalUrl('javascript:alert(1)'), /only http\/https\/weread urls are allowed/)
+  assert.equal(validateExternalUrl('obsidian://open?path=C%3A%5Cwiki'), 'obsidian://open?path=C%3A%5Cwiki')
+  assert.throws(() => validateExternalUrl('file:///tmp/secret'), /only http\/https\/weread\/obsidian urls are allowed/)
+  assert.throws(() => validateExternalUrl('javascript:alert(1)'), /only http\/https\/weread\/obsidian urls are allowed/)
 })
 
 test('window behavior resolves platform semantics and tray failure fallbacks', () => {
