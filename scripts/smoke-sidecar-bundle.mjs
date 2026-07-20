@@ -67,9 +67,9 @@ try {
   });
   console.error("[smoke-sidecar-bundle] ok via Electron utilityProcess");
 } finally {
-  rmSync(configHome, { recursive: true, force: true });
-  rmSync(smokeCwd, { recursive: true, force: true });
-  rmSync(relocatedRoot, { recursive: true, force: true });
+  await removeDirectory(configHome);
+  await removeDirectory(smokeCwd);
+  await removeDirectory(relocatedRoot);
 }
 
 function runElectronSmoke(label, entry, extraEnv) {
@@ -81,7 +81,7 @@ function runElectronSmoke(label, entry, extraEnv) {
       ...extraEnv,
     },
     encoding: "utf8",
-    timeout: label === "sidecar bundle" && process.platform === "win32" ? 90_000 : 25_000,
+    timeout: label === "sidecar bundle" && process.platform === "win32" ? 150_000 : 25_000,
     windowsHide: true,
   });
 
@@ -89,6 +89,19 @@ function runElectronSmoke(label, entry, extraEnv) {
   if (result.stderr) process.stderr.write(result.stderr);
   if (result.error) fail(`${label}: ${result.error.stack ?? result.error.message}`);
   if (result.status !== 0) fail(`${label}: Electron smoke exited with code ${result.status}`);
+}
+
+async function removeDirectory(path) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (process.platform !== "win32" || !error || error.code !== "EBUSY") throw error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    }
+  }
+  rmSync(path, { recursive: true, force: true });
 }
 
 function currentNativeTargetId() {

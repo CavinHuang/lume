@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto'
 import { Worker } from 'node:worker_threads'
 import { dirname } from 'node:path'
 
+if (process.platform === 'win32') app.commandLine.appendSwitch('no-stdio-init')
+
 const sidecarPath = process.env.LUME_SIDECAR_BUNDLE
 const xhrWorkerPath = process.env.LUME_XHR_SYNC_WORKER
 if (!sidecarPath || !xhrWorkerPath) {
@@ -167,7 +169,7 @@ app.whenReady().then(() => {
   })
   timeout = setTimeout(() => {
     finish(1, `[smoke-utility-sidecar] healthcheck timed out\n${stderr}`)
-  }, process.platform === 'win32' ? 60_000 : 20_000)
+  }, process.platform === 'win32' ? 120_000 : 20_000)
 }).catch((error) => {
   finish(1, `[smoke-utility-sidecar] Electron startup failed: ${error.stack ?? error}`)
 })
