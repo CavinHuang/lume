@@ -226,7 +226,10 @@ export async function probeProcessSandbox(
   ].join(';')
 
   try {
-    const child = spawnWithProcessSandbox(process.execPath, ['-e', script, allowedFile, outputFile, resolve(input.deniedPath)], {
+    const probeArgs = process.platform === 'win32' && process.versions.electron
+      ? ['--no-stdio-init', '-e', script, allowedFile, outputFile, resolve(input.deniedPath)]
+      : ['-e', script, allowedFile, outputFile, resolve(input.deniedPath)]
+    const child = spawnWithProcessSandbox(process.execPath, probeArgs, {
       cwd: probeDir,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       timeoutMs,
