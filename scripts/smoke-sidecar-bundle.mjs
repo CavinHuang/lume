@@ -73,8 +73,10 @@ try {
 }
 
 function runElectronSmoke(label, entry, extraEnv) {
-  const electronArgs = process.platform === "win32" ? ["--no-stdio-init", entry] : [entry];
-  const result = spawnSync(electronExecutable, electronArgs, {
+  const runWithNode = label === "sidecar bundle" && process.platform === "win32";
+  const runtime = runWithNode ? "node" : electronExecutable;
+  const runtimeArgs = runWithNode ? [entry] : process.platform === "win32" ? ["--no-stdio-init", entry] : [entry];
+  const result = spawnSync(runtime, runtimeArgs, {
     cwd: smokeCwd,
     env: {
       ...process.env,

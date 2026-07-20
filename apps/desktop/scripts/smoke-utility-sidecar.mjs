@@ -1,11 +1,14 @@
-import { app, utilityProcess } from 'electron'
+const runningInElectron = Boolean(process.versions.electron)
+const { app, utilityProcess } = runningInElectron
+  ? await import('electron')
+  : { app: null, utilityProcess: null }
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createInterface } from 'node:readline'
 import { Worker } from 'node:worker_threads'
 import { dirname } from 'node:path'
 
-if (process.platform === 'win32') app.commandLine.appendSwitch('no-stdio-init')
+if (process.platform === 'win32') app?.commandLine.appendSwitch('no-stdio-init')
 
 const sidecarPath = process.env.LUME_SIDECAR_BUNDLE
 const xhrWorkerPath = process.env.LUME_XHR_SYNC_WORKER
@@ -33,7 +36,10 @@ function finish(code, message) {
   if (message) console.error(message)
   child?.kill()
   xhrWorker?.terminate()
-  setImmediate(() => app.exit(code))
+  setImmediate(() => {
+    if (app) app.exit(code)
+    else process.exit(code)
+  })
 }
 
 function finishWhenHealthy() {
@@ -46,7 +52,8 @@ function pollWikiRuntime() {
   child?.postMessage(JSON.stringify({ id: 3, method: 'wiki:get-capabilities', params: null }))
 }
 
-app.whenReady().then(() => {
+const ready = app ? app.whenReady() : Promise.resolve()
+ready.then(() => {
   xhrWorker = new Worker(xhrWorkerPath)
   xhrWorker.once('error', (error) => {
     finish(1, `[smoke-utility-sidecar] XHR worker failed: ${error.stack ?? error}`)
@@ -181,7 +188,7 @@ function spawnSidecar(entry) {
     })
   }
 
-  const processChild = spawn('node', [entry], {
+  const processChild = spawn(runningInElectron ? 'node' : process.execPath, [entry], {
     cwd: dirname(entry),
     env: {
       ...process.env,
