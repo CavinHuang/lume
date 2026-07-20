@@ -64,6 +64,7 @@ try {
     LUME_CONFIG_DIR: configHome,
     LUME_DEFAULT_SKILLS_ARCHIVE: resolve(relocatedResourcesDir, "default-skills.tar"),
     LUME_LOG_CONSOLE: "true",
+    LUME_ELECTRON_EXECUTABLE: electronExecutable,
   });
   console.error("[smoke-sidecar-bundle] ok via Electron utilityProcess");
 } finally {
