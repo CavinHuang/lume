@@ -81,6 +81,7 @@ import {
   resolveFileProtocolPath,
   validateIpcSender,
   validateRendererInvokeCommand,
+  validateRendererSidecarMethod,
 } from './electron-security'
 import {
   createPreviewScopeRegistry,
@@ -89,6 +90,11 @@ import {
   previewScopeUrl,
   previewTokenFromUrl,
 } from './file-protocol'
+import {
+  createPluginAssetRegistry,
+  pluginAssetTokenFromUrl,
+  scopePluginAssetUrls,
+} from './plugin-asset-registry'
 import {
   createUtilityProcessSidecarForkConfig,
   getDesktopHostBinaryPath,
@@ -150,6 +156,7 @@ const DESKTOP_CONTEXT_SET_SUSPENDED_METHOD = 'desktop-context:set-suspended'
 const DESKTOP_CONTEXT_CAPTURE_METHOD = 'desktop-context:capture-current'
 const DESKTOP_CONTEXT_GET_FOREGROUND_TARGET_METHOD = 'desktop-context:get-foreground-target'
 const previewScopes = createPreviewScopeRegistry()
+const pluginAssets = createPluginAssetRegistry()
 const attachmentStages = new AttachmentStageRegistry({
   rootDir: join(app.getPath('temp'), 'lume-attachment-staging'),
 })
@@ -652,11 +659,16 @@ function registerFileProtocol() {
   if (!previewOwnershipGateRegistered) {
     previewOwnershipGateRegistered = true
     session.defaultSession.webRequest.onBeforeRequest(
-      { urls: [`${FILE_PROTOCOL}://preview/*`, `${FILE_PROTOCOL}://attachment/*`] },
+      { urls: [`${FILE_PROTOCOL}://preview/*`, `${FILE_PROTOCOL}://attachment/*`, `${FILE_PROTOCOL}://plugin-asset/*`] },
       (details, callback) => {
         if (details.url.startsWith(`${FILE_PROTOCOL}://attachment/`)) {
           const stagedAttachmentId = attachmentStageIdFromPreviewUrl(details.url)
           callback({ cancel: !stagedAttachmentId || !attachmentStages.owns(stagedAttachmentId, details.webContentsId) })
+          return
+        }
+        if (details.url.startsWith(`${FILE_PROTOCOL}://plugin-asset/`)) {
+          const token = pluginAssetTokenFromUrl(details.url)
+          callback({ cancel: !token || !pluginAssets.owns(token, details.webContentsId) })
           return
         }
         const token = previewTokenFromUrl(details.url)
@@ -665,6 +677,19 @@ function registerFileProtocol() {
     )
   }
   protocol.handle(FILE_PROTOCOL, async (request) => {
+    if (request.url.startsWith(`${FILE_PROTOCOL}://plugin-asset/`)) {
+      const token = pluginAssetTokenFromUrl(request.url)
+      const asset = token ? pluginAssets.get(token) : undefined
+      if (!asset) return new Response('Not Found', { status: 404 })
+      return new Response(new Uint8Array(asset.bytes), {
+        headers: {
+          'cache-control': 'no-store',
+          'content-security-policy': "default-src 'none'; sandbox",
+          'content-type': asset.mediaType,
+          'x-content-type-options': 'nosniff',
+        },
+      })
+    }
     if (request.url.startsWith(`${FILE_PROTOCOL}://attachment/`)) {
       const stagedAttachmentId = attachmentStageIdFromPreviewUrl(request.url)
       const stage = stagedAttachmentId ? attachmentStages.preview(stagedAttachmentId) : null
@@ -886,7 +911,10 @@ export function attachWebContentsSecurity(win, { allowNavigation }) {
     if (isAllowedPreviewFrameNavigation(previewScopes, url, win.webContents.id)) return
     event.preventDefault()
   })
-  win.webContents.once('destroyed', () => previewScopes.revokeOwner(ownerWebContentsId))
+  win.webContents.once('destroyed', () => {
+    previewScopes.revokeOwner(ownerWebContentsId)
+    pluginAssets.revokeOwner(ownerWebContentsId)
+  })
 
   win.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false)
@@ -1116,14 +1144,15 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'sidecar_healthcheck':
       return sidecarHost.call('healthcheck', null)
     case 'sidecar_call': {
-      if (typeof payload.method === 'string' && (payload.method.startsWith('wiki:privileged-') || payload.method === 'system.wiki-privileged-credential')) {
-        throw new Error('Wiki privileged RPC is not available through sidecar_call')
-      }
+      validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {
         const params = payload.method === 'agent:save-files-to-thread'
           ? resolveStagedAttachmentParams(payload.params, context.ownerWebContentsId)
           : payload.params ?? null
-        return sidecarHost.call(payload.method, params)
+        const result = await sidecarHost.call(payload.method, params)
+        return context.ownerWebContentsId === undefined
+          ? result
+          : scopePluginAssetUrls(pluginAssets, payload.method, result, context.ownerWebContentsId)
       }
       const origin = resolveRendererTraceOrigin(context.ownerWebContentsId)
       const incoming = payload.params && typeof payload.params === 'object' ? payload.params : {}
@@ -1150,6 +1179,112 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       })
       const result = await sidecarHost.call(payload.method, { ...incoming, traceContext }, traceContext)
       return { ...(result && typeof result === 'object' ? result : {}), traceId, submissionId }
+    }
+    case 'desktop:save-plugin-package': {
+      requireMainWindowSender(context, command)
+      const input = payload && typeof payload === 'object' ? payload : {}
+      if (typeof input.workspaceSlug !== 'string' || typeof input.catalogItemKey !== 'string' || typeof input.setupStepId !== 'string') {
+        throw new Error('invalid plugin package request')
+      }
+      if (!mainWindow || mainWindow.isDestroyed() || context.ownerWebContentsId === undefined) throw new Error('main window unavailable')
+      const ownerWebContentsId = context.ownerWebContentsId
+      const ownerGeneration = mainWindowLifecycle.getGeneration()
+      const owner = { ownerWebContentsId, ownerGeneration }
+      const prepared = await sidecarHost.callPluginPackagePrivileged('plugin-package:privileged-prepare', { ...input, ...owner }) as {
+        token: string
+        kind: 'file' | 'directory'
+        suggestedFilename: string
+        size: number
+        source: string
+        verification: 'verified' | 'unverified'
+        sha256: string
+        finalOrigin?: string
+        originChanged?: boolean
+      }
+      let consumed = false
+      const revoke = async () => {
+        if (consumed) return
+        await sidecarHost.callPluginPackagePrivileged('plugin-package:privileged-revoke', { token: prepared.token, ...owner }).catch(() => undefined)
+      }
+      try {
+        if (prepared.verification === 'unverified' || prepared.originChanged) {
+          const warning = await dialog.showMessageBox(mainWindow, {
+            type: 'warning',
+            title: prepared.verification === 'unverified' ? '未验证的配套包' : '下载来源已跳转',
+            message: prepared.verification === 'unverified'
+              ? '该配套包没有可校验的 SHA-256。是否仍要保存？'
+              : '配套包下载跳转到了其他站点。是否仍要保存已校验的文件？',
+            detail: `来源：${prepared.finalOrigin ?? prepared.source}\nSHA-256：${prepared.sha256}\n大小：${prepared.size} 字节`,
+            buttons: ['取消', '继续保存'],
+            defaultId: 0,
+            cancelId: 0,
+            noLink: true,
+          })
+          if (warning.response !== 1) {
+            await revoke()
+            return { status: 'cancelled' }
+          }
+        }
+
+        let targetPath
+        let overwrite = false
+        if (prepared.kind === 'file') {
+          const selected = await dialog.showSaveDialog(mainWindow, {
+            title: '保存插件配套包',
+            defaultPath: prepared.suggestedFilename,
+            properties: ['createDirectory', 'showOverwriteConfirmation'],
+          })
+          if (selected.canceled || !selected.filePath) {
+            await revoke()
+            return { status: 'cancelled' }
+          }
+          targetPath = selected.filePath
+          overwrite = existsSync(targetPath)
+        } else {
+          const selected = await dialog.showOpenDialog(mainWindow, {
+            title: '选择插件包导出位置',
+            properties: ['openDirectory', 'createDirectory'],
+          })
+          if (selected.canceled || !selected.filePaths[0]) {
+            await revoke()
+            return { status: 'cancelled' }
+          }
+          targetPath = join(selected.filePaths[0], prepared.suggestedFilename)
+          if (existsSync(targetPath)) {
+            const confirmation = await dialog.showMessageBox(mainWindow, {
+              type: 'warning',
+              title: '替换已有目录',
+              message: `“${prepared.suggestedFilename}”已存在，是否整体替换？`,
+              detail: '原目录会在新目录完整写入后被替换。',
+              buttons: ['取消', '整体替换'],
+              defaultId: 0,
+              cancelId: 0,
+              noLink: true,
+            })
+            if (confirmation.response !== 1) {
+              await revoke()
+              return { status: 'cancelled' }
+            }
+            overwrite = true
+          }
+        }
+
+        if (!mainWindowLifecycle.isCurrent(ownerGeneration) || mainWindow.isDestroyed() || mainWindow.webContents.id !== ownerWebContentsId) {
+          await revoke()
+          return { status: 'cancelled' }
+        }
+        const saved = await sidecarHost.callPluginPackagePrivileged('plugin-package:privileged-finalize', {
+          token: prepared.token,
+          ...owner,
+          targetPath,
+          overwrite,
+        }) as { savedPath: string }
+        consumed = true
+        return { status: 'saved', savedPath: saved.savedPath, verification: prepared.verification }
+      } catch (error) {
+        await revoke()
+        throw error
+      }
     }
     case 'desktop_wiki_get_proposal_summary':
       requireMainWindowSender(context, command)
@@ -1973,6 +2108,15 @@ function createSidecarHost({ onNotification }) {
     return call(method, { credential: wikiPrivilegedCredential, request })
   }
 
+  async function callPluginPackagePrivileged(method, request) {
+    await start()
+    if (!wikiPrivilegedCredential) throw new Error('Plugin package privileged channel unavailable')
+    if (typeof method !== 'string' || !method.startsWith('plugin-package:privileged-')) {
+      throw new Error('Invalid plugin package privileged method')
+    }
+    return call(method, { credential: wikiPrivilegedCredential, request })
+  }
+
   async function stop() {
     if (!child || child.pid === undefined) return
     stopRequested = true
@@ -1998,6 +2142,7 @@ function createSidecarHost({ onNotification }) {
     start,
     call,
     callWikiPrivileged,
+    callPluginPackagePrivileged,
     stop,
   }
 }
@@ -2010,6 +2155,7 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
     event.sender.once('destroyed', () => {
       attachmentStageOwners.delete(ownerWebContentsId)
       attachmentStages.cleanupOwner(ownerWebContentsId)
+      pluginAssets.revokeOwner(ownerWebContentsId)
     })
   }
   return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId })

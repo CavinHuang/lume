@@ -14,14 +14,15 @@ import {
 } from './InfographicBlock'
 
 describe('InfographicBlock export helpers', () => {
-  test('keeps the AntV container measurable before the first successful render', () => {
+  test('renders directly into a measurable AntV container without flashing DSL source', () => {
     const html = renderToStaticMarkup(createElement(InfographicBlock, {
       code: 'infographic list-grid-badge-card',
       streaming: true,
     }))
 
     expect(html).toContain('aria-label="信息图预览"')
-    expect(html).toContain('opacity-0')
+    expect(html).toContain('aria-hidden="false" class="overflow-auto')
+    expect(html).not.toContain('<pre')
     expect(html).not.toContain(' hidden=""')
   })
 

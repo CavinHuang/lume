@@ -4,6 +4,7 @@ const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'healthcheck',
   'sidecar_healthcheck',
   'sidecar_call',
+  'desktop:save-plugin-package',
   'desktop_wiki_get_proposal_summary',
   'desktop_wiki_apply_draft',
   'desktop_wiki_resolve_pending',

@@ -44,6 +44,7 @@ import {
   updatePlugin,
   updatePluginsConfig,
   writeClipboardText,
+  savePluginPackage,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import type {
@@ -78,6 +79,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PluginDetailPage } from './PluginDetailPage'
 import { BridgeInstallWizard } from './BridgeInstallWizard'
+import { PluginLogo } from './PluginLogo'
 import { bridgeWizardOpenAtom, bridgeWizardPluginAtom } from '@/atoms'
 type SkillVisualTone = 'violet' | 'mint' | 'figma' | 'green' | 'blue' | 'orange'
 
@@ -121,7 +123,9 @@ export function SkillsMarketView() {
   const [skills, setSkills] = useState<SkillCatalogItem[]>([])
   const [plugins, setPlugins] = useState<PluginMarketItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [syncNotice, setSyncNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('全部分类')
   const [source, setSource] = useState('全部来源')
@@ -137,7 +141,7 @@ export function SkillsMarketView() {
   const [pluginDetailError, setPluginDetailError] = useState<string | null>(null)
   const [pluginDetail, setPluginDetail] = useState<GetMarketDetailResult | null>(null)
 
-  const loadCatalog = useCallback(async () => {
+  const loadCatalog = useCallback(async (cacheMode: 'cache-first' | 'force-refresh' = 'cache-first', background = false) => {
     if (!workspaceSlug) {
       setSkills([])
       setPlugins([])
@@ -145,19 +149,34 @@ export function SkillsMarketView() {
       return
     }
 
-    setLoading(true)
+    if (background) setSyncing(true)
+    else setLoading(true)
     setError(null)
     try {
-      const result = await getMarketCatalog({ workspaceSlug })
+      const result = await getMarketCatalog({ workspaceSlug, cacheMode })
       setSkills(result.skills)
       setPlugins(result.plugins)
-      setLastSyncedAt(Date.now())
+      setLastSyncedAt(result.syncedAt ? Date.parse(result.syncedAt) : null)
+      setSyncNotice(
+        result.status === 'failed-with-stale' || result.status === 'stale'
+          ? '远程同步失败，当前继续使用上次成功的数据。'
+          : result.status === 'partial'
+            ? '部分市场源同步失败，其余内容仍可正常使用。'
+            : null,
+      )
+      if (result.refreshRecommended && cacheMode === 'cache-first') void loadCatalog('force-refresh', true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      setSkills([])
-      setPlugins([])
+      const message = err instanceof Error ? err.message : String(err)
+      if (background) {
+        setSyncNotice(`同步失败，当前内容保持不变：${message}`)
+      } else {
+        setError(message)
+        setSkills([])
+        setPlugins([])
+      }
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
+      else setSyncing(false)
     }
   }, [workspaceSlug])
 
@@ -243,7 +262,8 @@ export function SkillsMarketView() {
         const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: marketItem.id })
         setPluginDetail(refreshed)
         if (refreshed.item.kind === 'plugin') {
-          setSelectedPlugin(refreshed.item.plugin)
+          const refreshedPlugin = refreshed.item.plugin
+          setSelectedPlugin((current) => ({ ...refreshedPlugin, catalogItemKey: current?.catalogItemKey }))
         }
       } else {
         await installMarketItem({
@@ -280,7 +300,8 @@ export function SkillsMarketView() {
       const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: marketItem.id })
       setPluginDetail(refreshed)
       if (refreshed.item.kind === 'plugin') {
-        setSelectedPlugin(refreshed.item.plugin)
+        const refreshedPlugin = refreshed.item.plugin
+        setSelectedPlugin((current) => ({ ...refreshedPlugin, catalogItemKey: current?.catalogItemKey }))
       }
       await loadCatalog()
     } catch (err) {
@@ -337,7 +358,8 @@ export function SkillsMarketView() {
       const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: marketItem.id })
       setPluginDetail(refreshed)
       if (refreshed.item.kind === 'plugin') {
-        setSelectedPlugin(refreshed.item.plugin)
+        const refreshedPlugin = refreshed.item.plugin
+        setSelectedPlugin((current) => ({ ...refreshedPlugin, catalogItemKey: current?.catalogItemKey }))
       }
       await loadCatalog()
     } catch (err) {
@@ -388,12 +410,42 @@ export function SkillsMarketView() {
     setPluginDetail(null)
     setError(null)
     try {
-      setPluginDetail(await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: item.id }))
+      const detail = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: item.id })
+      if (detail.item.kind === 'plugin') {
+        detail.item.plugin = {
+          ...detail.item.plugin,
+          catalogItemKey: item.catalogItemKey,
+          marketplace: detail.item.plugin.marketplace
+            ? {
+                ...detail.item.plugin.marketplace,
+                icon: detail.item.plugin.marketplace.icon?.url
+                  ? detail.item.plugin.marketplace.icon
+                  : item.marketplace?.icon,
+              }
+            : item.marketplace,
+        }
+      }
+      setPluginDetail(detail)
     } catch (err) {
       setPluginDetailError(err instanceof Error ? err.message : String(err))
       setPluginDetail({ item: { kind: 'plugin', plugin: item }, diagnostics: item.diagnostics ?? [] })
     } finally {
       setPluginDetailLoading(false)
+    }
+  }
+
+  const handlePreparePackage = async (setupStepId: string) => {
+    const item = selectedPlugin
+    if (!workspaceSlug || !item?.catalogItemKey) return
+    setBusyItemId(`package:${setupStepId}`)
+    setPluginDetailError(null)
+    try {
+      const result = await savePluginPackage({ workspaceSlug, catalogItemKey: item.catalogItemKey, setupStepId })
+      if (result.status === 'saved') toast.success(`配套包已保存${result.savedPath ? `：${result.savedPath}` : ''}`)
+    } catch (err) {
+      setPluginDetailError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyItemId(null)
     }
   }
 
@@ -453,6 +505,7 @@ export function SkillsMarketView() {
         onUninstall={() => void handleUninstallPluginFromDetail()}
         onToggleEnable={() => void handleTogglePluginFromDetail()}
         onTryInChat={handleTryPluginInChat}
+        onPreparePackage={handlePreparePackage}
         onRollback={() => void handleRollbackPluginFromDetail()}
       />
     )
@@ -514,6 +567,7 @@ export function SkillsMarketView() {
             ) : (
               <MarketCardGrid
                 cards={cards}
+                notice={syncNotice}
                 activeKind={activeKind}
                 busyItemId={busyItemId}
                 onAction={(card) => {
@@ -529,12 +583,12 @@ export function SkillsMarketView() {
           </main>
 
           <SkillSourcePanel
-            loading={loading}
+            loading={loading || syncing}
             sources={sourceViews}
             summary={summary}
             lastSyncedAt={lastSyncedAt}
             onAddSource={() => setSourceDialogOpen(true)}
-            onSync={() => void loadCatalog()}
+            onSync={() => void loadCatalog('force-refresh', true)}
           />
         </div>
       </div>
@@ -619,12 +673,14 @@ function MarketSelect({
 
 function MarketCardGrid({
   cards,
+  notice,
   activeKind,
   busyItemId,
   onAction,
   onOpenDetail,
 }: {
   cards: MarketDisplayCard[]
+  notice: string | null
   activeKind: MarketCardKind
   busyItemId: string | null
   onAction: (card: MarketDisplayCard) => void
@@ -632,6 +688,11 @@ function MarketCardGrid({
 }) {
   return (
     <section className="mt-6 grid min-h-0 content-start grid-cols-3 gap-5 overflow-y-auto pr-2 pb-2">
+      {notice && (
+        <div className="col-span-3 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-warning)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-warning)_7%,var(--surface-1))] px-3 py-2 text-[12px] text-[var(--text-2)]">
+          {notice}
+        </div>
+      )}
       {cards.map((card) => (
         <MarketCard
           key={`${card.kind}:${card.id}`}
@@ -664,6 +725,7 @@ function MarketCard({
   onOpenDetail: () => void
 }) {
   const Icon = card.icon
+  const plugin = card.kind === 'plugin' ? card.item as PluginMarketItem : null
   const installed = card.installState === 'installed'
   const skillActionable = card.kind === 'skill' && (installed || isInstallableSkillMarketItem(card.item as SkillCatalogItem))
   const pluginActionable = card.kind === 'plugin'
@@ -684,7 +746,7 @@ function MarketCard({
     >
       <div className="flex min-w-0 items-center gap-3">
         <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-[8px]', iconToneClass(card.tone))}>
-          <Icon size={21} strokeWidth={2.2} />
+          {plugin ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-6" /> : <Icon size={21} strokeWidth={2.2} />}
         </div>
         <h2 className="min-w-0 flex-1 truncate text-[16px] font-semibold leading-6 text-[var(--text-1)]" title={card.name}>
           {card.name}

@@ -17,7 +17,7 @@ export function CapabilityMentionNodeView({ node }: NodeViewProps) {
         title={uri}
         data-capability-uri={uri}
       >
-        {isPlugin && iconUrl && !iconFailed ? (
+        {iconUrl && !iconFailed ? (
           <img
             src={iconUrl}
             alt=""

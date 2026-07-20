@@ -1,6 +1,6 @@
 {
   "name": "@lume/desktop",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "Lume desktop shell powered by Electron",
   "author": "Lume Team",

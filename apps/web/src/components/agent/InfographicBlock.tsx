@@ -249,7 +249,7 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
   }
 
   const hasRendered = hasSuccessfulRenderRef.current
-  const showSource = !hasRendered || (status === 'error' && !streaming)
+  const showSource = !hasRendered && status === 'error' && !streaming
   const canExport = hasRendered && status === 'ready'
 
   return (

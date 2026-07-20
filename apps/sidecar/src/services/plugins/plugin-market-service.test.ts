@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,6 +9,7 @@ import { PluginRegistry } from "../agent-runtime/plugins/plugin-registry";
 import { getLumeConfigYamlPath } from "../infra/config-paths";
 import { getEffectivePluginRuntimeConfig } from "../system/lume-config-service";
 import {
+  clearPluginMarketInMemoryCatalogLeasesForTest,
   PluginMarketError,
   PluginMarketService
 } from "./plugin-market-service";
@@ -37,20 +38,25 @@ function makeService(root: string, fetchImpl?: typeof fetch) {
 
 describe("PluginMarketService", () => {
   let prevHome: string | undefined;
+  let prevUserProfile: string | undefined;
   let prevConfigDir: string | undefined;
   let root = "";
 
   beforeEach(() => {
     prevHome = process.env.HOME;
+    prevUserProfile = process.env.USERPROFILE;
     prevConfigDir = process.env.LUME_CONFIG_DIR;
     root = mkdtempSync(join(tmpdir(), "lume-plugin-market-"));
     process.env.HOME = root;
+    process.env.USERPROFILE = root;
     process.env.LUME_CONFIG_DIR = join(root, "config");
   });
 
   afterEach(() => {
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;
+    if (prevUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevUserProfile;
     if (prevConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
     else process.env.LUME_CONFIG_DIR = prevConfigDir;
     if (root) rmSync(root, { recursive: true, force: true });
@@ -703,6 +709,77 @@ describe("PluginMarketService", () => {
     });
   });
 
+  test("prepares and saves a declared local companion package by opaque catalog key", async () => {
+    const pluginRoot = join(root, "source", "package-plugin");
+    const indexPath = join(root, "market.json");
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "package-plugin",
+      version: "1.0.0",
+      marketplace: {
+        setup: [{
+          id: "save-extension",
+          title: "Save extension",
+          description: "Export the Chrome extension package.",
+          artifact: { path: "./packages/extension.zip", kind: "chrome-extension" }
+        }]
+      }
+    });
+    await mkdir(join(pluginRoot, "packages"), { recursive: true });
+    await writeFile(join(pluginRoot, "packages", "extension.zip"), "extension-bytes", "utf-8");
+    await writeJson(indexPath, {
+      items: [{ kind: "plugin", id: "package-plugin", source: { type: "local", path: pluginRoot } }]
+    });
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [DISABLED_OFFICIAL_MARKET_SOURCE, { id: "local-market", name: "Local", kind: "local-index", path: indexPath, enabled: true }]
+      }
+    }), "utf-8");
+    const service = makeService(root);
+    const catalog = await service.getMarketCatalog({ workspaceSlug: "default" });
+    const item = catalog.plugins.find((plugin) => plugin.pluginId === "package-plugin");
+    expect(item?.catalogItemKey).toBeTruthy();
+    clearPluginMarketInMemoryCatalogLeasesForTest();
+
+    const prepared = await service.preparePluginPackage({
+      workspaceSlug: "default",
+      catalogItemKey: item!.catalogItemKey!,
+      setupStepId: "save-extension",
+      ownerWebContentsId: 11,
+      ownerGeneration: 2,
+    });
+    const target = join(root, "exported", "extension.zip");
+    await service.finalizePluginPackage({
+      token: prepared.token,
+      ownerWebContentsId: 11,
+      ownerGeneration: 2,
+      targetPath: target,
+    });
+    expect(readFileSync(target, "utf8")).toBe("extension-bytes");
+
+    await writeJson(join(pluginRoot, "lume-plugin.json"), {
+      schema: "lume-plugin/v1",
+      name: "package-plugin",
+      version: "1.0.1",
+      marketplace: {
+        setup: [{
+          id: "save-extension",
+          title: "Save extension",
+          description: "Export the Chrome extension package.",
+          artifact: { path: "./packages/extension.zip", kind: "chrome-extension" }
+        }]
+      }
+    });
+    await expect(service.preparePluginPackage({
+      workspaceSlug: "default",
+      catalogItemKey: item!.catalogItemKey!,
+      setupStepId: "save-extension",
+      ownerWebContentsId: 11,
+      ownerGeneration: 2,
+    })).rejects.toThrow(/内容已变化/);
+  });
+
   test("plugin detail tolerates missing README", async () => {
     const pluginRoot = join(root, "source", "missing-readme-plugin");
     const indexPath = join(root, "market.json");
@@ -828,7 +905,7 @@ describe("PluginMarketService", () => {
     expect(inspected.normalized.manifestFormat).toBe("codex");
   });
 
-  test("remote marketplace still lists plugins when GitHub metadata APIs are rate limited", async () => {
+  test("remote marketplace pins the default branch to a commit snapshot", async () => {
     writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
       version: 1,
       plugins: {
@@ -839,21 +916,28 @@ describe("PluginMarketService", () => {
       }
     }), "utf-8");
 
+    const sha = "a".repeat(40);
     const fetchImpl = (async (url: string) => {
-      if (url === "https://api.github.com/repos/acme/market" || url.includes("/git/trees/main")) {
-        return new Response("rate limited", { status: 403 });
+      if (url === "https://api.github.com/repos/acme/market") {
+        return Response.json({ default_branch: "main" });
       }
-      if (url === "https://raw.githubusercontent.com/acme/market/main/.lume-plugin/marketplace.json") {
+      if (url === "https://api.github.com/repos/acme/market/commits/main") {
+        return Response.json({ sha });
+      }
+      if (url === `https://raw.githubusercontent.com/acme/market/${sha}/.lume-plugin/marketplace.json`) {
         return new Response(JSON.stringify({
           plugins: [
             { name: "remote-plugin", description: "Remote plugin", source: "./plugins/remote-plugin" }
           ]
         }), { status: 200 });
       }
-      if (url === "https://raw.githubusercontent.com/acme/market/main/plugins/remote-plugin/.lume-plugin/plugin.json") {
+      if (url.includes(`/git/trees/${sha}`)) {
+        return Response.json({ tree: [{ path: "plugins/remote-plugin/lume-plugin.json", type: "blob" }] });
+      }
+      if (url === `https://raw.githubusercontent.com/acme/market/${sha}/plugins/remote-plugin/.lume-plugin/plugin.json`) {
         return new Response("missing", { status: 404 });
       }
-      if (url === "https://raw.githubusercontent.com/acme/market/main/plugins/remote-plugin/lume-plugin.json") {
+      if (url === `https://raw.githubusercontent.com/acme/market/${sha}/plugins/remote-plugin/lume-plugin.json`) {
         return new Response(JSON.stringify({
           schema: "lume-plugin/v1",
           name: "remote-plugin",
@@ -868,6 +952,53 @@ describe("PluginMarketService", () => {
 
     expect(catalog.plugins.map((plugin) => plugin.pluginId)).toEqual(["remote-plugin"]);
     expect(catalog.plugins[0]?.installState).toBe("not-installed");
+    expect(catalog.syncedAt).toBeTruthy();
+  });
+
+  test("reuses the persisted remote snapshot without reinspecting plugins", async () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [
+          DISABLED_OFFICIAL_MARKET_SOURCE,
+          { id: "cached-market", name: "Cached", kind: "remote-index", url: "https://github.com/acme/cached", enabled: true }
+        ]
+      }
+    }), "utf-8");
+    const sha = "b".repeat(40);
+    let fetchCount = 0;
+    const fetchImpl = (async (url: string) => {
+      fetchCount++;
+      if (url === "https://api.github.com/repos/acme/cached") return Response.json({ default_branch: "main" });
+      if (url === "https://api.github.com/repos/acme/cached/commits/main") return Response.json({ sha });
+      if (url === `https://raw.githubusercontent.com/acme/cached/${sha}/.lume-plugin/marketplace.json`) {
+        return Response.json({ plugins: [{ name: "cached-plugin", source: "./plugins/cached-plugin" }] });
+      }
+      if (url.includes(`/git/trees/${sha}`)) {
+        return Response.json({ tree: [{ path: "plugins/cached-plugin/lume-plugin.json", type: "blob" }] });
+      }
+      if (url === `https://raw.githubusercontent.com/acme/cached/${sha}/plugins/cached-plugin/lume-plugin.json`) {
+        return Response.json({ schema: "lume-plugin/v1", name: "cached-plugin", version: "1.0.0" });
+      }
+      return new Response("unexpected", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const first = await makeService(root, fetchImpl).getMarketCatalog({ workspaceSlug: "default", cacheMode: "force-refresh" });
+    expect(first.plugins.map((plugin) => plugin.pluginId)).toEqual(["cached-plugin"]);
+    const cacheDirectory = join(root, ".lume", "cache", "market-snapshots", "v1");
+    const currentPointer = readdirSync(cacheDirectory).find((name) => name.endsWith(".current"));
+    expect(currentPointer).toBeTruthy();
+    writeFileSync(join(cacheDirectory, currentPointer!), "interrupted-pointer-write", "utf8");
+    const firstFetchCount = fetchCount;
+    const failFetch = (async () => {
+      fetchCount++;
+      throw new Error("cache miss");
+    }) as unknown as typeof fetch;
+    const second = await makeService(root, failFetch).getMarketCatalog({ workspaceSlug: "default" });
+
+    expect(second.plugins.map((plugin) => plugin.pluginId)).toEqual(["cached-plugin"]);
+    expect(fetchCount).toBe(firstFetchCount);
+    expect(second.status).toBe("fresh");
   });
 
   test("github install reports tarball download failures", async () => {

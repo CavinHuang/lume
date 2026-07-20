@@ -334,7 +334,7 @@ function getMentionSectionLabel(section: MentionItem['section']): string {
 
 function MentionItemIcon({ item }: { item: MentionItem }) {
   const [failed, setFailed] = useState(false)
-  if (item.type === 'plugin' && item.iconUrl && !failed) {
+  if (item.iconUrl && !failed) {
     return <img src={item.iconUrl} alt="" className="size-4 rounded object-contain" onError={() => setFailed(true)} />
   }
   if (item.type === 'plugin') return <Package size={16} />

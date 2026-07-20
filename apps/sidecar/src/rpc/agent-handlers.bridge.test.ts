@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS } from '@lume/shared'
 import type { PlanModePhaseTracker } from '../services/agent/plan-mode-phase-tracker'
 import { createAgentHandlers } from './agent-handlers'
 
@@ -51,39 +51,18 @@ describe('agent handlers plugin bridge', () => {
     ).rejects.toThrow(/本地地址/)
   })
 
-  test('EXPORT_PLUGIN_ARTIFACT 导出已存在的产物', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'lume-bridge-rpc-'))
-    setHome(home)
-    const artifactDir = join(home, '.lume', 'plugins', 'demo', '1.0.0')
-    mkdirSync(artifactDir, { recursive: true })
-    writeFileSync(join(artifactDir, 'ext.zip'), 'bytes')
+  test('配套包准备接口拒绝无效主进程凭证', async () => {
+    setHome(mkdtempSync(join(tmpdir(), 'lume-package-rpc-')))
     const handlers = makeHandlers()
-    const result = await handlers[AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT]!({
-      pluginId: 'demo',
-      version: '1.0.0',
-      artifactPath: './ext.zip',
-      destDir: join(home, 'out'),
-    }) as { savedPath: string }
-    expect(result.savedPath).toContain('ext.zip')
+    await expect(handlers[PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.PREPARE]!({
+      credential: 'renderer-controlled',
+      request: {
+        workspaceSlug: 'default',
+        catalogItemKey: 'opaque-catalog-key',
+        setupStepId: 'save-package',
+        ownerWebContentsId: 7,
+        ownerGeneration: 1,
+      },
+    })).rejects.toThrow(/PRIVILEGED/)
   })
-
-  test('EXPORT_PLUGIN_ARTIFACT 拒绝 pluginId 含 ..', async () => {
-    setHome(mkdtempSync(join(tmpdir(), 'lume-bridge-rpc-')))
-    const handlers = makeHandlers()
-    await expect(
-      handlers[AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT]!({
-        pluginId: '..', version: '1.0.0', artifactPath: './ext.zip',
-      }),
-    ).rejects.toThrow(/非法 pluginId|\.\. 序列/);
-  });
-
-  test('EXPORT_PLUGIN_ARTIFACT 拒绝 artifactPath 含 ..', async () => {
-    setHome(mkdtempSync(join(tmpdir(), 'lume-bridge-rpc-')))
-    const handlers = makeHandlers()
-    await expect(
-      handlers[AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT]!({
-        pluginId: 'demo', version: '1.0.0', artifactPath: '../../../etc/passwd',
-      }),
-    ).rejects.toThrow(/相对路径|\.\./);
-  });
 })

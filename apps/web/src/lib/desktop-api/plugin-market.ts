@@ -16,14 +16,13 @@ import {
   type UninstallPluginResult,
   type UpdatePluginInput,
   type UpdatePluginResult,
-  type ExportPluginArtifactInput,
-  type ExportPluginArtifactResult,
-  type DownloadBridgeAssetInput,
-  type DownloadBridgeAssetResult,
   type CheckBridgeStatusInput,
   type CheckBridgeStatusResult,
+  type PreparePluginPackageInput,
+  type SavePluginPackageResult,
 } from '@lume/shared'
 import { sidecarCall } from './system'
+import { invoke } from '@/lib/desktop-runtime/core'
 
 export const getMarketCatalog = (input: GetMarketCatalogInput) =>
   sidecarCall<GetMarketCatalogResult>(AGENT_IPC_CHANNELS.GET_MARKET_CATALOG, input)
@@ -49,11 +48,8 @@ export const setPluginEnablement = (input: SetPluginEnablementInput) =>
 export const setPluginActiveVersion = (input: SetPluginActiveVersionInput) =>
   sidecarCall<SetPluginActiveVersionResult>(AGENT_IPC_CHANNELS.SET_PLUGIN_ACTIVE_VERSION, input)
 
-export const exportPluginArtifact = (input: ExportPluginArtifactInput) =>
-  sidecarCall<ExportPluginArtifactResult>(AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT, input)
-
-export const downloadBridgeAsset = (input: DownloadBridgeAssetInput) =>
-  sidecarCall<DownloadBridgeAssetResult>(AGENT_IPC_CHANNELS.DOWNLOAD_BRIDGE_ASSET, input)
-
 export const checkBridgeStatus = (input: CheckBridgeStatusInput) =>
   sidecarCall<CheckBridgeStatusResult>(AGENT_IPC_CHANNELS.CHECK_BRIDGE_STATUS, input)
+
+export const savePluginPackage = (input: PreparePluginPackageInput) =>
+  invoke<SavePluginPackageResult>('desktop:save-plugin-package', input)

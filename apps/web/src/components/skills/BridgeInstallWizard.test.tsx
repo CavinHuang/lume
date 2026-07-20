@@ -30,8 +30,7 @@ const installMarketItemMock = mock(
 
 mock.module('@/lib/desktop-api', () => ({
   checkBridgeStatus: async () => ({ ok: true, detail: 'ok' }),
-  downloadBridgeAsset: async () => ({ savedPath: '/tmp/x', verified: true }),
-  exportPluginArtifact: async () => ({ savedPath: '/tmp/x' }),
+  savePluginPackage: async () => ({ status: 'saved', savedPath: '/tmp/x' }),
   writeClipboardText: async () => undefined,
   getMarketDetail: async (): Promise<GetMarketDetailResult> => mockMarketDetailResult(),
   installMarketItem: installMarketItemMock,
@@ -323,6 +322,7 @@ async function flush() {
 function bridgePlugin(): PluginMarketItem {
   return {
     id: 'local:demo', pluginId: 'demo', name: 'Demo', version: '1.0.0',
+    catalogItemKey: 'catalog-demo',
     sourceType: 'local', trustLevel: 'trusted',
     installState: 'not-installed', enableState: 'not-installed',
     capabilities: { skillCount: 0, hookEvents: [], mcpServerNames: [], commandToolNames: [] },
@@ -411,7 +411,7 @@ describe('BridgeInstallWizard', () => {
     mock.restore()
   })
 
-  test('open 时渲染步骤标题与导出按钮', async () => {
+  test('open 时渲染步骤标题与保存按钮', async () => {
     resetBody()
     const container = fakeDocument.createElement('div')
     const store = createStore()
@@ -430,7 +430,7 @@ describe('BridgeInstallWizard', () => {
       })
 
       // 向导默认在第 0 步（安装 Lume 插件）。点击「下一步」推进到第 1 步
-      // （桥接扩展安装），那里才有「安装扩展」标题与「导出」按钮。
+      // （桥接扩展安装），那里才有「安装扩展」标题与「保存」按钮。
       const suffix = findReactPropsSuffix(fakeDocument.body)
       expect(suffix).not.toBeNull()
       const next = findButtonOnClick(fakeDocument.body, suffix!, '下一步')
@@ -442,7 +442,7 @@ describe('BridgeInstallWizard', () => {
 
       // Portal 内容挂到 document.body（FakeDocument.body）
       expect(bodyText()).toContain('安装扩展')
-      expect(bodyText()).toContain('导出')
+      expect(bodyText()).toContain('保存')
     } finally {
       await act(async () => {
         root?.unmount()

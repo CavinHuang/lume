@@ -7,11 +7,13 @@ import {
   sep,
 } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { PUBLIC_RENDERER_SIDECAR_METHODS } from './renderer-sidecar-methods'
 
 export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'healthcheck',
   'sidecar_healthcheck',
   'sidecar_call',
+  'desktop:save-plugin-package',
   'desktop_wiki_get_proposal_summary',
   'desktop_wiki_apply_draft',
   'desktop_wiki_resolve_pending',
@@ -86,6 +88,23 @@ export function validateRendererInvokeCommand(command) {
     throw new Error(`unsupported desktop command: ${String(command)}`)
   }
   return command
+}
+
+export function validateRendererSidecarMethod(method) {
+  if (typeof method !== 'string' || !method) throw new Error('invalid sidecar method')
+  if (
+    method.startsWith('wiki:privileged-')
+    || method.startsWith('plugin-package:privileged-')
+    || method === 'system.wiki-privileged-credential'
+    || method === 'agent:export-plugin-artifact'
+    || method === 'agent:download-bridge-asset'
+  ) {
+    throw new Error('privileged RPC is not available through sidecar_call')
+  }
+  if (!PUBLIC_RENDERER_SIDECAR_METHODS.has(method)) {
+    throw new Error(`unsupported renderer sidecar method: ${method}`)
+  }
+  return method
 }
 
 export function validateRendererEventChannel(channel) {

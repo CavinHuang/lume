@@ -18,7 +18,15 @@ import {
   validateIpcSender,
   validateRendererEventChannel,
   validateRendererInvokeCommand,
+  validateRendererSidecarMethod,
 } from "../src/electron-security.ts";
+import { PUBLIC_RENDERER_SIDECAR_METHODS } from "../src/renderer-sidecar-methods.ts";
+import {
+  createPluginAssetRegistry,
+  pluginAssetTokenFromUrl,
+  scopePluginAssetUrls,
+} from "../src/plugin-asset-registry.ts";
+import * as sharedIpc from "../../../packages/shared/src/types/index.ts";
 import {
   createPreviewProtocolResponse,
   createPreviewScopeRegistry,
@@ -37,6 +45,7 @@ import {
 
 test("renderer IPC commands are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("sidecar_call"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop:save-plugin-package"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_apply_draft"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_resolve_pending"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_undo_batch"), true);
@@ -82,10 +91,17 @@ test("preview scopes bind unguessable tokens to one webContents owner and expire
   assert.equal(registry.owns(scope.token, 7), false);
 });
 
+test("renderer sidecar allowlist tracks public shared IPC channels", () => {
+  const sharedMethods = Object.entries(sharedIpc)
+    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && value && typeof value === "object")
+    .flatMap(([, value]) => Object.values(value))
+    .filter((value) => typeof value === "string" && !value.includes(":privileged-"));
+  for (const method of sharedMethods) assert.equal(PUBLIC_RENDERER_SIDECAR_METHODS.has(method), true, method);
+});
+
 test("Wiki formal mutations use a main-process credential and reject generic RPC", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
-  assert.match(mainSource, /payload\.method\.startsWith\('wiki:privileged-'\)/);
-  assert.match(mainSource, /Wiki privileged RPC is not available through sidecar_call/);
+  assert.throws(() => validateRendererSidecarMethod("wiki:privileged-apply-draft"), /privileged RPC/);
   assert.match(mainSource, /randomBytes\(32\)\.toString\('base64url'\)/);
   assert.match(mainSource, /system\.wiki-privileged-credential/);
   assert.match(mainSource, /callWikiPrivileged\('wiki:privileged-apply-draft'/);
@@ -93,6 +109,50 @@ test("Wiki formal mutations use a main-process credential and reject generic RPC
   assert.equal(mainSource.includes("LUME_WIKI_PRIVILEGED"), false);
   const nodeReplSource = readFileSync(resolve(DESKTOP_ROOT, "..", "sidecar", "src", "services", "agent-runtime", "tools", "node-repl", "node-repl-runtime-manager.ts"), "utf8");
   assert.match(nodeReplSource, /delete env\.LUME_WIKI_PRIVILEGED_CREDENTIAL/);
+});
+
+test("plugin package writes are main-owned and unavailable through generic RPC", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  assert.throws(() => validateRendererSidecarMethod("plugin-package:privileged-finalize"), /privileged RPC/);
+  assert.throws(() => validateRendererSidecarMethod("agent:download-bridge-asset"), /privileged RPC/);
+  assert.equal(validateRendererSidecarMethod("agent:get-market-catalog"), "agent:get-market-catalog");
+  assert.throws(() => validateRendererSidecarMethod("future:unreviewed-method"), /unsupported renderer sidecar method/);
+  assert.match(mainSource, /desktop:save-plugin-package/);
+  assert.match(mainSource, /showSaveDialog/);
+  assert.match(mainSource, /plugin-package:privileged-finalize/);
+});
+
+test("plugin image data is exchanged for owner-scoped protocol URLs", () => {
+  let now = 1_000;
+  const registry = createPluginAssetRegistry({ now: () => now, ttlMs: 100 });
+  const dataUrl = `data:image/png;base64,${Buffer.from("logo").toString("base64")}`;
+  const scoped = scopePluginAssetUrls(registry, "agent:get-market-catalog", {
+    plugin: { marketplace: { icon: { url: dataUrl } } },
+  }, 7);
+  const scopedUrl = scoped.plugin.marketplace.icon.url;
+  const token = pluginAssetTokenFromUrl(scopedUrl);
+
+  assert.match(scopedUrl, /^lume-file:\/\/plugin-asset\/[a-f0-9]{64}$/);
+  assert.equal(registry.owns(token, 7), true);
+  assert.equal(registry.owns(token, 8), false);
+  assert.equal(registry.get(token)?.bytes.toString(), "logo");
+  assert.equal(registry.registerDataUrl(7, dataUrl), scopedUrl);
+  assert.equal(scopePluginAssetUrls(registry, "agent:list-threads", dataUrl, 7), dataUrl);
+  assert.equal(scopePluginAssetUrls(registry, "agent:get-market-detail", "data:image/bmp;base64,YQ==", 7), null);
+
+  now = 1_101;
+  assert.equal(registry.owns(token, 7), false);
+});
+
+test("plugin image registry enforces per-asset and owner quotas", () => {
+  const registry = createPluginAssetRegistry({ maxAssetBytes: 4, maxOwnerBytes: 5, maxTotalBytes: 8 });
+  const image = (value) => `data:image/png;base64,${Buffer.from(value).toString("base64")}`;
+
+  registry.registerDataUrl(1, image("1234"));
+  assert.throws(() => registry.registerDataUrl(1, image("12")), /quota exceeded/);
+  assert.throws(() => registry.registerDataUrl(2, image("12345")), /invalid plugin image payload/);
+  registry.registerDataUrl(2, image("1234"));
+  assert.throws(() => registry.registerDataUrl(3, image("1")), /quota exceeded/);
 });
 
 test("guarded preview scopes retain their mandatory guard for per-request revalidation", () => {
@@ -232,6 +292,7 @@ test("main installs one owner gate and enables CORS only on the preview protocol
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   assert.equal((mainSource.match(/webRequest\.onBeforeRequest/g) ?? []).length, 1);
   assert.match(mainSource, /previewScopes\.owns\(token, details\.webContentsId\)/);
+  assert.match(mainSource, /pluginAssets\.owns\(token, details\.webContentsId\)/);
   const schemeRegistrations = mainSource.slice(
     mainSource.indexOf("protocol.registerSchemesAsPrivileged"),
     mainSource.indexOf("const sidecarHost"),

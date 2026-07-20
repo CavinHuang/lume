@@ -1119,7 +1119,44 @@ const inspectMarketSourceRefSchema: z.ZodType<InspectMarketSourceRef> = z.union(
 
 export const marketCatalogInputSchema = z.object({
   workspaceSlug: idSchema,
-  includeBlockedSources: z.boolean().optional()
+  includeBlockedSources: z.boolean().optional(),
+  cacheMode: z.enum(["cache-first", "force-refresh"]).optional()
+}).strict();
+
+export const preparePluginPackageInputSchema = z.object({
+  workspaceSlug: idSchema,
+  catalogItemKey: z.string().trim().min(1).max(512),
+  setupStepId: z.string().trim().min(1).max(128)
+}).strict();
+
+const pluginPackageOwnerSchema = z.object({
+  ownerWebContentsId: z.number().int().nonnegative(),
+  ownerGeneration: z.number().int().nonnegative(),
+}).strict();
+
+export const privilegedPreparePluginPackageInputSchema = z.object({
+  credential: z.string().min(1),
+  request: preparePluginPackageInputSchema.extend(pluginPackageOwnerSchema.shape).strict(),
+}).strict();
+
+export const privilegedFinalizePluginPackageInputSchema = z.object({
+  credential: z.string().min(1),
+  request: z.object({
+    token: z.string().trim().min(16).max(128),
+    ownerWebContentsId: z.number().int().nonnegative(),
+    ownerGeneration: z.number().int().nonnegative(),
+    targetPath: z.string().trim().min(1),
+    overwrite: z.boolean().optional(),
+  }).strict(),
+}).strict();
+
+export const privilegedRevokePluginPackageInputSchema = z.object({
+  credential: z.string().min(1),
+  request: z.object({
+    token: z.string().trim().min(16).max(128),
+    ownerWebContentsId: z.number().int().nonnegative(),
+    ownerGeneration: z.number().int().nonnegative(),
+  }).strict(),
 }).strict();
 
 export const marketDetailInputSchema = z.object({
@@ -1553,25 +1590,6 @@ const bridgePluginIdSchema = z.string().trim().min(1)
 const bridgeVersionSchema = z.string().trim().min(1)
   .regex(/^[a-z0-9_.-]+$/i, "非法 version")
   .refine(v => !v.includes(".."), { message: "version 不得含 .. 序列" });
-const bridgeArtifactPathSchema = z.string().trim().min(1).refine(
-  (p) => !p.includes("..") && !p.includes("\\") && !p.startsWith("/") && !p.includes("\0"),
-  { message: "artifactPath 必须是相对路径且不含 .. 或绝对路径" }
-);
-
-export const exportPluginArtifactInputSchema = z.object({
-  pluginId: bridgePluginIdSchema,
-  version: bridgeVersionSchema,
-  artifactPath: bridgeArtifactPathSchema,
-  destDir: z.string().optional(),
-}).strict();
-
-export const downloadBridgeAssetInputSchema = z.object({
-  url: z.string().url().startsWith("https://"),
-  filename: z.string().optional(),
-  sha256: z.string().optional(),
-  destDir: z.string().optional(),
-}).strict();
-
 export const checkBridgeStatusInputSchema = z.object({
   pluginId: bridgePluginIdSchema,
   version: bridgeVersionSchema,

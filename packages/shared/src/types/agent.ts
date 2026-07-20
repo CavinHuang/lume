@@ -1870,10 +1870,6 @@ export const AGENT_IPC_CHANNELS = {
   SET_PLUGIN_ENABLEMENT: 'agent:set-plugin-enablement',
   /** 设置插件 active version */
   SET_PLUGIN_ACTIVE_VERSION: 'agent:set-plugin-active-version',
-  /** 导出已安装插件的桥接产物到本地 */
-  EXPORT_PLUGIN_ARTIFACT: 'agent:export-plugin-artifact',
-  /** 下载外部桥接资产（如 GitHub Release） */
-  DOWNLOAD_BRIDGE_ASSET: 'agent:download-bridge-asset',
   /** 检测桥接是否就绪（端口/扩展/HTTP） */
   CHECK_BRIDGE_STATUS: 'agent:check-bridge-status',
   /** 工作区 Skill 有可确认的改进建议 */
@@ -2061,5 +2057,12 @@ export const AGENT_IPC_CHANNELS = {
   // 分叉
   /** 从指定消息处分叉线程 */
   FORK_THREAD: 'agent:fork-thread',
+} as const
+
+/** Electron main-only RPC; every call also requires a per-process privileged credential. */
+export const PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS = {
+  PREPARE: 'plugin-package:privileged-prepare',
+  FINALIZE: 'plugin-package:privileged-finalize',
+  REVOKE: 'plugin-package:privileged-revoke',
 } as const
 export type AgentThinkingLevel = LumeConfigThinkingLevel

@@ -1,4 +1,4 @@
-import { AGENT_IPC_CHANNELS, type BootstrapFileType } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS, type BootstrapFileType } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import type {
   AgentPendingInteractiveState,
@@ -162,6 +162,7 @@ import { readPluginAuditEntries } from "../services/agent-runtime/plugins/plugin
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
 import { createDefaultPluginMarketService } from "../services/plugins/plugin-market-service";
 import { createDefaultPluginBridgeService } from "../services/plugins/plugin-bridge-service";
+import { assertWikiPrivilegedCredential } from "../services/wiki/privileged-auth";
 import { listInvocableCapabilities } from "../services/agent/invocable-capability-catalog";
 import { getAgentWorkspacePath, getPluginAuditPath } from "../services/infra/config-paths";
 import { createLogger, writeLogRecord } from "../services/infra/logger";
@@ -245,6 +246,9 @@ import {
   listInvocableCapabilitiesInputSchema,
   listDirectoryInputSchema,
   marketCatalogInputSchema,
+  privilegedPreparePluginPackageInputSchema,
+  privilegedFinalizePluginPackageInputSchema,
+  privilegedRevokePluginPackageInputSchema,
   marketDetailInputSchema,
   moveFileInputSchema,
   pendingInteractiveInputSchema,
@@ -270,8 +274,6 @@ import {
   skillImprovementAnalysisInputSchema,
   skillVersionInputSchema,
   setPluginActiveVersionInputSchema,
-  exportPluginArtifactInputSchema,
-  downloadBridgeAssetInputSchema,
   checkBridgeStatusInputSchema,
   setPluginEnablementInputSchema,
   threadRunEventsInputSchema,
@@ -1249,21 +1251,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       );
       return createDefaultPluginMarketService().setPluginActiveVersion(input);
     },
-    [AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT]: async (params) => {
-      const input = validateInput(
-        exportPluginArtifactInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.EXPORT_PLUGIN_ARTIFACT,
-      );
-      return createDefaultPluginBridgeService().exportPluginArtifact(input);
+    [PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.PREPARE]: async (params) => {
+      const input = validateInput(privilegedPreparePluginPackageInputSchema, params, PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.PREPARE);
+      assertWikiPrivilegedCredential(input.credential);
+      return createDefaultPluginMarketService().preparePluginPackage(input.request);
     },
-    [AGENT_IPC_CHANNELS.DOWNLOAD_BRIDGE_ASSET]: async (params) => {
-      const input = validateInput(
-        downloadBridgeAssetInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.DOWNLOAD_BRIDGE_ASSET,
-      );
-      return createDefaultPluginBridgeService().downloadBridgeAsset(input);
+    [PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.FINALIZE]: async (params) => {
+      const input = validateInput(privilegedFinalizePluginPackageInputSchema, params, PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.FINALIZE);
+      assertWikiPrivilegedCredential(input.credential);
+      return createDefaultPluginMarketService().finalizePluginPackage(input.request);
+    },
+    [PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.REVOKE]: async (params) => {
+      const input = validateInput(privilegedRevokePluginPackageInputSchema, params, PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS.REVOKE);
+      assertWikiPrivilegedCredential(input.credential);
+      return createDefaultPluginMarketService().revokePluginPackage(input.request);
     },
     [AGENT_IPC_CHANNELS.CHECK_BRIDGE_STATUS]: async (params) => {
       const input = validateInput(

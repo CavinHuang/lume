@@ -6,10 +6,9 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { bridgeWizardOpenAtom, bridgeWizardPluginAtom } from '@/atoms'
 import {
   checkBridgeStatus,
-  downloadBridgeAsset,
-  exportPluginArtifact,
   getMarketDetail,
   installMarketItem,
+  savePluginPackage,
   writeClipboardText,
 } from '@/lib/desktop-api'
 import type { PluginSetupArtifact, PluginSetupVerify } from '@lume/shared'
@@ -75,7 +74,7 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
       })
       const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: plugin.id })
       if (refreshed.item.kind === 'plugin') {
-        setBridgeWizardPlugin(refreshed.item.plugin)
+        setBridgeWizardPlugin({ ...refreshed.item.plugin, catalogItemKey: plugin.catalogItemKey })
       }
       toast.success('安装成功')
       setIndex(1)
@@ -86,23 +85,14 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
     }
   }
 
-  const handleExport = async (artifact: PluginSetupArtifact) => {
-    try {
-      const r = await exportPluginArtifact({
-        pluginId: plugin.pluginId,
-        version: plugin.version,
-        artifactPath: artifact.path,
-      })
-      toast.success(`已导出到 ${r.savedPath}`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+  const handleSavePackage = async (setupStepId: string) => {
+    if (!workspaceSlug || !plugin.catalogItemKey) {
+      toast.error('插件目录快照已失效，请刷新市场后重试')
+      return
     }
-  }
-
-  const handleDownload = async (url: string, filename?: string) => {
     try {
-      const r = await downloadBridgeAsset({ url, filename })
-      toast.success(`已下载到 ${r.savedPath}`)
+      const result = await savePluginPackage({ workspaceSlug, catalogItemKey: plugin.catalogItemKey, setupStepId })
+      if (result.status === 'saved') toast.success(`已保存到 ${result.savedPath}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
@@ -195,12 +185,9 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
               </div>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
-              {current.artifact && (
-                <Button onClick={() => handleExport(current.artifact!)}>导出 {artifactLabel(current.artifact.kind)}</Button>
-              )}
-              {current.download && (
-                <Button onClick={() => handleDownload(current.download!.url, current.download!.filename)}>
-                  下载 {current.download.filename ?? '资产'}
+              {(current.artifact || current.download) && (
+                <Button onClick={() => handleSavePackage(current.id)}>
+                  保存 {current.artifact ? artifactLabel(current.artifact.kind) : current.download?.filename ?? '配套包'}
                 </Button>
               )}
               {current.verify && current.verify.method !== 'none' && (

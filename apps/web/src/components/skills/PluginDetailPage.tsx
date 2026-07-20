@@ -5,7 +5,6 @@ import {
   ExternalLink,
   Loader2,
   Power,
-  Puzzle,
   RotateCcw,
   ShieldCheck,
   Trash2,
@@ -16,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { PLUGIN_SOURCE_LABELS } from './plugin-market-ui-state'
+import { PluginLogo } from './PluginLogo'
 import {
   buildPermissionRows,
   buildPluginUpdateAction,
@@ -38,6 +38,7 @@ export interface PluginDetailPageProps {
   onUninstall: () => void
   onToggleEnable: () => void
   onTryInChat: () => void
+  onPreparePackage?: (setupStepId: string) => void
   onRollback?: () => void
 }
 
@@ -51,6 +52,7 @@ export function PluginDetailPage({
   onUninstall,
   onToggleEnable,
   onTryInChat,
+  onPreparePackage,
   onRollback,
 }: PluginDetailPageProps) {
   const item = detail?.item.kind === 'plugin' ? detail.item.plugin : null
@@ -115,16 +117,7 @@ export function PluginDetailPage({
               <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
                 <div className="min-w-0">
                   <div className="mb-4 flex size-12 items-center justify-center overflow-hidden rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-1)]">
-                    {marketplace?.icon?.url ? (
-                      <img
-                        src={marketplace.icon.url}
-                        alt=""
-                        data-plugin-marketplace-icon="true"
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <Puzzle size={24} />
-                    )}
+                    <PluginLogo src={marketplace?.icon?.url} alt={`${pluginName} 图标`} className="size-full" />
                   </div>
                   <h1 className="truncate text-[26px] font-semibold leading-8 text-[var(--text-1)]">{pluginName}</h1>
                   <p className="mt-2 max-w-[680px] text-[14px] leading-6 text-[var(--text-2)]">
@@ -330,6 +323,11 @@ export function PluginDetailPage({
                       <div className="min-w-0">
                         <div className="text-[13px] font-semibold text-[var(--text-1)]">{setup.title}</div>
                         <div className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{setup.description}</div>
+                        {(setup.artifact || setup.download) && onPreparePackage && setup.id && (
+                          <Button type="button" variant="outline" disabled={busy} className="mt-2 h-8 text-[12px]" onClick={() => onPreparePackage(setup.id!)}>
+                            {setup.targetApp?.kind === 'chrome' ? '保存 Chrome 扩展包' : setup.targetApp?.kind === 'obsidian' ? '导出 Obsidian 插件包' : '保存配套包'}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}

@@ -162,6 +162,8 @@ export interface PluginMarketItem {
   permissions: PluginPermissionSummary
   marketplace?: PluginMarketplaceMetadata
   diagnostics?: AgentPluginDiagnostic[]
+  /** Opaque identity for this source/catalog snapshot; never use pluginId alone. */
+  catalogItemKey?: string
 }
 
 export type MarketCatalogItem =
@@ -171,12 +173,19 @@ export type MarketCatalogItem =
 export interface GetMarketCatalogInput {
   workspaceSlug: string
   includeBlockedSources?: boolean
+  cacheMode?: "cache-first" | "force-refresh"
 }
 
 export interface GetMarketCatalogResult {
   plugins: PluginMarketItem[]
   skills: SkillCatalogItem[]
   diagnostics: AgentPluginDiagnostic[]
+  status?: "fresh" | "stale" | "partial" | "failed-with-stale" | "failed"
+  syncedAt?: string
+  expiresAt?: string
+  refreshRecommended?: boolean
+  fromStaleCache?: boolean
+  sourceDiagnostics?: Array<{ sourceId: string; status: "fresh" | "stale" | "failed"; message?: string }>
 }
 
 export interface GetMarketDetailInput {
@@ -225,6 +234,53 @@ export interface InstallMarketItemInput {
   overwrite?: boolean
   enableScope?: "none" | "workspace" | "global"
   acceptedPermissionsHash?: string
+  catalogItemKey?: string
+}
+
+export interface PreparePluginPackageInput {
+  workspaceSlug: string
+  catalogItemKey: string
+  setupStepId: string
+}
+
+export interface PreparePluginPackageResult {
+  token: string
+  kind: "file" | "directory"
+  suggestedFilename: string
+  version?: string
+  size: number
+  source: string
+  verification: "verified" | "unverified"
+  sha256: string
+  finalOrigin?: string
+  originChanged?: boolean
+}
+
+export interface FinalizePluginPackageInput {
+  token: string
+  ownerWebContentsId: number
+  ownerGeneration: number
+  targetPath: string
+  overwrite?: boolean
+}
+
+export interface RevokePluginPackageInput {
+  token: string
+  ownerWebContentsId: number
+  ownerGeneration: number
+}
+
+export interface SavePluginPackageResult {
+  status: "saved" | "cancelled"
+  savedPath?: string
+  verification?: "verified" | "unverified"
+}
+
+export interface PluginPackageProgress {
+  operationId: string
+  phase: "preparing" | "downloading" | "extracting" | "ready" | "saving" | "complete" | "failed"
+  downloaded?: number
+  total?: number
 }
 
 export interface InstallMarketItemResult {
