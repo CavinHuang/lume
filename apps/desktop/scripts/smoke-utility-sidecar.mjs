@@ -34,9 +34,20 @@ function finish(code, message) {
   if (timeout) clearTimeout(timeout)
   if (wikiPollTimer) clearTimeout(wikiPollTimer)
   if (message) console.error(message)
-  child?.kill()
   xhrWorker?.terminate()
-  setImmediate(() => {
+  const childExit = child ? new Promise((resolve) => {
+    if (child.exitCode !== null && child.exitCode !== undefined) {
+      resolve()
+      return
+    }
+    const forceResolve = setTimeout(resolve, 5_000)
+    child.once('exit', () => {
+      clearTimeout(forceResolve)
+      resolve()
+    })
+    child.kill()
+  }) : Promise.resolve()
+  void childExit.then(() => {
     if (app) app.exit(code)
     else process.exit(code)
   })
@@ -195,7 +206,9 @@ function spawnSidecar(entry) {
       ELECTRON_RUN_AS_NODE: '1',
       LUME_SIDECAR_TRANSPORT: 'stdio',
     },
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: process.platform === 'win32'
+      ? ['overlapped', 'overlapped', 'overlapped']
+      : ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })
   const lines = createInterface({ input: processChild.stdout, crlfDelay: Infinity })
