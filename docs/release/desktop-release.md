@@ -6,11 +6,6 @@ Lume desktop releases are packaged with Electron 42.5.1 and Electron Builder, di
 
 - `RELEASE_TOKEN`: GitHub token used by the release workflow to create draft releases, upload assets, delete stale assets on reruns, verify remote assets, and publish.
 - `GH_TOKEN`: set by workflow steps from `RELEASE_TOKEN` for GitHub CLI commands.
-- `MACOS_CERTIFICATE_P12_BASE64`: base64-encoded Developer ID Application certificate (`.p12`) used to sign the main app and bundled helper app.
-- `MACOS_CERTIFICATE_PASSWORD`: password for the Developer ID Application `.p12` certificate.
-- `APPLE_API_KEY_P8_BASE64`: base64-encoded App Store Connect API private key (`AuthKey_*.p8`) used for notarization.
-- `APPLE_API_KEY_ID`: App Store Connect API key ID.
-- `APPLE_API_ISSUER`: App Store Connect API issuer ID.
 - `LUME_DESKTOP_TARGET`: optional local target override for artifact verification scripts. Supported release values are `aarch64-apple-darwin`, `x86_64-apple-darwin`, and `x86_64-pc-windows-msvc`.
 
 ## Release Flow
@@ -21,9 +16,13 @@ Lume desktop releases are packaged with Electron 42.5.1 and Electron Builder, di
 4. GitHub Actions builds shared packages, the sidecar, and the web app once, then reuses those JS assets for desktop packaging.
 5. Each desktop package job builds the Rust N-API native module for its runner architecture into `apps/desktop/resources/natives/<platform>-<arch>/lume-natives.node`.
 6. Each desktop package job builds the TypeScript main process and sandbox preload with Vite into `apps/desktop/dist`, builds the sidecar and default-skills resources, verifies package inputs, smokes the sidecar through an Electron utility process, and packages with Electron Builder.
-7. The macOS package job imports a Developer ID Application certificate, signs both app architectures, submits them to Apple notarization, validates the stapled tickets and Gatekeeper assessment, then launches the ARM build for smoke testing. It does not remove quarantine attributes to bypass validation.
+7. Without an Apple Developer ID, the macOS package job ad-hoc signs the app and bundled helper, verifies bundle integrity and the signature mode for both architectures, then removes quarantine from the verified CI copy only to launch the ARM build for smoke testing.
 8. The workflow uploads macOS and Windows Electron artifacts from `apps/desktop/dist-release` to the shared draft release.
 9. A final remote gate verifies both macOS architectures in `latest-mac.yml` plus the Windows installer and updater assets, then publishes the draft automatically only after all gates pass.
+
+## macOS First Launch
+
+The ad-hoc signature protects package integrity but cannot make Gatekeeper trust Lume automatically. Drag Lume into Applications before launching it. For the first launch, Control-click Lume in Applications, choose Open, and confirm Open again. If macOS still blocks the app, open System Settings > Privacy & Security and choose Open Anyway. A copy of these steps is included in every DMG.
 
 ## Local Commands
 

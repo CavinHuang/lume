@@ -109,44 +109,6 @@ jobs:
             ${{ runner.os }}-bun-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Configure macOS signing and notarization
-        shell: bash
-        env:
-          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: |
-          set -euo pipefail
-          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD APPLE_API_KEY_P8_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required GitHub secret: $name"
-              exit 1
-            fi
-          done
-
-          certificate_path="$RUNNER_TEMP/lume-developer-id.p12"
-          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-          keychain_path="$RUNNER_TEMP/lume-signing.keychain-db"
-          keychain_password="$(uuidgen)"
-
-          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 -D > "$certificate_path"
-          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$api_key_path"
-          chmod 600 "$certificate_path" "$api_key_path"
-
-          security create-keychain -p "$keychain_password" "$keychain_path"
-          security set-keychain-settings -lut 21600 "$keychain_path"
-          security unlock-keychain -p "$keychain_password" "$keychain_path"
-          security import "$certificate_path" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
-          security list-keychains -d user -s "$keychain_path"
-
-          echo "CSC_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
-          echo "APPLE_API_KEY=$api_key_path" >> "$GITHUB_ENV"
-          echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
-          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
-          echo "LUME_COMPUTER_USE_CODESIGN_MODE=identity" >> "$GITHUB_ENV"
       - name: Download JS assets
         uses: actions/download-artifact@v4
         with:
@@ -163,7 +125,7 @@ jobs:
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
           node scripts/build-node-repl-resources.mjs
-          node scripts/build-desktop-host-resources.mjs --require-stable-signing
+          node scripts/build-desktop-host-resources.mjs
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
@@ -175,7 +137,7 @@ jobs:
         run: |
           LUME_DESKTOP_TARGET=aarch64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
           LUME_DESKTOP_TARGET=x86_64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
-      - name: Verify and smoke installed macOS app
+      - name: Verify ad-hoc signature and smoke installed macOS app
         shell: bash
         run: |
           set -euo pipefail
@@ -190,8 +152,7 @@ jobs:
             hdiutil detach "$mount_dir" -quiet
 
             codesign --verify --deep --strict --verbose=2 "$copied_app"
-            xcrun stapler validate "$copied_app"
-            spctl --assess --type execute --verbose=4 "$copied_app"
+            codesign -dv --verbose=4 "$copied_app" 2>&1 | grep -q "Signature=adhoc"
             if [[ "$dmg" == *arm64.dmg ]]; then
               launch_app="$copied_app"
             fi
@@ -201,6 +162,9 @@ jobs:
             echo "Missing arm64 app for launch smoke"
             exit 1
           fi
+          # There is no Developer ID, so launch smoke removes quarantine only after
+          # the ad-hoc signature and bundle integrity have been verified above.
+          xattr -dr com.apple.quarantine "$launch_app"
           log="$(mktemp)"
           LUME_DESKTOP_STARTUP_LOG="$log" "$launch_app/Contents/MacOS/Lume" &
           pid="$!"

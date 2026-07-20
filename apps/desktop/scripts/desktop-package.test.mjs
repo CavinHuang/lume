@@ -56,11 +56,18 @@ test('Windows installer lets users choose the installation directory', () => {
   assert.equal(pkg.build.nsis?.allowToChangeInstallationDirectory, true)
 })
 
-test('macOS release requires Developer ID signing, notarization, and Gatekeeper verification', () => {
+test('macOS release uses a verified ad-hoc signature and includes first-launch instructions', () => {
   const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
+  const installGuide = resolve(DESKTOP_ROOT, 'assets/mac-install-guide.txt')
 
   assert.equal(pkg.build.mac?.hardenedRuntime, true)
-  assert.equal(pkg.build.mac?.notarize, true)
+  assert.equal(pkg.build.mac?.identity, '-')
+  assert.equal(pkg.build.mac?.notarize, false)
+  assert.equal(existsSync(installGuide), true)
+  assert.equal(
+    pkg.build.dmg?.contents.some((entry) => entry.type === 'file' && entry.path === 'assets/mac-install-guide.txt'),
+    true,
+  )
   for (const secret of [
     'MACOS_CERTIFICATE_P12_BASE64',
     'MACOS_CERTIFICATE_PASSWORD',
@@ -68,13 +75,14 @@ test('macOS release requires Developer ID signing, notarization, and Gatekeeper 
     'APPLE_API_KEY_ID',
     'APPLE_API_ISSUER',
   ]) {
-    assert.match(workflow, new RegExp(`secrets\\.${secret}`))
+    assert.doesNotMatch(workflow, new RegExp(`secrets\\.${secret}`))
   }
-  assert.match(workflow, /build-desktop-host-resources\.mjs --require-stable-signing/)
+  assert.doesNotMatch(workflow, /build-desktop-host-resources\.mjs --require-stable-signing/)
   assert.match(workflow, /codesign --verify --deep --strict/)
-  assert.match(workflow, /xcrun stapler validate/)
-  assert.match(workflow, /spctl --assess --type execute/)
-  assert.doesNotMatch(workflow, /xattr -dr com\.apple\.quarantine/)
+  assert.match(workflow, /Signature=adhoc/)
+  assert.doesNotMatch(workflow, /xcrun stapler validate/)
+  assert.doesNotMatch(workflow, /spctl --assess --type execute/)
+  assertContainsBefore(workflow, 'codesign --verify --deep --strict', 'xattr -dr com.apple.quarantine')
 })
 
 test('update installation keeps renderer IPC pending until the updater takes over', () => {
@@ -268,10 +276,10 @@ test('desktop-host resource build prefers a stable macOS signing identity', () =
   assert.match(script, /ad-hoc identity.*TCC/)
 })
 
-test('release desktop package requires a stable macOS computer-use signing identity', () => {
+test('release desktop package allows the macOS computer-use helper to use ad-hoc signing', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
 
-  assert.match(pkg.scripts.package, /build-desktop-host-resources\.mjs --require-stable-signing/)
+  assert.doesNotMatch(pkg.scripts.package, /build-desktop-host-resources\.mjs --require-stable-signing/)
   assert.match(script, /REQUIRE_STABLE_SIGNING/)
   assert.match(script, /requires a stable macOS signing identity/)
 })

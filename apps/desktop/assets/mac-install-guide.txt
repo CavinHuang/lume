@@ -1,0 +1,10 @@
+Lume macOS 安装说明
+
+此版本使用 ad-hoc 签名，不包含 Apple Developer ID。
+
+1. 将 Lume 拖到“应用程序”文件夹，不要直接在安装镜像中启动。
+2. 打开“应用程序”，按住 Control 点击 Lume，选择“打开”。
+3. 在确认窗口中再次点击“打开”。
+4. 如果仍被阻止，请打开“系统设置”→“隐私与安全性”，在安全性区域点击“仍要打开”。
+
+请只安装从 https://github.com/CavinHuang/lume/releases 下载的安装包。

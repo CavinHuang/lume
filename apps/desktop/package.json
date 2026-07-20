@@ -15,7 +15,7 @@
     "build:runtime": "bun ./scripts/build.ts",
     "build:natives": "bun ../../scripts/build-natives-binary.mjs",
     "build": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-unpacked --dir --publish never --config.directories.output=dist-unpacked",
-    "package": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs --require-stable-signing && node ./scripts/run-electron-builder.mjs --output-dir dist-release --publish never --config.directories.output=dist-release",
+    "package": "bun ./scripts/build.ts && bun ../../scripts/build-natives-binary.mjs && bun ../../scripts/build-sidecar-bundle.mjs && bun ../../scripts/build-default-skills-archive.mjs && node ../../scripts/build-node-repl-resources.mjs && node ../../scripts/build-desktop-host-resources.mjs && node ./scripts/run-electron-builder.mjs --output-dir dist-release --publish never --config.directories.output=dist-release",
     "typecheck": "tsc -p tsconfig.json --noEmit && node --check ./scripts/electron-runtime.mjs",
     "test": "bun test ./scripts/desktop-package.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./scripts/logging-service.test.mjs ./scripts/log-digest-policy.test.mjs ./scripts/diagnostic-content-store.test.mjs ./scripts/settings-broker.test.mjs ./scripts/electron-runtime.test.mjs ./scripts/electron-security.test.mjs"
   },
@@ -82,7 +82,28 @@
       "icon": "assets/icon.icns",
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
-      "notarize": true
+      "identity": "-",
+      "notarize": false
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 270,
+          "y": 340,
+          "type": "file",
+          "path": "assets/mac-install-guide.txt"
+        }
+      ]
     },
     "win": {
       "icon": "assets/icon.ico",
