@@ -181,7 +181,7 @@ function spawnSidecar(entry) {
     })
   }
 
-  const processChild = spawn(process.execPath, ['--no-stdio-init', entry], {
+  const processChild = spawn(process.execPath, [entry], {
     cwd: dirname(entry),
     env: {
       ...process.env,
