@@ -32,7 +32,9 @@ import type { LumeLogDigestPolicy } from "@lume/shared";
 import { installWikiPrivilegedCredential } from "./services/wiki/privileged-auth";
 import { markWikiProposalSecurityGateAvailable } from "./services/wiki/wiki-capabilities";
 
-const rpcTransport = createProcessRpcTransport();
+const rpcTransport = createProcessRpcTransport(
+  process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
+);
 const SETTINGS_ACK_TIMEOUT_MS = 10_000;
 const pendingSettingsMutations = new Map<string, {
   resolve: () => void;

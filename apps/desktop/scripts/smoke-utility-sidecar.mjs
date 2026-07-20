@@ -183,7 +183,11 @@ function spawnSidecar(entry) {
 
   const processChild = spawn(process.execPath, ['--no-stdio-init', entry], {
     cwd: dirname(entry),
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      LUME_SIDECAR_TRANSPORT: 'stdio',
+    },
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })
