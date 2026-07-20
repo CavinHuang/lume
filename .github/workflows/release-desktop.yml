@@ -193,8 +193,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          find apps/desktop/dist-release -maxdepth 1 -type f ! -name builder-debug.yml -print0 \
-            | xargs -0 -I{} gh release upload "${GITHUB_REF_NAME}" "{}" --clobber
+          upload_release_asset() {
+            local asset="$1"
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber && return 0
+              if [ "$attempt" -eq 5 ]; then return 1; fi
+              sleep "$((attempt * 3))"
+            done
+          }
+          while IFS= read -r -d '' asset; do
+            upload_release_asset "$asset"
+          done < <(find apps/desktop/dist-release -maxdepth 1 -type f ! -name builder-debug.yml -print0)
 
   build-windows:
     name: Build Windows
@@ -301,9 +311,17 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         shell: pwsh
         run: |
+          function Invoke-ReleaseUpload([string]$AssetPath) {
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              gh release upload $env:GITHUB_REF_NAME $AssetPath --clobber
+              if ($LASTEXITCODE -eq 0) { return }
+              if ($attempt -eq 5) { throw "Failed to upload release asset: $AssetPath" }
+              Start-Sleep -Seconds ($attempt * 3)
+            }
+          }
           Get-ChildItem apps/desktop/dist-release -File |
             Where-Object { $_.Name -ne "builder-debug.yml" } |
-            ForEach-Object { gh release upload $env:GITHUB_REF_NAME $_.FullName --clobber }
+            ForEach-Object { Invoke-ReleaseUpload $_.FullName }
 
   verify-release-assets:
     name: Verify Release Assets

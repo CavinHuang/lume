@@ -100,6 +100,8 @@ test('macOS release uses a verified ad-hoc signature and includes first-launch i
   assert.doesNotMatch(workflow, /spctl --assess --type execute/)
   assertContainsBefore(workflow, 'codesign --verify --deep --strict', 'xattr -dr com.apple.quarantine')
   assert.match(workflow, /retry gh release delete-asset/)
+  assert.match(workflow, /upload_release_asset/)
+  assert.match(workflow, /Invoke-ReleaseUpload/)
 })
 
 test('update installation keeps renderer IPC pending until the updater takes over', () => {
