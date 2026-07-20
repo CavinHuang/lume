@@ -762,25 +762,6 @@ export function buildTrayMenuTemplate({
   ]
 }
 
-/**
- * 将彩色 RGBA 像素转成 macOS template image 数据：RGB 全置 0（黑），alpha 保留原值。
- * 结果是黑色剪影 + 原透明度，macOS 据菜单栏明暗自动渲染。
- * _size 当前未用，保留签名稳定供后续集成（尺寸校验/缩放）使用。
- */
-export function deriveTemplateImageBuffer(
-  rgba: Buffer,
-  _size: { width: number; height: number },
-): Buffer {
-  const out = Buffer.alloc(rgba.length)
-  for (let i = 0; i < rgba.length; i += 4) {
-    out[i] = 0
-    out[i + 1] = 0
-    out[i + 2] = 0
-    out[i + 3] = rgba[i + 3]
-  }
-  return out
-}
-
 const QUICK_INPUT_CONTEXT_FALLBACK_TTL_MS = 60_000
 
 export function resolveQuickInputContextCapture(previous, value, now = Date.now()) {

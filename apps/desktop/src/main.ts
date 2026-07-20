@@ -650,6 +650,13 @@ function getAssetPath(fileName) {
   return resolve(DESKTOP_ROOT, 'assets', fileName)
 }
 
+function getTrayIconPath() {
+  if (process.platform !== 'darwin') return getAssetPath('icon.ico')
+  return app.isPackaged
+    ? join(process.resourcesPath, 'tray-icon.png')
+    : resolve(REPO_ROOT, 'apps', 'web', 'src', 'assets', 'imgs', 'logo.png')
+}
+
 function createWindowIcon() {
   // Windows/Linux 任务栏与 Alt-Tab 图标取自窗口实例；开发模式下进程为 electron.exe，
   // 若不显式设置会回退到 Electron 默认图标。macOS 图标由 .app bundle 提供，无需设置。
@@ -733,7 +740,7 @@ function ensureTray() {
   if (trayManager.isTrayAvailable()) return
   try {
     trayManager.createTray({
-      iconPath: getAssetPath(process.platform === 'darwin' ? 'icon.png' : 'icon.ico'),
+      iconPath: getTrayIconPath(),
       onClickShow: () => ensureMainWindowVisible().catch(logTrayActionError),
       onAction: handleTrayAction,
     })

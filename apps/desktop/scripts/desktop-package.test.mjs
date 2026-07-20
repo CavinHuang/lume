@@ -83,6 +83,7 @@ test('macOS release uses a verified ad-hoc signature and includes first-launch i
   assert.doesNotMatch(workflow, /xcrun stapler validate/)
   assert.doesNotMatch(workflow, /spctl --assess --type execute/)
   assertContainsBefore(workflow, 'codesign --verify --deep --strict', 'xattr -dr com.apple.quarantine')
+  assert.match(workflow, /retry gh release delete-asset/)
 })
 
 test('update installation keeps renderer IPC pending until the updater takes over', () => {
@@ -126,6 +127,22 @@ test('desktop package includes bundled capability plugins', () => {
   assert.match(main, /LUME_BUNDLED_PLUGINS_DIR/)
   assert.match(main, /process\.resourcesPath, 'bundled-plugins'/)
   assert.match(main, /'apps', 'sidecar', 'bundled-plugins'/)
+})
+
+test('desktop package includes the transparent Lume logo for the macOS tray', () => {
+  assert.deepEqual(
+    pkg.build.extraResources.find((entry) => entry.to === 'tray-icon.png'),
+    {
+      from: '../web/src/assets/imgs/logo.png',
+      to: 'tray-icon.png',
+    },
+  )
+  assert.equal(existsSync(resolve(REPO_ROOT, 'apps/web/src/assets/imgs/logo.png')), true)
+
+  const main = readFileSync(resolve(DESKTOP_ROOT, 'src/main.ts'), 'utf8')
+  const trayManager = readFileSync(resolve(DESKTOP_ROOT, 'src/tray-manager.ts'), 'utf8')
+  assert.match(main, /process\.resourcesPath, 'tray-icon\.png'/)
+  assert.match(trayManager, /setTemplateImage\(true\)/)
 })
 
 test('desktop package includes sidecar runtime data', () => {

@@ -15,6 +15,7 @@ const requiredFiles = [
   resolve(DESKTOP_DIR, "assets", "icon.png"),
   resolve(DESKTOP_DIR, "assets", "icon.ico"),
   resolve(DESKTOP_DIR, "assets", "icon.icns"),
+  resolve(REPO_ROOT, "apps", "web", "src", "assets", "imgs", "logo.png"),
   resolve(DESKTOP_DIR, "resources", "default-skills.tar"),
   sidecarBundle,
   xhrWorkerBundle,
@@ -45,7 +46,7 @@ if (pkg.devDependencies?.["electron-updater"] !== "6.8.9" || pkg.dependencies?.[
 }
 
 const resources = pkg.build?.extraResources ?? [];
-for (const expected of ["../web/dist", "resources/default-skills.tar", "resources/sidecar", "resources/natives"]) {
+for (const expected of ["../web/dist", "../web/src/assets/imgs/logo.png", "resources/default-skills.tar", "resources/sidecar", "resources/natives"]) {
   if (!resources.some((entry) => entry?.from === expected)) {
     fail(`electron-builder extraResources missing ${expected}`);
   }

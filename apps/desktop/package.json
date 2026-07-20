@@ -46,6 +46,10 @@
         "to": "web"
       },
       {
+        "from": "../web/src/assets/imgs/logo.png",
+        "to": "tray-icon.png"
+      },
+      {
         "from": "resources/default-skills.tar",
         "to": "default-skills.tar"
       },

@@ -24,6 +24,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          retry() {
+            local attempt
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              if [ "$attempt" -eq 5 ]; then return 1; fi
+              sleep "$((attempt * 3))"
+            done
+          }
           case "${GITHUB_REF}" in
             refs/tags/v*) ;;
             *) echo "Release workflow must run from a v* tag"; exit 1 ;;
@@ -38,14 +46,14 @@ jobs:
               echo "Release ${GITHUB_REF_NAME} is already published"
               exit 1
             fi
-            gh release edit "${GITHUB_REF_NAME}" --title "Lume ${GITHUB_REF_NAME}" --notes-file "$notes"
-            gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' | while read -r asset_name; do
-              [ -z "$asset_name" ] || gh release delete-asset "${GITHUB_REF_NAME}" "$asset_name" --yes
+            retry gh release edit "${GITHUB_REF_NAME}" --title "Lume ${GITHUB_REF_NAME}" --notes-file "$notes"
+            retry gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' | while read -r asset_name; do
+              [ -z "$asset_name" ] || retry gh release delete-asset "${GITHUB_REF_NAME}" "$asset_name" --yes
             done
           else
-            gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --title "Lume ${GITHUB_REF_NAME}" --notes-file "$notes"
+            retry gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --title "Lume ${GITHUB_REF_NAME}" --notes-file "$notes"
           fi
-          release_id="$(gh release view "${GITHUB_REF_NAME}" --json databaseId --jq '.databaseId')"
+          release_id="$(retry gh release view "${GITHUB_REF_NAME}" --json databaseId --jq '.databaseId')"
           echo "release_id=${release_id}" >> "$GITHUB_OUTPUT"
 
   build-js-assets:

@@ -40,7 +40,6 @@ import {
   getQuickInputUrl,
   buildTrayMenuTemplate,
   truncateTrayTitle,
-  deriveTemplateImageBuffer,
 } from '../src/desktop-core.ts'
 
 function makeTempDir(prefix) {
@@ -524,19 +523,6 @@ test('tray titles stay within fourteen Chinese characters of visual width', () =
   assert.equal(truncateTrayTitle('short title'), 'short title')
 })
 
-test('deriveTemplateImageBuffer produces black pixels preserving original alpha', () => {
-  // 像素：红不透明白、绿半透明、透明（alpha=0）
-  const rgba = Buffer.from([
-    255, 0, 0, 255,
-    0, 255, 0, 128,
-    0, 0, 0, 0,
-  ])
-  const out = deriveTemplateImageBuffer(rgba, { width: 3, height: 1 })
-  assert.deepEqual(
-    Array.from(out),
-    [0, 0, 0, 255, 0, 0, 0, 128, 0, 0, 0, 0],
-  )
-})
 test("resolveQuickInputContextCapture keeps the last app context when a follow-up capture sees Lume", () => {
   const previous = {
     status: "ok",
