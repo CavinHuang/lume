@@ -88,6 +88,8 @@
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "identity": null,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist",
       "notarize": false
     },
     "dmg": {

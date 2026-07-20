@@ -63,6 +63,8 @@ test('macOS release uses a verified ad-hoc signature and includes first-launch i
 
   assert.equal(pkg.build.mac?.hardenedRuntime, true)
   assert.equal(pkg.build.mac?.identity, null)
+  assert.equal(pkg.build.mac?.entitlements, 'assets/entitlements.mac.plist')
+  assert.equal(pkg.build.mac?.entitlementsInherit, 'assets/entitlements.mac.plist')
   assert.equal(pkg.build.mac?.notarize, false)
   assert.equal(pkg.build.afterPack, 'scripts/after-pack.cjs')
   assert.equal(existsSync(afterPackPath), true)
@@ -71,7 +73,12 @@ test('macOS release uses a verified ad-hoc signature and includes first-launch i
   assert.match(afterPack, /'--deep'/)
   assert.match(afterPack, /'--sign',\s*'-'/)
   assert.match(afterPack, /'--options',\s*'runtime'/)
+  assert.match(afterPack, /'--entitlements',\s*entitlementsPath/)
   assert.match(afterPack, /'--timestamp=none'/)
+  const entitlements = readFileSync(resolve(DESKTOP_ROOT, 'assets/entitlements.mac.plist'), 'utf8')
+  assert.match(entitlements, /com\.apple\.security\.cs\.allow-jit/)
+  assert.match(entitlements, /com\.apple\.security\.cs\.allow-unsigned-executable-memory/)
+  assert.match(entitlements, /com\.apple\.security\.cs\.disable-library-validation/)
   assert.equal(existsSync(installGuide), true)
   assert.equal(
     pkg.build.dmg?.contents.some((entry) => entry.type === 'file' && entry.path === 'assets/mac-install-guide.txt'),

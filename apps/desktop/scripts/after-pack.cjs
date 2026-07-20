@@ -5,6 +5,7 @@ module.exports = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return
 
   const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
+  const entitlementsPath = join(__dirname, '..', 'assets', 'entitlements.mac.plist')
   execFileSync('/usr/bin/codesign', [
     '--force',
     '--deep',
@@ -12,6 +13,8 @@ module.exports = async function afterPack(context) {
     '-',
     '--options',
     'runtime',
+    '--entitlements',
+    entitlementsPath,
     '--timestamp=none',
     appPath,
   ], { stdio: 'inherit' })
