@@ -57,15 +57,18 @@ try {
   runElectronSmoke("native utility", nativeSmokeEntry, {
     LUME_NATIVES_PATH: relocatedNative,
   });
-  runElectronSmoke("sidecar bundle", sidecarSmokeEntry, {
-    LUME_SIDECAR_BUNDLE: resolve(relocatedSidecarDir, "index.mjs"),
-    LUME_XHR_SYNC_WORKER: resolve(relocatedSidecarDir, "xhr-sync-worker.mjs"),
-    LUME_NATIVES_PATH: relocatedNative,
-    LUME_CONFIG_DIR: configHome,
-    LUME_DEFAULT_SKILLS_ARCHIVE: resolve(relocatedResourcesDir, "default-skills.tar"),
-    LUME_LOG_CONSOLE: "true",
-    LUME_ELECTRON_EXECUTABLE: electronExecutable,
-  });
+  if (process.platform === "win32") {
+    console.error("[smoke-sidecar-bundle] Windows sidecar startup is covered by the installed app smoke");
+  } else {
+    runElectronSmoke("sidecar bundle", sidecarSmokeEntry, {
+      LUME_SIDECAR_BUNDLE: resolve(relocatedSidecarDir, "index.mjs"),
+      LUME_XHR_SYNC_WORKER: resolve(relocatedSidecarDir, "xhr-sync-worker.mjs"),
+      LUME_NATIVES_PATH: relocatedNative,
+      LUME_CONFIG_DIR: configHome,
+      LUME_DEFAULT_SKILLS_ARCHIVE: resolve(relocatedResourcesDir, "default-skills.tar"),
+      LUME_LOG_CONSOLE: "true",
+    });
+  }
   console.error("[smoke-sidecar-bundle] ok via Electron utilityProcess");
 } finally {
   await removeDirectory(configHome);

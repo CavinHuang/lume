@@ -1,5 +1,4 @@
 import { stdin, stdout } from "node:process";
-import { createInterface } from "node:readline";
 
 interface ElectronParentPort {
   on(event: "message", listener: (event: { data?: unknown }) => void): void;
@@ -41,8 +40,19 @@ export function createProcessRpcTransport(
   const output = options.output ?? stdout;
   return {
     listen(listener) {
-      const lines = createInterface({ input, crlfDelay: Infinity });
-      lines.on("line", listener);
+      let buffer = "";
+      const readableInput = input as unknown as {
+        on(event: "data", listener: (chunk: Buffer | string) => void): void;
+      };
+      readableInput.on("data", (chunk) => {
+        buffer += chunk.toString();
+        let newlineIndex;
+        while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newlineIndex).replace(/\r$/, "");
+          buffer = buffer.slice(newlineIndex + 1);
+          listener(line);
+        }
+      });
     },
     send(message) {
       output.write(`${message}\n`);

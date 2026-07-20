@@ -2,11 +2,11 @@ const runningInElectron = Boolean(process.versions.electron)
 const { app, utilityProcess } = runningInElectron
   ? await import('electron')
   : { app: null, utilityProcess: null }
-import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { createInterface } from 'node:readline'
+import { spawn } from 'node:child_process'
 import { Worker } from 'node:worker_threads'
 import { dirname } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 if (process.platform === 'win32') app?.commandLine.appendSwitch('no-stdio-init')
 
@@ -199,23 +199,28 @@ function spawnSidecar(entry) {
     })
   }
 
-  const sidecarRuntime = process.env.LUME_ELECTRON_EXECUTABLE
-    ? { executable: process.env.LUME_ELECTRON_EXECUTABLE, args: [entry] }
-    : { executable: runningInElectron ? 'node' : process.execPath, args: [entry] }
-  const processChild = spawn(sidecarRuntime.executable, sidecarRuntime.args, {
+  const processChild = spawn(runningInElectron ? 'node' : process.execPath, [
+    '-e',
+    `import(${JSON.stringify(pathToFileURL(entry).href)}).catch((error) => { console.error(error.stack ?? error); process.exitCode = 1 })`,
+  ], {
     cwd: dirname(entry),
     env: {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
       LUME_SIDECAR_TRANSPORT: 'stdio',
     },
-    stdio: process.platform === 'win32'
-      ? ['overlapped', 'overlapped', 'overlapped']
-      : ['pipe', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })
-  const lines = createInterface({ input: processChild.stdout, crlfDelay: Infinity })
-  lines.on('line', (line) => processChild.emit('message', line))
+  let outputBuffer = ''
+  processChild.stdout.on('data', (chunk) => {
+    outputBuffer += chunk.toString()
+    let newlineIndex
+    while ((newlineIndex = outputBuffer.indexOf('\n')) >= 0) {
+      const line = outputBuffer.slice(0, newlineIndex).replace(/\r$/, '')
+      outputBuffer = outputBuffer.slice(newlineIndex + 1)
+      processChild.emit('message', line)
+    }
+  })
   processChild.postMessage = (message) => processChild.stdin.write(`${message}\n`)
   return processChild
 }
