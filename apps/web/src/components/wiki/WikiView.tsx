@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
-import { Archive, ChevronDown, ChevronLeft, ChevronRight, FileText, Folder, FolderOpen, Import, Inbox, LoaderCircle, MessageSquare, MoreHorizontal, RefreshCw, Save, Search, ShieldAlert, X } from 'lucide-react'
+import { Archive, ChevronDown, ChevronRight, FileText, Folder, FolderOpen, Import, Inbox, LoaderCircle, MessageSquare, MoreHorizontal, RefreshCw, Save, Search, ShieldAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { WikiPageRecord, WikiPageType, WikiPrivacyImpactPreview, WikiProposalSummaryV1, WikiReadResult, WikiSnapshot, WikiSourceRef } from '@lume/shared'
 import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, tabsAtom } from '@/atoms'
@@ -37,8 +37,7 @@ export function WikiView() {
   const [aliases, setAliases] = useState('')
   const [tags, setTags] = useState('')
   const [inspectorOpen, setInspectorOpen] = useState(true)
-  const [scopeOpen, setScopeOpen] = useState(true)
-  const [pageListOpen, setPageListOpen] = useState(true)
+  const [leftPanelsOpen, setLeftPanelsOpen] = useState(true)
   const [importOpen, setImportOpen] = useState(false)
   const [importMode, setImportMode] = useState<'text' | 'url'>('text')
   const [importTitle, setImportTitle] = useState('')
@@ -194,9 +193,10 @@ export function WikiView() {
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 text-[var(--text-1)]">
-      <aside className={cn('flex shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface-1)] transition-[width]', scopeOpen ? 'w-[220px]' : 'w-11')}>
-        {scopeOpen ? <div className="flex items-center justify-between px-3 py-3"><span className="text-sm font-semibold">知识归宿</span><div className="flex items-center gap-1"><Button variant="ghost" size="icon-sm" onClick={openImport} title="导入知识"><Import size={15} /></Button><Button variant="ghost" size="icon-sm" onClick={() => setScopeOpen(false)} title="收起知识归宿" aria-label="收起知识归宿"><ChevronLeft size={15} /></Button></div></div> : <div className="flex justify-center p-2"><Button variant="ghost" size="icon-sm" onClick={() => setScopeOpen(true)} title="展开知识归宿" aria-label="展开知识归宿"><ChevronRight size={15} /></Button></div>}
-        {scopeOpen && <ScrollArea className="min-h-0 flex-1 px-2">
+      {leftPanelsOpen && <>
+      <aside className="flex w-[220px] shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface-1)]">
+        <div className="flex items-center justify-between px-3 py-3"><span className="text-sm font-semibold">知识归宿</span><div className="flex items-center gap-1"><Button variant="ghost" size="icon-sm" onClick={openImport} title="导入知识"><Import size={15} /></Button><Button variant="ghost" size="icon-sm" onClick={() => setLeftPanelsOpen(false)} title="收起左侧面板" aria-label="收起左侧面板"><ChevronRight size={15} /></Button></div></div>
+        <ScrollArea className="min-h-0 flex-1 px-2">
           <ScopeButton icon={<Folder size={14} />} label="全部知识" count={snapshot ? countWikiPages(snapshot.pages, { kind: 'all' }) : 0} active={folder.kind === 'all'} onClick={() => selectFolder({ kind: 'all' })} />
           <ScopeButton icon={<Inbox size={14} />} label="收件箱" count={snapshot ? countWikiPages(snapshot.pages, { kind: 'inbox' }) : 0} active={folder.kind === 'inbox'} onClick={() => selectFolder({ kind: 'inbox' })} />
           <div className="mt-4 px-2 text-[11px] uppercase tracking-wide text-[var(--text-3)]">工作区归宿</div>
@@ -210,22 +210,23 @@ export function WikiView() {
               <div className="mt-2 flex gap-1">{item.requiresRegeneration ? <Badge variant="destructive">需重新编辑</Badge> : <Button size="xs" disabled={busy || isDirty} onClick={() => void act(async () => { await resolveWikiPending(item, 'accept'); await load() })}>接受</Button>}<Button size="xs" variant="outline" disabled={busy || isDirty} onClick={() => void act(async () => { await resolveWikiPending(item, 'reject'); await load() })}>拒绝</Button></div>
             </div>
           )) : <div className="px-2 py-2 text-xs text-[var(--text-3)]">暂无待审核项</div>}
-        </ScrollArea>}
+        </ScrollArea>
       </aside>
 
-      <section className={cn('flex shrink-0 flex-col border-r border-[var(--border)] transition-[width]', pageListOpen ? 'w-[260px]' : 'w-11')}>
-        {pageListOpen ? <div className="flex items-center gap-2 p-3"><div className="relative min-w-0 flex-1"><Input value={query} onChange={(event) => { setQuery(event.target.value); setResultIds(null) }} onKeyDown={(event) => event.key === 'Enter' && search()} placeholder="搜索知识" className="pr-8" />{query && <Button variant="ghost" size="icon-xs" className="absolute right-1 top-1/2 -translate-y-1/2" onClick={() => { setQuery(''); setResultIds(null) }} title="清除搜索"><X size={13} /></Button>}</div><Button variant="outline" size="icon" onClick={search} disabled={busy} title="搜索"><Search size={15} /></Button><Button variant="ghost" size="icon-sm" onClick={() => setPageListOpen(false)} title="收起知识列表" aria-label="收起知识列表"><ChevronLeft size={15} /></Button></div> : <div className="flex justify-center p-2"><Button variant="ghost" size="icon-sm" onClick={() => setPageListOpen(true)} title="展开知识列表" aria-label="展开知识列表"><ChevronRight size={15} /></Button></div>}
-        {pageListOpen && <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+      <section className="flex w-[260px] shrink-0 flex-col border-r border-[var(--border)]">
+        <div className="flex gap-2 p-3"><div className="relative min-w-0 flex-1"><Input value={query} onChange={(event) => { setQuery(event.target.value); setResultIds(null) }} onKeyDown={(event) => event.key === 'Enter' && search()} placeholder="搜索知识" className="pr-8" />{query && <Button variant="ghost" size="icon-xs" className="absolute right-1 top-1/2 -translate-y-1/2" onClick={() => { setQuery(''); setResultIds(null) }} title="清除搜索"><X size={13} /></Button>}</div><Button variant="outline" size="icon" onClick={search} disabled={busy} title="搜索"><Search size={15} /></Button></div>
+        <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
           {visiblePages.map((page) => <Button key={page.id} variant="ghost" onClick={() => selectPage(page.id)} className={cn('mb-1 h-auto w-full justify-start gap-2 px-2 py-2 text-left', selectedId === page.id && 'bg-[var(--surface-2)]')}><FileText size={14} /><span className="min-w-0"><span className="block truncate text-sm">{page.title}</span><span className="block text-[11px] text-[var(--text-3)]">{pageTypeLabel(page.type)}</span></span></Button>)}
           {loading ? <div className="flex items-center justify-center gap-2 p-6 text-sm text-[var(--text-3)]"><LoaderCircle className="animate-spin" size={15} />正在打开 Wiki…</div> : !visiblePages.length && <div className="space-y-3 p-5 text-center"><div className="text-sm text-[var(--text-3)]">{resultIds ? '没有匹配的知识' : '这个归宿还没有内容'}</div>{!resultIds && <Button size="sm" variant="outline" onClick={openImport}><Import size={14} />导入第一份内容</Button>}</div>}
-        </ScrollArea>}
+        </ScrollArea>
       </section>
+      </>}
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="wiki-main flex min-w-0 flex-1 flex-col">
         <header className="flex min-w-0 items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3">
           <div className="min-w-0 flex-1"><div className="flex min-w-0 items-center gap-2"><div className="truncate font-semibold">{selected?.page.title ?? 'Wiki'}</div>{snapshot && <Badge className="hidden sm:inline-flex" variant={snapshot.capabilities.phase === 'B' ? 'secondary' : 'outline'} title={snapshot.capabilities.reason}>{snapshot.capabilities.phase === 'B' ? '智能维护已开启' : runtimePreparing || snapshot.capabilities.runtimeStatus === 'preparing' ? <><LoaderCircle className="animate-spin" size={11} />正在准备智能维护</> : '基础安全模式'}</Badge>} {snapshot && <Badge className="hidden sm:inline-flex" variant="outline">{snapshot.searchMode === 'hybrid' ? '混合检索' : '全文检索'}</Badge>}</div>{snapshot && <div className="mt-0.5 max-w-[560px] truncate text-[11px] text-[var(--text-3)]">{snapshot.pages.filter((page) => page.status === 'active').length} 条知识 · {snapshot.semanticCheck.message}</div>}</div>
-          <div className="hidden shrink-0 items-center gap-2 md:flex">{snapshot && <><Button variant="outline" size="sm" onClick={openObsidian}>在 Obsidian 打开</Button><Button variant="outline" size="sm" onClick={openWikiFolder}><FolderOpen size={14} />打开目录</Button></>}<Button variant="outline" size="sm" onClick={checkWiki} disabled={busy || isDirty} title={isDirty ? '请先保存或取消当前修改' : undefined}><RefreshCw className={cn(busy && 'animate-spin')} size={14} />检查</Button><Button variant="outline" size="sm" onClick={ask} disabled={busy}><MessageSquare size={14} />向 Wiki 提问</Button>{editActions}</div>
-          <div className="flex shrink-0 items-center gap-2 md:hidden">
+          <div className="wiki-main-actions flex shrink-0 items-center gap-2">{snapshot && <><Button variant="outline" size="sm" onClick={openObsidian}>在 Obsidian 打开</Button><Button variant="outline" size="sm" onClick={openWikiFolder}><FolderOpen size={14} />打开目录</Button></>}<Button variant="outline" size="sm" onClick={checkWiki} disabled={busy || isDirty} title={isDirty ? '请先保存或取消当前修改' : undefined}><RefreshCw className={cn(busy && 'animate-spin')} size={14} />检查</Button><Button variant="outline" size="sm" onClick={ask} disabled={busy}><MessageSquare size={14} />向 Wiki 提问</Button>{editActions}</div>
+          <div className="wiki-main-actions-compact flex shrink-0 items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="outline" size="icon-sm" aria-label="更多操作" title="更多操作" />}><MoreHorizontal size={15} /></DropdownMenuTrigger>
               <DropdownMenuContent>

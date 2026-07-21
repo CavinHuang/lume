@@ -242,6 +242,7 @@ export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
   'memory:organize-history',
   'memory:read',
   'memory:remember',
+  'memory:reload-local-onnx',
   'memory:resolve-pending',
   'memory:search',
   'memory:settings-snapshot',

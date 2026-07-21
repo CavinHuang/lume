@@ -73,3 +73,6 @@ export const getMemoryRuntimeConfig = () =>
 
 export const updateMemoryRuntimeConfig = (input: UpdateMemoryRuntimeConfigInput) =>
   sidecarCall<MemoryRuntimeConfig>(MEMORY_IPC_CHANNELS.UPDATE_RUNTIME_CONFIG, input)
+
+export const reloadLocalOnnxEmbedding = () =>
+  sidecarCall(MEMORY_IPC_CHANNELS.RELOAD_LOCAL_ONNX, {})

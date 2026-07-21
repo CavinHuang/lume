@@ -75,9 +75,9 @@ class LocalOnnxEmbeddingWorker {
       this.rejectReady = reject;
       setLocalOnnxStatus(hasLocalOnnxModelCache() ? "initializing" : "downloading");
       const initTimer = setTimeout(() => {
-        setLocalOnnxStatus("failed", "Local ONNX embedding model initialization timed out.");
-        this.dispose();
-        reject(new Error("Local ONNX embedding model initialization timed out."));
+        const error = new Error("Local ONNX embedding model initialization timed out.");
+        setLocalOnnxStatus("failed", error.message);
+        this.failInitialization(error);
       }, INIT_TIMEOUT_MS);
       this.worker = new Worker(new URL("./local-embedding-worker.ts", import.meta.url), {
         workerData: {
@@ -96,8 +96,7 @@ class LocalOnnxEmbeddingWorker {
           clearTimeout(initTimer);
           const error = new Error(message.error ?? "Local ONNX embedding model failed to initialize.");
           setLocalOnnxStatus("failed", error.message);
-          this.dispose();
-          this.rejectReady?.(error);
+          this.failInitialization(error);
           return;
         }
         this.resolvePending(message);
@@ -106,15 +105,13 @@ class LocalOnnxEmbeddingWorker {
         clearTimeout(initTimer);
         const normalized = error instanceof Error ? error : new Error(String(error));
         setLocalOnnxStatus("failed", normalized.message);
-        this.dispose();
-        this.rejectReady?.(normalized);
+        this.failInitialization(normalized);
       });
       this.worker.on("exit", (code) => {
-        if (code === 0) return;
+        if (code === 0 || !this.ready) return;
         const error = new Error(`Local ONNX embedding worker exited (${code}).`);
         setLocalOnnxStatus("failed", error.message);
-        this.rejectAll(error);
-        this.ready = undefined;
+        this.failInitialization(error);
       });
     });
     return this.ready;
@@ -130,7 +127,9 @@ class LocalOnnxEmbeddingWorker {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error("Local ONNX embedding request timed out."));
+        const error = new Error("Local ONNX embedding request timed out.");
+        setLocalOnnxStatus("failed", error.message);
+        reject(error);
       }, EMBED_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, timer });
       worker.postMessage({ type: "embed_batch", id, texts });
@@ -144,16 +143,22 @@ class LocalOnnxEmbeddingWorker {
     this.pending.delete(message.id);
     clearTimeout(pending.timer);
     if (message.type === "error_batch") {
-      pending.reject(new Error(message.error ?? "Local ONNX embedding request failed."));
+      const error = new Error(message.error ?? "Local ONNX embedding request failed.");
+      setLocalOnnxStatus("failed", error.message);
+      pending.reject(error);
       return;
     }
     if (!(message.data instanceof Float32Array) || message.data.length === 0 || message.dims <= 0) {
-      pending.reject(new Error("Local ONNX embedding response shape is invalid."));
+      const error = new Error("Local ONNX embedding response shape is invalid.");
+      setLocalOnnxStatus("failed", error.message);
+      pending.reject(error);
       return;
     }
     const vectors = sliceFlatVectors(message.data, message.dims);
     if (vectors.length === 0 || vectors.some((vector) => vector.length === 0)) {
-      pending.reject(new Error("Local ONNX embedding response shape is invalid."));
+      const error = new Error("Local ONNX embedding response shape is invalid.");
+      setLocalOnnxStatus("failed", error.message);
+      pending.reject(error);
       return;
     }
     pending.resolve(vectors);
@@ -168,9 +173,30 @@ class LocalOnnxEmbeddingWorker {
   }
 
   private dispose(): void {
-    this.worker?.terminate().catch(() => undefined);
+    const worker = this.worker;
+    worker?.removeAllListeners();
+    worker?.terminate().catch(() => undefined);
     this.worker = undefined;
     this.rejectAll(new Error("Local ONNX embedding worker was disposed."));
+  }
+
+  reset(): void {
+    const error = new Error("Local ONNX embedding worker was reset.");
+    const rejectReady = this.rejectReady;
+    this.dispose();
+    rejectReady?.(error);
+    this.ready = undefined;
+    this.resolveReady = undefined;
+    this.rejectReady = undefined;
+  }
+
+  private failInitialization(error: Error): void {
+    const rejectReady = this.rejectReady;
+    this.dispose();
+    rejectReady?.(error);
+    this.ready = undefined;
+    this.resolveReady = undefined;
+    this.rejectReady = undefined;
   }
 }
 
@@ -179,6 +205,12 @@ let singleton: LocalOnnxEmbeddingWorker | undefined;
 export function createLocalOnnxMemoryEmbeddingProvider(): MemoryV2EmbedTexts {
   singleton ??= new LocalOnnxEmbeddingWorker();
   return (texts) => singleton!.embedTexts(texts);
+}
+
+export function retryLocalOnnxMemoryEmbedding(): void {
+  singleton?.reset();
+  runtimeStatus = undefined;
+  void createLocalOnnxMemoryEmbeddingProvider()(["Lume ONNX embedding health check"]).catch(() => undefined);
 }
 
 export function getLocalOnnxMemoryEmbeddingStatus(): LocalOnnxMemoryEmbeddingStatus {

@@ -2207,6 +2207,7 @@ ipcMain.handle('lume:update:download', async (event) => {
   const progressState = { previousTransferred: 0, started: false }
 
   return new Promise((resolveDownload, rejectDownload) => {
+    let finished = false
     const cleanup = () => {
       autoUpdater.removeListener('download-progress', onProgress)
       autoUpdater.removeListener('update-downloaded', onDownloaded)
@@ -2223,6 +2224,7 @@ ipcMain.handle('lume:update:download', async (event) => {
       }
     }
     const onDownloaded = () => {
+      finished = true
       cleanup()
       emitDownloadEvent(createUpdateFinishedEvent())
       resolveDownload(null)
@@ -2235,7 +2237,9 @@ ipcMain.handle('lume:update:download', async (event) => {
     autoUpdater.on('download-progress', onProgress)
     autoUpdater.once('update-downloaded', onDownloaded)
     autoUpdater.once('error', onError)
-    autoUpdater.downloadUpdate().catch(onError)
+    autoUpdater.downloadUpdate().then(() => {
+      if (!finished) onDownloaded()
+    }).catch(onError)
   })
 })
 ipcMain.handle('lume:update:install', async (event) => {

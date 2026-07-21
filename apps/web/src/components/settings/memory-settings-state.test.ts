@@ -698,6 +698,13 @@ describe('memory settings state', () => {
 
     expect(summarizeLocalOnnxStatus(status)).toBe(status.message)
     expect(localOnnxStatusTone(status.status)).toBe('warn')
+
+    expect(summarizeLocalOnnxStatus({
+      ...status,
+      status: 'failed',
+      message: '本地 ONNX 模型初始化失败，当前会继续使用基础召回。',
+      error: '模型文件损坏',
+    })).toContain('原因：模型文件损坏')
   })
 
   test('rerank options include enabled chat models but skip embedding-only models', () => {

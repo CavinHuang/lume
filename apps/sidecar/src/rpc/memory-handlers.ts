@@ -21,6 +21,7 @@ import {
   searchMemoryTool
 } from "../services/memory-v2/tools";
 import { getMemoryV2SettingsSnapshot } from "../services/memory-v2/settings-snapshot";
+import { getLocalOnnxMemoryEmbeddingStatus, retryLocalOnnxMemoryEmbedding } from "../services/memory-v2/local-embedding";
 import { openMemoryV2Source } from "../services/memory-v2/source-open";
 import { listMemorySourceFiles } from "../services/memory-v2/source-files";
 import { organizeMemoryHistory } from "../services/memory-v2/history-organizer";
@@ -149,6 +150,10 @@ export function createMemoryHandlers(): Record<string, RpcHandler> {
       return updateMemoryRuntimeConfig(
         validateInput(updateMemoryRuntimeConfigInputSchema, params, MEMORY_IPC_CHANNELS.UPDATE_RUNTIME_CONFIG)
       );
+    },
+    [MEMORY_IPC_CHANNELS.RELOAD_LOCAL_ONNX]: async () => {
+      retryLocalOnnxMemoryEmbedding();
+      return getLocalOnnxMemoryEmbeddingStatus();
     }
   };
 }

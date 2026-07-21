@@ -442,13 +442,13 @@ test('update download events preserve renderer progress contract', () => {
 
   assert.deepEqual(createUpdateDownloadProgressEvents(state, { transferred: 40, total: 100 }), [
     { event: 'Started', data: { contentLength: 100 } },
-    { event: 'Progress', data: { chunkLength: 40, contentLength: 100 } },
+    { event: 'Progress', data: { chunkLength: 40, transferred: 40, contentLength: 100 } },
   ])
   assert.deepEqual(createUpdateDownloadProgressEvents(state, { transferred: 75, total: 100 }), [
-    { event: 'Progress', data: { chunkLength: 35, contentLength: 100 } },
+    { event: 'Progress', data: { chunkLength: 35, transferred: 75, contentLength: 100 } },
   ])
   assert.deepEqual(createUpdateDownloadProgressEvents(state, { transferred: 70 }), [
-    { event: 'Progress', data: { chunkLength: 0, contentLength: null } },
+    { event: 'Progress', data: { chunkLength: 0, transferred: 70, contentLength: null } },
   ])
   assert.deepEqual(createUpdateFinishedEvent(), { event: 'Finished', data: {} })
 })

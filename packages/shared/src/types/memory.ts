@@ -538,5 +538,6 @@ export const MEMORY_IPC_CHANNELS = {
   DELETE_ENTRY: "memory:delete-entry",
   RESOLVE_PENDING: "memory:resolve-pending",
   GET_RUNTIME_CONFIG: "memory:get-runtime-config",
-  UPDATE_RUNTIME_CONFIG: "memory:update-runtime-config"
+  UPDATE_RUNTIME_CONFIG: "memory:update-runtime-config",
+  RELOAD_LOCAL_ONNX: "memory:reload-local-onnx"
 } as const;

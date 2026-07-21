@@ -386,10 +386,10 @@ export function createUpdateDownloadProgressEvents(state, progress) {
     events.push({ event: 'Started', data: { contentLength: total } })
   }
 
-  const transferred = Number.isFinite(progress.transferred) ? progress.transferred : state.previousTransferred
+  const transferred = Number.isFinite(progress.transferred) ? Math.max(0, progress.transferred) : state.previousTransferred
   const chunkLength = Math.max(0, transferred - state.previousTransferred)
   state.previousTransferred = transferred
-  events.push({ event: 'Progress', data: { chunkLength, contentLength: total } })
+  events.push({ event: 'Progress', data: { chunkLength, transferred, contentLength: total } })
 
   return events
 }

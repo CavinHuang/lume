@@ -50,6 +50,7 @@ import {
   organizeMemoryEntries,
   organizeMemoryHistory,
   readMemory,
+  reloadLocalOnnxEmbedding,
   rememberMemory,
   deleteMemoryEntry,
   resolveMemoryPending,
@@ -432,6 +433,11 @@ export function MemorySettings() {
     await refresh()
   })
 
+  const handleReloadLocalOnnx = () => runAction('reload-local-onnx', async () => {
+    await reloadLocalOnnxEmbedding()
+    await refresh()
+  })
+
   const handleOrganizeHistory = () => runAction('organize-history', async () => {
     if (!workspaceSlug) return
     setOrganizeResult(null)
@@ -618,6 +624,7 @@ export function MemorySettings() {
         onIngestWorkspaceFile={() => void handleIngestWorkspaceFile()}
         onOpenFile={(path) => void handleOpenMemoryFile(path)}
         onSemanticMode={(mode) => void handleSemanticMode(mode)}
+        onReloadLocalOnnx={() => void handleReloadLocalOnnx()}
         onToggle={(groupId, enabled) => void handleTogglePolicyGroup(groupId, enabled)}
         externalText={externalText}
         ingestJob={ingestJob}
@@ -658,6 +665,7 @@ function OverviewPanel({
   onOrganizeEntries,
   onOrganizeHistory,
   onSemanticMode,
+  onReloadLocalOnnx,
   onToggle,
   organizeResult,
   workspaceFilePath,
@@ -684,6 +692,7 @@ function OverviewPanel({
   onOrganizeEntries: () => void
   onOrganizeHistory: () => void
   onSemanticMode: (mode: MemoryRuntimeConfig['retrieval']['semantic']) => void
+  onReloadLocalOnnx: () => void
   onToggle: (groupId: MemoryToolPolicyGroupId, enabled: boolean) => void
   organizeResult: MemoryOrganizeHistoryResult | null
   workspaceFilePath: string
@@ -843,6 +852,18 @@ function OverviewPanel({
             <p className="mt-2 text-[12px] leading-5 text-[var(--text-3)]">
               {summarizeLocalOnnxStatus(snapshot.retrieval.semantic.localOnnx)}
             </p>
+            {snapshot.retrieval.semantic.localOnnx.status === 'failed' && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={busyAction !== null}
+                onClick={onReloadLocalOnnx}
+              >
+                <RefreshCw size={14} className={busyAction === 'reload-local-onnx' ? 'animate-spin' : undefined} />
+                {busyAction === 'reload-local-onnx' ? '重新加载中' : '重新加载'}
+              </Button>
+            )}
           </div>
         ) : null}
       </div>

@@ -12,6 +12,7 @@ import { createMemoryV2EmbeddingAttempts, type MemoryV2EmbeddingAttempt } from "
 import { dotProduct, toFloat32Array } from "../memory-v2/vector-math";
 
 const require = createRequire(import.meta.url);
+const SEMANTIC_SEARCH_TIMEOUT_MS = 1_500;
 
 export class WikiIndexService {
   private db?: DatabaseSync;
@@ -109,11 +110,14 @@ export class WikiIndexService {
     if (!query.trim() || visiblePages.length === 0) return lexical.slice(0, maxResults);
     for (const attempt of this.embeddingAttempts()) {
       try {
-        const semantic = await this.semanticScores(query, visiblePages, attempt);
+        const semantic = await withTimeout(
+          this.semanticScores(query, visiblePages, attempt),
+          SEMANTIC_SEARCH_TIMEOUT_MS,
+        );
         this.mode = "hybrid";
         return fuseResults(lexical, semantic, visiblePages, maxResults);
       } catch {
-        // Try the next configured/local provider; lexical search stays available.
+        // Semantic initialization can be slow on first use; lexical search stays available.
       }
     }
     this.mode = "lexical-only";
@@ -270,7 +274,10 @@ function fuseResults(
   const lexicalById = new Map(lexical.map((item, index) => [item.page.id, { item, rank: index + 1 }]));
   const semanticRank = [...semantic.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
   const semanticById = new Map(semanticRank.map(([id, score], index) => [id, { score, rank: index + 1 }]));
-  return pages.map((page) => {
+  // A lexical hit is a hard filter for the UI search. Otherwise every visible
+  // page would be returned after semantic scoring, making an exact search look ineffective.
+  const candidates = lexical.length > 0 ? pages.filter((page) => lexicalById.has(page.id)) : pages;
+  return candidates.map((page) => {
     const lexicalMatch = lexicalById.get(page.id);
     const semanticMatch = semanticById.get(page.id);
     const score = (lexicalMatch ? 1 / (60 + lexicalMatch.rank) : 0) + (semanticMatch ? 1 / (60 + semanticMatch.rank) : 0);
@@ -289,4 +296,17 @@ function pageFingerprint(pages: WikiPageRecord[]): string {
 
 function semanticFinding(rule: string, severity: WikiLintFinding["severity"], message: string, pageId: string, generation: number): WikiLintFinding {
   return { id: randomUUID(), rule, severity, message, pageId, createdAt: new Date().toISOString(), generation };
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Wiki semantic search timed out")), timeoutMs);
+    promise.then((value) => {
+      clearTimeout(timer);
+      resolve(value);
+    }, (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
 }

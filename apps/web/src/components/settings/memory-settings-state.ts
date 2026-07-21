@@ -256,6 +256,7 @@ export function summarizeLocalOnnxStatus(
   status: MemorySettingsSnapshot['retrieval']['semantic']['localOnnx'],
 ): string {
   if (!status) return '本地 ONNX 未启用'
+  if (status.status === 'failed' && status.error) return `${status.message} 原因：${status.error}`
   return status.message
 }
 

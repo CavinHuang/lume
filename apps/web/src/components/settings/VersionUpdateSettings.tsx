@@ -199,7 +199,9 @@ export function VersionUpdateSettings() {
           return
         }
         if (event.event === 'Progress') {
-          downloadedBytes += event.data.chunkLength
+          downloadedBytes = totalBytes === null
+            ? Math.max(0, event.data.transferred)
+            : Math.min(totalBytes, Math.max(0, event.data.transferred))
           setDownloadProgress({ downloadedBytes, totalBytes })
           return
         }

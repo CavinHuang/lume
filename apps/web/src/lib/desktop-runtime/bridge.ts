@@ -13,6 +13,7 @@ export interface DesktopDownloadProgressEvent {
   event: 'Progress'
   data: {
     chunkLength: number
+    transferred: number
     contentLength?: number | null
   }
 }
