@@ -60,6 +60,8 @@ export interface DesktopBridgeAPI {
   convertFileSrc?(path: string): string
   relaunch?(): Promise<void>
   checkForUpdate?(): Promise<DesktopUpdateHandle | null>
+  downloadUpdateAsset?(url: string, onEvent?: (event: DesktopDownloadEvent) => void): Promise<void>
+  installUpdate?(): Promise<void>
   window?: DesktopBridgeWindow
 }
 

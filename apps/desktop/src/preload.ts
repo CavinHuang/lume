@@ -201,5 +201,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       },
     }
   },
+  async downloadUpdateAsset(url, onEvent) {
+    const handler = (_event, payload) => onEvent?.(payload)
+    ipcRenderer.on('lume:event:update:download', handler)
+    try {
+      await ipcRenderer.invoke('lume:update:download-asset', { url })
+    } finally {
+      ipcRenderer.removeListener('lume:event:update:download', handler)
+    }
+  },
+  async installUpdate() {
+    await ipcRenderer.invoke('lume:update:install')
+  },
   window: createWindowBridge(),
 })

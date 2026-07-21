@@ -114,9 +114,9 @@ test('update installation keeps renderer IPC pending until the updater takes ove
   assert.notEqual(handlerEnd, -1)
   assert.match(handler, /new Promise<never>/)
   assert.match(handler, /isQuitting = true/)
-  assert.match(handler, /autoUpdater\.quitAndInstall\(true, true\)/)
-  assert.doesNotMatch(handler, /autoUpdater\.quitAndInstall\(true, true\)\s*\n\s*return null/)
-  assertContainsBefore(handler, 'isQuitting = true', 'autoUpdater.quitAndInstall(true, true)')
+  assert.match(handler, /autoUpdater\.quitAndInstall\(false, true\)/)
+  assert.doesNotMatch(handler, /autoUpdater\.quitAndInstall\(false, true\)\s*\n\s*return null/)
+  assertContainsBefore(handler, 'isQuitting = true', 'autoUpdater.quitAndInstall(false, true)')
 })
 
 test('desktop package includes node-repl resources', () => {

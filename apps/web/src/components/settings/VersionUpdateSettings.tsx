@@ -19,9 +19,11 @@ import { Switch } from '@/components/ui/switch'
 import {
   checkDesktopUpdate,
   downloadDesktopUpdate,
+  downloadDesktopUpdateAsset,
   getGeneralSettings,
   getLatestGitHubRelease,
   installDesktopUpdateAndRelaunch,
+  installDesktopUpdateAssetAndRelaunch,
   openExternal,
   updateGeneralSettings,
   type DesktopUpdateDownloadEvent,
@@ -57,6 +59,7 @@ export function VersionUpdateSettings() {
   const [status, setStatus] = React.useState<VersionUpdateStatus>('idle')
   const [downloaded, setDownloaded] = React.useState(false)
   const [desktopUpdateAvailable, setDesktopUpdateAvailable] = React.useState(false)
+  const [externalUpdateDownloaded, setExternalUpdateDownloaded] = React.useState(false)
   const [downloadProgress, setDownloadProgress] = React.useState<DownloadProgress>({
     downloadedBytes: 0,
     totalBytes: null,
@@ -72,7 +75,10 @@ export function VersionUpdateSettings() {
   }
   const actionState = getUpdateActionState(snapshot)
   const canDownload = actionState.canDownload && desktopUpdateAvailable
+  const releasePlatform = detectReleaseDownloadPlatform()
   const canOpenReleaseDownload = shouldShowReleasePageAction(snapshot, desktopUpdateAvailable, releaseDownloadUrl)
+  const canDownloadMacRelease = canOpenReleaseDownload && releasePlatform === 'macos'
+  const canOpenReleaseDownloadLink = canOpenReleaseDownload && !canDownloadMacRelease
   const canOpenReleasePage = shouldShowReleasePageAction(snapshot, desktopUpdateAvailable, releaseUrl)
   const updateAvailable = status === 'available' || status === 'downloaded' || status === 'downloading'
   const lastCheckText = settings?.updateSettings.lastUpdateCheckAt
@@ -127,6 +133,7 @@ export function VersionUpdateSettings() {
     setDesktopUpdateAvailable(Boolean(info))
     setLatestVersion(remoteVersion ? normalizeReleaseVersion(remoteVersion) : null)
     setDownloaded(false)
+    setExternalUpdateDownloaded(false)
 
     if (!remoteVersion) {
       setStatus('current')
@@ -186,13 +193,16 @@ export function VersionUpdateSettings() {
     void handleCheckUpdate()
   }, [settings])
 
-  const handleDownloadUpdate = async () => {
+  const runDownload = async (
+    download: (onEvent: (event: DesktopUpdateDownloadEvent) => void) => Promise<void>,
+    external = false,
+  ) => {
     setStatus('downloading')
     setDownloadProgress({ downloadedBytes: 0, totalBytes: null })
     try {
       let downloadedBytes = 0
       let totalBytes: number | null = null
-      await downloadDesktopUpdate((event: DesktopUpdateDownloadEvent) => {
+      await download((event: DesktopUpdateDownloadEvent) => {
         if (event.event === 'Started') {
           totalBytes = event.data.contentLength ?? null
           setDownloadProgress({ downloadedBytes: 0, totalBytes })
@@ -211,6 +221,7 @@ export function VersionUpdateSettings() {
         }))
       })
       setDownloaded(true)
+      setExternalUpdateDownloaded(external)
       setStatus('downloaded')
       if (settings?.updateSettings.notifyAfterDownload) {
         toast.success('更新已下载，可以安装并重启')
@@ -223,10 +234,26 @@ export function VersionUpdateSettings() {
     }
   }
 
+  const handleDownloadUpdate = () => runDownload((onEvent) => downloadDesktopUpdate(onEvent))
+
+  const handleDownloadMacRelease = () => {
+    if (!releaseDownloadUrl) return Promise.resolve()
+    return runDownload(
+      (onEvent) => downloadDesktopUpdateAsset(releaseDownloadUrl, onEvent),
+      true,
+    )
+  }
+
   const handleInstallUpdate = async () => {
     setStatus('installing')
     try {
-      await installDesktopUpdateAndRelaunch()
+      // 让安装过渡层先完成一次渲染，再交给主进程退出并替换应用。
+      await new Promise((resolve) => window.setTimeout(resolve, 450))
+      if (externalUpdateDownloaded) {
+        await installDesktopUpdateAssetAndRelaunch()
+      } else {
+        await installDesktopUpdateAndRelaunch()
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setErrorMessage(message)
@@ -287,7 +314,13 @@ export function VersionUpdateSettings() {
                 下载更新
               </Button>
             )}
-            {canOpenReleaseDownload && releaseDownloadUrl && (
+            {canDownloadMacRelease && releaseDownloadUrl && (
+              <Button className="h-9 px-4" onClick={() => void handleDownloadMacRelease()}>
+                <Download size={15} />
+                下载更新
+              </Button>
+            )}
+            {canOpenReleaseDownloadLink && releaseDownloadUrl && (
               <Button className="h-9 px-4" onClick={() => void openExternal(releaseDownloadUrl)}>
                 <Download size={15} />
                 下载安装包
@@ -358,9 +391,8 @@ export function VersionUpdateSettings() {
         </SettingsBox>
       </div>
 
-      {status === 'downloading' && (
-        <DownloadOverlay progress={downloadProgress} version={latestVersion ?? ''} />
-      )}
+      {status === 'downloading' && <DownloadOverlay progress={downloadProgress} version={latestVersion ?? ''} />}
+      {status === 'installing' && <InstallOverlay version={latestVersion ?? ''} />}
     </div>
   )
 }
@@ -462,7 +494,7 @@ function DownloadOverlay({ progress, version }: { progress: DownloadProgress; ve
           </div>
           <div>
             <h3 className="text-[17px] font-semibold text-[var(--text-1)]">正在下载 Lume {version}</h3>
-            <p className="mt-1 text-[13px] text-[var(--text-2)]">下载完成后可以选择稍后重启。</p>
+            <p className="mt-1 text-[13px] text-[var(--text-2)]">正在获取更新安装包，请不要关闭窗口。</p>
           </div>
         </div>
         <div className="mt-6 h-2 overflow-hidden rounded-full bg-[var(--surface-3)]">
@@ -470,9 +502,43 @@ function DownloadOverlay({ progress, version }: { progress: DownloadProgress; ve
         </div>
         <p className="mt-3 text-[13px] text-[var(--text-2)]">
           {formatBytes(progress.downloadedBytes)}
-          {progress.totalBytes ? ` / ${formatBytes(progress.totalBytes)}` : ''}
-          {progress.totalBytes ? ` · ${percent}%` : ''}
+          {progress.totalBytes ? ` / ${formatBytes(progress.totalBytes)} · ${percent}%` : ''}
         </p>
+      </div>
+    </div>
+  )
+}
+
+function InstallOverlay({ version }: { version: string }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/10 backdrop-blur-[1px]">
+      <div className="w-[496px] rounded-[12px] border border-[var(--border)] bg-[var(--surface-1)] p-6 shadow-[0_24px_80px_rgba(20,24,40,0.18)]">
+        <div className="flex items-center gap-3">
+          <div className="flex size-12 items-center justify-center rounded-full bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]">
+            <ShieldCheck size={22} />
+          </div>
+          <div>
+            <h3 className="text-[17px] font-semibold text-[var(--text-1)]">正在安装 Lume {version}</h3>
+            <p className="mt-1 text-[13px] text-[var(--text-2)]">即将退出当前 Lume，安装完成后会自动重新启动。</p>
+          </div>
+        </div>
+        <div className="mt-6 space-y-3 rounded-[8px] bg-[var(--surface-2)] p-3.5 text-[13px]">
+          <div className="flex items-center gap-2 text-[var(--lume-success)]">
+            <CheckCircle2 size={15} />
+            更新包已下载
+          </div>
+          <div className="flex items-center gap-2 text-[var(--text-1)]">
+            <Loader2 size={15} className="animate-spin text-[var(--brand)]" />
+            正在退出 Lume 并替换应用
+          </div>
+          <div className="flex items-center gap-2 text-[var(--text-3)]">
+            <span className="size-[15px] rounded-full border border-current" />
+            启动新版本
+          </div>
+        </div>
+        <div className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--surface-3)]">
+          <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--brand)]" />
+        </div>
       </div>
     </div>
   )

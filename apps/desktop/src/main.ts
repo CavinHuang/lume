@@ -20,14 +20,17 @@ import { autoUpdater } from 'electron-updater'
 import {
   appendFileSync,
   copyFileSync,
+  createWriteStream,
   existsSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { once } from 'node:events'
+import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   computeQuickInputBounds,
@@ -170,6 +173,7 @@ const DESKTOP_ACTION_HUD_COMPLETED_MS = 1_600
 const DESKTOP_ACTION_HUD_STALE_MS = 30_000
 
 let mainWindow = null
+let pendingMacUpdatePath: string | null = null
 const mainWindowCreation = createAsyncSingleFlight<any>()
 const mainWindowLifecycle = createMainWindowLifecycleState<any>()
 const trayWarningLimiter = createEventRateLimiter()
@@ -820,6 +824,92 @@ function checkForUpdateNow() {
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.checkForUpdates().catch((error) => writeMainLog('warn', 'desktop.update', 'update.check_failed', 'update check failed', { data: { error } }))
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+async function downloadMacUpdateAsset(url: string, sender: any): Promise<void> {
+  if (process.platform !== 'darwin') throw new Error('应用内 DMG 更新仅支持 macOS')
+  const parsed = new URL(validateExternalUrl(url))
+  const allowedHosts = new Set([
+    'github.com',
+    'objects.githubusercontent.com',
+    'release-assets.githubusercontent.com',
+    'github-releases.githubusercontent.com',
+  ])
+  if (parsed.protocol !== 'https:' || !allowedHosts.has(parsed.hostname) || !parsed.pathname.toLowerCase().endsWith('.dmg')) {
+    throw new Error('无效的 macOS 更新安装包地址')
+  }
+
+  const response = await fetch(parsed)
+  if (!response.ok || !response.body) {
+    throw new Error(`下载 macOS 更新失败：HTTP ${response.status}`)
+  }
+
+  const targetDir = ensureDir(join(app.getPath('temp'), 'lume-update'))
+  const sourceName = basename(parsed.pathname).replace(/[^a-zA-Z0-9._-]/g, '_') || `Lume-${Date.now()}.dmg`
+  const targetPath = join(targetDir, sourceName)
+  const contentLength = Number(response.headers.get('content-length'))
+  const total = Number.isFinite(contentLength) && contentLength > 0 ? contentLength : null
+  const output = createWriteStream(targetPath)
+  const reader = response.body.getReader()
+  let transferred = 0
+
+  const emit = (payload: unknown) => {
+    if (!sender.isDestroyed()) sender.send(`lume:event:${UPDATE_DOWNLOAD_CHANNEL}`, payload)
+  }
+
+  emit({ event: 'Started', data: { contentLength: total } })
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      transferred += chunk.value.byteLength
+      if (!output.write(chunk.value)) await once(output, 'drain')
+      emit({
+        event: 'Progress',
+        data: { chunkLength: chunk.value.byteLength, transferred, contentLength: total },
+      })
+    }
+    await new Promise<void>((resolveOutput, rejectOutput) => {
+      output.once('error', rejectOutput)
+      output.end(resolveOutput)
+    })
+  } catch (error) {
+    output.destroy()
+    rmSync(targetPath, { force: true })
+    throw error
+  }
+
+  pendingMacUpdatePath = targetPath
+  emit({ event: 'Finished', data: {} })
+}
+
+function scheduleMacUpdateInstall(dmgPath: string): void {
+  const appBundlePath = dirname(dirname(dirname(process.execPath)))
+  if (!appBundlePath.endsWith('.app')) throw new Error('无法定位当前 macOS 应用目录')
+
+  const mountPath = join(app.getPath('temp'), `lume-update-mount-${randomUUID()}`)
+  const temporaryBundlePath = `${appBundlePath}.lume-update-${randomUUID()}`
+  const script = [
+    'set -eu',
+    `while kill -0 ${process.pid} 2>/dev/null; do sleep 1; done`,
+    `mkdir -p ${shellQuote(mountPath)}`,
+    `hdiutil attach -nobrowse -readonly -mountpoint ${shellQuote(mountPath)} ${shellQuote(dmgPath)} >/dev/null`,
+    `cleanup() { hdiutil detach ${shellQuote(mountPath)} -quiet >/dev/null 2>&1 || true; rm -rf ${shellQuote(mountPath)} ${shellQuote(temporaryBundlePath)}; rm -f ${shellQuote(dmgPath)}; }`,
+    'trap cleanup EXIT',
+    `source_app=$(find ${shellQuote(mountPath)} -type d -name '*.app' -prune -print | head -n 1)`,
+    '[ -n "$source_app" ]',
+    `ditto "$source_app" ${shellQuote(temporaryBundlePath)}`,
+    `rm -rf ${shellQuote(appBundlePath)}`,
+    `mv ${shellQuote(temporaryBundlePath)} ${shellQuote(appBundlePath)}`,
+    `open -a ${shellQuote(appBundlePath)}`,
+  ].join('\n')
+
+  const child = spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' })
+  child.unref()
 }
 
 function ensureTray() {
@@ -2242,9 +2332,24 @@ ipcMain.handle('lume:update:download', async (event) => {
     }).catch(onError)
   })
 })
+ipcMain.handle('lume:update:download-asset', async (event, payload) => {
+  validateIpcSender(event, getTrustedWindows())
+  if (!app.isPackaged) return null
+  if (!payload || typeof payload.url !== 'string') throw new Error('缺少更新安装包地址')
+  await downloadMacUpdateAsset(payload.url, event.sender)
+  return null
+})
 ipcMain.handle('lume:update:install', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
+  if (pendingMacUpdatePath) {
+    const dmgPath = pendingMacUpdatePath
+    pendingMacUpdatePath = null
+    scheduleMacUpdateInstall(dmgPath)
+    isQuitting = true
+    setImmediate(() => app.quit())
+    return null
+  }
   return new Promise<never>((_resolveInstall, rejectInstall) => {
     let timeout: ReturnType<typeof setTimeout> | null = null
     const cleanup = () => {
@@ -2267,7 +2372,9 @@ ipcMain.handle('lume:update:install', async (event) => {
     // 安装器接管前继续执行普通 relaunch，从而再次启动尚未替换的旧实例。
     isQuitting = true
     try {
-      autoUpdater.quitAndInstall(true, true)
+      // Windows 静默安装会让应用退出后出现一段不可见的空白期；显示安装器进度，
+      // 并在安装完成后自动启动新版本。
+      autoUpdater.quitAndInstall(false, true)
     } catch (error) {
       onError(error)
     }

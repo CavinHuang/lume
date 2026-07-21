@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke, isDesktopRuntime } from '@/lib/desktop-runtime/core'
+import { getDesktopBridge } from '@/lib/desktop-runtime/bridge'
 import { check, type DownloadEvent, type Update } from '@/lib/desktop-runtime/updater'
 import type { FileRef, GuardedFileRef } from '@lume/shared'
 
@@ -135,9 +136,28 @@ export async function downloadDesktopUpdate(
   await pendingDesktopUpdate.download(onEvent)
 }
 
+export async function downloadDesktopUpdateAsset(
+  url: string,
+  onEvent?: (event: DesktopUpdateDownloadEvent) => void,
+): Promise<void> {
+  const bridge = getDesktopBridge()
+  if (!bridge?.downloadUpdateAsset) {
+    throw new Error('当前桌面环境不支持应用内下载更新')
+  }
+  await bridge.downloadUpdateAsset(url, onEvent)
+}
+
 export async function installDesktopUpdateAndRelaunch(): Promise<void> {
   if (!pendingDesktopUpdate) {
     throw new Error('更新尚未下载')
   }
   await pendingDesktopUpdate.install()
+}
+
+export async function installDesktopUpdateAssetAndRelaunch(): Promise<void> {
+  const bridge = getDesktopBridge()
+  if (!bridge?.installUpdate) {
+    throw new Error('当前桌面环境不支持安装更新')
+  }
+  await bridge.installUpdate()
 }
