@@ -11,6 +11,7 @@ import { resolveWikiPath } from './path-security'
 import { isPublicIpAddress, WikiSafeHttpFetchService } from './safe-http-fetch'
 import { WikiSourceStore } from './source-store'
 import { cjkNgrams } from './search-text'
+import { toWikiSearchPageRef } from './index-service'
 
 const roots: string[] = []
 const uuid = '11111111-1111-4111-8111-111111111111'
@@ -85,6 +86,20 @@ describe('wiki stores and security', () => {
     expect(coordinator.getDraftStatus(cancelled.id).state).toBe('pending')
     coordinator.cancelDraft(cancelled.id)
     expect(coordinator.getDraftStatus(cancelled.id).state).toBe('unavailable')
+  })
+
+  test('projects search hits to lightweight page refs instead of returning full page bodies', () => {
+    const page = parseWikiPage(createWikiPageMarkdown({
+      type: 'topic', title: '轻量搜索结果', primaryWorkspace: null, body: '正文'.repeat(20_000),
+    }))
+    const ref = toWikiSearchPageRef(page)
+
+    expect(ref.id).toBe(page.id)
+    expect(ref.title).toBe(page.title)
+    expect(ref).not.toHaveProperty('body')
+    expect(ref).not.toHaveProperty('markdown')
+    expect(ref).not.toHaveProperty('frontmatter')
+    expect(JSON.stringify(ref).length).toBeLessThan(1_000)
   })
 
   test('resumes an interrupted journal without replaying completed files', () => {

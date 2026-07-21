@@ -67,6 +67,7 @@ describe("general-settings-service", () => {
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
+      agentMessageAvatarMode: "visible",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
@@ -99,6 +100,7 @@ describe("general-settings-service", () => {
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
+      agentMessageAvatarMode: "visible",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
@@ -125,6 +127,7 @@ describe("general-settings-service", () => {
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
+      agentMessageAvatarMode: "visible",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
@@ -156,6 +159,7 @@ describe("general-settings-service", () => {
         customThemePalettes?: unknown[];
         agentMessageDisplayMode?: string;
         agentMessageListDisplayMode?: string;
+        agentMessageAvatarMode?: string;
         logging?: typeof LUME_LOGGING_DEFAULTS;
         windowBehavior?: {
           minimizeToTray?: boolean;
@@ -177,6 +181,7 @@ describe("general-settings-service", () => {
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
+      agentMessageAvatarMode: "visible",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
@@ -296,6 +301,7 @@ describe("general-settings-service", () => {
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
+      agentMessageAvatarMode: "visible",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
@@ -474,15 +480,18 @@ describe("general-settings-service", () => {
     const updated = await updatePersistedGeneralSettings({
       agentMessageDisplayMode: "verbose",
       agentMessageListDisplayMode: "left_aligned",
+      agentMessageAvatarMode: "hidden",
     });
     expect(updated.agentMessageDisplayMode).toBe("verbose");
     expect(updated.agentMessageListDisplayMode).toBe("left_aligned");
+    expect(updated.agentMessageAvatarMode).toBe("hidden");
 
     const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
-      generalSettings?: { agentMessageDisplayMode?: string; agentMessageListDisplayMode?: string };
+      generalSettings?: { agentMessageDisplayMode?: string; agentMessageListDisplayMode?: string; agentMessageAvatarMode?: string };
     };
     expect(raw.generalSettings?.agentMessageDisplayMode).toBe("verbose");
     expect(raw.generalSettings?.agentMessageListDisplayMode).toBe("left_aligned");
+    expect(raw.generalSettings?.agentMessageAvatarMode).toBe("hidden");
   });
 
   function writeConfigFile(pathSegments: string[], content: string): string {

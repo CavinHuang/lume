@@ -4,7 +4,9 @@ import { getMemoryLocalModelsDir } from "../infra/config-paths";
 import type { MemoryV2EmbedTexts } from "./embedding";
 
 export const LOCAL_ONNX_MODEL_ID = "Xenova/bge-small-zh-v1.5";
-const INIT_TIMEOUT_MS = 15_000;
+// 首次使用可能同时包含模型下载、文件校验、ONNX Runtime 初始化和首轮加载。
+// 15 秒在 Windows 上容易把仍在正常初始化的 worker 判定为失败。
+const INIT_TIMEOUT_MS = 120_000;
 const EMBED_TIMEOUT_MS = 8_000;
 const EMBED_BATCH_SIZE = 32;
 
@@ -215,6 +217,11 @@ export function retryLocalOnnxMemoryEmbedding(): void {
 }
 
 export function getLocalOnnxMemoryEmbeddingStatus(): LocalOnnxMemoryEmbeddingStatus {
+  // worker 启动时模型文件可能还未落盘，状态会先记为 downloading；
+  // 后续设置页轮询到缓存文件后，及时切换到 initializing，避免状态长期卡在下载中。
+  if (runtimeStatus?.status === "downloading" && hasLocalOnnxModelCache()) {
+    runtimeStatus = buildLocalOnnxStatus("initializing");
+  }
   if (runtimeStatus) return runtimeStatus;
   return buildLocalOnnxStatus(hasLocalOnnxModelCache() ? "cached" : "not_cached");
 }

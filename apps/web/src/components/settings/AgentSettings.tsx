@@ -1,16 +1,20 @@
 import * as React from 'react'
 import {
   Activity,
+  Brain,
   Box,
   Check,
   ChevronDown,
+  Eye,
   GripVertical,
   KeyRound,
   Loader2,
+  RefreshCw,
   Search,
   Trash2,
   X,
   UserRound,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -21,6 +25,7 @@ import type {
   LumeConfigThinkingLevel,
   LumeEffectiveConfig,
   MemoryRuntimeConfig,
+  ModelMeta,
   ProviderType,
   ProviderGroup,
   ReadingAdvancedModelSettings,
@@ -29,6 +34,7 @@ import type {
 import {
   findModelMeta,
   formatContextWindow,
+  formatPricing,
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
   PROVIDER_LABELS,
   PROVIDER_GROUPS,
@@ -37,7 +43,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
-import { useModelMetaVersion } from '@/lib/model-meta-context'
+import { useModelMetaReload, useModelMetaVersion } from '@/lib/model-meta-context'
 import { createChannel, decryptChannelKey, listChannels, updateChannel, deleteChannel } from '@/lib/desktop-api/channel'
 import {
   getEffectiveLumeConfig,
@@ -54,6 +60,7 @@ import {
   type LumeModelPurpose,
 } from '@/lib/desktop-api/lume-config'
 import { getMemoryRuntimeConfig, updateMemoryRuntimeConfig } from '@/lib/desktop-api/memory'
+import { syncModelMeta } from '@/lib/desktop-api/model'
 import { getReadingSnapshot, updateReadingSettings } from '@/lib/desktop-api/reading'
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
@@ -91,6 +98,8 @@ export function AgentSettings() {
   const [apiKeyLoading, setApiKeyLoading] = React.useState(false)
   const [providerEnabled, setProviderEnabled] = React.useState(false)
   const [savingProvider, setSavingProvider] = React.useState(false)
+  const [syncingModelMeta, setSyncingModelMeta] = React.useState(false)
+  const reloadModelMeta = useModelMetaReload()
 
   const reload = React.useCallback(async () => {
     const [nextChannels, nextConfig, nextMemoryRuntimeConfig, nextReadingSnapshot] = await Promise.all([
@@ -371,6 +380,20 @@ export function AgentSettings() {
     }
   }
 
+  const handleSyncModelMeta = async () => {
+    setSyncingModelMeta(true)
+    try {
+      const generated = await syncModelMeta()
+      await reloadModelMeta(generated)
+      toast.success(`已更新 ${generated.length} 个模型信息`)
+    } catch (error) {
+      console.error('[AgentSettings] syncModelMeta FAILED:', error)
+      toast.error(`更新模型信息失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSyncingModelMeta(false)
+    }
+  }
+
   const persistProvider = async (input: ChannelCreateInput) => {
     const payload = { ...input, enabled: providerEnabled }
     setSavingProvider(true)
@@ -534,6 +557,7 @@ export function AgentSettings() {
           contextModelRef={contextModelRef}
           contextWindowInput={contextWindowInput}
           savingAction={savingAction}
+          syncingModelMeta={syncingModelMeta}
           savingModel={savingModel}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={handleThinkingLevelChange}
@@ -546,6 +570,7 @@ export function AgentSettings() {
           onImageGenerationChange={(next) => void persistImageGeneration(next)}
           onAddContextWindow={() => void handleAddContextWindow()}
           onRemoveContextWindow={(modelRef) => void handleRemoveContextWindow(modelRef)}
+          onSyncModelMeta={() => void handleSyncModelMeta()}
         />
       )}
     </div>
@@ -624,6 +649,7 @@ function ModelActionSettings({
   contextModelRef,
   contextWindowInput,
   savingAction,
+  syncingModelMeta,
   savingModel,
   thinkingLevel,
   onThinkingLevelChange,
@@ -636,6 +662,7 @@ function ModelActionSettings({
   onImageGenerationChange,
   onAddContextWindow,
   onRemoveContextWindow,
+  onSyncModelMeta,
 }: {
   chatOptions: ActionModelOption[]
   embeddingOptions: ActionModelOption[]
@@ -659,6 +686,7 @@ function ModelActionSettings({
   contextModelRef: string
   contextWindowInput: string
   savingAction: string | null
+  syncingModelMeta: boolean
   savingModel: boolean
   thinkingLevel: LumeConfigThinkingLevel
   onThinkingLevelChange: (value: LumeConfigThinkingLevel) => void
@@ -671,6 +699,7 @@ function ModelActionSettings({
   onImageGenerationChange: (value: { priorityModelRefs?: string[] }) => void
   onAddContextWindow: () => void
   onRemoveContextWindow: (modelRef: string) => void
+  onSyncModelMeta: () => void
 }) {
   const inheritDefault = '与默认对话模型相同'
   const inheritBackground = '与轻量模型相同'
@@ -838,7 +867,7 @@ function ModelActionSettings({
         onChange={onImageGenerationChange}
       />
 
-      <ContextWindowSettings
+      <ModelInfoSettings
         chatOptions={chatOptions}
         contextWindows={contextWindows}
         modelRef={contextModelRef}
@@ -848,6 +877,8 @@ function ModelActionSettings({
         onTokensChange={onContextWindowInputChange}
         onAdd={onAddContextWindow}
         onRemove={onRemoveContextWindow}
+        syncing={syncingModelMeta}
+        onSync={onSyncModelMeta}
       />
     </div>
   )
@@ -1051,80 +1082,113 @@ function ImageGenerationSettings({
   )
 }
 
-function ContextWindowSettings({
+function ModelInfoSettings({
   chatOptions,
   contextWindows,
   modelRef,
   tokens,
   disabled,
+  syncing,
   onModelRefChange,
   onTokensChange,
   onAdd,
   onRemove,
+  onSync,
 }: {
   chatOptions: ActionModelOption[]
   contextWindows: Record<string, number>
   modelRef: string
   tokens: string
   disabled?: boolean
+  syncing: boolean
   onModelRefChange: (value: string) => void
   onTokensChange: (value: string) => void
   onAdd: () => void
   onRemove: (modelRef: string) => void
+  onSync: () => void
 }) {
   const modelMetaVersion = useModelMetaVersion()
-  // model 元数据 reload 后触发组件重渲染（buildContextWindowRows 读全局 registry，version 变即重算）
+  // model 元数据 reload 后触发组件重渲染。
   void modelMetaVersion
-  const rows = buildContextWindowRows(chatOptions, contextWindows)
+  const rows = buildModelInfoRows(chatOptions, contextWindows)
 
   return (
     <SettingsCard
-      title="模型上下文长度"
-      description="查看和自定义各模型的最大上下文窗口。"
+      title="模型信息维护"
+      description="维护已启用模型的能力、上下文长度和价格信息。"
+      action={(
+        <Button
+          type="button"
+          variant="outline"
+          disabled={syncing}
+          onClick={onSync}
+          className="h-8 gap-1.5 rounded-[8px] px-3 text-[12px]"
+        >
+          <RefreshCw size={13} className={cn(syncing && 'animate-spin')} />
+          {syncing ? '更新中…' : '更新 models.dev'}
+        </Button>
+      )}
     >
       <div className="space-y-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_150px_72px] gap-2">
-          <Input
-            value={modelRef}
-            onChange={(event) => onModelRefChange(event.target.value)}
-            placeholder="模型名（如 gpt-5.5）"
-            className="h-9 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
-          />
-          <Input
-            value={tokens}
-            onChange={(event) => onTokensChange(event.target.value)}
-            placeholder="128000"
-            inputMode="numeric"
-            className="h-9 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
-          />
-          <Button type="button" disabled={disabled} onClick={onAdd} className="h-9 rounded-[8px] text-[13px]">添加</Button>
-        </div>
-
-        <div className="max-h-[360px] overflow-y-auto rounded-[8px] bg-[var(--surface-2)]">
+        <div className="overflow-x-auto rounded-[8px] bg-[var(--surface-2)]">
+          <div className="grid min-w-[620px] grid-cols-[minmax(0,1.4fr)_76px_minmax(130px,1fr)_110px] gap-3 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] px-3 py-2 text-[10px] font-medium text-[var(--text-3)]">
+            <span>模型</span>
+            <span className="text-right">上下文</span>
+            <span>能力</span>
+            <span className="text-right">价格 / 1M</span>
+          </div>
+          <div className="max-h-[410px] overflow-y-auto">
           {rows.map((row) => (
-            <div key={row.modelRef} className="grid min-h-11 grid-cols-[minmax(0,1fr)_86px_54px] items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] px-3 last:border-b-0">
+            <div key={row.modelRef} className="grid min-h-14 min-w-[620px] grid-cols-[minmax(0,1.4fr)_76px_minmax(130px,1fr)_110px] items-center gap-3 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] px-3 py-2 last:border-b-0">
               <div className="min-w-0">
                 <div className="truncate text-[12px] font-semibold text-[var(--text-1)]">{row.modelRef}</div>
                 <div className="truncate text-[11px] text-[var(--text-3)]">{row.label}</div>
               </div>
               <span className="justify-self-end rounded-[7px] bg-[var(--surface-1)] px-2 py-1 text-[12px] font-semibold text-[var(--text-2)]">
-                {formatContextWindow(row.tokens)}
+                {row.contextWindow ? formatContextWindow(row.contextWindow) : '未收录'}
               </span>
-              {row.custom ? (
-                <Button
-                  variant="ghost"
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onRemove(row.modelRef)}
-                  className="text-[12px] font-medium text-[var(--lume-danger)] disabled:opacity-40"
-                >
-                  移除
-                </Button>
-              ) : (
-                <span className="text-right text-[11px] text-[var(--text-3)]">内置</span>
-              )}
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                {row.meta ? <ModelCapabilityBadges meta={row.meta} /> : <span className="text-[11px] text-[var(--text-3)]">暂无能力信息</span>}
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                {row.meta?.pricing && <span className="text-[10px] text-[var(--text-3)]">{formatPricing(row.meta.pricing)}</span>}
+                {row.custom ? (
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onRemove(row.modelRef)}
+                    className="h-7 px-1.5 text-[11px] font-medium text-[var(--lume-danger)] disabled:opacity-40"
+                  >
+                    移除覆盖
+                  </Button>
+                ) : (
+                  <span className="text-[10px] text-[var(--text-3)]">默认</span>
+                )}
+              </div>
             </div>
           ))}
+          </div>
+        </div>
+
+        <div className="rounded-[8px] bg-[var(--surface-2)] p-3">
+          <div className="mb-2 text-[12px] font-semibold text-[var(--text-1)]">手动覆盖上下文长度</div>
+          <div className="grid grid-cols-[minmax(0,1fr)_150px_72px] gap-2">
+            <Input
+              value={modelRef}
+              onChange={(event) => onModelRefChange(event.target.value)}
+              placeholder="模型名（如 zai/glm-5.2）"
+              className="h-9 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
+            />
+            <Input
+              value={tokens}
+              onChange={(event) => onTokensChange(event.target.value)}
+              placeholder="1000000"
+              inputMode="numeric"
+              className="h-9 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-1)] px-3 text-[13px] text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))]"
+            />
+            <Button type="button" disabled={disabled} onClick={onAdd} className="h-9 rounded-[8px] text-[13px]">添加</Button>
+          </div>
         </div>
       </div>
     </SettingsCard>
@@ -1467,29 +1531,47 @@ function moveItem<T>(items: T[], from: number, to: number): T[] {
   return next
 }
 
-function buildContextWindowRows(
+const MODEL_CAPABILITY_BADGES = [
+  { key: 'vision', label: '视觉', icon: Eye },
+  { key: 'toolUse', label: '工具', icon: Wrench },
+  { key: 'reasoning', label: '推理', icon: Brain },
+] as const
+
+function ModelCapabilityBadges({ meta }: { meta: ModelMeta }) {
+  const badges = MODEL_CAPABILITY_BADGES.filter(({ key }) => meta.capabilities[key])
+  if (badges.length === 0) return <span className="text-[11px] text-[var(--text-3)]">基础对话</span>
+
+  return badges.map(({ key, label, icon: Icon }) => (
+    <span key={key} className="inline-flex items-center gap-1 rounded-[5px] bg-[var(--surface-1)] px-1.5 py-0.5 text-[10px] text-[var(--text-2)]">
+      <Icon size={11} />
+      {label}
+    </span>
+  ))
+}
+
+function buildModelInfoRows(
   options: ActionModelOption[],
   overrides: Record<string, number>
-): Array<{ modelRef: string; label: string; tokens: number; custom: boolean }> {
-  const rows = new Map<string, { modelRef: string; label: string; tokens: number; custom: boolean }>()
+): Array<{ modelRef: string; label: string; contextWindow?: number; custom: boolean; meta?: ModelMeta }> {
+  const rows = new Map<string, { modelRef: string; label: string; contextWindow?: number; custom: boolean; meta?: ModelMeta }>()
   for (const option of options) {
     const meta = findModelMeta(option.modelRef)
-    const tokens = overrides[option.modelRef] ?? meta?.contextWindow
-    if (!tokens) continue
     rows.set(option.modelRef, {
       modelRef: option.modelRef,
       label: option.label,
-      tokens,
+      contextWindow: overrides[option.modelRef] ?? meta?.contextWindow,
       custom: overrides[option.modelRef] !== undefined,
+      meta,
     })
   }
-  for (const [modelRef, tokens] of Object.entries(overrides)) {
+  for (const [modelRef, contextWindow] of Object.entries(overrides)) {
     if (rows.has(modelRef)) continue
     rows.set(modelRef, {
       modelRef,
       label: modelRef,
-      tokens,
+      contextWindow,
       custom: true,
+      meta: findModelMeta(modelRef),
     })
   }
   return [...rows.values()].sort((left, right) => left.modelRef.localeCompare(right.modelRef))

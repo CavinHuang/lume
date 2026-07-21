@@ -1553,7 +1553,8 @@ export const updateGeneralSettingsInputSchema = z.object({
     lastUpdateCheckAt: z.string().nullable().optional()
   }).optional(),
   agentMessageDisplayMode: z.enum(["minimal", "verbose"]).optional(),
-  agentMessageListDisplayMode: z.enum(["conversation", "left_aligned"]).optional()
+  agentMessageListDisplayMode: z.enum(["conversation", "left_aligned"]).optional(),
+  agentMessageAvatarMode: z.enum(["visible", "hidden"]).optional()
 });
 
 export const clearCacheInputSchema = z.object({

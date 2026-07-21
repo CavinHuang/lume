@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'b
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MODEL_META_IPC_CHANNELS } from '@lume/shared'
+import { MODEL_META_IPC_CHANNELS, MODEL_META_SEED, setModelMeta } from '@lume/shared'
 import { createModelMetaHandlers } from './model-meta-handlers'
 
 describe('createModelMetaHandlers GET', () => {
@@ -15,6 +15,7 @@ describe('createModelMetaHandlers GET', () => {
     process.env.LUME_CONFIG_DIR = tmpDir
   })
   afterEach(async () => {
+    setModelMeta(MODEL_META_SEED)
     if (prevEnv === undefined) delete process.env.LUME_CONFIG_DIR
     else process.env.LUME_CONFIG_DIR = prevEnv
     await rm(tmpDir, { recursive: true, force: true })
@@ -52,6 +53,7 @@ describe('createModelMetaHandlers SYNC', () => {
     process.env.LUME_CONFIG_DIR = tmpDir
   })
   afterEach(async () => {
+    setModelMeta(MODEL_META_SEED)
     mock.restore()
     if (prevEnv === undefined) delete process.env.LUME_CONFIG_DIR
     else process.env.LUME_CONFIG_DIR = prevEnv

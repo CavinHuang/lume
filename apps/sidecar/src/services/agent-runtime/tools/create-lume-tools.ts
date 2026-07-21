@@ -64,24 +64,10 @@ export interface CreateLumeRuntimeToolsOutput {
   availableToolNames: string[];
 }
 
-const WIKI_TARGET_PATTERN = /(?:\bwiki\b|知识库|knowledge\s*base)/i;
-const WIKI_WRITE_PATTERN = /(?:沉淀|保存|写入|写到|记到|存到|归档|收录|加入|导入|放进|整理进|persist|save|write|archive|add|import)/i;
-const WIKI_WRITE_NEGATION_PATTERN = /(?:(?:不要|别|禁止|无需|不需要|不可|不能).{0,8}(?:沉淀|保存|写入|写到|记到|存到|归档|收录|加入|导入)|(?:do\s+not|don't|never|without).{0,16}(?:persist|save|write|archive|add|import))/i;
-
-export function isExplicitWikiWriteInstruction(instruction?: string): boolean {
-  return Boolean(
-    instruction
-    && WIKI_TARGET_PATTERN.test(instruction)
-    && WIKI_WRITE_PATTERN.test(instruction)
-    && !WIKI_WRITE_NEGATION_PATTERN.test(instruction)
-  );
-}
-
 export function createOrdinaryWikiTools(input: {
   profile?: TrustedWikiRuntimeProfile;
   proposalEnabled?: boolean;
   creatorThreadId?: string;
-  originalUserInstruction?: string;
 }): ToolDefinition[] {
   if (!input.profile || input.profile.explicit) return [];
   return [
@@ -90,8 +76,6 @@ export function createOrdinaryWikiTools(input: {
       creatorThreadId: input.creatorThreadId,
       creatorProfile: "ordinary-agent",
       securityGateAvailable: input.proposalEnabled === true,
-      requireExplicitWriteIntent: true,
-      writeAuthorized: isExplicitWikiWriteInstruction(input.originalUserInstruction),
     }),
   ];
 }
@@ -100,7 +84,6 @@ export function createWikiToolsForTrustedProfile(input: {
   profile?: TrustedWikiRuntimeProfile;
   proposalEnabled?: boolean;
   creatorThreadId?: string;
-  originalUserInstruction?: string;
 }): ToolDefinition[] {
   if (!input.profile) return [];
   if (!input.profile.explicit) return createOrdinaryWikiTools(input);
@@ -110,8 +93,6 @@ export function createWikiToolsForTrustedProfile(input: {
       creatorThreadId: input.creatorThreadId,
       creatorProfile: "ask-wiki",
       securityGateAvailable: input.proposalEnabled === true,
-      requireExplicitWriteIntent: true,
-      writeAuthorized: isExplicitWikiWriteInstruction(input.originalUserInstruction),
     }),
   ];
 }
@@ -130,7 +111,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
       profile: wikiProfile,
       proposalEnabled: input.wikiProposalEnabled,
       creatorThreadId: input.threadId,
-      originalUserInstruction: input.originalUserInstruction,
     });
     return { customTools, availableToolNames: customTools.map((tool) => tool.name) };
   }
@@ -204,7 +184,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     profile: wikiProfile,
     proposalEnabled: input.wikiProposalEnabled,
     creatorThreadId: input.threadId,
-    originalUserInstruction: input.originalUserInstruction
   });
   const customTools = [
     ...memoryTools,

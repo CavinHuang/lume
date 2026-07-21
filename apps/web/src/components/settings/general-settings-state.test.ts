@@ -46,6 +46,7 @@ describe('general settings state', () => {
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
+      agentMessageAvatarMode: 'visible',
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: false,
@@ -72,6 +73,7 @@ describe('general settings state', () => {
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
+      agentMessageAvatarMode: 'visible',
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: false,
@@ -94,6 +96,7 @@ describe('general settings state', () => {
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
+      agentMessageAvatarMode: 'visible',
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: true,
@@ -114,6 +117,7 @@ describe('general settings state', () => {
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
+      agentMessageAvatarMode: 'visible',
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: true,

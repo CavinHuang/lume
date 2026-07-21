@@ -14,7 +14,7 @@ Wiki 读取工具已经在服务端执行 thread scope、workspace UUID、page v
 
 - 受信任的本地 direct Agent 线程始终获得 `wiki.search`、`wiki.read`、`wiki.follow_links`。
 - IM、群聊、外部主体和不可信 thread source 仍不能因此获得 Wiki scope。
-- `wiki.propose_changes` 与只读工具一样保持稳定注入；工具执行时必须同时验证 proposal security gate 已就绪、当前用户消息明确要求写入 Wiki，否则在创建 staging 前拒绝。
+- `wiki.propose_changes` 与只读工具一样保持稳定注入；proposal security gate 就绪后，Agent 可以创建 staging 草案，不再使用关键词判断拦截。正式 Wiki 只有在用户点击确认卡并由 privileged channel apply 后才会变化。
 - 提案只能写 staging；正式 apply/resolve/undo 继续由 Electron 主进程 privileged channel 执行，并要求用户确认。
 - 更新仍绑定 page ID、expected hash 和块 ownership；高风险覆盖、删除与冲突继续进入 pending review。
 - Phase B 继续表示通用 shell/process 的 protected-root 隔离能力，但不再控制专用 Wiki 只读工具是否出现。

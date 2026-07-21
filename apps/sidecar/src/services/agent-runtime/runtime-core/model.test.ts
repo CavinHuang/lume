@@ -46,4 +46,30 @@ describe("runtime-core model", () => {
     expect(resolved?.resolvedModelId).toBe("claude-sonnet-4-5-20250929");
     expect(resolved?.model.baseUrl).toBe("https://api.anthropic.com");
   });
+
+  test("GLM-5.2 应使用元数据中的 1M 上下文窗口", () => {
+    const resolved = resolvePiChannelModel({
+      channel: {
+        models: [{ id: "glm-5.2", name: "GLM-5.2", enabled: true }]
+      },
+      channelProvider: "zai",
+      requestedModelRefOrId: "zai/glm-5.2",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4"
+    });
+
+    expect(resolved?.model.contextWindow).toBe(1_000_000);
+  });
+
+  test("应优先使用模型上下文长度手动覆盖值", () => {
+    const resolved = resolvePiChannelModel({
+      channel: {
+        models: [{ id: "glm-5.2", name: "GLM-5.2", enabled: true }]
+      },
+      channelProvider: "zai",
+      requestedModelRefOrId: "zai/glm-5.2",
+      contextWindowOverrides: { "zai/glm-5.2": 512_000 }
+    });
+
+    expect(resolved?.model.contextWindow).toBe(512_000);
+  });
 });

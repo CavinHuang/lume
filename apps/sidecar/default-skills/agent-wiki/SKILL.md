@@ -11,7 +11,7 @@ version: "3.2"
 - Wiki 是受保护知识域，不能用 `Read`、`Write`、`Edit`、`Glob`、`Grep`、`Bash` 或任何通用文件工具直接访问。
 - 不要探测 `~/.lume/wiki`，也不要把失败后的草稿写到 session、workspace 或其他目录冒充已沉淀。
 - 正式写入必须经过 `wiki.propose_changes` 创建 sidecar staging 草案，再由用户点击确认卡。模型不能代替用户确认。
-- `wiki.propose_changes` 出现在工具 schema 中不等于获得写入授权；security gate 未就绪或当前用户没有明确要求写入时不得创建草案，runtime 会在写 staging 前拒绝。
+- `wiki.propose_changes` 只创建 staging 草案，不代表获得正式写入授权；security gate 未就绪时 runtime 会拒绝，正式 Wiki 只有在用户点击确认卡后才会变化。
 - `wiki.search`、`wiki.read`、`wiki.follow_links` 是受 scope 与 provenance ACL 约束的只读能力，在受信任的本地 Agent 线程中应正常可用；不要把读取误当成写权限。
 - 当前运行没有某个 Wiki 工具时，只能说明“当前线程未获得该工具”，不得据此断言 Wiki、sidecar 或安装包整体不可用；不要改用文件写入兜底。
 - `wiki.*` 是 Lume 运行时内置工具，不是 MCP server；MCP servers 列表为空不能用于判断 Wiki 是否可用，只能以当前工具 schema 中是否存在 `wiki.*` 为准。

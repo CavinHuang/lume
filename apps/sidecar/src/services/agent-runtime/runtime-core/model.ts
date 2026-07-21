@@ -20,6 +20,7 @@ export function resolvePiChannelModel(params: {
   channelProvider?: string;
   requestedModelRefOrId: string;
   baseUrl?: string;
+  contextWindowOverrides?: Record<string, number>;
 }): ResolvedPiChannelModel | null {
   const candidateModelIds = resolveModelCandidatesForChannel(params.channel, params.requestedModelRefOrId);
   for (const candidateModelId of candidateModelIds) {
@@ -37,7 +38,8 @@ export function resolvePiChannelModel(params: {
           provider,
           modelId,
           shouldApplyChannelBaseUrl(provider, params.baseUrl) ? params.baseUrl : undefined,
-          channelModel?.capabilities?.vision ?? findModelMeta(modelId)?.capabilities.vision
+          channelModel?.capabilities?.vision ?? findModelMeta(modelId)?.capabilities.vision,
+          resolveContextWindowOverride(params, provider, modelId)
         )
       };
     }
@@ -64,14 +66,33 @@ export function resolvePiChannelModel(params: {
       modelId,
       shouldApplyChannelBaseUrl(fallbackProvider, params.baseUrl) ? params.baseUrl : undefined,
       params.channel.models.find((item) => item.id === firstModelId || item.alias === firstModelId)?.capabilities?.vision
-        ?? findModelMeta(modelId)?.capabilities.vision
+        ?? findModelMeta(modelId)?.capabilities.vision,
+      resolveContextWindowOverride(params, fallbackProvider, modelId)
     )
   };
 }
 
 export const resolveRuntimeCoreChannelModel = resolvePiChannelModel;
 
-function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?: string, vision = false): Model<Api> {
+function resolveContextWindowOverride(
+  params: { requestedModelRefOrId: string; contextWindowOverrides?: Record<string, number> },
+  provider: KnownProvider,
+  modelId: string,
+): number | undefined {
+  const overrides = params.contextWindowOverrides
+  if (!overrides) return undefined
+  return overrides[params.requestedModelRefOrId]
+    ?? overrides[`${provider}/${modelId}`]
+    ?? overrides[modelId]
+}
+
+function createFallbackModel(
+  provider: KnownProvider,
+  modelId: string,
+  baseUrl?: string,
+  vision = false,
+  contextWindowOverride?: number,
+): Model<Api> {
   const normalizedBaseUrl = baseUrl?.trim() || resolveFallbackBaseUrl(provider);
   const api =
     provider === "anthropic"
@@ -88,7 +109,7 @@ function createFallbackModel(provider: KnownProvider, modelId: string, baseUrl?:
     reasoning: supportsReasoning(provider, normalizedBaseUrl),
     input: vision ? ["text", "image"] : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
+    contextWindow: contextWindowOverride ?? findModelMeta(modelId)?.contextWindow ?? 200000,
     maxTokens: 32768
   };
 }

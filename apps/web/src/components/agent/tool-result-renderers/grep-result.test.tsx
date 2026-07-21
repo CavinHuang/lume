@@ -1,0 +1,17 @@
+import { describe, expect, test } from 'bun:test'
+import { formatGrepResult } from './grep-result'
+
+describe('formatGrepResult', () => {
+  test('renders structured grep matches as readable lines', () => {
+    expect(formatGrepResult({
+      pattern: 'Wiki',
+      output_mode: 'content',
+      matches: ['src/wiki.ts:12:const Wiki = true', 'src/view.tsx:8:WikiView'],
+    })).toBe('src/wiki.ts:12:const Wiki = true\nsrc/view.tsx:8:WikiView')
+  })
+
+  test('does not stringify structured results as object identity', () => {
+    expect(formatGrepResult({ matches: [{ path: 'src/wiki.ts', line_number: 12, line: 'Wiki' }] })).toContain('"path": "src/wiki.ts"')
+    expect(formatGrepResult({ matches: [{ path: 'src/wiki.ts' }] })).not.toBe('[object Object]')
+  })
+})

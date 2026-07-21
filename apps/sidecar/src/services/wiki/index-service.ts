@@ -3,7 +3,7 @@ import { existsSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { WikiLintFinding, WikiPageRecord, WikiSearchResult } from "@lume/shared";
+import type { WikiLintFinding, WikiPageRecord, WikiPageRef, WikiSearchResult } from "@lume/shared";
 import { extractWikiLinks, sha256, WikiMarkdownStore } from "./markdown-store";
 import { ensureWikiDirectory, resolveWikiPath } from "./path-security";
 import { cjkNgrams } from "./search-text";
@@ -176,7 +176,7 @@ export class WikiIndexService {
     }
     return [...scores.entries()].map(([id, value]) => {
       const page = visiblePages.find((item) => item.id === id)!;
-      return { page, snippet: page.body.replace(/\s+/g, " ").slice(0, 240), score: value.score, matchedBy: [...new Set(value.matchedBy)] };
+      return { page: toWikiSearchPageRef(page), snippet: page.body.replace(/\s+/g, " ").slice(0, 240), score: value.score, matchedBy: [...new Set(value.matchedBy)] };
     }).sort((left, right) => right.score - left.score || left.page.id.localeCompare(right.page.id)).slice(0, maxResults);
   }
 
@@ -282,12 +282,25 @@ function fuseResults(
     const semanticMatch = semanticById.get(page.id);
     const score = (lexicalMatch ? 1 / (60 + lexicalMatch.rank) : 0) + (semanticMatch ? 1 / (60 + semanticMatch.rank) : 0);
     return {
-      page,
+      page: toWikiSearchPageRef(page),
       snippet: lexicalMatch?.item.snippet ?? page.body.replace(/\s+/g, " ").slice(0, 240),
       score,
       matchedBy: [...new Set([...(lexicalMatch?.item.matchedBy ?? []), ...(semanticMatch ? ["semantic" as const] : [])])],
     };
   }).sort((left, right) => right.score - left.score || left.page.id.localeCompare(right.page.id)).slice(0, maxResults);
+}
+
+export function toWikiSearchPageRef(page: WikiPageRecord): WikiPageRef {
+  return {
+    id: page.id,
+    fileKey: page.fileKey,
+    title: page.title,
+    type: page.type,
+    status: page.status,
+    primaryWorkspaceId: page.primaryWorkspaceId,
+    associatedWorkspaceIds: page.associatedWorkspaceIds,
+    ...(page.path ? { path: page.path } : {}),
+  };
 }
 
 function pageFingerprint(pages: WikiPageRecord[]): string {

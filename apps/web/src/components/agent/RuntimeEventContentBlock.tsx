@@ -122,7 +122,9 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   onUserResizeStart,
 }: RuntimeEventContentBlockProps) {
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
-  const useLeftAlignedMessageList = useAtomValue(generalSettingsAtom).agentMessageListDisplayMode === 'left_aligned'
+  const generalSettings = useAtomValue(generalSettingsAtom)
+  const useLeftAlignedMessageList = generalSettings.agentMessageListDisplayMode === 'left_aligned'
+  const showMessageAvatar = generalSettings.agentMessageAvatarMode === 'visible'
 
   if (message.type === 'user') {
     return (
@@ -131,6 +133,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
         threadId={threadId}
         className={cls}
         leftAligned={useLeftAlignedMessageList}
+        showAvatar={showMessageAvatar}
         canEdit={canEditUserMessage}
         onOpenThreadFile={onOpenThreadFile}
         onOpenThreadImage={onOpenThreadImage}
@@ -181,7 +184,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   return (
     <MessageFileReferenceBindingProvider value={message.fileReferenceBinding} consumerThreadId={threadId} protocolVersion={message.fileReferenceProtocolVersion}>
     <div className={cn('group/agent-message flex w-full max-w-[920px] min-w-0 gap-4', cls)}>
-      {showAssistantAvatar && (
+      {showAssistantAvatar && showMessageAvatar && (
         <div
           data-agent-message-avatar="true"
           className="mt-1 flex size-10 shrink-0 items-center justify-center rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[var(--lume-bg-elevated)] text-[var(--lume-accent)] shadow-[0_10px_24px_-20px_hsl(var(--lume-shadow-panel)/0.72)]"
@@ -396,6 +399,7 @@ function UserMessageBlock({
   className,
   canEdit,
   leftAligned,
+  showAvatar,
   onOpenThreadFile,
   onOpenThreadImage,
 }: {
@@ -404,6 +408,7 @@ function UserMessageBlock({
   className: string
   canEdit: boolean
   leftAligned: boolean
+  showAvatar: boolean
   onOpenThreadFile?: OpenThreadFile
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
 }) {
@@ -462,7 +467,7 @@ function UserMessageBlock({
       leftAligned ? 'justify-start' : 'ml-auto justify-end gap-2',
       className,
     )}>
-      {leftAligned && (
+      {leftAligned && showAvatar && (
         <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
           L
         </div>

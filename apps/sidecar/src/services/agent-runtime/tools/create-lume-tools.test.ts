@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLumeRuntimeTools, createOrdinaryWikiTools, createWikiToolsForTrustedProfile, isExplicitWikiWriteInstruction } from "./create-lume-tools";
+import { createLumeRuntimeTools, createOrdinaryWikiTools, createWikiToolsForTrustedProfile } from "./create-lume-tools";
 import { createToolDescriptorsFromDefinitions } from "./tool-source";
 import { ToolRegistry } from "./tool-registry";
 import { ToolResolver } from "./tool-resolver";
@@ -14,19 +14,9 @@ function baseInput() {
 }
 
 describe("create-lume-tools", () => {
-  test("recognizes only explicit Wiki write instructions", () => {
-    expect(isExplicitWikiWriteInstruction("把上面的 P0 和 P1 沉淀到 Wiki")).toBeTrue();
-    expect(isExplicitWikiWriteInstruction("save this to the knowledge base")).toBeTrue();
-    expect(isExplicitWikiWriteInstruction("搜索一下 Wiki")).toBeFalse();
-    expect(isExplicitWikiWriteInstruction("保存当前文件")).toBeFalse();
-    expect(isExplicitWikiWriteInstruction("不要写入 Wiki，只查询现有内容")).toBeFalse();
-    expect(isExplicitWikiWriteInstruction("Do not write to the knowledge base")).toBeFalse();
-  });
-
   test("keeps all Wiki schemas visible while a missing security gate blocks proposal execution", async () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
-      originalUserInstruction: "继续分析这个问题"
     });
 
     expect(tools.map((tool) => tool.name)).toEqual(["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]);
@@ -36,11 +26,10 @@ describe("create-lume-tools", () => {
     expect(result.content).toContain("写入安全通道尚未就绪");
   });
 
-  test("authorizes a confirmable Wiki proposal only for an explicit write instruction", async () => {
+  test("allows a proposal to reach staging while formal writes remain confirmation-gated", async () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
       proposalEnabled: true,
-      originalUserInstruction: "把这段内容写入 Wiki"
     });
 
     expect(tools.map((tool) => tool.name)).toEqual(["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]);
@@ -73,26 +62,24 @@ describe("create-lume-tools", () => {
     ]);
   });
 
-  test("keeps the write schema visible but rejects execution without explicit user intent", async () => {
+  test("keeps the write schema usable without keyword-based intent gating", async () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
       proposalEnabled: true,
-      originalUserInstruction: "继续分析这个问题"
     });
 
     expect(tools.map((tool) => tool.name)).toEqual(["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]);
     const proposal = tools.find((tool) => tool.name === "wiki.propose_changes");
     expect(proposal).toBeDefined();
-    const unauthorizedResult = await proposal!.call({ action: "create", title: "不应创建" }, {} as never);
-    expect(unauthorizedResult.is_error).toBeTrue();
-    expect(unauthorizedResult.content).toContain("没有明确要求写入 Wiki");
+    const result = await proposal!.call({ action: "not-valid" }, {} as never);
+    expect(result.is_error).toBeTrue();
+    expect(result.content).toContain("action 必须是");
   });
 
-  test("keeps Wiki reads and an explicitly requested proposal visible in plan mode", () => {
+  test("keeps Wiki reads and proposal staging visible in plan mode", () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
       proposalEnabled: true,
-      originalUserInstruction: "重新试试写入 wiki"
     });
     const registry = new ToolRegistry();
     registry.registerMany(createToolDescriptorsFromDefinitions(tools, "lume"));

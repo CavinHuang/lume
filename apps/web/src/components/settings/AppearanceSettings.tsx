@@ -4,6 +4,7 @@ import { Monitor, Moon, Sparkles, Sun, Trash2, type LucideIcon } from 'lucide-re
 import { toast } from 'sonner'
 import type {
   AgentMessageDisplayMode,
+  AgentMessageAvatarMode,
   AgentMessageListDisplayMode,
   CustomThemePalette,
   ThemeMode,
@@ -44,6 +45,11 @@ const DISPLAY_MODE_OPTIONS: Array<{ value: AgentMessageDisplayMode; label: strin
 const MESSAGE_LIST_DISPLAY_MODE_OPTIONS: Array<{ value: AgentMessageListDisplayMode; label: string; desc: string }> = [
   { value: 'conversation', label: '气泡模式', desc: '用户消息显示在右侧，保持当前对话形式' },
   { value: 'left_aligned', label: '文档模式', desc: '参考飞书，用户和助手消息统一从左侧开始' },
+]
+
+const MESSAGE_AVATAR_MODE_OPTIONS: Array<{ value: AgentMessageAvatarMode; label: string; desc: string }> = [
+  { value: 'visible', label: '显示头像', desc: '显示用户和助手消息头像' },
+  { value: 'hidden', label: '不显示头像', desc: '隐藏消息头像，保留消息内容' },
 ]
 
 export function AppearanceSettings() {
@@ -97,6 +103,11 @@ export function AppearanceSettings() {
   const handleMessageListDisplayModeChange = (mode: AgentMessageListDisplayMode) => {
     if (mode === settings.agentMessageListDisplayMode || saving) return
     void persistSettings({ agentMessageListDisplayMode: mode }, '外观设置已保存')
+  }
+
+  const handleMessageAvatarModeChange = (mode: AgentMessageAvatarMode) => {
+    if (mode === settings.agentMessageAvatarMode || saving) return
+    void persistSettings({ agentMessageAvatarMode: mode }, '外观设置已保存')
   }
 
   const handleAskLumeToConfigure = () => {
@@ -233,6 +244,34 @@ export function AppearanceSettings() {
                 </div>
               )
             })}
+          </div>
+        </div>
+        <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium leading-5 text-[var(--text-2)]">消息头像</div>
+            <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">
+              控制用户和助手消息是否显示头像
+            </div>
+          </div>
+          <div className="lume-segmented grid w-[220px] grid-cols-2">
+            {MESSAGE_AVATAR_MODE_OPTIONS.map((option) => (
+              <Button
+                variant="ghost"
+                key={option.value}
+                type="button"
+                onClick={() => handleMessageAvatarModeChange(option.value)}
+                disabled={saving}
+                title={option.desc}
+                className={cn(
+                  'lume-segmented-item disabled:opacity-60',
+                  settings.agentMessageAvatarMode === option.value
+                    ? 'lume-segmented-item-active'
+                    : '',
+                )}
+              >
+                {option.label}
+              </Button>
+            ))}
           </div>
         </div>
       </section>

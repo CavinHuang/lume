@@ -28,6 +28,8 @@ export type AgentMessageDisplayMode = "minimal" | "verbose"
 
 export type AgentMessageListDisplayMode = "conversation" | "left_aligned"
 
+export type AgentMessageAvatarMode = "visible" | "hidden"
+
 export interface GeneralSettingsWindowBehavior {
   minimizeToTray: boolean
   closeToTray: boolean
@@ -49,6 +51,7 @@ export interface GeneralSettings {
   updateSettings: GeneralSettingsUpdateSettings
   agentMessageDisplayMode: AgentMessageDisplayMode
   agentMessageListDisplayMode: AgentMessageListDisplayMode
+  agentMessageAvatarMode: AgentMessageAvatarMode
   logging: LumeLoggingSettings
 }
 
@@ -60,6 +63,7 @@ export interface UpdateGeneralSettingsInput {
   updateSettings?: Partial<GeneralSettingsUpdateSettings>
   agentMessageDisplayMode?: AgentMessageDisplayMode
   agentMessageListDisplayMode?: AgentMessageListDisplayMode
+  agentMessageAvatarMode?: AgentMessageAvatarMode
   logging?: Partial<LumeLoggingSettings>
 }
 
@@ -160,6 +164,7 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
   },
   agentMessageDisplayMode: "minimal",
   agentMessageListDisplayMode: "conversation",
+  agentMessageAvatarMode: "visible",
   logging: { ...LUME_LOGGING_DEFAULTS }
 }
 

@@ -19,14 +19,20 @@ export function createWikiReadTools(scope: WikiSearchScope): ToolDefinition[] {
   return [
     createSdkJsonResultTool({
       name: "wiki.search",
-      description: "在当前会话获准的 Wiki 范围内搜索页面。不会读取范围外页面，也不会修改 Wiki。",
-      inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number", minimum: 1, maximum: 50 } }, required: ["query"] },
+      description: "在当前会话获准的 Wiki 范围内搜索页面。只返回轻量元数据和短摘要；从候选中选择 pageId 后再用 wiki.read 读取正文。",
+      inputSchema: { type: "object", properties: { query: { type: "string" }, maxResults: { type: "number", minimum: 1, maximum: 20, description: "返回候选数，默认 8；查询应尽量具体。" } }, required: ["query"] },
       isReadOnly: true,
       isConcurrencySafe: true,
       runtimeMetadata,
       async call(input) {
         const { service, subject } = await getWikiContext(scope);
-        return service.search({ query: String(input.query ?? ""), scope, maxResults: typeof input.maxResults === "number" ? input.maxResults : 10 }, subject);
+        const limit = Math.min(20, Math.max(1, typeof input.maxResults === "number" ? Math.floor(input.maxResults) : 8));
+        const matches = await service.search({ query: String(input.query ?? ""), scope, maxResults: limit + 1 }, subject);
+        return {
+          results: matches.slice(0, limit),
+          hasMore: matches.length > limit,
+          guidance: "选择必要的 pageId 后调用 wiki.read；结果过多时请缩小查询，不要一次读取所有页面。",
+        };
       },
     }),
     createSdkJsonResultTool({
@@ -63,8 +69,6 @@ export function createWikiProposalTool(
     creatorThreadId?: string;
     creatorProfile?: "ask-wiki" | "ordinary-agent";
     securityGateAvailable?: boolean;
-    requireExplicitWriteIntent?: boolean;
-    writeAuthorized?: boolean;
   } = {}
 ): ToolDefinition {
   const createOnly = options.createOnly === true;
@@ -72,7 +76,7 @@ export function createWikiProposalTool(
     name: "wiki.propose_changes",
     description: createOnly
       ? "为用户明确要求沉淀的内容创建一个待确认的新 Wiki 页面草案。它只写入 staging，不会修改正式 Wiki；创建后必须等待用户在确认卡中确认。"
-      : "创建一个待用户确认的 Wiki 变更草案。仅当当前用户消息明确要求写入 Wiki 时才允许执行；它只写入 staging，不能代替用户确认。更新前必须先 wiki.read 并提供 expectedHash。",
+      : "创建一个待用户确认的 Wiki 变更草案。它只写入 staging，用户点击确认卡后才会修改正式 Wiki。更新前必须先 wiki.read 并提供 expectedHash。",
     inputSchema: {
       type: "object",
       properties: {
@@ -115,9 +119,6 @@ export function createWikiProposalTool(
     async call(input) {
       if (options.securityGateAvailable === false) {
         throw new Error("Wiki 写入安全通道尚未就绪，当前不能创建变更草案");
-      }
-      if (options.requireExplicitWriteIntent && !options.writeAuthorized) {
-        throw new Error("当前用户消息没有明确要求写入 Wiki，不能创建变更草案");
       }
       const action = input.action === "update" || input.action === "create" || input.action === "replace_page" ? input.action : undefined;
       if (!action) throw new Error("action 必须是 create、update 或 replace_page");

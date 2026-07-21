@@ -1,4 +1,4 @@
-import { MODEL_META_IPC_CHANNELS, buildGeneratedFromCatalog, type Catalog, type ModelMeta } from "@lume/shared"
+import { MODEL_META_IPC_CHANNELS, buildGeneratedFromCatalog, setModelMeta, type Catalog, type ModelMeta } from "@lume/shared"
 import { getConfigDir } from "../services/infra/config-paths"
 import { fetchWithProxy } from "../services/infra/proxy-fetch"
 import { readFile, rename, writeFile } from "node:fs/promises"
@@ -29,7 +29,9 @@ export function createModelMetaHandlers(): Record<string, RpcHandler> {
     [MODEL_META_IPC_CHANNELS.GET]: async () => {
       const filePath = join(getConfigDir(), GENERATED_FILE)
       try {
-        return JSON.parse(await readFile(filePath, "utf8"))
+        const generated = JSON.parse(await readFile(filePath, "utf8")) as ModelMeta[]
+        setModelMeta(generated)
+        return generated
       } catch (e) {
         if (e instanceof Error && "code" in e && (e as NodeJS.ErrnoException).code === "ENOENT") return null
         throw e
@@ -41,6 +43,7 @@ export function createModelMetaHandlers(): Record<string, RpcHandler> {
       const catalog = (await res.json()) as Catalog
       const generated = buildGeneratedFromCatalog(catalog)
       await atomicWriteGenerated(join(getConfigDir(), GENERATED_FILE), generated)
+      setModelMeta(generated)
       return generated
     },
   }

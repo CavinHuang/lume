@@ -339,7 +339,7 @@
   display: table;
   width: 100%;
   table-layout: auto;
-  overflow: visible;
+  overflow: hidden;
   margin: 18px 0 22px;
   border-radius: 10px;
   box-shadow: 0 0 0 1px var(--lume-border-subtle);
