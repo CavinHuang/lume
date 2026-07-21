@@ -133,9 +133,21 @@ export type PluginSetupArtifactKind =
   | "node-bundle"
   | "file"
 
+export type PluginSetupPlatform = "win32" | "darwin" | "linux"
+export type PluginSetupArch = "x64" | "arm64"
+
 export interface PluginSetupArtifact {
   path: string
   kind: PluginSetupArtifactKind
+  platform?: PluginSetupPlatform
+  arch?: PluginSetupArch
+}
+
+export interface PluginSetupInstaller {
+  kind: "chrome-native-host"
+  hostName: string
+  extensionId: string
+  appServerUrl: string
 }
 
 export interface PluginSetupDownload {
@@ -172,8 +184,10 @@ export interface PluginMarketplaceSetupStep {
   description: string
   kind?: PluginMarketplaceSetupKind
   artifact?: PluginSetupArtifact
+  artifacts?: PluginSetupArtifact[]
   download?: PluginSetupDownload
   build?: PluginSetupBuild
+  installer?: PluginSetupInstaller
   targetApp?: PluginSetupTargetApp
   verify?: PluginSetupVerify
 }
@@ -297,6 +311,7 @@ export interface PreparePluginPackageResult {
   sha256: string
   finalOrigin?: string
   originChanged?: boolean
+  installer?: PluginSetupInstaller
 }
 
 export interface FinalizePluginPackageInput {
@@ -317,6 +332,13 @@ export interface SavePluginPackageResult {
   status: "saved" | "cancelled"
   savedPath?: string
   verification?: "verified" | "unverified"
+}
+
+export interface InstallPluginPackageResult {
+  status: "installed"
+  hostName: string
+  hostPath: string
+  manifestPath: string
 }
 
 export interface PluginPackageProgress {

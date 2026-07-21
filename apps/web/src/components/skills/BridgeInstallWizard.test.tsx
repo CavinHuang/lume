@@ -31,6 +31,12 @@ const installMarketItemMock = mock(
 mock.module('@/lib/desktop-api', () => ({
   checkBridgeStatus: async () => ({ ok: true, detail: 'ok' }),
   savePluginPackage: async () => ({ status: 'saved', savedPath: '/tmp/x' }),
+  installPluginPackage: async () => ({
+    status: 'installed',
+    hostName: 'com.lume.browser',
+    hostPath: '/tmp/lume-chrome-host',
+    manifestPath: '/tmp/com.lume.browser.json',
+  }),
   writeClipboardText: async () => undefined,
   getMarketDetail: async (): Promise<GetMarketDetailResult> => mockMarketDetailResult(),
   installMarketItem: installMarketItemMock,

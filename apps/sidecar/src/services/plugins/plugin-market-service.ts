@@ -30,9 +30,13 @@ import type {
   PluginMarketMirrorSnapshot,
   PluginMarketplaceAsset,
   PluginMarketplaceMetadata,
+  PluginMarketplaceSetupStep,
   PluginPermissionSummary,
   PluginReadmePreview,
   PluginSourceRef,
+  PluginSetupArch,
+  PluginSetupArtifact,
+  PluginSetupPlatform,
   FinalizePluginPackageInput,
   PreparePluginPackageInput,
   PreparePluginPackageResult,
@@ -80,6 +84,17 @@ interface CatalogPluginLease {
   expiresAt: number;
 }
 const catalogPluginLeases = new Map<string, CatalogPluginLease>();
+
+export function selectPluginSetupArtifact(
+  step: Pick<PluginMarketplaceSetupStep, "artifact" | "artifacts">,
+  target: { platform: NodeJS.Platform; arch: string } = { platform: process.platform, arch: process.arch },
+): PluginSetupArtifact | undefined {
+  const platform = target.platform as PluginSetupPlatform;
+  const arch = target.arch as PluginSetupArch;
+  return [step.artifact, ...(step.artifacts ?? [])]
+    .filter((artifact): artifact is PluginSetupArtifact => Boolean(artifact))
+    .find((artifact) => (!artifact.platform || artifact.platform === platform) && (!artifact.arch || artifact.arch === arch));
+}
 
 export function clearPluginMarketInMemoryCatalogLeasesForTest(): void {
   catalogPluginLeases.clear();
@@ -482,12 +497,26 @@ export class PluginMarketService {
     }
     const step = inspected.normalized.marketplace?.setup?.find((candidate) => candidate.id === input.setupStepId);
     if (!step) throw new PluginMarketError("source_not_found", "未找到配套包步骤");
+    if (step.installer && !lease.official) {
+      throw new PluginMarketError("invalid_manifest", "只有官方市场插件可以声明本机安装器");
+    }
     if (step.build?.command) {
       throw new PluginMarketError("invalid_manifest", "配套包导出不执行 build.command");
     }
+    const artifact = selectPluginSetupArtifact(step);
+    if (step.artifacts?.length && !artifact) {
+      throw new PluginMarketError("source_not_found", `当前平台 ${process.platform}-${process.arch} 没有可用的预编译配套包`);
+    }
+    if (step.installer && artifact?.kind !== "native-binary") {
+      throw new PluginMarketError("invalid_manifest", "本机安装器必须提供 native-binary 产物");
+    }
+    const withInstaller = (prepared: PreparePluginPackageResult): PreparePluginPackageResult => ({
+      ...prepared,
+      ...(step.installer ? { installer: step.installer } : {}),
+    });
     const packages = getPluginPackageService();
     if (step.download) {
-      return packages.prepareDownload({
+      return withInstaller(await packages.prepareDownload({
         url: step.download.url,
         filename: step.download.filename,
         expectedSha256: step.download.sha256,
@@ -496,33 +525,33 @@ export class PluginMarketService {
         ownerGeneration: input.ownerGeneration,
         source: lease.official ? "official-market" : "external-download",
         version: inspected.normalized.version,
-      });
+      }));
     }
-    if (!step.artifact?.path) throw new PluginMarketError("invalid_manifest", "配套包必须声明 artifact.path 或 download");
+    if (!artifact?.path) throw new PluginMarketError("invalid_manifest", "配套包必须声明 artifact.path、artifacts 或 download");
     if (lease.source.type === "local" || lease.source.type === "legacy") {
-      return packages.preparePath({
+      return withInstaller(await packages.preparePath({
         packageRoot: lease.source.path,
-        sourcePath: resolve(lease.source.path, step.artifact.path.replace(/^\.\//, "")),
-        suggestedFilename: basename(step.artifact.path),
+        sourcePath: resolve(lease.source.path, artifact.path.replace(/^\.\//, "")),
+        suggestedFilename: basename(artifact.path),
         ownerWebContentsId: input.ownerWebContentsId,
         ownerGeneration: input.ownerGeneration,
         source: lease.source.type,
         version: inspected.normalized.version,
-      });
+      }));
     }
     if (lease.source.type !== "github") throw new PluginMarketError("source_not_found", "不支持的插件来源");
     const stage = join(homedir(), ".lume", "cache", "plugin-package-sources", randomUUID());
     try {
       await this.stageGitHubTarball(lease.source, stage);
-      return await packages.preparePath({
+      return withInstaller(await packages.preparePath({
         packageRoot: stage,
-        sourcePath: resolve(stage, step.artifact.path.replace(/^\.\//, "")),
-        suggestedFilename: basename(step.artifact.path),
+        sourcePath: resolve(stage, artifact.path.replace(/^\.\//, "")),
+        suggestedFilename: basename(artifact.path),
         ownerWebContentsId: input.ownerWebContentsId,
         ownerGeneration: input.ownerGeneration,
         source: `github:${lease.source.owner}/${lease.source.repo}@${lease.source.ref}`,
         version: inspected.normalized.version,
-      });
+      }));
     } finally {
       await rm(stage, { recursive: true, force: true });
     }

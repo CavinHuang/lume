@@ -39,6 +39,7 @@ export interface PluginDetailPageProps {
   onToggleEnable: () => void
   onTryInChat: () => void
   onPreparePackage?: (setupStepId: string) => void
+  onInstallPackage?: (setupStepId: string) => void
   onRollback?: () => void
 }
 
@@ -53,6 +54,7 @@ export function PluginDetailPage({
   onToggleEnable,
   onTryInChat,
   onPreparePackage,
+  onInstallPackage,
   onRollback,
 }: PluginDetailPageProps) {
   const item = detail?.item.kind === 'plugin' ? detail.item.plugin : null
@@ -323,11 +325,15 @@ export function PluginDetailPage({
                       <div className="min-w-0">
                         <div className="text-[13px] font-semibold text-[var(--text-1)]">{setup.title}</div>
                         <div className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{setup.description}</div>
-                        {(setup.artifact || setup.download) && onPreparePackage && setup.id && (
+                        {setup.installer && onInstallPackage && setup.id ? (
+                          <Button type="button" disabled={busy} className="mt-2 h-8 text-[12px]" onClick={() => onInstallPackage(setup.id!)}>
+                            安装 Native Host
+                          </Button>
+                        ) : (setup.artifact || setup.artifacts?.length || setup.download) && onPreparePackage && setup.id ? (
                           <Button type="button" variant="outline" disabled={busy} className="mt-2 h-8 text-[12px]" onClick={() => onPreparePackage(setup.id!)}>
                             {setup.targetApp?.kind === 'chrome' ? '保存 Chrome 扩展包' : setup.targetApp?.kind === 'obsidian' ? '导出 Obsidian 插件包' : '保存配套包'}
                           </Button>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   ))}

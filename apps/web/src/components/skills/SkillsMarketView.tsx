@@ -45,6 +45,7 @@ import {
   updatePluginsConfig,
   writeClipboardText,
   savePluginPackage,
+  installPluginPackage,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import type {
@@ -449,6 +450,21 @@ export function SkillsMarketView() {
     }
   }
 
+  const handleInstallPackage = async (setupStepId: string) => {
+    const item = selectedPlugin
+    if (!workspaceSlug || !item?.catalogItemKey) return
+    setBusyItemId(`package:${setupStepId}`)
+    setPluginDetailError(null)
+    try {
+      const result = await installPluginPackage({ workspaceSlug, catalogItemKey: item.catalogItemKey, setupStepId })
+      toast.success(`Native Host 已安装：${result.hostName}`)
+    } catch (err) {
+      setPluginDetailError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyItemId(null)
+    }
+  }
+
   useEffect(() => {
     if (!capabilityDetailTarget || loading || !workspaceSlug) return
     setCapabilityDetailTarget(null)
@@ -506,6 +522,7 @@ export function SkillsMarketView() {
         onToggleEnable={() => void handleTogglePluginFromDetail()}
         onTryInChat={handleTryPluginInChat}
         onPreparePackage={handlePreparePackage}
+        onInstallPackage={handleInstallPackage}
         onRollback={() => void handleRollbackPluginFromDetail()}
       />
     )

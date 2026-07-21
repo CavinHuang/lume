@@ -11,8 +11,20 @@ import { getEffectivePluginRuntimeConfig } from "../system/lume-config-service";
 import {
   clearPluginMarketInMemoryCatalogLeasesForTest,
   PluginMarketError,
-  PluginMarketService
+  PluginMarketService,
+  selectPluginSetupArtifact,
 } from "./plugin-market-service";
+
+test("selectPluginSetupArtifact chooses the current platform runtime", () => {
+  const step = {
+    artifacts: [
+      { path: "./runtime/win32-x64/host.exe", kind: "native-binary" as const, platform: "win32" as const, arch: "x64" as const },
+      { path: "./runtime/darwin-arm64/host", kind: "native-binary" as const, platform: "darwin" as const, arch: "arm64" as const },
+    ],
+  };
+  expect(selectPluginSetupArtifact(step, { platform: "win32", arch: "x64" })?.path).toBe("./runtime/win32-x64/host.exe");
+  expect(selectPluginSetupArtifact(step, { platform: "linux", arch: "x64" })).toBeUndefined();
+});
 
 async function writeJson(path: string, value: unknown) {
   await mkdir(dirname(path), { recursive: true });

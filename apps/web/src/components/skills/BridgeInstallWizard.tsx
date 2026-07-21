@@ -8,6 +8,7 @@ import {
   checkBridgeStatus,
   getMarketDetail,
   installMarketItem,
+  installPluginPackage,
   savePluginPackage,
   writeClipboardText,
 } from '@/lib/desktop-api'
@@ -93,6 +94,20 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
     try {
       const result = await savePluginPackage({ workspaceSlug, catalogItemKey: plugin.catalogItemKey, setupStepId })
       if (result.status === 'saved') toast.success(`已保存到 ${result.savedPath}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const handleInstallPackage = async (setupStepId: string) => {
+    if (!workspaceSlug || !plugin.catalogItemKey) {
+      toast.error('插件目录快照已失效，请刷新市场后重试')
+      return
+    }
+    try {
+      const result = await installPluginPackage({ workspaceSlug, catalogItemKey: plugin.catalogItemKey, setupStepId })
+      toast.success(`Native Host 已安装：${result.hostName}`)
+      markDone(setupStepId)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
@@ -185,11 +200,15 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
               </div>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
-              {(current.artifact || current.download) && (
+              {current.installer ? (
+                <Button onClick={() => handleInstallPackage(current.id)}>
+                  安装 Native Host
+                </Button>
+              ) : (current.artifact || current.artifacts?.length || current.download) ? (
                 <Button onClick={() => handleSavePackage(current.id)}>
                   保存 {current.artifact ? artifactLabel(current.artifact.kind) : current.download?.filename ?? '配套包'}
                 </Button>
-              )}
+              ) : null}
               {current.verify && current.verify.method !== 'none' && (
                 <Button variant="ghost" disabled={steps[current.id]?.checking} onClick={() => handleVerify(current.id, current.verify!)}>
                   {steps[current.id]?.checking ? '检测中…' : '检测'}
