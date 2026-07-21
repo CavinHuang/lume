@@ -890,7 +890,7 @@ export class PluginMarketService {
       refresh = (async () => {
         let lastError: unknown;
         for (const url of fetchUrls) {
-          try { return await this.readRemoteMarketIndex(url); }
+          try { return await this.readRemoteMarketIndex(url, canonicalUrl); }
           catch (error) { lastError = error; }
         }
         throw lastError ?? new PluginMarketError("source_not_found", "市场源 URL 为空");
@@ -974,13 +974,13 @@ export class PluginMarketService {
     });
   }
 
-  private async readRemoteMarketIndex(sourceUrl: string): Promise<MarketIndexEntry[]> {
+  private async readRemoteMarketIndex(sourceUrl: string, canonicalSourceUrl = sourceUrl): Promise<MarketIndexEntry[]> {
     if (!sourceUrl) {
       throw new PluginMarketError("source_not_found", "市场源 URL 为空");
     }
     const parsedSourceUrl = new URL(sourceUrl);
     if (parsedSourceUrl.protocol === "https:" && !["github.com", "raw.githubusercontent.com"].includes(parsedSourceUrl.hostname)) {
-      return this.readMirrorMarketIndex(sourceUrl);
+      return this.readMirrorMarketIndex(sourceUrl, canonicalSourceUrl);
     }
     if (/\.json(?:$|[?#])/i.test(sourceUrl)) {
       const remoteJson = parsedSourceUrl;
@@ -1024,7 +1024,7 @@ export class PluginMarketService {
     return this.hydrateRemotePluginEntries(entries);
   }
 
-  private async readMirrorMarketIndex(catalogUrl: string): Promise<MarketIndexEntry[]> {
+  private async readMirrorMarketIndex(catalogUrl: string, canonicalSourceUrl: string): Promise<MarketIndexEntry[]> {
     const response = await this.requestRemote(catalogUrl, {
       headers: { Accept: "application/json", "User-Agent": "Lume-Plugin-Market" },
     });
@@ -1037,6 +1037,7 @@ export class PluginMarketService {
     if (bytes.length > MIRROR_CATALOG_MAX_BYTES) throw new PluginMarketError("invalid_manifest", "插件镜像目录超过大小限制");
     const snapshot = JSON.parse(bytes.toString("utf8")) as PluginMarketMirrorSnapshot;
     if (!isPluginMarketMirrorSnapshot(snapshot)) throw new PluginMarketError("invalid_manifest", "插件镜像目录格式无效");
+    assertMirrorSourceMatches(canonicalSourceUrl, snapshot);
     const archiveUrl = resolveMirrorUrl(catalogUrl, snapshot.archivePath);
     const rawBaseUrl = resolveMirrorUrl(catalogUrl, snapshot.rawBasePath);
     const plugins = await Promise.all(snapshot.plugins.map(async (entry): Promise<MarketIndexPluginEntry> => {
@@ -1127,7 +1128,6 @@ export class PluginMarketService {
     packagePath: string,
   ): Promise<string | undefined> {
     const extension = extname(packagePath).toLowerCase();
-    if (extension === ".svg") return undefined;
     const mime = MARKETPLACE_IMAGE_MIME_BY_EXT[extension];
     if (!mime) return undefined;
     const path = joinPosix(source.subdir, packagePath);
@@ -1984,6 +1984,35 @@ function isPluginMarketMirrorSnapshot(value: unknown): value is PluginMarketMirr
       && typeof entry.manifest === "object"
       && !Array.isArray(entry.manifest))
     && Array.isArray(snapshot.skills);
+}
+
+function assertMirrorSourceMatches(canonicalSourceUrl: string, snapshot: PluginMarketMirrorSnapshot): void {
+  let expected: Pick<GitHubRepoRoot, "owner" | "repo">;
+  let declared: GitHubRepoRoot;
+  try {
+    expected = parseMarketGitHubIdentity(canonicalSourceUrl);
+    declared = parseGitHubRootUrl(snapshot.source.url);
+  } catch {
+    throw new PluginMarketError("invalid_manifest", "插件镜像来源不是受支持的 GitHub 仓库");
+  }
+  if (
+    expected.owner.toLowerCase() !== snapshot.source.owner.toLowerCase()
+    || expected.repo.toLowerCase() !== snapshot.source.repo.toLowerCase()
+    || declared.owner.toLowerCase() !== expected.owner.toLowerCase()
+    || declared.repo.toLowerCase() !== expected.repo.toLowerCase()
+  ) {
+    throw new PluginMarketError("invalid_manifest", "插件镜像来源与配置的市场仓库不一致");
+  }
+}
+
+function parseMarketGitHubIdentity(sourceUrl: string): Pick<GitHubRepoRoot, "owner" | "repo"> {
+  try { return parseGitHubRootUrl(sourceUrl); }
+  catch {
+    const url = new URL(sourceUrl);
+    const [owner, repo] = url.pathname.split("/").filter(Boolean);
+    if (url.protocol !== "https:" || url.hostname !== "raw.githubusercontent.com" || !owner || !repo) throw new Error("invalid GitHub market URL");
+    return { owner, repo };
+  }
 }
 
 function canonicalPluginSourceIdentity(source: PluginSourceRef): string {

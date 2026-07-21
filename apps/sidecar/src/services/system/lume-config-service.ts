@@ -39,7 +39,8 @@ const OFFICIAL_PLUGIN_MARKET_SOURCE: LumeConfigPluginMarketSourceRef = {
   name: "Lume Plugins",
   kind: "remote-index",
   enabled: true,
-  url: "https://github.com/CavinHuang/lume-plugins"
+  url: "https://github.com/CavinHuang/lume-plugins",
+  mirrorUrl: "https://lume-plugin.mrhuang.site"
 };
 const DEFAULT_INTERNAL_HOOKS = {
   enabled: true,
@@ -1048,7 +1049,7 @@ export function getEffectivePluginRuntimeConfig(workspaceSlug?: string): Effecti
     directories: normalizeUniqueStringArray(config.plugins?.directories),
     marketSources: (config.plugins?.marketSources ?? [])
       .filter((source) => source.enabled !== false)
-      .map((source) => source.id === "official" && !source.mirrorUrl && process.env.LUME_PLUGIN_MARKET_MIRROR_URL?.trim()
+      .map((source) => source.id === "official" && process.env.LUME_PLUGIN_MARKET_MIRROR_URL?.trim()
         ? { ...source, mirrorUrl: process.env.LUME_PLUGIN_MARKET_MIRROR_URL.trim() }
         : source)
   };

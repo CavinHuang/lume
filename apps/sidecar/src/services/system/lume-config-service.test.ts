@@ -52,7 +52,8 @@ describe("lume-config-service", () => {
       name: "Lume Plugins",
       kind: "remote-index",
       enabled: true,
-      url: "https://github.com/CavinHuang/lume-plugins"
+      url: "https://github.com/CavinHuang/lume-plugins",
+      mirrorUrl: "https://lume-plugin.mrhuang.site"
     }]);
     expect(file.permissions?.rules).toEqual([]);
     expect(file.permissions?.classifier?.enabled).toBe(false);
@@ -381,9 +382,22 @@ describe("lume-config-service", () => {
       name: "Lume Plugins",
       kind: "remote-index",
       enabled: false,
-      url: "https://github.com/CavinHuang/lume-plugins"
+      url: "https://github.com/CavinHuang/lume-plugins",
+      mirrorUrl: "https://lume-plugin.mrhuang.site"
     });
     expect(getEffectivePluginRuntimeConfig("default").marketSources).toEqual([]);
+  });
+
+  test("应允许环境变量覆盖默认官方镜像地址", () => {
+    const previous = process.env.LUME_PLUGIN_MARKET_MIRROR_URL;
+    process.env.LUME_PLUGIN_MARKET_MIRROR_URL = "https://mirror.override.example";
+    try {
+      expect(getEffectivePluginRuntimeConfig("default").marketSources[0]?.mirrorUrl)
+        .toBe("https://mirror.override.example");
+    } finally {
+      if (previous === undefined) delete process.env.LUME_PLUGIN_MARKET_MIRROR_URL;
+      else process.env.LUME_PLUGIN_MARKET_MIRROR_URL = previous;
+    }
   });
 
   test("应合并 global 与 workspace 插件启用配置", () => {

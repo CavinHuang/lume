@@ -984,8 +984,12 @@ describe("PluginMarketService", () => {
     const urls: string[] = [];
     const fetchImpl = (async (url: string) => {
       urls.push(url);
-      if (url !== "https://mirror.example/v1/catalog") return new Response("unexpected", { status: 500 });
-      return Response.json({
+      if (url === `https://mirror.example/v1/snapshots/${sha}/raw/plugins/mirrored-plugin/assets/icon.svg`) {
+        return new Response("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>", {
+          headers: { "content-type": "image/svg+xml" },
+        });
+      }
+      if (url === "https://mirror.example/v1/catalog") return Response.json({
         schema: "lume-plugin-market-mirror/v1",
         generation: sha,
         generatedAt: "2026-07-21T00:00:00.000Z",
@@ -1008,16 +1012,22 @@ describe("PluginMarketService", () => {
             schema: "lume-plugin/v1",
             name: "mirrored-plugin",
             version: "1.0.0",
+            marketplace: { icon: "./assets/icon.svg" },
           },
         }],
         skills: [],
       });
+      return new Response("unexpected", { status: 500 });
     }) as unknown as typeof fetch;
 
     const catalog = await makeService(root, fetchImpl).getMarketCatalog({ workspaceSlug: "default", cacheMode: "force-refresh" });
 
     expect(catalog.plugins.map((plugin) => plugin.pluginId)).toEqual(["mirrored-plugin"]);
-    expect(urls).toEqual(["https://mirror.example/v1/catalog"]);
+    expect(catalog.plugins[0]?.marketplace?.icon?.url).toStartWith("data:image/svg+xml;base64,");
+    expect(urls).toEqual([
+      "https://mirror.example/v1/catalog",
+      `https://mirror.example/v1/snapshots/${sha}/raw/plugins/mirrored-plugin/assets/icon.svg`,
+    ]);
   });
 
   test("falls back to GitHub when the configured mirror is unavailable", async () => {
