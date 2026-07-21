@@ -905,7 +905,7 @@ describe("PluginMarketService", () => {
     expect(inspected.normalized.manifestFormat).toBe("codex");
   });
 
-  test("remote marketplace pins the default branch to a commit snapshot", async () => {
+  test("remote marketplace pins commits, deduplicates trees, and isolates invalid entries", async () => {
     writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
       version: 1,
       plugins: {
@@ -917,6 +917,7 @@ describe("PluginMarketService", () => {
     }), "utf-8");
 
     const sha = "a".repeat(40);
+    let treeRequests = 0;
     const fetchImpl = (async (url: string) => {
       if (url === "https://api.github.com/repos/acme/market") {
         return Response.json({ default_branch: "main" });
@@ -927,12 +928,17 @@ describe("PluginMarketService", () => {
       if (url === `https://raw.githubusercontent.com/acme/market/${sha}/.lume-plugin/marketplace.json`) {
         return new Response(JSON.stringify({
           plugins: [
-            { name: "remote-plugin", description: "Remote plugin", source: "./plugins/remote-plugin" }
+            { name: "remote-plugin", description: "Remote plugin", source: "./plugins/remote-plugin" },
+            { name: "broken-plugin", description: "Broken plugin", source: "./plugins/broken-plugin" }
           ]
         }), { status: 200 });
       }
       if (url.includes(`/git/trees/${sha}`)) {
-        return Response.json({ tree: [{ path: "plugins/remote-plugin/lume-plugin.json", type: "blob" }] });
+        treeRequests++;
+        return Response.json({ tree: [
+          { path: "plugins/remote-plugin/lume-plugin.json", type: "blob" },
+          { path: "plugins/broken-plugin/lume-plugin.json", type: "blob" }
+        ] });
       }
       if (url === `https://raw.githubusercontent.com/acme/market/${sha}/plugins/remote-plugin/.lume-plugin/plugin.json`) {
         return new Response("missing", { status: 404 });
@@ -945,14 +951,113 @@ describe("PluginMarketService", () => {
           version: "1.0.0"
         }), { status: 200 });
       }
+      if (url === `https://raw.githubusercontent.com/acme/market/${sha}/plugins/broken-plugin/lume-plugin.json`) {
+        return Response.json({ schema: "lume-plugin/v1" });
+      }
       return new Response("unexpected url", { status: 500 });
     }) as unknown as typeof fetch;
 
     const catalog = await makeService(root, fetchImpl).getMarketCatalog({ workspaceSlug: "default" });
 
     expect(catalog.plugins.map((plugin) => plugin.pluginId)).toEqual(["remote-plugin"]);
+    expect(treeRequests).toBe(1);
+    expect(catalog.diagnostics.some((diagnostic) => diagnostic.message.includes("broken-plugin"))).toBe(true);
     expect(catalog.plugins[0]?.installState).toBe("not-installed");
     expect(catalog.syncedAt).toBeTruthy();
+  });
+
+  test("prefers a configured mirror snapshot without calling GitHub", async () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [{
+          id: "official",
+          name: "Lume Plugins",
+          kind: "remote-index",
+          url: "https://github.com/CavinHuang/lume-plugins",
+          mirrorUrl: "https://mirror.example",
+          enabled: true,
+        }]
+      }
+    }), "utf-8");
+    const sha = "c".repeat(40);
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      if (url !== "https://mirror.example/v1/catalog") return new Response("unexpected", { status: 500 });
+      return Response.json({
+        schema: "lume-plugin-market-mirror/v1",
+        generation: sha,
+        generatedAt: "2026-07-21T00:00:00.000Z",
+        source: {
+          owner: "CavinHuang",
+          repo: "lume-plugins",
+          ref: "main",
+          commit: sha,
+          url: "https://github.com/CavinHuang/lume-plugins",
+        },
+        archivePath: `/v1/snapshots/${sha}/archive.tar.gz`,
+        rawBasePath: `/v1/snapshots/${sha}/raw/`,
+        diagnostics: [],
+        plugins: [{
+          id: "mirrored-plugin",
+          name: "mirrored-plugin",
+          version: "1.0.0",
+          subdir: "plugins/mirrored-plugin",
+          manifest: {
+            schema: "lume-plugin/v1",
+            name: "mirrored-plugin",
+            version: "1.0.0",
+          },
+        }],
+        skills: [],
+      });
+    }) as unknown as typeof fetch;
+
+    const catalog = await makeService(root, fetchImpl).getMarketCatalog({ workspaceSlug: "default", cacheMode: "force-refresh" });
+
+    expect(catalog.plugins.map((plugin) => plugin.pluginId)).toEqual(["mirrored-plugin"]);
+    expect(urls).toEqual(["https://mirror.example/v1/catalog"]);
+  });
+
+  test("falls back to GitHub when the configured mirror is unavailable", async () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      plugins: {
+        marketSources: [{
+          id: "official",
+          name: "Lume Plugins",
+          kind: "remote-index",
+          url: "https://github.com/CavinHuang/lume-plugins",
+          mirrorUrl: "https://mirror.example",
+          enabled: true,
+        }]
+      }
+    }), "utf-8");
+    const sha = "d".repeat(40);
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      if (url === "https://mirror.example/v1/catalog") return new Response("offline", { status: 503 });
+      if (url === "https://api.github.com/repos/CavinHuang/lume-plugins") return Response.json({ default_branch: "main" });
+      if (url === "https://api.github.com/repos/CavinHuang/lume-plugins/commits/main") return Response.json({ sha });
+      if (url === `https://raw.githubusercontent.com/CavinHuang/lume-plugins/${sha}/.lume-plugin/marketplace.json`) {
+        return Response.json({ plugins: [{ name: "fallback-plugin", source: "./plugins/fallback-plugin" }] });
+      }
+      if (url.includes(`/git/trees/${sha}`)) {
+        return Response.json({ tree: [{ path: "plugins/fallback-plugin/lume-plugin.json", type: "blob" }] });
+      }
+      if (url === `https://raw.githubusercontent.com/CavinHuang/lume-plugins/${sha}/plugins/fallback-plugin/lume-plugin.json`) {
+        return Response.json({ schema: "lume-plugin/v1", name: "fallback-plugin", version: "1.0.0" });
+      }
+      return new Response("unexpected", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const catalog = await makeService(root, fetchImpl).getMarketCatalog({ workspaceSlug: "default", cacheMode: "force-refresh" });
+
+    expect(catalog.plugins.map((plugin) => plugin.pluginId)).toEqual(["fallback-plugin"]);
+    expect(urls[0]).toBe("https://mirror.example/v1/catalog");
+    expect(urls).toContain(`https://raw.githubusercontent.com/CavinHuang/lume-plugins/${sha}/.lume-plugin/marketplace.json`);
   });
 
   test("reuses the persisted remote snapshot without reinspecting plugins", async () => {

@@ -54,6 +54,7 @@ export interface LumeConfigPluginMarketSourceRef {
   enabled: boolean
   url?: string
   path?: string
+  mirrorUrl?: string
 }
 
 export interface LumeConfigPluginsSection {

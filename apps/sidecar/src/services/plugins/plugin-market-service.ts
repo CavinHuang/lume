@@ -27,6 +27,7 @@ import type {
   PluginCapabilitySummary,
   PluginEnableState,
   PluginMarketItem,
+  PluginMarketMirrorSnapshot,
   PluginMarketplaceAsset,
   PluginMarketplaceMetadata,
   PluginPermissionSummary,
@@ -57,6 +58,7 @@ const execFileAsync = promisify(execFile);
 const README_MAX_BYTES = 256 * 1024;
 const MARKETPLACE_ASSET_MAX_BYTES = 512 * 1024;
 const GITHUB_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024;
+const MIRROR_CATALOG_MAX_BYTES = 8 * 1024 * 1024;
 const MARKETPLACE_IMAGE_MIME_BY_EXT: Record<string, string> = {
   ".gif": "image/gif",
   ".jpg": "image/jpeg",
@@ -129,6 +131,7 @@ interface MarketIndexPluginEntry {
   source: PluginSourceRef;
   snapshotPlugin?: NormalizedPlugin;
   snapshotIconUrl?: string;
+  snapshotError?: string;
 }
 
 interface MarketIndexReadResult {
@@ -242,6 +245,7 @@ export class PluginMarketService {
             continue;
           }
           try {
+            if (entry.snapshotError) throw new PluginMarketError("invalid_manifest", entry.snapshotError);
             const normalized = entry.snapshotPlugin ?? (await this.inspectPluginSource(input.workspaceSlug, entry.source)).normalized;
             const item = this.toMarketItem(
               normalized,
@@ -272,7 +276,7 @@ export class PluginMarketService {
             diagnostics.push({
               severity: "warning",
               code: "invalid_manifest",
-              message: error instanceof Error ? error.message : String(error),
+              message: `市场插件 ${entry.id}: ${error instanceof Error ? error.message : String(error)}`,
             });
           }
         }
@@ -666,8 +670,11 @@ export class PluginMarketService {
     }
   }
 
-  private async inspectGitHubPlugin(source: Extract<PluginSourceRef, { type: "github" }>): Promise<NormalizedPlugin> {
-    const { raw, format } = await this.fetchGitHubManifest(source);
+  private async inspectGitHubPlugin(
+    source: Extract<PluginSourceRef, { type: "github" }>,
+    tree?: GitHubTreeEntry[] | null,
+  ): Promise<NormalizedPlugin> {
+    const { raw, format } = await this.fetchGitHubManifest(source, tree);
     try {
       return normalizePluginManifests({
         pluginRoot: `github:${source.owner}/${source.repo}/${source.ref}${source.subdir ? `/${source.subdir}` : ""}`,
@@ -680,10 +687,15 @@ export class PluginMarketService {
     }
   }
 
-  private async fetchGitHubManifest(source: Extract<PluginSourceRef, { type: "github" }>): Promise<GitHubManifestMatch & { raw: string }> {
+  private async fetchGitHubManifest(
+    source: Extract<PluginSourceRef, { type: "github" }>,
+    tree?: GitHubTreeEntry[] | null,
+  ): Promise<GitHubManifestMatch & { raw: string }> {
+    if (source.mirrorRawBaseUrl) return this.fetchGitHubManifestFromRaw(source);
+    if (tree === null) return this.fetchGitHubManifestFromRaw(source);
     try {
-      const tree = await this.fetchGitHubTree(source);
-      const match = resolveGitHubManifestPath(tree, source.subdir);
+      const resolvedTree = tree ?? await this.fetchGitHubTree(source);
+      const match = resolveGitHubManifestPath(resolvedTree, source.subdir);
       return { ...match, raw: await this.fetchText(rawGitHubUrl(source, match.path)) };
     } catch {
       return this.fetchGitHubManifestFromRaw(source);
@@ -727,6 +739,10 @@ export class PluginMarketService {
   }
 
   private async readGitHubReadme(source: Extract<PluginSourceRef, { type: "github" }>): Promise<PluginReadmePreview | undefined> {
+    if (source.mirrorReadmeUrl) {
+      const url = new URL(source.mirrorReadmeUrl);
+      return truncateReadme(await this.fetchText(url.toString()), url.pathname);
+    }
     const tree = await this.fetchGitHubTree(source);
     const prefix = source.subdir ? `${source.subdir.replace(/\/$/, "")}/` : "";
     const match = tree.find((entry) =>
@@ -818,16 +834,18 @@ export class PluginMarketService {
       const now = Date.now();
       return { entries: this.readLocalMarketIndex(source.path ?? ""), stale: false, syncedAt: now, expiresAt: now + REMOTE_MARKET_TTL_MS };
     }
-    const cachePath = this.remoteMarketCachePath(source.id, source.url ?? "");
+    const canonicalUrl = source.url ?? "";
+    const fetchUrls = marketFetchUrls(source);
+    const cachePath = this.remoteMarketCachePath(source.id, canonicalUrl);
     const cached = await this.readRemoteMarketCache(cachePath);
     if (cached && cacheMode !== "force-refresh") {
       const expiresAt = cached.syncedAt + REMOTE_MARKET_TTL_MS;
       const stale = Date.now() >= expiresAt;
-      if (stale) void this.refreshRemoteMarketIndex(source.id, source.url ?? "", cachePath).catch(() => undefined);
+      if (stale) void this.refreshRemoteMarketIndex(source.id, fetchUrls, canonicalUrl, cachePath).catch(() => undefined);
       return { entries: cached.entries, stale, syncedAt: cached.syncedAt, expiresAt };
     }
     try {
-      return await this.refreshRemoteMarketIndex(source.id, source.url ?? "", cachePath);
+      return await this.refreshRemoteMarketIndex(source.id, fetchUrls, canonicalUrl, cachePath);
     } catch (error) {
       if (cached) {
         return {
@@ -861,10 +879,22 @@ export class PluginMarketService {
     return { type: "local", path: plugin.root };
   }
 
-  private async refreshRemoteMarketIndex(sourceId: string, sourceUrl: string, cachePath: string): Promise<MarketIndexReadResult> {
+  private async refreshRemoteMarketIndex(
+    sourceId: string,
+    fetchUrls: string[],
+    canonicalUrl: string,
+    cachePath: string,
+  ): Promise<MarketIndexReadResult> {
     let refresh = remoteRefreshes.get(sourceId);
     if (!refresh) {
-      refresh = this.readRemoteMarketIndex(sourceUrl);
+      refresh = (async () => {
+        let lastError: unknown;
+        for (const url of fetchUrls) {
+          try { return await this.readRemoteMarketIndex(url); }
+          catch (error) { lastError = error; }
+        }
+        throw lastError ?? new PluginMarketError("source_not_found", "市场源 URL 为空");
+      })();
       remoteRefreshes.set(sourceId, refresh);
       void refresh.then(
         () => { if (remoteRefreshes.get(sourceId) === refresh) remoteRefreshes.delete(sourceId); },
@@ -873,7 +903,12 @@ export class PluginMarketService {
     }
     const entries = await refresh;
     const current = getEffectivePluginRuntimeConfig().marketSources.find((source) => source.id === sourceId);
-    if (!current || current.kind !== "remote-index" || current.url !== sourceUrl) {
+    if (
+      !current
+      || current.kind !== "remote-index"
+      || current.url !== canonicalUrl
+      || marketFetchUrls(current)[0] !== fetchUrls[0]
+    ) {
       throw new PluginMarketError("source_not_found", "市场源已变更，丢弃本次刷新结果");
     }
     const syncedAt = Date.now();
@@ -886,7 +921,7 @@ export class PluginMarketService {
       await writeDurableFile(tempPath, content);
       await rename(tempPath, generation);
       await syncDirectory(dirname(cachePath));
-      await writeDurableFile(`${generation}.complete`, JSON.stringify({ schema: 1, sourceId, sourceUrl, contentHash }));
+      await writeDurableFile(`${generation}.complete`, JSON.stringify({ schema: 1, sourceId, sourceUrl: canonicalUrl, contentHash }));
       await syncDirectory(dirname(cachePath));
       await writeDurableFile(`${cachePath}.current`, generation);
       await pruneCacheGenerations(cachePath, generation);
@@ -943,21 +978,19 @@ export class PluginMarketService {
     if (!sourceUrl) {
       throw new PluginMarketError("source_not_found", "市场源 URL 为空");
     }
+    const parsedSourceUrl = new URL(sourceUrl);
+    if (parsedSourceUrl.protocol === "https:" && !["github.com", "raw.githubusercontent.com"].includes(parsedSourceUrl.hostname)) {
+      return this.readMirrorMarketIndex(sourceUrl);
+    }
     if (/\.json(?:$|[?#])/i.test(sourceUrl)) {
-      const remoteJson = new URL(sourceUrl);
+      const remoteJson = parsedSourceUrl;
       const segments = remoteJson.pathname.split("/").filter(Boolean);
       if (remoteJson.protocol !== "https:" || remoteJson.hostname !== "raw.githubusercontent.com" || remoteJson.username || remoteJson.password || segments.length < 4) {
         throw new PluginMarketError("source_not_found", "远程 JSON 市场源仅支持 raw.githubusercontent.com");
       }
       const [owner, repo, ref, ...path] = segments;
-      const commitResponse = await this.requestRemote(
-        `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref!)}`,
-        { headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" } },
-      );
-      if (!commitResponse.ok) throw new PluginMarketError("network_failed", `解析远程 JSON 提交失败: ${commitResponse.status}`);
-      const commit = await commitResponse.json() as { sha?: string };
-      if (!commit.sha || !/^[a-f0-9]{40}$/i.test(commit.sha)) throw new PluginMarketError("invalid_manifest", "远程 JSON 快照缺少有效提交 SHA");
-      const pinnedUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${commit.sha}/${path.join("/")}`;
+      const commitSha = await this.resolveGitHubCommitSha(owner!, repo!, ref!);
+      const pinnedUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${commitSha}/${path.join("/")}`;
       const parsed = JSON.parse(await this.fetchText(pinnedUrl)) as Record<string, unknown>;
       if (Array.isArray(parsed.items)) {
         return this.hydrateRemotePluginEntries(await this.pinRemotePluginEntries(readLegacyIndexEntries(parsed.items)));
@@ -991,34 +1024,101 @@ export class PluginMarketService {
     return this.hydrateRemotePluginEntries(entries);
   }
 
+  private async readMirrorMarketIndex(catalogUrl: string): Promise<MarketIndexEntry[]> {
+    const response = await this.requestRemote(catalogUrl, {
+      headers: { Accept: "application/json", "User-Agent": "Lume-Plugin-Market" },
+    });
+    if (!response.ok) throw new PluginMarketError("network_failed", `读取插件镜像失败: ${response.status}`);
+    const declared = Number(response.headers.get("content-length") ?? 0);
+    if (Number.isFinite(declared) && declared > MIRROR_CATALOG_MAX_BYTES) {
+      throw new PluginMarketError("invalid_manifest", "插件镜像目录超过大小限制");
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > MIRROR_CATALOG_MAX_BYTES) throw new PluginMarketError("invalid_manifest", "插件镜像目录超过大小限制");
+    const snapshot = JSON.parse(bytes.toString("utf8")) as PluginMarketMirrorSnapshot;
+    if (!isPluginMarketMirrorSnapshot(snapshot)) throw new PluginMarketError("invalid_manifest", "插件镜像目录格式无效");
+    const archiveUrl = resolveMirrorUrl(catalogUrl, snapshot.archivePath);
+    const rawBaseUrl = resolveMirrorUrl(catalogUrl, snapshot.rawBasePath);
+    const plugins = await Promise.all(snapshot.plugins.map(async (entry): Promise<MarketIndexPluginEntry> => {
+      const source: Extract<PluginSourceRef, { type: "github" }> = {
+        type: "github",
+        owner: snapshot.source.owner,
+        repo: snapshot.source.repo,
+        ref: snapshot.source.commit,
+        url: snapshot.source.url,
+        subdir: entry.subdir,
+        mirrorArchiveUrl: archiveUrl,
+        mirrorRawBaseUrl: rawBaseUrl,
+        ...(entry.readmePath ? { mirrorReadmeUrl: resolveMirrorUrl(catalogUrl, `${snapshot.rawBasePath}${entry.readmePath}`) } : {}),
+      };
+      const snapshotPlugin = normalizePluginManifests({
+        pluginRoot: `github:${snapshot.source.owner}/${snapshot.source.repo}/${snapshot.source.commit}/${entry.subdir}`,
+        lumeManifest: entry.manifest,
+      });
+      const snapshotIconUrl = snapshotPlugin.marketplace?.icon
+        ? await this.readRemoteMarketplaceAsset(source, snapshotPlugin.marketplace.icon).catch(() => undefined)
+        : undefined;
+      return {
+        kind: "plugin",
+        id: entry.id,
+        name: entry.name,
+        ...(entry.description ? { description: entry.description } : {}),
+        ...(entry.version ? { version: entry.version } : {}),
+        source,
+        snapshotPlugin,
+        ...(snapshotIconUrl ? { snapshotIconUrl } : {}),
+      };
+    }));
+    const skills: MarketIndexSkillEntry[] = snapshot.skills.map((entry) => ({
+      kind: "skill",
+      id: entry.id,
+      name: entry.name,
+      ...(entry.description ? { description: entry.description } : {}),
+      ...(entry.version ? { version: entry.version } : {}),
+      source: {
+        type: "skill-github",
+        url: `https://github.com/${snapshot.source.owner}/${snapshot.source.repo}/tree/${snapshot.source.commit}/${entry.subdir}`,
+      },
+    }));
+    return [...plugins, ...skills];
+  }
+
   private async pinRemotePluginEntries(entries: MarketIndexEntry[]): Promise<MarketIndexEntry[]> {
     return Promise.all(entries.map(async (entry) => {
       if (entry.kind !== "plugin" || entry.source.type !== "github") return entry;
-      const response = await this.requestRemote(
-        `https://api.github.com/repos/${entry.source.owner}/${entry.source.repo}/commits/${encodeURIComponent(entry.source.ref || "main")}`,
-        { headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" } },
-      );
-      if (!response.ok) throw new PluginMarketError("network_failed", `解析 GitHub 提交失败: ${response.status}`);
-      const pinned = await response.json() as { sha?: string };
-      if (!pinned.sha || !/^[a-f0-9]{40}$/i.test(pinned.sha)) throw new PluginMarketError("invalid_manifest", "GitHub 快照缺少有效提交 SHA");
+      const sha = await this.resolveGitHubCommitSha(entry.source.owner, entry.source.repo, entry.source.ref || "main");
       return {
         ...entry,
         source: {
           ...entry.source,
-          ref: pinned.sha,
+          ref: sha,
         },
       };
     }));
   }
 
   private async hydrateRemotePluginEntries(entries: MarketIndexEntry[]): Promise<MarketIndexEntry[]> {
+    const trees = new Map<string, Promise<GitHubTreeEntry[] | null>>();
     return Promise.all(entries.map(async (entry) => {
       if (entry.kind !== "plugin" || entry.source.type !== "github") return entry;
-      const snapshotPlugin = await this.inspectGitHubPlugin(entry.source);
-      const snapshotIconUrl = snapshotPlugin.marketplace?.icon
-        ? await this.readRemoteMarketplaceAsset(entry.source, snapshotPlugin.marketplace.icon).catch(() => undefined)
-        : undefined;
-      return { ...entry, snapshotPlugin, ...(snapshotIconUrl ? { snapshotIconUrl } : {}) };
+      try {
+        const treeKey = `${entry.source.owner}/${entry.source.repo}@${entry.source.ref}`;
+        let tree = trees.get(treeKey);
+        if (!tree) {
+          tree = this.fetchGitHubTree(entry.source).catch(() => null);
+          trees.set(treeKey, tree);
+        }
+        const snapshotPlugin = await this.inspectGitHubPlugin(entry.source, await tree);
+        const snapshotIconUrl = snapshotPlugin.marketplace?.icon
+          ? await this.readRemoteMarketplaceAsset(entry.source, snapshotPlugin.marketplace.icon).catch(() => undefined)
+          : undefined;
+        return { ...entry, snapshotPlugin, ...(snapshotIconUrl ? { snapshotIconUrl } : {}) };
+      } catch (error) {
+        return {
+          ...entry,
+          snapshotError: error instanceof Error ? error.message : String(error),
+        };
+      }
     }));
   }
 
@@ -1087,21 +1187,34 @@ export class PluginMarketService {
     const parsed = parseGitHubRootUrl(url);
     let ref = parsed.ref;
     if (!ref) {
-      const response = await this.requestRemote(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, {
-        headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" },
-      });
-      if (!response.ok) throw new PluginMarketError("network_failed", `读取 GitHub 仓库信息失败: ${response.status}`);
-      const payload = await response.json() as { default_branch?: string };
-      ref = payload.default_branch ?? "main";
+      try {
+        const response = await this.requestRemote(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, {
+          headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" },
+        });
+        if (response.ok) {
+          const payload = await response.json() as { default_branch?: string };
+          if (typeof payload.default_branch === "string") ref = payload.default_branch;
+        }
+      } catch { /* git ls-remote fallback below */ }
+      if (!ref) return { ...parsed, ref: await resolveGitHubCommitWithGit(parsed.owner, parsed.repo) };
     }
-    const commitResponse = await this.requestRemote(
-      `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/commits/${encodeURIComponent(ref)}`,
-      { headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" } },
-    );
-    if (!commitResponse.ok) throw new PluginMarketError("network_failed", `解析 GitHub 提交失败: ${commitResponse.status}`);
-    const commit = await commitResponse.json() as { sha?: string };
-    if (!commit.sha || !/^[a-f0-9]{40}$/i.test(commit.sha)) throw new PluginMarketError("invalid_manifest", "GitHub 快照缺少有效提交 SHA");
-    return { ...parsed, ref: commit.sha };
+    const resolvedRef = ref;
+    return { ...parsed, ref: await this.resolveGitHubCommitSha(parsed.owner, parsed.repo, resolvedRef) };
+  }
+
+  private async resolveGitHubCommitSha(owner: string, repo: string, ref: string): Promise<string> {
+    if (/^[a-f0-9]{40}$/i.test(ref)) return ref.toLowerCase();
+    try {
+      const response = await this.requestRemote(
+        `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`,
+        { headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" } },
+      );
+      if (response.ok) {
+        const commit = await response.json() as { sha?: string };
+        if (commit.sha && /^[a-f0-9]{40}$/i.test(commit.sha)) return commit.sha.toLowerCase();
+      }
+    } catch { /* git ls-remote fallback below */ }
+    return resolveGitHubCommitWithGit(owner, repo, ref);
   }
 
   private async stageInstall(source: PluginSourceRef, plugin: NormalizedPlugin): Promise<string> {
@@ -1126,7 +1239,9 @@ export class PluginMarketService {
   }
 
   private async stageGitHubTarball(source: Extract<PluginSourceRef, { type: "github" }>, stage: string): Promise<void> {
-    const response = await this.requestRemote(`https://api.github.com/repos/${source.owner}/${source.repo}/tarball/${encodeURIComponent(source.ref)}`, {
+    const archiveUrl = source.mirrorArchiveUrl
+      ?? `https://api.github.com/repos/${source.owner}/${source.repo}/tarball/${encodeURIComponent(source.ref)}`;
+    const response = await this.requestRemote(archiveUrl, {
       headers: { Accept: "application/vnd.github+json", "User-Agent": "Lume-Plugin-Market" },
     });
     if (!response.ok) {
@@ -1154,7 +1269,9 @@ export class PluginMarketService {
     if (verbose.stdout.split(/\r?\n/).some((line) => /^[lh]/.test(line))) {
       throw new PluginMarketError("install_failed", "GitHub 源归档包含链接条目");
     }
-    await execFileAsync("tar", ["-xzf", archive, "-C", stage, "--strip-components=1"]);
+    await execFileAsync("tar", source.mirrorArchiveUrl
+      ? ["-xzf", archive, "-C", stage]
+      : ["-xzf", archive, "-C", stage, "--strip-components=1"]);
     await rm(archive, { force: true });
     if (source.subdir) {
       const nested = join(stage, source.subdir);
@@ -1725,6 +1842,40 @@ function joinPosix(...segments: Array<string | undefined>): string {
   return posix.normalize(filtered.join("/") || "").replace(/^\.$/, "");
 }
 
+async function resolveGitHubCommitWithGit(owner: string, repo: string, ref?: string): Promise<string> {
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
+    throw new PluginMarketError("source_not_found", "GitHub 仓库标识非法");
+  }
+  const remote = `https://github.com/${owner}/${repo}.git`;
+  const patterns = ref
+    ? [ref, `refs/heads/${ref}`, `refs/tags/${ref}`, `refs/tags/${ref}^{}`]
+    : ["HEAD"];
+  try {
+    const { stdout } = await execFileAsync("git", ["ls-remote", remote, ...patterns], {
+      timeout: 15_000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    });
+    const rows = stdout.split(/\r?\n/).flatMap((line) => {
+      const match = /^([a-f0-9]{40})\s+(.+)$/i.exec(line.trim());
+      return match ? [{ sha: match[1]!.toLowerCase(), name: match[2]! }] : [];
+    });
+    const preferred = ref
+      ? rows.find((row) => row.name === `refs/tags/${ref}^{}`)
+        ?? rows.find((row) => row.name === `refs/heads/${ref}`)
+        ?? rows.find((row) => row.name === `refs/tags/${ref}`)
+        ?? rows[0]
+      : rows.find((row) => row.name === "HEAD") ?? rows[0];
+    if (preferred) return preferred.sha;
+  } catch (error) {
+    throw new PluginMarketError(
+      "network_failed",
+      `无法固定 GitHub 提交: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  throw new PluginMarketError("invalid_manifest", "GitHub 快照缺少有效提交 SHA");
+}
+
 function parseGitHubRootUrl(input: string): GitHubRepoRoot {
   let url: URL;
   try {
@@ -1782,7 +1933,57 @@ function githubManifestCandidates(subdir?: string): GitHubManifestMatch[] {
 }
 
 function rawGitHubUrl(source: Extract<PluginSourceRef, { type: "github" }>, path: string): string {
+  if (source.mirrorRawBaseUrl) return new URL(path.replace(/^\/+/, ""), ensureTrailingSlash(source.mirrorRawBaseUrl)).toString();
   return `https://raw.githubusercontent.com/${source.owner}/${source.repo}/${source.ref}/${path}`;
+}
+
+function marketFetchUrls(source: { url?: string; mirrorUrl?: string }): string[] {
+  const urls: string[] = [];
+  if (source.mirrorUrl?.trim()) {
+    const mirror = new URL(source.mirrorUrl.trim());
+    if (mirror.protocol !== "https:" && mirror.hostname !== "localhost" && mirror.hostname !== "127.0.0.1") {
+      throw new PluginMarketError("source_not_found", "插件市场镜像必须使用 HTTPS");
+    }
+    urls.push(new URL("/v1/catalog", mirror).toString());
+  }
+  if (source.url?.trim()) urls.push(source.url.trim());
+  return [...new Set(urls)];
+}
+
+function resolveMirrorUrl(catalogUrl: string, path: string): string {
+  const resolved = new URL(path, catalogUrl);
+  const catalog = new URL(catalogUrl);
+  if (resolved.protocol !== "https:" && resolved.hostname !== "localhost" && resolved.hostname !== "127.0.0.1") {
+    throw new PluginMarketError("invalid_manifest", "插件镜像资源必须使用 HTTPS");
+  }
+  if (resolved.origin !== catalog.origin) throw new PluginMarketError("invalid_manifest", "插件镜像资源不得跨域");
+  return resolved.toString();
+}
+
+function ensureTrailingSlash(url: string): string {
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+function isPluginMarketMirrorSnapshot(value: unknown): value is PluginMarketMirrorSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const snapshot = value as Partial<PluginMarketMirrorSnapshot>;
+  return snapshot.schema === "lume-plugin-market-mirror/v1"
+    && typeof snapshot.generation === "string"
+    && /^[a-f0-9]{40}$/i.test(snapshot.generation)
+    && snapshot.source?.commit === snapshot.generation
+    && typeof snapshot.source.owner === "string"
+    && typeof snapshot.source.repo === "string"
+    && typeof snapshot.source.url === "string"
+    && typeof snapshot.archivePath === "string"
+    && typeof snapshot.rawBasePath === "string"
+    && Array.isArray(snapshot.plugins)
+    && snapshot.plugins.every((entry) => !!entry
+      && typeof entry.id === "string"
+      && typeof entry.subdir === "string"
+      && !!entry.manifest
+      && typeof entry.manifest === "object"
+      && !Array.isArray(entry.manifest))
+    && Array.isArray(snapshot.skills);
 }
 
 function canonicalPluginSourceIdentity(source: PluginSourceRef): string {

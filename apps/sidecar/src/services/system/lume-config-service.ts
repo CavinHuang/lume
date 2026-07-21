@@ -234,9 +234,11 @@ function normalizePluginMarketSources(value: unknown): LumeConfigPluginMarketSou
     const id = normalizeOptionalString(item.id);
     if (id === OFFICIAL_PLUGIN_MARKET_SOURCE.id) {
       if (!officialConfigured) {
+        const mirrorUrl = normalizeOptionalString(item.mirrorUrl);
         sources[0] = {
           ...OFFICIAL_PLUGIN_MARKET_SOURCE,
-          enabled: item.enabled !== false
+          enabled: item.enabled !== false,
+          ...(mirrorUrl ? { mirrorUrl } : {})
         };
         officialConfigured = true;
       }
@@ -247,6 +249,7 @@ function normalizePluginMarketSources(value: unknown): LumeConfigPluginMarketSou
     if (!id || !name || !kind || seen.has(id)) continue;
     const url = normalizeOptionalString(item.url);
     const path = normalizeOptionalString(item.path);
+    const mirrorUrl = normalizeOptionalString(item.mirrorUrl);
     if (kind === "remote-index" && !url) continue;
     if (kind === "local-index" && !path) continue;
     sources.push({
@@ -255,7 +258,8 @@ function normalizePluginMarketSources(value: unknown): LumeConfigPluginMarketSou
       kind,
       enabled: item.enabled !== false,
       ...(url ? { url } : {}),
-      ...(path ? { path } : {})
+      ...(path ? { path } : {}),
+      ...(mirrorUrl ? { mirrorUrl } : {})
     });
     seen.add(id);
   }
@@ -1042,7 +1046,11 @@ export function getEffectivePluginRuntimeConfig(workspaceSlug?: string): Effecti
     enabled,
     disabled,
     directories: normalizeUniqueStringArray(config.plugins?.directories),
-    marketSources: (config.plugins?.marketSources ?? []).filter((source) => source.enabled !== false)
+    marketSources: (config.plugins?.marketSources ?? [])
+      .filter((source) => source.enabled !== false)
+      .map((source) => source.id === "official" && !source.mirrorUrl && process.env.LUME_PLUGIN_MARKET_MIRROR_URL?.trim()
+        ? { ...source, mirrorUrl: process.env.LUME_PLUGIN_MARKET_MIRROR_URL.trim() }
+        : source)
   };
 }
 

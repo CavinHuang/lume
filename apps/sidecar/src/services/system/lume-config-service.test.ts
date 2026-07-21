@@ -338,7 +338,7 @@ describe("lume-config-service", () => {
         enabled: ["legacy-a", "legacy-b", "legacy-a"],
         disabled: ["legacy-c"],
         directories: ["/plugins", "/plugins"],
-        marketSources: [{ id: "official", name: "Official", kind: "remote-index", url: "https://example.com/index.json", enabled: true }]
+        marketSources: [{ id: "official", name: "Official", kind: "remote-index", url: "https://example.com/index.json", mirrorUrl: "https://mirror.example", enabled: true }]
       }
     }), "utf-8");
 
@@ -357,7 +357,8 @@ describe("lume-config-service", () => {
       name: "Lume Plugins",
       kind: "remote-index",
       enabled: true,
-      url: "https://github.com/CavinHuang/lume-plugins"
+      url: "https://github.com/CavinHuang/lume-plugins",
+      mirrorUrl: "https://mirror.example"
     });
   });
 

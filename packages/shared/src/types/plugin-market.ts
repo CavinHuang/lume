@@ -4,7 +4,17 @@ export type PluginSourceType = "local" | "github" | "subscribed-market" | "legac
 
 export type PluginSourceRef =
   | { type: "local"; path: string }
-  | { type: "github"; owner: string; repo: string; ref: string; url: string; subdir?: string }
+  | {
+      type: "github"
+      owner: string
+      repo: string
+      ref: string
+      url: string
+      subdir?: string
+      mirrorArchiveUrl?: string
+      mirrorRawBaseUrl?: string
+      mirrorReadmeUrl?: string
+    }
   | { type: "subscribed-market"; sourceId: string; itemId: string; resolved: PluginSourceRef }
   | { type: "legacy"; path: string }
 
@@ -19,6 +29,39 @@ export interface PluginMarketSourceRef {
   enabled: boolean
   url?: string
   path?: string
+  mirrorUrl?: string
+}
+
+export interface PluginMarketMirrorSnapshot {
+  schema: "lume-plugin-market-mirror/v1"
+  generation: string
+  generatedAt: string
+  source: {
+    owner: string
+    repo: string
+    ref: string
+    commit: string
+    url: string
+  }
+  archivePath: string
+  rawBasePath: string
+  diagnostics: Array<{ itemId?: string; message: string }>
+  plugins: Array<{
+    id: string
+    name: string
+    description?: string
+    version?: string
+    subdir: string
+    manifest: Record<string, unknown>
+    readmePath?: string
+  }>
+  skills: Array<{
+    id: string
+    name: string
+    description?: string
+    version?: string
+    subdir: string
+  }>
 }
 
 export interface MarketplaceOwner {
