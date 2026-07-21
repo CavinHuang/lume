@@ -182,7 +182,6 @@ export interface CreateRuntimeCoreSessionInput {
   workflowHooks?: LumeWorkflowHookRuntimeLike;
   applyWorkflowHookEffects?: (result: LumeWorkflowHookExecutionResult) => Promise<void> | void;
   trace?: ContextAssemblyInput["trace"];
-  wikiPhaseBEnabled?: boolean;
   wikiProposalEnabled?: boolean;
   processSandbox?: SandboxSettings;
 }
@@ -792,7 +791,6 @@ function buildRuntimeCoreTools(input: {
   pluginCommandTools?: ToolDefinition[];
   /** Plugin MCP tool definitions (Phase MCP Merge-A) from the plugin-scoped MCP manager. */
   pluginMcpTools?: ToolDefinition[];
-  wikiPhaseBEnabled?: boolean;
   wikiProposalEnabled?: boolean;
 }): RuntimeCoreToolset {
   const permissionMode = input.permissionMode ?? "default";
@@ -851,7 +849,6 @@ function buildRuntimeCoreTools(input: {
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {}),
-    wikiPhaseBEnabled: input.wikiPhaseBEnabled,
     wikiProposalEnabled: input.wikiProposalEnabled
   });
   const askWikiOnly = getAgentThreadMeta(input.sessionId)?.wikiProfile?.kind === "ask-wiki";
@@ -1644,7 +1641,6 @@ export async function createRuntimeCoreSession(
     })),
     pluginCommandTools: pluginAssembly.commandToolDefinitions,
     pluginMcpTools: pluginMcpRuntime.tools,
-    wikiPhaseBEnabled: input.wikiPhaseBEnabled,
     wikiProposalEnabled: input.wikiProposalEnabled,
     mcpTools: replaceMcpResourceTools(workspaceMcpRuntime.tools, pluginAwareMcpResourceTools),
     mcpDiagnostics: [

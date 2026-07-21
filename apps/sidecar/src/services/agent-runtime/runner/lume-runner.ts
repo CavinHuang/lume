@@ -359,7 +359,6 @@ export class LumeRunner {
       workflowHooks: this.workflowHooks,
       applyWorkflowHookEffects: (result) => this.applyWorkflowHookEffects(result),
       trace: this.observer.getContextAssemblyTrace(),
-      wikiPhaseBEnabled: wikiCapability.phaseBEnabled,
       wikiProposalEnabled: WIKI_CAPABILITIES.askWikiProposal,
       processSandbox: wikiCapability.sandbox
     });

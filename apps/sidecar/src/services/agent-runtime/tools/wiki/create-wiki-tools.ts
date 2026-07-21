@@ -58,14 +58,21 @@ export function createWikiReadTools(scope: WikiSearchScope): ToolDefinition[] {
 
 export function createWikiProposalTool(
   scope: WikiSearchScope,
-  options: { createOnly?: boolean; creatorThreadId?: string; creatorProfile?: "ask-wiki" | "ordinary-agent" } = {}
+  options: {
+    createOnly?: boolean;
+    creatorThreadId?: string;
+    creatorProfile?: "ask-wiki" | "ordinary-agent";
+    securityGateAvailable?: boolean;
+    requireExplicitWriteIntent?: boolean;
+    writeAuthorized?: boolean;
+  } = {}
 ): ToolDefinition {
   const createOnly = options.createOnly === true;
   const tool = createSdkJsonResultTool({
     name: "wiki.propose_changes",
     description: createOnly
       ? "为用户明确要求沉淀的内容创建一个待确认的新 Wiki 页面草案。它只写入 staging，不会修改正式 Wiki；创建后必须等待用户在确认卡中确认。"
-      : "创建一个待用户确认的 Wiki 变更草案。它只写入 staging，不会修改正式 Wiki，也不能代替用户确认。更新前必须先 wiki.read 并提供 expectedHash。",
+      : "创建一个待用户确认的 Wiki 变更草案。仅当当前用户消息明确要求写入 Wiki 时才允许执行；它只写入 staging，不能代替用户确认。更新前必须先 wiki.read 并提供 expectedHash。",
     inputSchema: {
       type: "object",
       properties: {
@@ -106,6 +113,12 @@ export function createWikiProposalTool(
       requiresApprovalByDefault: false
     },
     async call(input) {
+      if (options.securityGateAvailable === false) {
+        throw new Error("Wiki 写入安全通道尚未就绪，当前不能创建变更草案");
+      }
+      if (options.requireExplicitWriteIntent && !options.writeAuthorized) {
+        throw new Error("当前用户消息没有明确要求写入 Wiki，不能创建变更草案");
+      }
       const action = input.action === "update" || input.action === "create" || input.action === "replace_page" ? input.action : undefined;
       if (!action) throw new Error("action 必须是 create、update 或 replace_page");
       if (createOnly && action === "update") throw new Error("当前会话只能新建 Wiki 草案；请在 Wiki 会话中读取原页面后再更新");

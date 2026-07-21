@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLumeRuntimeTools, createOrdinaryWikiTools, isExplicitWikiWriteInstruction } from "./create-lume-tools";
+import { createLumeRuntimeTools, createOrdinaryWikiTools, createWikiToolsForTrustedProfile, isExplicitWikiWriteInstruction } from "./create-lume-tools";
 import { createToolDescriptorsFromDefinitions } from "./tool-source";
 import { ToolRegistry } from "./tool-registry";
 import { ToolResolver } from "./tool-resolver";
@@ -19,51 +19,78 @@ describe("create-lume-tools", () => {
     expect(isExplicitWikiWriteInstruction("save this to the knowledge base")).toBeTrue();
     expect(isExplicitWikiWriteInstruction("搜索一下 Wiki")).toBeFalse();
     expect(isExplicitWikiWriteInstruction("保存当前文件")).toBeFalse();
+    expect(isExplicitWikiWriteInstruction("不要写入 Wiki，只查询现有内容")).toBeFalse();
+    expect(isExplicitWikiWriteInstruction("Do not write to the knowledge base")).toBeFalse();
   });
 
-  test("keeps Wiki proposals disabled until the proposal security gate passes", () => {
+  test("keeps all Wiki schemas visible while a missing security gate blocks proposal execution", async () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
-      phaseBEnabled: false,
-      originalUserInstruction: "把这段内容写入 Wiki"
+      originalUserInstruction: "继续分析这个问题"
     });
 
-    expect(tools).toEqual([]);
+    expect(tools.map((tool) => tool.name)).toEqual(["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]);
+    const proposal = tools.find((tool) => tool.name === "wiki.propose_changes")!;
+    const result = await proposal.call({ action: "create", title: "不应创建" }, {} as never);
+    expect(result.is_error).toBeTrue();
+    expect(result.content).toContain("写入安全通道尚未就绪");
   });
 
-  test("offers a create-only Wiki proposal after the proposal security gate passes", () => {
+  test("authorizes a confirmable Wiki proposal only for an explicit write instruction", async () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
-      phaseBEnabled: false,
       proposalEnabled: true,
       originalUserInstruction: "把这段内容写入 Wiki"
     });
 
-    expect(tools.map((tool) => tool.name)).toEqual(["wiki.propose_changes"]);
-    expect(tools[0]?.description).toContain("新 Wiki 页面草案");
-    expect(tools[0]?.runtimeMetadata).toMatchObject({
+    expect(tools.map((tool) => tool.name)).toEqual(["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]);
+    const proposal = tools.find((tool) => tool.name === "wiki.propose_changes");
+    expect(proposal?.description).toContain("待用户确认");
+    expect(proposal?.runtimeMetadata).toMatchObject({
       category: "control",
       capability: "planning",
       sideEffects: "local_write",
       allowedInPlanMode: true,
       isReadOnly: false
     });
+    const authorizedResult = await proposal!.call({ action: "not-valid" }, {} as never);
+    expect(authorizedResult.is_error).toBeTrue();
+    expect(authorizedResult.content).toContain("action 必须是");
   });
 
-  test("does not expose Wiki tools in an ordinary Phase A conversation without write intent", () => {
+  test("always exposes scoped reads in a dedicated Ask Wiki thread", () => {
+    const tools = createWikiToolsForTrustedProfile({
+      profile: { scope: { kind: "all" }, explicit: true },
+      proposalEnabled: true,
+      creatorThreadId: "ask-wiki-thread",
+    });
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "wiki.search",
+      "wiki.read",
+      "wiki.follow_links",
+      "wiki.propose_changes"
+    ]);
+  });
+
+  test("keeps the write schema visible but rejects execution without explicit user intent", async () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
-      phaseBEnabled: false,
+      proposalEnabled: true,
       originalUserInstruction: "继续分析这个问题"
     });
 
-    expect(tools).toEqual([]);
+    expect(tools.map((tool) => tool.name)).toEqual(["wiki.search", "wiki.read", "wiki.follow_links", "wiki.propose_changes"]);
+    const proposal = tools.find((tool) => tool.name === "wiki.propose_changes");
+    expect(proposal).toBeDefined();
+    const unauthorizedResult = await proposal!.call({ action: "create", title: "不应创建" }, {} as never);
+    expect(unauthorizedResult.is_error).toBeTrue();
+    expect(unauthorizedResult.content).toContain("没有明确要求写入 Wiki");
   });
 
-  test("keeps all Phase B Wiki tools visible in plan mode with explicit side-effect metadata", () => {
+  test("keeps Wiki reads and an explicitly requested proposal visible in plan mode", () => {
     const tools = createOrdinaryWikiTools({
       profile: { scope: { kind: "workspace", workspaceId: "workspace-1" }, explicit: false },
-      phaseBEnabled: true,
       proposalEnabled: true,
       originalUserInstruction: "重新试试写入 wiki"
     });
