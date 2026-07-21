@@ -26,6 +26,8 @@ export interface CustomThemePalette {
 
 export type AgentMessageDisplayMode = "minimal" | "verbose"
 
+export type AgentMessageListDisplayMode = "conversation" | "left_aligned"
+
 export interface GeneralSettingsWindowBehavior {
   minimizeToTray: boolean
   closeToTray: boolean
@@ -46,6 +48,7 @@ export interface GeneralSettings {
   windowBehavior: GeneralSettingsWindowBehavior
   updateSettings: GeneralSettingsUpdateSettings
   agentMessageDisplayMode: AgentMessageDisplayMode
+  agentMessageListDisplayMode: AgentMessageListDisplayMode
   logging: LumeLoggingSettings
 }
 
@@ -56,6 +59,7 @@ export interface UpdateGeneralSettingsInput {
   windowBehavior?: Partial<GeneralSettingsWindowBehavior>
   updateSettings?: Partial<GeneralSettingsUpdateSettings>
   agentMessageDisplayMode?: AgentMessageDisplayMode
+  agentMessageListDisplayMode?: AgentMessageListDisplayMode
   logging?: Partial<LumeLoggingSettings>
 }
 
@@ -155,6 +159,7 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
     lastUpdateCheckAt: null
   },
   agentMessageDisplayMode: "minimal",
+  agentMessageListDisplayMode: "conversation",
   logging: { ...LUME_LOGGING_DEFAULTS }
 }
 

@@ -45,6 +45,7 @@ describe('general settings state', () => {
       themePalette: 'mint',
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
+      agentMessageListDisplayMode: 'conversation',
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: false,
@@ -70,6 +71,7 @@ describe('general settings state', () => {
       themePalette: 'mint',
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
+      agentMessageListDisplayMode: 'conversation',
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: false,
@@ -91,6 +93,7 @@ describe('general settings state', () => {
       themePalette: 'iris',
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
+      agentMessageListDisplayMode: 'conversation',
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: true,
@@ -110,6 +113,7 @@ describe('general settings state', () => {
       themePalette: 'iris',
       customThemePalettes: [],
       agentMessageDisplayMode: 'minimal',
+      agentMessageListDisplayMode: 'conversation',
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: true,

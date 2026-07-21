@@ -1552,7 +1552,8 @@ export const updateGeneralSettingsInputSchema = z.object({
     installOnlyWhenIdle: z.boolean().optional(),
     lastUpdateCheckAt: z.string().nullable().optional()
   }).optional(),
-  agentMessageDisplayMode: z.enum(["minimal", "verbose"]).optional()
+  agentMessageDisplayMode: z.enum(["minimal", "verbose"]).optional(),
+  agentMessageListDisplayMode: z.enum(["conversation", "left_aligned"]).optional()
 });
 
 export const clearCacheInputSchema = z.object({

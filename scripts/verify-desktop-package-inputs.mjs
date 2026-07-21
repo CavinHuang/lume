@@ -6,6 +6,26 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DESKTOP_DIR = resolve(REPO_ROOT, "apps", "desktop");
 const sidecarBundle = resolve(DESKTOP_DIR, "resources", "sidecar", "index.mjs");
 const xhrWorkerBundle = resolve(DESKTOP_DIR, "resources", "sidecar", "xhr-sync-worker.mjs");
+const localOnnxWorkerBundle = resolve(DESKTOP_DIR, "resources", "sidecar", "local-embedding-worker.mjs");
+const onnxRuntimeNative = resolve(
+  DESKTOP_DIR,
+  "resources",
+  "bin",
+  "napi-v3",
+  process.platform,
+  process.arch,
+  "onnxruntime_binding.node",
+);
+const sharpNative = resolve(
+  DESKTOP_DIR,
+  "resources",
+  "sidecar",
+  "node_modules",
+  "@img",
+  `sharp-${process.platform}-${process.arch}`,
+  "lib",
+  `sharp-${process.platform}-${process.arch}.node`,
+);
 const nativeBinary = resolve(DESKTOP_DIR, "resources", "natives", currentNativeTargetId(), "lume-natives.node");
 const desktopMain = resolve(DESKTOP_DIR, "dist", "main", "main.mjs");
 const desktopPreload = resolve(DESKTOP_DIR, "dist", "preload", "preload.cjs");
@@ -19,6 +39,9 @@ const requiredFiles = [
   resolve(DESKTOP_DIR, "resources", "default-skills.tar"),
   sidecarBundle,
   xhrWorkerBundle,
+  localOnnxWorkerBundle,
+  onnxRuntimeNative,
+  sharpNative,
   nativeBinary,
   resolve(REPO_ROOT, "apps", "web", "dist", "index.html"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot-theme.js"),
@@ -46,7 +69,7 @@ if (pkg.devDependencies?.["electron-updater"] !== "6.8.9" || pkg.dependencies?.[
 }
 
 const resources = pkg.build?.extraResources ?? [];
-for (const expected of ["../web/dist", "../web/src/assets/imgs/logo.png", "resources/default-skills.tar", "resources/sidecar", "resources/natives"]) {
+for (const expected of ["../web/dist", "../web/src/assets/imgs/logo.png", "resources/default-skills.tar", "resources/sidecar", "resources/bin", "resources/natives"]) {
   if (!resources.some((entry) => entry?.from === expected)) {
     fail(`electron-builder extraResources missing ${expected}`);
   }

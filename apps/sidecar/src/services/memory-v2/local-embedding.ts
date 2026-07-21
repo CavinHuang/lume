@@ -79,7 +79,8 @@ class LocalOnnxEmbeddingWorker {
         setLocalOnnxStatus("failed", error.message);
         this.failInitialization(error);
       }, INIT_TIMEOUT_MS);
-      this.worker = new Worker(new URL("./local-embedding-worker.ts", import.meta.url), {
+      const workerFile = process.versions.bun ? "./local-embedding-worker.ts" : "./local-embedding-worker.mjs";
+      this.worker = new Worker(new URL(workerFile, import.meta.url), {
         workerData: {
           cacheDir: getMemoryLocalModelsDir(),
           modelId: LOCAL_ONNX_MODEL_ID

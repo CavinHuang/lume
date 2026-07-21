@@ -15,17 +15,35 @@ const resourcesDir = process.env.LUME_SMOKE_RESOURCES_DIR
   : resolve(DESKTOP_DIR, "resources");
 const sidecarPath = resolve(resourcesDir, "sidecar", "index.mjs");
 const xhrWorkerPath = resolve(resourcesDir, "sidecar", "xhr-sync-worker.mjs");
+const localOnnxWorkerPath = resolve(resourcesDir, "sidecar", "local-embedding-worker.mjs");
+const onnxRuntimeNativePath = resolve(
+  resourcesDir,
+  "bin",
+  "napi-v3",
+  process.platform,
+  process.arch,
+  "onnxruntime_binding.node",
+);
+const sharpNativePath = resolve(
+  resourcesDir,
+  "sidecar",
+  "node_modules",
+  "@img",
+  `sharp-${process.platform}-${process.arch}`,
+  "lib",
+  `sharp-${process.platform}-${process.arch}.node`,
+);
 const skillsArchive = resolve(resourcesDir, "default-skills.tar");
 const nativeBinary = resolve(resourcesDir, "natives", currentNativeTargetId(), "lume-natives.node");
 const sidecarSmokeEntry = resolve(DESKTOP_DIR, "scripts", "smoke-utility-sidecar.mjs");
 const nativeSmokeEntry = resolve(DESKTOP_DIR, "scripts", "smoke-utility-natives.mjs");
 
-for (const file of [sidecarPath, xhrWorkerPath, skillsArchive, nativeBinary, sidecarSmokeEntry, nativeSmokeEntry]) {
+for (const file of [sidecarPath, xhrWorkerPath, localOnnxWorkerPath, onnxRuntimeNativePath, sharpNativePath, skillsArchive, nativeBinary, sidecarSmokeEntry, nativeSmokeEntry]) {
   if (!existsSync(file)) fail(`missing smoke input: ${file}`);
 }
 
 const escapedRepoRoot = JSON.stringify(REPO_ROOT).slice(1, -1).toLowerCase();
-for (const file of [sidecarPath, xhrWorkerPath]) {
+for (const file of [sidecarPath, xhrWorkerPath, localOnnxWorkerPath]) {
   const source = readFileSync(file, "utf8");
   if (source.toLowerCase().includes(escapedRepoRoot)) {
     fail(`${file} contains the build workspace path`);
@@ -49,6 +67,7 @@ const relocatedNative = resolve(relocatedResourcesDir, "natives", currentNativeT
 mkdirSync(dirname(relocatedNative), { recursive: true });
 cpSync(dirname(sidecarPath), relocatedSidecarDir, { recursive: true });
 cpSync(resolve(resourcesDir, "data"), resolve(relocatedResourcesDir, "data"), { recursive: true });
+cpSync(resolve(resourcesDir, "bin"), resolve(relocatedResourcesDir, "bin"), { recursive: true });
 cpSync(resolve(resourcesDir, "package.json"), resolve(relocatedResourcesDir, "package.json"));
 cpSync(nativeBinary, relocatedNative);
 cpSync(skillsArchive, resolve(relocatedResourcesDir, "default-skills.tar"));

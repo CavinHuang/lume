@@ -66,6 +66,7 @@ describe("general-settings-service", () => {
       themePalette: "mint",
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
+      agentMessageListDisplayMode: "conversation",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
@@ -97,6 +98,7 @@ describe("general-settings-service", () => {
       themePalette: "mint",
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
+      agentMessageListDisplayMode: "conversation",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
@@ -122,6 +124,7 @@ describe("general-settings-service", () => {
       themePalette: "mint",
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
+      agentMessageListDisplayMode: "conversation",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
@@ -152,6 +155,7 @@ describe("general-settings-service", () => {
         themePalette?: string;
         customThemePalettes?: unknown[];
         agentMessageDisplayMode?: string;
+        agentMessageListDisplayMode?: string;
         logging?: typeof LUME_LOGGING_DEFAULTS;
         windowBehavior?: {
           minimizeToTray?: boolean;
@@ -172,6 +176,7 @@ describe("general-settings-service", () => {
       themePalette: "mint",
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
+      agentMessageListDisplayMode: "conversation",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
@@ -290,6 +295,7 @@ describe("general-settings-service", () => {
       themePalette: "mint",
       customThemePalettes: [],
       agentMessageDisplayMode: "minimal",
+      agentMessageListDisplayMode: "conversation",
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
@@ -453,7 +459,7 @@ describe("general-settings-service", () => {
     expect(existsSync(logsFile)).toBeTrue();
   });
 
-  test("agentMessageDisplayMode 缺失时回退 minimal，显式值被保留并持久化", async () => {
+  test("消息显示模式缺失时回退默认值，显式值被保留并持久化", async () => {
     const settingsPath = getSettingsPath();
     writeFileSync(
       settingsPath,
@@ -463,14 +469,20 @@ describe("general-settings-service", () => {
 
     const loaded = getPersistedGeneralSettings();
     expect(loaded.agentMessageDisplayMode).toBe("minimal");
+    expect(loaded.agentMessageListDisplayMode).toBe("conversation");
 
-    const updated = await updatePersistedGeneralSettings({ agentMessageDisplayMode: "verbose" });
+    const updated = await updatePersistedGeneralSettings({
+      agentMessageDisplayMode: "verbose",
+      agentMessageListDisplayMode: "left_aligned",
+    });
     expect(updated.agentMessageDisplayMode).toBe("verbose");
+    expect(updated.agentMessageListDisplayMode).toBe("left_aligned");
 
     const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
-      generalSettings?: { agentMessageDisplayMode?: string };
+      generalSettings?: { agentMessageDisplayMode?: string; agentMessageListDisplayMode?: string };
     };
     expect(raw.generalSettings?.agentMessageDisplayMode).toBe("verbose");
+    expect(raw.generalSettings?.agentMessageListDisplayMode).toBe("left_aligned");
   });
 
   function writeConfigFile(pathSegments: string[], content: string): string {

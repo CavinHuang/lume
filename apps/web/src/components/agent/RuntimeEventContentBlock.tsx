@@ -122,6 +122,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
   onUserResizeStart,
 }: RuntimeEventContentBlockProps) {
   const cls = animate ? 'animate-in fade-in slide-in-from-left-1 duration-150 fill-mode-both' : ''
+  const useLeftAlignedMessageList = useAtomValue(generalSettingsAtom).agentMessageListDisplayMode === 'left_aligned'
 
   if (message.type === 'user') {
     return (
@@ -129,6 +130,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
         message={message}
         threadId={threadId}
         className={cls}
+        leftAligned={useLeftAlignedMessageList}
         canEdit={canEditUserMessage}
         onOpenThreadFile={onOpenThreadFile}
         onOpenThreadImage={onOpenThreadImage}
@@ -393,6 +395,7 @@ function UserMessageBlock({
   threadId,
   className,
   canEdit,
+  leftAligned,
   onOpenThreadFile,
   onOpenThreadImage,
 }: {
@@ -400,6 +403,7 @@ function UserMessageBlock({
   threadId: string
   className: string
   canEdit: boolean
+  leftAligned: boolean
   onOpenThreadFile?: OpenThreadFile
   onOpenThreadImage?: (attachment: AgentMessageAttachmentInput) => void
 }) {
@@ -453,18 +457,35 @@ function UserMessageBlock({
   }
 
   return (
-    <div className={cn('group/user-message ml-auto flex w-full max-w-[920px] justify-end gap-2', className)}>
-      <div className="flex max-w-[560px] min-w-0 flex-col items-end gap-1.5">
+    <div className={cn(
+      'group/user-message flex w-full max-w-[920px] gap-3',
+      leftAligned ? 'justify-start' : 'ml-auto justify-end gap-2',
+      className,
+    )}>
+      {leftAligned && (
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
+          L
+        </div>
+      )}
+      <div className={cn(
+        'flex min-w-0 flex-col gap-1.5',
+        leftAligned ? 'max-w-[760px] items-start' : 'max-w-[560px] items-end',
+      )}>
         {message.attachments && message.attachments.length > 0 && (
           <AgentAttachmentGrid
             attachments={message.attachments}
-            align="right"
+            align={leftAligned ? 'left' : 'right'}
             imageSrcById={imageSrcById}
             onOpenFile={(attachment) => onOpenThreadFile?.(attachment.threadPath, attachment.fileRef)}
             onOpenImage={(attachment) => onOpenThreadImage?.(attachment)}
           />
         )}
-        <div className="rounded-[12px] rounded-tr-[10px] bg-[var(--lume-accent-soft)] px-3 py-2 text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)] shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]">
+        <div className={cn(
+          'text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)]',
+          leftAligned
+            ? 'px-0 py-0'
+            : 'rounded-[12px] rounded-tr-[10px] bg-[var(--lume-accent-soft)] px-3 py-2 shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]',
+        )}>
           {editing ? (
             <Textarea
               value={draft}
@@ -560,9 +581,11 @@ function UserMessageBlock({
           </div>
         )}
       </div>
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
-        L
-      </div>
+      {!leftAligned && (
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[var(--lume-accent)] text-[15px] font-semibold text-[var(--lume-accent-foreground)] shadow-[0_12px_24px_-18px_hsl(var(--lume-shadow-panel)/0.72)]">
+          L
+        </div>
+      )}
     </div>
   )
 }

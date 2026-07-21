@@ -1,6 +1,6 @@
 {
   "name": "@lume/desktop",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "description": "Lume desktop shell powered by Electron",
   "author": "Lume Team",
@@ -73,6 +73,10 @@
       {
         "from": "resources/natives",
         "to": "natives"
+      },
+      {
+        "from": "resources/bin",
+        "to": "bin"
       },
       {
         "from": "resources/node-repl",

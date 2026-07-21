@@ -133,6 +133,7 @@ export function mergeGeneralSettings(
     themePalette: updates.themePalette ?? base.themePalette,
     customThemePalettes: updates.customThemePalettes ?? base.customThemePalettes ?? [],
     agentMessageDisplayMode: updates.agentMessageDisplayMode ?? base.agentMessageDisplayMode,
+    agentMessageListDisplayMode: updates.agentMessageListDisplayMode ?? base.agentMessageListDisplayMode,
     logging: {
       ...base.logging,
       ...(updates.logging ?? {}),

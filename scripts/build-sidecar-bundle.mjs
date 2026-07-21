@@ -9,10 +9,21 @@ const SIDECAR_ENTRY = resolve(REPO_ROOT, "apps", "sidecar", "src", "index.ts");
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "sidecar");
 const OUT_FILE = resolve(OUT_DIR, "index.mjs");
 const XHR_WORKER_OUT_FILE = resolve(OUT_DIR, "xhr-sync-worker.mjs");
+const LOCAL_ONNX_WORKER_OUT_FILE = resolve(OUT_DIR, "local-embedding-worker.mjs");
+const LOCAL_ONNX_RUNTIME_OUT_DIR = resolve(dirname(OUT_DIR), "bin", "napi-v3");
 const sdkRequire = createRequire(resolve(REPO_ROOT, "packages", "sdk", "package.json"));
 const jsdomEntry = sdkRequire.resolve("jsdom");
 const jsdomLibDir = dirname(jsdomEntry);
 const XHR_WORKER_ENTRY = resolve(jsdomLibDir, "jsdom", "living", "xhr", "xhr-sync-worker.js");
+const LOCAL_ONNX_WORKER_ENTRY = resolve(
+  REPO_ROOT,
+  "apps",
+  "sidecar",
+  "src",
+  "services",
+  "memory-v2",
+  "local-embedding-worker.ts",
+);
 const mxcPackageJson = sdkRequire.resolve("@microsoft/mxc-sdk/package.json");
 const mxcRequire = createRequire(mxcPackageJson);
 const nodePtyPackageJson = mxcRequire.resolve("node-pty/package.json");
@@ -40,6 +51,7 @@ for (const child of readdirSync(OUT_DIR)) {
 for (const [entry, outfile] of [
   [SIDECAR_ENTRY, OUT_FILE],
   [XHR_WORKER_ENTRY, XHR_WORKER_OUT_FILE],
+  [LOCAL_ONNX_WORKER_ENTRY, LOCAL_ONNX_WORKER_OUT_FILE],
 ]) {
   const args = [
     "build",
@@ -67,6 +79,7 @@ for (const [entry, outfile] of [
 const sidecarRequire = createRequire(resolve(REPO_ROOT, "apps", "sidecar", "package.json"));
 let bundleSrc = readFileSync(OUT_FILE, "utf8");
 let xhrWorkerSrc = readFileSync(XHR_WORKER_OUT_FILE, "utf8");
+let localOnnxWorkerSrc = readFileSync(LOCAL_ONNX_WORKER_OUT_FILE, "utf8");
 
 // bun 会把 CommonJS __dirname/__filename 和 require.resolve 固化为构建机绝对路径。
 // 内嵌 jsdom 静态样式表、随包提供同步 XHR worker，并删除仅用于错误栈的 undici 文件名。
@@ -74,6 +87,7 @@ const jsdomDirnamePattern = /^  var __dirname = ".*node_modules.*jsdom.*living.*
 const jsdomStyleReadPattern = /  var defaultStyleSheet = fs\.readFileSync\(path\d*\.resolve\(__dirname, "\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css"\), \{ encoding: "utf-8" \}\);/;
 const undiciFilenamePattern = /^  var __filename = ".*node_modules.*undici.*index\.js";\r?\n/m;
 const xhrWorkerResolvePattern = /  var syncWorkerFile = __require\.resolve\("[^"\r\n]*xhr-sync-worker\.js"\);/;
+const transformersDirnamePattern = /, __dirname = "[^"]*node_modules[^\"]*transformers[^\"]*dist", __webpack_modules__/;
 const jsdomStylePath = resolve(jsdomLibDir, "jsdom", "browser", "default-stylesheet.css");
 const jsdomStyle = readFileSync(jsdomStylePath, "utf8");
 const makeRelocatable = (source, label) => {
@@ -96,17 +110,81 @@ const makeRelocatable = (source, label) => {
 };
 bundleSrc = makeRelocatable(bundleSrc, "main");
 xhrWorkerSrc = makeRelocatable(xhrWorkerSrc, "xhr worker");
+if (!transformersDirnamePattern.test(localOnnxWorkerSrc)) {
+  console.error("[sidecar-bundle] local ONNX worker: transformers __dirname pattern not found");
+  process.exit(1);
+}
+localOnnxWorkerSrc = localOnnxWorkerSrc.replace(
+  transformersDirnamePattern,
+  ', __dirname = ".", __webpack_modules__',
+);
 writeFileSync(OUT_FILE, bundleSrc);
 writeFileSync(XHR_WORKER_OUT_FILE, xhrWorkerSrc);
+writeFileSync(LOCAL_ONNX_WORKER_OUT_FILE, localOnnxWorkerSrc);
 
 const escapedRepoRoot = JSON.stringify(REPO_ROOT).slice(1, -1).toLowerCase();
-for (const [label, source] of [["main", bundleSrc], ["xhr worker", xhrWorkerSrc]]) {
+for (const [label, source] of [["main", bundleSrc], ["xhr worker", xhrWorkerSrc], ["local ONNX worker", localOnnxWorkerSrc]]) {
   if (source.toLowerCase().includes(escapedRepoRoot)) {
     console.error(`[sidecar-bundle] ${label} still contains the build workspace path`);
     process.exit(1);
   }
 }
-console.error("[sidecar-bundle] embedded jsdom stylesheet and packaged relocatable sync worker");
+console.error("[sidecar-bundle] embedded jsdom stylesheet and packaged relocatable workers");
+
+const onnxRuntimeEntry = readdirSync(resolve(REPO_ROOT, "node_modules", ".bun"))
+  .find((entry) => entry.startsWith("onnxruntime-node@1.21.0"));
+if (!onnxRuntimeEntry) {
+  console.error("[sidecar-bundle] missing onnxruntime-node@1.21.0 in Bun cache");
+  process.exit(1);
+}
+const onnxRuntimeBinSource = resolve(
+  REPO_ROOT,
+  "node_modules",
+  ".bun",
+  onnxRuntimeEntry,
+  "node_modules",
+  "onnxruntime-node",
+  "bin",
+  "napi-v3",
+  process.platform,
+);
+const onnxRuntimeBinTarget = process.platform === "darwin"
+  ? resolve(LOCAL_ONNX_RUNTIME_OUT_DIR, process.platform)
+  : resolve(LOCAL_ONNX_RUNTIME_OUT_DIR, process.platform, process.arch);
+const onnxRuntimeArchSource = process.platform === "darwin"
+  ? onnxRuntimeBinSource
+  : resolve(onnxRuntimeBinSource, process.arch);
+if (!existsSync(onnxRuntimeArchSource)) {
+  console.error(`[sidecar-bundle] missing ONNX Runtime native files: ${onnxRuntimeArchSource}`);
+  process.exit(1);
+}
+rmSync(onnxRuntimeBinTarget, { recursive: true, force: true });
+mkdirSync(dirname(onnxRuntimeBinTarget), { recursive: true });
+cpSync(onnxRuntimeArchSource, onnxRuntimeBinTarget, { recursive: true });
+console.error(`[sidecar-bundle] copied ONNX Runtime native files -> resources/bin/napi-v3/${process.platform}`);
+
+const sharpPlatform = `${process.platform}-${process.arch}`;
+const sharpEntry = readdirSync(resolve(REPO_ROOT, "node_modules", ".bun"))
+  .find((entry) => entry.startsWith(`@img+sharp-${sharpPlatform}@0.34.5`));
+if (!sharpEntry) {
+  console.error(`[sidecar-bundle] missing sharp native package for ${sharpPlatform}`);
+  process.exit(1);
+}
+const sharpPackageName = `sharp-${sharpPlatform}`;
+const sharpSource = resolve(
+  REPO_ROOT,
+  "node_modules",
+  ".bun",
+  sharpEntry,
+  "node_modules",
+  "@img",
+  sharpPackageName,
+);
+const sharpTarget = resolve(OUT_DIR, "node_modules", "@img", sharpPackageName);
+rmSync(sharpTarget, { recursive: true, force: true });
+mkdirSync(dirname(sharpTarget), { recursive: true });
+cpSync(sharpSource, sharpTarget, { recursive: true });
+console.error(`[sidecar-bundle] copied sharp native package -> resources/sidecar/node_modules/@img/${sharpPackageName}`);
 
 // (a) 相对路径 require（基准=本 bundle = resources/sidecar/）:
 //     css-tree 的 ../data/patch.json -> resources/data/patch.json
@@ -138,7 +216,7 @@ const NODE_BUILTINS = new Set([
   "console", "v8", "sys", "node:test",
 ]);
 const reqsByPkg = new Map();
-const runtimeBundleSrc = `${bundleSrc}\n${xhrWorkerSrc}`;
+const runtimeBundleSrc = `${bundleSrc}\n${xhrWorkerSrc}\n${localOnnxWorkerSrc}`;
 for (const m of runtimeBundleSrc.matchAll(/require[0-9]?\("([^"]+)"\)/g)) {
   const req = m[1];
   if (req.startsWith(".") || req.startsWith("node:") || NODE_BUILTINS.has(req)) continue;

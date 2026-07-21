@@ -10,6 +10,7 @@ import { join, resolve, sep } from "node:path";
 import {
   GENERAL_SETTINGS_DEFAULTS,
   type AgentMessageDisplayMode,
+  type AgentMessageListDisplayMode,
   type BuiltInThemePalette,
   type CustomThemePalette,
   type CustomThemePaletteColors,
@@ -128,6 +129,10 @@ function isAgentMessageDisplayMode(value: unknown): value is AgentMessageDisplay
   return value === "minimal" || value === "verbose";
 }
 
+function isAgentMessageListDisplayMode(value: unknown): value is AgentMessageListDisplayMode {
+  return value === "conversation" || value === "left_aligned";
+}
+
 function isLogLevel(value: unknown): value is LumeLogLevel {
   return value === "trace" || value === "debug" || value === "info"
     || value === "warn" || value === "error" || value === "fatal";
@@ -208,6 +213,9 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
     agentMessageDisplayMode: isAgentMessageDisplayMode(value.agentMessageDisplayMode)
       ? value.agentMessageDisplayMode
       : GENERAL_SETTINGS_DEFAULTS.agentMessageDisplayMode,
+    agentMessageListDisplayMode: isAgentMessageListDisplayMode(value.agentMessageListDisplayMode)
+      ? value.agentMessageListDisplayMode
+      : GENERAL_SETTINGS_DEFAULTS.agentMessageListDisplayMode,
     logging: sanitizeLoggingSettings(value.logging),
     windowBehavior: {
       minimizeToTray:
@@ -355,6 +363,7 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
       : GENERAL_SETTINGS_DEFAULTS.themePalette,
     customThemePalettes,
     agentMessageDisplayMode: input.agentMessageDisplayMode ?? current.agentMessageDisplayMode,
+    agentMessageListDisplayMode: input.agentMessageListDisplayMode ?? current.agentMessageListDisplayMode,
     logging: sanitizeLoggingSettings({ ...current.logging, ...(input.logging ?? {}) }),
     windowBehavior: (() => {
       const showTray = input.windowBehavior?.showTray ?? current.windowBehavior.showTray;

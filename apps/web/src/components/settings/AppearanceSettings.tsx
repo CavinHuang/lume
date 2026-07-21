@@ -4,6 +4,7 @@ import { Monitor, Moon, Sparkles, Sun, Trash2, type LucideIcon } from 'lucide-re
 import { toast } from 'sonner'
 import type {
   AgentMessageDisplayMode,
+  AgentMessageListDisplayMode,
   CustomThemePalette,
   ThemeMode,
   ThemePalette,
@@ -38,6 +39,11 @@ const THEME_ICONS: Record<ThemeMode, LucideIcon> = {
 const DISPLAY_MODE_OPTIONS: Array<{ value: AgentMessageDisplayMode; label: string; desc: string }> = [
   { value: 'minimal', label: '极简', desc: '只显示文字结论，过程收进可展开的一行' },
   { value: 'verbose', label: '明细', desc: '每个工具/思考/子代理独立折叠展示' },
+]
+
+const MESSAGE_LIST_DISPLAY_MODE_OPTIONS: Array<{ value: AgentMessageListDisplayMode; label: string; desc: string }> = [
+  { value: 'conversation', label: '气泡模式', desc: '用户消息显示在右侧，保持当前对话形式' },
+  { value: 'left_aligned', label: '文档模式', desc: '参考飞书，用户和助手消息统一从左侧开始' },
 ]
 
 export function AppearanceSettings() {
@@ -86,6 +92,11 @@ export function AppearanceSettings() {
   const handleDisplayModeChange = (mode: AgentMessageDisplayMode) => {
     if (mode === settings.agentMessageDisplayMode || saving) return
     void persistSettings({ agentMessageDisplayMode: mode }, '外观设置已保存')
+  }
+
+  const handleMessageListDisplayModeChange = (mode: AgentMessageListDisplayMode) => {
+    if (mode === settings.agentMessageListDisplayMode || saving) return
+    void persistSettings({ agentMessageListDisplayMode: mode }, '外观设置已保存')
   }
 
   const handleAskLumeToConfigure = () => {
@@ -247,6 +258,34 @@ export function AppearanceSettings() {
                 className={cn(
                   'lume-segmented-item disabled:opacity-60',
                   settings.agentMessageDisplayMode === option.value
+                    ? 'lume-segmented-item-active'
+                    : '',
+                )}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <div className="flex min-h-[48px] items-center justify-between gap-5 py-2">
+          <div className="min-w-0">
+            <div className="text-[13px] font-medium leading-5 text-[var(--text-2)]">消息列表样式</div>
+            <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">
+              选择消息在对话中的排列方式
+            </div>
+          </div>
+          <div className="lume-segmented grid w-[220px] grid-cols-2">
+            {MESSAGE_LIST_DISPLAY_MODE_OPTIONS.map((option) => (
+              <Button
+                variant="ghost"
+                key={option.value}
+                type="button"
+                onClick={() => handleMessageListDisplayModeChange(option.value)}
+                disabled={saving}
+                title={option.desc}
+                className={cn(
+                  'lume-segmented-item disabled:opacity-60',
+                  settings.agentMessageListDisplayMode === option.value
                     ? 'lume-segmented-item-active'
                     : '',
                 )}

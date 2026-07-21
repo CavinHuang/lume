@@ -123,12 +123,16 @@ function verifyNativeResources(files, desktopTarget) {
 }
 
 function verifySidecarResources(files, desktopTarget) {
-  for (const name of ["index.mjs", "xhr-sync-worker.mjs"]) {
+  for (const name of ["index.mjs", "xhr-sync-worker.mjs", "local-embedding-worker.mjs"]) {
     const pattern = new RegExp(`/resources/sidecar/${name.replace(".", "\\.")}$`, "i");
     if (!files.some((file) => pattern.test(file))) {
       fail(`missing packaged sidecar resource: ${name}`);
     }
   }
+  const onnxRuntimeNative = files.find((file) => /\/resources\/bin\/napi-v3\/[^/]+\/[^/]+\/onnxruntime_binding\.node$/i.test(file));
+  if (!onnxRuntimeNative) fail("missing packaged ONNX Runtime native binding");
+  const sharpNative = files.find((file) => /\/resources\/sidecar\/node_modules\/@img\/sharp-[^/]+\/lib\/sharp-[^/]+\.node$/i.test(file));
+  if (!sharpNative) fail("missing packaged sharp native binding");
   const sidecarBundle = files.find((file) => /\/resources\/sidecar\/index\.mjs$/i.test(file));
   const sidecarSource = sidecarBundle ? readFileSync(sidecarBundle, "utf8") : "";
   for (const marker of ["wiki:privileged-apply-draft", "wiki.propose_changes", "system.wiki-privileged-credential"]) {
