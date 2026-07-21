@@ -82,7 +82,7 @@ describe("memory-v2 settings snapshot", () => {
       }
     });
     expect(snapshot.retrieval.semantic.fallbackModelRef).toBeUndefined();
-    expect(snapshot.retrieval.semantic.localOnnx?.message).toContain("首次使用");
+    expect(snapshot.retrieval.semantic.localOnnx?.message).toContain("下载模型");
     expect(snapshot.retrieval.rerank.source).toBe("disabled");
   });
 

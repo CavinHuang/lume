@@ -120,7 +120,7 @@ function localOnnxStatusMessage(status: ReturnType<typeof getLocalOnnxMemoryEmbe
   if (status === "downloading") return "正在下载并初始化本地 ONNX 模型，首次使用可能需要一点时间。";
   if (status === "initializing") return "正在初始化本地 ONNX 模型。";
   if (status === "failed") return "本地 ONNX 模型初始化失败，当前会继续使用基础召回。";
-  return "本地 ONNX 模型尚未缓存，首次使用语义召回时会自动下载。";
+  return "本地 ONNX 模型尚未缓存，点击“下载模型”即可开始下载。";
 }
 
 function memoryFileSummary(path: string, label: string, scope: "global" | "workspace"): MemorySettingsFileSummary {

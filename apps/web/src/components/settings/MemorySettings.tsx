@@ -852,7 +852,8 @@ function OverviewPanel({
             <p className="mt-2 text-[12px] leading-5 text-[var(--text-3)]">
               {summarizeLocalOnnxStatus(snapshot.retrieval.semantic.localOnnx)}
             </p>
-            {snapshot.retrieval.semantic.localOnnx.status === 'failed' && (
+            {(snapshot.retrieval.semantic.localOnnx.status === 'not_cached'
+              || snapshot.retrieval.semantic.localOnnx.status === 'failed') && (
               <Button
                 variant="outline"
                 size="sm"
@@ -861,7 +862,11 @@ function OverviewPanel({
                 onClick={onReloadLocalOnnx}
               >
                 <RefreshCw size={14} className={busyAction === 'reload-local-onnx' ? 'animate-spin' : undefined} />
-                {busyAction === 'reload-local-onnx' ? '重新加载中' : '重新加载'}
+                {busyAction === 'reload-local-onnx'
+                  ? '加载中'
+                  : snapshot.retrieval.semantic.localOnnx.status === 'not_cached'
+                    ? '下载模型'
+                    : '重新加载'}
               </Button>
             )}
           </div>
