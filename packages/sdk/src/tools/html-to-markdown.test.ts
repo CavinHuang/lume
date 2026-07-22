@@ -34,4 +34,37 @@ describe("extractArticleMarkdown", () => {
     const result = extractArticleMarkdown(html, "https://example.com/code");
     expect(result!.content).toContain("const x = 1;");
   });
+
+  test("preserves GFM tables and nested cell content", () => {
+    const html = `
+      <html><body><article>
+        <h1>Release Matrix</h1>
+        <table>
+          <tr><td>版本</td><td>状态</td><td>说明</td></tr>
+          <tr><td>1.0</td><td><strong>稳定</strong></td><td><a href="https://example.com">文档</a></td></tr>
+          <tr><td></td><td>测试中</td><td><p>包含多行</p><p>内容</p></td></tr>
+        </table>
+      </article></body></html>`;
+    const result = extractArticleMarkdown(html, "https://example.com/table");
+    expect(result).not.toBeNull();
+    expect(result!.content).toContain("| 版本 | 状态 | 说明 |");
+    expect(result!.content).toContain("| --- | --- | --- |");
+    expect(result!.content).toContain("**稳定**");
+    expect(result!.content).toContain("[文档](https://example.com/)");
+    expect(result!.content).toContain("包含多行");
+  });
+
+  test("expands merged table cells without dropping surrounding rows", () => {
+    const html = `<article><table>
+      <tr><th colspan="2">标题</th></tr>
+      <tr><td rowspan="2">分类</td><td>A</td></tr>
+      <tr><td>B</td></tr>
+    </table></article>`;
+    const result = extractArticleMarkdown(html, "https://example.com/merged");
+    expect(result).not.toBeNull();
+    expect(result!.content).toContain("标题");
+    expect(result!.content).toContain("分类");
+    expect(result!.content).toContain("A");
+    expect(result!.content).toContain("B");
+  });
 });

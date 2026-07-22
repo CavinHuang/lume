@@ -56,3 +56,33 @@ describe("runWebFetch — assets", () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 });
+
+describe("runWebFetch — content types", () => {
+  test("returns a direct image as an image content block", async () => {
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
+    const fetchImpl = (async () => new Response(png, { headers: { "content-type": "image/png" } })) as any;
+    const out = await runWebFetch({ url: "https://example.com/pixel.png" }, ctx, { fetchImpl });
+    expect(out.is_error).toBeFalsy();
+    expect((out.data as any).content[0].type).toBe("image");
+    expect((out.data as any).content[0].mimeType).toBe("image/png");
+  });
+
+  test("prefers a declared Markdown alternate", async () => {
+    const markdown = "# Alternate\n\n" + "content ".repeat(40);
+    const fetchImpl = (async (url: string) => {
+      if (url.endsWith("/article.md")) return new Response(markdown, { headers: { "content-type": "text/markdown" } });
+      return new Response(`<html><head><link rel="alternate" type="text/markdown" href="/article.md"></head><body><article>${"fallback ".repeat(50)}</article></body></html>`, { headers: { "content-type": "text/html" } });
+    }) as any;
+    const out = await runWebFetch({ url: "https://example.com/article" }, ctx, { fetchImpl });
+    expect(out.data).toContain("Alternate");
+    expect(out.data).toContain("alternate-markdown");
+  });
+
+  test("converts RSS items to Markdown", async () => {
+    const feed = `<rss><channel><title>News</title><item><title>First</title><link>https://example.com/first</link><description>Hello feed</description></item></channel></rss>`;
+    const fetchImpl = (async () => new Response(feed, { headers: { "content-type": "application/rss+xml" } })) as any;
+    const out = await runWebFetch({ url: "https://example.com/feed.xml" }, ctx, { fetchImpl });
+    expect(out.data).toContain("## First");
+    expect(out.data).toContain("Hello feed");
+  });
+});

@@ -41,6 +41,10 @@ describe("resolveImgSrc", () => {
     const img = dom(`<img alt="no src">`).querySelector("img")!;
     expect(resolveImgSrc(img as any)).toBeNull();
   });
+  test("uses picture source and data-srcset fallbacks", () => {
+    const img = dom(`<picture><source data-srcset="https://a.com/large.webp 2x"><img src="data:," /></picture>`).querySelector("img")!;
+    expect(resolveImgSrc(img as any)).toBe("https://a.com/large.webp");
+  });
 });
 
 describe("downloadAndLocalizeImages", () => {
