@@ -73,6 +73,7 @@ import {
 } from './plugin-market-ui-state'
 import { formatRiskLabel } from './plugin-detail-state'
 import { buildPluginTryPrompt } from './plugin-try-prompt-state'
+import { installPluginSetupPackages } from './plugin-setup-installer'
 
 import { upsertWelcomeTab } from '@/components/app-shell/LeftSidebar'
 import { Button } from '@/components/ui/button'
@@ -260,6 +261,12 @@ export function SkillsMarketView() {
           pluginId: marketItem.pluginId,
           acceptedPermissionsHash: pluginDetail.inspect.permissionsHash,
         })
+        const installedPackages = await installPluginSetupPackages({
+          workspaceSlug,
+          catalogItemKey: marketItem.catalogItemKey,
+          setup: marketItem.marketplace?.setup,
+        })
+        if (installedPackages.length > 0) toast.success('插件与 Native Host 已更新')
         const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: marketItem.id })
         setPluginDetail(refreshed)
         if (refreshed.item.kind === 'plugin') {
@@ -275,6 +282,12 @@ export function SkillsMarketView() {
           enableScope: 'workspace',
           overwrite: false,
         })
+        const installedPackages = await installPluginSetupPackages({
+          workspaceSlug,
+          catalogItemKey: marketItem.catalogItemKey,
+          setup: marketItem.marketplace?.setup,
+        })
+        if (installedPackages.length > 0) toast.success('插件与 Native Host 已安装')
         setSelectedPlugin(null)
         setPluginDetail(null)
       }
