@@ -388,6 +388,30 @@ describe("lume-config-service", () => {
     expect(getEffectivePluginRuntimeConfig("default").marketSources).toEqual([]);
   });
 
+  test("应保存 Advisor 的独立模型并支持显式禁用", () => {
+    updateLumeConfigSection({
+      source: "system",
+      path: "models.advisor",
+      value: { defaultModelRef: " openai/gpt-5-mini ", enabled: true }
+    });
+
+    expect(getEffectiveLumeConfig("default").models?.advisor).toEqual({
+      defaultModelRef: "openai/gpt-5-mini",
+      enabled: true
+    });
+
+    updateLumeConfigSection({
+      source: "agent",
+      workspaceSlug: "default",
+      path: "models.advisor",
+      value: { enabled: false }
+    });
+    expect(getEffectiveLumeConfig("default").models?.advisor).toEqual({
+      defaultModelRef: "openai/gpt-5-mini",
+      enabled: false
+    });
+  });
+
   test("应允许环境变量覆盖默认官方镜像地址", () => {
     const previous = process.env.LUME_PLUGIN_MARKET_MIRROR_URL;
     process.env.LUME_PLUGIN_MARKET_MIRROR_URL = "https://mirror.override.example";

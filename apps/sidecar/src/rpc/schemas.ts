@@ -671,6 +671,11 @@ const lumeConfigSimpleModelStrategySchema = z.object({
   defaultModelRef: nonEmptyTrimmedStringSchema.optional()
 }).strict();
 
+const lumeConfigAdvisorStrategySchema = z.object({
+  enabled: z.boolean().optional(),
+  defaultModelRef: nonEmptyTrimmedStringSchema.optional()
+}).strict();
+
 const lumeConfigImageGenerationStrategySchema = z.object({
   priorityModelRefs: z.array(nonEmptyTrimmedStringSchema).optional()
 }).strict();
@@ -767,6 +772,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.routine"),
     value: lumeConfigRoutineStrategySchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.advisor"),
+    value: lumeConfigAdvisorStrategySchema
   }),
   ...[
     "models.background",

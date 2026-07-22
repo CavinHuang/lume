@@ -409,6 +409,35 @@ export class LumeRunObserver {
     return this.state.workspaceSlug;
   }
 
+  recordAdvisorReview(
+    review: {
+      severity: "clear" | "suggestion" | "concern" | "blocker";
+      summary: string;
+      details?: string;
+      modelRef: string;
+      durationMs: number;
+    },
+    emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
+  ): void {
+    this.enqueue(async () => {
+      const item: LumeRunItem = {
+        type: "system_event",
+        id: `advisor:${this.state.runId}:${randomUUID()}`,
+        name: "advisor_reviewed",
+        payload: review,
+        createdAt: new Date().toISOString()
+      };
+      await this.stateStore.appendItem(this.state.runId, item);
+      for (const event of projectRunItemToRuntimeEvents(this.state, item, {
+        includeAssistantText: true,
+        includeAssistantThinking: true,
+        includeModelStreamText: true
+      })) {
+        this.emitRuntimeEvent(emitRuntimeEvent, event);
+      }
+    });
+  }
+
   getFileReferenceBinding(): FileReferenceBinding | undefined {
     return this.state.fileReferenceBinding;
   }

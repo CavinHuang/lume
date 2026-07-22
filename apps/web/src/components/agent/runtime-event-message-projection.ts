@@ -110,6 +110,16 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'advisor.reviewed') {
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
+    state.currentAssistant.blocks.push({
+      type: 'advisor_review',
+      id: `advisor:${event.runId}:${event.createdAt}`,
+      event,
+    })
+    return
+  }
+
   if (
     event.type === 'context.compaction.started'
     || event.type === 'context.compaction.progress'
@@ -706,6 +716,7 @@ function estimateAssistantBlockTokens(block: RuntimeAssistantBlock): number {
   if (block.type === 'text' || block.type === 'thinking') return estimateTextTokens(block.text)
   if (block.type === 'plan_preview') return estimateTextTokens(block.preview.markdown)
   if (block.type === 'task_progress') return estimateTextTokens(block.event.message ?? '')
+  if (block.type === 'advisor_review') return estimateTextTokens(`${block.event.summary} ${block.event.details ?? ''}`)
   if (block.type === 'tool_call') {
     return estimateValueTokens(block.toolCall.input) + estimateValueTokens(block.toolCall.output)
   }

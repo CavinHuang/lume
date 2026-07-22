@@ -30,6 +30,7 @@ export type RuntimeEventType =
   | "context.compaction.started"
   | "context.compaction.progress"
   | "context.compaction.completed"
+  | "advisor.reviewed"
   | "usage.updated";
 
 export interface RuntimeEventBase {
@@ -394,6 +395,15 @@ export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {
   progress?: RuntimeNormalizedUsage;
 }
 
+export interface AdvisorReviewedRuntimeEvent extends RuntimeEventBase {
+  type: "advisor.reviewed";
+  severity: "clear" | "suggestion" | "concern" | "blocker";
+  summary: string;
+  details?: string;
+  modelRef: string;
+  durationMs?: number;
+}
+
 export type LumeRuntimeEvent =
   | RunStartedRuntimeEvent
   | UserMessageSubmittedRuntimeEvent
@@ -419,4 +429,5 @@ export type LumeRuntimeEvent =
   | ContextCompactionStartedRuntimeEvent
   | ContextCompactionProgressRuntimeEvent
   | ContextCompactionCompletedRuntimeEvent
+  | AdvisorReviewedRuntimeEvent
   | UsageUpdatedRuntimeEvent;

@@ -295,6 +295,24 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
       hidden: payload.hidden !== false
     }];
   }
+  if (item.name === "advisor_reviewed") {
+    const severity = stringValue(payload.severity, "suggestion");
+    if (severity !== "clear" && severity !== "suggestion" && severity !== "concern" && severity !== "blocker") return [];
+    const modelRef = stringValue(payload.modelRef, "unknown");
+    const summary = stringValue(payload.summary, "Advisor review completed");
+    return [{
+      id: `${run.runId}:${item.id}:advisor.reviewed`,
+      type: "advisor.reviewed",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      severity,
+      summary,
+      ...(stringValue(payload.details, "") ? { details: stringValue(payload.details, "") } : {}),
+      modelRef,
+      ...(typeof payload.durationMs === "number" ? { durationMs: payload.durationMs } : {})
+    }];
+  }
   if (item.name === "context_compaction_started") {
     return [{
       id: `${run.runId}:${item.id}:context.compaction.started`,

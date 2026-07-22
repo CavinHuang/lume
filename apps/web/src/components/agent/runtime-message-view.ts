@@ -16,6 +16,7 @@ export interface RuntimeToolCallView {
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>
 export type MemoryContextUsedViewEvent = Extract<LumeRuntimeEvent, { type: 'memory.context.used' }>
+export type AdvisorReviewedViewEvent = Extract<LumeRuntimeEvent, { type: 'advisor.reviewed' }>
 export type ContextCompactionViewEvent = Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>
 export type PlanPreviewView = Pick<
   Extract<LumeRuntimeEvent, { type: 'plan.preview' }>,
@@ -33,6 +34,7 @@ export type RuntimeAssistantBlock =
   | { type: 'tool_call'; id: string; toolCall: RuntimeToolCallView }
   | { type: 'task_progress'; id: string; event: TaskProgressViewEvent }
   | { type: 'memory_context_used'; id: string; event: MemoryContextUsedViewEvent }
+  | { type: 'advisor_review'; id: string; event: AdvisorReviewedViewEvent }
   | { type: 'plan_preview'; id: string; preview: PlanPreviewView }
   | { type: 'todo_update'; id: string; data: TodoBlockData }
 

@@ -1,5 +1,6 @@
 import type {
   LumeConfigAgentDefaultStrategy,
+  LumeConfigAdvisorStrategy,
   LumeConfigPermissionApprovalRoutes,
   LumeConfigPermissionMode,
   LumeConfigPermissionsSection,
@@ -48,6 +49,15 @@ export const updateRoutineModelStrategy = (value: LumeConfigRoutineModelStrategy
     path: 'models.routine',
     value,
     summary: 'update routine scheduling model strategy',
+  })
+
+export const updateAdvisorModelStrategy = (value: LumeConfigAdvisorStrategy, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'models.advisor',
+    value,
+    summary: 'update second-model Advisor strategy',
   })
 
 export const updateAutomationModelStrategy = (value: LumeConfigSimpleModelStrategy, workspaceSlug?: string) =>

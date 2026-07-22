@@ -1255,7 +1255,11 @@ export class QueryEngine {
     }
 
     // Hook: Stop (end of agentic loop)
-    const stopHooks = await this.executeHooks('Stop')
+    const stopHooks = await this.executeHooks('Stop', {
+      // Expose the bounded, normalized conversation to host-owned post-turn
+      // reviewers without changing the model-visible prompt.
+      messages: this.messages,
+    })
     for (const event of stopHooks.events) yield event
 
     // Hook: SessionEnd

@@ -145,6 +145,15 @@ function normalizeModelStrategy(value: unknown): { defaultModelRef?: string } {
   return defaultModelRef ? { defaultModelRef } : {};
 }
 
+function normalizeAdvisorStrategy(value: unknown): { enabled?: boolean; defaultModelRef?: string } {
+  if (!isPlainObject(value)) return {};
+  const defaultModelRef = normalizeOptionalString(value.defaultModelRef);
+  return {
+    ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
+    ...(defaultModelRef ? { defaultModelRef } : {})
+  };
+}
+
 function normalizeImageGenerationStrategy(value: unknown): { priorityModelRefs?: string[] } {
   if (!isPlainObject(value)) return {};
   const priorityModelRefs = normalizeUniqueStringArray(value.priorityModelRefs);
@@ -552,6 +561,7 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
       welcomeSuggestions: normalizeModelStrategy(value.models.welcomeSuggestions),
       permissionClassifier: normalizeModelStrategy(value.models.permissionClassifier),
       memoryJudgement: normalizeModelStrategy(value.models.memoryJudgement),
+      advisor: normalizeAdvisorStrategy(value.models.advisor),
       imageGeneration: normalizeImageGenerationStrategy(value.models.imageGeneration),
       computerUse: normalizeComputerUseStrategy(value.models.computerUse),
       ...(normalizeContextWindows(value.models.contextWindows)
@@ -727,6 +737,10 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
       memoryJudgement: {
         ...(fallback.models?.memoryJudgement ?? {}),
         ...(base.models?.memoryJudgement ?? {})
+      },
+      advisor: {
+        ...(fallback.models?.advisor ?? {}),
+        ...(base.models?.advisor ?? {})
       },
       imageGeneration: {
         ...(fallback.models?.imageGeneration ?? {}),
@@ -936,6 +950,10 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
       memoryJudgement: {
         ...(file.models?.memoryJudgement ?? {}),
         ...(overlay?.models?.memoryJudgement ?? {})
+      },
+      advisor: {
+        ...(file.models?.advisor ?? {}),
+        ...(overlay?.models?.advisor ?? {})
       },
       imageGeneration: {
         ...(file.models?.imageGeneration ?? {}),

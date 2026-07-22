@@ -594,6 +594,33 @@ describe("projectRunStateToRuntimeEvents", () => {
     }));
   });
 
+  test("projects persisted Advisor reviews into product runtime events", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      generatedItems: [{
+        type: "system_event",
+        id: "advisor-1",
+        name: "advisor_reviewed",
+        payload: {
+          severity: "concern",
+          summary: "可能遗漏边界条件",
+          details: "建议补充空输入检查",
+          modelRef: "openai/gpt-5-mini",
+          durationMs: 1234
+        },
+        createdAt: "2026-04-30T00:00:01.000Z"
+      }]
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "advisor.reviewed",
+      severity: "concern",
+      summary: "可能遗漏边界条件",
+      details: "建议补充空输入检查",
+      modelRef: "openai/gpt-5-mini",
+      durationMs: 1234
+    }));
+  });
+
   test("does not project legacy usage fields as context usage", () => {
     const events = projectRunStateToRuntimeEvents(baseRun({
       generatedItems: [{

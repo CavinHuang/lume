@@ -349,6 +349,7 @@ export class LumeRunner {
       messageMetadata: input.messageMetadata,
       emitSdkMessage: this.emit.onSdkMessage,
       emitRuntimeEvent: this.emit.onRuntimeEvent,
+      emitAdvisorReview: (review) => this.observer.recordAdvisorReview(review, this.emit.onRuntimeEvent),
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
       emitDesktopActionRequest: this.emit.onDesktopActionRequest,

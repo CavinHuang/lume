@@ -20,6 +20,12 @@ export interface LumeConfigSimpleModelStrategy {
   defaultModelRef?: string
 }
 
+export interface LumeConfigAdvisorStrategy {
+  /** Set false to keep the optional second-model review disabled. */
+  enabled?: boolean
+  defaultModelRef?: string
+}
+
 export interface LumeConfigImageGenerationStrategy {
   priorityModelRefs?: string[]
 }
@@ -82,6 +88,7 @@ export interface LumeConfigModelsSection {
   welcomeSuggestions?: LumeConfigSimpleModelStrategy
   permissionClassifier?: LumeConfigSimpleModelStrategy
   memoryJudgement?: LumeConfigSimpleModelStrategy
+  advisor?: LumeConfigAdvisorStrategy
   imageGeneration?: LumeConfigImageGenerationStrategy
   computerUse?: LumeConfigComputerUseStrategy
   contextWindows?: Record<string, number>

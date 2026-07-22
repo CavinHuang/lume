@@ -843,6 +843,24 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
     return null
   }
 
+  if (block.type === 'advisor_review') {
+    const tone = block.event.severity === 'blocker'
+      ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
+      : block.event.severity === 'concern'
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+        : 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+    return (
+      <div className={cn('my-2 rounded-lg border px-3 py-2 text-sm', tone)}>
+        <div className="flex items-center gap-2 font-medium">
+          <Sparkles className="size-4" />
+          <span>Advisor · {block.event.severity}</span>
+        </div>
+        <div className="mt-1">{block.event.summary}</div>
+        {block.event.details ? <div className="mt-1 whitespace-pre-wrap opacity-85">{block.event.details}</div> : null}
+      </div>
+    )
+  }
+
   return (
     <RuntimeEventToolCallBlock
       toolCall={block.toolCall}

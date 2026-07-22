@@ -102,6 +102,7 @@ import {
   clearRuntimeToolDescriptors,
 } from "../tools/tool-descriptor-session";
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
+import { runAdvisor } from "../advisor/advisor-service";
 import { getNodeReplRuntimeRegistry } from "../tools/node-repl/node-repl-runtime-registry";
 import { getComputerUseSessionRegistry } from "../tools/computer-use/computer-use-session";
 import {
@@ -172,6 +173,13 @@ export interface CreateRuntimeCoreSessionInput {
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
+  emitAdvisorReview?: (review: {
+    severity: "clear" | "suggestion" | "concern" | "blocker";
+    summary: string;
+    details?: string;
+    modelRef: string;
+    durationMs: number;
+  }) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
@@ -1544,6 +1552,33 @@ export async function createRuntimeCoreSession(
     workspaceSlug: input.workspaceSlug,
     sandbox: input.processSandbox,
   });
+  const agentHooks = { ...pluginAgentHooks };
+  const advisorConfig = getEffectiveLumeConfig(input.workspaceSlug).models?.advisor;
+  if (input.threadType !== "subagent" && advisorConfig?.defaultModelRef && advisorConfig.enabled !== false) {
+    agentHooks.Stop = [
+      ...(agentHooks.Stop ?? []),
+      {
+        hooks: [async (hookInput: Record<string, unknown>) => {
+          try {
+            const review = await runAdvisor({
+              workspaceSlug: input.workspaceSlug,
+              cwd: input.cwd,
+              userMessage: input.userMessage,
+              messages: hookInput.messages,
+            });
+            if (!review) return undefined;
+            input.emitAdvisorReview?.(review);
+          } catch (error) {
+            log.warn("Advisor review failed", {
+              sessionId: input.lumeSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          return undefined;
+        }],
+      },
+    ];
+  }
 
   // Phase MCP Merge-A/B: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
   // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
@@ -1755,7 +1790,7 @@ export async function createRuntimeCoreSession(
     ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
       ? { resume: input.lumeSessionId }
       : {}),
-    ...(Object.keys(pluginAgentHooks).length > 0 ? { hooks: pluginAgentHooks } : {}),
+    ...(Object.keys(agentHooks).length > 0 ? { hooks: agentHooks } : {}),
     agents,
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
