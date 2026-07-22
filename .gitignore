@@ -36,3 +36,7 @@ tmp-ui-audit/
 **/usage.jsonl
 .spec-workflow
 .superpowers
+
+# 临时计划与研究产物，仅本地使用，不进版本库
+/PLAN-*.md
+/codex-*.txt
