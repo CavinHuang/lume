@@ -31,6 +31,8 @@ interface MermaidBlockProps {
   onCopy: (code: string) => Promise<void>
   /** 由宿主将 SVG 栅格化后写入系统图片剪贴板 */
   onCopyImage: (svg: string) => Promise<void>
+  /** 由宿主使用当前 SVG 打开大屏预览 */
+  onPreview?: (svg: string) => void
 }
 
 /** 防抖间隔（ms） */
@@ -76,6 +78,14 @@ const imageIconPath = (
     <rect x="3" y="3" width="18" height="18" rx="2" />
     <circle cx="8.5" cy="8.5" r="1.5" />
     <path d="m21 15-5-5L5 21" />
+  </>
+)
+const previewIconPath = (
+  <>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+    <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+    <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+    <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
   </>
 )
 const zoomInPath = (
@@ -127,7 +137,7 @@ export function stripStylesheetImports(svg: string): string {
   return svg.replace(/@import\s+url\((?:'[^']*'|"[^"]*"|[^)]*)\)\s*;?/gi, '')
 }
 
-export function MermaidBlock({ code, onCopy, onCopyImage }: MermaidBlockProps): React.ReactElement {
+export function MermaidBlock({ code, onCopy, onCopyImage, onPreview }: MermaidBlockProps): React.ReactElement {
   const [svgHtml, setSvgHtml] = React.useState<string | null>(null)
   const [svgVisible, setSvgVisible] = React.useState(false)
   const [copied, setCopied] = React.useState<'code' | 'image' | null>(null)
@@ -309,6 +319,17 @@ export function MermaidBlock({ code, onCopy, onCopyImage }: MermaidBlockProps): 
                 <svg {...ICON_ATTRS}>{zoomInPath}</svg>
               </button>
             </div>
+          )}
+          {svgVisible && onPreview && (
+            <button
+              type="button"
+              onClick={() => svgHtml && onPreview(svgHtml)}
+              className="p-0.5 rounded hover:bg-foreground/10 transition-colors text-muted-foreground hover:text-foreground"
+              title="大屏预览"
+              aria-label="大屏预览 Mermaid 图表"
+            >
+              <svg {...ICON_ATTRS}>{previewIconPath}</svg>
+            </button>
           )}
           {svgVisible && (
             <button type="button" onClick={handleCopyImage} className="flex items-center gap-1.5 px-1.5 py-0.5 rounded hover:bg-foreground/10 transition-colors text-muted-foreground hover:text-foreground">

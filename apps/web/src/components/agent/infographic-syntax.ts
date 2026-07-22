@@ -7,6 +7,13 @@ const SAFE_ICON_PATTERN = /^[a-z][a-z0-9]*(?:[ -][a-z0-9]+){0,2}$/
 const SAFE_COLOR_PATTERN = /^#[0-9a-f]{3,8}$/i
 const SAFE_THEMES = new Set(['light', 'dark', 'hand-drawn'])
 const SAFE_DATA_ARRAY_KEYS = ['items', 'lists', 'sequences', 'compares', 'nodes', 'values'] as const
+const REPAIRABLE_KEYS = new Set([
+  'id', 'label', 'desc', 'group', 'category', 'value', 'icon', 'children',
+  'from', 'to', 'direction', 'showArrow', 'arrowType', 'lineStyle', 'root',
+  'relations', 'items', 'lists', 'sequences', 'compares', 'nodes', 'values',
+  'title', 'order', 'colorPrimary', 'colorBg', 'palette', 'stylize', 'type',
+])
+const ARRAY_CONTAINER_KEYS = new Set([...SAFE_DATA_ARRAY_KEYS, 'children', 'relations'])
 
 type InfographicData = NonNullable<InfographicOptions['data']>
 type InfographicDatum = Record<string, unknown>
@@ -25,6 +32,7 @@ export interface PreparedInfographic {
 
 export interface PrepareInfographicOptions {
   enableIcons: boolean
+  allowIncomplete?: boolean
 }
 
 export class InfographicSyntaxError extends Error {
@@ -45,13 +53,24 @@ export function prepareInfographic(
     throw new InfographicSyntaxError('信息图 DSL 超过 64 KiB 限制')
   }
 
-  const parsed = runtime.parseSyntax(normalized)
+  let effectiveSyntax = normalized
+  let parsed = runtime.parseSyntax(effectiveSyntax)
+  if (parsed.errors.length > 0) {
+    const repaired = repairInfographicSyntax(effectiveSyntax)
+    if (repaired) {
+      const repairedParsed = runtime.parseSyntax(repaired)
+      if (repairedParsed.errors.length === 0) {
+        effectiveSyntax = repaired
+        parsed = repairedParsed
+      }
+    }
+  }
   if (parsed.errors.length > 0) {
     throw new InfographicSyntaxError(formatSyntaxError(parsed.errors[0]))
   }
 
   const template = parsed.options.template?.trim()
-  if (!template || !runtime.getTemplate(template)) {
+  if ((!template && !prepareOptions.allowIncomplete) || (template && !runtime.getTemplate(template))) {
     throw new InfographicSyntaxError(template ? `未知的信息图模板：${template}` : '信息图必须指定已注册模板')
   }
   if (parsed.options.design) {
@@ -59,20 +78,24 @@ export function prepareInfographic(
   }
 
   const warnings = parsed.warnings.map(formatSyntaxError)
+  if (effectiveSyntax !== normalized) warnings.push('已自动修复 YAML 风格字段和列表缩进')
   if (parsed.options.width !== undefined || parsed.options.height !== undefined) {
     warnings.push('已忽略 DSL 中的宽高，由 Lume 容器控制')
   }
 
-  const data = sanitizeData(parsed.options.data, prepareOptions.enableIcons, warnings)
+  const data = parsed.options.data
+    ? sanitizeData(parsed.options.data, prepareOptions.enableIcons, warnings, prepareOptions.allowIncomplete === true)
+    : undefined
+  if (!data && !prepareOptions.allowIncomplete) throw new InfographicSyntaxError('信息图必须包含 data')
   const theme = sanitizeTheme(parsed.options.theme)
   const themeConfig = withBundledTypography(sanitizeThemeConfig(parsed.options.themeConfig))
-  const title = typeof data.title === 'string' && data.title.trim() ? data.title.trim() : 'lume-infographic'
+  const title = typeof data?.title === 'string' && data.title.trim() ? data.title.trim() : 'lume-infographic'
 
   return {
-    syntax: normalized,
+    syntax: effectiveSyntax,
     options: {
-      template,
-      data,
+      ...(template ? { template } : {}),
+      ...(data ? { data } : {}),
       ...(theme ? { theme } : {}),
       themeConfig,
       editable: false,
@@ -80,6 +103,66 @@ export function prepareInfographic(
     title,
     warnings,
   }
+}
+
+/**
+ * Repairs the common model failure mode where AntV syntax is emitted as
+ * YAML-like `key: value` and list indentation is lost below array containers.
+ * It does not invent fields or data; the repaired result still passes the
+ * normal parser, template allowlist, and resource sanitizer before rendering.
+ */
+export function repairInfographicSyntax(syntax: string): string | null {
+  const lines = syntax.split(/\r?\n/)
+  const listStack: Array<{ rawIndent: number; outputIndent: number }> = []
+  let pendingListIndent: number | null = null
+  let changed = false
+
+  const repaired = lines.map((line) => {
+    if (!line.trim()) return line
+    const rawIndent = line.match(/^ */)?.[0].length ?? 0
+    const trimmed = line.trim()
+    const listMatch = trimmed.match(/^-\s+([A-Za-z][\w-]*):(?:\s*(.*))?$/)
+    const fieldMatch = trimmed.match(/^([A-Za-z][\w-]*):(?:\s*(.*))?$/)
+    const match = listMatch ?? fieldMatch
+    const key = match?.[1]
+    const value = match?.[2] ?? ''
+    const isListItem = listMatch !== null
+    const normalizedContent = key && REPAIRABLE_KEYS.has(key)
+      ? `${isListItem ? '- ' : ''}${key}${value ? ` ${value}` : ''}`
+      : trimmed
+    if (normalizedContent !== trimmed) changed = true
+
+    if (rawIndent === 0 && !isListItem) {
+      listStack.length = 0
+      pendingListIndent = null
+      return normalizedContent
+    }
+
+    if (isListItem) {
+      let outputIndent = rawIndent
+      if (pendingListIndent !== null) {
+        outputIndent = pendingListIndent
+        listStack.push({ rawIndent, outputIndent })
+        pendingListIndent = null
+      } else {
+        while (listStack.length > 1 && rawIndent < listStack[listStack.length - 1]!.rawIndent) listStack.pop()
+        const context = listStack[listStack.length - 1]
+        if (context && rawIndent === context.rawIndent) outputIndent = context.outputIndent
+      }
+      if (outputIndent !== rawIndent) changed = true
+      return `${' '.repeat(outputIndent)}${normalizedContent}`
+    }
+
+    const context = listStack[listStack.length - 1]
+    const outputIndent = context && rawIndent > context.rawIndent
+      ? context.outputIndent + 2
+      : rawIndent
+    if (outputIndent !== rawIndent) changed = true
+    if (key && ARRAY_CONTAINER_KEYS.has(key)) pendingListIndent = outputIndent + 2
+    return `${' '.repeat(outputIndent)}${normalizedContent}`
+  }).join('\n')
+
+  return changed ? repaired : null
 }
 
 function withBundledTypography(themeConfig: ThemeConfig | undefined): ThemeConfig {
@@ -97,6 +180,7 @@ function sanitizeData(
   input: InfographicOptions['data'] | undefined,
   enableIcons: boolean,
   warnings: string[],
+  allowIncomplete = false,
 ): InfographicData {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new InfographicSyntaxError('信息图必须包含 data')
@@ -126,7 +210,7 @@ function sanitizeData(
 
   const hasVisualData = SAFE_DATA_ARRAY_KEYS.some((key) => Array.isArray(output[key]) && (output[key] as unknown[]).length > 0)
     || output.root !== undefined
-  if (!hasVisualData) throw new InfographicSyntaxError('信息图 data 至少需要一个数据项')
+  if (!hasVisualData && !allowIncomplete) throw new InfographicSyntaxError('信息图 data 至少需要一个数据项')
 
   return output as InfographicData
 }

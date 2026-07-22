@@ -64,12 +64,12 @@ describe('InfographicBlock export helpers', () => {
       previous,
     })
 
-    expect(result.instance.rendered).toBeTrue()
+    expect(result.rendered).toBeTrue()
     expect(result.instance).toBe(previous)
     expect(((renderedOptions as { data?: { items?: Array<{ icon?: string }> } }).data?.items?.[0]?.icon)).toBeUndefined()
   })
 
-  test('destroys an initial instance that cannot render', () => {
+  test('destroys an initial instance that cannot render after streaming finishes', () => {
     let failedDestroyed = false
     class FailedInfographic implements InfographicInstance {
       rendered = false
@@ -87,7 +87,7 @@ describe('InfographicBlock export helpers', () => {
     expect(failedDestroyed).toBeTrue()
   })
 
-  test('does not touch the previous SVG when a streaming chunk is incomplete', () => {
+  test('keeps one instance and its previous SVG when a streaming chunk is invalid', () => {
     let renderCalled = false
     const previous = {
       rendered: true,
@@ -95,14 +95,57 @@ describe('InfographicBlock export helpers', () => {
       destroy: () => {},
     } as InfographicInstance
 
-    expect(() => renderInfographic({
+    const result = renderInfographic({
       runtime: { parseSyntax, getTemplate, Infographic: class {} as never },
-      code: 'infographic list-grid-badge-card\ndata\n  items',
+      code: 'infographic unknown-template\ndata\n  items',
       streaming: true,
       container: {} as Element,
       previous,
-    })).toThrow()
+    })
+    expect(result.instance).toBe(previous)
+    expect(result.rendered).toBeTrue()
+    expect(result.prepared).toBeNull()
     expect(renderCalled).toBeFalse()
+  })
+
+  test('feeds official incremental syntax chunks to one persistent instance', () => {
+    let constructed = 0
+    let renderCalls = 0
+    class StreamingInfographic implements InfographicInstance {
+      rendered = false
+      constructor() { constructed += 1 }
+      render(options?: string | Partial<import('@antv/infographic').InfographicOptions>) {
+        renderCalls += 1
+        const data = typeof options === 'object' ? options.data : undefined
+        if (data && 'lists' in data && Array.isArray(data.lists) && data.lists.length > 0) this.rendered = true
+      }
+      async toDataURL() { return '' }
+      destroy() {}
+    }
+    const runtime = { parseSyntax, getTemplate, Infographic: StreamingInfographic }
+    const chunks = [
+      'infographic list-row-horizontal-icon-arrow\n',
+      'data\n  title Customer Growth Engine\n  desc Multi-channel reach and repeat purchases\n',
+      '  lists\n    - label Lead Acquisition\n      value 18.6\n',
+      '      desc Channel investment and content marketing\n      icon search\n',
+    ]
+    let code = ''
+    let previous: InfographicInstance | null = null
+    for (const chunk of chunks) {
+      code += chunk
+      const result = renderInfographic({
+        runtime,
+        code,
+        streaming: true,
+        container: {} as Element,
+        previous,
+      })
+      previous = result.instance
+    }
+
+    expect(constructed).toBe(1)
+    expect(renderCalls).toBe(chunks.length)
+    expect(previous?.rendered).toBeTrue()
   })
 
   test('copies DSL through the supplied desktop writer', async () => {

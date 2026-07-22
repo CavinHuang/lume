@@ -5,6 +5,7 @@ import {
   InfographicSyntaxError,
   LUME_INFOGRAPHIC_FONT_FAMILY,
   prepareInfographic,
+  repairInfographicSyntax,
 } from './infographic-syntax'
 
 const runtime = { parseSyntax, getTemplate }
@@ -41,6 +42,46 @@ data
 
     expect(prepared.options.data?.sequences?.[0]?.label).toBe('Confidential customer name')
     expect(prepared.options.data?.sequences?.[0]?.icon).toBeUndefined()
+  })
+
+  test('accepts safe incomplete data during streaming preparation', () => {
+    const prepared = prepareInfographic(`
+infographic list-row-horizontal-icon-arrow
+data
+  title Customer Growth Engine
+`, runtime, { enableIcons: false, allowIncomplete: true })
+
+    expect(prepared.options.template).toBe('list-row-horizontal-icon-arrow')
+    expect(prepared.options.data?.title).toBe('Customer Growth Engine')
+    expect(prepared.options.data?.items).toBeUndefined()
+  })
+
+  test('repairs YAML-style hierarchy fields and lost children indentation', () => {
+    const source = `infographic hierarchy-mindmap-level-gradient-compact-card
+data
+  root
+    id: root
+    label: AI 合同助手
+    children:
+- id: arch
+  label: 五层架构
+  children:
+  - id: l1
+    label: 页面层
+  - id: l2
+    label: Flow 编排层
+- id: review
+  label: 合同审查`
+    const repaired = repairInfographicSyntax(source)
+    expect(repaired).toContain('    id root')
+    expect(repaired).toContain('      - id arch')
+    expect(repaired).toContain('          - id l1')
+    expect(repaired).toContain('      - id review')
+
+    const prepared = prepareInfographic(source, runtime, { enableIcons: false })
+    expect(prepared.options.data?.root?.children).toHaveLength(2)
+    expect(prepared.options.data?.root?.children?.[0]?.children).toHaveLength(2)
+    expect(prepared.warnings).toContain('已自动修复 YAML 风格字段和列表缩进')
   })
 
   test('rejects unknown templates and custom design', () => {

@@ -73,6 +73,8 @@ describe("default skills inventory", () => {
     expect(content).toContain("每次回复最多输出一张");
     expect(content).toContain("relation-dagre-flow-tb-badge-card");
     expect(content).toContain("禁止 HTML、外链脚本、URL");
+    expect(content).toContain("不是 YAML");
+    expect(content).toContain("`-` 必须缩进");
     expect(content).not.toContain("unpkg.com");
     expect(content).not.toContain("write_file");
   });

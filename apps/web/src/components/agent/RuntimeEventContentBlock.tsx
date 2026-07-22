@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, Gauge, GitFork, History, ListChecks, ListCollapse, Loader2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, Gauge, GitFork, History, ListChecks, ListCollapse, Loader2, Maximize2, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -30,6 +30,7 @@ import {
 } from './expression-actions'
 
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentFileReference, type OpenThreadFile } from './AgentFileReference'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
@@ -1830,17 +1831,72 @@ export function MarkdownPre({
   streamStatus,
   ...rest
 }: MarkdownPreProps) {
+  const [mermaidPreviewSvg, setMermaidPreviewSvg] = useState<string | null>(null)
+  const [mermaidOriginalSize, setMermaidOriginalSize] = useState(false)
   const mermaidCode = getMermaidCodeFromPreNode(domNode)
   if (mermaidCode !== null) {
     if (streamStatus === 'loading' || isMermaidPreStreaming(domNode)) {
       return <pre {...rest}>{children}</pre>
     }
+    const closeMermaidPreview = () => {
+      setMermaidPreviewSvg(null)
+      setMermaidOriginalSize(false)
+    }
+    const mermaidPreviewSrc = mermaidPreviewSvg
+      ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(mermaidPreviewSvg)}`
+      : undefined
+
     return (
-      <MermaidBlock
-        code={mermaidCode}
-        onCopy={copyMermaidToClipboard}
-        onCopyImage={copyMermaidImageToClipboard}
-      />
+      <>
+        <MermaidBlock
+          code={mermaidCode}
+          onCopy={copyMermaidToClipboard}
+          onCopyImage={copyMermaidImageToClipboard}
+          onPreview={setMermaidPreviewSvg}
+        />
+        <Dialog open={Boolean(mermaidPreviewSvg)} onOpenChange={(open) => { if (!open) closeMermaidPreview() }}>
+          <DialogContent
+            showCloseButton={false}
+            className="inset-0 left-0 top-0 z-[151] block h-dvh w-dvw max-w-none translate-x-0 translate-y-0 overflow-auto rounded-none bg-black/92 p-4 ring-0 sm:max-w-none"
+            onClick={closeMermaidPreview}
+          >
+            <DialogTitle className="sr-only">预览 Mermaid 图表</DialogTitle>
+            <div className="fixed right-4 top-4 z-10 flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="bg-black/35 text-white hover:bg-white/15 hover:text-white"
+                onClick={() => setMermaidOriginalSize((value) => !value)}
+              >
+                {mermaidOriginalSize ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                {mermaidOriginalSize ? '适应窗口' : '原始尺寸'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="bg-black/35 text-white hover:bg-white/15 hover:text-white"
+                onClick={closeMermaidPreview}
+                aria-label="关闭 Mermaid 预览"
+              >
+                <X size={18} />
+              </Button>
+            </div>
+            {mermaidPreviewSrc && (
+              <div className={mermaidOriginalSize ? 'min-h-full min-w-full' : 'flex h-full w-full items-center justify-center'}>
+                <img
+                  src={mermaidPreviewSrc}
+                  alt="Mermaid 图表"
+                  className={mermaidOriginalSize ? 'max-w-none' : 'max-h-full max-w-full object-contain'}
+                  onClick={(event) => event.stopPropagation()}
+                  onDoubleClick={() => setMermaidOriginalSize((value) => !value)}
+                />
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      </>
     )
   }
 

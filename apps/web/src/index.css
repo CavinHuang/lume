@@ -342,7 +342,23 @@
   overflow: hidden;
   margin: 18px 0 22px;
   border-radius: 10px;
-  box-shadow: 0 0 0 1px var(--lume-border-subtle);
+  box-shadow: none;
+}
+
+.agent-message-markdown table:not(pre) tr:first-child > * {
+  border-top-color: var(--lume-border-subtle);
+}
+
+.agent-message-markdown table:not(pre) tr:last-child > * {
+  border-bottom-color: var(--lume-border-subtle);
+}
+
+.agent-message-markdown table:not(pre) tr > :first-child {
+  border-left-color: var(--lume-border-subtle);
+}
+
+.agent-message-markdown table:not(pre) tr > :last-child {
+  border-right-color: var(--lume-border-subtle);
 }
 
 .agent-message-markdown th,
