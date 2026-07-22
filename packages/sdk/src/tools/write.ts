@@ -6,6 +6,7 @@ import { writeFile, mkdir, rename, rm } from 'fs/promises'
 import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed } from '../utils/pathing.js'
+import { notifyLspFileChanged } from '../lsp/client.js'
 
 export const FileWriteTool = defineTool({
   name: 'Write',
@@ -41,6 +42,7 @@ export const FileWriteTool = defineTool({
     try {
       await mkdir(dirname(filePath), { recursive: true })
       await writeFileAtomic(filePath, input.content)
+      await notifyLspFileChanged(filePath)
 
       const lines = input.content.split('\n').length
       const bytes = Buffer.byteLength(input.content, 'utf-8')

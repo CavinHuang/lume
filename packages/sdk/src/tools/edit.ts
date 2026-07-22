@@ -6,6 +6,7 @@ import { readFile, writeFile, rename, rm } from 'fs/promises'
 import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed } from '../utils/pathing.js'
+import { notifyLspFileChanged } from '../lsp/client.js'
 
 export const FileEditTool = defineTool({
   name: 'Edit',
@@ -69,6 +70,7 @@ export const FileEditTool = defineTool({
         }
         content = content.replace(old_string, new_string)
         await writeFileAtomic(filePath, content)
+        await notifyLspFileChanged(filePath)
         return {
           data: {
             filePath,
@@ -81,6 +83,7 @@ export const FileEditTool = defineTool({
         const count = content.split(old_string).length - 1
         content = content.split(old_string).join(new_string)
         await writeFileAtomic(filePath, content)
+        await notifyLspFileChanged(filePath)
         return {
           data: {
             filePath,

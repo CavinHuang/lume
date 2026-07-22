@@ -65,7 +65,7 @@ import {
 } from './mcp-resource-tools.js'
 
 // LSP
-import { LSPTool } from './lsp-tool.js'
+import { LSPApplyTool, LSPTool } from './lsp-tool.js'
 
 // Config
 import { ConfigTool } from './config-tool.js'
@@ -134,6 +134,7 @@ const ALL_TOOLS: ToolDefinition[] = [
 
   // LSP
   LSPTool,
+  LSPApplyTool,
 
   // Config
   ConfigTool,
@@ -256,6 +257,7 @@ export {
   McpAuthTool,
   // LSP
   LSPTool,
+  LSPApplyTool,
   // Config
   ConfigTool,
   // Todo
@@ -264,6 +266,8 @@ export {
   SkillTool,
   createSkillTool,
 }
+
+export type { LspWorkspaceEditPreview } from './lsp-tool.js'
 
 // Re-export helpers
 export { defineTool, toApiTool } from './types.js'

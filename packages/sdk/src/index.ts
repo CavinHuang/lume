@@ -166,6 +166,7 @@ export {
 
   // LSP
   LSPTool,
+  LSPApplyTool,
 
   // Config
   ConfigTool,
@@ -176,6 +177,42 @@ export {
   // Skill
   SkillTool,
 } from './tools/index.js'
+
+// LSP protocol and client manager
+export {
+  collectLspDiagnostics,
+  encodeLspMessage,
+  getLspClient,
+  getLspClientsForFile,
+  notifyLspFileChanged,
+  notifyLspFileClosed,
+  notifyLspWatchedFiles,
+  requestLspClients,
+  resolveLspServerConfig,
+  resolveLspServerConfigsForFile,
+  setLspIdleTimeout,
+  shutdownLspClients,
+} from './lsp/client.js'
+export type {
+  LspAggregatedDiagnostic,
+  LspClient,
+  LspClientState,
+  LspCreateFile,
+  LspDeleteFile,
+  LspDiagnostic,
+  LspLocation,
+  LspLocationLink,
+  LspPosition,
+  LspRange,
+  LspRenameFile,
+  LspServerCapabilities,
+  LspServerConfig,
+  LspServerStatus,
+  LspTextDocumentEdit,
+  LspTextEdit,
+  LspWatchedFileChange,
+  LspWorkspaceEdit,
+} from './lsp/client.js'
 
 // --------------------------------------------------------------------------
 // MCP Client

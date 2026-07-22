@@ -13,6 +13,7 @@ import { readFile, writeFile } from 'fs/promises'
 import { resolve } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed } from '../utils/pathing.js'
+import { notifyLspFileChanged } from '../lsp/client.js'
 
 type NotebookCell = {
   id?: string
@@ -181,6 +182,7 @@ export const NotebookEditTool = defineTool({
       const targetCell = cells[targetIndex]
       const updatedFile = JSON.stringify(notebook, null, 1)
       await writeFile(notebookPath, updatedFile, 'utf-8')
+      await notifyLspFileChanged(notebookPath)
 
       return JSON.stringify({
         new_source: editMode === 'delete' ? '' : (targetCell ? readCellSource(targetCell) : newSource),
