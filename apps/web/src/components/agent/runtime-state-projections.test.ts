@@ -202,6 +202,40 @@ describe('runtime-state projections', () => {
     })
   })
 
+  test('keeps the selected model context window when historical runtime events use an older value', () => {
+    const base = {
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }
+
+    expect(buildContextWindowProgress([
+      {
+        ...base,
+        id: 'run-started',
+        type: 'run.started',
+        model: {
+          provider: 'zai',
+          modelId: 'glm-5.2',
+          contextWindow: 200_000,
+        },
+      },
+      usageUpdatedEvent({
+        ...base,
+        id: 'usage',
+        inputTokens: 90_000,
+        outputTokens: 15_531,
+        totalTokens: 105_531,
+        contextWindow: 200_000,
+      }),
+    ] satisfies LumeRuntimeEvent[], { contextWindow: 1_000_000 })).toMatchObject({
+      usedTokens: 105_531,
+      contextWindow: 1_000_000,
+      percent: 11,
+      detail: '105.5K / 1M tokens',
+    })
+  })
+
   test('estimates opened thread context from loaded history messages when runtime usage is absent', () => {
     const base = {
       threadId: 'thread-1',

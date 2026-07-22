@@ -228,7 +228,7 @@ export function WikiView() {
         <form className="flex gap-2 p-3" onSubmit={(event) => { event.preventDefault(); search() }}><div className="relative min-w-0 flex-1"><Input value={query} onChange={(event) => { searchRequestRef.current += 1; setQuery(event.target.value); setResultIds(null) }} placeholder="搜索知识" className="pr-8" aria-label="搜索知识" />{query && <Button type="button" variant="ghost" size="icon-xs" className="absolute right-1 top-1/2 -translate-y-1/2" onClick={() => { searchRequestRef.current += 1; setQuery(''); setResultIds(null) }} title="清除搜索" aria-label="清除搜索"><X size={13} /></Button>}</div><Button type="submit" variant="outline" size="icon" disabled={busy || !query.trim()} title="搜索" aria-label="搜索">{searching ? <LoaderCircle className="animate-spin" size={15} /> : <Search size={15} />}</Button></form>
         {(searching || resultIds !== null) && <div className="px-3 pb-1 text-[11px] text-[var(--text-3)]">{searching ? '搜索中…' : `找到 ${visiblePages.length} 条知识`}</div>}
         <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
-          {visiblePages.map((page) => <Button key={page.id} variant="ghost" onClick={() => selectPage(page.id)} className={cn('mb-1 h-auto w-full justify-start gap-2 px-2 py-2 text-left', selectedId === page.id && 'bg-[var(--surface-2)]')}><FileText size={14} /><span className="min-w-0"><span className="block truncate text-sm">{page.title}</span><span className="block text-[11px] text-[var(--text-3)]">{pageTypeLabel(page.type)}</span></span></Button>)}
+          {visiblePages.map((page) => <Button key={page.id} variant="ghost" onClick={() => selectPage(page.id)} className={cn('mb-1 h-auto w-full justify-start gap-2 px-2 py-2 text-left', selectedId === page.id && 'bg-muted')}><FileText size={14} /><span className="min-w-0"><span className="block truncate text-sm">{page.title}</span><span className="block text-[11px] text-[var(--text-3)]">{pageTypeLabel(page.type)}</span></span></Button>)}
           {loading ? <div className="flex items-center justify-center gap-2 p-6 text-sm text-[var(--text-3)]"><LoaderCircle className="animate-spin" size={15} />正在打开 Wiki…</div> : !visiblePages.length && <div className="space-y-3 p-5 text-center"><div className="text-sm text-[var(--text-3)]">{resultIds ? '没有匹配的知识' : '这个归宿还没有内容'}</div>{!resultIds && <Button size="sm" variant="outline" onClick={openImport}><Import size={14} />导入第一份内容</Button>}</div>}
         </ScrollArea>
       </section>
@@ -298,7 +298,7 @@ export function WikiView() {
 }
 
 function ScopeButton({ icon, label, count, active, onClick }: { icon: ReactNode; label: string; count: number; active: boolean; onClick: () => void }) {
-  return <Button variant="ghost" onClick={onClick} className={cn('mt-1 h-8 w-full justify-start gap-2 px-2 text-xs font-normal', active && 'bg-[var(--surface-2)] font-medium')}><span className="text-[var(--text-3)]">{icon}</span><span className="min-w-0 flex-1 truncate text-left">{label}</span><span className="tabular-nums text-[var(--text-3)]">{count}</span></Button>
+  return <Button variant="ghost" onClick={onClick} className={cn('mt-1 h-8 w-full justify-start gap-2 px-2 text-xs font-normal', active && 'bg-muted font-medium')}><span className="text-[var(--text-3)]">{icon}</span><span className="min-w-0 flex-1 truncate text-left">{label}</span><span className="tabular-nums text-[var(--text-3)]">{count}</span></Button>
 }
 function pageTypeLabel(type: WikiPageRecord['type']): string {
   return { source: '来源', topic: '主题', decision: '决策', synthesis: '综合' }[type]

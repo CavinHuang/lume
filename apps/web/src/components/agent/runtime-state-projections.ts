@@ -107,6 +107,7 @@ export function buildContextWindowProgress(
   const fallbackWindow = typeof fallback.contextWindow === 'number' && fallback.contextWindow > 0
     ? fallback.contextWindow
     : DEFAULT_CONTEXT_WINDOW
+  const hasModelContextWindow = typeof fallback.contextWindow === 'number' && fallback.contextWindow > 0
   let contextWindow = fallbackWindow
   let usedTokens = 0
   let sections: ContextWindowProgressSection[] = []
@@ -121,7 +122,7 @@ export function buildContextWindowProgress(
 
   for (const event of events) {
     if (event.type === 'run.started') {
-      if (isPositiveTokenCount(event.model?.contextWindow)) {
+      if (!hasModelContextWindow && isPositiveTokenCount(event.model?.contextWindow)) {
         contextWindow = event.model.contextWindow
       }
       if (!hasRuntimeContextSignal) {
@@ -171,7 +172,7 @@ export function buildContextWindowProgress(
       }
     }
     if (event.type === 'context.compaction.started') {
-      if (isPositiveTokenCount(event.contextWindow)) {
+      if (!hasModelContextWindow && isPositiveTokenCount(event.contextWindow)) {
         contextWindow = event.contextWindow
       }
       usedTokens = event.preTokens
@@ -189,7 +190,7 @@ export function buildContextWindowProgress(
       }
     }
     if (event.type === 'context.compaction.progress') {
-      if (isPositiveTokenCount(event.contextWindow)) {
+      if (!hasModelContextWindow && isPositiveTokenCount(event.contextWindow)) {
         contextWindow = event.contextWindow
       }
       usedTokens = event.preTokens
@@ -210,7 +211,7 @@ export function buildContextWindowProgress(
       }
     }
     if (event.type === 'context.compaction.completed') {
-      if (isPositiveTokenCount(event.contextWindow)) {
+      if (!hasModelContextWindow && isPositiveTokenCount(event.contextWindow)) {
         contextWindow = event.contextWindow
       }
       usedTokens = event.postTokens ?? event.preTokens
@@ -231,7 +232,7 @@ export function buildContextWindowProgress(
     }
     if (event.type === 'usage.updated') {
       if (event.scope !== 'main') continue
-      if (isPositiveTokenCount(event.context.contextWindow)) {
+      if (!hasModelContextWindow && isPositiveTokenCount(event.context.contextWindow)) {
         contextWindow = event.context.contextWindow
       }
       usedTokens = event.context.totalTokens

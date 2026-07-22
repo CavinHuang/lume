@@ -31,6 +31,8 @@ export interface InterceptorInput {
   context: {
     cwd: string;
     threadId: string;
+    /** Source plugin for plugin-provided tools; absent for built-in tools. */
+    sourcePluginId?: string;
   };
 }
 

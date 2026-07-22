@@ -177,6 +177,7 @@ export function createCanUseToolHandler(
 
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
+    const sourcePluginId = (tool as { runtimeMetadata?: { pluginId?: string } }).runtimeMetadata?.pluginId;
 
     // Plugin permission interceptor: run before global PermissionEngine
     for (const interceptor of pluginInterceptors) {
@@ -186,6 +187,7 @@ export function createCanUseToolHandler(
         context: {
           cwd: prepared.agentCwd,
           threadId: params.runtime.sessionId,
+          ...(sourcePluginId ? { sourcePluginId } : {}),
         },
       } as InterceptorInput);
       if (pluginResult) {
