@@ -160,6 +160,7 @@ describe("OpenAIResponsesProvider", () => {
       messages: [
         { role: "user", content: "old question" },
         { role: "assistant", content: "old answer" },
+        { role: "assistant", content: [{ type: "text", text: "structured old answer" }] },
         { role: "assistant", content: [{ type: "tool_use", id: "call_1", response_item_id: "fc_1", name: "lookup", input: { q: "x" } }] },
         { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "result" }] },
         { role: "runtime", content: "current runtime" },
@@ -173,7 +174,8 @@ describe("OpenAIResponsesProvider", () => {
     expect(requestBody?.input).toEqual([
       { role: "developer", type: "message", content: [{ type: "input_text", text: "stable system" }] },
       { role: "user", type: "message", content: [{ type: "input_text", text: "old question" }] },
-      { role: "assistant", type: "message", content: [{ type: "input_text", text: "old answer" }] },
+      { role: "assistant", type: "message", content: [{ type: "output_text", text: "old answer" }] },
+      { role: "assistant", type: "message", content: [{ type: "output_text", text: "structured old answer" }] },
       { type: "function_call", id: "fc_1", call_id: "call_1", name: "lookup", arguments: '{"q":"x"}' },
       { type: "function_call_output", call_id: "call_1", output: "result" },
       { role: "developer", type: "message", content: [{ type: "input_text", text: "current runtime" }] },

@@ -23,13 +23,18 @@ import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from '../utils/retr
 // --------------------------------------------------------------------------
 
 type ResponsesInputItem =
-  | { role: 'developer' | 'user' | 'assistant'; content: ResponsesInputContent[]; type: 'message' }
+  | { role: 'developer' | 'user'; content: ResponsesInputContent[]; type: 'message' }
+  | { role: 'assistant'; content: ResponsesAssistantContent[]; type: 'message' }
   | { type: 'function_call'; id?: string; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string }
 
 type ResponsesInputContent =
   | { type: 'input_text'; text: string }
   | { type: 'input_image'; image_url: string }
+
+type ResponsesAssistantContent =
+  | { type: 'output_text'; text: string }
+  | { type: 'refusal'; refusal: string }
 
 const TOOL_RESULT_IMAGE_INSTRUCTION =
   'The following image was returned by a tool. Inspect its pixels directly and use it as visual evidence for the current user request.'
@@ -485,7 +490,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       items.push({
         role: 'assistant',
         type: 'message',
-        content: [{ type: 'input_text', text: msg.content }],
+        content: [{ type: 'output_text', text: msg.content }],
       })
       return
     }
@@ -513,7 +518,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       items.push({
         role: 'assistant',
         type: 'message',
-        content: [{ type: 'input_text', text: textParts.join('\n') }],
+        content: [{ type: 'output_text', text: textParts.join('\n') }],
       })
     }
     items.push(...functionCallItems)
