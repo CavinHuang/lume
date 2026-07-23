@@ -29,8 +29,8 @@ import {
 import { once } from 'node:events'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import { randomBytes, randomUUID } from 'node:crypto'
-import { basename, dirname, join, resolve } from 'node:path'
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   computeQuickInputBounds,
@@ -114,6 +114,8 @@ import { LoggingService } from './logging/logging-service'
 import { DiagnosticContentStore } from './logging/diagnostic-content-store'
 import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecure } from './logging/log-digest-policy'
 import { SettingsBroker } from './settings/settings-broker'
+import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
+import { discoverChromeProfiles, importChromeProfile } from './browser-import'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
 import {
   createAsyncSingleFlight,
@@ -124,6 +126,9 @@ import {
   validateTrayStatePayload,
   waitForWindowReady,
 } from './tray-window-runtime'
+
+app.commandLine.appendSwitch('disable-quic')
+app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp')
 
 const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -173,6 +178,12 @@ const DESKTOP_ACTION_HUD_COMPLETED_MS = 1_600
 const DESKTOP_ACTION_HUD_STALE_MS = 30_000
 
 let mainWindow = null
+let browserRuntime: BrowserRuntime | null = null
+let agentBrowserPluginEnabled = false
+const browserRpcSecret = randomBytes(32)
+let browserRpcInboundSequence = 0
+let browserRpcOutboundSequence = 0
+const browserImportJobs = new Map<string, { cancelled: boolean }>()
 let pendingMacUpdatePath: string | null = null
 const mainWindowCreation = createAsyncSingleFlight<any>()
 const mainWindowLifecycle = createMainWindowLifecycleState<any>()
@@ -579,6 +590,29 @@ function emitRendererEvent(channel, payload) {
       win.webContents.send(`lume:event:${channel}`, deliveredPayload)
     }
   }
+}
+
+function getPersistedBrowserSettings() {
+  const value = getSettingsBroker().read().browser
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+}
+
+function persistBrowserSettings(settings: unknown): void {
+  getSettingsBroker().mutate((current) => ({ ...current, browser: settings }))
+}
+
+function browserRpcMac(direction: 'sidecar->main' | 'main->sidecar', sequence: number, id: string, body: unknown): string {
+  return createHmac('sha256', browserRpcSecret)
+    .update(`${direction}|${sequence}|${id}|${JSON.stringify(body)}`)
+    .digest('base64url')
+}
+
+function verifyBrowserRpcMac(direction: 'sidecar->main' | 'main->sidecar', sequence: number, id: string, body: unknown, mac: unknown): boolean {
+  if (typeof mac !== 'string') return false
+  const expected = browserRpcMac(direction, sequence, id, body)
+  const actual = Buffer.from(mac)
+  const wanted = Buffer.from(expected)
+  return actual.length === wanted.length && timingSafeEqual(actual, wanted)
 }
 
 function getLauncherPath() {
@@ -1222,6 +1256,91 @@ function resolveStagedAttachmentParams(params: unknown, ownerWebContentsId?: num
 
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
+    case 'browser_runtime': {
+      if (!browserRuntime) throw new Error('browser runtime unavailable')
+      const browserContext = payload.context && typeof payload.context === 'object'
+        ? payload.context
+        : { browserSessionId: 'renderer', browserTurnId: 'renderer', actor: 'user' }
+      if (context.ownerWebContentsId !== undefined && browserContext.actor !== 'user') {
+        throw new Error('renderer browser requests must use actor=user')
+      }
+      if (context.ownerWebContentsId !== undefined) requireMainWindowSender(context, 'browser_runtime')
+      if (browserContext.actor === 'agent' && context.ownerWebContentsId !== undefined) throw new Error('agent browser requests require sidecar ingress')
+      return browserRuntime.dispatch({
+        requestId: typeof payload.requestId === 'string' ? payload.requestId : randomUUID(),
+        context: browserContext,
+        method: String(payload.method ?? ''),
+        params: payload.params && typeof payload.params === 'object' ? payload.params : {},
+        ...(typeof payload.idempotencyKey === 'string' ? { idempotencyKey: payload.idempotencyKey } : {}),
+      })
+    }
+    case 'browser_settings:get':
+      requireMainWindowSender(context, 'browser_settings:get')
+      if (!browserRuntime) throw new Error('browser runtime unavailable')
+      return browserRuntime.getSettings()
+    case 'browser_settings:update':
+      requireMainWindowSender(context, 'browser_settings:update')
+      if (!browserRuntime) throw new Error('browser runtime unavailable')
+      {
+        if (payload.advancedCdpEnabled === true && browserRuntime.getSettings().advancedCdpEnabled !== true) {
+          if (!mainWindow || mainWindow.isDestroyed()) throw new Error('confirmation_unavailable')
+          const confirmation = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['启用隔离高级 CDP', '取消'], defaultId: 1, cancelId: 1, title: '高级 CDP 风险确认', message: '高级 CDP 只允许在新建的隔离空白浏览器会话中使用。', detail: '它不会接触保存的 Cookie、密码、外部 Chrome 或其他 target；未知和高风险方法仍会被拒绝。' })
+          if (confirmation.response !== 0) return browserRuntime.getSettings()
+        }
+        const settings = browserRuntime.updateSettings(payload as any)
+        void sidecarHost.notifyBrowserSettings?.(settings)
+        return settings
+      }
+    case 'browser_import:discover':
+      requireMainWindowSender(context, 'browser_import:discover')
+      return discoverChromeProfiles()
+    case 'browser_import:start': {
+      requireMainWindowSender(context, 'browser_import:start')
+      if (payload.acknowledged !== true) throw new Error('import_acknowledgement_required')
+      const profileId = typeof payload.profileId === 'string' ? payload.profileId : ''
+      const jobId = randomUUID()
+      const job = { cancelled: false }
+      browserImportJobs.set(jobId, job)
+      void importChromeProfile({
+          profileId,
+          cookies: payload.cookies !== false,
+          passwords: payload.passwords !== false,
+          acknowledged: payload.acknowledged === true,
+          configDir: resolveConfigDir(),
+          safeStorage,
+          cancelled: () => job.cancelled,
+          emit: (params) => emitRendererEvent('browser:event', { method: 'browser:import-progress', params: { jobId, ...params } }),
+          onCookie: async (cookie) => {
+            const cookieStore = session.fromPartition('persist:lume-browser').cookies
+            const existing = (await cookieStore.get({ url: cookie.url, name: cookie.name })).find((entry) => entry.path === cookie.path && (cookie.domain ? entry.domain === cookie.domain : !entry.domain.startsWith('.')))
+            await cookieStore.set(cookie)
+            return async () => {
+              await cookieStore.remove(cookie.url, cookie.name)
+              if (!existing) return
+              await cookieStore.set({
+                url: `${existing.secure ? 'https' : 'http'}://${existing.domain.replace(/^\./, '')}${existing.path}`,
+                name: existing.name,
+                value: existing.value,
+                path: existing.path,
+                ...(existing.domain.startsWith('.') ? { domain: existing.domain } : {}),
+                ...(existing.expirationDate ? { expirationDate: existing.expirationDate } : {}),
+                secure: existing.secure,
+                httpOnly: existing.httpOnly,
+                sameSite: existing.sameSite,
+              })
+            }
+          },
+        }).then((report) => emitRendererEvent('browser:event', { method: 'browser:import-complete', params: { jobId, report } })).catch((error) => emitRendererEvent('browser:event', { method: 'browser:import-complete', params: { jobId, error: error instanceof Error ? error.message : 'import failed' } })).finally(() => browserImportJobs.delete(jobId))
+      return { jobId }
+    }
+    case 'browser_import:cancel': {
+      requireMainWindowSender(context, 'browser_import:cancel')
+      if (typeof payload.jobId === 'string') {
+        const job = browserImportJobs.get(payload.jobId)
+        if (job) job.cancelled = true
+      }
+      return { ok: true }
+    }
     case 'healthcheck': {
       await sidecarHost.call('healthcheck', null)
       return {
@@ -1823,6 +1942,47 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
   }
 }
 
+function readChromeBridgeConfig(): { endpoint: string; pairingId: string; generation: number; hostPath: string; hostSha256: string } | null {
+  const environmentEndpoint = process.env.LUME_CHROME_BRIDGE_ENDPOINT
+  const environmentPairingId = process.env.LUME_CHROME_BRIDGE_PAIRING_ID
+  const environmentGeneration = Number(process.env.LUME_CHROME_BRIDGE_GENERATION)
+  const environmentHostPath = process.env.LUME_CHROME_BRIDGE_HOST_PATH
+  const environmentHostSha256 = process.env.LUME_CHROME_BRIDGE_HOST_SHA256
+  const fromEnvironment = environmentEndpoint && environmentPairingId && Number.isSafeInteger(environmentGeneration) && environmentGeneration > 0 && environmentHostPath && environmentHostSha256
+    ? { endpoint: environmentEndpoint, pairingId: environmentPairingId, generation: environmentGeneration, hostPath: environmentHostPath, hostSha256: environmentHostSha256 }
+    : null
+  let candidate = fromEnvironment
+
+  if (!candidate) {
+    const platformRoot = process.platform === 'win32'
+      ? process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
+      : process.platform === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support')
+        : join(homedir(), '.config')
+    const configPath = join(platformRoot, 'Lume', 'ChromeNativeMessaging', 'bridge-config.json')
+    try {
+      const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as { schemaVersion?: unknown; endpoint?: unknown; pairingId?: unknown; generation?: unknown; hostPath?: unknown; hostSha256?: unknown }
+      if (parsed.schemaVersion === 3 && typeof parsed.endpoint === 'string' && typeof parsed.pairingId === 'string' && typeof parsed.generation === 'number' && typeof parsed.hostPath === 'string' && typeof parsed.hostSha256 === 'string') {
+        candidate = { endpoint: parsed.endpoint, pairingId: parsed.pairingId, generation: parsed.generation, hostPath: parsed.hostPath, hostSha256: parsed.hostSha256 }
+      }
+    } catch {
+      return null
+    }
+  }
+
+  if (!candidate) return null
+  const endpointRoot = process.platform === 'darwin'
+    ? join(homedir(), 'Library', 'Application Support', 'Lume')
+    : join(homedir(), '.config', 'Lume')
+  const validEndpoint = process.platform === 'win32'
+    ? /^\\\\\.\\pipe\\lume-browser-[a-zA-Z0-9_-]{8,80}$/.test(candidate.endpoint)
+    : candidate.endpoint.startsWith(endpointRoot + sep) && candidate.endpoint.endsWith('.sock')
+  const expectedHostName = process.platform === 'win32' ? 'lume-chrome-host.exe' : 'lume-chrome-host'
+  const validHost = resolve(candidate.hostPath) === candidate.hostPath && basename(candidate.hostPath) === expectedHostName && existsSync(candidate.hostPath) && /^[a-f0-9]{64}$/i.test(candidate.hostSha256)
+  const validPairing = /^[A-Za-z0-9_-]{8,96}$/.test(candidate.pairingId) && Number.isSafeInteger(candidate.generation) && candidate.generation > 0
+  return validEndpoint && validHost && validPairing ? candidate : null
+}
+
 function createSidecarHost({ onNotification }) {
   let child = null
   let started = null
@@ -1841,10 +2001,19 @@ function createSidecarHost({ onNotification }) {
 
   function createSpawnConfig() {
     const configDir = resolveConfigDir()
+    const chromeBridge = readChromeBridgeConfig()
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       LUME_CONFIG_DIR: configDir,
       LUME_DEFAULT_SKILLS_AUTOSTART: 'true',
+      LUME_BROWSER_RPC_SECRET: browserRpcSecret.toString('base64url'),
+      ...(chromeBridge ? {
+        LUME_CHROME_BRIDGE_ENDPOINT: chromeBridge.endpoint,
+        LUME_CHROME_BRIDGE_PAIRING_ID: chromeBridge.pairingId,
+        LUME_CHROME_BRIDGE_GENERATION: String(chromeBridge.generation),
+        LUME_CHROME_BRIDGE_HOST_PATH: chromeBridge.hostPath,
+        LUME_CHROME_BRIDGE_HOST_SHA256: chromeBridge.hostSha256,
+      } : {}),
     }
 
     if (desktopHostState.available) {
@@ -1910,6 +2079,8 @@ function createSidecarHost({ onNotification }) {
 
     started = new Promise<void>((resolveStarted, rejectStarted) => {
       stopRequested = false
+      browserRpcInboundSequence = 0
+      browserRpcOutboundSequence = 0
       const forkConfig = createSpawnConfig()
       const runningChild = utilityProcess.fork(
         forkConfig.modulePath,
@@ -2039,6 +2210,38 @@ function createSidecarHost({ onNotification }) {
               }
             }
           }
+          return
+        }
+
+        if (payload && payload.method === 'browser:request' && payload.id !== undefined) {
+          const requestSequence = payload.browserRpc?.sequence
+          if (typeof requestSequence !== 'number'
+            || requestSequence !== browserRpcInboundSequence + 1
+            || !verifyBrowserRpcMac('sidecar->main', requestSequence, String(payload.id), payload.params ?? null, payload.browserRpc.mac)) return
+          browserRpcInboundSequence = requestSequence
+          void dispatchCommand('browser_runtime', payload.params ?? {}, {})
+            .then((result) => {
+              const sequence = ++browserRpcOutboundSequence
+              const body = { ok: true, result }
+              runningChild.postMessage(JSON.stringify({ id: payload.id, result, browserRpc: { sequence, mac: browserRpcMac('main->sidecar', sequence, String(payload.id), body) } }))
+            })
+            .catch((error) => {
+              const sequence = ++browserRpcOutboundSequence
+              const body = { ok: false, error: typeof error?.code === 'string' ? error.code : 'browser_internal_error' }
+              runningChild.postMessage(JSON.stringify({ id: payload.id, error: { code: body.error }, browserRpc: { sequence, mac: browserRpcMac('main->sidecar', sequence, String(payload.id), body) } }))
+            })
+          return
+        }
+
+        if (payload && payload.method === 'browser:plugin-state' && payload.id === undefined) {
+          agentBrowserPluginEnabled = payload.params?.browserEnabled === true || payload.params?.enabled === true
+          browserRuntime?.setAgentPluginEnabled(agentBrowserPluginEnabled)
+          return
+        }
+
+        if (payload && payload.method === 'browser:backend-state' && payload.id === undefined) {
+          if (payload.params?.hostConnected === false) browserRuntime?.resetAgentCursor()
+          emitRendererEvent('browser:event', { method: payload.method, params: payload.params ?? {} })
           return
         }
 
@@ -2207,6 +2410,11 @@ function createSidecarHost({ onNotification }) {
     return call(method, { credential: wikiPrivilegedCredential, request })
   }
 
+  async function notifyBrowserSettings(settings) {
+    await start()
+    child.postMessage(JSON.stringify({ method: 'browser:settings', params: { extensionBackendEnabled: settings?.extensionBackendEnabled === true } }))
+  }
+
   async function stop() {
     if (!child || child.pid === undefined) return
     stopRequested = true
@@ -2233,6 +2441,7 @@ function createSidecarHost({ onNotification }) {
     call,
     callWikiPrivileged,
     callPluginPackagePrivileged,
+    notifyBrowserSettings,
     stop,
   }
 }
@@ -2390,6 +2599,20 @@ app.whenReady().then(async () => {
   registerAppProtocol()
   registerFileProtocol()
   const configDir = applyLauncherConfig()
+  browserRuntime = createBrowserRuntime({
+    getWindow: () => mainWindow,
+    configDir: () => configDir,
+    emit: (event) => emitRendererEvent('browser:event', event),
+    initialSettings: getPersistedBrowserSettings() as Partial<import('../../../packages/shared/src/types/browser-runtime').BrowserSettings>,
+    persistSettings: persistBrowserSettings,
+    isAgentPluginEnabled: () => agentBrowserPluginEnabled,
+    journalEncryption: {
+      available: safeStorage.isEncryptionAvailable(),
+      encrypt: (value) => safeStorage.encryptString(value),
+      decrypt: (value) => safeStorage.decryptString(value),
+    },
+    credentialStorage: safeStorage,
+  })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()
   logDesktopStartup('tray ready')
@@ -2399,6 +2622,7 @@ app.whenReady().then(async () => {
   }
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
+  await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
   await unlockDesktopContextStore()
@@ -2440,6 +2664,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', async () => {
+  browserRuntime?.destroy()
+  browserRuntime = null
   desktopHostSupervisor?.stop()
   await sidecarHost.stop()
   writeMainLog('info', 'desktop.lifecycle', 'app.stopping', 'app stopping')

@@ -20,7 +20,11 @@ function assertContainsBefore(text, first, second) {
 test('desktop package uses Vite-built TypeScript runtime files', () => {
   assert.equal(pkg.main, 'dist/main/main.mjs')
   assert.equal(pkg.build.artifactName, '${productName}-${version}-${arch}.${ext}')
-  assert.deepEqual(pkg.build.files, ['dist/main/main.mjs', 'dist/preload/preload.cjs', 'assets'])
+  assert.deepEqual(pkg.build.files, [
+    'dist/main/main.mjs',
+    'dist/preload/preload.cjs',
+    'assets',
+  ])
   assert.equal(pkg.dependencies?.['electron-updater'], undefined)
   assert.equal(pkg.devDependencies?.['electron-updater'], '6.8.9')
   assert.equal(pkg.devDependencies?.electron, '42.5.1')
@@ -51,25 +55,50 @@ test('desktop package uses Vite-built TypeScript runtime files', () => {
   }
 })
 
+test('sidecar bundle removes sql.js build-machine paths before packaging', () => {
+  const source = readFileSync(resolve(REPO_ROOT, 'scripts/build-sidecar-bundle.mjs'), 'utf8')
+  assert.match(source, /sqlJsDirnamePattern/)
+  assert.match(source, /sqlJsDirnamePattern,\s*'  var __dirname = "\.", __filename = "sql-wasm\.js";'/)
+})
+
+test('packaged desktop smoke uses an isolated profile and verifies the renderer', () => {
+  assert.equal(pkg.scripts['test:packaged-smoke'], 'node ./scripts/packaged-desktop-smoke.mjs')
+  const smokePath = resolve(DESKTOP_ROOT, 'scripts/packaged-desktop-smoke.mjs')
+  assert.equal(existsSync(smokePath), true)
+  const source = readFileSync(smokePath, 'utf8')
+  assert.match(source, /--user-data-dir=/)
+  assert.match(source, /DevToolsActivePort/)
+  assert.match(source, /document\.readyState/)
+})
+
+test('live Chrome import smoke reports only aggregate encrypted-database compatibility', () => {
+  assert.equal(pkg.scripts['test:browser-import-live-smoke'], 'node ./scripts/browser-import-live-smoke.mjs')
+  const source = readFileSync(resolve(DESKTOP_ROOT, 'scripts/browser-import-live-smoke.mjs'), 'utf8')
+  assert.match(source, /Chrome must remain open/)
+  assert.match(source, /readChromeCookieRows/)
+  assert.match(source, /SELECT password_value FROM logins/)
+  assert.doesNotMatch(source, /row\.(origin_url|username_value|host_key|name)/)
+  assert.doesNotMatch(source, /decryptChromeValue|importChromeProfile/)
+})
+
 test('Windows installer lets users choose the installation directory', () => {
   assert.equal(pkg.build.nsis?.oneClick, false)
   assert.equal(pkg.build.nsis?.allowToChangeInstallationDirectory, true)
 })
 
-test('macOS release uses a verified ad-hoc signature and includes first-launch instructions', () => {
+test('macOS release requires Developer ID signing, notarization, and Gatekeeper verification', () => {
   const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
   const installGuide = resolve(DESKTOP_ROOT, 'assets/mac-install-guide.txt')
   const afterPackPath = resolve(DESKTOP_ROOT, 'scripts/after-pack.cjs')
 
   assert.equal(pkg.build.mac?.hardenedRuntime, true)
-  assert.equal(pkg.build.mac?.identity, null)
   assert.equal(pkg.build.mac?.entitlements, 'assets/entitlements.mac.plist')
   assert.equal(pkg.build.mac?.entitlementsInherit, 'assets/entitlements.mac.plist')
-  assert.equal(pkg.build.mac?.notarize, false)
   assert.equal(pkg.build.afterPack, 'scripts/after-pack.cjs')
   assert.equal(existsSync(afterPackPath), true)
   const afterPack = readFileSync(afterPackPath, 'utf8')
   assert.match(afterPack, /electronPlatformName !== 'darwin'/)
+  assert.match(afterPack, /LUME_RELEASE_SIGNING_REQUIRED === '1'/)
   assert.match(afterPack, /'--deep'/)
   assert.match(afterPack, /'--sign',\s*'-'/)
   assert.match(afterPack, /'--options',\s*'runtime'/)
@@ -91,14 +120,19 @@ test('macOS release uses a verified ad-hoc signature and includes first-launch i
     'APPLE_API_KEY_ID',
     'APPLE_API_ISSUER',
   ]) {
-    assert.doesNotMatch(workflow, new RegExp(`secrets\\.${secret}`))
+    assert.match(workflow, new RegExp(`secrets\\.${secret}`))
   }
-  assert.doesNotMatch(workflow, /build-desktop-host-resources\.mjs --require-stable-signing/)
+  assert.match(workflow, /--target aarch64-apple-darwin --require-stable-signing/)
+  assert.match(workflow, /--target x86_64-apple-darwin --require-stable-signing/)
+  assert.match(workflow, /notarytool submit/)
+  assert.match(workflow, /--config\.mac\.notarize=true/)
+  assert.match(workflow, /APPLE_API_KEY=/)
+  assert.match(workflow, /stapler staple/)
+  assert.match(workflow, /xcrun stapler validate/)
   assert.match(workflow, /codesign --verify --deep --strict/)
-  assert.match(workflow, /Signature=adhoc/)
-  assert.doesNotMatch(workflow, /xcrun stapler validate/)
-  assert.doesNotMatch(workflow, /spctl --assess --type execute/)
-  assertContainsBefore(workflow, 'codesign --verify --deep --strict', 'xattr -dr com.apple.quarantine')
+  assert.match(workflow, /Authority=Developer ID Application/)
+  assert.match(workflow, /spctl --assess --type execute/)
+  assert.doesNotMatch(workflow, /xattr -dr com\.apple\.quarantine/)
   assert.match(workflow, /retry gh release delete-asset/)
   assert.match(workflow, /upload_release_asset/)
   assert.match(workflow, /Invoke-ReleaseUpload/)
@@ -309,14 +343,29 @@ test('desktop-host resource build prefers a stable macOS signing identity', () =
   assert.match(script, /Apple Development/)
   assert.match(script, /--options["'],\s*["']runtime/)
   assert.match(script, /ad-hoc identity.*TCC/)
+  assert.match(script, /arm64-apple-macos14\.0/)
+  assert.match(script, /x86_64-apple-macos14\.0/)
 })
 
-test('release desktop package allows the macOS computer-use helper to use ad-hoc signing', () => {
+test('release desktop package requires stable signing for the macOS computer-use helper', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
 
-  assert.doesNotMatch(pkg.scripts.package, /build-desktop-host-resources\.mjs --require-stable-signing/)
+  assert.match(pkg.scripts.package, /build-desktop-host-resources\.mjs --require-stable-signing/)
   assert.match(script, /REQUIRE_STABLE_SIGNING/)
   assert.match(script, /requires a stable macOS signing identity/)
+})
+
+test('Windows release requires Authenticode signing for the app and desktop host', () => {
+  const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
+  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
+
+  assert.match(workflow, /secrets\.WINDOWS_CERTIFICATE_PFX_BASE64/)
+  assert.match(workflow, /secrets\.WINDOWS_CERTIFICATE_PASSWORD/)
+  assert.match(workflow, /CSC_LINK=/)
+  assert.match(workflow, /Get-AuthenticodeSignature/)
+  assert.match(script, /signWindowsBinary\(OUT_FILE\)/)
+  assert.match(script, /signtool and an Authenticode certificate/)
+  assert.match(script, /"verify", "\/pa", "\/all"/)
 })
 
 test('node-repl resource build clears generated output before writing resources', () => {

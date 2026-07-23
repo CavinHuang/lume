@@ -329,6 +329,7 @@ async function buildAgentPluginList(): Promise<{
 
 interface AgentHandlersContext {
   writeNotification: NotificationWriter;
+  notifyBrowserPluginState?: () => void;
   planModePhaseTracker: PlanModePhaseTracker;
   notifyPlanModePhaseChange: (
     threadId: string,
@@ -1141,7 +1142,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.INSTALL_MARKET_ITEM
       );
-      return createDefaultPluginMarketService().installMarketItem(input);
+      const result = await createDefaultPluginMarketService().installMarketItem(input);
+      if (input.itemId === "browser" || input.itemId === "lume-chrome") context.notifyBrowserPluginState?.();
+      return result;
     },
     [AGENT_IPC_CHANNELS.UPDATE_PLUGIN]: async (params) => {
       const input = validateInput(
@@ -1149,7 +1152,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.UPDATE_PLUGIN
       );
-      return createDefaultPluginMarketService().updatePlugin(input);
+      const result = await createDefaultPluginMarketService().updatePlugin(input);
+      if (input.pluginId === "browser" || input.pluginId === "lume-chrome") context.notifyBrowserPluginState?.();
+      return result;
     },
     [AGENT_IPC_CHANNELS.UNINSTALL_PLUGIN]: async (params) => {
       const input = validateInput(
@@ -1157,7 +1162,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.UNINSTALL_PLUGIN
       );
-      return createDefaultPluginMarketService().uninstallPlugin(input);
+      const result = await createDefaultPluginMarketService().uninstallPlugin(input);
+      if (input.pluginId === "browser" || input.pluginId === "lume-chrome") context.notifyBrowserPluginState?.();
+      return result;
     },
     [AGENT_IPC_CHANNELS.SET_PLUGIN_ENABLEMENT]: async (params) => {
       const input = validateInput(
@@ -1165,7 +1172,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.SET_PLUGIN_ENABLEMENT
       );
-      return createDefaultPluginMarketService().setPluginEnablement(input);
+      const result = await createDefaultPluginMarketService().setPluginEnablement(input);
+      if (input.pluginId === "browser" || input.pluginId === "lume-chrome") context.notifyBrowserPluginState?.();
+      return result;
     },
     [AGENT_IPC_CHANNELS.SET_PLUGIN_ACTIVE_VERSION]: async (params) => {
       const input = validateInput(

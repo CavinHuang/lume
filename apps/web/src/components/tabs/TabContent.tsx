@@ -7,6 +7,7 @@ import { ReadingView } from '@/components/reading/ReadingView'
 import { SettingsView } from '@/components/settings/SettingsView'
 import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
+import { BrowserTabView } from './BrowserTabView'
 
 export function TabContent() {
   const tabs = useAtomValue(tabsAtom)
@@ -60,6 +61,10 @@ export function TabContent() {
 
   if (activeTab.type === 'lume') {
     return <LumeView />
+  }
+
+  if (activeTab.type === 'browser') {
+    return <BrowserTabView tab={activeTab} />
   }
 
   return null

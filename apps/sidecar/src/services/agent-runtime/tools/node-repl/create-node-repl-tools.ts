@@ -12,6 +12,7 @@ import {
   type NodeReplRuntimeRegistry
 } from "./node-repl-types";
 import { waitForBrowserAuthResponse } from "../../interruption/browser-auth-session";
+import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder";
 
 export const NODE_REPL_MCP_SERVER_ID = "node_repl";
 export const NODE_REPL_MCP_SERVER_NAME = "node_repl";
@@ -81,6 +82,24 @@ export function createNodeReplTools(input: {
             })
             : undefined,
           emitComputerUseRequest: input.emitComputerUseRequest,
+          browserRequest: async (request, signal) => {
+            if (signal.aborted) throw new Error("browser request cancelled");
+            const broker = getActiveBrowserBroker();
+            if (!broker) throw new Error("Browser Broker is unavailable");
+            const params = { ...request.params };
+            const requestedBackend = String(params.__browserBackend ?? params.browserId ?? params.clientType ?? "").toLowerCase();
+            const backend = requestedBackend === "extension" || requestedBackend === "chrome-extension" || requestedBackend === "lume-extension" ? "extension" as const : "iab" as const;
+            delete params.__browserBackend;
+            return broker.dispatch({
+              method: request.method,
+              params,
+              ...(typeof params.tabId === "string" ? { tabId: params.tabId } : {}),
+              browserSessionId: threadId,
+              browserTurnId: context.toolUseId ?? `node-repl:${threadId}`,
+              threadId,
+              backend,
+            });
+          },
         });
         return {
           type: "tool_result",
@@ -247,7 +266,7 @@ async function resolveBrowserAuthRequest(input: {
   if (!normalized) return { status: "unavailable" };
   const result = await waitForBrowserAuthResponse(normalized, input.signal, input.emit);
   if (result.status === "submitted") {
-    return { status: "approved", values: result.values ?? {} };
+    return { status: "approved" };
   }
   return { status: result.status };
 }

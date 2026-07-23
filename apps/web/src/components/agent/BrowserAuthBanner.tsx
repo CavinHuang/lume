@@ -9,7 +9,6 @@ import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame } from './InteractiveOverlayFrame'
 
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 interface BrowserAuthBannerProps {
   threadId: string
   request: AgentBrowserAuthRequest
@@ -18,26 +17,22 @@ interface BrowserAuthBannerProps {
 export function buildBrowserAuthSubmission(input: {
   threadId: string
   requestId: string
-  values: Record<string, string>
 }): AgentBrowserAuthResponseInput {
   return {
     threadId: input.threadId,
     requestId: input.requestId,
     status: 'submitted',
-    values: input.values,
   }
 }
 
 export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
-  const [values, setValues] = useState<Record<string, string>>({})
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const subagentDisplayLabel = getSubagentDisplayLabel(request)
 
   useEffect(() => {
-    setValues({})
     setHidden(false)
     setBusy(false)
     setError(null)
@@ -54,9 +49,7 @@ export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps)
       await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_BROWSER_AUTH, buildBrowserAuthSubmission({
         threadId,
         requestId: request.requestId,
-        values,
       }))
-      setValues({})
       dismiss()
     } catch (err) {
       console.error('[BrowserAuthBanner] submit failed', err)
@@ -75,7 +68,6 @@ export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps)
         requestId: request.requestId,
         status: 'cancelled',
       } satisfies AgentBrowserAuthResponseInput)
-      setValues({})
       dismiss()
     } catch (err) {
       console.error('[BrowserAuthBanner] cancel failed', err)
@@ -85,8 +77,6 @@ export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps)
     }
   }
 
-  const submitDisabled = request.fields.some((field) => field.required && !values[field.id])
-
   if (hidden) return null
 
   return (
@@ -94,7 +84,7 @@ export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps)
       kind="browser-auth"
       title="安全输入浏览器凭证"
       busy={busy}
-      submitDisabled={submitDisabled}
+      submitDisabled={false}
       onIgnore={() => setHidden(true)}
       onSubmit={() => void submit()}
     >
@@ -106,7 +96,7 @@ export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps)
             </span>
             <div className="min-w-0">
               <p className="text-[13px] font-semibold leading-5 text-[#1f232b]">
-                只会把凭证填入当前浏览器页面，Agent 只能看到提交状态。
+                请在当前浏览器页面中手动完成安全输入；Agent 只能看到完成状态。
               </p>
               <p className="mt-0.5 truncate font-mono text-[12px] leading-5 text-amber-800">{request.origin}</p>
               {request.reason && (
@@ -118,22 +108,7 @@ export function BrowserAuthBanner({ threadId, request }: BrowserAuthBannerProps)
             </div>
           </div>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {request.fields.map((field) => (
-            <label key={field.id} className="block">
-              <span className="mb-1 block px-1 text-[12px] font-semibold leading-5 text-[#5c626d]">
-                {field.label}{field.required ? ' *' : ''}
-              </span>
-              <Input
-                type={field.type === 'password' ? 'password' : 'text'}
-                autoComplete={field.autocomplete}
-                value={values[field.id] ?? ''}
-                onChange={(event) => setValues((prev) => ({ ...prev, [field.id]: event.target.value }))}
-                className="h-10 w-full rounded-[12px] border border-black/10 bg-white px-3 text-[14px] text-[#1f232b] outline-none transition-colors focus:border-[#5f9cff] focus:ring-2 focus:ring-[#5f9cff]/20"
-              />
-            </label>
-          ))}
-        </div>
+        <div className="rounded-[12px] border border-black/10 bg-white px-3 py-2 text-[12px] leading-5 text-[#5c626d]">需要填写：{request.fields.map((field) => field.label).join('、') || '页面要求的凭据'}。Lume 不会通过聊天或 Sidecar 接收这些值。</div>
         <div className="flex items-center justify-between gap-3 px-1">
           <p className="text-[11px] leading-4 text-[#8a8f98]">
             不要把密码或验证码粘贴到聊天消息里；如果来源不可信，请取消请求。

@@ -4,6 +4,7 @@ import {
   Box,
   Cog,
   Database,
+  Globe,
   HardDrive,
   Bot,
   Keyboard,
@@ -38,6 +39,7 @@ export type SettingsViewTab =
   | 'data'
   | 'logs'
   | 'archive'
+  | 'browser'
 
 export const SETTINGS_NAV_ITEMS: Array<{
   id: SettingsViewTab
@@ -49,6 +51,7 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'models', label: '模型', icon: Box },
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'skills', label: '技能管理', icon: Puzzle },
+  { id: 'browser', label: '浏览器', icon: Globe },
   { id: 'workspaces', label: '工作区', icon: Users },
   { id: 'memory', label: '记忆', icon: Database },
   { id: 'reading', label: '读书', icon: BookOpen },
@@ -83,6 +86,7 @@ export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   data: '数据管理',
   logs: '应用日志',
   archive: '归档与回收站',
+  browser: '浏览器',
 }
 
 export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
@@ -104,4 +108,5 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   data: '查看存储用量、安全清理与全量数据导出',
   logs: '查看应用、Agent、工具调用、MCP 与 Skill 加载运行日志',
   archive: '查看已归档的会话，恢复或永久删除，管理回收站',
+  browser: '管理内置浏览器、Agent 控制和外部 Chrome 能力',
 }

@@ -27,6 +27,7 @@ import {
   scopePluginAssetUrls,
 } from "../src/plugin-asset-registry.ts";
 import * as sharedIpc from "../../../packages/shared/src/types/index.ts";
+import { BROWSER_IPC_CHANNELS } from "../../../packages/shared/src/types/browser-runtime.ts";
 import {
   createPreviewProtocolResponse,
   createPreviewScopeRegistry,
@@ -95,8 +96,13 @@ test("renderer sidecar allowlist tracks public shared IPC channels", () => {
   const sharedMethods = Object.entries(sharedIpc)
     .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && value && typeof value === "object")
     .flatMap(([, value]) => Object.values(value))
-    .filter((value) => typeof value === "string" && !value.includes(":privileged-"));
+    .filter((value) => typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value));
   for (const method of sharedMethods) assert.equal(PUBLIC_RENDERER_SIDECAR_METHODS.has(method), true, method);
+});
+
+test("renderer may inspect browser backend availability without invoking browser actions", () => {
+  assert.equal(validateRendererSidecarMethod("browser:backends"), "browser:backends");
+  assert.throws(() => validateRendererSidecarMethod("browser:broker"), /unsupported renderer sidecar method/);
 });
 
 test("Wiki formal mutations use a main-process credential and reject generic RPC", () => {

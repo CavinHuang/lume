@@ -180,12 +180,11 @@ describe("createNodeReplTools", () => {
     await submitBrowserAuthResponse({
       threadId: emitted[0].threadId,
       requestId: emitted[0].requestId,
-      status: "submitted",
-      values: { password: "password-value" }
+      status: "submitted"
     });
     const result = await pending;
 
-    expect(runtimeAuthResult).toEqual({ status: "approved", values: { password: "password-value" } });
+    expect(runtimeAuthResult).toEqual({ status: "approved" });
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify({ status: "approved" }) }]);
     expect(JSON.stringify(result)).not.toContain("password-value");
     expect(JSON.stringify(emitted)).not.toContain("password-value");

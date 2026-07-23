@@ -6,7 +6,6 @@ import type {
 
 export interface BrowserAuthWaitResult {
   status: AgentBrowserAuthStatus;
-  values?: Record<string, string>;
 }
 
 const pendingBrowserAuthResolvers = new Map<
@@ -82,8 +81,7 @@ export async function submitBrowserAuthResponse(input: AgentBrowserAuthResponseI
   const pending = pendingBrowserAuthResolvers.get(pendingKey(input.threadId, input.requestId));
   if (!pending) return false;
   pending.resolve({
-    status: input.status,
-    ...(input.values ? { values: input.values } : {})
+    status: input.status
   });
   return true;
 }

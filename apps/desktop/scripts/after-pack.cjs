@@ -3,6 +3,7 @@ const { join } = require('node:path')
 
 module.exports = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return
+  if (process.env.LUME_RELEASE_SIGNING_REQUIRED === '1') return
 
   const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
   const entitlementsPath = join(__dirname, '..', 'assets', 'entitlements.mac.plist')
