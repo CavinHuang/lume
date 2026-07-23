@@ -2107,6 +2107,7 @@ async function runTaskLinkedSubagent(input: {
     executorRef,
     terminal: true,
     error: execution.error,
+    resultSummary: execution.completionSummary ?? execution.output,
   }, actor);
   if (execution.status !== "completed") {
     const latest = await input.taskStore.get(input.taskRef.taskId, actor);

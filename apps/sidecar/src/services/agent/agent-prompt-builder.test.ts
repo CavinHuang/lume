@@ -112,12 +112,12 @@ describe("agent-prompt-builder", () => {
     expect(agents.explorer?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
     expect(agents.explorer?.prompt).toContain("高效的代码库探索员");
     expect(agents.planner?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
-    expect(agents.planner?.disallowedTools).toEqual(["Agent", "Write", "Edit", "TaskContractWrite", "TaskReport"]);
+    expect(agents.planner?.disallowedTools).toEqual(["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskReport"]);
     expect(agents.planner?.prompt).toContain("software architect and planning specialist");
     expect(agents.planner?.prompt).toContain("READ-ONLY MODE - NO FILE MODIFICATIONS");
     expect(agents.planner?.prompt).toContain("Critical Files for Implementation");
-    expect(agents.planner?.prompt).toContain("TaskContractWrite");
-    expect(agents.planner?.prompt).toContain("The main thread owns TaskContractWrite");
+    expect(agents.planner?.prompt).toContain("manage Tasks");
+    expect(agents.planner?.prompt).toContain("normal Task and tool flow");
     expect(agents.researcher?.tools).toContain("WebSearch");
     expect(agents.researcher?.tools).toContain("WebFetch");
     expect(agents["code-reviewer"]?.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);

@@ -171,3 +171,8 @@ Remaining deviations/risks:
 - TaskStore lock heartbeat is refreshed around short synchronous transactions rather than by an independent lease-renewal worker.
 - Executor recovery requires a verified terminal/forced acknowledgement; the fence intentionally remains when termination cannot be proven.
 - Legacy TaskProgressPanel helper predicates remain exported for compatibility even though user-facing continue/retry/skip controls were removed.
+
+### Act 3 follow-up
+
+- Prevented completion while a Task-linked executor binding is still active; completion now remains a main-agent transition after terminal acknowledgement.
+- Persisted a bounded executor result summary in `metadata._lume.lastResult`, alongside the existing server-managed error record, so TaskGet remains diagnostically useful after the executor returns.

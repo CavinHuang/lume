@@ -309,6 +309,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       if (typeof mutationInput.activeForm === "string") task.activeForm = mutationInput.activeForm;
       if (requestedStatus === "in_progress") this.claim(task, context, mutationInput);
       if (requestedStatus === "completed") {
+        if (this.executorBinding(task)) throw new Error("Task cannot be completed while its executor is active");
         task.status = "completed";
         task.owner = context.actorId;
         this.clearExecutorBinding(task);
@@ -378,7 +379,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     });
   }
 
-  async acknowledgeExecutor(input: { taskId: string; claimToken: string; executorRef: string; terminal: boolean; forced?: boolean; error?: string }, context: TaskStoreContext): Promise<TaskMutationResult> {
+  async acknowledgeExecutor(input: { taskId: string; claimToken: string; executorRef: string; terminal: boolean; forced?: boolean; error?: string; resultSummary?: string }, context: TaskStoreContext): Promise<TaskMutationResult> {
     const trustedContext: TaskStoreContext = {
       threadId: this.taskListId,
       threadType: input.forced ? "recovery" : "system",
@@ -397,6 +398,13 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       delete lume.executionFence;
       lume.recoveryState = input.forced ? "forced_terminated" : "terminal_ack";
       if (input.error) lume.lastError = { source: "executor", message: input.error, recordedAt: now };
+      if (typeof input.resultSummary === "string" && input.resultSummary.trim()) {
+        lume.lastResult = {
+          status: input.error ? "errored" : "completed",
+          summary: input.resultSummary.trim().slice(0, 4_000),
+          recordedAt: now,
+        };
+      }
       task.metadata = { ...metadataObject(task.metadata), _lume: lume };
       task.updatedAt = now;
       task.revision += 1;

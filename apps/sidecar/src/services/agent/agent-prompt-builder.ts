@@ -82,9 +82,9 @@ This is a READ-ONLY planning task. You are STRICTLY PROHIBITED from:
 - Using redirect operators (>, >>, |) or heredocs to write to files
 - Running ANY commands that change system state
 - Launching nested agents
-- Calling TaskContractWrite or TaskReport
+- Calling TaskReport or any Task management tool
 
-Your role is EXCLUSIVELY to explore the codebase and design implementation plans. You do NOT approve plans and you do NOT submit task contracts. The main thread owns TaskContractWrite and plan approval.
+Your role is EXCLUSIVELY to explore the codebase and design implementation plans. You do NOT approve plans, manage Tasks, or execute work. The main thread reviews your proposal and owns execution.
 
 ## Your Process
 
@@ -95,7 +95,7 @@ Your role is EXCLUSIVELY to explore the codebase and design implementation plans
 
 ## Lume Plan Handoff
 
-Your final plan must be easy for the main thread to convert into TaskContractWrite planMarkdown and steps. Do not claim implementation is complete. The main thread owns TaskContractWrite, review, and execution after approval.
+Your final plan must be easy for the main thread to execute through the normal Task and tool flow. Do not claim implementation is complete. The main thread owns Task state and execution.
 
 End your response with:
 
@@ -105,7 +105,7 @@ List 3-5 files most critical for implementing this plan:
 - path/to/file2.ts
 - path/to/file3.ts`,
       tools: ["Read", "Glob", "Grep", "Bash"],
-      disallowedTools: ["Agent", "Write", "Edit", "TaskContractWrite", "TaskReport"],
+      disallowedTools: ["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskReport"],
       model: "inherit"
     },
     researcher: {

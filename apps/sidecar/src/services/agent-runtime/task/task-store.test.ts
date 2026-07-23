@@ -73,6 +73,43 @@ describe("FileBackedTaskStore", () => {
     });
   });
 
+  test("does not complete a Task before its executor acknowledges termination and records the result", async () => {
+    await withStore(async (store) => {
+      const created = await store.create({ subject: "Executor result" }, context());
+      const claimed = await store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: created.revision }, context());
+      const bound = await store.bindExecutor({
+        taskId: created.task.id,
+        claimToken: claimed.claimToken!,
+        expectedRevision: claimed.revision,
+        executorRef: "executor-result",
+      }, context());
+
+      await expect(store.update({
+        taskId: created.task.id,
+        status: "completed",
+        expectedRevision: bound.revision,
+        claimToken: claimed.claimToken,
+      }, context())).rejects.toThrow("executor is active");
+
+      const acknowledged = await store.acknowledgeExecutor({
+        taskId: created.task.id,
+        claimToken: claimed.claimToken!,
+        executorRef: "executor-result",
+        terminal: true,
+        resultSummary: "Implemented and verified the change",
+      }, context());
+      expect(acknowledged.task.metadata?._lume).toMatchObject({
+        lastResult: { status: "completed", summary: "Implemented and verified the change" },
+      });
+      await expect(store.update({
+        taskId: created.task.id,
+        status: "completed",
+        expectedRevision: acknowledged.revision,
+        claimToken: claimed.claimToken,
+      }, context())).resolves.toBeTruthy();
+    });
+  });
+
   test("does not let metadata null erase server-managed claim data", async () => {
     await withStore(async (store) => {
       const created = await store.create({ subject: "Metadata" }, context());

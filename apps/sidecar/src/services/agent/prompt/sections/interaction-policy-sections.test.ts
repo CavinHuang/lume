@@ -2,23 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { buildPlanModeSection } from "./interaction-policy-sections";
 
 describe("interaction-policy-sections", () => {
-  test("plan mode instructs agents to publish reviewable plans through TaskContractWrite", () => {
+  test("plan mode describes a read-only plan without a separate Task approval flow", () => {
     const section = buildPlanModeSection();
 
-    expect(section).toContain("TaskContractWrite");
-    expect(section).toContain("planMarkdown");
+    expect(section).toContain("Markdown 计划");
     expect(section).toContain("Markdown");
-    expect(section).toContain("needs_approval");
-    expect(section).toContain("计划文件");
-    expect(section).toContain("计划审批请求");
-    expect(section).toContain("不会创建可执行 task");
+    expect(section).toContain("Task 不需要单独审批");
+    expect(section).toContain("旧的 TaskContractWrite");
+    expect(section).toContain("旧 TaskRun");
     expect(section).toContain("AskUserQuestion");
     expect(section).toContain("澄清需求");
-    expect(section).toContain("不要用 AskUserQuestion 请求计划审批");
-    expect(section).toContain("批准后系统才会根据已审批计划创建 task");
+    expect(section).toContain("用户决定继续后按正常流程执行");
     expect(section).toContain("先探索，再调用 planner");
-    expect(section).toContain("planner 只提供设计草案");
-    expect(section).toContain("主线程负责审阅并调用 TaskContractWrite");
+    expect(section).toContain("planner 只提供设计草案，不修改文件、不管理 Task");
+    expect(section).toContain("主线程负责审阅 planner 结果");
     expect(section).not.toContain("EnterPlanMode");
     expect(section).not.toContain("ExitPlanMode");
     expect(section).not.toContain(".context/plan/");
