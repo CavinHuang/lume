@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, Gauge, GitFork, History, ListChecks, ListCollapse, Loader2, Maximize2, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
@@ -10,7 +10,7 @@ import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock
 import type { RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
-import { agentSend, getThreadMessageVersions, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
 import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentFileReference, type OpenThreadFile } from './AgentFileReference'
+import { collectAssistantSources, type AssistantSourceReference } from './source-references'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
@@ -160,6 +161,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
     () => contentBlocks.filter((block) => block.type !== 'memory_context_used'),
     [contentBlocks],
   )
+  const sourceCollection = useMemo(() => collectAssistantSources(contentBlocks), [contentBlocks])
   const activeStreamingTextBlockId = streaming === true && message.status === 'streaming'
     ? findActiveStreamingTextBlockId(message.blocks)
     : null
@@ -245,6 +247,8 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
           memoryEvents={contentBlocks
             .filter((b): b is Extract<typeof b, { type: 'memory_context_used' }> => b.type === 'memory_context_used')
             .map(b => b.event)}
+          sources={sourceCollection.sources}
+          sourcesTruncated={sourceCollection.truncated}
           onOpenMemorySource={onOpenMemorySource}
         />
         {message.imDelivery && <ImDeliveryStatusLine delivery={message.imDelivery} />}
@@ -2303,6 +2307,67 @@ function FooterMemoryNotice({
   )
 }
 
+function FooterSourceNotice({
+  sources,
+  truncated,
+}: {
+  sources: AssistantSourceReference[]
+  truncated: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="relative shrink-0">
+      <Button
+        variant="ghost"
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="assistant-footer-action inline-flex items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)]"
+      >
+        <Globe size={13} strokeWidth={1.8} />
+        <span>来源 · {sources.length}{truncated ? '+' : ''}</span>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </Button>
+      {expanded && (
+        <div className="absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[260px] max-w-[380px] overflow-y-auto rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)]">
+          <div className="space-y-1 text-[11px] leading-5">
+            {sources.map((source, index) => {
+              const content = (
+                <>
+                  <span className="shrink-0 tabular-nums">{index + 1}.</span>
+                  <span className="min-w-0 truncate">{source.title}</span>
+                  <span className="shrink-0 truncate text-[var(--lume-text-muted)]">{source.domain}</span>
+                </>
+              )
+              if (!source.clickable) {
+                return (
+                  <div key={`${source.url}:${index}`} className="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[var(--lume-text-secondary)]" title={source.url}>
+                    {content}
+                  </div>
+                )
+              }
+              return (
+                <Button
+                  key={`${source.url}:${index}`}
+                  variant="ghost"
+                  type="button"
+                  onClick={() => { void openExternal(source.url) }}
+                  className="flex w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-1 py-0.5 text-left font-mono text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
+                  title={source.url}
+                >
+                  {content}
+                  <ExternalLink size={11} className="ml-auto shrink-0" />
+                </Button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AssistantMessageFooter({
   threadId,
   messageId,
@@ -2313,6 +2378,8 @@ function AssistantMessageFooter({
   tokenUsage,
   completedAt,
   memoryEvents,
+  sources,
+  sourcesTruncated,
   onOpenMemorySource,
 }: {
   threadId: string
@@ -2324,6 +2391,8 @@ function AssistantMessageFooter({
   tokenUsage?: RuntimeAssistantTokenUsageView
   completedAt?: string
   memoryEvents?: MemoryContextUsedViewEvent[]
+  sources: AssistantSourceReference[]
+  sourcesTruncated: boolean
   onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
 }) {
   const setThreads = useSetAtom(agentThreadsAtom)
@@ -2353,8 +2422,9 @@ function AssistantMessageFooter({
   }, [downloadMenuOpen])
 
   const hasMemory = memoryEvents && memoryEvents.length > 0
+  const hasSources = sources.length > 0
 
-  if (!canCopy && !canFork && !canDownload && !showTokens && !completedTimeLabel && !hasMemory) return null
+  if (!canCopy && !canFork && !canDownload && !showTokens && !completedTimeLabel && !hasMemory && !hasSources) return null
 
   const handleFork = async () => {
     if (!messageId || forking) return
@@ -2482,6 +2552,7 @@ function AssistantMessageFooter({
             onOpenMemorySource={onOpenMemorySource}
           />
         )}
+        {hasSources && <FooterSourceNotice sources={sources} truncated={sourcesTruncated} />}
       </div>
       {showTokens && (
         <AssistantTokenUsageMetrics usage={footerTokenUsage} />
