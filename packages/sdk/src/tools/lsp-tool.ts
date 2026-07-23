@@ -153,8 +153,6 @@ function createLspTool(allowWrite: boolean) {
       const client = selectClient(clients, input.server)
       if (!client) return { data: 'No matching LSP server is available', is_error: true }
       if (filePath) await Promise.all(clients.map((candidate) => candidate.syncFile(filePath)))
-      const request = <T>(method: string, params: unknown, timeoutMs = 15_000) =>
-        client.request<T>(method, params, timeoutMs, context.abortSignal)
       const requestAll = <T>(method: string, params: unknown, timeoutMs = 15_000) =>
         requestLspClients<T>(clients, method, params, timeoutMs, context.abortSignal)
       const position = filePath

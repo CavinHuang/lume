@@ -72,7 +72,8 @@ interface RunRuntimeCoreAttemptOptions {
 interface RuntimeSessionRunInput {
   params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
-  runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">;
+  runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">
+    & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport">>;
   options: RunRuntimeCoreAttemptOptions;
   sandbox?: SandboxSettings;
   createCanUseTool: (
@@ -170,7 +171,7 @@ export class LumeRunner {
 
   async finalizeResult(result: AgentRuntimeRunResult): Promise<AgentRuntimeRunResult> {
     const lumeResult = fromAgentRuntimeRunResult(result);
-    await this.observer.finalize(lumeResult.status, lumeResult.error);
+    await this.observer.finalize(lumeResult.status, lumeResult.error, lumeResult.verificationStatus, lumeResult.codingReport);
     return result;
   }
 
@@ -273,7 +274,10 @@ export class LumeRunner {
         sdkThreadId: session.threadId ?? session.sessionId,
         runtimeThreadId: session.threadId ?? session.sessionId
       });
-      return this.complete();
+      return this.complete(
+        runtimeSession.getVerificationStatus?.(),
+        runtimeSession.getVerificationReport?.(),
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (/abort|interrupted/i.test(errorMessage)) {
@@ -375,7 +379,7 @@ export class LumeRunner {
     });
   }
 
-  async complete(): Promise<AgentRuntimeRunResult> {
+  async complete(verificationStatus?: AgentRuntimeRunResult["verificationStatus"], codingReport?: AgentRuntimeRunResult["codingReport"]): Promise<AgentRuntimeRunResult> {
     await this.observer.flush();
     const workspaceSlug = this.observer.getWorkspaceSlug();
     const runState = await this.observer.getRunState();
@@ -429,10 +433,12 @@ export class LumeRunner {
       type: "run.completed",
       threadId: this.observer.getThreadId(),
       runId: this.observer.getRunId(),
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...(verificationStatus ? { verificationStatus } : {}),
+      ...(codingReport ? { codingReport } : {})
     });
     this.emit.onComplete();
-    return this.finalizeResult({ status: "completed" });
+    return this.finalizeResult({ status: "completed", verificationStatus, codingReport });
   }
 
   private scheduleConversationSummary(

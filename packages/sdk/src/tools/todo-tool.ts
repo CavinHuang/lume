@@ -59,7 +59,7 @@ function renderTodos(todos: TodoItem[]): string {
 }
 
 const VERIFICATION_NUDGE =
-  '\n\n[verification needed] 多个任务被一次性标记为完成。在结束本轮前，请派 code-reviewer 子代理验证这些任务的实现是否真正达成，避免虚假完成。'
+  '\n\n[verification needed] 多个任务被一次性标记为完成。请回到当前 Run 执行相关验证并检查最终 Diff，再结束本轮。'
 
 function countNewlyCompleted(prev: TodoItem[], next: TodoItem[]): number {
   const prevCompleted = new Set(prev.filter((t) => t.status === 'completed').map((t) => t.content))

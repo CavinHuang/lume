@@ -996,6 +996,8 @@ export class Agent {
       },
       sandbox: opts.sandbox,
       toolConfig: opts.toolConfig,
+      artifactsRoot: opts.artifactsRoot,
+      onToolExecution: opts.onToolExecution,
       currentUserMessageId: userMessage?.uuid ?? `command:${this.sid}:compact`,
       fileCheckpointState: this.fileCheckpointState,
       mcpServerStatuses: this.collectMcpServerStatuses().map((status) => ({

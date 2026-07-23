@@ -1044,4 +1044,50 @@ describe('todo_update block 稳定性', () => {
 
     expect(idsAfterFallback).toEqual(idsBeforeFallback)
   })
+
+  test('projects coding execution metadata and completion report for the existing UI', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'message.user.submitted', text: '修复测试', messageId: 'user-1' }),
+      event({
+        type: 'tool.started',
+        toolCallId: 'tool-1',
+        toolName: 'Bash',
+        inputPreview: { command: 'bun test' },
+        riskLevel: 'medium',
+      }),
+      event({
+        type: 'tool.completed',
+        toolCallId: 'tool-1',
+        toolName: 'Bash',
+        resultPreview: '1 pass',
+        execution: {
+          version: 1,
+          durationMs: 25,
+          command: 'bun test',
+          purpose: 'verification',
+          terminationReason: 'completed',
+        },
+      }),
+      event({
+        type: 'run.completed',
+        codingReport: {
+          status: 'verified',
+          workspaceChanged: true,
+          changedFiles: ['src/fix.ts'],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        },
+      }),
+    ])
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant?.type).toBe('assistant')
+    if (assistant?.type !== 'assistant') return
+    expect(assistant.codingReport?.status).toBe('verified')
+    expect(assistant.codingReport?.changedFiles).toEqual(['src/fix.ts'])
+    expect(assistant.toolCalls[0]).toMatchObject({
+      riskLevel: 'medium',
+      execution: { command: 'bun test', purpose: 'verification' },
+    })
+  })
 })

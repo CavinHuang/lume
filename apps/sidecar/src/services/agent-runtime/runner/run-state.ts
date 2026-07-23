@@ -4,7 +4,8 @@ import type {
   FileReferenceBinding,
   FileReferenceProtocolVersion,
   RuntimeBillingUsageSummary,
-  RuntimeUsageContextSnapshot
+  RuntimeUsageContextSnapshot,
+  RuntimeCodingReport
 } from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
 import type { LumeRunItem } from "./run-items";
@@ -96,6 +97,8 @@ export interface LumeRunState {
     stack?: string;
     retryable?: boolean;
   };
+  verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
+  codingReport?: RuntimeCodingReport;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;

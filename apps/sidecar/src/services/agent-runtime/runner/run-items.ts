@@ -50,6 +50,7 @@ export interface LumeToolResultItem {
   parentToolCallId?: string;
   subagentRunId?: string;
   isError?: boolean;
+  execution?: Record<string, unknown>;
   traceSpanId?: string;
   createdAt: string;
 }

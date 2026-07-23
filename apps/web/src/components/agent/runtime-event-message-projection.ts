@@ -1,4 +1,4 @@
-import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent } from '@lume/shared'
+import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent, RuntimeCodingReport } from '@lume/shared'
 import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
@@ -239,6 +239,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       input: event.inputPreview ?? {},
       status: 'running',
       startedAt: event.createdAt,
+      ...(event.riskLevel ? { riskLevel: event.riskLevel } : {}),
     }
     state.currentAssistant.toolCalls.set(event.toolCallId, toolCall)
     state.currentAssistant.toolBlockIds.set(event.toolCallId, state.currentAssistant.blocks.length)
@@ -264,6 +265,9 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       output: isError ? event.error.message : event.resultPreview,
       isError,
       ...(permissionState ? { permissionState } : {}),
+      ...(existing?.riskLevel ? { riskLevel: existing.riskLevel } : {}),
+      ...(event.execution ? { execution: event.execution } : {}),
+      ...(event.resultRef ? { resultRef: event.resultRef } : {}),
       ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
       ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
         ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }
@@ -300,6 +304,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     if (event.type === 'run.completed') {
       state.currentAssistant.messageId = event.finalMessageId
       state.currentAssistant.completedAt = event.createdAt
+      if (event.codingReport) state.currentAssistant.codingReport = event.codingReport
     }
     state.currentAssistant.status = 'completed'
     flushAssistant(state.messages, state.currentAssistant)
@@ -363,24 +368,6 @@ function appendContextCompactionNotice(
   messages: RuntimeMessageView[],
   event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>,
 ): void {
-  if (event.type === 'context.compaction.completed') {
-    const activeNotice = [...messages]
-      .reverse()
-      .find((m): m is Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }> =>
-        m.type === 'system' && m.variant === 'context_compaction' && m.status === 'active',
-      )
-    if (activeNotice) {
-      activeNotice.status = 'completed'
-      activeNotice.text = formatContextCompactionNoticeText(event)
-      if (event.summary) activeNotice.summary = event.summary
-      return
-    }
-  }
-  const existing = messages.at(-1)
-  if (existing?.type === 'system' && existing.variant === 'context_compaction' && existing.status === 'active') {
-    existing.text = formatContextCompactionNoticeText(event)
-    return
-  }
   messages.push({
     id: event.id,
     type: 'system',
@@ -482,6 +469,7 @@ interface MutableAssistantMessage {
   error?: string
   providerTokenCount?: number
   providerTokenUsage?: RuntimeAssistantTokenUsageView
+  codingReport?: RuntimeCodingReport
   imDelivery?: RuntimeAssistantMessageView['imDelivery']
   toolCalls: Map<string, RuntimeToolCallView>
   toolBlockIds: Map<string, number>
@@ -596,6 +584,7 @@ function assistantHasContent(assistant: MutableAssistantMessage): boolean {
     || assistant.thinking.trim()
     || assistant.toolCalls.size > 0
     || assistant.blocks.some((block) => block.type === 'memory_context_used')
+    || assistant.codingReport
     || assistant.error
   )
 }
@@ -622,6 +611,7 @@ function snapshotAssistant(assistant: MutableAssistantMessage | null): RuntimeMe
     tokenCount: assistant.providerTokenCount ?? estimateAssistantTokenCount(assistant),
     ...(assistant.providerTokenCount !== undefined ? { tokenCountSource: 'provider' as const } : {}),
     ...(assistant.providerTokenUsage ? { tokenUsage: assistant.providerTokenUsage } : {}),
+    ...(assistant.codingReport ? { codingReport: assistant.codingReport } : {}),
     toolCalls: [...assistant.toolCalls.values()],
   }
 }

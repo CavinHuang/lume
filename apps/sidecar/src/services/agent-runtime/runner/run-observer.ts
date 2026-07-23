@@ -475,7 +475,7 @@ export class LumeRunObserver {
     }, async () => ({ status: input.record.status }));
   }
 
-  async finalize(status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">, error?: Error | string): Promise<void> {
+  async finalize(status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">, error?: Error | string, verificationStatus?: LumeRunState["verificationStatus"], codingReport?: LumeRunState["codingReport"]): Promise<void> {
     await this.flush();
     const completedAt = new Date().toISOString();
     const patch: Partial<LumeRunState> = {
@@ -491,6 +491,8 @@ export class LumeRunObserver {
       completedAt,
       pendingInterruptions: []
     };
+    if (verificationStatus) patch.verificationStatus = verificationStatus;
+    if (codingReport) patch.codingReport = codingReport;
     if (error) {
       patch.error = {
         code: "runtime_error",
@@ -729,7 +731,11 @@ function mapSdkMessageToRunItems(
       id,
       toolCallId: message.result.tool_use_id,
       toolName: message.result.tool_name,
-      output: message.result.output,
+      output: message.result.content ?? message.result.output,
+      isError: message.result.is_error === true,
+      ...((message.result._meta?.execution && typeof message.result._meta.execution === "object")
+        ? { execution: message.result._meta.execution as Record<string, unknown> }
+        : {}),
       parentToolCallId: metadata.parent_tool_use_id ?? undefined,
       subagentRunId: typeof metadata.subagent_run_id === "string" ? metadata.subagent_run_id : undefined,
       createdAt

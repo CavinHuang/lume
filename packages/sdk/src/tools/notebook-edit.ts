@@ -9,8 +9,8 @@
  * - edit_mode
  */
 
-import { readFile, writeFile } from 'fs/promises'
-import { resolve } from 'path'
+import { readFile, writeFile, rename, rm } from 'fs/promises'
+import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed } from '../utils/pathing.js'
 import { notifyLspFileChanged } from '../lsp/client.js'
@@ -181,7 +181,7 @@ export const NotebookEditTool = defineTool({
       ensureCellIds(cells)
       const targetCell = cells[targetIndex]
       const updatedFile = JSON.stringify(notebook, null, 1)
-      await writeFile(notebookPath, updatedFile, 'utf-8')
+      await writeFileAtomic(notebookPath, updatedFile)
       await notifyLspFileChanged(notebookPath)
 
       return JSON.stringify({
@@ -199,3 +199,14 @@ export const NotebookEditTool = defineTool({
     }
   },
 })
+
+async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+  const tempPath = join(dirname(filePath), `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
+  try {
+    await writeFile(tempPath, content, 'utf-8')
+    await rename(tempPath, filePath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+    throw error
+  }
+}

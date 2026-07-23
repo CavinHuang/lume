@@ -45,6 +45,7 @@ export interface Task {
  * Global task store (shared across tools in a session).
  */
 const taskStore = new Map<string, Task>()
+const taskStopHandlers = new Map<string, () => void>()
 
 let taskCounter = 0
 
@@ -67,7 +68,16 @@ export function getTask(id: string): Task | undefined {
  */
 export function clearTasks(): void {
   taskStore.clear()
+  taskStopHandlers.clear()
   taskCounter = 0
+}
+
+export function registerTaskStopHandler(id: string, handler: () => void): void {
+  taskStopHandlers.set(id, handler)
+}
+
+export function unregisterTaskStopHandler(id: string): void {
+  taskStopHandlers.delete(id)
 }
 
 export function createTaskRecord(input: {
@@ -297,8 +307,11 @@ export const TaskStopTool: ToolDefinition = {
 
     task.status = 'stopped'
     task.updatedAt = new Date().toISOString()
+    taskStopHandlers.get(task.id)?.()
+    taskStopHandlers.delete(task.id)
     if (input.reason) task.output = `Stopped: ${input.reason}`
 
+    const execution = task.metadata?.execution
     return {
       type: 'tool_result',
       tool_use_id: '',
@@ -308,6 +321,7 @@ export const TaskStopTool: ToolDefinition = {
         task_type: task.taskType || 'unknown',
         command: task.description || task.subject,
       }),
+      ...(execution && typeof execution === 'object' ? { _meta: { execution } } : {}),
     }
   },
 }
@@ -366,6 +380,7 @@ export const TaskOutputTool: ToolDefinition = {
       }
     }
 
+    const execution = task.metadata?.execution
     return {
       type: 'tool_result',
       tool_use_id: '',
@@ -386,6 +401,7 @@ export const TaskOutputTool: ToolDefinition = {
           error: task.status === 'failed' ? task.output || 'Task failed' : undefined,
         },
       }),
+      ...(execution && typeof execution === 'object' ? { _meta: { execution } } : {}),
     }
   },
 }

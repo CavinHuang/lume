@@ -123,6 +123,7 @@ export interface SDKToolResultMessage {
     output: string
     content?: string | ToolResultContentBlock[]
     is_error?: boolean
+    _meta?: Record<string, unknown>
   }
 }
 
@@ -777,7 +778,37 @@ export interface ToolContext {
   hookRegistry?: import('./hooks.js').HookRegistry
   onSubagentStart?: (params: { runId: string; parentThreadId: string; agentType: string; task: string }) => void
   onSubagentEnd?: (params: { runId: string; status: 'completed' | 'errored' | 'aborted'; output?: string; error?: string }) => Promise<void> | void
+  /** Called by a background tool when its process reaches a terminal state. */
+  onBackgroundTaskCompleted?: () => void
   skillRegistry?: import('./skills/registry.js').SkillRegistry
+  /** Session-owned directory for private, large tool result artifacts. */
+  artifactsRoot?: string
+  /** Host runtime observation hook; never included in provider-facing messages. */
+  onToolExecution?: (observation: {
+    toolName: string
+    input: unknown
+    result: ToolResult
+  }) => void
+}
+
+export interface ToolExecutionMetadata {
+  version: 1
+  exitCode?: number | null
+  stdoutPreview?: string
+  stderrPreview?: string
+  timedOut?: boolean
+  aborted?: boolean
+  durationMs: number
+  command: string
+  purpose?: string
+  workspaceChanged?: boolean
+  resultRef?: {
+    kind: 'file'
+    path: string
+    size: number
+    mimeType?: string
+  }
+  terminationReason: 'completed' | 'nonzero' | 'timeout' | 'aborted' | 'spawn_error' | 'running'
 }
 
 export interface ToolResult {
@@ -1349,6 +1380,8 @@ export interface AgentOptions {
   debugFile?: string
   /** Tool-specific configuration */
   toolConfig?: Record<string, unknown>
+  artifactsRoot?: string
+  onToolExecution?: ToolContext['onToolExecution']
   /** Enable prompt suggestions */
   promptSuggestions?: boolean
   /** Event output style */
@@ -1418,6 +1451,8 @@ export interface QueryEngineConfig {
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
+  artifactsRoot?: string
+  onToolExecution?: ToolContext['onToolExecution']
   skillRegistry?: import('./skills/registry.js').SkillRegistry
   currentUserMessageId?: string
   fileCheckpointState?: import('./utils/file-checkpoints.js').FileCheckpointState

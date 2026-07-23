@@ -124,6 +124,7 @@ export interface ToolCompletedRuntimeEvent extends RuntimeEventBase {
     size: number;
     mimeType?: string;
   };
+  execution?: ToolExecutionMetadata;
 }
 
 export interface ToolFailedRuntimeEvent extends RuntimeEventBase {
@@ -134,6 +135,8 @@ export interface ToolFailedRuntimeEvent extends RuntimeEventBase {
     code: string;
     message: string;
   };
+  resultRef?: ToolExecutionMetadata["resultRef"];
+  execution?: ToolExecutionMetadata;
 }
 
 export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
@@ -256,6 +259,21 @@ export interface RunCompletedRuntimeEvent extends RuntimeEventBase {
   type: "run.completed";
   finalOutput?: string;
   finalMessageId?: string;
+  verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
+  codingReport?: RuntimeCodingReport;
+}
+
+export interface RuntimeCodingReport {
+  status: "not_required" | "unverified" | "verified" | "failed";
+  workspaceChanged: boolean;
+  changedFiles: string[];
+  externalChangedFiles: string[];
+  pendingBackground: boolean;
+  message?: string;
+  baselineFailure?: {
+    command: string;
+    signature: string;
+  };
 }
 
 export interface RunTurnLimitedRuntimeEvent extends RuntimeEventBase {
@@ -393,6 +411,26 @@ export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {
   context: RuntimeUsageContextSnapshot;
   billing: RuntimeBillingUsageSummary;
   progress?: RuntimeNormalizedUsage;
+}
+
+export interface ToolExecutionMetadata {
+  version: 1;
+  exitCode?: number | null;
+  stdoutPreview?: string;
+  stderrPreview?: string;
+  timedOut?: boolean;
+  aborted?: boolean;
+  durationMs: number;
+  command: string;
+  purpose?: string;
+  workspaceChanged?: boolean;
+  resultRef?: {
+    kind: "file";
+    path: string;
+    size: number;
+    mimeType?: string;
+  };
+  terminationReason: "completed" | "nonzero" | "timeout" | "aborted" | "spawn_error" | "running";
 }
 
 export interface AdvisorReviewedRuntimeEvent extends RuntimeEventBase {

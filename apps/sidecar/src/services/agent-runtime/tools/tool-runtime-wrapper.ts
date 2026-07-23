@@ -1,9 +1,11 @@
-import { access, stat } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import { createDiagnosticLogSummary, createLogger } from "../../infra/logger";
 import type { FileAccessLedger } from "./file-access-ledger";
 import type { LumeToolDescriptor } from "./tool-types";
+import { acquireWorkspaceWriterLease } from "./workspace-writer-lease";
 
 export interface ToolRuntimeWrapInput {
   descriptor: LumeToolDescriptor;
@@ -91,8 +93,18 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
         return executionGuard;
       }
 
+      const lease = isMutationTool(descriptor.canonicalName)
+        ? await acquireWorkspaceWriterLease(input.cwd, `${input.threadId}:${context.toolUseId ?? "unknown"}`)
+        : undefined;
+      const leaseHeartbeat = lease ? setInterval(() => lease.heartbeat(), 15_000) : undefined;
+      leaseHeartbeat?.unref?.();
+      const releaseLease = () => {
+        if (leaseHeartbeat) clearInterval(leaseHeartbeat);
+        lease?.();
+      };
       const fileGuard = await enforceFileAccessPolicy(input, rawInput, context.toolUseId);
       if (fileGuard) {
+        releaseLease();
         log.warn("tool call blocked by file access policy", {
           threadId: input.threadId,
           toolName: tool.name,
@@ -115,9 +127,17 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
         session_id: context.sessionId ?? input.threadId
       } as any);
 
-      let result: ToolResult;
+      let result: ToolResult = errorResult(context.toolUseId, `${tool.name} 未返回结果`);
+      const backgroundLease = lease && descriptor.canonicalName === "bash" && requestsBackgroundExecution(rawInput)
+        ? releaseLease
+        : undefined;
       try {
-        result = await tool.call(rawInput, context);
+        result = await tool.call(
+          rawInput,
+          backgroundLease
+            ? { ...context, onBackgroundTaskCompleted: backgroundLease }
+            : context
+        );
       } catch (error) {
         log.error("tool call threw", {
           threadId: input.threadId,
@@ -128,6 +148,10 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
           elapsedMs: Date.now() - startedAt
         });
         result = errorResult(context.toolUseId, `${tool.name} 执行失败：${normalizeErrorMessage(error)}`);
+      } finally {
+        const keepsLeaseUntilBackgroundCompletion = backgroundLease
+          && getExecutionTerminationReason(result) === "running";
+        if (!keepsLeaseUntilBackgroundCompletion) releaseLease();
       }
 
       await recordFileRead(input, rawInput, result);
@@ -270,7 +294,7 @@ async function enforceFileAccessPolicy(
   if (!(await exists(canonical))) return null;
 
   const name = input.descriptor.canonicalName;
-  if (name !== "write" && name !== "edit") return null;
+  if (name !== "write" && name !== "edit" && name !== "notebookedit") return null;
 
   const check = await input.fileLedger.assertCanOverwrite({
     threadId: input.threadId,
@@ -292,26 +316,58 @@ async function recordFileRead(
   const canonical = resolve(input.cwd, filePath);
   if (!(await exists(canonical))) return;
   const fileStat = await stat(canonical);
+  const contentHash = createHash("sha256").update(await readFile(canonical)).digest("hex");
   const fullRead = isFullReadResult(result);
   input.fileLedger.recordRead({
     threadId: input.threadId,
     cwd: input.cwd,
     filePath: canonical,
     mtimeMs: fileStat.mtimeMs,
-    fullRead
+    contentHash,
+    fullRead,
+    readRange: getReadRange(result)
   });
+}
+
+function getExecutionTerminationReason(result: ToolResult | undefined): string | undefined {
+  const execution = result?._meta?.execution;
+  return execution && typeof execution === "object"
+    ? (execution as { terminationReason?: unknown }).terminationReason as string | undefined
+    : undefined;
+}
+
+function isMutationTool(canonicalName: string): boolean {
+  return canonicalName === "write"
+    || canonicalName === "edit"
+    || canonicalName === "notebookedit"
+    || canonicalName === "bash"
+    || canonicalName === "lsp";
 }
 
 function readInputPath(input: unknown): string | undefined {
   if (!input || typeof input !== "object") return undefined;
   const record = input as Record<string, unknown>;
-  const value = record.file_path ?? record.path;
+  const value = record.file_path ?? record.notebook_path ?? record.path;
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 function isFullReadResult(result: ToolResult): boolean {
   const data = parseObjectContent(result.content);
-  return typeof data.remainingLines === "number" ? data.remainingLines <= 0 : true;
+  if (data.summarized === true) return false;
+  if (typeof data.remainingLines === "number") {
+    return (data.offset === undefined || data.offset === 0) && data.remainingLines <= 0;
+  }
+  return true;
+}
+
+function getReadRange(result: ToolResult): { offset: number; limit: number; totalLines?: number } | undefined {
+  const data = parseObjectContent(result.content);
+  if (typeof data.offset !== "number" || typeof data.limit !== "number") return undefined;
+  return {
+    offset: data.offset,
+    limit: data.limit,
+    ...(typeof data.totalLines === "number" ? { totalLines: data.totalLines } : {})
+  };
 }
 
 function parseObjectContent(content: ToolResult["content"]): Record<string, unknown> {

@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LumeRuntimeEvent } from '@lume/shared'
+import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LumeRuntimeEvent, RuntimeCodingReport, ToolExecutionMetadata } from '@lume/shared'
 
 export interface RuntimeToolCallView {
   id: string
@@ -12,6 +12,9 @@ export interface RuntimeToolCallView {
   subagentStatus?: 'running' | 'completed' | 'errored'
   startedAt?: string
   durationMs?: number
+  riskLevel?: 'low' | 'medium' | 'high'
+  execution?: ToolExecutionMetadata
+  resultRef?: ToolExecutionMetadata['resultRef']
 }
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>
@@ -64,6 +67,7 @@ export interface RuntimeAssistantMessageView {
   tokenCount?: number
   tokenCountSource?: 'provider'
   tokenUsage?: RuntimeAssistantTokenUsageView
+  codingReport?: RuntimeCodingReport
   imDelivery?: {
     status: 'pending' | 'sent' | 'failed'
     provider: ImProvider

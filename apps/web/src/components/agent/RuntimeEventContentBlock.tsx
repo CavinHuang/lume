@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
+import type { RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { agentSend, getThreadMessageVersions, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
@@ -212,6 +213,9 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
             onOpenThreadFile={onOpenThreadFile}
             onUserResizeStart={onUserResizeStart}
           />
+        )}
+        {message.codingReport && (
+          <CodingRunReportCard report={message.codingReport} blocks={contentBlocks} />
         )}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
@@ -1116,6 +1120,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { tool
       >
         <Icon size={12} className="shrink-0" />
         <span className="shrink-0 font-mono font-medium">{toolCall.toolName}</span>
+        {toolCall.riskLevel && <span className={cn('shrink-0', riskLevelClassName(toolCall.riskLevel))}>{riskLevelLabel(toolCall.riskLevel)}</span>}
         <span className="min-w-0 flex-1 truncate">{summarizeInput(input)}</span>
         {toolCall.status === 'failed' && <TriangleAlert size={11} className="shrink-0 text-destructive/70" />}
         {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
@@ -1130,6 +1135,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { tool
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
+            <ToolExecutionDetails toolCall={toolCall} />
             <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>
@@ -1321,6 +1327,103 @@ function parseToolCallOutput(output: unknown): unknown {
   } catch {
     return output
   }
+}
+
+function CodingRunReportCard({
+  report,
+  blocks,
+}: {
+  report: RuntimeCodingReport
+  blocks: RuntimeAssistantBlock[]
+}) {
+  const toolCalls = blocks
+    .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'tool_call' }> => block.type === 'tool_call')
+    .map((block) => block.toolCall)
+  const latestTool = toolCalls.at(-1)
+  const activeTodo = [...blocks].reverse().find((block): block is Extract<RuntimeAssistantBlock, { type: 'todo_update' }> => block.type === 'todo_update')
+  const hasRisk = report.status === 'failed' || Boolean(report.baselineFailure) || report.externalChangedFiles.length > 0
+
+  if (report.status === 'not_required' && !report.workspaceChanged && !report.pendingBackground) return null
+
+  const statusLabel = report.status === 'verified'
+    ? '验证通过'
+    : report.status === 'failed'
+      ? '验证失败'
+      : report.status === 'unverified'
+        ? '待验证'
+        : '无需验证'
+  const statusTone = report.status === 'verified'
+    ? 'text-emerald-700 dark:text-emerald-300'
+    : report.status === 'failed'
+      ? 'text-destructive'
+      : 'text-amber-700 dark:text-amber-300'
+
+  return (
+    <div className="w-full max-w-[560px] rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-4 py-3 shadow-[0_1px_2px_hsl(var(--lume-shadow-panel)/0.08)]">
+      <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--lume-text-primary)]">
+        <Terminal size={15} className="text-[var(--lume-accent)]" />
+        <span>编码执行摘要</span>
+        <span className={cn('ml-auto text-[12px]', statusTone)}>{statusLabel}</span>
+      </div>
+      <div className="mt-2 grid gap-x-4 gap-y-1 text-[12px] text-[var(--lume-text-muted)] sm:grid-cols-2">
+        <span>阶段：{report.pendingBackground ? '等待后台任务' : activeTodo?.data.currentActiveForm ?? (report.workspaceChanged ? '验证工作区' : '执行完成')}</span>
+        <span>执行轮次：{toolCalls.length}</span>
+        {latestTool?.execution?.command && (
+          <span className="min-w-0 sm:col-span-2">最近命令：<code className="break-all text-[11px] text-[var(--lume-text-secondary)]">{latestTool.execution.command}</code></span>
+        )}
+      </div>
+      {report.changedFiles.length > 0 && (
+        <div className="mt-2 border-t border-[var(--lume-border-subtle)] pt-2 text-[12px] text-[var(--lume-text-muted)]">
+          <span>已改文件：</span>
+          <span className="text-[var(--lume-text-secondary)]">{formatFileList(report.changedFiles)}</span>
+        </div>
+      )}
+      {hasRisk && (
+        <div className="mt-2 flex items-start gap-1.5 text-[12px] text-amber-700 dark:text-amber-300">
+          <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+          <span>{report.baselineFailure ? `验证命令失败：${report.baselineFailure.command}` : report.externalChangedFiles.length > 0 ? `检测到外部改动：${formatFileList(report.externalChangedFiles)}` : report.message ?? '编码任务未通过验证'}</span>
+        </div>
+      )}
+      {report.pendingBackground && (
+        <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-300">后台任务仍在运行，完成状态会在 TaskOutput 返回后更新。</div>
+      )}
+    </div>
+  )
+}
+
+function formatFileList(files: string[]): string {
+  if (files.length <= 4) return files.join('、')
+  return `${files.slice(0, 4).join('、')} 等 ${files.length} 个文件`
+}
+
+function ToolExecutionDetails({ toolCall }: { toolCall: RuntimeToolCallView }) {
+  const execution = toolCall.execution
+  const resultRef = toolCall.resultRef ?? execution?.resultRef
+  if (!execution && !resultRef) return null
+
+  const terminationLabel = execution?.terminationReason === 'completed'
+    ? '正常结束'
+    : execution?.terminationReason === 'nonzero'
+      ? '非零退出'
+      : execution?.terminationReason === 'timeout'
+        ? '超时'
+        : execution?.terminationReason === 'aborted'
+          ? '已中止'
+          : execution?.terminationReason === 'spawn_error'
+            ? '启动失败'
+            : null
+
+  return (
+    <div className="mb-2 space-y-1 rounded-md bg-foreground/[0.03] px-2.5 py-2 text-[11px] text-foreground/55">
+      {execution?.command && <div className="break-all"><span className="mr-1 text-foreground/40">命令</span><code>{execution.command}</code></div>}
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {terminationLabel && <span>结果：{terminationLabel}</span>}
+        {typeof execution?.exitCode === 'number' && <span>退出码：{execution.exitCode}</span>}
+        {typeof execution?.durationMs === 'number' && <span>耗时：{formatDurationLabel(execution.durationMs)}</span>}
+      </div>
+      {resultRef && <div className="break-all"><span className="mr-1 text-foreground/40">结果文件</span>{resultRef.path}</div>}
+    </div>
+  )
 }
 
 function MinimalAssistantContent({
@@ -2070,6 +2173,11 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
       >
         <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
         <span className="font-mono font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
+        {toolCall.riskLevel && (
+          <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
+            {riskLevelLabel(toolCall.riskLevel)}
+          </span>
+        )}
         {getToolPermissionTitleBadgeText(toolCall) && (
           <span className="rounded-full bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 py-0.5 text-[12px] font-semibold text-[var(--lume-warning)]">
             {getToolPermissionTitleBadgeText(toolCall)}
@@ -2100,6 +2208,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">
+            <ToolExecutionDetails toolCall={toolCall} />
             <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>
@@ -2111,6 +2220,18 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
 export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): string | null {
   if (toolCall.permissionState === 'timeout') return '权限超时'
   return null
+}
+
+function riskLevelLabel(level: NonNullable<RuntimeToolCallView['riskLevel']>): string {
+  return level === 'high' ? '高风险' : level === 'medium' ? '中风险' : '低风险'
+}
+
+function riskLevelClassName(level: NonNullable<RuntimeToolCallView['riskLevel']>): string {
+  return level === 'high'
+    ? 'text-destructive'
+    : level === 'medium'
+      ? 'text-amber-700 dark:text-amber-300'
+      : 'text-emerald-700 dark:text-emerald-300'
 }
 function FooterMemoryNotice({
   events,

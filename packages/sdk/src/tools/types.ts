@@ -11,7 +11,11 @@ export function defineTool(config: {
   name: string
   description: string
   inputSchema: ToolInputSchema
-  call: (input: any, context: ToolContext) => Promise<string | { data: unknown; is_error?: boolean }>
+  call: (input: any, context: ToolContext) => Promise<
+    | string
+    | ToolResult
+    | { data: unknown; is_error?: boolean; _meta?: Record<string, unknown> }
+  >
   isReadOnly?: boolean
   isConcurrencySafe?: boolean
   prompt?: string | ((context: ToolContext) => Promise<string>)
@@ -42,7 +46,11 @@ export function defineTool(config: {
   }
 }
 
-function normalizeToolCallResult(result: string | { data: unknown; is_error?: boolean }): ToolResult {
+function normalizeToolCallResult(
+  result: string | ToolResult | { data: unknown; is_error?: boolean; _meta?: Record<string, unknown> },
+): ToolResult {
+  if (isToolResult(result)) return result
+
   if (typeof result === 'string') {
     return {
       type: 'tool_result',
@@ -53,13 +61,16 @@ function normalizeToolCallResult(result: string | { data: unknown; is_error?: bo
   }
 
   const payload = result.data
-  if (isRecord(payload) && Array.isArray(payload.content)) {
+  if (isRecord(payload) && 'content' in payload) {
     return {
       type: 'tool_result',
       tool_use_id: '',
-      content: payload.content,
+      content: typeof payload.content === 'string' || Array.isArray(payload.content)
+        ? payload.content as ToolResult['content']
+        : JSON.stringify(payload.content, null, 2),
       ...(result.is_error ? { is_error: true } : {}),
       ...(isRecord(payload._meta) ? { _meta: payload._meta } : {}),
+      ...(result._meta ? { _meta: result._meta } : {}),
     }
   }
 
@@ -68,7 +79,15 @@ function normalizeToolCallResult(result: string | { data: unknown; is_error?: bo
     tool_use_id: '',
     content: typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2),
     is_error: result.is_error || false,
+    ...(result._meta ? { _meta: result._meta } : {}),
   }
+}
+
+function isToolResult(value: unknown): value is ToolResult {
+  return isRecord(value)
+    && value.type === 'tool_result'
+    && typeof value.tool_use_id === 'string'
+    && 'content' in value
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

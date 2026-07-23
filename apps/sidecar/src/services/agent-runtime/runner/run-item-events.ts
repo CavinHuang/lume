@@ -2,6 +2,7 @@ import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
 import type { LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
 import type { LumeRunItem } from "./run-items";
 import type { LumeRunState } from "./run-state";
+import { inferToolMetadata } from "../tools/tool-metadata";
 
 export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEvent[] {
   if (isRuntimeContinuationRun(run)) {
@@ -60,7 +61,9 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
       threadId: run.threadId,
       runId: run.runId,
       createdAt: run.completedAt ?? run.updatedAt,
-      finalOutput: extractFinalOutput(run.generatedItems)
+      finalOutput: extractFinalOutput(run.generatedItems),
+      ...(run.verificationStatus ? { verificationStatus: run.verificationStatus } : {}),
+      ...(run.codingReport ? { codingReport: run.codingReport } : {})
     });
   }
 
@@ -92,8 +95,12 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
 
   return events.map((event) => ({
     ...event,
-    fileReferenceBinding: run.fileReferenceBinding,
-    fileReferenceProtocolVersion: run.fileReferenceProtocolVersion ?? FILE_REFERENCE_PROTOCOL_VERSION
+    ...(run.fileReferenceBinding
+      ? {
+          fileReferenceBinding: run.fileReferenceBinding,
+          fileReferenceProtocolVersion: run.fileReferenceProtocolVersion ?? FILE_REFERENCE_PROTOCOL_VERSION
+        }
+      : {})
   }));
 }
 
@@ -188,12 +195,15 @@ export function projectRunItemToRuntimeEvents(
       toolCallId: item.id,
       toolName: item.toolName,
       inputPreview: item.input,
+      riskLevel: inferToolMetadata(item.toolName).riskLevel,
       ...subagentFields
     }];
   }
 
   if (item.type === "tool_result") {
     const isError = item.isError === true;
+    const execution = normalizeToolExecutionMetadata(item.execution);
+    const resultRef = execution?.resultRef;
     if (isError) {
       return [{
         id: `${run.runId}:${item.id}:tool.failed`,
@@ -207,6 +217,8 @@ export function projectRunItemToRuntimeEvents(
           code: "tool_error",
           message: previewRuntimePayload(item.output)
         },
+        ...(execution ? { execution } : {}),
+        ...(resultRef ? { resultRef } : {}),
         ...subagentFields
       }];
     }
@@ -219,6 +231,8 @@ export function projectRunItemToRuntimeEvents(
       toolCallId: item.toolCallId,
       toolName: item.toolName,
       resultPreview: previewRuntimePayload(item.output),
+      ...(execution ? { execution } : {}),
+      ...(resultRef ? { resultRef } : {}),
       ...subagentFields
     }];
   }
@@ -257,6 +271,32 @@ export function projectRunItemToRuntimeEvents(
   }
 
   return [];
+}
+
+function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").ToolExecutionMetadata | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const terminationReason = record.terminationReason;
+  if (record.version !== 1 || typeof record.command !== "string" || typeof record.durationMs !== "number") return undefined;
+  if (terminationReason !== "completed" && terminationReason !== "nonzero" && terminationReason !== "timeout" && terminationReason !== "aborted" && terminationReason !== "spawn_error" && terminationReason !== "running") return undefined;
+  const ref = record.resultRef;
+  const resultRef = ref && typeof ref === "object" && !Array.isArray(ref) ? ref as Record<string, unknown> : undefined;
+  return {
+    version: 1,
+    ...(typeof record.exitCode === "number" || record.exitCode === null ? { exitCode: record.exitCode } : {}),
+    ...(typeof record.stdoutPreview === "string" ? { stdoutPreview: record.stdoutPreview } : {}),
+    ...(typeof record.stderrPreview === "string" ? { stderrPreview: record.stderrPreview } : {}),
+    ...(typeof record.timedOut === "boolean" ? { timedOut: record.timedOut } : {}),
+    ...(typeof record.aborted === "boolean" ? { aborted: record.aborted } : {}),
+    durationMs: record.durationMs,
+    command: record.command,
+    ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),
+    ...(typeof record.workspaceChanged === "boolean" ? { workspaceChanged: record.workspaceChanged } : {}),
+    ...(resultRef?.kind === "file" && typeof resultRef.path === "string" && typeof resultRef.size === "number"
+      ? { resultRef: resultRef as import("@lume/shared").ToolExecutionMetadata["resultRef"] }
+      : {}),
+    terminationReason,
+  };
 }
 
 function subagentRuntimeFields(item: LumeRunItem): Pick<LumeRuntimeEvent, "subagentRunId" | "parentToolUseId"> {

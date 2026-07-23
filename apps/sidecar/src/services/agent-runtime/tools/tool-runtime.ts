@@ -169,6 +169,7 @@ function materializeRuntimeTools(input: {
             cwd: input.cwd,
             fileLedger: getRuntimeFileAccessLedger()
           });
+    if (descriptor.canonicalName === "askuserquestion") return runtimeTool;
     return wrapToolWithProtectedRootPolicy({
       descriptor,
       tool: runtimeTool,

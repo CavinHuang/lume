@@ -1,0 +1,281 @@
+import type { ToolResult } from "@lume/agent-sdk";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import {
+  captureWorkspaceSnapshot,
+  diffWorkspaceSnapshots,
+  flattenWorkspaceSnapshotDiff,
+  type WorkspaceSnapshot,
+  type WorkspaceSnapshotDiff
+} from "./workspace-snapshot";
+
+export type CodingVerificationStatus = "not_required" | "unverified" | "verified" | "failed";
+
+export interface CodingVerificationReport {
+  status: CodingVerificationStatus;
+  message?: string;
+  baselineFailure?: {
+    command: string;
+    signature: string;
+  };
+  workspaceChanged: boolean;
+  changedFiles: string[];
+  externalChangedFiles: string[];
+  pendingBackground: boolean;
+}
+
+interface PersistedCodingRunState {
+  version: 1;
+  workspaceRoot: string;
+  baselineSnapshot?: WorkspaceSnapshot;
+  latestSnapshot?: WorkspaceSnapshot;
+  mutationObserved: boolean;
+  verificationStatus: CodingVerificationStatus;
+  verificationMessage: string;
+  promptedWithoutEvidence: boolean;
+  baselineVerification?: { command: string; signature: string };
+  baselineFailure?: { command: string; signature: string };
+  attributedCandidates: string[];
+  pendingBackground: boolean;
+}
+
+export interface CodingRunTrackerOptions {
+  workspaceRoot?: string;
+  statePath?: string;
+}
+
+export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
+  let mutationObserved = false;
+  let verificationStatus: CodingVerificationStatus = "not_required";
+  let verificationMessage = "";
+  let promptedWithoutEvidence = false;
+  let baselineVerification: PersistedCodingRunState["baselineVerification"];
+  let baselineFailure: PersistedCodingRunState["baselineFailure"];
+  let baselineSnapshot: WorkspaceSnapshot | undefined;
+  let latestSnapshot: WorkspaceSnapshot | undefined;
+  let workspaceDiff: WorkspaceSnapshotDiff = { added: [], modified: [], deleted: [] };
+  const attributedCandidates = new Set<string>();
+  let pendingBackground = false;
+  let pendingSnapshot: Promise<void> = Promise.resolve();
+
+  function persist(): void {
+    if (!options.statePath || !options.workspaceRoot) return;
+    const state: PersistedCodingRunState = {
+      version: 1,
+      workspaceRoot: options.workspaceRoot,
+      baselineSnapshot,
+      latestSnapshot,
+      mutationObserved,
+      verificationStatus,
+      verificationMessage,
+      promptedWithoutEvidence,
+      baselineVerification,
+      baselineFailure,
+      attributedCandidates: [...attributedCandidates],
+      pendingBackground
+    };
+    try {
+      mkdirSync(dirname(options.statePath), { recursive: true });
+      const tempPath = `${options.statePath}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(tempPath, JSON.stringify(state), "utf-8");
+      renameSync(tempPath, options.statePath);
+    } catch {
+      // State persistence is best effort; the in-memory guard remains authoritative.
+    }
+  }
+
+  function restore(): void {
+    if (!options.statePath || !options.workspaceRoot || !existsSync(options.statePath)) return;
+    try {
+      const state = JSON.parse(readFileSync(options.statePath, "utf-8")) as Partial<PersistedCodingRunState>;
+      if (state.version !== 1 || state.workspaceRoot !== options.workspaceRoot) return;
+      baselineSnapshot = state.baselineSnapshot;
+      latestSnapshot = state.latestSnapshot;
+      if (baselineSnapshot && latestSnapshot) workspaceDiff = diffWorkspaceSnapshots(baselineSnapshot, latestSnapshot);
+      mutationObserved = state.mutationObserved === true;
+      verificationStatus = state.verificationStatus ?? "not_required";
+      verificationMessage = state.verificationMessage ?? "";
+      promptedWithoutEvidence = state.promptedWithoutEvidence === true;
+      baselineVerification = state.baselineVerification;
+      baselineFailure = state.baselineFailure;
+      for (const path of state.attributedCandidates ?? []) attributedCandidates.add(path);
+      pendingBackground = state.pendingBackground === true;
+    } catch {
+      // Ignore corrupt or partial state and establish a fresh baseline.
+    }
+  }
+
+  async function initialize(): Promise<void> {
+    restore();
+    if (!options.workspaceRoot || baselineSnapshot) return;
+    try {
+      baselineSnapshot = await captureWorkspaceSnapshot(options.workspaceRoot);
+      latestSnapshot = baselineSnapshot;
+      persist();
+    } catch {
+      // A missing or inaccessible workspace produces an unverified report later.
+    }
+  }
+
+  function queueSnapshot(input: { toolName: string; input: unknown; result: ToolResult }): void {
+    const toolName = input.toolName;
+    const result = input.result;
+    if (!options.workspaceRoot) return;
+    const name = toolName.toLowerCase();
+    const execution = getExecutionMetadata(result);
+    const shouldSnapshot = name === "bash"
+      || ["write", "edit", "notebookedit", "lsp"].includes(name)
+      || (name === "taskoutput" && execution?.terminationReason !== "running");
+    if (!shouldSnapshot) return;
+    pendingSnapshot = pendingSnapshot.then(async () => {
+      try {
+        const snapshot = await captureWorkspaceSnapshot(options.workspaceRoot!);
+        if (!baselineSnapshot) baselineSnapshot = snapshot;
+        latestSnapshot = snapshot;
+        workspaceDiff = diffWorkspaceSnapshots(baselineSnapshot, snapshot);
+        const executionMutation = execution?.command
+          ? isLikelyMutationCommand({ input: { command: execution.command } })
+          : false;
+        if (((name === "bash" && isLikelyMutationCommand(input)) || (name === "taskoutput" && executionMutation)) && result.is_error !== true) {
+          for (const path of flattenWorkspaceSnapshotDiff(workspaceDiff)) attributedCandidates.add(path);
+          mutationObserved = true;
+          if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
+        }
+        persist();
+      } catch {
+        // Keep the previous snapshot; direct mutation evidence still applies.
+      }
+    });
+  }
+
+  function observe(input: { toolName: string; input: unknown; result: ToolResult }): void {
+    const name = input.toolName.toLowerCase();
+    const execution = getExecutionMetadata(input.result);
+    if (name === "bash" && execution?.terminationReason === "running") pendingBackground = true;
+    if (name === "taskoutput" && execution && execution.terminationReason !== "running") pendingBackground = false;
+    const bashMutation = name === "bash" && isLikelyMutationCommand(input);
+    if ((["write", "edit", "notebookedit", "lsp"].includes(name) || bashMutation) && input.result.is_error !== true) {
+      mutationObserved = true;
+      if (name !== "bash") {
+        const path = readMutationPath(input.input, options.workspaceRoot);
+        if (path) attributedCandidates.add(path);
+      }
+      if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
+    }
+    queueSnapshot(input);
+    if (name !== "bash") {
+      persist();
+      return;
+    }
+    const raw = input.input && typeof input.input === "object" ? input.input as Record<string, unknown> : {};
+    const command = typeof raw.command === "string" ? raw.command : "";
+    const purpose = typeof raw.purpose === "string" ? raw.purpose : "";
+    if (!isVerificationCommand(command, purpose)) {
+      persist();
+      return;
+    }
+    const signature = verificationSignature(input.result);
+    if (!mutationObserved && input.result.is_error === true) {
+      baselineVerification = { command, signature };
+      persist();
+      return;
+    }
+    if (input.result.is_error === true) {
+      if (baselineVerification?.command === command && baselineVerification.signature === signature) {
+        baselineFailure = { command, signature };
+        verificationStatus = "unverified";
+        verificationMessage = "验证命令在修改前已经失败，本次失败与基线一致，无法归因于当前修改。";
+        promptedWithoutEvidence = true;
+        persist();
+        return;
+      }
+      verificationStatus = "failed";
+      verificationMessage = stringifyResult(input.result);
+      persist();
+      return;
+    }
+    verificationStatus = "verified";
+    verificationMessage = "";
+    baselineFailure = undefined;
+    persist();
+  }
+
+  async function completionGuard(): Promise<string | undefined> {
+    await pendingSnapshot;
+    if (pendingBackground) return "[background pending] 后台命令仍在运行，请在当前 Run 中使用 TaskOutput 等待其终态后再完成。";
+    if (!mutationObserved || verificationStatus === "verified" || verificationStatus === "not_required") return undefined;
+    if (verificationStatus === "failed") {
+      return `[verification failed] ${verificationMessage || "上一次验证失败"}。请在当前 Run 中修复问题并重新执行验证。`;
+    }
+    if (promptedWithoutEvidence) return undefined;
+    promptedWithoutEvidence = true;
+    return "[verification needed] 当前 Run 已产生文件或命令变更。请执行相关测试、类型检查、Lint、构建或最小验证；若项目没有可靠入口，完成时明确说明未验证。";
+  }
+
+  return {
+    observe,
+    initialize,
+    completionGuard,
+    getVerificationStatus: () => verificationStatus,
+    getVerificationReport: (): CodingVerificationReport => {
+      const changedFiles = flattenWorkspaceSnapshotDiff(workspaceDiff).filter((path) => attributedCandidates.has(path));
+      const externalChangedFiles = flattenWorkspaceSnapshotDiff(workspaceDiff).filter((path) => !attributedCandidates.has(path));
+      return {
+        status: verificationStatus,
+        ...(verificationMessage ? { message: verificationMessage } : {}),
+        ...(baselineFailure ? { baselineFailure } : {}),
+        workspaceChanged: changedFiles.length > 0,
+        changedFiles,
+        externalChangedFiles,
+        pendingBackground
+      };
+    }
+  };
+}
+
+function isVerificationCommand(command: string, purpose: string): boolean {
+  if (purpose.trim().toLowerCase() === "verification") return true;
+  return /(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest|bun)(\s|$)/i.test(command);
+}
+
+function isLikelyMutationCommand(input: { input: unknown }): boolean {
+  const raw = input.input && typeof input.input === "object" ? input.input as Record<string, unknown> : {};
+  const command = typeof raw.command === "string" ? raw.command : "";
+  return /(^|\s)(rm|mv|cp|mkdir|rmdir|touch|del|copy|move|npm|pnpm|yarn|bun|git\s+(apply|checkout|clean|reset)|sed\s+-i|perl\s+-i)(\s|$)/i.test(command)
+    || /(?:>>?|\|\s*(?:tee|Set-Content)|Set-Content|Out-File|writeFile|write_text|unlink\s*\()/i.test(command);
+}
+
+function readMutationPath(input: unknown, workspaceRoot?: string): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const value = (input as Record<string, unknown>).file_path
+    ?? (input as Record<string, unknown>).notebook_path
+    ?? (input as Record<string, unknown>).path;
+  if (typeof value !== "string" || !value.trim() || !workspaceRoot) return undefined;
+  const canonical = resolve(workspaceRoot, value);
+  const relativePath = relative(workspaceRoot, canonical).split("\\").join("/");
+  return relativePath === ".." || relativePath.startsWith("../") ? undefined : relativePath;
+}
+
+function stringifyResult(result: ToolResult): string {
+  if (typeof result.content === "string") return result.content.slice(0, 1000);
+  try {
+    return JSON.stringify(result.content).slice(0, 1000);
+  } catch {
+    return "工具验证失败";
+  }
+}
+
+function verificationSignature(result: ToolResult): string {
+  const text = stringifyResult(result);
+  return `${result.is_error === true ? "error" : "ok"}:${text.slice(0, 2000)}`;
+}
+
+function getExecutionMetadata(result: ToolResult): {
+  command?: string;
+  terminationReason?: string;
+} | undefined {
+  const execution = result._meta?.execution;
+  return execution && typeof execution === "object"
+    ? execution as { command?: string; terminationReason?: string }
+    : undefined;
+}

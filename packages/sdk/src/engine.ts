@@ -1226,6 +1226,7 @@ export class QueryEngine {
             output: formatToolResultOutput(result.content),
             content: result.content,
             is_error: result.is_error === true,
+            ...(result._meta ? { _meta: result._meta } : {}),
           },
         }
       }
@@ -1351,6 +1352,8 @@ export class QueryEngine {
       additionalDirectories: this.config.additionalDirectories,
       sandbox: this.config.sandbox,
       toolConfig: this.config.toolConfig,
+      artifactsRoot: this.config.artifactsRoot,
+      onToolExecution: this.config.onToolExecution,
       permissionMode: this.config.permissionMode,
       hookRegistry: this.hookRegistry,
       skillRegistry: this.config.skillRegistry,
@@ -1588,6 +1591,11 @@ export class QueryEngine {
       const startedAt = performance.now()
       const eventStartIndex = events.length
       const result = await tool.call(block.input, toolContext)
+      toolContext.onToolExecution?.({
+        toolName: block.name,
+        input: block.input,
+        result,
+      })
       applySkillAllowedTools(block.name, result, this.config)
       const elapsedTimeSeconds = Math.max(0, (performance.now() - startedAt) / 1000)
       toolsUsed.push(block.name)

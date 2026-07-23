@@ -102,6 +102,7 @@ import {
   clearRuntimeToolDescriptors,
 } from "../tools/tool-descriptor-session";
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
+import { createCodingRunTracker, type CodingVerificationStatus } from "./coding-run-tracker";
 import { runAdvisor } from "../advisor/advisor-service";
 import { getNodeReplRuntimeRegistry } from "../tools/node-repl/node-repl-runtime-registry";
 import { getComputerUseSessionRegistry } from "../tools/computer-use/computer-use-session";
@@ -236,6 +237,8 @@ export interface CreateRuntimeCoreSessionResult {
   userMessageForModel: string | ContentBlockParam[];
   memoryContextUsedItems: MemoryV2RecallItem[];
   tools: ToolDefinition[];
+  getVerificationStatus: () => CodingVerificationStatus;
+  getVerificationReport: () => import("./coding-run-tracker").CodingVerificationReport;
 }
 
 interface RuntimeCoreToolset {
@@ -1497,10 +1500,15 @@ export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
   const boundSubagentIdentity = resolveBoundSubagentIdentity(input);
+  const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
+  const codingRunTracker = createCodingRunTracker({
+    workspaceRoot: input.cwd,
+    statePath: join(sessionDir, "coding-state.v1.json")
+  });
+  await codingRunTracker.initialize();
   const boundSubagentReportTool = boundSubagentIdentity
     ? createBoundSubagentTaskReportTool(boundSubagentIdentity)
     : undefined;
-  const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
   const initialTodoState = await readLatestTodoState({
     sessionDir,
     threadId: input.lumeSessionId
@@ -1775,6 +1783,21 @@ export async function createRuntimeCoreSession(
     buildSubagentWorkContext(unresolvedSubagentTasks)
   ].filter(Boolean).join("\n\n");
   const context = sessionManager.buildSessionContext();
+  const existingCompletionGuard = boundSubagentIdentity
+    ? () => getSubagentCoordinator().getRunCompletionBlocker(boundSubagentIdentity.runId)
+    : input.runId
+      ? () => getSubagentCoordinator().getCompletionBlocker(input.lumeSessionId, input.runId!)
+      : undefined;
+  const completionGuard = async (): Promise<string | undefined> => {
+    const existing = await existingCompletionGuard?.();
+    return existing ?? codingRunTracker.completionGuard();
+  };
+  const codingCompletionEnabled = !(
+    input.subagentRunId
+    && input.subagentTaskId
+    && !input.runId
+    && !boundSubagentIdentity
+  );
 
   const agentOptions: AgentOptions = {
     apiType: resolveSdkApiType(input.provider, input.openaiApiMode),
@@ -1782,6 +1805,8 @@ export async function createRuntimeCoreSession(
     ...(input.resolvedModel?.baseUrl ? { baseURL: input.resolvedModel.baseUrl } : {}),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
     cwd: input.cwd,
+    artifactsRoot: input.artifactsRoot,
+    onToolExecution: codingRunTracker.observe,
     systemPrompt,
     runtimeContext,
     promptCache,
@@ -1812,11 +1837,9 @@ export async function createRuntimeCoreSession(
         messageMetadata: input.messageMetadata
       }
     }),
-    ...(boundSubagentIdentity
-      ? { completionGuard: async () => getSubagentCoordinator().getRunCompletionBlocker(boundSubagentIdentity.runId) }
-      : input.runId
-        ? { completionGuard: async () => getSubagentCoordinator().getCompletionBlocker(input.lumeSessionId, input.runId!) }
-        : {}),
+    ...(codingCompletionEnabled && (input.userMessage?.trim() || existingCompletionGuard)
+      ? { completionGuard }
+      : {}),
     additionalDirectories: input.lumeWorkDir && input.lumeWorkDir !== input.cwd ? [input.lumeWorkDir] : undefined,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
@@ -1896,7 +1919,9 @@ export async function createRuntimeCoreSession(
     runtimeContext,
     userMessageForModel,
     memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
-    tools: resolvedTools
+    tools: resolvedTools,
+    getVerificationStatus: codingRunTracker.getVerificationStatus,
+    getVerificationReport: codingRunTracker.getVerificationReport
   };
 }
 

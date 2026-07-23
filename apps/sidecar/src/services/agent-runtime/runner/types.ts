@@ -1,5 +1,5 @@
 import type { SDKMessage } from "@lume/agent-sdk";
-import type { AgentSendInput, FileReferenceBinding } from "@lume/shared";
+import type { AgentSendInput, FileReferenceBinding, RuntimeCodingReport } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
 import type { AgentBrowserAuthRequest } from "@lume/shared";
 import type { AgentDesktopActionRequest } from "@lume/shared";
@@ -26,6 +26,8 @@ export type AgentRuntimeRunStatus = "completed" | "aborted" | "errored" | "turn_
 export interface AgentRuntimeRunResult {
   status: AgentRuntimeRunStatus;
   errorMessage?: string;
+  verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
+  codingReport?: RuntimeCodingReport;
 }
 
 export interface AgentRuntimeRunParams {
