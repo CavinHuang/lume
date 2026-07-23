@@ -118,7 +118,6 @@ import {
   replaceMcpResourceTools,
 } from "./mcp-resource-router.js";
 import type { LumeToolDescriptor } from "../tools/tool-types";
-import type { TaskContractRecord } from "../plan/task-contract-record-types";
 import {
   cloneTodoState,
   getTodoCompletionBlocker,
@@ -191,7 +190,6 @@ export interface CreateRuntimeCoreSessionInput {
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
   runId?: string;
   workflowHooks?: LumeWorkflowHookRuntimeLike;
@@ -796,7 +794,6 @@ function buildRuntimeCoreTools(input: {
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
   initialTodoState?: TodoState | null;
   runId?: string;
@@ -1747,7 +1744,6 @@ export async function createRuntimeCoreSession(
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
-    emitTaskContractUpdated: input.emitTaskContractUpdated,
     emitTodoUpdated: handleTodoUpdated,
     initialTodoState,
     runId: input.runId,

@@ -10,7 +10,6 @@ import type {
 } from "@lume/shared";
 import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
-import type { TaskContractPlanPreview } from "../plan/task-contract-write-tool";
 import type { ContextAssemblyInput } from "../context/context-assembler";
 import { TraceRecorder, type TraceRecorderEvent } from "../trace/trace-recorder";
 import { redactTracePayload, summarizeTraceOutput } from "../trace/trace-redaction";
@@ -270,34 +269,6 @@ export class LumeRunObserver {
             billing
           }
         });
-      }
-    });
-  }
-
-  recordPlanPreview(
-    preview: TaskContractPlanPreview,
-    emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
-  ): void {
-    this.enqueue(async () => {
-      const item: LumeRunItem = {
-        type: "plan_preview",
-        id: `plan:${preview.contractId}`,
-        contractId: preview.contractId,
-        title: preview.title,
-        summary: preview.summary,
-        markdown: preview.markdown,
-        planFilePath: preview.planFilePath,
-        planVerified: preview.planVerified,
-        stepCount: preview.stepCount,
-        createdAt: new Date().toISOString()
-      };
-      await this.stateStore.appendItem(this.state.runId, item);
-      for (const event of projectRunItemToRuntimeEvents(this.state, item, {
-        includeAssistantText: true,
-        includeAssistantThinking: true,
-        includeModelStreamText: true
-      })) {
-        this.emitRuntimeEvent(emitRuntimeEvent, event);
       }
     });
   }

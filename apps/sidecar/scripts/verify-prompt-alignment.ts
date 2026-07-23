@@ -88,8 +88,8 @@ check("P0-3: 计划模式 — AskUserQuestion 澄清", planPrompt, "AskUserQuest
 check("P0-3: 计划模式 — AskUserQuestion 不做审批", planPrompt, "不要用 AskUserQuestion 请求计划审批");
 check("P0-3: 计划模式 — planner 辅助设计", planPrompt, "先探索，再调用 planner");
 check("P0-3: 计划模式 — planner 不做审批", planPrompt, "planner 只提供设计草案");
-check("P0-3: 计划模式 — 使用结构化计划工具", planPrompt, "TaskContractWrite");
-check("P0-3: 计划模式 — 等待计划批准", planPrompt, "needs_approval");
+check("P0-3: 计划模式 — Task 不需要单独审批", planPrompt, "Task 不需要单独审批");
+check("P0-3: 计划模式 — TodoWrite 仅用于执行阶段", planPrompt, "TodoWrite 只记录执行阶段");
 // 计划模式不应包含原始 Planning Protocol，而是使用增强版计划章节
 const planHasPlanningProtocol = planPrompt.includes("Planning Protocol");
 if (!planHasPlanningProtocol) {

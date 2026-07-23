@@ -185,3 +185,4 @@ Remaining deviations/risks:
 - Removed `TaskContractWrite` from runtime tool metadata and planning-group resolution. The old plan/TaskRun source files and skipped compatibility tests remain isolated legacy code and are not reachable from the new Task toolchain.
 - Removed legacy TaskRun replay from runtime event history; replay now reads Lume run state plus the new TaskStore event log only.
 - Put startup journal recovery behind the Task list fencing lock and added coverage for recovery plus monotonic IDs after deletion.
+- Removed the obsolete runtime TaskContract callback and plan-preview observer path; plan mode now communicates a plan as ordinary assistant output and continues through the normal agent flow.
