@@ -100,9 +100,50 @@ jobs:
     name: Build macOS
     needs: [prepare-release, build-js-assets]
     runs-on: macos-15
+    env:
+      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Require macOS release credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD APPLE_API_KEY_P8_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required macOS release secret: $name"
+              exit 1
+            fi
+          done
+      - name: Import Developer ID certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/lume-developer-id.p12"
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          keychain_path="$RUNNER_TEMP/lume-release.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$certificate_path"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$api_key_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          identity="$(security find-identity -v -p codesigning "$keychain_path" | sed -n 's/.*"\\(Developer ID Application:.*\\)"/\\1/p' | head -n 1)"
+          if [ -z "$identity" ]; then
+            echo "Developer ID Application identity not found"
+            exit 1
+          fi
+          echo "LUME_COMPUTER_USE_CODESIGN_MODE=identity" >> "$GITHUB_ENV"
+          echo "LUME_COMPUTER_USE_CODESIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY=$api_key_path" >> "$GITHUB_ENV"
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -133,19 +174,41 @@ jobs:
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
           node scripts/build-node-repl-resources.mjs
-          node scripts/build-desktop-host-resources.mjs
+          node scripts/build-desktop-host-resources.mjs --target aarch64-apple-darwin --require-stable-signing
+          node scripts/build-desktop-host-resources.mjs --target x86_64-apple-darwin --require-stable-signing --preserve-manifest
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
         working-directory: apps/desktop
-        run: node ./scripts/run-electron-builder.mjs --output-dir dist-release --mac --arm64 --x64 --publish never --config.directories.output=dist-release
+        env:
+          LUME_RELEASE_SIGNING_REQUIRED: "1"
+        run: node ./scripts/run-electron-builder.mjs --output-dir dist-release --mac --arm64 --x64 --publish never --config.directories.output=dist-release --config.mac.notarize=true
+      - name: Notarize and staple release disks
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+          for dmg in apps/desktop/dist-release/*.dmg; do
+            found=1
+            xcrun notarytool submit "$dmg" \
+              --key "$APPLE_API_KEY" \
+              --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER" \
+              --wait
+            xcrun stapler staple "$dmg"
+            xcrun stapler validate "$dmg"
+          done
+          if [ "$found" -ne 1 ]; then
+            echo "Missing macOS DMG"
+            exit 1
+          fi
       - name: Smoke sidecar bundle
         run: bun scripts/smoke-sidecar-bundle.mjs
       - name: Verify package artifacts
         run: |
           LUME_DESKTOP_TARGET=aarch64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
           LUME_DESKTOP_TARGET=x86_64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
-      - name: Verify ad-hoc signature and smoke installed macOS app
+      - name: Verify Developer ID signature, Gatekeeper, and installed macOS app
         shell: bash
         run: |
           set -euo pipefail
@@ -160,7 +223,9 @@ jobs:
             hdiutil detach "$mount_dir" -quiet
 
             codesign --verify --deep --strict --verbose=2 "$copied_app"
-            codesign -dv --verbose=4 "$copied_app" 2>&1 | grep -q "Signature=adhoc"
+            codesign -dv --verbose=4 "$copied_app" 2>&1 | grep -q "Authority=Developer ID Application"
+            codesign -dv --verbose=4 "$copied_app" 2>&1 | grep -q "TeamIdentifier="
+            spctl --assess --type execute --verbose=4 "$copied_app"
             if [[ "$dmg" == *arm64.dmg ]]; then
               launch_app="$copied_app"
             fi
@@ -170,9 +235,6 @@ jobs:
             echo "Missing arm64 app for launch smoke"
             exit 1
           fi
-          # There is no Developer ID, so launch smoke removes quarantine only after
-          # the ad-hoc signature and bundle integrity have been verified above.
-          xattr -dr com.apple.quarantine "$launch_app"
           log="$(mktemp)"
           LUME_DESKTOP_STARTUP_LOG="$log" "$launch_app/Contents/MacOS/Lume" &
           pid="$!"
@@ -210,9 +272,29 @@ jobs:
     name: Build Windows
     needs: [prepare-release, build-js-assets]
     runs-on: windows-latest
+    env:
+      WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Require and prepare Windows release certificate
+        shell: pwsh
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE_PFX_BASE64) { throw "Missing required Windows release secret: WINDOWS_CERTIFICATE_PFX_BASE64" }
+          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) { throw "Missing required Windows release secret: WINDOWS_CERTIFICATE_PASSWORD" }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "lume-authenticode.pfx"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -File -Recurse |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signTool) { throw "signtool.exe not found" }
+          "LUME_WINDOWS_SIGNTOOL_PATH=$($signTool.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LUME_WINDOWS_CODESIGN_CERTIFICATE=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LUME_WINDOWS_CODESIGN_PASSWORD=$env:WINDOWS_CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CSC_LINK=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CSC_KEY_PASSWORD=$env:WINDOWS_CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -242,7 +324,7 @@ jobs:
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
           node scripts/build-node-repl-resources.mjs
-          node scripts/build-desktop-host-resources.mjs
+          node scripts/build-desktop-host-resources.mjs --require-stable-signing
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
@@ -284,6 +366,14 @@ jobs:
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
           if (-not $app) { throw "Installed Lume.exe not found" }
+          if ((Get-AuthenticodeSignature $app.FullName).Status -ne "Valid") {
+            throw "Installed Lume.exe does not have a valid Authenticode signature"
+          }
+          $desktopHost = Get-ChildItem $app.DirectoryName -Filter "lume_desktop_host.exe" -File -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $desktopHost -or (Get-AuthenticodeSignature $desktopHost.FullName).Status -ne "Valid") {
+            throw "Packaged desktop host does not have a valid Authenticode signature"
+          }
           $log = Join-Path $env:TEMP "lume-startup.log"
           Remove-Item $log -Force -ErrorAction SilentlyContinue
           $env:LUME_DESKTOP_STARTUP_LOG = $log

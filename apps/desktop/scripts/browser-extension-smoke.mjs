@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process"
 import { createServer } from "node:http"
-import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs"
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
@@ -8,10 +8,13 @@ import { ExternalChromeTransport } from "../../sidecar/src/services/browser/exte
 
 if (process.platform !== "win32") throw new Error("This installed Chrome smoke currently supports Windows only")
 
-const pluginRoot = resolve(process.argv[2] ?? "")
+const packagedLume = process.argv.includes("--packaged-lume")
+const pluginRoot = resolve(process.argv.slice(2).find((argument) => !argument.startsWith("--")) ?? "")
 const chromePath = resolve(process.env.LUME_SMOKE_CHROME_PATH ?? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")
+const lumePath = resolve(process.env.LUME_SMOKE_LUME_PATH ?? join(import.meta.dirname, "..", "dist-unpacked", "win-unpacked", "Lume.exe"))
 if (!existsSync(join(pluginRoot, "extension", "manifest.json"))) throw new Error("Pass the absolute lume-chrome plugin root as the first argument")
 if (!existsSync(chromePath) || basename(chromePath).toLowerCase() !== "chrome.exe") throw new Error("Chrome executable not found")
+if (packagedLume && !existsSync(lumePath)) throw new Error("Packaged Lume executable not found")
 
 const root = mkdtempSync(join(tmpdir(), "lume-installed-browser-smoke-"))
 const profile = join(root, "chrome-profile")
@@ -25,6 +28,7 @@ const pipeEndpoint = `\\\\.\\pipe\\lume-browser-smoke-${randomUUID().replaceAll(
 let chrome = null
 let transport = null
 let fixture = null
+let lume = null
 let pairingStored = false
 
 try {
@@ -55,53 +59,149 @@ try {
   })
   pairingStored = true
   const bridge = JSON.parse(readFileSync(join(localAppData, "Lume", "ChromeNativeMessaging", "bridge-config.json"), "utf8"))
-  transport = new ExternalChromeTransport({
-    endpoint: bridge.endpoint,
-    pairingId: bridge.pairingId,
-    generation: bridge.generation,
-    hostPath: bridge.hostPath,
-    hostSha256: bridge.hostSha256,
-    requestTimeoutMs: 15_000,
-  })
-  await transport.start()
+  if (packagedLume) {
+    const configRoot = join(root, "lume-config")
+    mkdirSync(configRoot, { recursive: true })
+    writeFileSync(join(configRoot, "settings.json"), JSON.stringify({ browser: { extensionBackendEnabled: true } }))
+    writeFileSync(join(configRoot, "lume.yaml"), "version: 1\nplugins:\n  global:\n    enabled:\n      - browser\n      - lume-chrome\n    disabled: []\n")
+    lume = launchPackagedLume(lumePath, join(root, "lume-profile"), configRoot, bridge)
+  } else {
+    transport = new ExternalChromeTransport({
+      endpoint: bridge.endpoint,
+      pairingId: bridge.pairingId,
+      generation: bridge.generation,
+      hostPath: bridge.hostPath,
+      hostSha256: bridge.hostSha256,
+      requestTimeoutMs: 15_000,
+    })
+    await transport.start()
+  }
   chrome = launchChrome(chromePath, profile, extensionRoot)
 
-  fixture = createServer((_request, response) => {
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
-    response.end("<title>Lume installed smoke</title><label>Name <input id=name></label><button id=apply onclick=\"document.querySelector('output').textContent=document.querySelector('#name').value\">Apply</button><output></output>")
-  })
-  await new Promise((resolveListen) => fixture.listen(0, "127.0.0.1", resolveListen))
-  const address = fixture.address()
-  if (!address || typeof address === "string") throw new Error("Fixture server did not bind")
-
-  try {
-    await waitUntil(() => transport.isAvailable(), 20_000, "Native Host did not connect through the installed MV3 extension")
-  } catch (error) {
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${readChromeNativeHostError(profile)}: ${JSON.stringify(readExtensionInstallState(profile, extensionId))}`)
+  if (packagedLume) {
+    const backends = await waitForPackagedBrowserBackends(join(root, "lume-profile"), 30_000)
+    if (!backends.some((backend) => backend?.backend === "extension")) throw new Error("Packaged Lume did not advertise the connected extension backend")
+    console.log(JSON.stringify({ ok: true, packagedLume: true, extensionId, extensionBackend: true }))
+  } else {
+    fixture = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
+      response.end("<title>Lume installed smoke</title><label>Name <input id=name></label><button id=apply onclick=\"document.querySelector('output').textContent=document.querySelector('#name').value\">Apply</button><output></output>")
+    })
+    await new Promise((resolveListen) => fixture.listen(0, "127.0.0.1", resolveListen))
+    const address = fixture.address()
+    if (!address || typeof address === "string") throw new Error("Fixture server did not bind")
+    try {
+      await waitUntil(() => transport.isAvailable(), 20_000, "Native Host did not connect through the installed MV3 extension")
+    } catch (error) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${readChromeNativeHostError(profile)}: ${JSON.stringify(readExtensionInstallState(profile, extensionId))}`)
+    }
+    const context = { actor: "agent", browserSessionId: "installed-smoke", browserTurnId: "installed-smoke", capability: "installed-smoke" }
+    const request = (method, params = {}) => transport.request({ requestId: randomUUID(), context, method, params })
+    const handshake = await request("handshake")
+    if (handshake?.protocolVersion !== 5) throw new Error("Installed extension protocol handshake failed")
+    const created = await request("ensure", { url: `http://127.0.0.1:${address.port}/` })
+    const tabId = created?.tabId
+    if (typeof tabId !== "string") throw new Error("Installed extension did not create a leased tab")
+    const locator = (selector) => ({ version: 1, steps: [{ kind: "css", selector }] })
+    await request("fill", { tabId, locator: locator("#name"), text: "Lume installed bridge" })
+    await request("click", { tabId, locator: locator("#apply") })
+    const result = await request("locator:innerText", { tabId, locator: locator("output") })
+    if (result !== "Lume installed bridge") throw new Error("Installed extension locator input did not roundtrip")
+    const screenshot = await request("screenshot", { tabId })
+    if (typeof screenshot?.dataBase64 !== "string" || screenshot.dataBase64.length < 100) throw new Error("Installed extension screenshot was empty")
+    await request("close", { tabId })
+    console.log(JSON.stringify({ ok: true, extensionId, protocolVersion: handshake.protocolVersion, locatorRoundtrip: true, screenshot: true }))
   }
-  const context = { actor: "agent", browserSessionId: "installed-smoke", browserTurnId: "installed-smoke", capability: "installed-smoke" }
-  const request = (method, params = {}) => transport.request({ requestId: randomUUID(), context, method, params })
-  const handshake = await request("handshake")
-  if (handshake?.protocolVersion !== 5) throw new Error("Installed extension protocol handshake failed")
-  const created = await request("ensure", { url: `http://127.0.0.1:${address.port}/` })
-  const tabId = created?.tabId
-  if (typeof tabId !== "string") throw new Error("Installed extension did not create a leased tab")
-  const locator = (selector) => ({ version: 1, steps: [{ kind: "css", selector }] })
-  await request("fill", { tabId, locator: locator("#name"), text: "Lume installed bridge" })
-  await request("click", { tabId, locator: locator("#apply") })
-  const result = await request("locator:innerText", { tabId, locator: locator("output") })
-  if (result !== "Lume installed bridge") throw new Error("Installed extension locator input did not roundtrip")
-  const screenshot = await request("screenshot", { tabId })
-  if (typeof screenshot?.dataBase64 !== "string" || screenshot.dataBase64.length < 100) throw new Error("Installed extension screenshot was empty")
-  await request("close", { tabId })
-  console.log(JSON.stringify({ ok: true, extensionId, protocolVersion: handshake.protocolVersion, locatorRoundtrip: true, screenshot: true }))
 } finally {
   if (transport) await transport.close().catch(() => undefined)
+  if (lume) stopChrome(lume)
   if (chrome) stopChrome(chrome)
   if (fixture) await new Promise((resolveClose) => fixture.close(() => resolveClose()))
   if (pairingStored && existsSync(hostPath)) spawnSync(hostPath, ["pairing", "delete", pairingId], { windowsHide: true, stdio: "ignore" })
   restoreRegistryDefault(registryKey, previousManifest)
-  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  await removeTemporaryRoot(root)
+}
+
+async function removeTemporaryRoot(target) {
+  if (dirname(target) !== tmpdir() || !basename(target).startsWith("lume-installed-browser-smoke-")) {
+    throw new Error("Refusing to remove an unexpected browser smoke path")
+  }
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      rmSync(target, { recursive: true, force: true })
+      return
+    } catch (error) {
+      if (attempt === 19) throw error
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250))
+    }
+  }
+}
+
+function launchPackagedLume(executable, userDataDir, configRoot, bridge) {
+  mkdirSync(userDataDir, { recursive: true })
+  return spawn(executable, [
+    `--user-data-dir=${userDataDir}`,
+    "--remote-debugging-port=0",
+  ], {
+    env: {
+      ...process.env,
+      LUME_CONFIG_DIR: configRoot,
+      LUME_CHROME_BRIDGE_ENDPOINT: bridge.endpoint,
+      LUME_CHROME_BRIDGE_PAIRING_ID: bridge.pairingId,
+      LUME_CHROME_BRIDGE_GENERATION: String(bridge.generation),
+      LUME_CHROME_BRIDGE_HOST_PATH: bridge.hostPath,
+      LUME_CHROME_BRIDGE_HOST_SHA256: bridge.hostSha256,
+    },
+    stdio: "ignore",
+    windowsHide: true,
+  })
+}
+
+async function waitForPackagedBrowserBackends(userDataDir, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let lastError = ""
+  while (Date.now() < deadline) {
+    try {
+      const port = readFileSync(join(userDataDir, "DevToolsActivePort"), "utf8").split(/\r?\n/, 1)[0]
+      const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json())
+      const page = targets.find((target) => target.type === "page" && typeof target.webSocketDebuggerUrl === "string")
+      if (!page) throw new Error("renderer target unavailable")
+      const backends = await evaluateCdp(page.webSocketDebuggerUrl, "globalThis.electronAPI.invoke('sidecar_call', { method: 'browser:backends', params: null })")
+      if (Array.isArray(backends) && backends.some((backend) => backend?.backend === "extension")) return backends
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150))
+  }
+  throw new Error(`Packaged Lume did not connect to the extension backend: ${lastError}`)
+}
+
+function evaluateCdp(webSocketUrl, expression) {
+  return new Promise((resolveValue, reject) => {
+    const socket = new WebSocket(webSocketUrl)
+    const id = 1
+    const timer = setTimeout(() => {
+      socket.close()
+      reject(new Error("CDP evaluation timed out"))
+    }, 5_000)
+    socket.onopen = () => socket.send(JSON.stringify({
+      id,
+      method: "Runtime.evaluate",
+      params: { expression, awaitPromise: true, returnByValue: true },
+    }))
+    socket.onerror = () => {
+      clearTimeout(timer)
+      reject(new Error("CDP connection failed"))
+    }
+    socket.onmessage = (event) => {
+      const message = JSON.parse(String(event.data))
+      if (message.id !== id) return
+      clearTimeout(timer)
+      socket.close()
+      if (message.result?.exceptionDetails) return reject(new Error(message.result.exceptionDetails.text ?? "CDP evaluation failed"))
+      resolveValue(message.result?.result?.value)
+    }
+  })
 }
 
 function run(command, args, cwd, env = process.env) {

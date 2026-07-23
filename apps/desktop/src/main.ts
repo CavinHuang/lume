@@ -101,6 +101,9 @@ import {
 import {
   createUtilityProcessSidecarForkConfig,
   getDesktopHostBinaryPath,
+  getDesktopHostManifestPath,
+  getNativeTargetId,
+  getUserPresenceHelperPath,
   getNativeBinaryPath,
   getNodeReplHostBinaryPath,
   getNodeReplRootPath,
@@ -116,6 +119,7 @@ import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecu
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile } from './browser-import'
+import { requestFreshUserPresence } from './user-presence'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
 import {
   createAsyncSingleFlight,
@@ -2612,6 +2616,21 @@ app.whenReady().then(async () => {
       decrypt: (value) => safeStorage.decryptString(value),
     },
     credentialStorage: safeStorage,
+    authorizeCredentialUse: async () => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) return false
+      return await requestFreshUserPresence({
+        binaryPath: getUserPresenceHelperPath({
+          appIsPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          desktopRoot: DESKTOP_ROOT,
+        }),
+        manifestPath: getDesktopHostManifestPath({ desktopRoot: DESKTOP_ROOT }),
+        targetId: getNativeTargetId(),
+        nativeWindowHandle: win.getNativeWindowHandle(),
+        reason: '允许 Lume 使用当前网站的已保存密码',
+      })
+    },
   })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()

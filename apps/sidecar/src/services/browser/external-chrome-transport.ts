@@ -69,7 +69,7 @@ export class ExternalChromeTransport implements BrowserMainTransport {
 
   get boundEndpoint(): string | undefined { return this.server ? this.endpoint : undefined; }
   get hostGeneration(): number { return this.generation; }
-  isAvailable(): boolean { return this.peer !== null && this.server !== null; }
+  isAvailable(): boolean { return this.peer !== null && this.server !== null && peerAuthenticated(this.peer); }
 
   async start(): Promise<void> {
     if (!this.token && this.hostPath && this.hostSha256 && this.pairingId) this.token = readPairingKey(this.hostPath, this.hostSha256, this.pairingId);

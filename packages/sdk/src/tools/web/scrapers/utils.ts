@@ -1,4 +1,4 @@
-import { runtimeLoadBinary, type AgentStorage, isRecord } from "./compat.js";
+import { runtimeLoadBinary, isRecord } from "./compat.js";
 import { renderStructuredBinary } from "../../web-fetch-content.js";
 
 export { isRecord };

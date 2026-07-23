@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createCipheriv } from "node:crypto";
-import { discoverChromeProfiles, mergeImportedPasswords, classifyChromeImportError, decryptWindowsV10Value, deriveMacChromeKey, decryptMacV10Value, decryptLegacyDpapiValue, atomicWriteEncryptedVault, createImportedCookie, readEncryptedVault, readChromeRows, readChromeCookieRows, isExpiredChromeCookie } from "../src/browser-import.ts";
+import { discoverChromeProfiles, mergeImportedPasswords, classifyChromeImportError, chromeEncryptedBytes, decryptWindowsV10Value, deriveMacChromeKey, decryptMacV10Value, decryptLegacyDpapiValue, atomicWriteEncryptedVault, createImportedCookie, readEncryptedVault, readChromeRows, readChromeCookieRows, isExpiredChromeCookie } from "../src/browser-import.ts";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -29,6 +29,7 @@ test("import errors classify security and rollback boundaries", () => {
   assert.equal(classifyChromeImportError(new Error("v20 app-bound encryption")), "app_bound_unsupported");
   assert.equal(classifyChromeImportError(new Error("keychain denied")), "keychain_denied");
   assert.equal(classifyChromeImportError(new Error("database busy")), "database_locked");
+  assert.equal(classifyChromeImportError(new Error("unable to open database file")), "database_locked");
 });
 
 test("Windows v10 uses AES-256-GCM and macOS legacy values use Chrome AES-CBC", () => {
@@ -38,6 +39,7 @@ test("Windows v10 uses AES-256-GCM and macOS legacy values use Chrome AES-CBC", 
   const encrypted = Buffer.concat([cipher.update("cookie-secret", "utf8"), cipher.final()]);
   const windowsValue = Buffer.concat([Buffer.from("v10"), nonce, encrypted, cipher.getAuthTag()]);
   assert.equal(decryptWindowsV10Value(windowsValue, windowsKey), "cookie-secret");
+  assert.deepEqual(chromeEncryptedBytes(new Uint8Array(windowsValue)), windowsValue);
 
   const macKey = deriveMacChromeKey("correct horse battery staple");
   const macCipher = createCipheriv("aes-128-cbc", macKey, Buffer.alloc(16, " "));

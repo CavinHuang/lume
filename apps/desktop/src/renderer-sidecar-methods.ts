@@ -1,5 +1,6 @@
 // Explicit renderer -> sidecar RPC allowlist. Private/main-only channels must never appear here.
 export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
+  'browser:backends',
   'agent:abort-submission',
   'agent:analyze-skill-improvement',
   'agent:append-thread-message',

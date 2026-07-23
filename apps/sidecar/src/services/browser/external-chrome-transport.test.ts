@@ -18,6 +18,7 @@ test("external bridge authenticates a connected native host and correlates reque
   const sent: any[] = [];
   const peer: any = { send: (value: unknown) => sent.push(value), close: () => peer.onClose?.() };
   (bridge as any).attachPeer(peer);
+  assert.equal(bridge.isAvailable(), false);
   const secure = authenticate(peer, sent);
   assert.equal(sent.at(-1).result.ok, true);
   assert.equal(bridge.isAvailable(), true);

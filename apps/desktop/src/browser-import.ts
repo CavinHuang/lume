@@ -20,7 +20,7 @@ type ChromeCryptoContext = { platform: "win32" | "darwin"; key: Buffer | null; u
 export function classifyChromeImportError(error: unknown): "profile_missing" | "database_locked" | "keychain_denied" | "app_bound_unsupported" | "invalid_database" | "unknown" {
   const message = error instanceof Error ? error.message : String(error)
   if (/profile_not_found/.test(message)) return "profile_missing"
-  if (/locked|busy/.test(message)) return "database_locked"
+  if (/locked|busy|unable to open database file|not an error/i.test(message)) return "database_locked"
   if (/keychain|protected|decrypt/i.test(message)) return "keychain_denied"
   if (/v20|app.bound/i.test(message)) return "app_bound_unsupported"
   if (/database_invalid|sqlite/i.test(message)) return "invalid_database"
@@ -221,7 +221,8 @@ export async function readChromeCookieRows(path: string): Promise<Record<string,
     const required = ["host_key", "name", "path", "encrypted_value", "expires_utc", "is_secure", "is_httponly"]
     if (required.some((column) => !available.has(column))) throw new Error("chrome_database_invalid")
     const optional = ["samesite", "source_scheme", "source_port", "top_frame_site_key", "is_partitioned", "has_cross_site_ancestor"].filter((column) => available.has(column))
-    return db.prepare(`SELECT ${[...required, ...optional].join(",")} FROM cookies LIMIT 10000`).all()
+    const selected = required.map((column) => column === "expires_utc" ? "CAST(expires_utc AS TEXT) AS expires_utc" : column)
+    return db.prepare(`SELECT ${[...selected, ...optional].join(",")} FROM cookies LIMIT 10000`).all()
   })
 }
 
@@ -275,8 +276,17 @@ export function isExpiredChromeCookie(row: Record<string, unknown>, now = Date.n
 }
 
 function encryptedValueVersion(value: unknown): string {
-  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(typeof value === "string" ? value : "")
+  const bytes = chromeEncryptedBytes(value)
   return bytes.subarray(0, 3).toString()
+}
+
+export function chromeEncryptedBytes(value: unknown): Buffer {
+  if (Buffer.isBuffer(value)) return value
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
+  }
+  if (value instanceof ArrayBuffer) return Buffer.from(value)
+  return Buffer.from(typeof value === "string" ? value : "", "base64")
 }
 
 function incrementReason(report: ChromeImportReport, reason: string): void {
@@ -326,7 +336,7 @@ async function chromeKey(os: "win32" | "darwin", source: string): Promise<Chrome
 
 export async function decryptChromeValue(value: unknown, context: ChromeCryptoContext | null): Promise<string | null> {
   if (!value) return null
-  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(String(value), "base64")
+  const bytes = chromeEncryptedBytes(value)
   if (bytes.subarray(0, 3).toString() === "v20") return null
   try {
     if (context?.platform === "win32") {

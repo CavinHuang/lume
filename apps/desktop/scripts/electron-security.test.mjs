@@ -100,6 +100,11 @@ test("renderer sidecar allowlist tracks public shared IPC channels", () => {
   for (const method of sharedMethods) assert.equal(PUBLIC_RENDERER_SIDECAR_METHODS.has(method), true, method);
 });
 
+test("renderer may inspect browser backend availability without invoking browser actions", () => {
+  assert.equal(validateRendererSidecarMethod("browser:backends"), "browser:backends");
+  assert.throws(() => validateRendererSidecarMethod("browser:broker"), /unsupported renderer sidecar method/);
+});
+
 test("Wiki formal mutations use a main-process credential and reject generic RPC", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   assert.throws(() => validateRendererSidecarMethod("wiki:privileged-apply-draft"), /privileged RPC/);

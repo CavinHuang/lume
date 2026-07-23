@@ -32,3 +32,14 @@ test("password lookup is bound to canonical origin and returns no secret metadat
     assert.equal(vault.passwordForOrigin(metadata.id, "https://other.test"), null);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("runtime requires fresh user presence before decrypting a saved password", () => {
+  const source = readFileSync(new URL("../src/browser-runtime.ts", import.meta.url), "utf8");
+  const method = source.slice(
+    source.indexOf("private async fillSavedPassword"),
+    source.indexOf("private async fillSavedContact"),
+  );
+  assert.match(method, /authorizeCredentialUse/);
+  assert.ok(method.indexOf("authorizeCredentialUse") < method.indexOf("passwordForOrigin"));
+  assert.match(source, /credentialStorage\.isEncryptionAvailable\(\) && this\.options\.authorizeCredentialUse/);
+});

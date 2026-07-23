@@ -4,9 +4,11 @@ export const SIDECAR_BUNDLE_NAME = 'index.mjs'
 export const NATIVE_BINARY_NAME = 'lume-natives.node'
 export const NODE_REPL_BINARY_NAME = 'node_repl'
 export const DESKTOP_HOST_BINARY_NAME = 'lume_desktop_host'
+export const DESKTOP_HOST_MANIFEST_NAME = 'desktop-host-manifest.json'
 export const DESKTOP_HOST_MAC_RELEASE_APP_NAME = 'Lume Computer Use.app'
 export const DESKTOP_HOST_MAC_DEV_APP_NAME = 'Lume Computer Use (Dev).app'
 export const DESKTOP_HOST_MAC_APP_NAME = DESKTOP_HOST_MAC_RELEASE_APP_NAME
+export const USER_PRESENCE_MAC_BINARY_NAME = 'LumeUserPresence'
 
 export function getSidecarScriptPath({ appIsPackaged, resourcesPath, desktopRoot }) {
   if (appIsPackaged) {
@@ -76,6 +78,17 @@ export function getDesktopHostBinaryPath({
     return join(root, targetId, getDesktopHostMacAppName({ appIsPackaged }), 'Contents', 'MacOS', fileName)
   }
   return join(root, targetId, fileName)
+}
+
+export function getDesktopHostManifestPath({ desktopRoot }) {
+  return resolve(desktopRoot, 'resources', DESKTOP_HOST_MANIFEST_NAME)
+}
+
+export function getUserPresenceHelperPath(options) {
+  const desktopHostPath = getDesktopHostBinaryPath(options)
+  return options.platform === 'darwin' || (!options.platform && process.platform === 'darwin')
+    ? join(dirname(desktopHostPath), USER_PRESENCE_MAC_BINARY_NAME)
+    : desktopHostPath
 }
 
 function getDesktopHostMacAppName({ appIsPackaged }: { appIsPackaged: boolean }): string {

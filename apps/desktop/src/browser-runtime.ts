@@ -37,6 +37,7 @@ type BrowserRuntimeOptions = {
   persistSettings?: (settings: BrowserSettings) => void
   journalEncryption?: { available: boolean; encrypt: (value: string) => Buffer; decrypt?: (value: Buffer) => string }
   credentialStorage: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
+  authorizeCredentialUse?: () => Promise<boolean>
 }
 
 type BrowserTab = BrowserTabDescriptor & {
@@ -143,7 +144,7 @@ export class BrowserRuntime {
       { id: "agentDownload", description: "Save confirmed downloads to a quota-bound task resource directory." },
     ]
     if (this.settings.advancedCdpEnabled) capabilities.push({ id: "advancedCdp", description: "Use the isolated, method-allowlisted CDP session." })
-    if (this.options.credentialStorage.isEncryptionAvailable()) capabilities.push({ id: "browserAuth", description: "Fill a saved credential in the current IAB origin without returning its value." })
+    if (this.options.credentialStorage.isEncryptionAvailable() && this.options.authorizeCredentialUse) capabilities.push({ id: "browserAuth", description: "Fill a saved credential in the current IAB origin after fresh system verification without returning its value." })
     return {
       id: "lume-iab",
       backend: "iab",
@@ -470,6 +471,10 @@ export class BrowserRuntime {
     })
     wc.on("render-process-gone", () => {
       tab.generation += 1
+      tab.inputSequence += 1
+      if (tab.context?.actor === "agent") {
+        tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
+      }
       this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "browser_internal_error", recoverable: true } })
     })
     try {
@@ -677,7 +682,10 @@ export class BrowserRuntime {
   private async fillSavedPassword(tab: BrowserTab, params: Record<string, unknown>): Promise<{ status: "submitted" }> {
     const origin = safeOrigin(tab.url)
     if (!origin) throw browserError("action_denied")
-    const secret = this.credentials.passwordForOrigin(String(params.credentialId ?? ""), origin)
+    const credentialId = String(params.credentialId ?? "")
+    const exists = this.credentials.listPasswords().some((entry) => entry.id === credentialId && entry.origin === origin)
+    if (!exists || !this.options.authorizeCredentialUse || !await this.options.authorizeCredentialUse()) throw browserError("action_denied")
+    const secret = this.credentials.passwordForOrigin(credentialId, origin)
     if (!secret) throw browserError("action_denied")
     await this.fillSecret(tab, params, secret)
     return { status: "submitted" }
@@ -1040,11 +1048,14 @@ export class BrowserRuntime {
     const tab = this.requireTab(tabId, userContext())
     const win = this.options.getWindow()
     if (!win || win.isDestroyed()) throw browserError("browser_unavailable")
+    const contentBounds = win.getContentBounds()
+    const x = boundedNumber(params.x, 0, Math.max(0, contentBounds.width - 1))
+    const y = boundedNumber(params.y, 0, Math.max(0, contentBounds.height - 1))
     const bounds = {
-      x: boundedNumber(params.x, 0, win.getContentBounds().width),
-      y: boundedNumber(params.y, 0, win.getContentBounds().height),
-      width: boundedNumber(params.width, 1, win.getContentBounds().width),
-      height: boundedNumber(params.height, 1, win.getContentBounds().height),
+      x,
+      y,
+      width: boundedNumber(params.width, 1, Math.max(1, contentBounds.width - x)),
+      height: boundedNumber(params.height, 1, Math.max(1, contentBounds.height - y)),
     }
     tab.view.setBounds(bounds)
     tab.surface = params.surface === "main" || params.surface === "right-panel" ? params.surface : null
