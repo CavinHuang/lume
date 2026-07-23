@@ -109,7 +109,6 @@ app.whenReady().then(async () => {
     },
     journalEncryption: { available: true, encrypt: value => Buffer.from(value) },
     credentialStorage: { isEncryptionAvailable: () => true, encryptString: value => Buffer.from(value), decryptString: value => value.toString() },
-    authorizeCredentialUse: async () => true,
   })
   runtime.setAgentPluginEnabled(true)
   const context = { actor: 'agent', browserSessionId: 'fixture-session', browserTurnId: 'fixture-turn', capability: 'browser' }

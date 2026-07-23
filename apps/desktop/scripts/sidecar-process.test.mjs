@@ -5,7 +5,6 @@ import {
   createDesktopHostSpawnConfig,
   createUtilityProcessSidecarForkConfig,
   getDesktopHostBinaryPath,
-  getUserPresenceHelperPath,
   getNativeBinaryPath,
   getNativeTargetId,
   getNodeReplHostBinaryPath,
@@ -143,29 +142,6 @@ test('getDesktopHostBinaryPath resolves target-specific packaged and dev binarie
       arch: 'arm64',
     }),
     resolve('D:/repo/apps/desktop', 'resources', 'desktop-host', 'darwin-arm64', 'Lume Computer Use (Dev).app', 'Contents', 'MacOS', 'lume_desktop_host'),
-  )
-})
-
-test('getUserPresenceHelperPath reuses the Windows host and selects the macOS helper', () => {
-  assert.equal(
-    getUserPresenceHelperPath({
-      appIsPackaged: true,
-      resourcesPath: 'C:/Program Files/Lume/resources',
-      desktopRoot: 'D:/repo/apps/desktop',
-      platform: 'win32',
-      arch: 'x64',
-    }),
-    join('C:/Program Files/Lume/resources', 'desktop-host', 'win32-x64-msvc', 'lume_desktop_host.exe'),
-  )
-  assert.equal(
-    getUserPresenceHelperPath({
-      appIsPackaged: true,
-      resourcesPath: '/Applications/Lume.app/Contents/Resources',
-      desktopRoot: '/repo/apps/desktop',
-      platform: 'darwin',
-      arch: 'arm64',
-    }),
-    join('/Applications/Lume.app/Contents/Resources', 'desktop-host', 'darwin-arm64', 'Lume Computer Use.app', 'Contents', 'MacOS', 'LumeUserPresence'),
   )
 })
 

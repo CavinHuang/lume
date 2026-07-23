@@ -2,7 +2,6 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, w
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CRATE_DIR = resolve(REPO_ROOT, "crates", "lume-desktop-host");
@@ -25,8 +24,6 @@ const MAC_EVENT_MONITOR_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUseEve
 const MAC_EVENT_MONITOR_BINARY_NAME = "LumeComputerUseEventMonitor";
 const MAC_APP_DISCOVERY_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUseAppDiscovery.swift");
 const MAC_APP_DISCOVERY_BINARY_NAME = "LumeComputerUseAppDiscovery";
-const MAC_USER_PRESENCE_SOURCE = resolve(CRATE_DIR, "macos", "LumeUserPresence.swift");
-const MAC_USER_PRESENCE_BINARY_NAME = "LumeUserPresence";
 const MAC_CURSOR_ASSET_NAME = "official-software-cursor-window-252.png";
 const MAC_CURSOR_ASSET_SOURCE = resolve(CRATE_DIR, "assets", MAC_CURSOR_ASSET_NAME);
 const MAC_BUNDLE_ICON_NAME = "LumeComputerUse.icns";
@@ -44,10 +41,8 @@ const MAC_BUNDLE_ICON_ENTRIES = [
   ["icon_512x512@2x.png", 1024],
 ];
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
-const MANIFEST_PATH = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host-manifest.json");
 const MAC_BUNDLE_VARIANT = process.env.LUME_COMPUTER_USE_BUNDLE_VARIANT === "dev" ? "dev" : "release";
 const REQUIRE_STABLE_SIGNING = process.argv.includes("--require-stable-signing");
-const PRESERVE_MANIFEST = process.argv.includes("--preserve-manifest");
 const MAC_BUNDLE_CONFIG = MAC_BUNDLE_VARIANT === "dev"
   ? {
       appBundleName: "Lume Computer Use (Dev).app",
@@ -91,34 +86,10 @@ if (process.platform === "darwin") {
   if (REQUIRE_STABLE_SIGNING) signWindowsBinary(OUT_FILE);
   console.error(`[desktop-host] wrote ${OUT_FILE}`);
 }
-writeDesktopHostManifest();
 
 function copyIfChanged(source, destination) {
   if (existsSync(destination) && readFileSync(source).equals(readFileSync(destination))) return;
   copyFileSync(source, destination);
-}
-
-function writeDesktopHostManifest() {
-  const userPresencePath = process.platform === "darwin"
-    ? resolve(dirname(OUT_FILE), MAC_USER_PRESENCE_BINARY_NAME)
-    : OUT_FILE;
-  const previous = PRESERVE_MANIFEST && existsSync(MANIFEST_PATH)
-    ? JSON.parse(readFileSync(MANIFEST_PATH, "utf8"))
-    : { version: 1, targets: {} };
-  const manifest = {
-    version: 1,
-    targets: {
-      ...(previous.version === 1 && previous.targets && typeof previous.targets === "object" ? previous.targets : {}),
-      [TARGET_ID]: {
-        binary: BINARY_NAME,
-        sha256: createHash("sha256").update(readFileSync(OUT_FILE)).digest("hex"),
-        userPresenceBinary: process.platform === "darwin" ? MAC_USER_PRESENCE_BINARY_NAME : BINARY_NAME,
-        userPresenceSha256: createHash("sha256").update(readFileSync(userPresencePath)).digest("hex"),
-      },
-    },
-  };
-  writeFileSync(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
-  console.error(`[desktop-host] wrote ${MANIFEST_PATH}`);
 }
 
 function argumentValue(name) {
@@ -159,7 +130,6 @@ function writeMacAppBundle() {
   buildMacScreenCapture(resolve(macosDir, MAC_SCREEN_CAPTURE_BINARY_NAME));
   buildMacEventMonitor(resolve(macosDir, MAC_EVENT_MONITOR_BINARY_NAME));
   buildMacAppDiscovery(resolve(macosDir, MAC_APP_DISCOVERY_BINARY_NAME));
-  buildMacUserPresence(resolve(macosDir, MAC_USER_PRESENCE_BINARY_NAME));
   signMacAppBundle(appRoot);
   console.error(`[desktop-host] wrote ${appRoot}`);
 }
@@ -292,24 +262,6 @@ function buildMacAppDiscovery(outputPath) {
     "AppKit",
     "-framework",
     "CoreServices",
-  ], {
-    cwd: REPO_ROOT,
-    stdio: "inherit",
-  });
-  if (result.status !== 0) process.exit(result.status ?? 1);
-  chmodSync(outputPath, 0o755);
-}
-
-function buildMacUserPresence(outputPath) {
-  const result = spawnSync("xcrun", [
-    "swiftc",
-    "-parse-as-library",
-    ...macSwiftTargetArgs(),
-    MAC_USER_PRESENCE_SOURCE,
-    "-o",
-    outputPath,
-    "-framework",
-    "LocalAuthentication",
   ], {
     cwd: REPO_ROOT,
     stdio: "inherit",

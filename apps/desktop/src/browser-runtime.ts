@@ -37,7 +37,6 @@ type BrowserRuntimeOptions = {
   persistSettings?: (settings: BrowserSettings) => void
   journalEncryption?: { available: boolean; encrypt: (value: string) => Buffer; decrypt?: (value: Buffer) => string }
   credentialStorage: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
-  authorizeCredentialUse?: () => Promise<boolean>
 }
 
 type BrowserTab = BrowserTabDescriptor & {
@@ -144,7 +143,7 @@ export class BrowserRuntime {
       { id: "agentDownload", description: "Save confirmed downloads to a quota-bound task resource directory." },
     ]
     if (this.settings.advancedCdpEnabled) capabilities.push({ id: "advancedCdp", description: "Use the isolated, method-allowlisted CDP session." })
-    if (this.options.credentialStorage.isEncryptionAvailable() && this.options.authorizeCredentialUse) capabilities.push({ id: "browserAuth", description: "Fill a saved credential in the current IAB origin after fresh system verification without returning its value." })
+    if (this.options.credentialStorage.isEncryptionAvailable()) capabilities.push({ id: "browserAuth", description: "Fill a saved credential in the current IAB origin without returning its value." })
     return {
       id: "lume-iab",
       backend: "iab",
@@ -682,10 +681,7 @@ export class BrowserRuntime {
   private async fillSavedPassword(tab: BrowserTab, params: Record<string, unknown>): Promise<{ status: "submitted" }> {
     const origin = safeOrigin(tab.url)
     if (!origin) throw browserError("action_denied")
-    const credentialId = String(params.credentialId ?? "")
-    const exists = this.credentials.listPasswords().some((entry) => entry.id === credentialId && entry.origin === origin)
-    if (!exists || !this.options.authorizeCredentialUse || !await this.options.authorizeCredentialUse()) throw browserError("action_denied")
-    const secret = this.credentials.passwordForOrigin(credentialId, origin)
+    const secret = this.credentials.passwordForOrigin(String(params.credentialId ?? ""), origin)
     if (!secret) throw browserError("action_denied")
     await this.fillSecret(tab, params, secret)
     return { status: "submitted" }

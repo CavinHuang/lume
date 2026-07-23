@@ -24,7 +24,6 @@ test('desktop package uses Vite-built TypeScript runtime files', () => {
     'dist/main/main.mjs',
     'dist/preload/preload.cjs',
     'assets',
-    'resources/desktop-host-manifest.json',
   ])
   assert.equal(pkg.dependencies?.['electron-updater'], undefined)
   assert.equal(pkg.devDependencies?.['electron-updater'], '6.8.9')
@@ -124,7 +123,7 @@ test('macOS release requires Developer ID signing, notarization, and Gatekeeper 
     assert.match(workflow, new RegExp(`secrets\\.${secret}`))
   }
   assert.match(workflow, /--target aarch64-apple-darwin --require-stable-signing/)
-  assert.match(workflow, /--target x86_64-apple-darwin --require-stable-signing --preserve-manifest/)
+  assert.match(workflow, /--target x86_64-apple-darwin --require-stable-signing/)
   assert.match(workflow, /notarytool submit/)
   assert.match(workflow, /--config\.mac\.notarize=true/)
   assert.match(workflow, /APPLE_API_KEY=/)
@@ -227,10 +226,6 @@ test('desktop package includes the optional desktop-host resource', () => {
   assert.match(pkg.scripts.package, /build-desktop-host-resources\.mjs/)
   assertContainsBefore(pkg.scripts.build, 'build-desktop-host-resources.mjs', 'run-electron-builder.mjs')
   assertContainsBefore(pkg.scripts.package, 'build-desktop-host-resources.mjs', 'run-electron-builder.mjs')
-  assert.equal(pkg.build.files.includes('resources/desktop-host-manifest.json'), true)
-  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
-  assert.match(script, /desktop-host-manifest\.json/)
-  assert.match(script, /createHash\("sha256"\)/)
 })
 
 test('desktop-host resource build ships the cursor reference license notice', () => {
@@ -278,25 +273,10 @@ test('desktop-host resource build compiles @main macOS helpers as libraries', ()
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
   const swiftCompileBlocks = script.match(/spawnSync\("xcrun", \[\s*"swiftc",[\s\S]*?\], \{/g) ?? []
 
-  assert.equal(swiftCompileBlocks.length, 6)
+  assert.equal(swiftCompileBlocks.length, 5)
   for (const block of swiftCompileBlocks) {
     assert.match(block, /"-parse-as-library"/)
   }
-})
-
-test('desktop-host resource build packages a LocalAuthentication user-presence helper', () => {
-  const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
-  const helperPath = resolve(REPO_ROOT, 'crates/lume-desktop-host/macos/LumeUserPresence.swift')
-  const helper = readFileSync(helperPath, 'utf8')
-
-  assert.equal(existsSync(helperPath), true)
-  assert.match(script, /LumeUserPresence\.swift/)
-  assert.match(script, /-framework",\s*"LocalAuthentication"/)
-  assert.match(script, /userPresenceSha256/)
-  assert.match(helper, /\.deviceOwnerAuthentication/)
-  assert.match(helper, /request\.parentPid == getppid\(\)/)
-  assert.match(helper, /proc_pidpath/)
-  assert.doesNotMatch(helper, /password|secret|credential/i)
 })
 
 test('desktop-host resource build packages the macOS permission guide helper', () => {
@@ -365,7 +345,6 @@ test('desktop-host resource build prefers a stable macOS signing identity', () =
   assert.match(script, /ad-hoc identity.*TCC/)
   assert.match(script, /arm64-apple-macos14\.0/)
   assert.match(script, /x86_64-apple-macos14\.0/)
-  assert.match(script, /PRESERVE_MANIFEST/)
 })
 
 test('release desktop package requires stable signing for the macOS computer-use helper', () => {

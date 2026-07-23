@@ -42,7 +42,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "windows",
- "windows-future",
 ]
 
 [[package]]
