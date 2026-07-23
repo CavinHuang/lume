@@ -176,3 +176,4 @@ Remaining deviations/risks:
 
 - Prevented completion while a Task-linked executor binding is still active; completion now remains a main-agent transition after terminal acknowledgement.
 - Persisted a bounded executor result summary in `metadata._lume.lastResult`, alongside the existing server-managed error record, so TaskGet remains diagnostically useful after the executor returns.
+- Made late non-success executor returns idempotent after TaskStop and preserved their actual terminal status in `lastResult`.

@@ -107,6 +107,24 @@ describe("FileBackedTaskStore", () => {
         expectedRevision: acknowledged.revision,
         claimToken: claimed.claimToken,
       }, context())).resolves.toBeTruthy();
+
+      const abortedTask = await store.create({ subject: "Aborted executor" }, context());
+      const abortedClaim = await store.update({ taskId: abortedTask.task.id, status: "in_progress", expectedRevision: abortedTask.revision }, context());
+      const abortedBinding = await store.bindExecutor({
+        taskId: abortedTask.task.id,
+        claimToken: abortedClaim.claimToken!,
+        expectedRevision: abortedClaim.revision,
+        executorRef: "executor-aborted",
+      }, context());
+      const abortedAck = await store.acknowledgeExecutor({
+        taskId: abortedTask.task.id,
+        claimToken: abortedClaim.claimToken!,
+        executorRef: "executor-aborted",
+        terminal: true,
+        resultStatus: "aborted",
+      }, context());
+      expect(abortedAck.task.metadata?._lume).toMatchObject({ lastResult: { status: "aborted" } });
+      expect(abortedBinding.claimToken).toBe(abortedClaim.claimToken);
     });
   });
 

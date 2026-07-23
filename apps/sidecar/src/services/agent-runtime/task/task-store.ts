@@ -379,7 +379,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     });
   }
 
-  async acknowledgeExecutor(input: { taskId: string; claimToken: string; executorRef: string; terminal: boolean; forced?: boolean; error?: string; resultSummary?: string }, context: TaskStoreContext): Promise<TaskMutationResult> {
+  async acknowledgeExecutor(input: { taskId: string; claimToken: string; executorRef: string; terminal: boolean; forced?: boolean; error?: string; resultSummary?: string; resultStatus?: "completed" | "errored" | "aborted" | "timed_out" }, context: TaskStoreContext): Promise<TaskMutationResult> {
     const trustedContext: TaskStoreContext = {
       threadId: this.taskListId,
       threadType: input.forced ? "recovery" : "system",
@@ -398,10 +398,12 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       delete lume.executionFence;
       lume.recoveryState = input.forced ? "forced_terminated" : "terminal_ack";
       if (input.error) lume.lastError = { source: "executor", message: input.error, recordedAt: now };
-      if (typeof input.resultSummary === "string" && input.resultSummary.trim()) {
+      if (input.resultStatus || input.error || (typeof input.resultSummary === "string" && input.resultSummary.trim())) {
         lume.lastResult = {
-          status: input.error ? "errored" : "completed",
-          summary: input.resultSummary.trim().slice(0, 4_000),
+          status: input.resultStatus ?? (input.error ? "errored" : "completed"),
+          ...(typeof input.resultSummary === "string" && input.resultSummary.trim()
+            ? { summary: input.resultSummary.trim().slice(0, 4_000) }
+            : {}),
           recordedAt: now,
         };
       }
