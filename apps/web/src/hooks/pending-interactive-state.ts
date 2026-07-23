@@ -3,9 +3,7 @@ import type {
   AgentBrowserAuthRequest,
   AgentDesktopActionRequest,
   AgentPendingInteractiveState,
-  AgentTaskApprovalRequest,
   AgentToolPermissionRequest,
-  LumeRuntimeEvent,
 } from "@lume/shared"
 
 function upsertByKey<T>(
@@ -80,38 +78,6 @@ export function upsertPendingDesktopActionRequest(
       ...current,
       desktopActionRequests: upsertByKey(current.desktopActionRequests, request, (item) => item.requestId),
     },
-  }
-}
-
-export function upsertPendingTaskApproval(
-  prev: Record<string, AgentPendingInteractiveState>,
-  request: AgentTaskApprovalRequest,
-): Record<string, AgentPendingInteractiveState> {
-  const current = prev[request.threadId] ?? { threadId: request.threadId }
-  return {
-    ...prev,
-    [request.threadId]: {
-      ...current,
-      threadId: request.threadId,
-      taskApprovals: upsertByKey(current.taskApprovals, request, (item) => item.contractId),
-    },
-  }
-}
-
-export function planPreviewToPendingTaskApproval(
-  event: Extract<LumeRuntimeEvent, { type: "plan.preview" }>,
-): AgentTaskApprovalRequest {
-  return {
-    threadId: event.threadId,
-    runId: event.runId,
-    requestId: `task_approval:${event.contractId}`,
-    contractId: event.contractId,
-    title: event.title,
-    message: "审阅任务计划",
-    summary: event.summary,
-    stepCount: event.stepCount,
-    ...(event.planFilePath ? { planFilePath: event.planFilePath } : {}),
-    ...(event.planVerified !== undefined ? { planVerified: event.planVerified } : {}),
   }
 }
 
@@ -194,35 +160,4 @@ export function removePendingToolPermissionEverywhere(
       : { ...state, toolPermissions }
   }
   return changed ? next : prev
-}
-
-export function removePendingTaskApproval(
-  prev: Record<string, AgentPendingInteractiveState>,
-  threadId: string,
-  contractId: string,
-): Record<string, AgentPendingInteractiveState> {
-  const current = prev[threadId]
-  if (!current) return prev
-  return {
-    ...prev,
-    [threadId]: {
-      ...current,
-      taskApprovals: (current.taskApprovals ?? []).filter((item) => item.contractId !== contractId),
-    },
-  }
-}
-
-export function removePendingTaskApprovalsForThread(
-  prev: Record<string, AgentPendingInteractiveState>,
-  threadId: string,
-): Record<string, AgentPendingInteractiveState> {
-  const current = prev[threadId]
-  if (!current || (current.taskApprovals ?? []).length === 0) return prev
-  return {
-    ...prev,
-    [threadId]: {
-      ...current,
-      taskApprovals: [],
-    },
-  }
 }

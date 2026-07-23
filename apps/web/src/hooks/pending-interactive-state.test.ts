@@ -3,21 +3,15 @@ import type {
   AgentAskUserQuestionRequest,
   AgentBrowserAuthRequest,
   AgentPendingInteractiveState,
-  AgentTaskApprovalRequest,
   AgentToolPermissionRequest,
-  LumeRuntimeEvent,
 } from "@lume/shared"
 import {
-  planPreviewToPendingTaskApproval,
   removePendingAskUserQuestion,
   removePendingBrowserAuthRequest,
-  removePendingTaskApprovalsForThread,
-  removePendingTaskApproval,
   removePendingToolPermission,
   removePendingToolPermissionEverywhere,
   upsertPendingAskUserQuestion,
   upsertPendingBrowserAuthRequest,
-  upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from "./pending-interactive-state"
 
@@ -203,101 +197,4 @@ describe("pending interactive state helpers", () => {
     expect(next["thread-b"]?.toolPermissions?.map((item) => item.requestId)).toEqual([])
   })
 
-  test("同一线程应能累计多个任务审批请求，并可按 contractId 删除", () => {
-    const first: AgentTaskApprovalRequest = {
-      threadId: "parent-thread",
-      requestId: "task_approval:plan-1",
-      contractId: "plan-1",
-      title: "确认任务清单",
-      message: "Approve plan 1",
-      stepCount: 1
-    }
-    const second: AgentTaskApprovalRequest = {
-      threadId: "parent-thread",
-      requestId: "task_approval:plan-2",
-      contractId: "plan-2",
-      title: "确认任务清单",
-      message: "Approve plan 2",
-      stepCount: 2
-    }
-
-    const next = upsertPendingTaskApproval({}, first)
-    const merged = upsertPendingTaskApproval(next, second)
-    const removed = removePendingTaskApproval(merged, "parent-thread", "plan-1")
-
-    expect(merged["parent-thread"]?.taskApprovals?.map((item) => item.contractId)).toEqual(["plan-1", "plan-2"])
-    expect(removed["parent-thread"]?.taskApprovals?.map((item) => item.contractId)).toEqual(["plan-2"])
-  })
-
-  test("plan.preview runtime event should immediately become a pending task approval", () => {
-    const request = planPreviewToPendingTaskApproval({
-      id: "run-1:plan:plan-1:plan.preview",
-      type: "plan.preview",
-      threadId: "thread-1",
-      runId: "run-1",
-      createdAt: "2026-05-16T00:00:00.000Z",
-      contractId: "plan-1",
-      title: "补齐计划模式",
-      summary: "准备执行计划",
-      markdown: "# 补齐计划模式",
-      planFilePath: "plans/plan-1.md",
-      planVerified: true,
-      stepCount: 3,
-    } as Extract<LumeRuntimeEvent, { type: "plan.preview" }>)
-
-    expect(request).toEqual({
-      threadId: "thread-1",
-      runId: "run-1",
-      requestId: "task_approval:plan-1",
-      contractId: "plan-1",
-      title: "补齐计划模式",
-      message: "审阅任务计划",
-      summary: "准备执行计划",
-      stepCount: 3,
-      planFilePath: "plans/plan-1.md",
-      planVerified: true,
-    })
-  })
-
-  test("线程进入执行态时应能清空该线程所有任务审批请求", () => {
-    const state = {
-      "parent-thread": {
-        threadId: "parent-thread",
-        taskApprovals: [
-          {
-            threadId: "parent-thread",
-            requestId: "task_approval:plan-1",
-            contractId: "plan-1",
-            title: "确认任务清单",
-            message: "Approve plan 1",
-            stepCount: 1,
-          },
-          {
-            threadId: "parent-thread",
-            requestId: "task_approval:plan-2",
-            contractId: "plan-2",
-            title: "确认任务清单",
-            message: "Approve plan 2",
-            stepCount: 2,
-          },
-        ],
-      },
-      "other-thread": {
-        threadId: "other-thread",
-        taskApprovals: [{
-          threadId: "other-thread",
-          requestId: "task_approval:plan-3",
-          contractId: "plan-3",
-          title: "确认任务清单",
-          message: "Approve plan 3",
-          stepCount: 1,
-        }],
-      },
-    }
-
-    const next = removePendingTaskApprovalsForThread(state, "parent-thread")
-
-    expect(next["parent-thread"]?.taskApprovals).toEqual([])
-    expect(next["other-thread"]?.taskApprovals?.map((item) => item.contractId)).toEqual(["plan-3"])
-  })
 })

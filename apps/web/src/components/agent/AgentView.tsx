@@ -16,7 +16,6 @@ import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
 import { BrowserAuthBanner } from './BrowserAuthBanner'
 import { DesktopActionBanner } from './DesktopActionBanner'
-import { PlanApprovalOverlay } from './PlanApprovalOverlay'
 import { ErrorBanner } from './ErrorBanner'
 import { ThreadFileEnvProvider } from './thread-file-env'
 import { Upload } from 'lucide-react'
@@ -66,20 +65,17 @@ export function AgentView({
   const pendingBrowserAuthRequests = pendingInteractive?.browserAuthRequests ?? []
   const pendingDesktopActionRequests = pendingInteractive?.desktopActionRequests ?? []
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
-  const pendingTaskApprovals = pendingInteractive?.taskApprovals ?? []
-  const activeTaskApproval = pendingTaskApprovals[0]
-  const activeToolPermission = activeTaskApproval ? undefined : pendingToolPermissions[0]
-  const activeBrowserAuthRequest = activeTaskApproval || activeToolPermission ? undefined : pendingBrowserAuthRequests[0]
-  const activeDesktopActionRequest = activeTaskApproval || activeToolPermission || activeBrowserAuthRequest
+  const activeToolPermission = pendingToolPermissions[0]
+  const activeBrowserAuthRequest = activeToolPermission ? undefined : pendingBrowserAuthRequests[0]
+  const activeDesktopActionRequest = activeToolPermission || activeBrowserAuthRequest
     ? undefined
     : pendingDesktopActionRequests[0]
-  const activeAskUserQuestion = activeTaskApproval || activeToolPermission || activeBrowserAuthRequest || activeDesktopActionRequest
+  const activeAskUserQuestion = activeToolPermission || activeBrowserAuthRequest || activeDesktopActionRequest
     ? undefined
     : pendingAskUserQuestions[0]
   const hasComposerOverlay = Boolean(
-    activeTaskApproval || activeToolPermission || activeBrowserAuthRequest || activeDesktopActionRequest || activeAskUserQuestion
+    activeToolPermission || activeBrowserAuthRequest || activeDesktopActionRequest || activeAskUserQuestion
   )
-  const [approvalOverlayVisible, setApprovalOverlayVisible] = useState(Boolean(activeTaskApproval))
 
   const threads = useAtomValue(agentThreadsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -282,10 +278,6 @@ export function AgentView({
     }
   }, [addPendingAttachments, threadId, readOnly])
 
-  useEffect(() => {
-    setApprovalOverlayVisible(Boolean(activeTaskApproval))
-  }, [activeTaskApproval?.contractId, threadId])
-
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
       {/* 主列 */}
@@ -303,9 +295,9 @@ export function AgentView({
           {!readOnly && (
             <div className="relative">
               <div
-                aria-hidden={hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible)}
+                aria-hidden={hasComposerOverlay}
                 className={cn(
-                  hasComposerOverlay && (!activeTaskApproval || approvalOverlayVisible) && 'pointer-events-none select-none opacity-0',
+                  hasComposerOverlay && 'pointer-events-none select-none opacity-0',
                 )}
               >
                 <AgentInput
@@ -322,15 +314,6 @@ export function AgentView({
                   onClearDesktopContextTarget={onClearDesktopContextTarget}
                 />
               </div>
-              {activeTaskApproval && (
-                <div className="absolute inset-x-0 bottom-0 z-30">
-                  <PlanApprovalOverlay
-                    threadId={threadId}
-                    request={activeTaskApproval}
-                    onVisibilityChange={setApprovalOverlayVisible}
-                  />
-                </div>
-              )}
               {activeToolPermission && (
                 <div className="absolute inset-x-0 bottom-0 z-30">
                   <PermissionBanner threadId={threadId} request={activeToolPermission} />

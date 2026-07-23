@@ -174,16 +174,9 @@ import {
   LumeResumeService,
   type ResumeRunResult
 } from "../services/agent-runtime/interruption/resume-service";
-import {
-  listPendingTaskApprovalRequests
-} from "../services/agent-runtime/plan/task-approval-service";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
 import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
-import {
-  createRuntimeOrchestrator,
-  type RuntimeOrchestrator
-} from "../services/agent-runtime/runtime-orchestrator";
 import { redactTraceForLevel, type TraceRedactionLevel } from "../services/agent-runtime/trace/trace-redaction";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
@@ -223,7 +216,6 @@ import {
   agentUpdateThreadTitleInputSchema,
   agentUpdateThreadModelSelectionInputSchema,
   applySkillImprovementInputSchema,
-  executeTaskContractInputSchema,
   getPluginAuditLogInputSchema,
   inspectMarketSourceInputSchema,
   installMarketItemInputSchema,
@@ -281,7 +273,6 @@ import {
   submitAskUserQuestionInputSchema,
   submitBrowserAuthInputSchema,
   submitDesktopActionInputSchema,
-  submitTaskApprovalInputSchema,
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
   workspaceDeleteInputSchema,
@@ -455,8 +446,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     });
   };
 
-  let runtimeOrchestrator: RuntimeOrchestrator;
-
   const createExecutionStartCallback = (input: AgentSendInput) => () => {
     if (!context.planModePhaseTracker.isLikelyExecutionRequest(input)) {
       return;
@@ -502,7 +491,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
 
   const createAgentStreamEmitter = (
     threadId: string,
-    options?: { contractId?: string; taskRunId?: string; workspaceSlug?: string }
+    options?: { workspaceSlug?: string }
   ) => {
     return {
       onRuntimeEvent: (event: unknown) => {
@@ -550,17 +539,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           });
         }
       },
-      onComplete: (payload?: { reason?: "max_turns" }) => {
-        const turnLimited = payload?.reason === "max_turns";
-        if (options?.taskRunId) {
-          void runtimeOrchestrator.handleTaskRunCompletion({
-            threadId,
-            taskRunId: options.taskRunId,
-            contractId: options.contractId,
-            turnLimited
-          });
-          return;
-        }
+      onComplete: () => {
         scheduleSkillImprovementSuggestionScan(threadId, options?.workspaceSlug);
         if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
           context.notifyPlanModePhaseChange(threadId, "completed");
@@ -590,71 +569,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           threadId,
           title
         }),
-      onAskUserQuestion: (request: unknown) =>
-        {
-          const message = (request as { questions?: Array<{ question?: string }> })?.questions
-            ?.map((item) => item.question)
-            .filter(Boolean)
-            .join("\n");
-          if (options?.taskRunId) {
-            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
-              threadId,
-              taskRunId: options.taskRunId,
-              waitingFor: "user",
-              reason: message || "等待用户回答"
-            });
-          }
-          context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
-        },
-      onBrowserAuthRequest: (request: unknown) =>
-        {
-          const authRequest = request as { reason?: string; origin?: string };
-          if (options?.taskRunId) {
-            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
-              threadId,
-              taskRunId: options.taskRunId,
-              waitingFor: "user",
-              reason: authRequest.reason || (authRequest.origin ? `等待 ${authRequest.origin} 安全凭证输入` : "等待浏览器安全凭证输入")
-            });
-          }
-          context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
-        },
+      onAskUserQuestion: (request: unknown) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
+      },
+      onBrowserAuthRequest: (request: unknown) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
+      },
       onDesktopActionRequest: (request: unknown) => {
         context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
       },
-      onToolPermissionRequest: (request: unknown) =>
-        {
-          const toolRequest = request as { toolName?: string; reason?: string };
-          if (options?.taskRunId) {
-            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
-              threadId,
-              taskRunId: options.taskRunId,
-              waitingFor: "permission",
-              reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
-            });
-          }
-          context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
-        },
-      onTaskContractUpdated: (contract?: { status?: string }) => {
-        if (contract?.status === "needs_approval") {
-          context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
-        }
+      onToolPermissionRequest: (request: unknown) => {
+        context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
       }
     };
   };
-
-  runtimeOrchestrator = createRuntimeOrchestrator({
-    appendAgentMessage,
-    createAgentStreamEmitter,
-    notifyPlanModePhaseChange: context.notifyPlanModePhaseChange,
-    resolveRuntimeSessionDir,
-    writeRuntimeEvent: (threadId, event) => {
-      context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-        threadId,
-        event
-      });
-    }
-  });
 
   const handlers: Record<string, RpcHandler> = {
     [AGENT_IPC_CHANNELS.LIST_THREADS]: async () => listAgentThreads(),
@@ -861,13 +789,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const browserAuthRequests = listPendingBrowserAuthRequests();
       const desktopActionRequests = listPendingDesktopActionRequests();
       const toolRequests = listPendingToolPermissionRequests();
-      const taskApprovalRequests = await listPendingTaskApprovalRequests();
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
       for (const request of browserAuthRequests) threadIds.add(request.threadId);
       for (const request of desktopActionRequests) threadIds.add(request.threadId);
       for (const request of toolRequests) threadIds.add(request.threadId);
-      for (const request of taskApprovalRequests) threadIds.add(request.threadId);
 
       const result: AgentPendingInteractiveState[] = [];
       for (const threadId of threadIds) {
@@ -876,14 +802,12 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         const browserAuthForThread = browserAuthRequests.filter((request) => request.threadId === threadId);
         const desktopActionsForThread = desktopActionRequests.filter((request) => request.threadId === threadId);
         const toolPermissions = toolRequests.filter((request) => request.threadId === threadId);
-        const taskApprovals = taskApprovalRequests.filter((request) => request.threadId === threadId);
         result.push({
           threadId,
           ...(askUserQuestions.length > 0 ? { askUserQuestions } : {}),
           ...(browserAuthForThread.length > 0 ? { browserAuthRequests: browserAuthForThread } : {}),
           ...(desktopActionsForThread.length > 0 ? { desktopActionRequests: desktopActionsForThread } : {}),
-          ...(toolPermissions.length > 0 ? { toolPermissions } : {}),
-          ...(taskApprovals.length > 0 ? { taskApprovals } : {})
+          ...(toolPermissions.length > 0 ? { toolPermissions } : {})
         });
       }
       return result;
@@ -1731,23 +1655,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       });
       return result;
     },
-    [AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL]: async (params) => {
-      const input = validateInput(
-        submitTaskApprovalInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL
-      );
-      return runtimeOrchestrator.submitTaskApproval(input);
-    },
-    [AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT]: async (params) => {
-      const input = validateInput(executeTaskContractInputSchema, params, AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT);
-      return runtimeOrchestrator.dispatchTaskExecution({
-        threadId: input.threadId,
-        contractId: input.contractId,
-        permissionMode: input.permissionMode,
-        intent: input.intent
-      });
-    },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
     "agent:read-bootstrap-file": async (params) => {
       const input = validateInput(readBootstrapFileInputSchema, params, "agent:read-bootstrap-file");
@@ -1785,13 +1692,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         origin: input.traceContext?.origin,
         data: { messageLength: input.userMessage.length }
       });
-      const approvalDispatch = await runtimeOrchestrator.dispatchPlanExecutionApproval(input);
-      if (approvalDispatch) {
-        return approvalDispatch;
-      }
-      const sendInput = await prepareAgentDispatchInput(
-        await runtimeOrchestrator.resolvePlanContinuationInput(input)
-      );
+      const sendInput = await prepareAgentDispatchInput(input);
       if (sendInput.permissionMode === "plan") {
         context.notifyPlanModePhaseChange(sendInput.threadId, "planning");
       }

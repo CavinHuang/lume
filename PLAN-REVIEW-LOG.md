@@ -177,3 +177,9 @@ Remaining deviations/risks:
 - Prevented completion while a Task-linked executor binding is still active; completion now remains a main-agent transition after terminal acknowledgement.
 - Persisted a bounded executor result summary in `metadata._lume.lastResult`, alongside the existing server-managed error record, so TaskGet remains diagnostically useful after the executor returns.
 - Made late non-success executor returns idempotent after TaskStop and preserved their actual terminal status in `lastResult`.
+
+### Act 3 legacy cutover
+
+- Removed the active Sidecar `RuntimeOrchestrator` wiring, task-approval and TaskContract execution RPC handlers, and pending approval recovery from the normal agent flow.
+- Removed the Web task-approval overlay, banner, desktop API calls, and pending-state helpers; Task progress remains read-only.
+- Removed `TaskContractWrite` from runtime tool metadata and planning-group resolution. The old plan/TaskRun source files and skipped compatibility tests remain isolated legacy code and are not reachable from the new Task toolchain.

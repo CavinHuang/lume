@@ -197,14 +197,6 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "TaskContractWrite",
-  category: "control",
-  riskLevel: "low",
-  description: "写入待审阅计划",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
   name: "TaskReport",
   category: "control",
   riskLevel: "low",

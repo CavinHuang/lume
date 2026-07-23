@@ -44,13 +44,10 @@ import {
   type DesktopProactiveProposal,
 } from '@lume/shared'
 import {
-  planPreviewToPendingTaskApproval,
   removePendingToolPermissionEverywhere,
-  removePendingTaskApprovalsForThread,
   upsertPendingAskUserQuestion,
   upsertPendingBrowserAuthRequest,
   upsertPendingDesktopActionRequest,
-  upsertPendingTaskApproval,
   upsertPendingToolPermission,
 } from './pending-interactive-state'
 import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
@@ -135,9 +132,6 @@ export function useGlobalAgentListeners() {
             for (const request of state.toolPermissions ?? []) {
               next = upsertPendingToolPermission(next, request)
             }
-            for (const request of state.taskApprovals ?? []) {
-              next = upsertPendingTaskApproval(next, request)
-            }
           }
           return next
         })
@@ -164,9 +158,6 @@ export function useGlobalAgentListeners() {
                 desktopActionVisualTimerRef.current = null
               }, 1_600)
             }
-          }
-          if (event.type === 'plan.preview') {
-            setPendingInteractive((prev) => upsertPendingTaskApproval(prev, planPreviewToPendingTaskApproval(event)))
           }
           if (event.type === 'task.progress') {
             setSidePanelViews((prev) => ({ ...prev, [threadId]: 'task-progress' }))
@@ -363,29 +354,6 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.PLAN_MODE_PHASE_CHANGED: {
           const e = params as PlanModePhaseChangedEvent
           setPlanModePhase((prev) => ({ ...prev, [e.threadId]: e }))
-          if (e.phase === 'awaiting_approval') {
-            setSidePanelViews((prev) => prev[e.threadId] === 'task-progress' ? { ...prev, [e.threadId]: null } : prev)
-          }
-          if (e.phase === 'planning' || e.phase === 'executing' || e.phase === 'completed' || e.phase === 'idle') {
-            setPendingInteractive((prev) => removePendingTaskApprovalsForThread(prev, e.threadId))
-          }
-          if (e.phase === 'planning' || e.phase === 'awaiting_approval') {
-            void sidecarCall<AgentPendingInteractiveState[]>(AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE, { threadId: e.threadId })
-              .then((states) => {
-                setPendingInteractive((prev) => {
-                  let next = prev
-                  for (const state of states ?? []) {
-                    for (const request of state.taskApprovals ?? []) {
-                      next = upsertPendingTaskApproval(next, request)
-                    }
-                  }
-                  return next
-                })
-              })
-              .catch((error) => {
-                console.error('[useGlobalAgentListeners] 刷新任务审批失败:', error)
-              })
-          }
           break
         }
         case AGENT_IPC_CHANNELS.TITLE_UPDATED: {
