@@ -14,7 +14,7 @@ describe("browser auth session", () => {
     });
   });
 
-  test("lists only non-secret metadata and resolves waiters with submitted values", async () => {
+  test("lists only non-secret metadata and resolves waiters with status only", async () => {
     const emitted: unknown[] = [];
     const pending = waitForBrowserAuthResponse(
       {
@@ -43,14 +43,10 @@ describe("browser auth session", () => {
     await submitBrowserAuthResponse({
       threadId: "thread-1",
       requestId: "auth-1",
-      status: "submitted",
-      values: { password: "password-value" }
+      status: "submitted"
     });
 
-    await expect(pending).resolves.toEqual({
-      status: "submitted",
-      values: { password: "password-value" }
-    });
+    await expect(pending).resolves.toEqual({ status: "submitted" });
     expect(listPendingBrowserAuthRequests()).toEqual([]);
   });
 });

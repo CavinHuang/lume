@@ -63,6 +63,12 @@ const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'data_export_zip',
   'data_migrate_to_dir',
   'data_apply_migration',
+  'browser_runtime',
+  'browser_settings:get',
+  'browser_settings:update',
+  'browser_import:discover',
+  'browser_import:start',
+  'browser_import:cancel',
 ])
 
 const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -72,6 +78,7 @@ const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'window-state',
   'tray-action',
   'logs:live',
+  'browser:event',
 ])
 
 function validateRendererInvokeCommand(command) {

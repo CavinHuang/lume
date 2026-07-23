@@ -13,12 +13,10 @@ describe('BrowserAuthBanner', () => {
     expect(buildBrowserAuthSubmission({
       threadId: 'thread-1',
       requestId: 'auth-1',
-      values: { password: 'password-value' },
     })).toEqual({
       threadId: 'thread-1',
       requestId: 'auth-1',
       status: 'submitted',
-      values: { password: 'password-value' },
     })
   })
 

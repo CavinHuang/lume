@@ -14,6 +14,7 @@ export * from './model'
 export * from './im'
 export * from './reading'
 export * from './wiki'
+export * from './browser'
 export { localFilePreviewUrl, openInSystem } from './native'
 export { sidecarCall } from './system'
 export type {

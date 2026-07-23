@@ -15,10 +15,13 @@ import { createDesktopContextHandlers } from "./desktop-context-handlers";
 import { createWikiHandlers } from "./wiki-handlers";
 import { desktopContextRpcService } from "../services/desktop-context/desktop-context-runtime";
 import type { NotificationWriter, RpcHandler } from "./types";
+import type { BrowserBroker } from "../services/browser/browser-broker";
+import { getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
 
 export interface CreateRpcHandlersContext {
   writeNotification: NotificationWriter;
   renderClient?: { handleRenderResult: (params: any) => void };
+  browserBroker?: BrowserBroker;
 }
 
 export function createRpcHandlers(context: CreateRpcHandlersContext): Record<string, RpcHandler> {
@@ -44,6 +47,15 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
   });
 
   const handlers: Record<string, RpcHandler> = {};
+  let extensionBackendEnabled = false;
+  const notifyBrowserPluginState = (): void => {
+    const enabled = getEffectivePluginRuntimeConfig().enabled;
+    const browserEnabled = enabled.includes("browser");
+    const chromeEnabled = enabled.includes("lume-chrome");
+    context.browserBroker?.setPluginState({ browserEnabled, chromeEnabled, extensionBackendEnabled });
+    context.writeNotification("browser:plugin-state", { browserEnabled, chromeEnabled, extensionBackendEnabled, enabled });
+  };
+  notifyBrowserPluginState();
   Object.assign(
     handlers,
     createSystemHandlers({
@@ -62,6 +74,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     createWikiHandlers(),
     createAgentHandlers({
       writeNotification: context.writeNotification,
+      notifyBrowserPluginState,
       planModePhaseTracker,
       notifyPlanModePhaseChange
     })
@@ -71,6 +84,16 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       context.renderClient!.handleRenderResult(params as any);
       return { ok: true };
     };
+  }
+  if (context.browserBroker) {
+    handlers["browser:settings"] = async (params) => {
+      if (!params || typeof params !== "object") throw new Error("invalid browser settings");
+      extensionBackendEnabled = (params as { extensionBackendEnabled?: unknown }).extensionBackendEnabled === true;
+      notifyBrowserPluginState();
+      return { ok: true };
+    };
+    handlers["browser:broker"] = async () => { throw new Error("browser broker requires the authenticated Node REPL ingress"); };
+    handlers["browser:backends"] = async () => context.browserBroker!.listBackends();
   }
   return handlers;
 }

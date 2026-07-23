@@ -509,11 +509,34 @@ const browserAuthBridge = Object.freeze({
         return trackBackground(state, operation);
     },
 });
+const browserBridge = Object.freeze({
+    request(methodValue, paramsValue = {}) {
+        let state;
+        try {
+            state = getCurrentExecState();
+        }
+        catch (error) {
+            return makeRejectedThenable(error);
+        }
+        const operation = (async () => {
+            requirePermission("browser");
+            const method = await methodValue;
+            const params = await paramsValue;
+            if (typeof method !== "string" || !method.trim())
+                throw new Error("nodeRepl.browser.request expected a method");
+            if (!isPlainObject(params))
+                throw new Error("nodeRepl.browser.request expected params to be an object");
+            return hostCall("browser.request", { method, params: structuredClone(params) }, state);
+        })();
+        return trackBackground(state, operation);
+    },
+});
 const telemetryBridge = options.responseMetaTrace ? createTelemetryBridge() : undefined;
 const privilegedProperties = {
     launchServices: { value: launchServicesBridge, enumerable: true, writable: false, configurable: false },
     config: { value: configBridge, enumerable: true, writable: false, configurable: false },
     browserAuth: { value: browserAuthBridge, enumerable: true, writable: false, configurable: false },
+    browser: { value: browserBridge, enumerable: true, writable: false, configurable: false },
     env: { value: fullEnv, enumerable: true, writable: false, configurable: false },
     createElicitation: {
         enumerable: true, writable: false, configurable: false,

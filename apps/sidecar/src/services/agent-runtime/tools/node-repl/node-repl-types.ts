@@ -44,7 +44,6 @@ export interface NodeReplBrowserAuthRequest {
 
 export interface NodeReplBrowserAuthResult {
   status: "approved" | "declined" | "cancelled" | "unavailable" | "expired" | "origin_changed" | "page_changed" | "locator_invalid" | "submission_failed";
-  values?: Record<string, string>;
 }
 
 export interface NodeReplComputerUseRequest {
@@ -62,6 +61,7 @@ export interface NodeReplRuntimeExecOptions {
   sandbox?: SandboxSettings;
   emitBrowserAuthRequest?: (request: NodeReplBrowserAuthRequest, signal: AbortSignal) => Promise<NodeReplBrowserAuthResult>;
   emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
+  browserRequest?: (request: { method: string; params: Record<string, unknown> }, signal: AbortSignal) => Promise<unknown>;
 }
 
 export interface NodeReplRuntimeClient {

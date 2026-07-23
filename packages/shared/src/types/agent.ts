@@ -1072,7 +1072,6 @@ export interface AgentBrowserAuthResponseInput {
   threadId: string
   requestId: string
   status: AgentBrowserAuthStatus
-  values?: Record<string, string>
 }
 
 export type AgentToolPermissionRiskLevel = 'low' | 'medium' | 'high'
