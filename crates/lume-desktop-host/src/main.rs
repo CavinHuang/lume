@@ -198,7 +198,16 @@ fn authorize_windows_user_presence(request: &UserPresenceRequest) -> Result<bool
     let operation: IAsyncOperation<UserConsentVerificationResult> =
         unsafe { factory.RequestVerificationForWindowAsync(hwnd, &HSTRING::from(&request.reason)) }
             .context("request Windows user verification")?;
-    Ok(operation.get()? == UserConsentVerificationResult::Verified)
+    let result = operation.get()?;
+    if result == UserConsentVerificationResult::Verified {
+        return Ok(true);
+    }
+    if result == UserConsentVerificationResult::Canceled
+        || result == UserConsentVerificationResult::RetriesExhausted
+    {
+        return Ok(false);
+    }
+    authorize_windows_credentials(hwnd, &request.reason)
 }
 
 #[cfg(windows)]
@@ -239,6 +248,173 @@ fn parent_executable_matches(parent_pid: u32, expected: &str) -> Result<bool> {
     let actual = String::from_utf16(&path[..length as usize])
         .context("decode user-presence parent executable")?;
     Ok(actual.eq_ignore_ascii_case(expected))
+}
+
+#[cfg(windows)]
+fn authorize_windows_credentials(
+    hwnd: windows::Win32::Foundation::HWND,
+    reason: &str,
+) -> Result<bool> {
+    use std::{ffi::OsStr, os::windows::ffi::OsStrExt, ptr::write_volatile};
+    use windows::{
+        core::{BOOL, PCWSTR},
+        Win32::{
+            Foundation::{CloseHandle, ERROR_CANCELLED, ERROR_SUCCESS, HANDLE},
+            Graphics::Gdi::HBITMAP,
+            Security::{
+                Credentials::{
+                    CredUIPromptForCredentialsW, CREDUI_FLAGS_ALWAYS_SHOW_UI,
+                    CREDUI_FLAGS_DO_NOT_PERSIST, CREDUI_FLAGS_GENERIC_CREDENTIALS, CREDUI_INFOW,
+                    CREDUI_MAX_USERNAME_LENGTH,
+                },
+                LogonUserW, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT,
+            },
+        },
+    };
+
+    fn wide(value: &str) -> Vec<u16> {
+        OsStr::new(value).encode_wide().chain(Some(0)).collect()
+    }
+
+    struct SecretWide(Vec<u16>);
+    impl Drop for SecretWide {
+        fn drop(&mut self) {
+            for value in &mut self.0 {
+                unsafe { write_volatile(value, 0) };
+            }
+        }
+    }
+
+    let message = wide(reason);
+    let caption = wide("Lume 用户验证");
+    let target = wide("Lume fresh user verification");
+    let ui = CREDUI_INFOW {
+        cbSize: std::mem::size_of::<CREDUI_INFOW>() as u32,
+        hwndParent: hwnd,
+        pszMessageText: PCWSTR(message.as_ptr()),
+        pszCaptionText: PCWSTR(caption.as_ptr()),
+        hbmBanner: HBITMAP::default(),
+    };
+    let mut username = SecretWide(vec![0; CREDUI_MAX_USERNAME_LENGTH as usize + 1]);
+    let mut password = SecretWide(vec![0; 512]);
+    let mut save = BOOL::from(false);
+    let status = unsafe {
+        CredUIPromptForCredentialsW(
+            Some(&ui),
+            PCWSTR(target.as_ptr()),
+            None,
+            0,
+            &mut username.0,
+            &mut password.0,
+            Some(&mut save),
+            CREDUI_FLAGS_ALWAYS_SHOW_UI
+                | CREDUI_FLAGS_DO_NOT_PERSIST
+                | CREDUI_FLAGS_GENERIC_CREDENTIALS,
+        )
+    };
+    if status == ERROR_CANCELLED {
+        return Ok(false);
+    }
+    if status != ERROR_SUCCESS {
+        bail!("Windows credential UI is unavailable");
+    }
+
+    let username_value = String::from_utf16_lossy(
+        &username.0[..username
+            .0
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(username.0.len())],
+    );
+    let (domain_value, account_value) = split_windows_account(&username_value);
+    let account = SecretWide(wide(account_value));
+    let domain = domain_value.map(|value| SecretWide(wide(value)));
+    let mut token = HANDLE::default();
+    let authenticated = unsafe {
+        LogonUserW(
+            PCWSTR(account.0.as_ptr()),
+            domain
+                .as_ref()
+                .map_or(PCWSTR::null(), |value| PCWSTR(value.0.as_ptr())),
+            PCWSTR(password.0.as_ptr()),
+            LOGON32_LOGON_INTERACTIVE,
+            LOGON32_PROVIDER_DEFAULT,
+            &mut token,
+        )
+    }
+    .is_ok();
+    let current_user = if authenticated {
+        token_matches_current_user(token)
+    } else {
+        Ok(false)
+    };
+    if !token.is_invalid() {
+        unsafe {
+            let _ = CloseHandle(token);
+        }
+    }
+    current_user
+}
+
+#[cfg(windows)]
+fn split_windows_account(value: &str) -> (Option<&str>, &str) {
+    match value.split_once('\\') {
+        Some((domain, account)) if !domain.is_empty() && !account.is_empty() => {
+            (Some(domain), account)
+        }
+        _ => (None, value),
+    }
+}
+
+#[cfg(windows)]
+fn token_matches_current_user(candidate: windows::Win32::Foundation::HANDLE) -> Result<bool> {
+    use std::ffi::c_void;
+    use windows::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        Security::{EqualSid, GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER},
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    fn token_user_buffer(token: HANDLE) -> Result<Vec<usize>> {
+        let mut byte_length = 0_u32;
+        let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut byte_length) };
+        if byte_length < std::mem::size_of::<TOKEN_USER>() as u32 || byte_length > 64 * 1024 {
+            bail!("invalid Windows token identity size");
+        }
+        let word_count = (byte_length as usize + std::mem::size_of::<usize>() - 1)
+            / std::mem::size_of::<usize>();
+        let mut buffer = vec![0_usize; word_count];
+        unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                Some(buffer.as_mut_ptr().cast::<c_void>()),
+                byte_length,
+                &mut byte_length,
+            )
+        }
+        .context("read Windows token identity")?;
+        Ok(buffer)
+    }
+
+    let candidate_buffer = token_user_buffer(candidate)?;
+    let mut current = HANDLE::default();
+    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut current) }
+        .context("open current Windows identity")?;
+    let current_buffer = token_user_buffer(current);
+    unsafe {
+        let _ = CloseHandle(current);
+    }
+    let current_buffer = current_buffer?;
+    let candidate_user = unsafe { &*(candidate_buffer.as_ptr().cast::<TOKEN_USER>()) };
+    let current_user = unsafe { &*(current_buffer.as_ptr().cast::<TOKEN_USER>()) };
+    Ok(unsafe {
+        EqualSid(
+            candidate_user.User.Sid.clone(),
+            current_user.User.Sid.clone(),
+        )
+    }
+    .is_ok())
 }
 
 fn read_session_token(args: &HostArgs) -> Result<String> {
@@ -439,6 +615,36 @@ mod tests {
             ..request
         })
         .is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn splits_domain_accounts_without_rewriting_email_accounts() {
+        assert_eq!(
+            split_windows_account("MicrosoftAccount\\user@example.com"),
+            (Some("MicrosoftAccount"), "user@example.com")
+        );
+        assert_eq!(
+            split_windows_account("user@example.com"),
+            (None, "user@example.com")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn current_process_token_matches_current_user() {
+        use windows::Win32::{
+            Foundation::{CloseHandle, HANDLE},
+            Security::TOKEN_QUERY,
+            System::Threading::{GetCurrentProcess, OpenProcessToken},
+        };
+
+        let mut token = HANDLE::default();
+        unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }.unwrap();
+        assert!(token_matches_current_user(token).unwrap());
+        unsafe {
+            let _ = CloseHandle(token);
+        }
     }
 
     #[test]
