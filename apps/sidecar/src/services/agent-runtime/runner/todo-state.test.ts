@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LumeRunState } from "./run-state";
 import { createFileBackedLumeRunStateStore } from "./run-state-store";
-import { readLatestTodoState } from "./todo-state";
+import { cloneTodoState, getTodoCompletionBlocker, readLatestTodoState } from "./todo-state";
 
 function makeState(runId: string, threadId: string, createdAt: string): LumeRunState {
   return {
@@ -84,5 +84,38 @@ describe("readLatestTodoState", () => {
       todos: [],
       currentActiveForm: null
     });
+  });
+});
+
+describe("todo completion guard", () => {
+  test("blocks final completion while todo items remain", () => {
+    const state = {
+      todos: [
+        { content: "Inspect code", activeForm: "Inspecting code", status: "completed" as const },
+        { content: "Fix bug", activeForm: "Fixing bug", status: "in_progress" as const },
+        { content: "Run tests", activeForm: "Running tests", status: "pending" as const }
+      ],
+      currentActiveForm: "Fixing bug"
+    };
+
+    const blocker = getTodoCompletionBlocker(state);
+    expect(blocker).toContain("[todo incomplete]");
+    expect(blocker).toContain("正在进行：Fix bug");
+    expect(blocker).toContain("[~] Fix bug");
+    expect(blocker).toContain("[ ] Run tests");
+    expect(blocker).toContain("不要直接给出最终答复");
+  });
+
+  test("allows completion after the list is cleared and clones snapshots defensively", () => {
+    expect(getTodoCompletionBlocker(null)).toBeUndefined();
+    expect(getTodoCompletionBlocker({ todos: [], currentActiveForm: null })).toBeUndefined();
+
+    const source = {
+      todos: [{ content: "Task", activeForm: "Doing task", status: "in_progress" as const }],
+      currentActiveForm: "Doing task"
+    };
+    const cloned = cloneTodoState(source);
+    cloned.todos[0]!.content = "Changed";
+    expect(source.todos[0]!.content).toBe("Task");
   });
 });

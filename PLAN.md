@@ -1,97 +1,107 @@
-# Plan: 重构 Lume 统一日志与端到端 Agent 链路追踪
-_Locked via grill — by Codex + user; condensed for adversarial review_
-
-> 本文件是实施与评审的规范版本；`PLAN-logging-details.md` 仅保留访谈后形成的详细说明，不新增要求。若两者表述冲突，以本文件为准。
+# Plan: 重设计 Lume Task 工具
+_Locked via grill — by Codex + 用户_
 
 ## Goal
 
-建立覆盖 Electron main、renderer、sidecar、desktop-host、node-repl 及全部 Agent 入口的统一结构化日志管线。Electron main 是唯一普通日志文件写入者；默认终端只显示关键生命周期与异常，成功 RPC、healthcheck 和列表轮询不刷屏。每次用户或系统入口都能通过稳定 ID 追踪 `入口 → IPC → sidecar → queue/runtime → provider/tool/subagent → 持久化 → 转发 → 前端提交或渠道确认`，同时默认不泄露密钥、完整正文、系统提示词或 provider 原始报文。
+将 Lume 收敛为一套 Claude Code 风格的持久化 Task 列表：Task 是主 Agent 管理的独立任务项，通过 `blocks/blockedBy` 组成依赖图；Task 只负责状态、依赖、认领和审计，不主动创建或调度 subagent。Subagent 保持独立能力，由主 Agent 自行决定是否调用，并通过可选引用与 Task 关联。TodoWrite 继续作为主 Agent 的短期串行进度清单，和 Task 完全隔离。
 
 ## Approach
 
-1. **定义共享事件协议与关联语义。**
-   - 在 `packages/shared` 增加版本化 `LumeLogEventV2`、批量传输、查询和配置类型；新文件写 NDJSON v2，读取器兼容现有 v1/pino/plain text，但不迁移历史文件。
-   - 每条事件包含 `eventId/schemaVersion/emittedAt/observedAt/seq/kind/level/source/context/event/status/message/data/error`；关联字段保持顶层可索引。
-   - canonical `traceId` 表示一次入口请求，由首个可信 main/sidecar 边界生成；renderer 只生成 `submissionId/clientEventId`，main 的接收回执把它们映射到 canonical trace。`runId` 表示一次 Agent 执行，`spanId` 表示阶段，retry/fallback 使用独立 `providerAttemptId`，工具沿用 `toolCallId`，子 Agent 使用独立 trace 并通过 parent/link 关联。
-   - ID 只用于关联，不用于授权；main 校验所有跨边界事件的类型、UUID/长度、source allowlist 和批量大小。任何外部 ID 都不得直接组成文件名或路径，持久化键必须由内部生成或经过固定编码。稳定事件名使用英文点分格式，错误使用统一结构。
+1. 以 Claude Code V2 Task 为基准，建立唯一的 Lume Task 工具链：`TaskCreate`、`TaskUpdate`、`TaskList`、`TaskGet`、`TaskStop`，并在 sidecar 主 Agent 的工具组中显式 wiring；工具工厂绑定 `sessionDir`、thread-derived `taskListId`、服务端 actor 和 runtime event emitter。
+   - `TaskCreate` 只创建一个 `pending` Task，不接受依赖、owner 或 executor 参数。
+   - `TaskUpdate` 负责修改描述、状态、owner、metadata，以及通过 `addBlocks/addBlockedBy` 建立依赖。
+   - `TaskList/TaskGet` 提供列表摘要和完整 Task 查询。
+   - 不新增 Task 流程容器、TaskRun、TaskWait 或 Task 自动执行器；`TaskStop` 是 Task 层的取消请求：原子地递增 claim generation、撤销当前 claim 并将公开状态回到 `pending`，同时记录带旧 claim token 的取消请求。它不等待、也不依赖 executor 确认；独立 executor-control adapter 可异步请求终止并记录 ack，旧执行器晚到结果因 token/revision fencing 被拒绝。若旧 executor 仍可能写共享工作区，则保留服务端内部 execution fence，阻止任何新的 Task claim，直到收到终止确认。
+   - TaskUpdate/TaskStop 是非并发安全控制工具；主 Agent 必须先完成认领，再在后续工具调用中 dispatch Agent。runtime 若发现同一 assistant turn 同时包含 TaskStop 与 task-linked Agent/Delegate，必须拒绝该批次或显式按 TaskStop 先行处理，禁止未定义执行顺序。
+   - 每个 owner-sensitive transition 必须携带服务端返回的 opaque claim token 和 expected revision/attempt；过期 executor 的迟到结果必须被拒绝。
 
-2. **让 Electron main 成为唯一 writer。**
-   - 在 `apps/desktop/src/logging` 建立服务，负责二次脱敏、时间归一化、单调 `seq`、终端格式化、异步批量写入、轮转、保留、查询、导出和 live subscription，不新增依赖。
-   - 默认文件级别为 info，但 `kind=trace` 单独路由并完整落盘；终端只显示关键 info、warn/error/fatal。成功的 polling/RPC 默认不生成普通日志，只记录失败、超时、慢调用或周期聚合。
-   - 文件按日生成，20 MB 分段，默认保留 14 天且总量不超过 500 MB。写入队列按约 50 ms/100 条批处理；普通 debug 和 trace detail 可丢弃并生成聚合 `logging.events_dropped`。不可丢的 trace spine 明确定义为 entry/accepted、run start/end、每次 provider attempt end、assistant persistence、delivery completion/unknown 及 parent/link；若任何 detail 被丢弃，同一 trace 写 `trace.incomplete` 标记和丢弃分类。
-   - 为 trace spine 和 warn/error 保留独立容量；极端饱和或 writer 自身故障时只写最小 emergency stderr/crash record，绝不反压 Agent/provider 执行，也不承诺断电时尾部绝对无损。
-   - rotation、retention、export snapshot 和 shutdown flush 通过 writer 的单一 segment lifecycle 队列串行化；永不删除 active segment。导出先 flush/rotate 得到不可变 segment 快照，并用 generation 隔离后续 live-tail，Windows 文件占用失败只延后清理而不破坏 active writer。
+2. 将 Task 持久化改为按任务列表隔离的文件结构：
+   `<sessionDir>/tasks/<taskListId>/.lock`、`.highwatermark` 和每个 Task 的独立 JSON 文件。
+   - 默认 `taskListId` 为主 Agent 的 thread/session ID。
+   - 创建使用任务列表锁和递增字符串 ID；删除后不复用 ID。
+   - 单 Task 更新使用任务文件锁；涉及 owner 忙碌检查和依赖变更时使用任务列表锁。
+   - 任务列表锁使用独占创建、renewable heartbeat、fencing token、固定超时、stale lock 恢复和统一加锁顺序；不能只依据经过时间抢占仍存活的 writer。taskListId 与 Task ID 只接受安全路径段，并验证解析路径仍位于 session task root 下。
+   - 所有 mutation（创建、ID/highwatermark、普通更新、owner/claim、依赖、删除、事件 revision）通过同一个 idempotent write-ahead transaction journal 记录 prepare/commit；启动或下一次 mutation 前恢复未完成事务，避免状态、事件和 highwatermark 分裂。
+   - TaskStore 提供唯一的 `mutate()` 入口：在同一事务中校验、写 snapshot、追加 revision、分配 `(taskListId, sequence)` 事件序号并触发 live notification；入口强制校验服务端 actor/context 必须是当前主线程（`threadType === main`），且 `taskListId` 必须等于该主线程推导值。启动恢复、executor-control ack 等非模型写入使用受限的 trusted `system/recovery` context，必须绑定相同的主线程 `taskListId`、服务端来源和允许的 mutation 类型，不能成为绕过权限的通道。事件 envelope 显式记录 `origin: agent | system | recovery`，TaskList 保持纯读。
+   - 不使用模块级全局 Map，也不读取旧 `task-contracts/`、`task-runs/` 数据。
 
-3. **用薄 transport 接入所有进程并消除重复包装。**
-   - main 自身直接调用 logging service；sidecar 和 renderer 使用本地过滤、首次脱敏、有界 batch transport。事件进入脱敏或队列前必须经过 cycle-safe serializer：拒绝 getters/prototypes，限制 depth、breadth、key count、单字符串和最终 encoded bytes，并对 Error/BigInt/循环引用使用确定性占位。每个 transport 同时受事件数和字节数上限约束，只允许一个或小的固定数量 acked in-flight batch；超时/断连停止继续发送并在本地按优先级丢弃，重连回放不得突破同一 pending-byte 上限。sidecar 未连接时使用有界启动 ring buffer，连接后按原时间回放。
-   - renderer 经 preload allowlist 的专用 IPC 发送，同时统一接入 `window.error`、`unhandledrejection` 和 React error boundary，不 monkey-patch 普通 console。
-   - desktop-host/node-repl 仅在 stderr 发带协议标识的单行 JSON；父进程按行解析，解析失败才记录 `raw_process_output`。stdout 的 socket/MCP/control 协议保持纯净。
-   - `system.log-batch`、日志查看器查询/live-tail 以及内部控制事件不进入 RPC access log，避免日志系统自我污染。
-   - 预期 shutdown 的 `sidecar exited code=0` 为 debug；意外 code=0 为 warn；启动失败或崩溃为 error/fatal。终端不再出现多层 `[desktop] [sidecar] [app]` 前缀。
+3. 保持 Claude Code 风格的公开 Task schema：
+   `id`、`subject`、`description`、`activeForm`、`owner`、`status`、`blocks`、`blockedBy`、`metadata`。
+   - 公开状态只有 `pending`、`in_progress`、`completed`。
+   - Lume 特有的 executor 引用、尝试次数、最近错误、产物和验证信息放在 `metadata._lume`。
+   - metadata 使用 Claude Code 风格的浅层增量合并语义：普通字段覆盖、数组整体替换、`null` 删除；限制 metadata 总大小并校验允许的结构。
+   - `_lume` 中的 claim、attempt、错误来源、事件引用等服务端字段由服务端保留，普通 TaskUpdate 不能伪造或删除。
 
-4. **在所有 Agent 入口建立并传播 trace context。**
-   - 扩展 `AgentSendInput` 或等价共享类型，renderer 入口只携带 `submissionId/clientEventId` 和非权威 origin hint；main 根据 IPC `event.sender/webContents.id` 与当前窗口 lifecycle registry 派生 `main_window` 或 `quick_input`，拒绝 sender 与 hint 不一致的事件，然后生成 canonical `traceId` 并回传映射。IM、Automation、Routine、subagent、resume 等入口由各自可信 sidecar adapter 派生 origin 并生成 canonical trace，携带可选 parent/link。
-   - main 为 IPC/RPC 分配 `rpcRequestId`；sidecar 的校验、approval/continuation 分流、queue accepted、重排、取消、冷启动恢复均保留或链接原 trace context。
-   - `sendAgentMessage` 在持久化后绑定真实 `messageId`。现有 Trace Store 继续使用内部生成的 per-run `storeTraceId` 作为文件键；版本化扩展 `correlationTraceId`、parent/link 字段，`LumeRunObserver.create` 接受 correlation context 但仍创建内部 store trace/run/root span。旧 reader/resume 按 schema version 兼容，绝不把外部 correlation ID 当文件键。复用现有 `TraceRecorder`、RunObserver、RuntimeEvent 和 usage identity，不建立平行 workflow 模型。
-   - origin 至少覆盖 `main_window/quick_input/im.<provider>/automation/routine/subagent/resume`；每种 origin 明确自己的完成点。
+4. 实现主 Agent 独占的认领和修改边界。
+   - 只有主 Agent 可以调用 Task 工具；subagent 不暴露 Task 工具。
+   - `in_progress` 更新必须通过原子校验：依赖全部完成、owner 未被占用、调用方权限有效；`in_progress` 必须有服务端派生的 owner/claim token。
+   - 每个 Task list 同时最多只有一个 `in_progress` Task；主 Agent 自己最多认领一个，不能通过不同 subagent owner 分散运行多个 Task。Task 图仍可保存多个 pending 项及并行依赖关系，但下一项必须等当前 Task 释放 claim/fence 后再认领。
+   - owner 从当前 thread/run 或经校验的 subagent 身份派生，模型不能伪造任意 owner。
+   - claim 保存 actor、parent run、claim token、claimedAt 和 lease 状态；stale claim 只能由 startup reconciliation 或显式 TaskStop/TaskUpdate mutation 恢复，TaskList 不得写状态。TaskStop 先撤销 claim 并把公开状态回到 pending，但 execution fence 对新的 Task claim 具有权威性：旧 executor 未终止确认前不能重新认领；ack 只释放 fence，不再改变公开状态，旧 claim 由 token/revision fencing 作废。
+   - Task 不创建、唤醒、等待或验收 subagent。
+   - `Agent` 是否创建 subagent、使用哪个 subagent，由主 Agent 单独决定；Task 不因此获得 subagent 生命周期。
 
-5. **在真实 runtime/SDK 边界记录 provider、tool 与 subagent。**
-   - 把上下文组装、记忆、模型解析、session 创建/恢复、provider attempt、权限、工具、compaction、subagent、persist、finalize 建模为 span。
-   - 给 SDK `QueryEngineConfig` 增加可选且平台无关的 observability callback；SDK 不依赖 desktop logger，sidecar adapter 负责绑定 trace context。
-   - provider attempt 记录 requested/effective provider、channel、adapter、model、attempt、status、request/response ID、first-token/总耗时、chunk/字符数、finish reason、usage/cache/cost/rate-limit 和规范化错误；不可获得的字段保持 unknown。
-   - base URL 保留完整路径，但删除 userinfo、query、fragment，并脱敏疑似 credential 的路径段。禁止 API key、authorization/cookie、provider 原始 request/response body。
-   - 不逐 token/chunk 写日志。工具只记录 name/call ID/source/权限/状态/耗时及有界安全摘要；文件和二进制只记录受控路径、mime、size、hash。
+5. 保持 Task 与 Subagent 两套独立生命周期。
+   - 主 Agent 可以先将 Task 设置为 `in_progress`，由 runtime 生成 claim，再在后续工具调用中调用 `Agent`；如果要把 owner 指向新 subagent，Agent bridge 使用无副作用的 identity reservation，再原子绑定 claim，启动失败时执行补偿释放，Task 不主动创建 subagent。
+   - `Agent` 和 `Delegate` 可接收独立的结构化 `task_ref: { taskListId, taskId, claimToken }`；bridge 必须校验 `task_ref.taskListId` 精确等于父主线程当前推导的 `taskListId`，使用自己的 subagent session/run ID，不修改 Task 状态，也不复用现有 SubagentCoordinator 的 `task_id`。
+   - subagent 执行器引用写入服务端管理的 `metadata._lume.executorRef`。
+   - Agent/Delegate 输入改为 discriminated union：带 `task_ref` 时拒绝 `task_id`、`new_task` 及其它旧 coordinator 字段，避免混入旧 SubagentCoordinator 路径；不带 `task_ref` 的 standalone Agent 保留旧路径。带 `task_ref` 的路径走直接 executor-control adapter。
+   - executor-control adapter 统一处理 Agent 与 Delegate 的取消、终止确认、claim token 和结果回写关联；每个 claim 通过 CAS 只能绑定一个 active executor/attempt，重复使用同一 `task_ref` 或 claim token 的 dispatch 必须拒绝，只有 terminal ack 才能清除 binding。subagent 完成后，主 Agent 根据返回结果调用 `TaskUpdate`。
+   - execution fence 保存 cancellation deadline、executorRef 和 recovery state。deadline 到期后，trusted recovery 必须通过 executor-control adapter 确认或强制终止 executor；只有 verified terminal/forced-termination result 才能释放 fence，否则保持 fence 并报告 recovery failure，不能为恢复吞掉安全约束。
+   - Task-linked Agent/Delegate 调用在 runtime 分批阶段默认进入串行队列；只有显式的 adapter-controlled queue 在调用前已确认 executor 为只读时才允许并发，不能依赖 Agent/Delegate 静态 `isConcurrencySafe` 或同轮模型意图。由于一个 Task list 同时只有一个 active Task，Task 之间不并行；独立、无 `task_ref` 的 Agent 能否并行仍由现有服务端只读判定控制。
+   - subagent 失败时由主 Agent 清除 owner、恢复 `pending`，并将错误与结果写入服务端管理的 `metadata._lume`。
 
-6. **定义回复交付的确定完成语义。**
-   - sidecar 对用户消息持久化、assistant final、可见消息版本和 run state 分别产生 milestone；同一 `traceId/runId/messageId` 随关键 RuntimeEvent 与通知传播。
-   - main 为每次目标窗口投递创建唯一 `deliveryAttemptId`，绑定 `webContents.id`、renderer lifecycle/导航 generation、message version 和 trace；主窗口与 quick-input 的广播分别形成独立 attempt，不共享成功状态。
-   - `webContents.send` 后记录 `reply.forwarded`；renderer 收到匹配版本后记录 `reply.received`，仅由观察到该精确 message version 已进入目标 atom/store 的 post-commit effect 回传幂等 `reply.committed` ack；可选在下一 animation frame 记录 `reply.rendered`。
-   - 重复/迟到/旧 lifecycle ack 被 main 幂等忽略；ack 超时只把对应 attempt 标记 `delivery_unknown`，不误报失败或成功。IM 以渠道 send ack 为完成点，Automation/Routine 以结果持久化为完成点，子 Agent 以自身 run/announce 结果为完成点。
+6. 实现依赖和动态修改规则。
+   - TaskCreate 不隐式推断依赖；依赖必须通过 TaskUpdate 显式声明。
+   - `blocks`/`blockedBy` 两端原子更新，并在写入前拒绝循环依赖。
+   - 主 Agent 可以修改 pending Task、追加 Task；已完成 Task 不覆盖。
+   - pending Task 可以删除；in_progress Task 由 TaskStop 原子撤销 claim 并把公开状态恢复 pending，但其 execution fence 在 executor-control adapter 返回 verified terminal/forced-termination result 前阻止重新认领；该确认只释放 fence，不是公开 Task 状态转换前置条件；completed Task 不允许删除。
+   - 删除时通过事务 journal 原子清理其他 Task 的依赖引用。
+   - 重试通过恢复 pending 并增加 `metadata._lume.attempts` 记录，不覆盖历史结果。
 
-7. **实现隐私、配置与 trace-centric viewer。**
-   - 默认消息摘要由专用 allowlist builder 生成，只允许角色、长度、使用 main 持有的 per-install secret 计算的 keyed digest，以及通过敏感值扫描后的最多 256 字符预览；普通 `data` schema 拒绝 message/body/prompt/raw response 字段。高风险上下文只记录结构化摘要，不生成文本预览。系统提示词只存版本/section keyed digest/长度；不复制文件、网页、截图、媒体或大段 shell 输出。
-   - main 生成并通过 safeStorage 保护 per-install digest root key，再按 `source/purpose/keyVersion` 派生不可逆 HMAC subkey，通过可信 IPC 随版本化 policy snapshot 分发给 renderer/sidecar；producer 用 subkey 对自己持有的完整正文计算 keyed digest，永不接触 root key或把正文送入普通日志。safeStorage 不可用时使用仅当前进程会话有效的随机 root，并把 digest 标记为 `session_scoped`，不降级为普通 hash。
-   - base URL 仍按用户锁定需求记录完整脱敏路径：强制删除 userinfo/query/fragment，逐 segment 处理已知 credential、JWT、高熵和 provider token 模式并支持配置扩展。扩展规则只允许有长度、数量和 segment 长度上限的 exact/glob 语法，禁止用户正则和跨 segment 匹配，确保线性时间；不得宣称能识别所有自定义 tokenized path，设置页与导出确认明确提示这一残余本地泄露风险。
-   - 完整用户/assistant 正文使用与普通事件判别联合不相交的 `SensitiveDiagnosticEnvelope`，普通 writer、队列、live-tail、viewer 查询和普通导出遇到该类型必须拒绝。main 在接收时重新验证 thread/trace scope、lease version 和 expiry，再用 Electron `safeStorage` 加密写入独立受控目录；默认 lease/密文 TTL 为 1 小时、最长 24 小时，并设置独立容量上限、启动/定时过期清理和立即删除。不可安全使用时拒绝开启，不回退明文；完整导出需再次确认并审计。
-   - 日志配置仍位于现有 `settings.json` 的 GeneralSettings schema，但 Electron 模式下由 main 的 `SettingsBroker` 成为整个根文件的唯一持久化 writer；general settings、UI state、proxy settings 及发现到的其他 root writer 全部改为请求 broker 做序列化 read-modify-write，不能各自重写快照。standalone CLI/headless 使用同一 `wx` lock-file/PID+start-time 所有权协议：desktop 持锁时只读设置并用进程内/env override，拒绝持久化 mutation；无 desktop 时 standalone 可取得锁并原子写入。logging policy 与 diagnostic lease 使用单调 `configVersion`，main 启动即加载并向 producers 分发只读 snapshot，拒绝旧版本回写；sidecar 重启不能恢复陈旧 lease。热更新 level/format/诊断状态，轮转参数在下一分段生效；旧环境变量兼容一个版本并只提示一次弃用。
-   - 把 list/read/query/open/export/delete/decrypt/live-tail 收口到 main；sidecar 停止时日志页仍可用。页面支持字段过滤、span 树、provider/model/usage 摘要、暂停/follow、当前 trace 导出；内部 viewer 事件默认隐藏。交互控件复用现有 shadcn/global 组件。
+7. 保留 Claude Code 风格的完成校验和只读展示。
+   - `TaskUpdate(status: completed)` 在提交 snapshot 之前运行阻塞式完成校验；若现有 hook registry 支持则复用，否则提供 TaskUpdate 的 pre-commit validator，校验失败时保持原状态并返回原因。
+   - 每次成功 mutation 同时写入当前 Task JSON 和任务列表 append-only event/revision log；启动回放由新 TaskStore 提供，不再读取 `task-runs/`；live/replay/deduplication 都使用 `(taskListId, sequence)`，不依赖 runId。
+   - 复用现有 `task.progress` 事件通道，但去除对 `contractId/TaskRun` 的依赖，展示 Task 列表、依赖、owner 和 metadata 摘要；同步更新 shared 类型、sidecar replay、事件去重和 web 消费者。
+   - UI 只读展示，不提供创建、修改、认领、删除或重试入口。
 
-8. **分阶段迁移、删除双轨并定向验证。**
-   - P0 去噪；P1 shared v2 + main writer + transports；P2 Agent/provider/tool trace；P3 native host + 加密诊断 + 配置；P4 viewer + cleanup。每阶段在新路径验证后才删除旧 writer，禁止长期双写同一文件。
-   - 删除 sidecar/desktop 的 `electron-log` 写入、sidecar console monkey patch、迁移后无用的 sidecar log-viewer RPC，以及确认无 workspace/build 引用后的旧 Tauri `crates/lume-logger` 和过时日志设计文档；不新增依赖。
-   - 第一方产品运行时代码迁移到上下文化 logger，仅 bootstrap/emergency 保留最小 console/eprintln allowlist；源码契约测试禁止新增直接 console/eprintln、多 writer、敏感 header/raw body。
-   - 定向验证协议与双层脱敏、URL 清理、队列/轮转/保留、transport/ring buffer、预期与意外退出、完整 Agent E2E ID 链、queue/resume/subagent/provider retry、1000 chunks 聚合、各 origin 完成点、safeStorage 失败、viewer live unsubscribe 和历史兼容。
-   - 仅运行受影响测试和必要模块 typecheck，最后执行 `git diff --check`；手工 desktop dev 验证示例中的健康检查不再刷屏，并检查一次真实消息 trace。
+8. 处理并行执行的资源边界。
+   - Task 不实现文件级 scheduler；主 Agent 只对只读任务并行调用 Agent。
+   - 共享工作区中的写入 Task 默认串行；现有 workspace writer lease 继续保护单次写工具调用，但不被宣称为完整任务级读改写隔离。
+   - `expectedFiles` 只作为提示和审计信息，不作为安全锁；第一版不承诺共享 worktree 的并行写入或 worktree 隔离。
+
+9. 更新提示词、权限和工具元数据，并完成旧链路切断。
+   - Task 与 TodoWrite 同时暴露，但不共享状态、不自动同步、不互相复制条目。
+   - TodoWrite 用于短期、简单、串行的小目标；Task 用于持久化任务、依赖、认领和并行委派。
+   - 新增五个工具的精确权限元数据，并在所有 subagent tool assembly（静态、dynamic、required tools）中集中移除完整 task-management deny set：`TaskCreate/TaskUpdate/TaskList/TaskGet/TaskStop/TaskOutput` 及旧 SDK Task 工具；`resolveDynamicTools` 必须传递 thread/actor context，嵌套 SDK AgentTool 必须应用同一 deny set，并由装配后的断言拒绝任何残留 Task 名称；仅 coordinator-bound standalone `TaskReport` 可例外保留。
+   - 保留 `Agent/Delegate/FinishAgentTask` 的 standalone subagent 兼容语义；新 Task 不使用 `FinishAgentTask`。
+   - 废弃 SDK 模块级 Map 作为 Task 状态源，但先将 Bash 后台 job 的停止句柄、输出读取等用途迁移到模型不可见的 `ProcessJobRegistry`，并将旧 `TaskStop/TaskOutput` 改名为内部 `ProcessStop/ProcessOutput`，同步更新 Bash、exports、权限、事件和测试。
+   - 旧 TaskContract 计划审批链、runtime orchestrator、approval service、RPC continue/retry/skip handler、旧 replay、主 Agent 的 `taskReportTool` 和旧 TaskProgressPanel 控件必须整体移除或隔离到明确的 legacy compatibility boundary；仅保留 coordinator-bound standalone subagent `TaskReport`，新 Task 工具不能意外进入旧链路。
 
 ## Key decisions & tradeoffs
 
-- Electron main 是唯一普通日志 writer；子进程因此需要启动缓冲和 emergency fallback。
-- 业务 trace 与普通 debug 分开路由：链路默认可查，但不会因完整 trace 重新刷终端。
-- renderer state committed 是桌面回复完成点；forwarded 不是送达证明，rendered 不是核心可靠性条件。
-- canonical trace ID 只由可信 main/sidecar 边界生成；renderer submission ID 与 Trace Store 内部文件键保持独立，以换取更明确的信任和迁移边界。
-- renderer 的 origin 仅是 hint；窗口类型由 main 的可信 sender/lifecycle registry 派生，内部入口由 sidecar adapter 派生。
-- 默认保存 allowlisted 摘要、keyed digest 和经扫描的最多 256 字符预览，这是用户锁定的本地可诊断性取舍；预览不能提供绝对秘密隔离。完整用户/assistant 正文必须走独立 envelope、限时、限定 scope、加密，系统提示词和原始 provider body 永不保存。
-- base URL 记录完整脱敏路径以诊断自定义 provider，这是用户锁定的可观测性要求；无法保证识别所有非标准 tokenized path，因此接受明确的本地残余风险，并要求可扩展 segment redaction 与导出提示。
-- 复用现有 Trace Store/RunObserver/RuntimeEvent；新增的是跨边界关联和安全日志投影，不是第三套 Agent 事件系统。
-- 有界队列优先保护业务执行而非追求日志绝对无损；trace spine 不参与常规丢弃，detail 丢弃必须聚合并把 trace 标记 incomplete。
-- 不增加依赖，删除 electron-log 双轨与未接入 Electron 主链路的旧 Rust logger。
+- **采用 Claude Code 的 Task 项模型，而不是 TaskRun 工作流容器。** 这样工具语义简单、持久化边界清楚，也符合“Task 与 Subagent 分离”的要求；Task list 同时只运行一个 Task，独立 Agent 的只读并行不由 Task 隐式派生。
+- **Task 与 Todo 同时暴露但完全隔离。** Claude Code 的 V1/V2 互斥切换不适合 Lume 的产品目标；Lume 通过提示词区分用途，而不是隐藏工具。
+- **只允许主 Agent 修改 Task。** 这是对 Claude Code 多 teammate 认领模型的有意收紧，牺牲跨 Agent 直接更新换取单一编排责任和更少竞态。
+- **公开状态保持三态。** `failed/blocked/cancelled` 不进入 Task 的长期公开 schema；失败恢复为 pending，依赖阻塞由 `blockedBy` 表示，诊断信息放入 `_lume` metadata。
+- **Task 不主动创建 subagent。** 主 Agent 自己决定是否调用 Agent，Task 只记录 owner 和关联信息，避免 Task/Agent 互相拥有生命周期；TaskStop 的执行栅栏只保护共享资源，不把 executor ack 变成 Task 状态机的一部分。
+- **保留 Claude Code 的每 Task 独立 JSON，但增加统一 mutate、事务 journal 和事件日志。** 这保留了用户选择的文件模型，同时补足双向依赖、highwatermark、回放和崩溃一致性。
+- **不迁移旧数据。** 现有 TaskContract/TaskRun 文件保留但不再读取；旧运行时代码必须先完成切断，否则“保留但不读取”只是计划性声明而非真实行为。
 
 ## Risks / open questions
 
-- main 是故障集中点；进程崩溃或断电可能损失最后一批事件，只能通过启动缓冲、保留容量、emergency record 和退出 flush 缓解。
-- 让 main 成为 Electron 模式下 `settings.json` 的唯一 writer 会扩大设置持久化迁移范围；必须保持现有 sidecar RPC 表面兼容，并为 CLI/headless 明确独立 owner，避免跨进程双写。
-- settings lock 的 stale-owner 判定必须同时校验 PID 与进程启动标识；无法证明锁已失效时宁可拒绝 mutation，不能强占后造成双 writer。
-- 不同进程的 wall clock 不可靠；全局展示顺序以 main `observedAt/seq` 为准，source duration 必须使用本进程单调时钟。
-- provider adapter 暴露的 status/request ID/rate-limit 元数据不一致；UI 和 schema 必须允许 unknown，不能伪造完整性。
-- Trace Store 的 resume 数据不能受普通日志 retention 影响；共享 ID 不代表共享生命周期或存储策略。
-- safeStorage 的平台可用性不同；诊断正文功能失败不得影响普通日志和 Agent 执行。
-- 默认 256 字符预览与完整 base URL path 即使经过扫描仍有未知秘密泄露的残余风险；两者均为用户明确锁定的本地诊断取舍，实现和 UI 不能把它表述为绝对安全，测试只能覆盖已知模式。
-- 全量 console 迁移范围较大，必须分阶段机械替换，避免顺便重构无关业务。
+- 当前 Lume 的 `TaskContract`、`TaskRun`、runtime orchestration、RPC 和 UI 测试覆盖多条旧链路，删除旧链路时需要逐处确认不会影响普通 Agent 回合；Bash ephemeral jobs 不能被误删。
+- 主 Agent 调用 Agent 与 TaskUpdate 之间存在短暂不一致窗口：Agent 创建失败或主 Agent 中断时，Task 可能暂时保持 `in_progress`；claim lease、stale recovery 和后续 TaskList 修复必须明确。
+- 文件锁、事务 journal 和任务列表锁需要避免跨文件更新时的死锁，并保证依赖双端写入不会产生半更新。
+- `task.progress` 事件现有消费者依赖 `taskRunId` 和 `contractId`，事件 schema 调整需要同步 sidecar、shared、replay 和 web。
+- 失败恢复为 pending 简化了公开模型，但 UI/Prompt 必须能展示最近失败原因；服务端 metadata provenance 不能被普通 TaskUpdate 伪造。
+- 独立 Agent 的共享工作区仍存在读改写冲突风险；第一版只承诺服务端确认的只读并行，Task-linked 调用和写入执行保守串行。
 
 ## Out of scope
 
-- 远程遥测、OpenTelemetry collector、云端聚合、告警和指标 dashboard。
-- 完整 provider HTTP 报文、完整系统提示词、任意文件/网页/媒体正文的保存或回放。
-- 统一构建、测试、benchmark、第三方依赖及 CLI 人类输出。
-- 改变 Agent、provider、tool 或消息产品行为；本次仅增加可观测上下文和安全投影。
-- 迁移历史日志或长期保留旧 writer。
+- 用户直接创建、修改、认领、删除或重试 Task 的 UI/API。
+- Task 自动创建 subagent、自动选择 subagent、Task 内部 scheduler、TaskWait 或嵌套 Task。
+- 跨 thread/workspace 默认共享 Task 列表。
+- 旧 TaskContract/TaskRun 数据迁移。
+- 文件级并行写入优化和 worktree 隔离；第一版只实现共享 worktree 写入串行，并继续复用现有 workspace writer lease。
+- 新增依赖或新的执行器类型。

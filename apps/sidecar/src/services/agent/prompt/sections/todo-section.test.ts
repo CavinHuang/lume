@@ -13,6 +13,10 @@ describe('buildTodoSection', () => {
   test('contains the do-not-batch rule', () => {
     expect(buildTodoSection()).toContain('do not batch')
   })
+  test('requires a final TodoWrite reconciliation', () => {
+    expect(buildTodoSection()).toContain('Before any final answer')
+    expect(buildTodoSection()).toContain('no task may remain pending or in_progress')
+  })
   test('contains the blocked-creates-new-task rule', () => {
     expect(buildTodoSection()).toContain('blocked')
     expect(buildTodoSection()).toContain('new task')

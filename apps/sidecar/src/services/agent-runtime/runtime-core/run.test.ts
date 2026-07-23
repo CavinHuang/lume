@@ -1002,6 +1002,8 @@ describe("runtime-core run", () => {
     expect(result.userMessageForModel).toBe("继续");
     const todoTool = result.tools.find((tool) => tool.name === "TodoWrite");
     expect(todoTool).toBeTruthy();
+    const completionGuard = (result.agent as any).baseOptions.completionGuard as () => Promise<string | undefined>;
+    expect(await completionGuard()).toContain("正在进行：D");
     const update = await todoTool!.call({
       todos: [
         { content: "A", activeForm: "Doing A", status: "completed" },
@@ -1012,6 +1014,19 @@ describe("runtime-core run", () => {
       ]
     }, {} as any);
     expect(update.content).not.toContain("verification");
+    expect(await completionGuard()).toContain("正在进行：E");
+
+    const completed = await todoTool!.call({
+      todos: [
+        { content: "A", activeForm: "Doing A", status: "completed" },
+        { content: "B", activeForm: "Doing B", status: "completed" },
+        { content: "C", activeForm: "Doing C", status: "completed" },
+        { content: "D", activeForm: "Doing D", status: "completed" },
+        { content: "E", activeForm: "Doing E", status: "completed" }
+      ]
+    }, {} as any);
+    expect(completed.content).toBe("No active todos.");
+    expect(await completionGuard()).toBeUndefined();
     await result.session.dispose();
   });
 

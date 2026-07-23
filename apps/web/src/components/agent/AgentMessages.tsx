@@ -420,7 +420,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
           )}
         </div>
       </div>
-      <TodoPanel data={latestTodo} />
+      <TodoPanel data={latestTodo} running={streaming} />
       <ScrollMinimap
         items={minimapItems}
         scrollContainerRef={scrollContainerRef}

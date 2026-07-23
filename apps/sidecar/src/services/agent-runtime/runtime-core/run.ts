@@ -118,7 +118,11 @@ import {
 } from "./mcp-resource-router.js";
 import type { LumeToolDescriptor } from "../tools/tool-types";
 import type { TaskContractRecord } from "../plan/task-contract-record-types";
-import { readLatestTodoState } from "../runner/todo-state";
+import {
+  cloneTodoState,
+  getTodoCompletionBlocker,
+  readLatestTodoState
+} from "../runner/todo-state";
 import {
   collectAppendContextEffects,
   type LumeWorkflowHookExecutionResult
@@ -1513,6 +1517,11 @@ export async function createRuntimeCoreSession(
     sessionDir,
     threadId: input.lumeSessionId
   });
+  let currentTodoState = cloneTodoState(initialTodoState);
+  const handleTodoUpdated: Parameters<typeof createTodoTool>[0]["onTodoUpdated"] = async (state) => {
+    currentTodoState = cloneTodoState(state);
+    await input.emitTodoUpdated?.(state);
+  };
   const sessionManager = createOrResumeRuntimeCoreSessionManager(input.cwd, input.lumeSessionId, input.agentDir);
   const agents = { ...buildBuiltinAgents(), ...loadCustomAgents(input.workspaceSlug) };
   const subagentDefinition = input.subagentType ? agents[input.subagentType] : undefined;
@@ -1671,7 +1680,7 @@ export async function createRuntimeCoreSession(
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitToolPermissionRequest: input.emitToolPermissionRequest,
     emitTaskContractUpdated: input.emitTaskContractUpdated,
-    emitTodoUpdated: input.emitTodoUpdated,
+    emitTodoUpdated: handleTodoUpdated,
     initialTodoState,
     runId: input.runId,
     renderClient: getSidecarRenderClient(),
@@ -1790,7 +1799,9 @@ export async function createRuntimeCoreSession(
       : undefined;
   const completionGuard = async (): Promise<string | undefined> => {
     const existing = await existingCompletionGuard?.();
-    return existing ?? codingRunTracker.completionGuard();
+    if (existing) return existing;
+    const coding = await codingRunTracker.completionGuard();
+    return coding ?? getTodoCompletionBlocker(currentTodoState);
   };
   const codingCompletionEnabled = !(
     input.subagentRunId

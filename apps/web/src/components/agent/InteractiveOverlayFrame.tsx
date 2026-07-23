@@ -28,8 +28,11 @@ interface InteractiveOverlayFrameProps {
   kind: string
   title: string
   children: ReactNode
+  eyebrow?: string
+  icon?: ReactNode
   busy?: boolean
   submitDisabled?: boolean
+  submitLabel?: string
   onSubmit: () => void
   onIgnore: () => void
 }
@@ -38,8 +41,11 @@ export function InteractiveOverlayFrame({
   kind,
   title,
   children,
+  eyebrow,
+  icon,
   busy = false,
   submitDisabled = false,
+  submitLabel = '提交',
   onSubmit,
   onIgnore,
 }: InteractiveOverlayFrameProps) {
@@ -47,11 +53,26 @@ export function InteractiveOverlayFrame({
     <div className="px-3 pb-2 sm:px-6">
       <section
         data-interactive-overlay={kind}
-        className="mx-auto max-w-[900px] rounded-[22px] border border-black/10 bg-white p-3 shadow-[0_16px_52px_rgba(15,23,42,0.16)]"
+        className="mx-auto max-w-[900px] overflow-hidden rounded-[22px] border border-black/[0.08] bg-white shadow-[0_16px_52px_rgba(15,23,42,0.16)]"
       >
-        <h3 className="px-1 pb-2.5 text-[16px] font-semibold leading-6 text-[#1f232b]">{title}</h3>
-        {children}
-        <div className="mt-2 flex items-center justify-end gap-2">
+        <div className="border-b border-[#edf0f4] bg-[linear-gradient(135deg,#fbfcff_0%,#f7f9fc_100%)] px-4 py-3 sm:px-5">
+          <div className="flex items-center gap-3">
+            {icon && (
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-[12px] bg-[#eaf2ff] text-[#4c8df6] shadow-[inset_0_0_0_1px_rgba(95,156,255,0.12)]">
+                {icon}
+              </div>
+            )}
+            <div className="min-w-0">
+              {eyebrow && <p className="mb-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#7f8998]">{eyebrow}</p>}
+              <h3 className="text-[16px] font-semibold leading-6 text-[#1f232b]">{title}</h3>
+            </div>
+            <span className="ml-auto shrink-0 rounded-full border border-[#dce7f9] bg-white/80 px-2 py-1 text-[11px] font-medium text-[#6c83a5]">
+              等待你的决定
+            </span>
+          </div>
+        </div>
+        <div className="p-3 sm:p-4">{children}</div>
+        <div className="flex items-center justify-end gap-2 border-t border-[#edf0f4] bg-[#fcfcfd] px-3 py-2.5 sm:px-4">
           <Button
                 variant="ghost"
             type="button"
@@ -66,12 +87,12 @@ export function InteractiveOverlayFrame({
             onClick={onSubmit}
             disabled={busy || submitDisabled}
             className={cn(
-              'inline-flex h-9 min-w-[82px] items-center justify-center gap-1.5 rounded-[16px] bg-[#5f9cff] px-3.5 text-[14px] font-semibold text-white shadow-[0_8px_18px_rgba(95,156,255,0.32)] transition-colors hover:bg-[#4b8cf0]',
+              'inline-flex h-9 min-w-[104px] items-center justify-center gap-1.5 rounded-[11px] bg-[#1f232b] px-3.5 text-[13px] font-semibold text-white shadow-[0_6px_16px_rgba(31,35,43,0.18)] transition-colors hover:bg-[#343a46]',
               'disabled:cursor-not-allowed disabled:opacity-60',
             )}
           >
             {busy ? <Loader2 size={15} className="animate-spin" /> : null}
-            提交
+            {submitLabel}
             {!busy && <CornerDownLeft size={15} />}
           </Button>
         </div>

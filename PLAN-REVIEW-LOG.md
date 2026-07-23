@@ -1,167 +1,148 @@
-# Plan Review Log: 重构 Lume 统一日志与端到端 Agent 链路追踪
+# Plan Review Log: 重设计 Lume Task 工具
 Act 1 (grill) complete — plan locked with the user. MAX_ROUNDS=5.
-
-## Act 1 — Locked decisions
-
-- Scope: Electron main, sidecar, renderer, desktop-host, node-repl and every Agent entrypoint; engineering-script logs remain out of scope.
-- Default visibility: concise lifecycle/warn/error terminal output, structured local files, no successful polling/RPC noise.
-- Correlation: renderer or entry adapter creates traceId; run/provider attempt/tool/message IDs remain distinct; subagents use linked traces.
-- Completion: renderer state committed for desktop chat, channel acknowledgement for IM, persisted result for Automation/Routine.
-- Privacy: default redacted 256-character previews; explicit time-limited encrypted full user/assistant content capture only.
-- Provider detail: provider/model/adapter/status/usage/timing and full sanitized base URL path; no credentials or raw bodies.
-- Ownership: Electron main is the only product log file writer; Trace Store remains a projection, not a second logger.
-- Retention: 14 days, 20 MB segments, 500 MB total; diagnostic capture defaults to 1 hour and caps at 24 hours.
-- Performance: bounded batched queues, business-first backpressure, explicit aggregated drop records.
-- Viewer: main-owned historical query plus real-time trace-centric timeline; viewer activity hidden by default.
-- Cleanup: remove first-party direct console/eprintln, electron-log writer duplication and the dead Tauri-era lume-logger implementation.
-
-## Act 2 — Attempt 1 failed before Round 1
-
-- Reviewer model: CLI default (config unpinned)
-- CLI: codex-cli 0.144.4
-- Sandbox: read-only
-- Thread: `019f6a26-7a79-78c1-9138-ca8d9e2551ac`
-- Result: the reviewer exceeded the mandatory 600-second ceiling and was terminated.
-- Evidence: a `thread.started` event was captured, but no output-last-message/verdict file was produced.
-- No critique was accepted and no review round was counted as complete.
-- Per the skill timeout rule, the run stopped without an automatic retry.
-
-## Act 2 — Attempt 2 failed before Round 1
-
-- Trigger: the user explicitly authorized one retry.
-- Reviewer model: CLI default (config unpinned)
-- CLI: codex-cli 0.144.4
-- Sandbox: read-only
-- Thread: `019f6a66-b73c-7c93-8582-051a5b44d44f`
-- Result: the fresh reviewer session again exceeded the mandatory 600-second ceiling and was terminated.
-- Evidence: a `thread.started` event was captured, but no output-last-message/verdict file was produced.
-- The event stream contained reviewer exploration only; no unfinished content was accepted as critique.
-- No review round was counted as complete. Per the skill timeout rule, the run stopped without another retry.
-
-## Act 2 — Retry preparation
-
-- The user explicitly authorized continuing after the second timeout.
-- The locked plan was condensed into a normative `PLAN.md`; the prior detailed wording was preserved in `PLAN-logging-details.md`.
-- No scope or locked decision changed. The concise version removes repetition and bounds implementation phases and verification.
-- The next reviewer prompt explicitly forbids reading skill files, running tests, or exhaustively inventorying the repository so the attempt can focus on material plan flaws.
 
 ## Round 1 — Codex
 
-`PLAN.md` is not ready to implement. No files were changed, no tests were run, and the non-normative background was not read.
+1. Runtime wiring is underspecified: Lume currently exposes no `TaskCreate/List/Update/Get`; `run.ts` only assembles `TaskReport`, Agent, delegation, and Todo tools, while SDK task tools remain separate.
+   Fix: Add a sidecar task-tool factory bound to `sessionDir`, `taskListId`, caller identity, and runtime event emission.
+2. Removing the SDK global task map breaks Bash background jobs: `bash.ts` still calls `createTaskRecord`, stop handlers, and `TaskOutput`, and `Agent.stopTask()` reads that map.
+   Fix: Keep a separately named ephemeral process-job registry or migrate Bash background execution before deleting the existing map.
+3. The claim-before-spawn lifecycle races because Agent/Delegate are concurrency-safe.
+   Fix: Make dispatch serial or require a separate claim turn / atomic claim protocol before Agent calls.
+4. Parallel subagents can corrupt shared workspace changes; the writer lease is not whole-task file ownership.
+   Fix: Require disjoint file reservations/worktrees or serialize overlapping declared paths.
+5. Owner authorization is not enforceable if owner is a caller-supplied string.
+   Fix: Derive/validate owner identities server-side and persist a run-bound claim token or lease with stale-claim recovery.
+6. Separate JSON writes for blocks/blockedBy are not crash-atomic.
+   Fix: Use a write-ahead transaction journal/recovery protocol or one canonical graph file.
+7. Lock protocol needs exclusive creation, timeout, stale recovery and fixed order.
+   Fix: Specify the lease/recovery protocol and lock order.
+8. New tool names need exact permission metadata and centralized subagent deny-listing.
+   Fix: Register all four tools and remove them from every subagent tool assembly.
+9. `task_ref` is not integrated with current Agent/Delegate and existing coordinator task IDs.
+   Fix: Add a distinct correlation field and define it as informational, not TaskReport/coordinator state.
+10. Completion hooks must run before the completed snapshot is committed.
+    Fix: Add a blocking TaskUpdate pre-commit validator.
+11. Per-task snapshots alone cannot provide audit replay.
+    Fix: Add an append-only event/revision log and update replay/UI projections.
+12. Old TaskContract/TaskRun is still live in orchestrator, RPC, approval, replay and UI.
+    Fix: Cut it over behind an explicit compatibility boundary.
+13. Existing UI controls continue to invoke execute/approval operations.
+    Fix: Replace them with read-only Task snapshots or explicitly narrow UI scope.
+14. State transition and owner-clearing invariants are underspecified.
+    Fix: Specify and enforce them atomically.
+15. Model-writable `_lume` metadata can forge/erase server audit data.
+    Fix: Reserve server-managed fields and record provenance.
+16. taskListId path containment is unspecified.
+    Fix: Validate path segments and containment.
 
-1. **Renderer-generated IDs create a trust and filesystem risk.** The plan lets renderer code create `traceId`, while the current trace store derives filenames directly from trace IDs (`trace-store.ts:123`). Type/length validation does not prevent traversal, collisions, trace poisoning, or forged origins.
+Remaining risks are material because the plan did not previously define safe persistence transactions, authoritative ownership, runtime wiring, or legacy lifecycle cutover.
 
-   Fix: Mint canonical UUID trace IDs at the first trusted main/sidecar boundary, treat renderer IDs only as validated `submissionId`s, and never use externally supplied identifiers in filesystem paths.
+### Claude's response
 
-2. **The proposed trace semantics conflict with the existing Trace Store schema.** Each current `LumeTrace` owns exactly one `runId`, has no parent/link fields, and `LumeRunObserver.create` always creates a new trace (`trace-types.ts:1`, `run-observer.ts:58`). “Accept the upstream traceId” does not specify whether to overwrite the store ID, attach to an existing record, or maintain two identities.
+The core product decisions stand: Claude Code-style Task items, one per-thread Task list, Task and Subagent as separate capabilities, and no automatic subagent creation. The plan was revised to:
 
-   Fix: Keep an internal per-run Trace Store ID and add explicit `correlationTraceId`, parent, and link fields with versioned readers rather than reusing the external trace ID as the store key.
+- explicitly wire Task tools into the sidecar main-agent runtime;
+- preserve a separately named SDK process-job registry for Bash background jobs;
+- require a claim-before-dispatch turn and server-owned claim leases;
+- add path/resource safety for parallel work and avoid treating the per-call writer lease as whole-task isolation;
+- add lock recovery, transaction journal, path containment and append-only Task revisions;
+- define `task_ref` as a separate informational correlation field;
+- make completion validation pre-commit and reserve server-managed metadata;
+- include the complete legacy TaskContract/TaskRun runtime, RPC, replay and UI cutover.
 
-3. **The default redaction policy cannot meet its stated secrecy guarantee.** Arbitrary 256-character body previews and ordinary hashes can expose unrecognized credentials or permit dictionary matching; full URL paths can contain webhook tokens and other opaque secrets that no redact-pattern list can reliably identify.
+Rejected: replacing the per-task JSON design with one canonical graph file. The user explicitly chose Claude Code's per-task JSON layout; a journal is added to preserve that choice while addressing crash consistency.
 
-   Fix: Default to length plus keyed digest and allowlisted structured summaries, and record only URL origin plus an allowlisted route template or hashed path—not arbitrary path text.
+## Round 2 — Codex
 
-4. **Sensitive diagnostic content lacks a structurally separate pipeline and retention policy.** Nothing prevents full bodies from entering ordinary `data`, live-tail, drop buffers, or exports before main encrypts them, and the 1–24 hour lease does not say when already-written ciphertext is deleted.
+Round 2 acknowledged that explicit wiring, WAL recovery, ownership leases, conservative parallelism, legacy-chain removal, and read-only UI were addressed on paper, but identified these remaining material issues:
 
-   Fix: Define a distinct sensitive-envelope schema rejected by the ordinary writer/viewer, revalidate scope and expiry in main at receipt, and apply explicit ciphertext TTL, startup cleanup, and storage caps.
-
-5. **“Bounded transport” does not bound Electron or child-process IPC.** A bounded producer queue can still create unlimited in-flight `ipcRenderer.invoke`/`child.send` operations while main is slow; replaying the startup ring makes this worse.
-
-   Fix: Specify byte-based pending limits, at most one or a small fixed number of acknowledged in-flight batches, timeout/disconnect handling, and priority-aware dropping before enqueueing into IPC.
-
-6. **The desktop completion acknowledgment is ambiguous and race-prone.** Current notifications are broadcast to both main and quick-input windows (`main.ts:339`); additionally, acknowledging immediately after scheduling a React/state update does not prove that update committed.
-
-   Fix: Give each delivery a unique attempt ID bound to one target `webContents`, message version, and renderer lifecycle, and emit an idempotent ack only from a post-commit effect that observes that exact version.
-
-7. **Logging configuration has two competing authorities.** Logging and diagnostic leases execute in main, but the plan keeps sidecar `GeneralSettings` authoritative even though the logging viewer must work while sidecar is stopped; startup, hot-update, and sidecar-restart ordering can therefore restore stale security-sensitive state.
-
-   Fix: Make main the sole persisted authority for logging configuration and diagnostic leases, distribute monotonically versioned read-only snapshots to producers, and leave unrelated settings in sidecar.
-
-8. **The loss policy contradicts “complete trace” routing.** The plan says trace events are fully written regardless of file level, then permits “low-value trace” dropping without defining which events form the minimum end-to-end chain; implementations could drop the only provider, persistence, or delivery evidence.
-
-   Fix: Define a non-droppable trace spine—entry, accepted, run start/end, provider attempt end, persistence, delivery, and link events—and mark affected traces explicitly incomplete when any detail class is dropped.
-
-9. **Writer maintenance operations lack serialization rules.** Rotation, retention deletion, export, query, live-tail, and shutdown flush can race over the same active segment, particularly on Windows, producing failed deletion or incomplete exports.
-
-   Fix: Serialize segment lifecycle operations through the writer, never delete the active segment, and export from a flushed immutable snapshot with live subscriptions detached by generation.
-
-VERDICT: REVISE
+1. New subagent identity is created inside `SubagentCoordinator` after the Task claim; preallocate/validate identity or use an atomic bridge.
+2. Claim tokens lacked a usable compare-and-swap path; late results from expired attempts could update a reclaimed Task.
+3. No defined stop operation existed for returning `in_progress` to `pending`.
+4. TaskList must stay observational; stale recovery must not mutate during reads.
+5. WAL coverage was incomplete for ordinary snapshots, event log and highwatermark updates.
+6. Event plumbing needed one authoritative TaskStore mutation path for live notifications and replay.
+7. Subagent deny-list needed to include legacy TaskStop/TaskOutput and all raw SDK assemblies.
+8. Current SDK/Delegate do not implement worktree isolation.
+9. Model-declared expected files are hints, not authoritative resource locks.
+10. `task_ref` needed a canonical scoped schema and separation from coordinator `task_id`.
+11. Main-agent TaskReport still targets TaskRun and must be removed separately from coordinator-bound TaskReport.
+12. Metadata merge semantics needed explicit depth, array, size and reserved-field rules.
 
 ### Claude's response
 
 Accepted and revised:
 
-- Canonical trace IDs are now minted only at a trusted main/sidecar boundary; renderer IDs are submission/client IDs, and no external ID may become a filesystem path.
-- Trace Store retains an internal per-run `storeTraceId`; a versioned `correlationTraceId` plus parent/link fields bridge the product trace without changing the storage key semantics.
-- Ordinary hashes became keyed digests, arbitrary payload fields are rejected from normal events, and previews are produced only by a dedicated allowlist/scanner with high-risk contexts suppressed.
-- Diagnostic plaintext now has a disjoint sensitive-envelope schema, main-side lease validation, separate encrypted storage, explicit TTL/cap/startup cleanup, and exclusion from ordinary queue/live-tail/export.
-- Transports now have event and byte caps, fixed acknowledged in-flight batches, timeout/disconnect behavior, and bounded replay.
-- Desktop delivery now uses per-window/lifecycle/message-version attempt IDs and an idempotent post-commit acknowledgment.
-- In Electron mode main is the sole persisted `settings.json` writer; sidecar APIs proxy atomic mutations, snapshots are versioned, and stale diagnostic leases cannot be restored after restart.
-- The non-droppable trace spine and `trace.incomplete` semantics are explicit.
-- Segment rotation, retention, snapshot export, live generation, and shutdown flush are serialized; active segments are never deleted.
+- Added `TaskStop`, explicit claim-token/revision fencing, verified executor cancellation, and startup-only stale recovery.
+- Made all state, event and highwatermark mutations share one idempotent `TaskStore.mutate()` WAL path.
+- Defined structured scoped `task_ref`, preallocation/atomic binding for new subagent identities, and a complete deny set for subagent tool assembly.
+- Removed worktree parallelism from the first implementation promise; shared-workspace writes are serialized and parallelism is limited to read-only tasks.
+- Separated the main-agent TaskRun report removal from the standalone coordinator-bound subagent report.
+- Kept Claude Code's shallow metadata merge model, with size limits and immutable server-managed `_lume` fields.
 
-Partially rejected:
-
-- The recommendation to replace the full base URL path with only origin/template/hash conflicts with the user's explicit locked requirement that the full path remain visible. The plan keeps the full path after mandatory userinfo/query/fragment removal and segment-level known-secret/high-entropy redaction, makes patterns extensible, and explicitly documents that arbitrary custom tokenized paths retain residual local disclosure risk. This is an accepted product tradeoff, not a claim of perfect secrecy.
-
-## Round 2 — Codex
-
-Six prior findings are fully addressed: Trace Store identity, sensitive-envelope separation/TTL, transport backpressure, delivery acknowledgments, trace-spine loss semantics, and segment lifecycle serialization. Three areas remain materially incomplete. No files were modified and no tests were run.
-
-1. **Renderer origin remains forgeable.** Canonical IDs are now minted correctly, but renderer still supplies `origin`; without deriving it from the trusted sender/window, a compromised renderer can poison trace attribution.
-
-   Fix: Main must derive `main_window` versus `quick_input` from `event.sender` and reject renderer-supplied origins inconsistent with that mapping.
-
-2. **Default free-text previews still retain the original secrecy problem.** Secret scanning cannot reliably sanitize arbitrary message text, and the plan’s acknowledged residual risk contradicts the default non-disclosure goal; only full URL paths were explicitly locked with that tradeoff.
-
-   Fix: Default message summaries to role, length, and keyed digest only, allowing text previews solely through the time-limited diagnostic mode or an explicit opt-in setting.
-
-3. **The keyed-digest data flow is internally incomplete.** Producers possess the full body, while only main possesses the HMAC secret and ordinary event schemas forbid sending the body; therefore neither side can produce the specified digest without an unstated sensitive-content channel or key distribution mechanism.
-
-   Fix: Have main distribute purpose-derived, versioned HMAC subkeys over trusted IPC so producers can digest full content without exposing the per-install root secret.
-
-4. **The proposed `settings.json` ownership migration misses existing writers.** Besides GeneralSettings, sidecar UI state and proxy services independently rewrite the same file (`ui-state-service.ts:85`, `proxy-settings-manager.ts:63`); migrating only the general-settings API leaves lost-update and corruption races, including simultaneous headless use.
-
-   Fix: Route every root `settings.json` mutation through one main-owned atomic broker in Electron mode and define locking or separate profiles for concurrent CLI/headless processes.
-
-5. **Payload bounds are enforced too late for arbitrary errors.** `window.error`, rejected values, and SDK errors may contain cycles, excessive depth, getters, or enormous nested objects that fail or consume resources before transport byte limits or main validation apply.
-
-   Fix: Require a cycle-safe producer-side serializer with hard depth, breadth, string, key, and encoded-byte limits before redaction or batching.
-
-6. **Configurable URL redaction extensions lack a safe matcher contract.** The locked full-path design is implementable and its residual-risk acceptance is explicit, but unrestricted configurable patterns could introduce catastrophic regex backtracking or inconsistent segment matching.
-
-   Fix: Define extensions as bounded exact/glob segment rules—or validate against a restricted non-backtracking grammar—with maximum rule count and length.
-
-VERDICT: REVISE
-
-### Claude's response (Round 2)
-
-Accepted and revised:
-
-- Renderer origin is now only a hint; main derives desktop window origin from the trusted sender/lifecycle registry, and sidecar adapters derive internal origins.
-- Main now protects a per-install digest root, derives versioned source/purpose HMAC subkeys, and distributes only subkeys through trusted policy snapshots. If safeStorage is unavailable, digests are explicitly session-scoped rather than downgraded to ordinary hashes.
-- Every `settings.json` root writer—including general settings, UI state, and proxy settings—must use a main-owned atomic broker in Electron mode. Standalone processes use a conservative lock-owner protocol and cannot persist while desktop owns the file.
-- Producer serialization is now cycle-safe and bounded by depth, breadth, keys, strings, and encoded bytes before redaction or transport.
-- Configurable URL redaction uses bounded exact/glob segment rules only; arbitrary regex and cross-segment matching are prohibited.
-
-Rejected with locked-user rationale:
-
-- Removing default text previews conflicts with the Act 1 decision to retain a redacted ~256-character preview plus IDs/length/digest. The plan now states explicitly that preview scanning is best-effort and carries accepted local residual disclosure risk, just like the separately locked full base URL path. Full plaintext remains structurally isolated behind the encrypted diagnostic envelope.
+Rejected: making model-declared `expectedFiles` an authoritative write lock. The current runtime cannot prove that a model's declaration matches its actual read-modify-write behavior, so the plan now treats it as hints only and conservatively serializes writes.
 
 ## Round 3 — Codex
 
-All six Round 2 findings are materially addressed:
+Round 3 found these remaining material issues:
 
-- Renderer origin is derived from trusted window identity.
-- Locked previews are structurally allowlisted and their residual risk is explicit.
-- Keyed digests have an implementable derived-subkey flow and safe fallback.
-- All root `settings.json` writers use one broker with cross-process ownership.
-- Serialization is bounded before redaction and transport.
-- URL extension matching is bounded, linear-time, and regex-free.
+- `TaskStop` needed an internal fenced `cancelling` phase; reclaim must wait for verified executor termination.
+- Agent and Delegate use different registries, so cancellation needed one durable executor-control adapter keyed by claim token.
+- Task-linked Agent calls currently enter `SubagentCoordinator` and its `FinishAgentTask` blockers; they need a direct task-aware executor path, while standalone Agent keeps the legacy path.
+- Read-only-only parallelism must be enforced by the server, not by model declarations.
+- The complete deny set must cover static, dynamic and required subagent tools.
+- Legacy SDK `TaskStop/TaskOutput` schemas conflict with the unique Task toolchain and must become model-invisible process-job controls.
+- Task events need a task-list sequence envelope with system/recovery origin rather than run-scoped IDs.
+- Lock timeout alone cannot safely recover live writers; heartbeat and fencing are required.
+- Child identity reservation needs compensating cleanup when claim binding or launch fails.
 
-The fixes introduce no new material contradiction. The remaining preview, sanitized-path, crash-tail, and stale-lock risks are explicitly documented with workable containment or fail-closed behavior.
+### Claude's response
 
-No files were modified and no tests were run.
+Accepted and revised:
 
-VERDICT: APPROVED
+- Added internal `cancelling`, verified cancellation acknowledgement, and a unified executor-control adapter for Agent and Delegate.
+- Defined task-linked direct executor routing that bypasses standalone coordinator acceptance; retained old coordinator semantics only for Agent calls without `task_ref`.
+- Made read-only parallelism a server-enforced executor property and made writes serial in the shared worktree.
+- Extended subagent filtering to static, dynamic and required tools, with only bound standalone TaskReport exempted.
+- Renamed the legacy process-job controls conceptually to `ProcessStop/ProcessOutput` and moved them behind a model-invisible ProcessJobRegistry.
+- Changed event identity to `(taskListId, sequence)` with explicit system/recovery origin, and strengthened locks with heartbeat/fencing.
+- Added side-effect-free child identity reservation with compensating release.
+
+## Round 4 — Codex
+
+Round 4 found five remaining material issues:
+
+- Main-agent-only mutation was still described mainly as tool assembly; runtime dynamic contexts did not guarantee a main-thread actor, and nested SDK paths could bypass the boundary.
+- `task_ref.taskListId` needed an explicit equality check against the parent main thread's derived Task list to prevent cross-thread references.
+- Waiting for executor termination before TaskStop released a claim made Task state depend on the Subagent lifecycle, contradicting the intended separation.
+- Static `isConcurrencySafe` on Agent/Delegate could not enforce read-only-only parallelism for task-linked calls because read/write status is runtime-specific.
+- The Agent schema needed a discriminated task_ref variant that rejects legacy coordinator fields when using the new Task association.
+
+### Claude's response
+
+Accepted and revised:
+
+- Made `TaskStore.mutate()` require and validate the main-thread actor/context and the derived `taskListId`, so authorization is enforced below tool assembly; all static, dynamic and required subagent assemblies retain the centralized deny set.
+- Required task-aware Agent/Delegate bridges to reject any `task_ref.taskListId` that is not exactly the parent main thread's derived list.
+- Decoupled TaskStop from executor termination: TaskStop fences and releases the Task claim immediately, returns the public state to pending, and records a cancellation request; executor-control cancellation and acknowledgement are separate and cannot block reclaim.
+- Required a per-call server-side concurrency decision based on verified executor read-only metadata; task-linked calls default to serialized when that proof is unavailable.
+- Defined Agent/Delegate task_ref input as a discriminated union and rejected `task_id`, `new_task`, and other legacy coordinator fields in that variant.
+
+## Round 5 — Codex (MAX_ROUNDS reached)
+
+Most prior findings were addressed, but Codex found three material consistency gaps:
+
+- The plan said the execution fence blocks new claims until termination acknowledgement, while another claim rule said acknowledgement does not block reclaim; the fence must be authoritative for write-capable claims.
+- The execution fence had no bounded cancellation deadline, crash recovery, or force-release protocol; a lost acknowledgement could permanently stall the single active Task list.
+- Multiple Agent/Delegate calls could reuse one `task_ref` and claim token; a single `executorRef` field did not atomically enforce one active executor per claim.
+
+### Resolution required from user
+
+The recommended resolution is to make the following amendments before implementation, but the review hard cap prevents another Codex pass:
+
+- TaskStop immediately returns the public Task to `pending`, but its internal execution fence is authoritative: no new Task claim or task-linked write-capable dispatch is accepted until the old executor reaches a terminal state. Read-only work does not bypass the single-active-Task rule.
+- Store a cancellation deadline and recovery state. Before release, trusted recovery must ask the executor-control adapter to confirm or force termination; only a verified terminal/forced-termination result may release the fence. If termination cannot be proven, keep the fence and surface recovery failure rather than allowing unsafe workspace reuse.
+- Add an atomic per-claim executor binding `{ claimToken, attempt, executorRef, state }`; a task-linked dispatch succeeds only when the binding is empty/terminal and CAS binds the new executor. Duplicate dispatches with the same token are rejected, and terminal acknowledgement clears the binding.
+
+These amendments are not Codex re-reviewed because `MAX_ROUNDS=5` was reached. No code was modified.

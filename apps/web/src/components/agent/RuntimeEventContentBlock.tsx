@@ -10,6 +10,7 @@ import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock
 import type { RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
+import { AskUserQuestionBlock } from './AskUserQuestionBlock'
 import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
@@ -870,6 +871,10 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
     )
   }
 
+  if (block.toolCall.toolName === 'AskUserQuestion') {
+    return <AskUserQuestionBlock toolCall={block.toolCall} />
+  }
+
   return (
     <RuntimeEventToolCallBlock
       toolCall={block.toolCall}
@@ -1238,6 +1243,9 @@ function StandardAssistantContent({
     if (segment.kind === 'image_tools') {
       return <ImageGenerationGroup key={`images:${segment.blocks[0]?.id ?? 'empty'}`} blocks={segment.blocks} />
     }
+    if (segment.kind === 'ask_user_question') {
+      return <AskUserQuestionBlock key={segment.block.id} toolCall={segment.block.toolCall} />
+    }
     if (segment.kind === 'wiki_proposal') {
       return <WikiProposalBlock key={segment.block.id} block={segment.block} />
     }
@@ -1452,6 +1460,9 @@ function MinimalAssistantContent({
       {segments.map((segment) => {
         if (segment.kind === 'image_tools') {
           return <ImageGenerationGroup key={`images:${segment.blocks[0]?.id ?? 'empty'}`} blocks={segment.blocks} />
+        }
+        if (segment.kind === 'ask_user_question') {
+          return <AskUserQuestionBlock key={segment.block.id} toolCall={segment.block.toolCall} />
         }
         if (segment.kind === 'wiki_proposal') {
           return <WikiProposalBlock key={segment.block.id} block={segment.block} />

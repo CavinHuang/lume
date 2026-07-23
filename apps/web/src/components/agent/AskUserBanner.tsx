@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { Check } from 'lucide-react'
+import { Check, CircleHelp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -79,46 +79,68 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   return (
     <InteractiveOverlayFrame
       kind="ask-user"
-      title="需要你的输入"
+      eyebrow="Ask"
+      icon={<CircleHelp size={18} />}
+      title="帮 Lume 做一个选择"
       busy={busy}
       submitDisabled={submitDisabled}
+      submitLabel="提交回答"
       onIgnore={() => setHidden(true)}
       onSubmit={() => void submit()}
     >
-      <div className="space-y-3">
+      <div className="space-y-4">
         {subagentDisplayLabel && (
-          <p className="px-1 text-[12px] leading-5 text-[#8a8f98]">{subagentDisplayLabel}</p>
+          <div className="flex items-center gap-2 rounded-[11px] border border-[#e8edf5] bg-[#f8fafc] px-3 py-2 text-[12px] leading-5 text-[#6f7b8d]">
+            <span className="size-1.5 rounded-full bg-[#5f9cff]" />
+            {subagentDisplayLabel}
+          </div>
         )}
-        {request.questions.map((q) => (
-          <div key={q.question}>
-            <p className="mb-1.5 px-1 text-[13px] font-semibold leading-5 text-[#1f232b]">{q.question}</p>
-            <div className="space-y-1">
+        {request.questions.map((q, questionIndex) => (
+          <div key={q.question} className="rounded-[15px] border border-[#e7ebf1] bg-[#fbfcfe] p-3">
+            <div className="mb-2.5 flex items-start gap-2.5">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#eaf2ff] text-[11px] font-bold text-[#4c8df6]">
+                {questionIndex + 1}
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8290a4]">{q.header}</p>
+                <p className="mt-0.5 text-[14px] font-semibold leading-5 text-[#1f232b]">{q.question}</p>
+              </div>
+            </div>
+            <div className="space-y-1.5" role="radiogroup" aria-label={q.header || q.question}>
               {q.options.map((opt) => (
                 <Button
                 variant="ghost"
                   key={opt.label}
                   type="button"
                   data-enter-submits
+                  role="radio"
+                  aria-checked={answers[q.question] === opt.label}
                   onClick={() => select(q.question, opt.label)}
                   className={cn(
-                    'flex min-h-10 w-full items-center rounded-[12px] px-2.5 text-left text-[14px] transition-colors',
+                    'flex min-h-11 w-full items-center rounded-[11px] border px-3 text-left text-[13px] transition-colors',
                     answers[q.question] === opt.label
-                      ? 'bg-[#f1f1f3] text-[#1f232b]'
-                      : 'text-[#8a8f98] hover:bg-[#f6f6f7]'
+                      ? 'border-[#9fc4ff] bg-[#f2f7ff] text-[#1f232b] shadow-[0_2px_8px_rgba(95,156,255,0.08)]'
+                      : 'border-transparent bg-white text-[#5f6876] hover:border-[#dce5f2] hover:bg-white'
                   )}
                 >
-                  <span className="flex min-w-0 flex-1 items-center gap-2 font-semibold">
-                    {opt.label}
-                    {answers[q.question] === opt.label && <Check size={15} className="text-[#5f9cff]" />}
+                  <span className={cn(
+                    'mr-2.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
+                    answers[q.question] === opt.label ? 'border-[#5f9cff] bg-[#5f9cff] text-white' : 'border-[#cbd3df] bg-white',
+                  )}>
+                    {answers[q.question] === opt.label && <Check size={10} strokeWidth={3} />}
                   </span>
+                  <span className="min-w-0 flex-1 font-semibold">{opt.label}</span>
                   {opt.description && opt.description !== opt.label && (
-                    <span className="ml-3 max-w-[45%] truncate text-[12px] font-medium text-[#9aa0aa]">{opt.description}</span>
+                    <span className="ml-3 min-w-0 truncate text-[11px] font-medium text-[#96a0af]">{opt.description}</span>
                   )}
                 </Button>
               ))}
             </div>
           </div>
         ))}
+        <p className="px-1 text-[11px] text-[#929cab]">
+          已完成 {Object.keys(answers).length} / {request.questions.length} 项 · 选择后按 Enter 提交
+        </p>
         {error && (
           <p className="px-1 pt-1 text-[12px] leading-5 text-destructive">{error}</p>
         )}
