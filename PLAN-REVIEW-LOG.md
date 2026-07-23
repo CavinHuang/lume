@@ -183,3 +183,5 @@ Remaining deviations/risks:
 - Removed the active Sidecar `RuntimeOrchestrator` wiring, task-approval and TaskContract execution RPC handlers, and pending approval recovery from the normal agent flow.
 - Removed the Web task-approval overlay, banner, desktop API calls, and pending-state helpers; Task progress remains read-only.
 - Removed `TaskContractWrite` from runtime tool metadata and planning-group resolution. The old plan/TaskRun source files and skipped compatibility tests remain isolated legacy code and are not reachable from the new Task toolchain.
+- Removed legacy TaskRun replay from runtime event history; replay now reads Lume run state plus the new TaskStore event log only.
+- Put startup journal recovery behind the Task list fencing lock and added coverage for recovery plus monotonic IDs after deletion.

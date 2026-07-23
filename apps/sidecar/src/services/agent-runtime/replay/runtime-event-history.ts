@@ -1,25 +1,19 @@
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from "@lume/shared";
 import { projectRunStateToRuntimeEvents } from "../runner/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
-import { projectTaskRunToRuntimeEvents } from "../task-run/task-progress-events";
-import { createFileBackedTaskRunStore } from "../task-run/task-run-store";
 import { createFileBackedTaskStore } from "../task/task-store";
 
 export async function listThreadRuntimeEvents(input: {
   sessionDir: string;
   threadId: string;
 }): Promise<AgentThreadRuntimeEventsResult> {
-  const [runs, taskRuns] = await Promise.all([
-    createFileBackedLumeRunStateStore(input.sessionDir).listByThread(input.threadId),
-    createFileBackedTaskRunStore(input.sessionDir).listByThread(input.threadId)
-  ]);
+  const runs = await createFileBackedLumeRunStateStore(input.sessionDir).listByThread(input.threadId);
   const taskEvents = createFileBackedTaskStore(input.sessionDir, { taskListId: input.threadId }).listEvents();
 
   return {
     threadId: input.threadId,
     events: assignRunSequences(sortRuntimeEvents([
       ...runs.flatMap((run) => projectRunStateToRuntimeEvents(run)),
-      ...taskRuns.flatMap((taskRun) => projectTaskRunToRuntimeEvents(input.threadId, taskRun)),
       ...taskEvents.map((event) => ({
         id: `task.progress:${event.taskListId}:${event.sequence}`,
         type: "task.progress" as const,

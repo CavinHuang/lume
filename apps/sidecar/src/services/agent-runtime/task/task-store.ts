@@ -224,7 +224,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     this.onCancellationRequested = options.onCancellationRequested;
     this.validateCompletion = options.validateCompletion;
     mkdirSync(this.listRoot, { recursive: true });
-    this.recoverJournal();
+    withLock(this.listLockPath, () => this.recoverJournal());
   }
 
   async create(input: { subject: string; description?: string; activeForm?: string }, context: TaskStoreContext): Promise<TaskMutationResult> {

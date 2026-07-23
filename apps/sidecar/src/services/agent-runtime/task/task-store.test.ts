@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileBackedTaskStore } from "./task-store";
@@ -134,6 +134,31 @@ describe("FileBackedTaskStore", () => {
       const claimed = await store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: created.revision }, context());
       const updated = await store.update({ taskId: created.task.id, metadata: null }, context());
       expect(updated.claimToken).toBe(claimed.claimToken);
+    });
+  });
+
+  test("recovers a pending journal before reads and never reuses deleted IDs", async () => {
+    await withStore(async (store, sessionDir) => {
+      const created = await store.create({ subject: "Original" }, context());
+      const taskPath = join(sessionDir, "tasks", "thread-1", `${created.task.id}.json`);
+      const stored = JSON.parse(await readFile(taskPath, "utf8")) as Record<string, unknown>;
+      stored.subject = "Recovered";
+      stored.revision = created.revision + 1;
+      await writeFile(
+        join(sessionDir, "tasks", "thread-1", ".journal.jsonl"),
+        `${JSON.stringify({
+          phase: "prepare",
+          transactionId: "recovery-1",
+          files: [{ path: taskPath, contents: JSON.stringify(stored) }],
+        })}\n`,
+        "utf8",
+      );
+
+      const restored = createFileBackedTaskStore(sessionDir, { taskListId: "thread-1" });
+      expect((await restored.get(created.task.id, context()))?.task.subject).toBe("Recovered");
+      await restored.delete(created.task.id, context());
+      const next = await restored.create({ subject: "Next" }, context());
+      expect(next.task.id).toBe("2");
     });
   });
 });
