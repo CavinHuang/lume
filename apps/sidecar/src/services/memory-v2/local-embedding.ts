@@ -1,12 +1,17 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import { getMemoryLocalModelsDir } from "../infra/config-paths";
 import type { MemoryV2EmbedTexts } from "./embedding";
+import {
+  hasLocalOnnxModelFile,
+  LOCAL_ONNX_MODEL_ID
+} from "./local-embedding-cache";
 
-export const LOCAL_ONNX_MODEL_ID = "Xenova/bge-small-zh-v1.5";
+export { LOCAL_ONNX_MODEL_ID } from "./local-embedding-cache";
+
 // 首次使用可能同时包含模型下载、文件校验、ONNX Runtime 初始化和首轮加载。
 // 15 秒在 Windows 上容易把仍在正常初始化的 worker 判定为失败。
 const INIT_TIMEOUT_MS = 120_000;
+const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const EMBED_TIMEOUT_MS = 8_000;
 const EMBED_BATCH_SIZE = 32;
 
@@ -20,6 +25,7 @@ export type LocalOnnxMemoryEmbeddingStatus = {
 type WorkerMessage =
   | { type: "ready" }
   | { type: "init_error"; error?: string }
+  | { type: "status"; status: "downloading" | "initializing" }
   | { type: "result_batch"; id: number; data: Float32Array; dims: number }
   | { type: "error_batch"; id: number; error?: string };
 
@@ -75,12 +81,23 @@ class LocalOnnxEmbeddingWorker {
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
-      setLocalOnnxStatus(hasLocalOnnxModelCache() ? "initializing" : "downloading");
-      const initTimer = setTimeout(() => {
-        const error = new Error("Local ONNX embedding model initialization timed out.");
-        setLocalOnnxStatus("failed", error.message);
-        this.failInitialization(error);
-      }, INIT_TIMEOUT_MS);
+      const cached = hasLocalOnnxModelCache();
+      setLocalOnnxStatus(cached ? "initializing" : "downloading");
+      let initTimer: ReturnType<typeof setTimeout>;
+      const armTimeout = (timeoutMs: number, message: string) => {
+        clearTimeout(initTimer);
+        initTimer = setTimeout(() => {
+          const error = new Error(message);
+          setLocalOnnxStatus("failed", error.message);
+          this.failInitialization(error);
+        }, timeoutMs);
+      };
+      armTimeout(
+        cached ? INIT_TIMEOUT_MS : DOWNLOAD_TIMEOUT_MS,
+        cached
+          ? "Local ONNX embedding model initialization timed out."
+          : "Local ONNX embedding model download timed out."
+      );
       const workerFile = process.versions.bun ? "./local-embedding-worker.ts" : "./local-embedding-worker.mjs";
       this.worker = new Worker(new URL(workerFile, import.meta.url), {
         workerData: {
@@ -89,6 +106,16 @@ class LocalOnnxEmbeddingWorker {
         }
       });
       this.worker.on("message", (message: WorkerMessage) => {
+        if (message.type === "status") {
+          setLocalOnnxStatus(message.status);
+          armTimeout(
+            message.status === "downloading" ? DOWNLOAD_TIMEOUT_MS : INIT_TIMEOUT_MS,
+            message.status === "downloading"
+              ? "Local ONNX embedding model download timed out."
+              : "Local ONNX embedding model initialization timed out."
+          );
+          return;
+        }
         if (message.type === "ready") {
           clearTimeout(initTimer);
           setLocalOnnxStatus("ready");
@@ -217,11 +244,6 @@ export function retryLocalOnnxMemoryEmbedding(): void {
 }
 
 export function getLocalOnnxMemoryEmbeddingStatus(): LocalOnnxMemoryEmbeddingStatus {
-  // worker 启动时模型文件可能还未落盘，状态会先记为 downloading；
-  // 后续设置页轮询到缓存文件后，及时切换到 initializing，避免状态长期卡在下载中。
-  if (runtimeStatus?.status === "downloading" && hasLocalOnnxModelCache()) {
-    runtimeStatus = buildLocalOnnxStatus("initializing");
-  }
   if (runtimeStatus) return runtimeStatus;
   return buildLocalOnnxStatus(hasLocalOnnxModelCache() ? "cached" : "not_cached");
 }
@@ -246,40 +268,5 @@ function buildLocalOnnxStatus(
 }
 
 function hasLocalOnnxModelCache(): boolean {
-  const cacheDir = getMemoryLocalModelsDir();
-  if (!existsSync(cacheDir)) return false;
-  const modelName = LOCAL_ONNX_MODEL_ID.split("/").at(-1) ?? LOCAL_ONNX_MODEL_ID;
-  const needles = [
-    LOCAL_ONNX_MODEL_ID,
-    LOCAL_ONNX_MODEL_ID.replace("/", "--"),
-    modelName
-  ];
-  return containsModelFile(cacheDir, needles);
-}
-
-function containsModelFile(path: string, needles: string[]): boolean {
-  let entries: string[];
-  try {
-    entries = readdirSync(path);
-  } catch {
-    return false;
-  }
-  for (const entry of entries) {
-    const child = `${path}/${entry}`;
-    let stat;
-    try {
-      stat = statSync(child);
-    } catch {
-      continue;
-    }
-    if (stat.isDirectory()) {
-      if (containsModelFile(child, needles)) return true;
-      continue;
-    }
-    if (!stat.isFile()) continue;
-    if (needles.some((needle) => child.includes(needle))) {
-      return true;
-    }
-  }
-  return false;
+  return hasLocalOnnxModelFile(getMemoryLocalModelsDir());
 }
