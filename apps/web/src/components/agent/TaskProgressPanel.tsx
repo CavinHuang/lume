@@ -29,19 +29,6 @@ const statusLabel = {
 
 type TaskProgressEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>
 
-export function canContinueTaskProgress(progress: TaskProgressEvent | undefined): boolean {
-  return progress?.status === 'pending' || progress?.status === 'running' || progress?.status === 'failed'
-}
-
-export function canRetryTaskProgress(progress: TaskProgressEvent | undefined): boolean {
-  return progress?.status === 'failed' && progress.tasks.some((task) => task.status === 'failed')
-}
-
-export function canSkipTaskProgress(progress: TaskProgressEvent | undefined): boolean {
-  return (progress?.status === 'pending' || progress?.status === 'failed')
-    && progress.tasks.some((task) => task.status === 'failed' || task.status === 'pending')
-}
-
 export function shouldShowTaskEmptyState(
   progress: TaskProgressEvent | undefined,
 ): progress is undefined {
