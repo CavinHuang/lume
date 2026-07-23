@@ -474,6 +474,27 @@ registerToolMetadata({
   allowedInPlanMode: false
 });
 
+// Persistent Task tools (main-agent only; subagent assembly applies a deny set)
+for (const name of ["TaskCreate", "TaskUpdate", "TaskStop"]) {
+  registerToolMetadata({
+    name,
+    category: "control",
+    riskLevel: "medium",
+    description: "管理主 Agent 的持久化 Task",
+    allowedInPlanMode: false,
+  });
+}
+
+for (const name of ["TaskList", "TaskGet"]) {
+  registerToolMetadata({
+    name,
+    category: "read",
+    riskLevel: "low",
+    description: "读取主 Agent 的持久化 Task",
+    allowedInPlanMode: true,
+  });
+}
+
 // TodoWrite 工具
 registerToolMetadata({
   name: "TodoWrite",

@@ -146,3 +146,28 @@ The recommended resolution is to make the following amendments before implementa
 - Add an atomic per-claim executor binding `{ claimToken, attempt, executorRef, state }`; a task-linked dispatch succeeds only when the binding is empty/terminal and CAS binds the new executor. Duplicate dispatches with the same token are rejected, and terminal acknowledgement clears the binding.
 
 These amendments are not Codex re-reviewed because `MAX_ROUNDS=5` was reached. No code was modified.
+
+## Act 3 — Build
+
+### Round 1 — implementation worker
+
+The accepted plan was implemented in the current clean worktree without creating a commit from the worker. The implementation added the host-bound five-tool Task API, file-backed TaskStore, scoped event replay, main-agent wiring, task_ref Agent/Delegate association, subagent Task deny-set enforcement, ProcessJobRegistry separation, read-only Task progress UI, and removal of the legacy TaskContractWrite registration from runtime plan mode.
+
+The worker reported `bun run typecheck` passing and identified two stale main-runtime tests that still expected TaskReport. Those assertions were updated to expect the five Task tools and to keep TaskReport only on the bound standalone subagent path.
+
+### Claude's verdict
+
+Reviewed the complete diff, corrected the stale tests, added TaskStore coverage, added pending Task deletion through TaskUpdate, preserved server-managed metadata on metadata null patches, enforced trusted system/recovery executor acknowledgements, added TaskStop executor cancellation callbacks, moved child-thread creation after claim binding, added executor stop fencing, and filtered Task/process tools from nested SDK AgentTool assembly.
+
+Proof:
+
+- `bun run typecheck` — passed for shared, ui, sidecar, cli, web, and desktop.
+- Focused Bun tests — 98 passed, 0 failed across TaskStore, runtime-core, delegation, tool runtime/metadata, Task progress UI, and Bash process-job compatibility.
+- `git diff --check` — passed.
+
+Remaining deviations/risks:
+
+- Legacy TaskContract/TaskRun storage and orchestration files remain for compatibility; the new runtime no longer registers TaskContractWrite for plan mode and the new TaskStore does not read old data.
+- TaskStore lock heartbeat is refreshed around short synchronous transactions rather than by an independent lease-renewal worker.
+- Executor recovery requires a verified terminal/forced acknowledgement; the fence intentionally remains when termination cannot be proven.
+- Legacy TaskProgressPanel helper predicates remain exported for compatibility even though user-facing continue/retry/skip controls were removed.

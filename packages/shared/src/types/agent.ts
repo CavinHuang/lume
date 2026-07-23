@@ -899,6 +899,13 @@ export interface AgentQueuedMessage {
   capabilityFingerprints?: Array<{ uri: string; fingerprint: string }>
 }
 
+/** Main-agent-owned persistent Task claim used by task-linked Agent/Delegate dispatch. */
+export interface AgentTaskRef {
+  taskListId: string
+  taskId: string
+  claimToken: string
+}
+
 export type AgentSubmissionReceiptStatus =
   | 'preparing'
   | 'accepted'

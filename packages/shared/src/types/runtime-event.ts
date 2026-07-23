@@ -202,6 +202,7 @@ export interface TodoStateUpdatedRuntimeEvent extends RuntimeEventBase {
 
 export type TaskProgressRuntimeStatus =
   | "pending"
+  | "in_progress"
   | "running"
   | "waiting_for_user"
   | "waiting_for_permission"
@@ -211,6 +212,7 @@ export type TaskProgressRuntimeStatus =
 
 export type TaskProgressRuntimeTaskStatus =
   | "pending"
+  | "in_progress"
   | "running"
   | "completed"
   | "failed"
@@ -218,12 +220,13 @@ export type TaskProgressRuntimeTaskStatus =
 
 export interface TaskProgressRuntimeTask {
   id: string;
-  title: string;
+  subject?: string;
+  title?: string;
   description?: string;
   expectedTools?: string[];
   expectedFiles?: string[];
   status: TaskProgressRuntimeTaskStatus;
-  attemptCount: number;
+  attemptCount?: number;
   result?: string;
   error?: string;
   startedAt?: string;
@@ -233,8 +236,11 @@ export interface TaskProgressRuntimeTask {
 
 export interface TaskProgressRuntimeEvent extends RuntimeEventBase {
   type: "task.progress";
-  taskRunId: string;
-  contractId: string;
+  /** New Task list identity. Legacy taskRunId/contractId remain optional for replay compatibility only. */
+  taskListId?: string;
+  origin?: "agent" | "system" | "recovery";
+  taskRunId?: string;
+  contractId?: string;
   status: TaskProgressRuntimeStatus;
   currentTaskId?: string;
   tasks: TaskProgressRuntimeTask[];

@@ -6,7 +6,7 @@ import { appendFile, mkdir, stat, writeFile } from 'fs/promises'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { createTaskRecord, registerTaskStopHandler, unregisterTaskStopHandler, updateTaskRecord } from './task-tools.js'
+import { createProcessJobRecord, registerProcessStopHandler, unregisterProcessStopHandler, updateProcessJob } from './process-job-registry.js'
 import { defineTool } from './types.js'
 import type { ToolExecutionMetadata } from '../types.js'
 import { resolveShellInvocation } from '../utils/shell-invocation.js'
@@ -57,7 +57,7 @@ export const BashTool = defineTool({
       mkdirSync(outputDirectory, { recursive: true })
       const outputFile = join(outputDirectory, `bash-${context.sessionId || 'session'}-${Date.now()}-${Math.random().toString(36).slice(2)}.log`)
       const purpose = typeof input.purpose === 'string' && input.purpose.trim() ? input.purpose.trim() : undefined
-      const task = createTaskRecord({
+      const task = createProcessJobRecord({
         subject: input.description || `Background shell command`,
         description: command,
         status: 'running',
@@ -112,7 +112,7 @@ export const BashTool = defineTool({
       }
       context.abortSignal?.addEventListener('abort', abortHandler, { once: true })
       const progressTimer = setInterval(() => {
-        const current = updateTaskRecord(task.id, {
+        const current = updateProcessJob(task.id, {
           status: 'running',
         })
         if (!current) return
@@ -181,12 +181,12 @@ export const BashTool = defineTool({
           terminationReason,
           resultRef: resultRef.resultRef ?? outputFileRef,
         }
-        updateTaskRecord(task.id, {
+        updateProcessJob(task.id, {
           status: terminationReason === 'completed' ? 'completed' : terminationReason === 'aborted' ? 'stopped' : 'failed',
           output,
           metadata: { execution },
         })
-        unregisterTaskStopHandler(task.id)
+        unregisterProcessStopHandler(task.id)
         context.emitEvent?.({
           type: 'system',
           subtype: 'task_progress',
@@ -214,7 +214,7 @@ export const BashTool = defineTool({
         context.onBackgroundTaskCompleted?.()
       }
 
-      registerTaskStopHandler(task.id, () => {
+      registerProcessStopHandler(task.id, () => {
         if (!settled) terminationReason = 'aborted'
         proc.kill('SIGTERM')
       })
@@ -224,7 +224,7 @@ export const BashTool = defineTool({
       proc.unref()
 
       return {
-        data: `Background task started: ${task.id}\nUse TaskOutput to inspect progress.`,
+        data: `Background process started: ${task.id}\nUse ProcessOutput to inspect progress.`,
         _meta: {
           execution: {
             version: 1,

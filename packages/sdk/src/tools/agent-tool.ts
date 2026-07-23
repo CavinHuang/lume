@@ -17,6 +17,17 @@ import { recordSkillUsage } from '../skills/evolution.js'
 // Store for registered agent definitions
 let registeredAgents: Record<string, AgentDefinition> = {}
 
+const TASK_MANAGEMENT_TOOL_NAMES = new Set([
+  'TaskCreate',
+  'TaskUpdate',
+  'TaskList',
+  'TaskGet',
+  'TaskStop',
+  'TaskOutput',
+  'ProcessOutput',
+  'ProcessStop',
+])
+
 /**
  * Register agent definitions for the AgentTool to use.
  */
@@ -87,6 +98,16 @@ export const AgentTool: ToolDefinition = {
         items: { type: 'string' },
         description: 'Expected files or other artifacts for a newly created persistent task',
       },
+      task_ref: {
+        type: 'object',
+        description: 'Associate an independently-created executor with a claimed main-agent Task. This is mutually exclusive with legacy coordinator fields.',
+        required: ['taskListId', 'taskId', 'claimToken'],
+        properties: {
+          taskListId: { type: 'string' },
+          taskId: { type: 'string' },
+          claimToken: { type: 'string' },
+        },
+      },
       model: {
         type: 'string',
         description: 'Optional model override for this agent',
@@ -153,8 +174,9 @@ export const AgentTool: ToolDefinition = {
       tools = filterTools(tools, defaultSkill.allowedTools)
     }
 
-    // Remove AgentTool from subagent to prevent infinite recursion
-    tools = tools.filter(t => t.name !== 'Agent')
+    // Remove recursive delegation and all Task/process-management tools from
+    // nested SDK subagents. The sidecar applies the same deny set at runtime.
+    tools = tools.filter(t => t.name !== 'Agent' && !TASK_MANAGEMENT_TOOL_NAMES.has(t.name))
 
     // Build system prompt
     let systemPrompt = agentDef?.prompt ||

@@ -603,6 +603,7 @@ export class Agent {
         cwd: options.cwd || process.cwd(),
         sessionId: this.sid,
         permissionMode: options.permissionMode,
+        threadType: options.threadType,
       })
       : assembledTools
 
@@ -1219,11 +1220,8 @@ export class Agent {
   }
 
   async stopTask(taskId: string): Promise<void> {
-    const { getTask } = await import('./tools/task-tools.js')
-    const task = getTask(taskId)
-    if (task) {
-      task.status = 'cancelled'
-    }
+    const { getProcessJob } = await import('./tools/process-job-registry.js')
+    getProcessJob(taskId)?.stop?.()
   }
 
   private getInitializationCommands(): SlashCommand[] {

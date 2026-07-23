@@ -3,6 +3,7 @@ import { projectRunStateToRuntimeEvents } from "../runner/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
 import { projectTaskRunToRuntimeEvents } from "../task-run/task-progress-events";
 import { createFileBackedTaskRunStore } from "../task-run/task-run-store";
+import { createFileBackedTaskStore } from "../task/task-store";
 
 export async function listThreadRuntimeEvents(input: {
   sessionDir: string;
@@ -12,12 +13,31 @@ export async function listThreadRuntimeEvents(input: {
     createFileBackedLumeRunStateStore(input.sessionDir).listByThread(input.threadId),
     createFileBackedTaskRunStore(input.sessionDir).listByThread(input.threadId)
   ]);
+  const taskEvents = createFileBackedTaskStore(input.sessionDir, { taskListId: input.threadId }).listEvents();
 
   return {
     threadId: input.threadId,
     events: assignRunSequences(sortRuntimeEvents([
       ...runs.flatMap((run) => projectRunStateToRuntimeEvents(run)),
-      ...taskRuns.flatMap((taskRun) => projectTaskRunToRuntimeEvents(input.threadId, taskRun))
+      ...taskRuns.flatMap((taskRun) => projectTaskRunToRuntimeEvents(input.threadId, taskRun)),
+      ...taskEvents.map((event) => ({
+        id: `task.progress:${event.taskListId}:${event.sequence}`,
+        type: "task.progress" as const,
+        threadId: input.threadId,
+        runId: input.threadId,
+        taskListId: event.taskListId,
+        origin: event.origin,
+        status: event.tasks.some((task) => task.status === "in_progress")
+          ? "in_progress" as const
+          : event.tasks.length > 0 && event.tasks.every((task) => task.status === "completed")
+            ? "completed" as const
+            : "pending" as const,
+        currentTaskId: event.tasks.find((task) => task.status === "in_progress")?.id,
+        tasks: event.tasks,
+        message: event.message,
+        createdAt: event.createdAt,
+        sequence: event.sequence,
+      }))
     ]))
   };
 }
@@ -26,6 +46,7 @@ export async function listThreadRuntimeEvents(input: {
 function assignRunSequences(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {
   const nextByRun = new Map<string, number>();
   return events.map((event) => {
+    if (event.type === "task.progress" && event.taskListId && event.sequence !== undefined) return event;
     const next = nextByRun.get(event.runId) ?? 0;
     nextByRun.set(event.runId, next + 1);
     return { ...event, sequence: next };

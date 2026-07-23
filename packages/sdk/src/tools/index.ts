@@ -34,15 +34,8 @@ import { AgentTool } from './agent-tool.js'
 import { SendMessageTool } from './send-message.js'
 import { TeamCreateTool, TeamDeleteTool } from './team-tools.js'
 
-// Tasks
-import {
-  TaskCreateTool,
-  TaskListTool,
-  TaskUpdateTool,
-  TaskGetTool,
-  TaskStopTool,
-  TaskOutputTool,
-} from './task-tools.js'
+// Persistent Tasks are host-bound through createTaskTools and are not part of
+// the SDK's unscoped base tool pool.
 
 // Worktree
 import { EnterWorktreeTool, ExitWorktreeTool } from './worktree-tools.js'
@@ -105,13 +98,7 @@ const ALL_TOOLS: ToolDefinition[] = [
   TeamCreateTool,
   TeamDeleteTool,
 
-  // Tasks
-  TaskCreateTool,
-  TaskListTool,
-  TaskUpdateTool,
-  TaskGetTool,
-  TaskStopTool,
-  TaskOutputTool,
+  // Internal process controls are intentionally not model-visible.
 
   // Worktree
   EnterWorktreeTool,
@@ -233,13 +220,7 @@ export {
   SendMessageTool,
   TeamCreateTool,
   TeamDeleteTool,
-  // Tasks
-  TaskCreateTool,
-  TaskListTool,
-  TaskUpdateTool,
-  TaskGetTool,
-  TaskStopTool,
-  TaskOutputTool,
+  // Persistent Tasks are host-bound; see createTaskTools.
   // Worktree
   EnterWorktreeTool,
   ExitWorktreeTool,

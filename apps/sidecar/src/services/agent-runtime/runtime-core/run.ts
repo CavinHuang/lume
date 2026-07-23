@@ -42,7 +42,8 @@ import type {
   FileReferenceBinding,
   SubagentTaskReport,
   SubagentTask,
-  SubagentTaskFeedback
+  SubagentTaskFeedback,
+  AgentTaskRef
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -84,8 +85,8 @@ import type { ContextAssemblyInput } from "../context/context-assembler";
 import { resolveDesktopContextProjection } from "../../desktop-context/desktop-context-runtime";
 import { createKernelContextController } from "../context/context-controller";
 import { buildRuntimeUserMessageInput } from "./message-attachment-input";
-import { createTaskContractWriteTool } from "../plan/task-contract-write-tool";
-import { createTaskReportTool } from "../task-run/task-report-tool";
+import { createMainTaskTools } from "../task/task-tools";
+import { FileBackedTaskStore } from "../task/task-store";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
 import { assemblePluginRuntime, type PluginRuntimeAssembly } from "../plugins/runtime-bridge.js";
@@ -132,6 +133,7 @@ import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 
 const log = createLogger("runtime-core-prompt");
 const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+const taskExecutorStopHandlers = new Map<string, () => void>();
 
 interface RuntimeCoreResolvedModel {
   id: string;
@@ -189,7 +191,7 @@ export interface CreateRuntimeCoreSessionInput {
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
+  emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
   runId?: string;
   workflowHooks?: LumeWorkflowHookRuntimeLike;
@@ -825,16 +827,6 @@ function buildRuntimeCoreTools(input: {
       originalUserInstruction: input.originalUserInstruction,
     })
     : tool);
-  const planWriteTool = createTaskContractWriteTool({
-    sessionDir: getRuntimeCoreSessionDir(input.sessionId),
-    threadId: input.sessionId,
-    runId: input.runId ?? input.sessionId,
-    ...(input.workspaceSlug ? { threadWorkspaceDir: input.cwd } : {}),
-    onTaskContractUpdated: input.emitTaskContractUpdated
-  });
-  const taskReportTool = input.boundSubagentReportTool
-    ? input.boundSubagentReportTool
-    : createTaskReportTool({ sessionDir: getRuntimeCoreSessionDir(input.sessionId), threadId: input.sessionId });
   const todoTool = createTodoTool({
     threadId: input.sessionId,
     initialTodos: input.initialTodoState?.todos,
@@ -876,9 +868,23 @@ function buildRuntimeCoreTools(input: {
     messageMetadata: input.messageMetadata
   };
 
+  const isMainTaskThread = input.threadType === "main" || input.threadType === undefined;
+  const mainTaskRuntime = isMainTaskThread
+    ? createMainTaskTools({
+      sessionDir: getRuntimeCoreSessionDir(input.sessionId),
+      threadId: input.sessionId,
+      runId: input.runId,
+      emitRuntimeEvent: input.emitRuntimeEvent,
+      onCancellationRequested: ({ executorRef }) => {
+        if (executorRef) taskExecutorStopHandlers.get(executorRef)?.();
+      },
+    })
+    : undefined;
+
   const sidecarAgentTool: ToolDefinition = {
     ...AgentTool,
-    isConcurrencySafe: () => true,
+    description: "Launch an independent subagent. For a persistent Task, first claim it with TaskUpdate and then pass task_ref; Task itself never creates or schedules the subagent.",
+    isConcurrencySafe: () => false,
     async call(toolInput: any, context: any) {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
@@ -893,6 +899,31 @@ function buildRuntimeCoreTools(input: {
         workspaceSlug: input.workspaceSlug
       });
       try {
+        if (toolInput.task_ref !== undefined) {
+          if (!mainTaskRuntime) throw new Error("Task-linked Agent calls are main-agent only");
+          assertTaskRefDiscriminant(toolInput);
+          const taskRef = parseTaskRef(toolInput.task_ref, parentThreadId);
+          return await runTaskLinkedSubagent({
+            toolInput,
+            context,
+            taskStore: mainTaskRuntime.store,
+            taskRef,
+            parentThreadId,
+            modelOverride,
+            workspaceId: input.workspaceId,
+            workspaceSlug: input.workspaceSlug,
+            channelId: input.channelId,
+            chatType: input.chatType,
+            messageMetadata: input.messageMetadata,
+            fileReferenceBinding: input.fileReferenceBinding,
+            permissionMode,
+            emitRuntimeEvent: input.emitRuntimeEvent,
+            emitAskUserQuestion: input.emitAskUserQuestion,
+            emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+            emitDesktopActionRequest: input.emitDesktopActionRequest,
+            emitToolPermissionRequest: input.emitToolPermissionRequest,
+          });
+        }
         const coordinator = getSubagentCoordinator();
         const taskId = typeof toolInput.task_id === "string" ? toolInput.task_id.trim() : undefined;
         const subagentId = typeof toolInput.subagent_id === "string" ? toolInput.subagent_id.trim() : undefined;
@@ -1019,9 +1050,10 @@ function buildRuntimeCoreTools(input: {
     }
   })
 
+  const mainTaskTools = mainTaskRuntime?.tools ?? [];
   const taskLoopTools = input.threadType === "subagent"
-    ? [taskReportTool, todoTool]
-    : [taskReportTool, sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
+    ? (input.boundSubagentReportTool ? [input.boundSubagentReportTool, todoTool] : [todoTool])
+    : [...(isMainTaskThread ? mainTaskTools : []), sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
 
   const delegateTool: ToolDefinition = {
     ...AgentTool,
@@ -1037,11 +1069,17 @@ function buildRuntimeCoreTools(input: {
         subagent_type: { type: "string" },
         model: { type: "string" },
         mode: { type: "string", enum: ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] },
+        task_ref: {
+          type: "object",
+          required: ["taskListId", "taskId", "claimToken"],
+          properties: { taskListId: { type: "string" }, taskId: { type: "string" }, claimToken: { type: "string" } },
+          description: "Associate this independently-created executor with a claimed main-agent Task.",
+        },
         run_in_background: { type: "boolean", description: "If true, start the child session asynchronously and return immediately with a delegationId. Use WaitForDelegations to collect results later." }
       },
       required: ["prompt", "description"]
     },
-    isConcurrencySafe: () => true,
+    isConcurrencySafe: () => false,
     async call(toolInput: any, context: any) {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
@@ -1050,6 +1088,37 @@ function buildRuntimeCoreTools(input: {
       });
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
+      }
+      if (toolInput.task_ref !== undefined) {
+        if (!mainTaskRuntime) return { type: "tool_result" as const, tool_use_id: "", content: "Task-linked Delegate calls are main-agent only", is_error: true };
+        try {
+          assertTaskRefDiscriminant(toolInput);
+          if (toolInput.run_in_background === true) throw new Error("Task-linked Delegate calls are serialized and cannot run in background");
+          const taskRef = parseTaskRef(toolInput.task_ref, parentThreadId);
+          const modelOverride = resolveSubagentModelOverride({ toolInput, workspaceSlug: input.workspaceSlug });
+          return await runTaskLinkedSubagent({
+            toolInput,
+            context,
+            taskStore: mainTaskRuntime.store,
+            taskRef,
+            parentThreadId,
+            modelOverride,
+            workspaceId: input.workspaceId,
+            workspaceSlug: input.workspaceSlug,
+            channelId: input.channelId,
+            chatType: input.chatType,
+            messageMetadata: input.messageMetadata,
+            fileReferenceBinding: input.fileReferenceBinding,
+            permissionMode,
+            emitRuntimeEvent: input.emitRuntimeEvent,
+            emitAskUserQuestion: input.emitAskUserQuestion,
+            emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+            emitDesktopActionRequest: input.emitDesktopActionRequest,
+            emitToolPermissionRequest: input.emitToolPermissionRequest,
+          });
+        } catch (error) {
+          return { type: "tool_result" as const, tool_use_id: "", content: error instanceof Error ? error.message : String(error), is_error: true };
+        }
       }
       // D7: 仅允许一级 delegate —— 当前父 thread 若已是某 subagent run 的 child，拒绝
       const depthGuard = canDelegateFromThread(parentThreadId);
@@ -1222,7 +1291,6 @@ function buildRuntimeCoreTools(input: {
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] }
     ] : [
       { source: "sdk", tools: baseTools },
-      ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
       { source: "task", tools: taskLoopTools },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
       ...(input.mcpTools?.length
@@ -1816,6 +1884,7 @@ export async function createRuntimeCoreSession(
     ...(input.resolvedModel?.baseUrl ? { baseURL: input.resolvedModel.baseUrl } : {}),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
     cwd: input.cwd,
+    threadType: input.threadType,
     artifactsRoot: input.artifactsRoot,
     onToolExecution: codingRunTracker.observe,
     systemPrompt,
@@ -1833,11 +1902,12 @@ export async function createRuntimeCoreSession(
     skillsDirectories: resolveSkillDirectories(input.cwd, input.workspaceSlug),
     shouldLoadFilesystemSkill: createRuntimeSkillFilter(input.workspaceSlug),
     skills: runtimePluginAssembly.skills,
-    resolveRuntimeTools: (tools) => ToolRuntime.resolveDynamicTools({
+    resolveRuntimeTools: (tools, runtimeContext) => ToolRuntime.resolveDynamicTools({
       tools,
       requiredTools: boundSubagentReportTool ? [boundSubagentReportTool] : undefined,
       cwd: input.cwd,
       sessionId: input.lumeSessionId,
+      threadType: runtimeContext.threadType ?? input.threadType,
       permissionMode: input.permissionMode,
       messageMetadata: input.messageMetadata,
       policyInput: {
@@ -1933,6 +2003,133 @@ export async function createRuntimeCoreSession(
     tools: resolvedTools,
     getVerificationStatus: codingRunTracker.getVerificationStatus,
     getVerificationReport: codingRunTracker.getVerificationReport
+  };
+}
+
+function parseTaskRef(value: unknown, parentThreadId: string): AgentTaskRef {
+  if (!value || typeof value !== "object") throw new Error("task_ref must be { taskListId, taskId, claimToken }");
+  const ref = value as Record<string, unknown>;
+  if (typeof ref.taskListId !== "string" || typeof ref.taskId !== "string" || typeof ref.claimToken !== "string") {
+    throw new Error("task_ref must contain taskListId, taskId, and claimToken");
+  }
+  if (ref.taskListId !== parentThreadId) throw new Error("task_ref.taskListId must match the parent main thread");
+  return { taskListId: ref.taskListId, taskId: ref.taskId, claimToken: ref.claimToken };
+}
+
+function assertTaskRefDiscriminant(toolInput: Record<string, unknown>): void {
+  const forbidden = ["task_id", "new_task", "acceptance_criteria", "expected_artifacts", "subagent_id", "team_name", "isolation"];
+  const present = forbidden.filter((name) => toolInput[name] !== undefined);
+  if (present.length > 0) throw new Error(`task_ref cannot be combined with legacy coordinator fields: ${present.join(", ")}`);
+}
+
+async function runTaskLinkedSubagent(input: {
+  toolInput: Record<string, unknown>;
+  context: ToolContext;
+  taskStore: FileBackedTaskStore;
+  taskRef: AgentTaskRef;
+  parentThreadId: string;
+  modelOverride: ResolvedSubagentModelOverride;
+  workspaceId?: string;
+  workspaceSlug?: string;
+  channelId?: string;
+  chatType?: AgentSendInput["chatType"];
+  messageMetadata?: Record<string, unknown>;
+  fileReferenceBinding?: FileReferenceBinding;
+  permissionMode?: AgentSendInput["permissionMode"];
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
+  emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
+  emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+}): Promise<ToolResult> {
+  const actor = { threadId: input.parentThreadId, threadType: "main" as const, actorId: `main:${input.parentThreadId}` };
+  const current = await input.taskStore.get(input.taskRef.taskId, actor);
+  if (!current || current.claimToken !== input.taskRef.claimToken) throw new Error("task_ref claim is missing or expired");
+  const executorRef = crypto.randomUUID();
+  await input.taskStore.bindExecutor({
+    taskId: input.taskRef.taskId,
+    claimToken: input.taskRef.claimToken,
+    expectedRevision: current.revision,
+    executorRef,
+  }, actor);
+  let childThreadId: string | undefined;
+  let execution: Awaited<ReturnType<typeof runSidecarSubagent>>;
+  try {
+    const childMeta = createAgentThreadWithModelRef(
+      typeof input.toolInput.description === "string" ? input.toolInput.description : "Task executor",
+      input.modelOverride.modelRef,
+      input.modelOverride.channelId ?? input.channelId,
+      input.workspaceId,
+      input.parentThreadId,
+      input.modelOverride.resolvedModelId ?? input.context.model,
+      { fileContextMode: "inherit" }
+    );
+    childThreadId = childMeta.id;
+    taskExecutorStopHandlers.set(executorRef, () => {
+      void import("./attempt").then((module) => module.stopAgentRuntime(childMeta.id)).catch(() => undefined);
+    });
+    const forwardedInput = { ...input.toolInput };
+    delete forwardedInput.task_ref;
+    execution = await runSidecarSubagent({
+      toolInput: forwardedInput,
+      context: input.context,
+      runId: executorRef,
+      childThreadId: childMeta.id,
+      parentThreadId: input.parentThreadId,
+      deliveryThreadId: input.parentThreadId,
+      parentToolUseId: input.context.toolUseId,
+      subagentType: typeof input.toolInput.subagent_type === "string" ? input.toolInput.subagent_type : undefined,
+      modelOverride: input.modelOverride,
+      channelId: input.channelId,
+      workspaceId: input.workspaceId,
+      chatType: input.chatType,
+      messageMetadata: input.messageMetadata,
+      fileReferenceBinding: input.fileReferenceBinding,
+      onRuntimeEvent: input.emitRuntimeEvent,
+      permissionMode: input.permissionMode,
+      emitAskUserQuestion: input.emitAskUserQuestion,
+      emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+      emitDesktopActionRequest: input.emitDesktopActionRequest,
+      emitToolPermissionRequest: input.emitToolPermissionRequest,
+    });
+  } catch (error) {
+    execution = {
+      status: "errored",
+      error: error instanceof Error ? error.message : String(error),
+      result: { type: "tool_result", tool_use_id: "", content: error instanceof Error ? error.message : String(error), is_error: true },
+    };
+  } finally {
+    taskExecutorStopHandlers.delete(executorRef);
+  }
+  const ack = await input.taskStore.acknowledgeExecutor({
+    taskId: input.taskRef.taskId,
+    claimToken: input.taskRef.claimToken,
+    executorRef,
+    terminal: true,
+    error: execution.error,
+  }, actor);
+  if (execution.status !== "completed") {
+    const latest = await input.taskStore.get(input.taskRef.taskId, actor);
+    if (latest) {
+      await input.taskStore.update({
+        taskId: input.taskRef.taskId,
+        status: "pending",
+        expectedRevision: latest.revision,
+        claimToken: input.taskRef.claimToken,
+      }, actor);
+    }
+  }
+  return {
+    ...execution.result,
+    content: JSON.stringify({
+      taskRef: input.taskRef,
+      executorRef,
+      ...(childThreadId ? { childThreadId } : {}),
+      status: execution.status,
+      output: execution.output,
+      ...(execution.error ? { error: execution.error } : {}),
+      taskRevision: ack.revision,
+    }),
   };
 }
 

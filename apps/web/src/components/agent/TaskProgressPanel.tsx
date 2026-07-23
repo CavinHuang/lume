@@ -1,19 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { useAtomValue } from 'jotai'
 import { agentRuntimeEventsFamily } from '@/atoms'
 import { cn } from '@/lib/utils'
-import { executeTaskContract } from '@/lib/desktop-api'
-import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, RotateCcw, SkipForward, XCircle } from 'lucide-react'
+import { CheckCircle, Circle, ClipboardList, Loader2, PlayCircle, SkipForward, XCircle } from 'lucide-react'
 
-import type { AgentTaskRunTask, LumeRuntimeEvent } from '@lume/shared'
-
-import { Button } from '@/components/ui/button'
+import type { TaskProgressRuntimeTask, LumeRuntimeEvent } from '@lume/shared'
 interface TaskProgressPanelProps {
   threadId: string
 }
 
 const statusIcon = {
   pending: <Circle size={14} className="text-[var(--text-3)]" />,
+  in_progress: <Loader2 size={14} className="animate-spin text-[var(--brand)]" />,
   running: <Loader2 size={14} className="animate-spin text-[var(--brand)]" />,
   completed: <CheckCircle size={14} className="text-emerald-500" />,
   failed: <XCircle size={14} className="text-destructive" />,
@@ -22,6 +20,7 @@ const statusIcon = {
 
 const statusLabel = {
   pending: '待开始',
+  in_progress: '进行中',
   running: '进行中',
   completed: '已完成',
   failed: '失败',
@@ -51,14 +50,13 @@ export function shouldShowTaskEmptyState(
 
 export function getTaskProgressItems(
   progress: TaskProgressEvent | undefined,
-): AgentTaskRunTask[] {
+): TaskProgressRuntimeTask[] {
   return progress?.tasks ?? []
 }
 
 export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
   const runtimeEventState = useAtomValue(agentRuntimeEventsFamily(threadId))
   const activeItemRef = useRef<HTMLDivElement>(null)
-  const [continueBusy, setContinueBusy] = useState(false)
 
   const latestTaskProgress = [...(runtimeEventState?.events ?? [])]
     .reverse()
@@ -67,28 +65,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
   const completedCount = progressItems.filter((item) => item.status === 'completed' || item.status === 'skipped').length
   const failedCount = progressItems.filter((item) => item.status === 'failed').length
   const progressValue = progressItems.length > 0 ? Math.round((completedCount / progressItems.length) * 100) : 0
-  const activeItem = progressItems.find((item) => item.status === 'running')
-  const canContinueTasks = canContinueTaskProgress(latestTaskProgress)
-  const canRetryTasks = canRetryTaskProgress(latestTaskProgress)
-  const canSkipTasks = canSkipTaskProgress(latestTaskProgress)
-
-  const runTaskIntent = async (intent: 'continue' | 'retry' | 'skip') => {
-    const contractId = latestTaskProgress?.contractId
-    if (!contractId) return
-    setContinueBusy(true)
-    try {
-      await executeTaskContract({
-        threadId,
-        contractId,
-        intent,
-      })
-    } catch (error) {
-      console.error('[TaskProgressPanel] 继续执行任务失败:', error)
-    } finally {
-      setContinueBusy(false)
-    }
-  }
-
+  const activeItem = progressItems.find((item) => item.status === 'running' || item.status === 'in_progress')
   // 自动滚动到当前执行任务
   useEffect(() => {
     activeItemRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
@@ -140,45 +117,6 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
               style={{ width: `${progressValue}%` }}
             />
           </div>
-          {canContinueTasks && (
-            <Button
-                variant="ghost"
-              type="button"
-              disabled={continueBusy}
-              onClick={() => void runTaskIntent('continue')}
-              className="mt-3 h-8 w-full rounded-lg bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] px-2 text-[11px] font-medium text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_14%,var(--surface-1))] disabled:opacity-50"
-            >
-              {continueBusy ? '继续中...' : '继续执行'}
-            </Button>
-          )}
-          {(canRetryTasks || canSkipTasks) && (
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              {canRetryTasks && (
-                <Button
-                variant="ghost"
-                  type="button"
-                  disabled={continueBusy}
-                  onClick={() => void runTaskIntent('retry')}
-                  className="inline-flex h-8 items-center justify-center gap-1 rounded-lg bg-amber-500/10 px-2 text-[11px] font-medium text-amber-600 transition-colors hover:bg-amber-500/15 disabled:opacity-50"
-                >
-                  <RotateCcw size={12} />
-                  重试
-                </Button>
-              )}
-              {canSkipTasks && (
-                <Button
-                variant="ghost"
-                  type="button"
-                  disabled={continueBusy}
-                  onClick={() => void runTaskIntent('skip')}
-                  className="inline-flex h-8 items-center justify-center gap-1 rounded-lg bg-[var(--surface-2)] px-2 text-[11px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-3)] disabled:opacity-50"
-                >
-                  <SkipForward size={12} />
-                  跳过
-                </Button>
-              )}
-            </div>
-          )}
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
@@ -191,10 +129,10 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
           {progressItems.map((step, index) => (
             <div
               key={step.id}
-              ref={step.status === 'running' ? activeItemRef : undefined}
+              ref={step.status === 'running' || step.status === 'in_progress' ? activeItemRef : undefined}
               className={cn(
                 'flex items-center gap-2.5 rounded-xl border bg-[var(--surface-1)] px-3 py-2.5 text-[12px] transition-colors',
-                step.status === 'running'
+                (step.status === 'running' || step.status === 'in_progress')
                   ? 'border-[color:color-mix(in_oklab,var(--brand)_34%,var(--border-strong))] shadow-[0_18px_40px_-36px_color-mix(in_oklab,var(--brand)_60%,transparent)]'
                   : 'border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)]',
                 step.status === 'failed' && 'border-destructive/24 bg-destructive/5'
@@ -203,7 +141,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
               <span className={cn(
                 'flex size-6 shrink-0 items-center justify-center rounded-full border text-[10.5px] font-semibold',
                 step.status === 'completed' && 'border-emerald-500/18 bg-emerald-500/8',
-                step.status === 'running' && 'border-[color:color-mix(in_oklab,var(--brand)_24%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_8%,var(--surface-1))]',
+                (step.status === 'running' || step.status === 'in_progress') && 'border-[color:color-mix(in_oklab,var(--brand)_24%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_8%,var(--surface-1))]',
                 step.status === 'pending' && 'border-[var(--border)] bg-[var(--surface-2)]',
                 step.status === 'failed' && 'border-destructive/20 bg-destructive/8',
               )}>
@@ -220,7 +158,7 @@ export function TaskProgressPanel({ threadId }: TaskProgressPanelProps) {
                   <span className={cn(
                     'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
                     step.status === 'completed' && 'bg-emerald-500/10 text-emerald-600',
-                    step.status === 'running' && 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]',
+                    (step.status === 'running' || step.status === 'in_progress') && 'bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]',
                     step.status === 'pending' && 'bg-[var(--surface-2)] text-[var(--text-3)]',
                     step.status === 'failed' && 'bg-destructive/10 text-destructive',
                     step.status === 'skipped' && 'bg-[var(--surface-2)] text-[var(--text-3)]',
@@ -248,6 +186,6 @@ function TaskProgressPanelHeader() {
   )
 }
 
-export function formatProgressItemTitle(step: AgentTaskRunTask): string {
-  return step.title || step.description || step.id
+export function formatProgressItemTitle(step: TaskProgressRuntimeTask): string {
+  return step.subject || step.title || step.description || step.id
 }

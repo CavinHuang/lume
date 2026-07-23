@@ -1254,6 +1254,8 @@ export interface Query {
 }
 
 export interface AgentOptions {
+  /** Host thread identity used for tool assembly authorization. */
+  threadType?: 'main' | 'subagent' | 'group' | 'channel'
   /** LLM model ID */
   model?: string
   /**
@@ -1284,6 +1286,7 @@ export interface AgentOptions {
       cwd: string
       sessionId: string
       permissionMode?: PermissionMode
+      threadType?: 'main' | 'subagent' | 'group' | 'channel'
     }
   ) => ToolDefinition[] | Promise<ToolDefinition[]>
   /**

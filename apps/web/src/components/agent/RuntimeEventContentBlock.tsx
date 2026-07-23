@@ -1397,7 +1397,7 @@ function CodingRunReportCard({
         </div>
       )}
       {report.pendingBackground && (
-        <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-300">后台任务仍在运行，完成状态会在 TaskOutput 返回后更新。</div>
+        <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-300">后台进程仍在运行，完成状态会在 ProcessOutput 返回后更新。</div>
       )}
     </div>
   )

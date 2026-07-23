@@ -137,13 +137,7 @@ export {
   TeamCreateTool,
   TeamDeleteTool,
 
-  // Tasks
-  TaskCreateTool,
-  TaskListTool,
-  TaskUpdateTool,
-  TaskGetTool,
-  TaskStopTool,
-  TaskOutputTool,
+  // Persistent Tasks are host-bound through createTaskTools.
 
   // Worktree
   EnterWorktreeTool,
@@ -471,15 +465,20 @@ export {
 export type { FileState } from './utils/fileCache.js'
 
 // --------------------------------------------------------------------------
-// Task & Team State (for advanced usage)
+// Task & Team contracts (state is owned by the host)
 // --------------------------------------------------------------------------
 
-export {
-  getAllTasks,
-  getTask,
-  clearTasks,
+export { createTaskTools } from './tools/task-tools.js'
+export type {
+  Task,
+  TaskStatus,
+  TaskRef,
+  TaskMetadata,
+  TaskStoreAdapter,
+  TaskStoreContext,
+  TaskMutationResult,
+  TaskToolName,
 } from './tools/task-tools.js'
-export type { Task, TaskStatus } from './tools/task-tools.js'
 
 export {
   getAllTeams,
