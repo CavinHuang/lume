@@ -13,6 +13,8 @@ const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const repositoryRoot = resolve(desktopRoot, '../..')
 const helperPath = resolve(desktopRoot, 'resources/desktop-host/win32-x64-msvc/lume_desktop_host.exe')
 const manifestPath = resolve(desktopRoot, 'resources/desktop-host-manifest.json')
+const requestedTimeout = Number(process.env.LUME_USER_PRESENCE_TIMEOUT_MS ?? 60_000)
+const verificationTimeoutMs = Number.isFinite(requestedTimeout) ? Math.min(300_000, Math.max(10_000, requestedTimeout)) : 60_000
 if (!existsSync(helperPath) || !existsSync(manifestPath)) throw new Error('Build desktop-host resources before running the user-presence smoke')
 
 const root = mkdtempSync(join(tmpdir(), 'lume-user-presence-smoke-'))
@@ -31,6 +33,7 @@ try {
     modulePath: modulePath.replace(/\\/g, '/'),
     helperPath: helperPath.replace(/\\/g, '/'),
     manifestPath: manifestPath.replace(/\\/g, '/'),
+    verificationTimeoutMs,
   }))
 
   const child = spawn(findElectronBinary(repositoryRoot), [`--user-data-dir=${join(root, 'user-data')}`, appRoot], {
@@ -42,7 +45,7 @@ try {
   child.stdout.on('data', chunk => { stdout += chunk })
   child.stderr.on('data', chunk => { stderr += chunk })
   const exitCode = await new Promise((resolveExit, reject) => {
-    const timer = setTimeout(() => { child.kill(); reject(new Error('Windows user-presence smoke timed out')) }, 90_000)
+    const timer = setTimeout(() => { child.kill(); reject(new Error('Windows user-presence smoke timed out')) }, verificationTimeoutMs + 30_000)
     child.once('error', reject)
     child.once('exit', code => { clearTimeout(timer); resolveExit(code) })
   })
@@ -73,7 +76,7 @@ function findElectronBinary(repositoryRoot) {
   throw new Error('A real Electron binary is required')
 }
 
-function electronFixture({ modulePath, helperPath, manifestPath }) {
+function electronFixture({ modulePath, helperPath, manifestPath, verificationTimeoutMs }) {
   return `
 import { app, BrowserWindow } from 'electron'
 import { writeFileSync } from 'node:fs'
@@ -95,7 +98,7 @@ app.whenReady().then(async () => {
     targetId: 'win32-x64-msvc',
     nativeWindowHandle: win.getNativeWindowHandle(),
     reason: '验证 Lume 浏览器凭证保护',
-    timeoutMs: 60_000,
+    timeoutMs: ${verificationTimeoutMs},
   })
   writeFileSync(resultPath, JSON.stringify({ authorized }))
   win.destroy()
