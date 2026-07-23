@@ -38,6 +38,68 @@ describe('OpenAIResponsesAdapter', () => {
       const request = adapter.buildStreamRequest(mockInput)
       expect(request.headers['Authorization']).toBe('Bearer test-key')
     })
+
+    test('should preserve assistant history as output_text', () => {
+      const request = adapter.buildStreamRequest({
+        ...mockInput,
+        history: [{
+          id: 'msg_1',
+          role: 'assistant',
+          content: 'Previous answer',
+          createdAt: 1,
+        }],
+      })
+      const body = JSON.parse(request.body)
+
+      expect(body.input[0]).toEqual({
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'Previous answer' }],
+      })
+    })
+
+    test('should request reasoning summaries when thinking is enabled', () => {
+      const request = adapter.buildStreamRequest({
+        ...mockInput,
+        thinkingEnabled: true,
+        thinkingLevel: 'high' as const,
+      })
+      const body = JSON.parse(request.body)
+
+      expect(body.reasoning).toEqual({ effort: 'high', summary: 'auto' })
+    })
+
+    test('should preserve response item IDs in tool continuations', () => {
+      const request = adapter.buildStreamRequest({
+        ...mockInput,
+        continuationMessages: [{
+          role: 'assistant',
+          content: 'Checking',
+          toolCalls: [{
+            id: 'call_1',
+            name: 'lookup',
+            arguments: { query: 'x' },
+            metadata: { responseItemId: 'fc_1' },
+          }],
+        }],
+      })
+      const body = JSON.parse(request.body)
+
+      expect(body.input.slice(-2)).toEqual([
+        {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'Checking' }],
+        },
+        {
+          type: 'function_call',
+          id: 'fc_1',
+          call_id: 'call_1',
+          name: 'lookup',
+          arguments: '{"query":"x"}',
+        },
+      ])
+    })
   })
 
   describe('parseSSELine', () => {
@@ -62,7 +124,12 @@ describe('OpenAIResponsesAdapter', () => {
       }))
 
       expect(events).toEqual([
-        { type: 'tool_call_delta', toolCallId: 'fc_1', argumentsDelta: '{"location":' },
+        {
+          type: 'tool_call_delta',
+          toolCallId: '',
+          argumentsDelta: '{"location":',
+          metadata: { blockIndex: 1 },
+        },
       ])
     })
 
@@ -81,8 +148,25 @@ describe('OpenAIResponsesAdapter', () => {
       }))
 
       expect(events).toEqual([
-        { type: 'tool_call_start', toolCallId: 'call_001', toolName: 'get_weather' },
+        {
+          type: 'tool_call_start',
+          toolCallId: 'call_001',
+          toolName: 'get_weather',
+          metadata: { blockIndex: 1, responseItemId: 'fc_001' },
+        },
       ])
+    })
+
+    test('should parse refusal and reasoning summary deltas', () => {
+      expect(adapter.parseSSELine(JSON.stringify({
+        type: 'response.refusal.delta',
+        delta: 'Cannot comply.',
+      }))).toEqual([{ type: 'chunk', delta: 'Cannot comply.' }])
+
+      expect(adapter.parseSSELine(JSON.stringify({
+        type: 'response.reasoning_summary_text.delta',
+        delta: 'Checked.',
+      }))).toEqual([{ type: 'reasoning', delta: 'Checked.' }])
     })
 
     test('should parse response.completed event', () => {
@@ -98,6 +182,34 @@ describe('OpenAIResponsesAdapter', () => {
       expect(events).toEqual([
         { type: 'done', stopReason: 'end_turn' },
       ])
+    })
+
+    test('should parse incomplete and error terminal events', () => {
+      expect(adapter.parseSSELine(JSON.stringify({
+        type: 'response.incomplete',
+        response: {
+          status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
+        },
+      }))).toEqual([{ type: 'done', stopReason: 'max_tokens' }])
+
+      expect(adapter.parseSSELine(JSON.stringify({
+        type: 'response.failed',
+        response: {
+          status: 'failed',
+          error: { code: 'server_error', message: 'Generation failed' },
+        },
+      }))).toEqual([{ type: 'error', error: '[server_error] Generation failed' }])
+
+      expect(adapter.parseSSELine(JSON.stringify({
+        type: 'error',
+        code: 'invalid_request_error',
+        message: 'Bad input',
+        param: 'input',
+      }))).toEqual([{
+        type: 'error',
+        error: '[invalid_request_error] Bad input (param: input)',
+      }])
     })
 
     test('should return empty array for unknown event types', () => {

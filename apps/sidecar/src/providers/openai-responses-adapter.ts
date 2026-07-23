@@ -21,8 +21,8 @@ import { normalizeBaseUrl } from './url-utils'
 
 interface ResponsesInputItem {
   type?: 'message' | 'function_call' | 'function_call_output'
-  role?: 'user' | 'developer'
-  content?: ResponsesInputContent[]
+  role?: 'user' | 'developer' | 'assistant'
+  content?: ResponsesInputContent[] | ResponsesAssistantContent[]
   call_id?: string
   name?: string
   arguments?: string
@@ -33,6 +33,10 @@ interface ResponsesInputItem {
 type ResponsesInputContent =
   | { type: 'input_text'; text: string }
   | { type: 'input_image'; image_url: string }
+
+type ResponsesAssistantContent =
+  | { type: 'output_text'; text: string }
+  | { type: 'refusal'; refusal: string }
 
 interface ResponsesStreamEvent {
   type: string
@@ -47,6 +51,15 @@ interface ResponsesStreamEvent {
     arguments?: string
     status?: string
   }
+  response?: {
+    status?: string
+    incomplete_details?: { reason?: string } | null
+    output?: Array<{ type?: string }>
+    error?: { code?: string; message?: string } | null
+  }
+  code?: string
+  message?: string
+  param?: string | null
 }
 
 // ===== 消息转换 =====
@@ -87,9 +100,13 @@ function toResponsesInput(input: StreamRequestInput): ResponsesInputItem[] {
           content: [{ type: 'input_text', text: msg.content }],
         })
       }
+    } else if (msg.role === 'assistant' && msg.content) {
+      items.push({
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: msg.content }],
+      })
     }
-    // Assistant history messages are skipped in Responses API input
-    // (the API uses previous_response_id for conversation state)
   }
 
   // Current user message
@@ -109,10 +126,20 @@ function appendResponsesContinuation(
 ): void {
   for (const msg of continuationMessages) {
     if (msg.role === 'assistant') {
+      if (msg.content) {
+        items.push({
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: msg.content }],
+        })
+      }
       for (const tc of msg.toolCalls) {
+        const responseItemId = typeof tc.metadata?.responseItemId === 'string'
+          ? tc.metadata.responseItemId
+          : undefined
         items.push({
           type: 'function_call',
-          id: tc.id,
+          ...(responseItemId ? { id: responseItemId } : {}),
           call_id: tc.id,
           name: tc.name,
           arguments: JSON.stringify(tc.arguments),
@@ -161,6 +188,14 @@ export class OpenAIResponsesAdapter implements ProviderAdapter {
       bodyObj.tools = toResponsesTools(input.tools)
     }
 
+    const reasoningEffort = input.thinkingLevel ?? (input.thinkingEnabled ? 'medium' : 'off')
+    if (reasoningEffort !== 'off') {
+      bodyObj.reasoning = {
+        effort: reasoningEffort,
+        summary: 'auto',
+      }
+    }
+
     if (input.continuationMessages && input.continuationMessages.length > 0) {
       appendResponsesContinuation(inputItems, input.continuationMessages)
     }
@@ -181,9 +216,16 @@ export class OpenAIResponsesAdapter implements ProviderAdapter {
       const events: StreamEvent[] = []
 
       switch (event.type) {
-        case 'response.output_text.delta': {
+        case 'response.output_text.delta':
+        case 'response.refusal.delta': {
           if (event.delta) {
             events.push({ type: 'chunk', delta: event.delta })
+          }
+          break
+        }
+        case 'response.reasoning_summary_text.delta': {
+          if (event.delta) {
+            events.push({ type: 'reasoning', delta: event.delta })
           }
           break
         }
@@ -191,8 +233,9 @@ export class OpenAIResponsesAdapter implements ProviderAdapter {
           if (event.delta) {
             events.push({
               type: 'tool_call_delta',
-              toolCallId: `fc_${event.output_index ?? 0}`,
+              toolCallId: '',
               argumentsDelta: event.delta,
+              metadata: { blockIndex: event.output_index ?? 0 },
             })
           }
           break
@@ -204,16 +247,47 @@ export class OpenAIResponsesAdapter implements ProviderAdapter {
               type: 'tool_call_start',
               toolCallId: item.call_id || item.id || `fc_${event.output_index ?? 0}`,
               toolName: item.name || '',
+              metadata: {
+                blockIndex: event.output_index ?? 0,
+                ...(item.id ? { responseItemId: item.id } : {}),
+              },
             })
           }
           break
         }
         case 'response.completed': {
-          const resp = (event as any).response
+          const resp = event.response
           const hasToolCalls = resp?.output?.some?.((o: any) => o.type === 'function_call') ?? false
           events.push({
             type: 'done',
             stopReason: hasToolCalls ? 'tool_use' : 'end_turn',
+          })
+          break
+        }
+        case 'response.incomplete': {
+          const reason = event.response?.incomplete_details?.reason
+          events.push({
+            type: 'done',
+            stopReason: reason === 'max_output_tokens' ? 'max_tokens' : reason || 'incomplete',
+          })
+          break
+        }
+        case 'response.failed':
+        case 'response.cancelled': {
+          const error = event.response?.error
+          events.push({
+            type: 'error',
+            error: formatResponsesError(
+              error?.message || event.type.replace('response.', ''),
+              error?.code,
+            ),
+          })
+          break
+        }
+        case 'error': {
+          events.push({
+            type: 'error',
+            error: formatResponsesError(event.message || 'Unknown streaming error', event.code, event.param),
           })
           break
         }
@@ -264,4 +338,12 @@ export class OpenAIResponsesAdapter implements ProviderAdapter {
 
     return null
   }
+}
+
+function formatResponsesError(message: string, code?: string, param?: string | null): string {
+  return [
+    code ? `[${code}]` : '',
+    message,
+    param ? `(param: ${param})` : '',
+  ].filter(Boolean).join(' ')
 }
