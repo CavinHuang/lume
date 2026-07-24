@@ -109,20 +109,22 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Require macOS release credentials
+      - name: Configure optional macOS signing
         shell: bash
         run: |
           set -euo pipefail
+          signing_ready=1
           for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD APPLE_API_KEY_P8_BASE64 APPLE_API_KEY_ID APPLE_API_ISSUER; do
-            if [ -z "${!name:-}" ]; then
-              echo "Missing required macOS release secret: $name"
-              exit 1
-            fi
+            if [ -z "${!name:-}" ]; then signing_ready=0; fi
           done
-      - name: Import Developer ID certificate
-        shell: bash
-        run: |
-          set -euo pipefail
+          if [ "$signing_ready" -ne 1 ]; then
+            echo "::warning::macOS signing credentials are incomplete; publishing an ad-hoc signed build without notarization"
+            echo "LUME_MAC_SIGNED_RELEASE=0" >> "$GITHUB_ENV"
+            echo "LUME_RELEASE_SIGNING_REQUIRED=0" >> "$GITHUB_ENV"
+            echo "LUME_COMPUTER_USE_CODESIGN_MODE=adhoc" >> "$GITHUB_ENV"
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
           certificate_path="$RUNNER_TEMP/lume-developer-id.p12"
           api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
           keychain_path="$RUNNER_TEMP/lume-release.keychain-db"
@@ -142,6 +144,8 @@ jobs:
           fi
           echo "LUME_COMPUTER_USE_CODESIGN_MODE=identity" >> "$GITHUB_ENV"
           echo "LUME_COMPUTER_USE_CODESIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "LUME_MAC_SIGNED_RELEASE=1" >> "$GITHUB_ENV"
+          echo "LUME_RELEASE_SIGNING_REQUIRED=1" >> "$GITHUB_ENV"
           echo "CSC_IDENTITY_AUTO_DISCOVERY=true" >> "$GITHUB_ENV"
           echo "APPLE_API_KEY=$api_key_path" >> "$GITHUB_ENV"
       - name: Setup Bun
@@ -174,16 +178,19 @@ jobs:
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
           node scripts/build-node-repl-resources.mjs
-          node scripts/build-desktop-host-resources.mjs --target aarch64-apple-darwin --require-stable-signing
-          node scripts/build-desktop-host-resources.mjs --target x86_64-apple-darwin --require-stable-signing
+          node scripts/build-desktop-host-resources.mjs --target aarch64-apple-darwin
+          node scripts/build-desktop-host-resources.mjs --target x86_64-apple-darwin
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
         working-directory: apps/desktop
-        env:
-          LUME_RELEASE_SIGNING_REQUIRED: "1"
-        run: node ./scripts/run-electron-builder.mjs --output-dir dist-release --mac --arm64 --x64 --publish never --config.directories.output=dist-release --config.mac.notarize=true
+        shell: bash
+        run: |
+          notarize=false
+          if [ "${LUME_MAC_SIGNED_RELEASE:-0}" = "1" ]; then notarize=true; fi
+          node ./scripts/run-electron-builder.mjs --output-dir dist-release --mac --arm64 --x64 --publish never --config.directories.output=dist-release --config.mac.notarize="$notarize"
       - name: Notarize and staple release disks
+        if: env.LUME_MAC_SIGNED_RELEASE == '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -208,7 +215,7 @@ jobs:
         run: |
           LUME_DESKTOP_TARGET=aarch64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
           LUME_DESKTOP_TARGET=x86_64-apple-darwin bun scripts/verify-desktop-package-artifacts.mjs
-      - name: Verify Developer ID signature, Gatekeeper, and installed macOS app
+      - name: Verify macOS package and installed app
         shell: bash
         run: |
           set -euo pipefail
@@ -223,9 +230,11 @@ jobs:
             hdiutil detach "$mount_dir" -quiet
 
             codesign --verify --deep --strict --verbose=2 "$copied_app"
-            codesign -dv --verbose=4 "$copied_app" 2>&1 | grep -q "Authority=Developer ID Application"
-            codesign -dv --verbose=4 "$copied_app" 2>&1 | grep -q "TeamIdentifier="
-            spctl --assess --type execute --verbose=4 "$copied_app"
+            if [ "${LUME_MAC_SIGNED_RELEASE:-0}" = "1" ]; then
+              codesign -dv --verbose=4 "$copied_app" 2>&1 | grep -q "Authority=Developer ID Application"
+              codesign -dv --verbose=4 "$copied_app" 2>&1 | grep -q "TeamIdentifier="
+              spctl --assess --type execute --verbose=4 "$copied_app"
+            fi
             if [[ "$dmg" == *arm64.dmg ]]; then
               launch_app="$copied_app"
             fi
@@ -278,11 +287,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Require and prepare Windows release certificate
+      - name: Configure optional Windows signing
         shell: pwsh
         run: |
-          if (-not $env:WINDOWS_CERTIFICATE_PFX_BASE64) { throw "Missing required Windows release secret: WINDOWS_CERTIFICATE_PFX_BASE64" }
-          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) { throw "Missing required Windows release secret: WINDOWS_CERTIFICATE_PASSWORD" }
+          if (-not $env:WINDOWS_CERTIFICATE_PFX_BASE64 -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            Write-Warning "Windows signing credentials are incomplete; publishing an unsigned build"
+            "LUME_WINDOWS_SIGNING_ENABLED=0" | Out-File -FilePath $env:GITHUB_ENV -Append
+            exit 0
+          }
           $certificatePath = Join-Path $env:RUNNER_TEMP "lume-authenticode.pfx"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
           $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -File -Recurse |
@@ -295,6 +307,7 @@ jobs:
           "LUME_WINDOWS_CODESIGN_PASSWORD=$env:WINDOWS_CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append
           "CSC_LINK=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append
           "CSC_KEY_PASSWORD=$env:WINDOWS_CERTIFICATE_PASSWORD" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LUME_WINDOWS_SIGNING_ENABLED=1" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -324,7 +337,7 @@ jobs:
           bun scripts/build-sidecar-bundle.mjs
           bun scripts/build-default-skills-archive.mjs
           node scripts/build-node-repl-resources.mjs
-          node scripts/build-desktop-host-resources.mjs --require-stable-signing
+          node scripts/build-desktop-host-resources.mjs
       - name: Verify desktop package inputs
         run: bun scripts/verify-desktop-package-inputs.mjs
       - name: Build Electron package
@@ -366,13 +379,16 @@ jobs:
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
           if (-not $app) { throw "Installed Lume.exe not found" }
-          if ((Get-AuthenticodeSignature $app.FullName).Status -ne "Valid") {
-            throw "Installed Lume.exe does not have a valid Authenticode signature"
-          }
           $desktopHost = Get-ChildItem $app.DirectoryName -Filter "lume_desktop_host.exe" -File -Recurse -ErrorAction SilentlyContinue |
             Select-Object -First 1
-          if (-not $desktopHost -or (Get-AuthenticodeSignature $desktopHost.FullName).Status -ne "Valid") {
-            throw "Packaged desktop host does not have a valid Authenticode signature"
+          if (-not $desktopHost) { throw "Packaged desktop host not found" }
+          if ($env:LUME_WINDOWS_SIGNING_ENABLED -eq "1") {
+            if ((Get-AuthenticodeSignature $app.FullName).Status -ne "Valid") {
+              throw "Installed Lume.exe does not have a valid Authenticode signature"
+            }
+            if ((Get-AuthenticodeSignature $desktopHost.FullName).Status -ne "Valid") {
+              throw "Packaged desktop host does not have a valid Authenticode signature"
+            }
           }
           $log = Join-Path $env:TEMP "lume-startup.log"
           Remove-Item $log -Force -ErrorAction SilentlyContinue

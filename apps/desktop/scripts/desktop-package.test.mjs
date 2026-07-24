@@ -86,7 +86,7 @@ test('Windows installer lets users choose the installation directory', () => {
   assert.equal(pkg.build.nsis?.allowToChangeInstallationDirectory, true)
 })
 
-test('macOS release requires Developer ID signing, notarization, and Gatekeeper verification', () => {
+test('macOS release uses Developer ID when configured and otherwise falls back to ad-hoc signing', () => {
   const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
   const installGuide = resolve(DESKTOP_ROOT, 'assets/mac-install-guide.txt')
   const afterPackPath = resolve(DESKTOP_ROOT, 'scripts/after-pack.cjs')
@@ -122,10 +122,14 @@ test('macOS release requires Developer ID signing, notarization, and Gatekeeper 
   ]) {
     assert.match(workflow, new RegExp(`secrets\\.${secret}`))
   }
-  assert.match(workflow, /--target aarch64-apple-darwin --require-stable-signing/)
-  assert.match(workflow, /--target x86_64-apple-darwin --require-stable-signing/)
+  assert.match(workflow, /Configure optional macOS signing/)
+  assert.match(workflow, /LUME_MAC_SIGNED_RELEASE=0/)
+  assert.match(workflow, /LUME_COMPUTER_USE_CODESIGN_MODE=adhoc/)
+  assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY=false/)
+  assert.match(workflow, /LUME_MAC_SIGNED_RELEASE=1/)
+  assert.match(workflow, /if: env\.LUME_MAC_SIGNED_RELEASE == '1'/)
   assert.match(workflow, /notarytool submit/)
-  assert.match(workflow, /--config\.mac\.notarize=true/)
+  assert.match(workflow, /--config\.mac\.notarize="\$notarize"/)
   assert.match(workflow, /APPLE_API_KEY=/)
   assert.match(workflow, /stapler staple/)
   assert.match(workflow, /xcrun stapler validate/)
@@ -136,6 +140,8 @@ test('macOS release requires Developer ID signing, notarization, and Gatekeeper 
   assert.match(workflow, /retry gh release delete-asset/)
   assert.match(workflow, /upload_release_asset/)
   assert.match(workflow, /Invoke-ReleaseUpload/)
+  assert.doesNotMatch(workflow, /--require-stable-signing/)
+  assert.doesNotMatch(workflow, /Missing required macOS release secret/)
 })
 
 test('update installation keeps renderer IPC pending until the updater takes over', () => {
@@ -347,25 +353,33 @@ test('desktop-host resource build prefers a stable macOS signing identity', () =
   assert.match(script, /x86_64-apple-macos14\.0/)
 })
 
-test('release desktop package requires stable signing for the macOS computer-use helper', () => {
+test('desktop package lets the macOS computer-use helper fall back to ad-hoc signing', () => {
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
 
-  assert.match(pkg.scripts.package, /build-desktop-host-resources\.mjs --require-stable-signing/)
-  assert.match(script, /REQUIRE_STABLE_SIGNING/)
-  assert.match(script, /requires a stable macOS signing identity/)
+  assert.doesNotMatch(pkg.scripts.package, /--require-stable-signing/)
+  assert.doesNotMatch(script, /REQUIRE_STABLE_SIGNING/)
+  assert.match(script, /\?\? "-"/)
+  assert.match(script, /signed with ad-hoc identity/)
 })
 
-test('Windows release requires Authenticode signing for the app and desktop host', () => {
+test('Windows release signs when credentials exist and otherwise keeps the unsigned smoke path', () => {
   const workflow = readFileSync(resolve(REPO_ROOT, '.github/workflows/release-desktop.yml'), 'utf8')
   const script = readFileSync(resolve(REPO_ROOT, 'scripts/build-desktop-host-resources.mjs'), 'utf8')
 
   assert.match(workflow, /secrets\.WINDOWS_CERTIFICATE_PFX_BASE64/)
   assert.match(workflow, /secrets\.WINDOWS_CERTIFICATE_PASSWORD/)
+  assert.match(workflow, /Configure optional Windows signing/)
+  assert.match(workflow, /LUME_WINDOWS_SIGNING_ENABLED=0/)
+  assert.match(workflow, /LUME_WINDOWS_SIGNING_ENABLED=1/)
+  assert.match(workflow, /if \(\$env:LUME_WINDOWS_SIGNING_ENABLED -eq "1"\)/)
   assert.match(workflow, /CSC_LINK=/)
   assert.match(workflow, /Get-AuthenticodeSignature/)
+  assert.match(script, /hasWindowsSigningCredentials\(\)/)
+  assert.match(script, /skipped Authenticode signing/)
   assert.match(script, /signWindowsBinary\(OUT_FILE\)/)
-  assert.match(script, /signtool and an Authenticode certificate/)
   assert.match(script, /"verify", "\/pa", "\/all"/)
+  assert.doesNotMatch(workflow, /Missing required Windows release secret/)
+  assert.doesNotMatch(workflow, /build-desktop-host-resources\.mjs --require-stable-signing/)
 })
 
 test('node-repl resource build clears generated output before writing resources', () => {

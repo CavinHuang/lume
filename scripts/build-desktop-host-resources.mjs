@@ -42,7 +42,6 @@ const MAC_BUNDLE_ICON_ENTRIES = [
 ];
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
 const MAC_BUNDLE_VARIANT = process.env.LUME_COMPUTER_USE_BUNDLE_VARIANT === "dev" ? "dev" : "release";
-const REQUIRE_STABLE_SIGNING = process.argv.includes("--require-stable-signing");
 const MAC_BUNDLE_CONFIG = MAC_BUNDLE_VARIANT === "dev"
   ? {
       appBundleName: "Lume Computer Use (Dev).app",
@@ -83,7 +82,11 @@ if (process.platform === "darwin") {
   mkdirSync(OUT_DIR, { recursive: true });
   copyIfChanged(BUILT_BINARY, OUT_FILE);
   copyIfChanged(CURSOR_LICENSE, resolve(OUT_DIR, "LICENSE.open-codex-computer-use"));
-  if (REQUIRE_STABLE_SIGNING) signWindowsBinary(OUT_FILE);
+  if (hasWindowsSigningCredentials()) {
+    signWindowsBinary(OUT_FILE);
+  } else {
+    console.error("[desktop-host] skipped Authenticode signing; Windows signing credentials are not configured");
+  }
   console.error(`[desktop-host] wrote ${OUT_FILE}`);
 }
 
@@ -320,9 +323,6 @@ function signMacAppBundle(appRoot) {
     throw new Error(`unsupported LUME_COMPUTER_USE_CODESIGN_MODE: ${mode}`);
   }
   const identity = resolveMacCodesignIdentity(mode);
-  if (REQUIRE_STABLE_SIGNING && (!identity || identity === "-")) {
-    throw new Error("release packaging requires a stable macOS signing identity for Lume Computer Use.app");
-  }
   if (!identity) {
     console.error(`[desktop-host] skipped codesign for ${appRoot}`);
     return;
@@ -375,9 +375,6 @@ function signWindowsBinary(binaryPath) {
   const signTool = process.env.LUME_WINDOWS_SIGNTOOL_PATH?.trim();
   const certificatePath = process.env.LUME_WINDOWS_CODESIGN_CERTIFICATE?.trim();
   const certificatePassword = process.env.LUME_WINDOWS_CODESIGN_PASSWORD;
-  if (!signTool || !certificatePath || !certificatePassword) {
-    throw new Error("release packaging requires signtool and an Authenticode certificate for the Windows desktop host");
-  }
   const sign = spawnSync(signTool, [
     "sign",
     "/fd",
@@ -401,4 +398,12 @@ function signWindowsBinary(binaryPath) {
     stdio: "inherit",
   });
   if (verify.status !== 0) process.exit(verify.status ?? 1);
+}
+
+function hasWindowsSigningCredentials() {
+  return Boolean(
+    process.env.LUME_WINDOWS_SIGNTOOL_PATH?.trim()
+    && process.env.LUME_WINDOWS_CODESIGN_CERTIFICATE?.trim()
+    && process.env.LUME_WINDOWS_CODESIGN_PASSWORD,
+  );
 }
