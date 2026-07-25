@@ -28,6 +28,7 @@ if (targetSpecific && !files.some((file) => targetSpecific.every((pattern) => pa
 }
 verifyPackagedApplications(files);
 verifyNativeResources(files, target);
+verifyRipgrepResources(files, target);
 verifySidecarResources(files, target);
 
 writeSummary(`Local Electron package artifacts for ${target}`, files);
@@ -119,6 +120,15 @@ function verifyNativeResources(files, desktopTarget) {
     if (!files.some((file) => pattern.test(file))) {
       fail(`missing native resource for ${nativeTarget}`);
     }
+  }
+}
+
+function verifyRipgrepResources(files, desktopTarget) {
+  const nativeTarget = nativeResourceTarget(desktopTarget);
+  const binary = desktopTarget === "x86_64-pc-windows-msvc" ? "rg\\.exe" : "rg";
+  const pattern = new RegExp(`/resources/ripgrep/${nativeTarget}/${binary}$`, "i");
+  if (!files.some((file) => pattern.test(file))) {
+    fail(`missing bundled ripgrep resource for ${nativeTarget}`);
   }
 }
 

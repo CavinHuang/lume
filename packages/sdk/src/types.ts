@@ -6,6 +6,7 @@
 export type ToolResultContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source?: any; data?: string; mimeType?: string; _meta?: Record<string, unknown> }
+  | { type: 'document'; source: any; _meta?: Record<string, unknown> }
 
 export type ContentBlockParam =
   | { type: 'text'; text: string }
@@ -744,6 +745,12 @@ export interface ToolDefinition {
   description: string
   inputSchema: ToolInputSchema
   call: (input: any, context: ToolContext) => Promise<ToolResult>
+  /** Validate the permission-adjusted input before hooks and side effects. */
+  validateInput?: (input: any, context: ToolContext) => void | string | Promise<void | string>
+  /** Optional provider-independent output description for hosts and inspectors. */
+  outputSchema?: Record<string, unknown>
+  /** Resolve the primary path for permission metadata and diagnostics. */
+  getPath?: (input: any, context: ToolContext) => string | undefined | Promise<string | undefined>
   isReadOnly?: () => boolean
   isConcurrencySafe?: () => boolean
   isEnabled?: () => boolean
@@ -768,10 +775,13 @@ export interface ToolContext {
   /** Parent agent's API type */
   apiType?: import('./providers/types.js').ApiType
   sessionId?: string
+  /** Current user message used to group file checkpoints. */
+  currentUserMessageId?: string
   toolUseId?: string
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
+  fileStateCache?: import('./utils/fileCache.js').FileStateCache
   permissionMode?: PermissionMode
   emitEvent?: (event: SDKMessage) => void
   /** Hook registry for firing lifecycle hooks (e.g. SubagentStart/Stop). */
@@ -798,6 +808,7 @@ export interface ToolExecutionMetadata {
   stderrPreview?: string
   timedOut?: boolean
   aborted?: boolean
+  outputLimitReached?: boolean
   durationMs: number
   command: string
   purpose?: string
@@ -808,7 +819,7 @@ export interface ToolExecutionMetadata {
     size: number
     mimeType?: string
   }
-  terminationReason: 'completed' | 'nonzero' | 'timeout' | 'aborted' | 'spawn_error' | 'running'
+  terminationReason: 'completed' | 'nonzero' | 'timeout' | 'aborted' | 'output_limit' | 'spawn_error' | 'running'
 }
 
 export interface ToolResult {

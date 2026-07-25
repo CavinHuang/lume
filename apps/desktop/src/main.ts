@@ -100,6 +100,7 @@ import {
 } from './plugin-asset-registry'
 import {
   createUtilityProcessSidecarForkConfig,
+  getBundledRipgrepPath,
   getDesktopHostBinaryPath,
   getNativeBinaryPath,
   getNodeReplHostBinaryPath,
@@ -2046,6 +2047,11 @@ function createSidecarHost({ onNotification }) {
       resourcesPath: process.resourcesPath,
       desktopRoot: DESKTOP_ROOT,
     })
+    const bundledRipgrepPath = getBundledRipgrepPath({
+      appIsPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      desktopRoot: DESKTOP_ROOT,
+    })
     const nodeReplRootPath = getNodeReplRootPath({
       appIsPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -2058,9 +2064,12 @@ function createSidecarHost({ onNotification }) {
     })
     ensureFile(sidecarScriptPath, 'missing sidecar bundle')
     ensureFile(nativeBinaryPath, 'missing native binary')
+    ensureFile(bundledRipgrepPath, 'missing bundled ripgrep binary')
     ensureExistingPath(nodeReplRootPath)
     ensureFile(nodeReplHostBinaryPath, 'missing node_repl host binary')
     env.LUME_NATIVES_PATH = nativeBinaryPath
+    env.LUME_RIPGREP_PATH = bundledRipgrepPath
+    prependPath(env, dirname(bundledRipgrepPath))
     env.LUME_NODE_REPL_ROOT = nodeReplRootPath
     env.LUME_NODE_REPL_HOST = nodeReplHostBinaryPath
     env.LUME_NODE_REPL_ELECTRON = process.execPath
@@ -2443,6 +2452,15 @@ function createSidecarHost({ onNotification }) {
     callPluginPackagePrivileged,
     notifyBrowserSettings,
     stop,
+  }
+}
+
+function prependPath(env: NodeJS.ProcessEnv, directory: string): void {
+  const pathKey = Object.keys(env).find((key) => key.toLocaleLowerCase() === 'path') || (process.platform === 'win32' ? 'Path' : 'PATH')
+  const current = env[pathKey] || ''
+  const entries = current.split(process.platform === 'win32' ? ';' : ':').filter(Boolean)
+  if (!entries.some((entry) => entry.toLocaleLowerCase() === directory.toLocaleLowerCase())) {
+    env[pathKey] = [directory, ...entries].join(process.platform === 'win32' ? ';' : ':')
   }
 }
 

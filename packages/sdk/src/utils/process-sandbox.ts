@@ -27,6 +27,37 @@ export interface SandboxedProcessOptions {
   stdio?: SpawnOptions['stdio']
 }
 
+/** Terminate a child and its descendants without assuming a shell runtime. */
+export function terminateProcessTree(
+  child: ChildProcess,
+  options: { detached?: boolean; force?: boolean } = {},
+): void {
+  const pid = child.pid
+  if (!pid) return
+  const signal = options.force ? 'SIGKILL' : 'SIGTERM'
+  if (process.platform === 'win32') {
+    const taskkill = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    taskkill.unref()
+    return
+  }
+  if (options.detached) {
+    try {
+      process.kill(-pid, signal)
+      return
+    } catch {
+      // Fall through to the direct child when the process group is gone.
+    }
+  }
+  try {
+    child.kill(signal)
+  } catch {
+    // The process may have exited between the status check and termination.
+  }
+}
+
 export interface ProcessSandboxProbeInput {
   probeRoot: string
   deniedPath: string

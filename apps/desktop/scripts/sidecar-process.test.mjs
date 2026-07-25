@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import {
   createDesktopHostSpawnConfig,
   createUtilityProcessSidecarForkConfig,
+  getBundledRipgrepPath,
   getDesktopHostBinaryPath,
   getNativeBinaryPath,
   getNativeTargetId,
@@ -63,6 +64,42 @@ test('getNativeBinaryPath resolves dev native binary from desktop resources', ()
       arch: 'x64',
     }),
     resolve('/repo/apps/desktop', 'resources', 'natives', 'win32-x64-msvc', 'lume-natives.node'),
+  )
+})
+
+test('getBundledRipgrepPath resolves packaged ripgrep from Electron resources', () => {
+  assert.equal(
+    getBundledRipgrepPath({
+      appIsPackaged: true,
+      resourcesPath: '/opt/Lume/resources',
+      desktopRoot: '/repo/apps/desktop',
+      platform: 'win32',
+      arch: 'x64',
+    }),
+    join('/opt/Lume/resources', 'ripgrep', 'win32-x64-msvc', 'rg.exe'),
+  )
+})
+
+test('getBundledRipgrepPath resolves both macOS packaged targets', () => {
+  assert.equal(
+    getBundledRipgrepPath({
+      appIsPackaged: true,
+      resourcesPath: '/Applications/Lume.app/Contents/Resources',
+      desktopRoot: '/repo/apps/desktop',
+      platform: 'darwin',
+      arch: 'x64',
+    }),
+    join('/Applications/Lume.app/Contents/Resources', 'ripgrep', 'darwin-x64', 'rg'),
+  )
+  assert.equal(
+    getBundledRipgrepPath({
+      appIsPackaged: true,
+      resourcesPath: '/Applications/Lume.app/Contents/Resources',
+      desktopRoot: '/repo/apps/desktop',
+      platform: 'darwin',
+      arch: 'arm64',
+    }),
+    join('/Applications/Lume.app/Contents/Resources', 'ripgrep', 'darwin-arm64', 'rg'),
   )
 })
 

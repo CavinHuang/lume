@@ -426,6 +426,7 @@ export interface ToolExecutionMetadata {
   stderrPreview?: string;
   timedOut?: boolean;
   aborted?: boolean;
+  outputLimitReached?: boolean;
   durationMs: number;
   command: string;
   purpose?: string;
@@ -436,7 +437,7 @@ export interface ToolExecutionMetadata {
     size: number;
     mimeType?: string;
   };
-  terminationReason: "completed" | "nonzero" | "timeout" | "aborted" | "spawn_error" | "running";
+  terminationReason: "completed" | "nonzero" | "timeout" | "aborted" | "output_limit" | "spawn_error" | "running";
 }
 
 export interface AdvisorReviewedRuntimeEvent extends RuntimeEventBase {

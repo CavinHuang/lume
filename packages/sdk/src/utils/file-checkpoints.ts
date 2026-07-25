@@ -1,11 +1,15 @@
-import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
-import { dirname } from 'path'
+import { mkdir, readFile, rm, stat, writeFile, rename } from 'fs/promises'
+import { basename, dirname, join, normalize, resolve } from 'path'
+import { decodeTextFile, encodeTextFile } from './text-file.js'
 
 export interface FileSnapshot {
   path: string
   existed: boolean
   content?: string
   mtimeMs?: number
+  encoding?: 'utf8' | 'utf16le'
+  lineEnding?: 'CRLF' | 'LF' | 'CR'
+  bom?: boolean
 }
 
 export interface FileCheckpoint {
@@ -29,15 +33,20 @@ export async function captureFileSnapshots(
     files: {},
   }
 
-  for (const path of paths) {
+  for (const rawPath of paths) {
+    const path = normalize(resolve(rawPath))
     if (!path || checkpoint.files[path]) continue
     try {
       const fileStat = await stat(path)
       if (fileStat.isDirectory()) continue
+      const decoded = decodeTextFile(await readFile(path))
       checkpoint.files[path] = {
         path,
         existed: true,
-        content: await readFile(path, 'utf-8'),
+        content: decoded.content,
+        encoding: decoded.encoding,
+        lineEnding: decoded.lineEnding,
+        bom: decoded.bom,
         mtimeMs: fileStat.mtimeMs,
       }
     } catch {
@@ -58,7 +67,11 @@ export function collectCheckpointPaths(
 ): string[] {
   if (!input || typeof input !== 'object') return []
   const payload = input as Record<string, unknown>
-  const filePath = typeof payload.file_path === 'string' ? payload.file_path : null
+  const filePath = typeof payload.file_path === 'string'
+    ? payload.file_path
+    : typeof payload.notebook_path === 'string'
+      ? payload.notebook_path
+      : null
 
   switch (toolName) {
     case 'Write':
@@ -99,8 +112,15 @@ export async function rewindCheckpoint(
       insertions += Math.max(0, next.length - current.length)
       deletions += Math.max(0, current.length - next.length)
       if (!dryRun) {
-        await mkdir(dirname(snapshot.path), { recursive: true })
-        await writeFile(snapshot.path, next, 'utf-8')
+        const encoded = snapshot.encoding
+          ? encodeTextFile(next, {
+              content: next,
+              encoding: snapshot.encoding,
+              lineEnding: snapshot.lineEnding || 'LF',
+              bom: snapshot.bom === true,
+            })
+          : Buffer.from(next, 'utf8')
+        await writeFileAtomic(snapshot.path, encoded)
       }
     } else {
       const current = await readFile(snapshot.path, 'utf-8').catch(() => '')
@@ -119,3 +139,14 @@ export async function rewindCheckpoint(
   }
 }
 
+async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true })
+  const tempPath = join(dirname(filePath), `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
+  try {
+    await writeFile(tempPath, content)
+    await rename(tempPath, filePath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+    throw error
+  }
+}

@@ -278,7 +278,7 @@ function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").
   const record = value as Record<string, unknown>;
   const terminationReason = record.terminationReason;
   if (record.version !== 1 || typeof record.command !== "string" || typeof record.durationMs !== "number") return undefined;
-  if (terminationReason !== "completed" && terminationReason !== "nonzero" && terminationReason !== "timeout" && terminationReason !== "aborted" && terminationReason !== "spawn_error" && terminationReason !== "running") return undefined;
+  if (terminationReason !== "completed" && terminationReason !== "nonzero" && terminationReason !== "timeout" && terminationReason !== "aborted" && terminationReason !== "output_limit" && terminationReason !== "spawn_error" && terminationReason !== "running") return undefined;
   const ref = record.resultRef;
   const resultRef = ref && typeof ref === "object" && !Array.isArray(ref) ? ref as Record<string, unknown> : undefined;
   return {
@@ -288,6 +288,7 @@ function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").
     ...(typeof record.stderrPreview === "string" ? { stderrPreview: record.stderrPreview } : {}),
     ...(typeof record.timedOut === "boolean" ? { timedOut: record.timedOut } : {}),
     ...(typeof record.aborted === "boolean" ? { aborted: record.aborted } : {}),
+    ...(typeof record.outputLimitReached === "boolean" ? { outputLimitReached: record.outputLimitReached } : {}),
     durationMs: record.durationMs,
     command: record.command,
     ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),

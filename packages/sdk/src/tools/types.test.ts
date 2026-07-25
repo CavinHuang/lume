@@ -28,4 +28,24 @@ describe("defineTool", () => {
     ]);
     expect((result as any)._meta).toEqual({ traceId: "t-1" });
   });
+
+  test("runs optional input validation before the tool callback", async () => {
+    let called = false;
+    const tool = defineTool({
+      name: "validated",
+      description: "test",
+      inputSchema: { type: "object", properties: {} },
+      validateInput: () => "bad input",
+      async call() {
+        called = true;
+        return "unexpected";
+      },
+    });
+
+    const result = await tool.call({}, { cwd: "/tmp" } as any);
+
+    expect(called).toBe(false);
+    expect(result.is_error).toBe(true);
+    expect(result.content).toContain("bad input");
+  });
 });

@@ -2,11 +2,12 @@
  * FileWriteTool - Write/create files
  */
 
-import { writeFile, mkdir, rename, rm } from 'fs/promises'
+import { writeFile, mkdir, rename, rm, readFile, stat } from 'fs/promises'
 import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed } from '../utils/pathing.js'
 import { notifyLspFileChanged } from '../lsp/client.js'
+import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
 export const FileWriteTool = defineTool({
   name: 'Write',
@@ -27,6 +28,14 @@ export const FileWriteTool = defineTool({
   },
   isReadOnly: false,
   isConcurrencySafe: false,
+  validateInput(input) {
+    if (!input || typeof input !== 'object') return 'Input must be an object.'
+    if (typeof input.file_path !== 'string' || !input.file_path.trim()) return 'file_path is required.'
+    if (typeof input.content !== 'string') return 'content must be a string.'
+  },
+  getPath(input, context) {
+    return resolve(context.cwd, input.file_path)
+  },
   async call(input, context) {
     const filePath = resolve(context.cwd, input.file_path)
     const sandboxError = ensurePathAllowed(
@@ -41,18 +50,45 @@ export const FileWriteTool = defineTool({
 
     try {
       await mkdir(dirname(filePath), { recursive: true })
-      await writeFileAtomic(filePath, input.content)
+      let encoded: Uint8Array = Buffer.from(input.content, 'utf8')
+      let overwritten = false
+      const existing = await stat(filePath).catch(() => undefined)
+      if (existing?.isDirectory()) {
+        return { data: `Error writing file: ${filePath} is a directory`, is_error: true }
+      }
+      if (existing) {
+        overwritten = true
+        const decoded = decodeTextFile(await readFile(filePath))
+        const previousRead = context.fileStateCache?.get(filePath)
+        if (previousRead && !previousRead.isPartialView && previousRead.content !== decoded.content) {
+          return {
+            data: 'Error: File has been modified since it was read. Read it again before attempting to overwrite it.',
+            is_error: true,
+          }
+        }
+        encoded = encodeTextFile(input.content, decoded)
+      }
+      await writeFileAtomic(filePath, encoded)
       await notifyLspFileChanged(filePath)
+
+      const updated = await stat(filePath)
+      context.fileStateCache?.set(filePath, {
+        content: input.content,
+        timestamp: updated.mtimeMs,
+        isPartialView: false,
+      })
 
       const lines = input.content.split('\n').length
       const bytes = Buffer.byteLength(input.content, 'utf-8')
       return {
         data: {
           filePath,
+          overwritten,
           lines,
           bytes,
           message: `File written: ${filePath} (${lines} lines, ${bytes} bytes)`,
         },
+        _meta: { file: { path: filePath, overwritten, checkpointable: true, checkpointId: context.currentUserMessageId } },
       }
     } catch (err: any) {
       return { data: `Error writing file: ${err.message}`, is_error: true }
@@ -60,11 +96,11 @@ export const FileWriteTool = defineTool({
   },
 })
 
-async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
   const dir = dirname(filePath)
   const tempPath = join(dir, `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
   try {
-    await writeFile(tempPath, content, 'utf-8')
+    await writeFile(tempPath, content)
     await rename(tempPath, filePath)
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => undefined)

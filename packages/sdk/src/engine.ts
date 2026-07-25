@@ -78,6 +78,7 @@ import { resolve } from 'path'
 import { getUserInvocableSkills } from './skills/index.js'
 import { getDeferredTools } from './tools/tool-search.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
+import { FileStateCache } from './utils/fileCache.js'
 
 // ============================================================================
 // Tool format conversion
@@ -364,6 +365,7 @@ export class QueryEngine {
     tool_use_id: string
     tool_input: Record<string, unknown>
   }> = []
+  private fileStateCache = new FileStateCache()
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -761,16 +763,18 @@ export class QueryEngine {
     return defaultMicroCompactMessages(messages as any[]) as NormalizedMessageParam[]
   }
 
-  private buildPermissionMetadata(
+  private async buildPermissionMetadata(
     block: ToolUseBlock,
     tool: ToolDefinition,
+    context: ToolContext,
   ) {
     const payload =
       block.input && typeof block.input === 'object'
         ? (block.input as Record<string, unknown>)
         : {}
-    const filePath =
-      typeof payload.file_path === 'string'
+    const filePath = tool.getPath
+      ? await tool.getPath(block.input, context)
+      : typeof payload.file_path === 'string'
         ? resolve(this.config.cwd, payload.file_path)
         : undefined
 
@@ -1349,9 +1353,11 @@ export class QueryEngine {
       model: this.config.model,
       apiType: this.provider.apiType,
       sessionId: this.sessionId,
+      currentUserMessageId: this.config.currentUserMessageId,
       additionalDirectories: this.config.additionalDirectories,
       sandbox: this.config.sandbox,
       toolConfig: this.config.toolConfig,
+      fileStateCache: this.fileStateCache,
       artifactsRoot: this.config.artifactsRoot,
       onToolExecution: this.config.onToolExecution,
       permissionMode: this.config.permissionMode,
@@ -1505,7 +1511,7 @@ export class QueryEngine {
         const permission = await this.config.canUseTool(
           tool,
           block.input,
-          this.buildPermissionMetadata(block, tool),
+          await this.buildPermissionMetadata(block, tool, toolContext),
         )
         if (permission.behavior === 'deny') {
           this.permissionDenials.push({
@@ -1544,6 +1550,39 @@ export class QueryEngine {
             type: 'tool_result',
             tool_use_id: block.id,
             content: `Permission check error: ${err.message}`,
+            is_error: true,
+            tool_name: block.name,
+          },
+          events,
+          toolsUsed,
+        }
+      }
+    }
+
+    // Validate the permission-adjusted input immediately before hooks and
+    // execution so malformed model output cannot reach tool side effects.
+    if (tool.validateInput) {
+      try {
+        const validationError = await tool.validateInput(block.input, toolContext)
+        if (typeof validationError === 'string' && validationError.trim()) {
+          return {
+            result: {
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: `Invalid input for tool "${block.name}": ${validationError}`,
+              is_error: true,
+              tool_name: block.name,
+            },
+            events,
+            toolsUsed,
+          }
+        }
+      } catch (err: any) {
+        return {
+          result: {
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: `Input validation error for tool "${block.name}": ${err.message}`,
             is_error: true,
             tool_name: block.name,
           },

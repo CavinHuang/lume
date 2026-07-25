@@ -288,7 +288,7 @@ function fixToolResultPairing(
 }
 
 /**
- * Strip images from messages (for compaction).
+ * Strip multimodal blocks from messages (for compaction).
  */
 export function stripImagesFromMessages(
   messages: Array<{ role: string; content: any }>,
@@ -305,11 +305,12 @@ export function stripImagesFromMessages(
 function stripImagesFromValue(value: any): any {
   if (Array.isArray(value)) {
     return value
-      .filter((item) => item?.type !== 'image')
+      .filter((item) => item?.type !== 'image' && item?.type !== 'document')
       .map(stripImagesFromValue)
   }
   if (!value || typeof value !== 'object') return value
   if (value.type === 'image') return '[image removed]'
+  if (value.type === 'document') return '[document removed]'
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [key, stripImagesFromValue(item)]),
   )

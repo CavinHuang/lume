@@ -27,6 +27,7 @@ const sharpNative = resolve(
   `sharp-${process.platform}-${process.arch}.node`,
 );
 const nativeBinary = resolve(DESKTOP_DIR, "resources", "natives", currentNativeTargetId(), "lume-natives.node");
+const ripgrepBinary = resolve(DESKTOP_DIR, "resources", "ripgrep", currentNativeTargetId(), process.platform === "win32" ? "rg.exe" : "rg");
 const desktopMain = resolve(DESKTOP_DIR, "dist", "main", "main.mjs");
 const desktopPreload = resolve(DESKTOP_DIR, "dist", "preload", "preload.cjs");
 const requiredFiles = [
@@ -43,6 +44,7 @@ const requiredFiles = [
   onnxRuntimeNative,
   sharpNative,
   nativeBinary,
+  ripgrepBinary,
   resolve(REPO_ROOT, "apps", "web", "dist", "index.html"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot-theme.js"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot.css"),
@@ -69,7 +71,7 @@ if (pkg.devDependencies?.["electron-updater"] !== "6.8.9" || pkg.dependencies?.[
 }
 
 const resources = pkg.build?.extraResources ?? [];
-for (const expected of ["../web/dist", "../web/src/assets/imgs/logo.png", "resources/default-skills.tar", "resources/sidecar", "resources/bin", "resources/natives"]) {
+for (const expected of ["../web/dist", "../web/src/assets/imgs/logo.png", "resources/default-skills.tar", "resources/sidecar", "resources/bin", "resources/natives", "resources/ripgrep"]) {
   if (!resources.some((entry) => entry?.from === expected)) {
     fail(`electron-builder extraResources missing ${expected}`);
   }
@@ -127,6 +129,9 @@ function verifyDesktopRuntime(mainFile, preloadFile, bundleFile) {
   }
   if (!mainSource.includes("LUME_NATIVES_PATH")) {
     fail("desktop main must pass LUME_NATIVES_PATH to the sidecar only");
+  }
+  if (!mainSource.includes("LUME_RIPGREP_PATH")) {
+    fail("desktop main must pass LUME_RIPGREP_PATH to the sidecar");
   }
   if (!mainSource.includes("system.ready")) {
     fail("desktop main must wait for sidecar system.ready");

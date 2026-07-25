@@ -16,6 +16,9 @@ export function defineTool(config: {
     | ToolResult
     | { data: unknown; is_error?: boolean; _meta?: Record<string, unknown> }
   >
+  validateInput?: (input: any, context: ToolContext) => void | string | Promise<void | string>
+  outputSchema?: Record<string, unknown>
+  getPath?: (input: any, context: ToolContext) => string | undefined | Promise<string | undefined>
   isReadOnly?: boolean
   isConcurrencySafe?: boolean
   prompt?: string | ((context: ToolContext) => Promise<string>)
@@ -24,6 +27,9 @@ export function defineTool(config: {
     name: config.name,
     description: config.description,
     inputSchema: config.inputSchema,
+    ...(config.validateInput ? { validateInput: config.validateInput } : {}),
+    ...(config.outputSchema ? { outputSchema: config.outputSchema } : {}),
+    ...(config.getPath ? { getPath: config.getPath } : {}),
     isReadOnly: () => config.isReadOnly ?? false,
     isConcurrencySafe: () => config.isConcurrencySafe ?? false,
     isEnabled: () => true,
@@ -32,6 +38,15 @@ export function defineTool(config: {
       : async (_context: ToolContext) => (config.prompt as string) ?? config.description,
     async call(input: any, context: ToolContext): Promise<ToolResult> {
       try {
+        const validationError = await config.validateInput?.(input, context)
+        if (typeof validationError === 'string' && validationError.trim()) {
+          return {
+            type: 'tool_result',
+            tool_use_id: '',
+            content: `Invalid input for tool "${config.name}": ${validationError}`,
+            is_error: true,
+          }
+        }
         const result = await config.call(input, context)
         return normalizeToolCallResult(result)
       } catch (err: any) {

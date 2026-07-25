@@ -13,6 +13,8 @@ import { finalizeSubagentOutputFromState, summarizeSubagentAssistantEvent } from
 import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
 import { getSkill } from '../skills/registry.js'
 import { recordSkillUsage } from '../skills/evolution.js'
+import { createProcessJobRecord, unregisterProcessStopHandler, updateProcessJob, type ProcessJob } from './process-job-registry.js'
+import { createManagedWorktree, removeManagedWorktree, type ManagedWorktree } from './worktree-tools.js'
 
 // Store for registered agent definitions
 let registeredAgents: Record<string, AgentDefinition> = {}
@@ -137,6 +139,15 @@ export const AgentTool: ToolDefinition = {
         type: 'string',
         description: 'Optional working directory override for the spawned agent',
       },
+      run_in_background: {
+        type: 'boolean',
+        description: 'Run the subagent in the background and return a task ID immediately',
+      },
+      isolation: {
+        type: 'string',
+        enum: ['none', 'worktree'],
+        description: 'Optional execution isolation. worktree creates a temporary git worktree.',
+      },
       subagent_run_id: {
         type: 'string',
         description: 'Internal run id injected by the host runtime. Reused across task events and finalization.',
@@ -147,13 +158,23 @@ export const AgentTool: ToolDefinition = {
   isReadOnly: () => false,
   isConcurrencySafe: () => true,
   isEnabled: () => true,
+  validateInput(input) {
+    if (!input || typeof input !== 'object') return 'Input must be an object.'
+    if (typeof input.prompt !== 'string' || !input.prompt.trim()) return 'prompt is required.'
+    if (typeof input.description !== 'string' || !input.description.trim()) return 'description is required.'
+    if (input.isolation !== undefined && !['none', 'worktree'].includes(input.isolation)) return 'Only none and worktree isolation are supported.'
+    if (input.run_in_background !== undefined && typeof input.run_in_background !== 'boolean') return 'run_in_background must be a boolean.'
+  },
   async prompt() {
     return 'Launch a subagent to handle complex tasks autonomously.'
   },
   async call(input: any, context: ToolContext): Promise<ToolResult> {
+    if (input?.isolation !== undefined && !['none', 'worktree'].includes(input.isolation)) {
+      return { type: 'tool_result', tool_use_id: '', content: 'Invalid input for tool "Agent": Only none and worktree isolation are supported.', is_error: true }
+    }
     const { getAllBaseTools, filterTools } = await import('./index.js')
     const agentType = input.subagent_type || 'general-purpose'
-    const effectiveCwd = input.cwd || context.cwd
+    let effectiveCwd = input.cwd || context.cwd
 
     // Find agent definition
     const agentDef = registeredAgents[agentType] || BUILTIN_AGENTS[agentType]
@@ -228,6 +249,9 @@ export const AgentTool: ToolDefinition = {
 
     let subagentStatus: 'completed' | 'errored' | 'aborted' = 'completed'
     let subagentErrorMessage = ''
+    let activeAbortSignal = context.abortSignal
+    let backgroundTask: ProcessJob | undefined
+    let worktree: ManagedWorktree | undefined
 
     const runSubagent = async () => {
       // Fire SubagentStart hook on the parent's hook registry
@@ -263,7 +287,7 @@ export const AgentTool: ToolDefinition = {
         includePartialMessages: false,
         sessionId: agentId,
         permissionMode: input.mode,
-        abortSignal: context.abortSignal,
+        abortSignal: activeAbortSignal,
       })
 
       if (input.resume) {
@@ -278,7 +302,7 @@ export const AgentTool: ToolDefinition = {
       const toolCalls: string[] = []
 
       for await (const event of engine.submitMessage(input.prompt)) {
-        if (context.abortSignal?.aborted) {
+        if (activeAbortSignal?.aborted) {
           subagentStatus = 'aborted'
           break
         }
@@ -288,6 +312,17 @@ export const AgentTool: ToolDefinition = {
         })
         if (taggedEvent) {
           context.emitEvent?.(taggedEvent)
+          if (backgroundTask) {
+            context.emitEvent?.({
+              type: 'system',
+              subtype: 'task_progress',
+              task_id: backgroundTask.id,
+              description: backgroundTask.subject,
+              last_tool_name: event.type === 'tool_result' ? event.result.tool_name : 'Agent',
+              usage: { total_tokens: 0, tool_uses: 1, duration_ms: 0 },
+              session_id: context.sessionId || '',
+            })
+          }
         }
         if (event.type === 'assistant') {
           const summary = summarizeSubagentAssistantEvent(
@@ -350,18 +385,107 @@ export const AgentTool: ToolDefinition = {
       return finalized.output
     }
 
+    const prepareWorktree = () => {
+      if (input.isolation !== 'worktree') return
+      worktree = createManagedWorktree({ cwd: effectiveCwd })
+      effectiveCwd = worktree.path
+    }
+
+    const runManagedSubagent = async () => {
+      prepareWorktree()
+      const output = await runSubagent()
+      if (worktree && subagentStatus === 'completed') {
+        removeManagedWorktree(worktree.id)
+      }
+      return output
+    }
+
     try {
-      if (input.isolation === 'worktree') {
+      if (input.run_in_background) {
+        const controller = new AbortController()
+        activeAbortSignal = controller.signal
+        const parentAbortHandler = () => controller.abort()
+        context.abortSignal?.addEventListener('abort', parentAbortHandler, { once: true })
+        backgroundTask = createProcessJobRecord({
+          subject: input.description,
+          description: input.prompt,
+          status: 'running',
+          taskType: 'agent',
+          metadata: { agentId, ...(worktree ? { worktree } : {}) },
+          stop: () => controller.abort(),
+        })
+        context.emitEvent?.({
+          type: 'system',
+          subtype: 'task_started',
+          task_id: backgroundTask.id,
+          description: backgroundTask.subject,
+          task_type: 'agent',
+          prompt: input.prompt,
+          session_id: context.sessionId || '',
+        })
+
+        void runManagedSubagent()
+          .then(async (output) => {
+            const status = subagentStatus === 'completed' ? 'completed' : subagentStatus === 'aborted' ? 'stopped' : 'failed'
+            updateProcessJob(backgroundTask!.id, {
+              status,
+              output,
+              metadata: { agentId, ...(worktree ? { worktree, retained: status !== 'completed' } : {}) },
+            })
+            unregisterProcessStopHandler(backgroundTask!.id)
+            context.abortSignal?.removeEventListener('abort', parentAbortHandler)
+            await context.onSubagentEnd?.({
+              runId: agentId,
+              status: subagentStatus,
+              output,
+              error: subagentStatus === 'errored' ? subagentErrorMessage : undefined,
+            })
+            context.emitEvent?.({
+              type: 'system',
+              subtype: 'task_notification',
+              task_id: backgroundTask!.id,
+              status: subagentStatus === 'completed' ? 'completed' : subagentStatus,
+              summary: backgroundTask!.subject,
+              session_id: context.sessionId || '',
+            })
+            context.onBackgroundTaskCompleted?.()
+          })
+          .catch(async (err: any) => {
+            updateProcessJob(backgroundTask!.id, {
+              status: 'failed',
+              output: `Subagent error: ${err.message}`,
+              metadata: { agentId, ...(worktree ? { worktree, retained: true } : {}) },
+            })
+            unregisterProcessStopHandler(backgroundTask!.id)
+            context.abortSignal?.removeEventListener('abort', parentAbortHandler)
+            await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })
+            context.emitEvent?.({
+              type: 'system',
+              subtype: 'task_notification',
+              task_id: backgroundTask!.id,
+              status: 'failed',
+              summary: err.message,
+              session_id: context.sessionId || '',
+            })
+            context.onBackgroundTaskCompleted?.()
+          })
+
         return {
           type: 'tool_result',
           tool_use_id: '',
-          content: 'Error: worktree isolation is intentionally not handled in this alignment scope.',
-          is_error: true,
+          content: `Background agent started: ${backgroundTask.id}\nUse TaskOutput with task_id=${backgroundTask.id} to inspect progress.`,
+          _meta: {
+            task: { id: backgroundTask.id, kind: 'agent', agentId, status: 'running' },
+            ...(worktree ? { worktree: { ...worktree, retained: true } } : {}),
+          },
         }
       }
-      const output = await runSubagent()
-      const errored = (subagentStatus as string) === 'errored'
-      await context.onSubagentEnd?.({ runId: agentId, status: errored ? 'errored' : 'completed', output, error: errored ? subagentErrorMessage : undefined })
+
+      const output = await runManagedSubagent()
+      const finalStatus = subagentStatus as 'completed' | 'errored' | 'aborted'
+      const errored = finalStatus === 'errored'
+      const aborted = finalStatus === 'aborted'
+      await context.onSubagentEnd?.({ runId: agentId, status: finalStatus, output, error: errored ? subagentErrorMessage : undefined })
       return {
         type: 'tool_result',
         tool_use_id: '',
@@ -375,7 +499,8 @@ export const AgentTool: ToolDefinition = {
               ].filter(Boolean).join(', ')}]`
             : ''
         ),
-        ...(errored ? { is_error: true } : {}),
+        ...(errored || aborted ? { is_error: true } : {}),
+        ...(worktree ? { _meta: { worktree: { ...worktree, retained: false } } } : {}),
       }
     } catch (err: any) {
       await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })
@@ -384,6 +509,7 @@ export const AgentTool: ToolDefinition = {
         tool_use_id: '',
         content: `Subagent error: ${err.message}`,
         is_error: true,
+        ...(worktree ? { _meta: { worktree: { ...worktree, retained: true } } } : {}),
       }
     }
   },

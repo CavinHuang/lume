@@ -1419,8 +1419,10 @@ function ToolExecutionDetails({ toolCall }: { toolCall: RuntimeToolCallView }) {
       ? '非零退出'
       : execution?.terminationReason === 'timeout'
         ? '超时'
-        : execution?.terminationReason === 'aborted'
+      : execution?.terminationReason === 'aborted'
           ? '已中止'
+          : execution?.terminationReason === 'output_limit'
+            ? '输出超限'
           : execution?.terminationReason === 'spawn_error'
             ? '启动失败'
             : null

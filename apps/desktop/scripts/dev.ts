@@ -14,6 +14,7 @@ const devServerUrl = process.env.LUME_DESKTOP_DEV_SERVER_URL?.trim() || "http://
 const buildDesktopRuntimeScript = resolve(desktopRoot, "scripts", "build.ts");
 const buildSidecarBundleScript = resolve(desktopRoot, "..", "..", "scripts", "build-sidecar-bundle.mjs");
 const buildNativesBinaryScript = resolve(desktopRoot, "..", "..", "scripts", "build-natives-binary.mjs");
+const buildRipgrepResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-ripgrep-resources.mjs");
 const buildNodeReplResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-node-repl-resources.mjs");
 const buildDesktopHostResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-desktop-host-resources.mjs");
 
@@ -73,6 +74,14 @@ if (!existsSync(nativeBinaryPath)) {
   if (nativesResult.status !== 0) {
     process.exit(nativesResult.status ?? 1);
   }
+}
+
+const ripgrepResourcesResult = spawnSync("node", [buildRipgrepResourcesScript], {
+  cwd: resolve(desktopRoot, "..", ".."),
+  stdio: "inherit",
+});
+if (ripgrepResourcesResult.status !== 0) {
+  process.exit(ripgrepResourcesResult.status ?? 1);
 }
 
 const desktopBuildResult = spawnSync("bun", [buildDesktopRuntimeScript], {

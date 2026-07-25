@@ -172,6 +172,7 @@ jobs:
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
           bun scripts/build-natives-binary.mjs --target aarch64-apple-darwin
           bun scripts/build-natives-binary.mjs --target x86_64-apple-darwin
+          node scripts/build-ripgrep-resources.mjs --target darwin-arm64 --target darwin-x64
       - name: Prepare desktop bundle resources
         run: |
           bun run --filter @lume/desktop build:runtime
@@ -331,6 +332,7 @@ jobs:
         run: |
           rustup target add x86_64-pc-windows-msvc
           bun scripts/build-natives-binary.mjs --target x86_64-pc-windows-msvc
+          node scripts/build-ripgrep-resources.mjs --target win32-x64-msvc
       - name: Prepare desktop bundle resources
         run: |
           bun run --filter @lume/desktop build:runtime

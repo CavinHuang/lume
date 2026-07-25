@@ -40,6 +40,13 @@ test('desktop package uses Vite-built TypeScript runtime files', () => {
       to: 'natives',
     },
   )
+  assert.deepEqual(
+    pkg.build.extraResources.find((entry) => entry.to === 'ripgrep'),
+    {
+      from: 'resources/ripgrep',
+      to: 'ripgrep',
+    },
+  )
   for (const file of [
     'vite.config.ts',
     'tsconfig.json',
@@ -168,6 +175,8 @@ test('desktop package includes node-repl resources', () => {
     },
   )
   assert.match(pkg.scripts.build, /build-node-repl-resources\.mjs/)
+  assert.match(pkg.scripts.build, /build-ripgrep-resources\.mjs/)
+  assert.match(pkg.scripts.package, /build-ripgrep-resources\.mjs/)
   assert.match(pkg.scripts.package, /build-node-repl-resources\.mjs/)
   assertContainsBefore(pkg.scripts.build, 'build-node-repl-resources.mjs', 'run-electron-builder.mjs')
   assertContainsBefore(pkg.scripts.package, 'build-node-repl-resources.mjs', 'run-electron-builder.mjs')

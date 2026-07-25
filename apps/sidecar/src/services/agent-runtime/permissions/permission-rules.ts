@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
+import { analyzeBashCommand } from "@lume/agent-sdk";
 import type { LumeToolDescriptor } from "../tools/tool-types";
 import { matchesRuntimeToolPolicyEntry } from "../tools/tool-policy-matcher";
 import type { PermissionRule } from "./permission-types";
@@ -41,7 +42,9 @@ export function matchPermissionRule(input: {
   const command = extractPermissionCommand(input.rawInput);
   if (input.rule.commandPattern) {
     if (!command) return false;
-    return matchPattern(input.rule.commandPattern, command);
+    const candidates = permissionCommandCandidates(input.descriptor.canonicalName, command, input.rule.action);
+    const matches = candidates.map((candidate) => matchPattern(input.rule.commandPattern!, candidate));
+    return input.rule.action === "allow" ? matches.length > 0 && matches.every(Boolean) : matches.some(Boolean);
   }
 
   const path = extractPermissionPath(input.rawInput);
@@ -55,6 +58,16 @@ export function matchPermissionRule(input: {
   }
 
   return true;
+}
+
+function permissionCommandCandidates(toolName: string, command: string, action: PermissionRule["action"]): string[] {
+  if (toolName !== "bash") return [command];
+  const analysis = analyzeBashCommand(command);
+  if (analysis.status === "simple") return analysis.commands.map((segment) => segment.argv.join(" "));
+  // An unparseable command must never acquire a persistent automatic allow.
+  // Retaining raw matching for deny rules prevents syntax from bypassing a
+  // user-configured prohibition while the normal permission flow asks once.
+  return action === "deny" ? [command] : [];
 }
 
 export function isPathWithinRoot(path: string, root: string, cwd?: string): boolean {

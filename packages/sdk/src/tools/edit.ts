@@ -2,11 +2,13 @@
  * FileEditTool - Precise string replacement in files
  */
 
-import { readFile, writeFile, rename, rm } from 'fs/promises'
-import { resolve, dirname, basename, join } from 'path'
+import { readFile, stat, writeFile, rename, rm } from 'fs/promises'
+import { dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
-import { ensurePathAllowed } from '../utils/pathing.js'
+import type { ToolContext } from '../types.js'
+import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
 import { notifyLspFileChanged } from '../lsp/client.js'
+import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
 export const FileEditTool = defineTool({
   name: 'Edit',
@@ -35,8 +37,18 @@ export const FileEditTool = defineTool({
   },
   isReadOnly: false,
   isConcurrencySafe: false,
+  validateInput(input) {
+    if (!input || typeof input !== 'object') return 'Input must be an object.'
+    if (typeof input.file_path !== 'string' || !input.file_path.trim()) return 'file_path is required.'
+    if (typeof input.old_string !== 'string') return 'old_string must be a string.'
+    if (typeof input.new_string !== 'string') return 'new_string must be a string.'
+    if (input.replace_all !== undefined && typeof input.replace_all !== 'boolean') return 'replace_all must be a boolean.'
+  },
+  getPath(input, context) {
+    return resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
+  },
   async call(input, context) {
-    const filePath = resolve(context.cwd, input.file_path)
+    const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
     const { old_string, new_string, replace_all } = input
     const sandboxError = ensurePathAllowed(
       filePath,
@@ -53,7 +65,16 @@ export const FileEditTool = defineTool({
     }
 
     try {
-      let content = await readFile(filePath, 'utf-8')
+      const decoded = decodeTextFile(await readFile(filePath))
+      let content = decoded.content
+
+      const previousRead = context.fileStateCache?.get(filePath)
+      if (previousRead && !previousRead.isPartialView && previousRead.content !== content) {
+        return {
+          data: 'Error: File has been modified since it was read. Read it again before attempting to edit it.',
+          is_error: true,
+        }
+      }
 
       if (!content.includes(old_string)) {
         return { data: `Error: old_string not found in ${filePath}. Make sure it matches exactly including whitespace.`, is_error: true }
@@ -69,8 +90,9 @@ export const FileEditTool = defineTool({
           }
         }
         content = content.replace(old_string, new_string)
-        await writeFileAtomic(filePath, content)
+        await writeFileAtomic(filePath, encodeTextFile(content, decoded))
         await notifyLspFileChanged(filePath)
+        await updateFileState(context, filePath, content)
         return {
           data: {
             filePath,
@@ -78,12 +100,14 @@ export const FileEditTool = defineTool({
             replaceAll: false,
             message: `File edited: ${filePath}`,
           },
+          _meta: { file: { path: filePath, replacements: 1, overwritten: true, checkpointable: true, checkpointId: context.currentUserMessageId } },
         }
       } else {
         const count = content.split(old_string).length - 1
         content = content.split(old_string).join(new_string)
-        await writeFileAtomic(filePath, content)
+        await writeFileAtomic(filePath, encodeTextFile(content, decoded))
         await notifyLspFileChanged(filePath)
+        await updateFileState(context, filePath, content)
         return {
           data: {
             filePath,
@@ -91,6 +115,7 @@ export const FileEditTool = defineTool({
             replaceAll: true,
             message: `File edited: ${filePath}`,
           },
+          _meta: { file: { path: filePath, replacements: count, overwritten: true, checkpointable: true, checkpointId: context.currentUserMessageId } },
         }
       }
     } catch (err: any) {
@@ -102,14 +127,24 @@ export const FileEditTool = defineTool({
   },
 })
 
-async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
   const dir = dirname(filePath)
   const tempPath = join(dir, `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
   try {
-    await writeFile(tempPath, content, 'utf-8')
+    await writeFile(tempPath, content)
     await rename(tempPath, filePath)
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => undefined)
     throw error
   }
+}
+
+async function updateFileState(context: ToolContext, filePath: string, content: string): Promise<void> {
+  if (!context.fileStateCache) return
+  const fileStat = await stat(filePath)
+  context.fileStateCache.set(filePath, {
+    content,
+    timestamp: fileStat.mtimeMs,
+    isPartialView: false,
+  })
 }

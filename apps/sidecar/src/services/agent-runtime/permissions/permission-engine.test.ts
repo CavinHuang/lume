@@ -235,6 +235,27 @@ describe("PermissionEngine", () => {
     });
   });
 
+  test("Bash allow rules match every parsed subcommand and not unparseable shell", async () => {
+    const engine = new PermissionEngine({
+      rules: [{ id: "allow-rg", scope: "workspace", tool: "Bash", commandPattern: "^rg\\b", action: "allow" }]
+    });
+
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "rg prompt src && git push origin main" },
+      mode: "default",
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({ status: "approval_required" });
+
+    await expect(engine.decide({
+      descriptor: bash,
+      input: { command: "echo $(rg prompt src)" },
+      mode: "default",
+      classifierEnabled: false,
+      context: { threadId: "thread-1", cwd: "/tmp/project" }
+    })).resolves.toMatchObject({ status: "approval_required" });
+  });
+
   test("permission rules share Tool Runtime group and wildcard matching", async () => {
     const engine = new PermissionEngine({
       rules: [

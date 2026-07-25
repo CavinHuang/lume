@@ -32,6 +32,32 @@ pub struct JsSummaryResult {
     pub segments: Vec<JsSummarySegment>,
 }
 
+#[napi(object)]
+pub struct JsBashCommand {
+    pub argv: Vec<String>,
+}
+
+#[napi(object)]
+pub struct JsBashAnalysis {
+    pub status: String,
+    pub commands: Vec<JsBashCommand>,
+    pub has_pipeline: bool,
+    pub has_redirection: bool,
+}
+
+/// Analyze shell command boundaries with tree-sitter-bash. This deliberately
+/// returns `too-complex` instead of guessing for shell expansions and groups.
+#[napi]
+pub fn analyze_bash(command: String) -> JsBashAnalysis {
+    let result = lume_ast::bash::analyze_bash_command(&command);
+    JsBashAnalysis {
+        status: result.status.to_string(),
+        commands: result.commands.into_iter().map(|command| JsBashCommand { argv: command.argv }).collect(),
+        has_pipeline: result.has_pipeline,
+        has_redirection: result.has_redirection,
+    }
+}
+
 /// Produce a structural summary of source code using tree-sitter.
 ///
 /// Returns kept/elided segments showing imports, function signatures,

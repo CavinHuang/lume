@@ -2,6 +2,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 export const SIDECAR_BUNDLE_NAME = 'index.mjs'
 export const NATIVE_BINARY_NAME = 'lume-natives.node'
+export const RIPGREP_BINARY_NAME = 'rg'
 export const NODE_REPL_BINARY_NAME = 'node_repl'
 export const DESKTOP_HOST_BINARY_NAME = 'lume_desktop_host'
 export const DESKTOP_HOST_MAC_RELEASE_APP_NAME = 'Lume Computer Use.app'
@@ -36,6 +37,21 @@ export function getNativeBinaryPath({
     return join(resourcesPath, 'natives', targetId, NATIVE_BINARY_NAME)
   }
   return resolve(desktopRoot, 'resources', 'natives', targetId, NATIVE_BINARY_NAME)
+}
+
+export function getBundledRipgrepPath({
+  appIsPackaged,
+  resourcesPath,
+  desktopRoot,
+  platform = process.platform,
+  arch = process.arch,
+}) {
+  const targetId = getNativeTargetId({ platform, arch })
+  const fileName = platform === 'win32' ? `${RIPGREP_BINARY_NAME}.exe` : RIPGREP_BINARY_NAME
+  const root = appIsPackaged
+    ? join(resourcesPath, 'ripgrep')
+    : resolve(desktopRoot, 'resources', 'ripgrep')
+  return join(root, targetId, fileName)
 }
 
 export function getNodeReplRootPath({ appIsPackaged, resourcesPath, desktopRoot }) {
