@@ -84,7 +84,7 @@ let localOnnxWorkerSrc = readFileSync(LOCAL_ONNX_WORKER_OUT_FILE, "utf8");
 // bun 会把 CommonJS __dirname/__filename 和 require.resolve 固化为构建机绝对路径。
 // 内嵌 jsdom 静态样式表、随包提供同步 XHR worker，并删除仅用于错误栈的 undici 文件名。
 const jsdomDirnamePattern = /^  var __dirname = ".*node_modules.*jsdom.*living.*css.*helpers";\r?\n/m;
-const jsdomStyleReadPattern = /  var defaultStyleSheet = fs\.readFileSync\(path\d*\.resolve\(__dirname, "\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css"\), \{ encoding: "utf-8" \}\);/;
+const jsdomStyleReadPattern = /  var defaultStyleSheet = [A-Za-z_$][\w$]*\.readFileSync\([A-Za-z_$][\w$]*\.resolve\(__dirname, "\.\.\/\.\.\/\.\.\/browser\/default-stylesheet\.css"\), \{ encoding: "utf-8" \}\);/;
 const undiciFilenamePattern = /^  var __filename = ".*node_modules.*undici.*index\.js";\r?\n/m;
 const xhrWorkerResolvePattern = /  var syncWorkerFile = __require\.resolve\("[^"\r\n]*xhr-sync-worker\.js"\);/;
 const sqlJsDirnamePattern = /^  var __dirname = ".*node_modules.*sql\.js.*dist", __filename = ".*node_modules.*sql\.js.*dist.*sql-wasm\.js";\r?\n/m;

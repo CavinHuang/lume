@@ -84,15 +84,22 @@ async function buildTarget(targetId, target) {
 
 function extractArchive(archivePath, extractRoot, isZip) {
   mkdirSync(extractRoot, { recursive: true });
+  const args = isZip ? ["-xf", archivePath, "-C", extractRoot] : ["-xzf", archivePath, "-C", extractRoot];
+  const tarResult = spawnSync("tar", args, { stdio: "inherit" });
+  if (tarResult.status === 0) return;
   if (isZip && process.platform === "win32") {
     const shell = process.env.ComSpec?.replace(/cmd\.exe$/i, "powershell.exe") || "powershell.exe";
-    const result = spawnSync(shell, ["-NoProfile", "-NonInteractive", "-Command", "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force", archivePath, extractRoot], { stdio: "inherit" });
-    if (result.status !== 0) fail(`failed to extract ${basename(archivePath)}`);
-    return;
+    const powershellResult = spawnSync(shell, [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
+      archivePath,
+      extractRoot,
+    ], { stdio: "inherit" });
+    if (powershellResult.status === 0) return;
   }
-  const args = isZip ? ["-xf", archivePath, "-C", extractRoot] : ["-xzf", archivePath, "-C", extractRoot];
-  const result = spawnSync("tar", args, { stdio: "inherit" });
-  if (result.status !== 0) fail(`failed to extract ${basename(archivePath)}`);
+  fail(`failed to extract ${basename(archivePath)}`);
 }
 
 function findFile(root, name) {
