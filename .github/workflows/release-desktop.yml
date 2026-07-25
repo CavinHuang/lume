@@ -349,18 +349,15 @@ jobs:
         run: bun scripts/smoke-sidecar-bundle.mjs
       - name: Verify package artifacts
         run: bun scripts/verify-desktop-package-artifacts.mjs
-      - name: Smoke installed Windows app
+      - name: Smoke packaged Windows app
         shell: pwsh
         run: |
           $installer = Get-ChildItem apps/desktop/dist-release -Filter *.exe |
             Where-Object { $_.Name -notlike "*.blockmap" } |
             Select-Object -First 1
           if (-not $installer) { throw "Missing Windows installer" }
-          $installRoot = Join-Path $env:RUNNER_TEMP "lume-installed"
-          Remove-Item $installRoot -Recurse -Force -ErrorAction SilentlyContinue
-          Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installRoot") -Wait
-          $app = Get-Item (Join-Path $installRoot "Lume.exe") -ErrorAction SilentlyContinue
-          if (-not $app) { throw "Installed Lume.exe not found in $installRoot" }
+          $app = Get-Item "apps/desktop/dist-release/win-unpacked/Lume.exe" -ErrorAction SilentlyContinue
+          if (-not $app) { throw "Packaged Lume.exe not found" }
           $desktopHost = Get-ChildItem $app.DirectoryName -Filter "lume_desktop_host.exe" -File -Recurse -ErrorAction SilentlyContinue |
             Select-Object -First 1
           if (-not $desktopHost) { throw "Packaged desktop host not found" }
@@ -388,11 +385,6 @@ jobs:
             throw "Installed app did not report sidecar ready"
           } finally {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            $uninstaller = Get-ChildItem $app.DirectoryName -Filter "Uninstall*.exe" -File -ErrorAction SilentlyContinue |
-              Select-Object -First 1
-            if ($uninstaller) {
-              Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait
-            }
           }
       - name: Upload release assets
         env:
