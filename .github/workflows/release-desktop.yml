@@ -356,31 +356,11 @@ jobs:
             Where-Object { $_.Name -notlike "*.blockmap" } |
             Select-Object -First 1
           if (-not $installer) { throw "Missing Windows installer" }
-          Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
-          $uninstallRoots = @(
-            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-          )
-          $entry = Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -eq "Lume" } |
-            Select-Object -First 1
-          $candidates = @()
-          if ($entry.InstallLocation) {
-            $candidates += Join-Path $entry.InstallLocation "Lume.exe"
-          }
-          foreach ($root in @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
-            if ($root -and (Test-Path $root)) {
-              $candidates += Get-ChildItem $root -Filter "Lume.exe" -File -Recurse -ErrorAction SilentlyContinue |
-                Select-Object -ExpandProperty FullName
-            }
-          }
-          $app = $candidates |
-            Where-Object { Test-Path $_ } |
-            ForEach-Object { Get-Item $_ } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not $app) { throw "Installed Lume.exe not found" }
+          $installRoot = Join-Path $env:RUNNER_TEMP "lume-installed"
+          Remove-Item $installRoot -Recurse -Force -ErrorAction SilentlyContinue
+          Start-Process -FilePath $installer.FullName -ArgumentList @("/S", "/D=$installRoot") -Wait
+          $app = Get-Item (Join-Path $installRoot "Lume.exe") -ErrorAction SilentlyContinue
+          if (-not $app) { throw "Installed Lume.exe not found in $installRoot" }
           $desktopHost = Get-ChildItem $app.DirectoryName -Filter "lume_desktop_host.exe" -File -Recurse -ErrorAction SilentlyContinue |
             Select-Object -First 1
           if (-not $desktopHost) { throw "Packaged desktop host not found" }
