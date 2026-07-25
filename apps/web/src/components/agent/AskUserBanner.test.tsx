@@ -34,7 +34,7 @@ describe('AskUserBanner', () => {
     expect(markup).toContain('要先修哪部分?')
     expect(markup).toContain('前端')
     expect(markup).toContain('后端')
-    expect(markup).toContain('忽略')
+    expect(markup).toContain('跳过')
     expect(markup).toContain('ESC')
     expect(markup).toContain('提交回答')
   })

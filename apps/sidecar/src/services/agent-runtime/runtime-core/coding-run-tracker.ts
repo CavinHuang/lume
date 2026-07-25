@@ -1,4 +1,4 @@
-import type { ToolResult } from "@lume/agent-sdk";
+import type { CompletionGuardResult, ToolResult } from "@lume/agent-sdk";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import {
@@ -22,6 +22,8 @@ export interface CodingVerificationReport {
   changedFiles: string[];
   externalChangedFiles: string[];
   pendingBackground: boolean;
+  verificationRepairAttempts?: number;
+  approvalRequestCount?: number;
 }
 
 interface PersistedCodingRunState {
@@ -37,6 +39,8 @@ interface PersistedCodingRunState {
   baselineFailure?: { command: string; signature: string };
   attributedCandidates: string[];
   pendingBackground: boolean;
+  verificationRepairAttempts?: number;
+  backgroundWaitPrompted?: boolean;
 }
 
 export interface CodingRunTrackerOptions {
@@ -56,6 +60,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   let workspaceDiff: WorkspaceSnapshotDiff = { added: [], modified: [], deleted: [] };
   const attributedCandidates = new Set<string>();
   let pendingBackground = false;
+  let verificationRepairAttempts = 0;
+  let backgroundWaitPrompted = false;
   let pendingSnapshot: Promise<void> = Promise.resolve();
 
   function persist(): void {
@@ -72,7 +78,9 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       baselineVerification,
       baselineFailure,
       attributedCandidates: [...attributedCandidates],
-      pendingBackground
+      pendingBackground,
+      verificationRepairAttempts,
+      backgroundWaitPrompted
     };
     try {
       mkdirSync(dirname(options.statePath), { recursive: true });
@@ -100,6 +108,10 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       baselineFailure = state.baselineFailure;
       for (const path of state.attributedCandidates ?? []) attributedCandidates.add(path);
       pendingBackground = state.pendingBackground === true;
+      verificationRepairAttempts = typeof state.verificationRepairAttempts === "number"
+        ? Math.max(0, state.verificationRepairAttempts)
+        : 0;
+      backgroundWaitPrompted = state.backgroundWaitPrompted === true;
     } catch {
       // Ignore corrupt or partial state and establish a fresh baseline.
     }
@@ -200,12 +212,35 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     persist();
   }
 
-  async function completionGuard(): Promise<string | undefined> {
+  async function completionGuard(): Promise<CompletionGuardResult> {
     await pendingSnapshot;
-    if (pendingBackground) return "[background pending] 后台命令仍在运行，请在当前 Run 中使用 TaskOutput 等待其终态后再完成。";
+    if (pendingBackground) {
+      if (backgroundWaitPrompted) {
+        return {
+          type: "stop",
+          errorCode: "background_pending",
+          message: "后台命令仍未结束，已停止本轮以避免重复等待。"
+        };
+      }
+      backgroundWaitPrompted = true;
+      persist();
+      return "[background pending] 后台命令仍在运行，请在当前 Run 中使用 TaskOutput 等待其终态后再完成。";
+    }
     if (!mutationObserved || verificationStatus === "verified" || verificationStatus === "not_required") return undefined;
     if (verificationStatus === "failed") {
-      return `[verification failed] ${verificationMessage || "上一次验证失败"}。请在当前 Run 中修复问题并重新执行验证。`;
+      if (verificationRepairAttempts >= 1) {
+        return {
+          type: "stop",
+          errorCode: "verification_failed_after_repair",
+          message: `验证在一次自动修复后仍失败，已停止继续消耗 token。${verificationMessage || "请查看失败日志后手动继续。"}`
+        };
+      }
+      verificationRepairAttempts += 1;
+      persist();
+      return {
+        type: "continue",
+        message: `[verification failed] ${(verificationMessage || "上一次验证失败").slice(0, 800)}。请在当前 Run 中修复问题并重新执行验证；最多自动修复一次。`
+      };
     }
     if (promptedWithoutEvidence) return undefined;
     promptedWithoutEvidence = true;
@@ -227,7 +262,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         workspaceChanged: changedFiles.length > 0,
         changedFiles,
         externalChangedFiles,
-        pendingBackground
+        pendingBackground,
+        verificationRepairAttempts
       };
     }
   };

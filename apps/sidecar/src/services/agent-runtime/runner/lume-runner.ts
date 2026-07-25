@@ -180,13 +180,24 @@ export class LumeRunner {
     await this.observer.finalize("failed", error instanceof Error ? error : String(error));
   }
 
-  async runQueryStream(query: AsyncIterable<SDKMessage>): Promise<AgentRuntimeRunResult> {
+  async runQueryStream(
+    query: AsyncIterable<SDKMessage>,
+    coding?: {
+      getVerificationStatus?: () => AgentRuntimeRunResult["verificationStatus"];
+      getVerificationReport?: () => AgentRuntimeRunResult["codingReport"];
+    }
+  ): Promise<AgentRuntimeRunResult> {
     const result = await consumeRuntimeCoreQueryStream({
       query,
       emit: this.emit
     });
-    if (result.status === "turn_limited") {
-      this.observer.recordTurnLimited(result.errorMessage);
+    const resultWithCoding = {
+      ...result,
+      ...(coding?.getVerificationStatus ? { verificationStatus: coding.getVerificationStatus() } : {}),
+      ...(coding?.getVerificationReport ? { codingReport: coding.getVerificationReport() } : {})
+    } satisfies AgentRuntimeRunResult;
+    if (resultWithCoding.status === "turn_limited") {
+      this.observer.recordTurnLimited(resultWithCoding.errorMessage);
       await this.observer.flush();
       this.emit.onRuntimeEvent?.({
         id: `${this.observer.getRunId()}:run.turn_limited`,
@@ -194,11 +205,11 @@ export class LumeRunner {
         threadId: this.observer.getThreadId(),
         runId: this.observer.getRunId(),
         createdAt: new Date().toISOString(),
-        reason: result.errorMessage
+        reason: resultWithCoding.errorMessage
       });
-      return this.finalizeResult(result);
+      return this.finalizeResult(resultWithCoding);
     }
-    if (result.status !== "completed") {
+    if (resultWithCoding.status !== "completed") {
       await this.observer.flush();
       this.emit.onRuntimeEvent?.({
         id: `${this.observer.getRunId()}:run.failed`,
@@ -208,12 +219,14 @@ export class LumeRunner {
         createdAt: new Date().toISOString(),
         error: {
           code: "runtime_error",
-          message: result.errorMessage
-        }
+          message: resultWithCoding.errorMessage
+        },
+        ...(resultWithCoding.verificationStatus ? { verificationStatus: resultWithCoding.verificationStatus } : {}),
+        ...(resultWithCoding.codingReport ? { codingReport: resultWithCoding.codingReport } : {})
       });
-      return this.finalizeResult(result);
+      return this.finalizeResult(resultWithCoding);
     }
-    return result;
+    return resultWithCoding;
   }
 
   async runRuntimeSession({
@@ -263,7 +276,10 @@ export class LumeRunner {
         ...(maxTurns === undefined ? {} : { maxTurns })
       });
 
-      const streamResult = await this.runQueryStream(query);
+      const streamResult = await this.runQueryStream(query, {
+        getVerificationStatus: runtimeSession.getVerificationStatus,
+        getVerificationReport: runtimeSession.getVerificationReport
+      });
       if (streamResult.status !== "completed") {
         return streamResult;
       }

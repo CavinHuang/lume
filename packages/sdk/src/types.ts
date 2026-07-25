@@ -1304,7 +1304,7 @@ export interface AgentOptions {
    * Host-owned completion policy. Returning feedback keeps the agent loop alive
    * and presents that feedback to the model as an internal user message.
    */
-  completionGuard?: () => Promise<string | undefined>
+  completionGuard?: () => Promise<CompletionGuardResult>
   /** Explicit skill definitions provided by the host runtime */
   skills?: import('./skills/types.js').SkillDefinition[]
   /** Explicit filesystem roots to scan for skills */
@@ -1482,8 +1482,14 @@ export interface QueryEngineConfig {
   /** Optional host-owned context policy bridge. Defaults preserve SDK compaction behavior. */
   contextController?: AgentContextController
   /** Optional host-owned policy that can prevent natural completion. */
-  completionGuard?: () => Promise<string | undefined>
+  completionGuard?: () => Promise<CompletionGuardResult>
 }
+
+export type CompletionGuardResult =
+  | string
+  | { type: 'continue'; message: string }
+  | { type: 'stop'; message: string; errorCode?: string }
+  | undefined
 
 // --------------------------------------------------------------------------
 // Slash Command & Agent Info (compatible with official Claude Agent SDK)

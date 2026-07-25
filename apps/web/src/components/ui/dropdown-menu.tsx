@@ -1,3 +1,4 @@
+import { forwardRef } from "react"
 import { Menu } from "@base-ui/react/menu"
 import { cn } from "@/lib/utils"
 
@@ -9,28 +10,27 @@ function DropdownMenuTrigger({ ...props }: Menu.Trigger.Props) {
   return <Menu.Trigger data-slot="dropdown-menu-trigger" {...props} />
 }
 
-function DropdownMenuContent({
-  className,
-  children,
-  ...props
-}: Menu.Popup.Props & { className?: string }) {
-  return (
-    <Menu.Portal>
-      <Menu.Positioner sideOffset={4} align="start" className="z-[9999]">
-        <Menu.Popup
-          data-slot="dropdown-menu-content"
-          className={cn(
-            "min-w-[140px] overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)] animate-in fade-in-0 zoom-in-95",
-            className
-          )}
-          {...props}
-        >
-          {children}
-        </Menu.Popup>
-      </Menu.Positioner>
-    </Menu.Portal>
-  )
-}
+const DropdownMenuContent = forwardRef<HTMLDivElement, Menu.Popup.Props & { className?: string }>(
+  function DropdownMenuContent({ className, children, ...props }, ref) {
+    return (
+      <Menu.Portal>
+        <Menu.Positioner sideOffset={4} align="start" className="z-[9999]">
+          <Menu.Popup
+            ref={ref}
+            data-slot="dropdown-menu-content"
+            className={cn(
+              "min-w-[140px] overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)] animate-in fade-in-0 zoom-in-95",
+              className
+            )}
+            {...props}
+          >
+            {children}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    )
+  }
+)
 
 function DropdownMenuItem({
   className,

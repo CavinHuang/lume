@@ -16,6 +16,7 @@ import {
   type Agent,
   type AgentDefinition,
   type AgentOptions,
+  type CompletionGuardResult,
   type ApiType,
   type PromptCachePolicy,
   type ContentBlockParam,
@@ -1575,6 +1576,13 @@ export async function createRuntimeCoreSession(
     statePath: join(sessionDir, "coding-state.v1.json")
   });
   await codingRunTracker.initialize();
+  let approvalRequestCount = 0;
+  const emitToolPermissionRequest = input.emitToolPermissionRequest
+    ? (request: AgentToolPermissionRequest) => {
+      approvalRequestCount += 1;
+      input.emitToolPermissionRequest?.(request);
+    }
+    : undefined;
   const boundSubagentReportTool = boundSubagentIdentity
     ? createBoundSubagentTaskReportTool(boundSubagentIdentity)
     : undefined;
@@ -1743,7 +1751,7 @@ export async function createRuntimeCoreSession(
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
-    emitToolPermissionRequest: input.emitToolPermissionRequest,
+    emitToolPermissionRequest,
     emitTodoUpdated: handleTodoUpdated,
     initialTodoState,
     runId: input.runId,
@@ -1861,7 +1869,7 @@ export async function createRuntimeCoreSession(
     : input.runId
       ? () => getSubagentCoordinator().getCompletionBlocker(input.lumeSessionId, input.runId!)
       : undefined;
-  const completionGuard = async (): Promise<string | undefined> => {
+  const completionGuard = async (): Promise<CompletionGuardResult> => {
     const existing = await existingCompletionGuard?.();
     if (existing) return existing;
     const coding = await codingRunTracker.completionGuard();
@@ -1998,7 +2006,10 @@ export async function createRuntimeCoreSession(
     memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
     tools: resolvedTools,
     getVerificationStatus: codingRunTracker.getVerificationStatus,
-    getVerificationReport: codingRunTracker.getVerificationReport
+    getVerificationReport: () => ({
+      ...codingRunTracker.getVerificationReport(),
+      approvalRequestCount
+    })
   };
 }
 

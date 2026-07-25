@@ -15,6 +15,7 @@ import {
   setToolPermissionApprovalSession,
   waitForToolPermissionDecision
 } from "../interruption/tool-permission-session";
+import { runtimePermissionSessionStore } from "../permissions/permission-session";
 import {
   setAskUserQuestionApprovalSession,
   waitForAskUserQuestionAnswers
@@ -177,6 +178,8 @@ export function createCanUseToolHandler(
 
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
+    const bypassPermissions = params.input.permissionMode === "bypassPermissions"
+      || runtimePermissionSessionStore.isBypassed(params.runtime.sessionId);
     const sourcePluginId = (tool as { runtimeMetadata?: { pluginId?: string } }).runtimeMetadata?.pluginId;
 
     // Plugin permission interceptor: run before global PermissionEngine
@@ -315,7 +318,9 @@ export function createCanUseToolHandler(
           message: gateResult.reason ?? `Plugin tool ${toolName} blocked by sensitive-capability gate.`,
         };
       }
-      if (gateResult.decision === "ask" && gateResult.pluginId && gateResult.capabilityKey) {
+      if (gateResult.decision === "ask" && bypassPermissions) {
+        log.debug("Plugin sensitive approval bypassed by permission mode", { toolName });
+      } else if (gateResult.decision === "ask" && gateResult.pluginId && gateResult.capabilityKey) {
         // Phase 4A: interactive plugin sensitive approval via the existing tool-permission pipeline.
         const pluginRequest: AgentToolPermissionRequest = {
           threadId: approvalThreadId,

@@ -7,10 +7,10 @@ import { clearTasks, TaskOutputTool } from "./task-tools";
 import { resolveShellInvocation } from "../utils/shell-invocation";
 
 describe("BashTool shell invocation", () => {
-  test("uses cmd.exe on Windows instead of requiring bash", () => {
+  test("uses PowerShell on Windows instead of requiring bash", () => {
     expect(resolveShellInvocation("echo hi", "win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" })).toEqual({
-      command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/d", "/s", "/c", "chcp 65001>nul & echo hi"],
+      command: "powershell.exe",
+      args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; echo hi"],
     });
   });
 
@@ -23,15 +23,10 @@ describe("BashTool shell invocation", () => {
     });
   });
 
-  test("adds NoProfile for explicit Windows PowerShell commands", () => {
+  test("allows an explicit PowerShell command under the native PowerShell wrapper", () => {
     expect(resolveShellInvocation("powershell -Command \"Remove-Item 'C:\\tmp\\a.exe' -Force\"", "win32", {
       ComSpec: "C:\\Windows\\System32\\cmd.exe",
-    }).args).toEqual([
-      "/d",
-      "/s",
-      "/c",
-      "chcp 65001>nul & powershell -NoProfile -NonInteractive -Command \"Remove-Item 'C:\\tmp\\a.exe' -Force\"",
-    ]);
+    }).command).toBe("powershell.exe");
   });
 
   test("keeps bash on non-Windows platforms", () => {

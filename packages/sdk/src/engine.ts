@@ -897,6 +897,7 @@ export class QueryEngine {
     let budgetExceeded = false
     let structuredOutputRetriesExceeded = false
     let completedNaturally = false
+    let completionGuardStop: { message: string; errorCode?: string } | undefined
     let maxOutputRecoveryAttempts = 0
     const MAX_OUTPUT_RECOVERY = 3
     let structuredOutputRetryAttempts = 0
@@ -1200,9 +1201,14 @@ export class QueryEngine {
       if (toolUseBlocks.length === 0) {
         const feedback = await this.config.completionGuard?.()
         if (feedback) {
+          if (typeof feedback !== 'string' && feedback.type === 'stop') {
+            completionGuardStop = feedback
+            break
+          }
+          const feedbackText = typeof feedback === 'string' ? feedback : feedback.message
           this.messages.push({
             role: 'user',
-            content: feedback,
+            content: feedbackText,
           })
           continue
         }
@@ -1276,6 +1282,8 @@ export class QueryEngine {
       ? 'error_max_budget_usd'
       : structuredOutputRetriesExceeded
         ? 'error_max_structured_output_retries'
+      : completionGuardStop
+        ? 'error_completion_guard'
       : turnsRemaining <= 0 && !completedNaturally
         ? 'error_max_turns'
         : 'success'
@@ -1307,8 +1315,10 @@ export class QueryEngine {
       cost: this.totalCost,
       permission_denials: this.permissionDenials,
       structured_output: structuredOutput,
-      errors: structuredOutputRetriesExceeded
-        ? ['Structured output validation failed after retry attempts.']
+      errors: completionGuardStop
+        ? [completionGuardStop.message]
+        : structuredOutputRetriesExceeded
+          ? ['Structured output validation failed after retry attempts.']
         : undefined,
     }
 

@@ -13,31 +13,17 @@ export function resolveShellInvocation(
       return { command: bashPath, args: ['-c', command] }
     }
 
-    const windowsCommand = withPowerShellDefaults(command)
+    const powershellPath = env.LUME_POWERSHELL_PATH || env.LUME_PWSH_PATH || 'powershell.exe'
     return {
-      command: env.ComSpec || env.comspec || 'cmd.exe',
-      args: ['/d', '/s', '/c', withWindowsUtf8(windowsCommand)],
+      command: powershellPath,
+      args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', withPowerShellUtf8(command)],
     }
   }
   return { command: 'bash', args: ['-c', command] }
 }
 
-function withPowerShellDefaults(command: string): string {
-  const match = command.match(/^(\s*(?:powershell(?:\.exe)?|pwsh(?:\.exe)?))(\s|$)/i)
-  if (!match) return command
-  const shell = match[1]
-  if (!shell) return command
-  const flags = [
-    /\s-(?:noprofile|nop)\b/i.test(command) ? undefined : '-NoProfile',
-    /\s-(?:noninteractive|ni)\b/i.test(command) ? undefined : '-NonInteractive',
-  ].filter((flag): flag is string => Boolean(flag))
-  return flags.length > 0 ? `${shell} ${flags.join(' ')}${command.slice(shell.length)}` : command
-}
-
-function withWindowsUtf8(command: string): string {
-  // cmd.exe uses the active system code page for built-in commands. Switch
-  // this child shell to UTF-8 so stdout/stderr can be decoded reliably.
-  return `chcp 65001>nul & ${command}`
+function withPowerShellUtf8(command: string): string {
+  return '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [System.Text.Encoding]::UTF8; ' + command
 }
 
 function resolveWindowsBashPath(env: NodeJS.ProcessEnv): string | undefined {

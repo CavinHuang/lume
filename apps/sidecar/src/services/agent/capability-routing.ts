@@ -1,7 +1,7 @@
 import type { AgentToolPolicy, SkillMeta } from "@lume/shared";
 import { canonicalizeAgentToolName } from "@lume/shared";
 
-export type CapabilityLane = "skills" | "browser" | "memory" | "web" | "raw-tools";
+export type CapabilityLane = "skills" | "browser" | "memory" | "web" | "coding" | "raw-tools";
 
 export interface CapabilityRoutingInput {
   userMessage?: string;
@@ -40,7 +40,7 @@ function normalizeToolNames(inputTools?: string[]): Set<string> {
   return new Set((inputTools ?? []).map((item) => canonicalizeAgentToolName(item)).filter(Boolean));
 }
 
-export function inferCapabilityLanes(inputTools?: string[]): CapabilityLane[] {
+export function inferCapabilityLanes(inputTools?: string[], userMessage?: string): CapabilityLane[] {
   const normalized = normalizeToolNames(inputTools);
   const lanes: CapabilityLane[] = [];
   if (normalized.has("skill")) lanes.push("skills");
@@ -66,7 +66,23 @@ export function inferCapabilityLanes(inputTools?: string[]): CapabilityLane[] {
   ) {
     lanes.push("raw-tools");
   }
+  if (
+    (normalized.has("write") || normalized.has("edit"))
+    && (normalized.has("read") || normalized.has("grep") || normalized.has("bash"))
+    && hasCodingIntent(userMessage)
+  ) {
+    lanes.push("coding");
+  }
   return lanes;
+}
+
+function hasCodingIntent(value?: string): boolean {
+  const message = (value ?? "").trim().toLowerCase();
+  if (!message) return false;
+  return containsAny(message, [
+    "code", "coding", "implement", "implementation", "refactor", "bug", "fix", "test", "build", "typecheck",
+    "代码", "编程", "实现", "修复", "重构", "测试", "编译", "类型错误", "报错"
+  ]);
 }
 
 function buildSkillText(skills: SkillMeta[]): string {
@@ -88,7 +104,7 @@ function containsAny(text: string, patterns: string[]): boolean {
 }
 
 export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): CapabilityRoutingDecision {
-  const lanes = inferCapabilityLanes(input.availableTools);
+  const lanes = inferCapabilityLanes(input.availableTools, input.userMessage);
   const laneSet = new Set(lanes);
   const message = (input.userMessage ?? "").trim().toLowerCase();
   const skillText = buildSkillText(input.loadedSkills ?? []);
@@ -214,6 +230,14 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
       lanes,
       preferredLane: "web",
       reason: "request implies public web retrieval"
+    };
+  }
+
+  if (laneSet.has("coding")) {
+    return {
+      lanes,
+      preferredLane: "coding",
+      reason: "request implies a direct coding workflow"
     };
   }
 

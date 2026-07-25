@@ -1,4 +1,4 @@
-import { CornerDownLeft, Loader2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CornerDownLeft, Loader2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ReactNode } from 'react'
 
@@ -33,6 +33,14 @@ interface InteractiveOverlayFrameProps {
   busy?: boolean
   submitDisabled?: boolean
   submitLabel?: string
+  compact?: boolean
+  meta?: ReactNode
+  progress?: {
+    current: number
+    total: number
+    onPrevious?: () => void
+    onNext?: () => void
+  }
   onSubmit: () => void
   onIgnore: () => void
 }
@@ -46,9 +54,92 @@ export function InteractiveOverlayFrame({
   busy = false,
   submitDisabled = false,
   submitLabel = '提交',
+  compact = false,
+  meta,
+  progress,
   onSubmit,
   onIgnore,
 }: InteractiveOverlayFrameProps) {
+  if (compact) {
+    return (
+      <div className="px-3 pb-2 sm:px-6">
+        <section
+          data-interactive-overlay={kind}
+          className="mx-auto max-w-[920px] rounded-[20px] border border-white/[0.06] bg-[#292929] px-4 py-3.5 text-white shadow-[0_16px_48px_rgba(0,0,0,0.28)] sm:px-5"
+        >
+          <div className="flex min-h-7 items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-[15px] font-semibold leading-6 text-[#f5f5f5]">{title}</h3>
+              {meta && <div className="mt-0.5 truncate text-[11px] text-[#9c9c9c]">{meta}</div>}
+            </div>
+            {progress && (
+              <div className="flex shrink-0 items-center gap-1 text-[12px] text-[#929292]">
+                {progress.onPrevious || progress.onNext ? (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    type="button"
+                    disabled={!progress.onPrevious || progress.current <= 1}
+                    onClick={progress.onPrevious}
+                    aria-label="上一个选项"
+                    className="text-[#777] hover:bg-white/[0.08] hover:text-white disabled:opacity-30"
+                  >
+                    <ChevronLeft size={15} />
+                  </Button>
+                ) : null}
+                <span className="min-w-[44px] text-center tabular-nums">{progress.current} of {progress.total}</span>
+                {progress.onPrevious || progress.onNext ? (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    type="button"
+                    disabled={!progress.onNext || progress.current >= progress.total}
+                    onClick={progress.onNext}
+                    aria-label="下一个选项"
+                    className="text-[#777] hover:bg-white/[0.08] hover:text-white disabled:opacity-30"
+                  >
+                    <ChevronRight size={15} />
+                  </Button>
+                ) : null}
+              </div>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              type="button"
+              onClick={onIgnore}
+              aria-label="关闭"
+              className="text-[#888] hover:bg-white/[0.08] hover:text-white"
+            >
+              <X size={16} />
+            </Button>
+          </div>
+          <div className="mt-3">{children}</div>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={onIgnore}
+              className="h-8 rounded-full border border-white/[0.12] px-3 text-[12px] font-semibold text-[#d0d0d0] hover:bg-white/[0.08] hover:text-white"
+            >
+              跳过 <kbd className="ml-1 rounded bg-white/[0.08] px-1 py-0.5 font-mono text-[10px] text-[#999]">ESC</kbd>
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={onSubmit}
+              disabled={busy || submitDisabled}
+              className="h-8 min-w-[76px] rounded-full border border-white/[0.16] bg-white/[0.08] px-3 text-[12px] font-semibold text-white hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-35"
+            >
+              {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}
+              {submitLabel}
+            </Button>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   return (
     <div className="px-3 pb-2 sm:px-6">
       <section

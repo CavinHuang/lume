@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, Camera, Copy, ExternalLink, Globe, MoreVertical, RotateCcw, Search, Share2, Smartphone, Tablet, ZoomIn, ZoomOut } from 'lucide-react'
 import { toast } from 'sonner'
@@ -34,6 +34,9 @@ export function BrowserShell({
   const [zoom, setZoom] = useState(1)
   const currentUrlRef = useRef(initialUrl)
   const onUrlChangeRef = useRef(onUrlChange)
+  const menuContentRef = useRef<HTMLDivElement | null>(null)
+  const menuOpenRef = useRef(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     onUrlChangeRef.current = onUrlChange
@@ -87,20 +90,46 @@ export function BrowserShell({
     }
   }, [tabId])
 
+  const syncBounds = useCallback(() => {
+    const node = viewportRef.current
+    if (!node) return
+    const rect = node.getBoundingClientRect()
+    void browserRuntime({ method: 'bounds', params: { tabId, surface, visible: true, x: rect.left, y: rect.top, width: rect.width, height: rect.height } }).catch(() => undefined)
+  }, [surface, tabId])
+
+  // 更多操作菜单向下展开会进入原生 WebContentsView 覆盖区域，导致下拉菜单被网页遮挡。
+  // 展开时按菜单实际高度临时收缩视图 bounds，让出 DOM 空间使菜单可见；关闭后还原。
+  const applyMenuOverlap = useCallback(() => {
+    const menu = menuContentRef.current
+    const viewport = viewportRef.current
+    if (!menu || !viewport) { syncBounds(); return }
+    const menuRect = menu.getBoundingClientRect()
+    const viewportRect = viewport.getBoundingClientRect()
+    const overlap = menuRect.bottom - viewportRect.top
+    if (overlap <= 0) { syncBounds(); return }
+    void browserRuntime({ method: 'bounds', params: { tabId, surface, visible: true, x: viewportRect.left, y: viewportRect.top + overlap, width: viewportRect.width, height: Math.max(1, viewportRect.height - overlap) } }).catch(() => undefined)
+  }, [surface, tabId, syncBounds])
+
+  const handleMenuOpenChange = useCallback((open: boolean) => {
+    setMenuOpen(open)
+    menuOpenRef.current = open
+    if (open) {
+      // 等菜单挂载并完成入场动画后再测量实际高度
+      requestAnimationFrame(() => requestAnimationFrame(() => applyMenuOverlap()))
+    } else {
+      syncBounds()
+    }
+  }, [applyMenuOverlap, syncBounds])
+
   useEffect(() => {
     if (!ready) return
-    const sync = () => {
-      const node = viewportRef.current
-      if (!node) return
-      const rect = node.getBoundingClientRect()
-      void browserRuntime({ method: 'bounds', params: { tabId, surface, visible: true, x: rect.left, y: rect.top, width: rect.width, height: rect.height } }).catch(() => undefined)
-    }
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync)
+    const onResize = () => { if (menuOpenRef.current) applyMenuOverlap(); else syncBounds() }
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize)
     if (viewportRef.current) observer?.observe(viewportRef.current)
-    window.addEventListener('resize', sync)
-    sync()
-    return () => { observer?.disconnect(); window.removeEventListener('resize', sync) }
-  }, [ready, surface, tabId])
+    window.addEventListener('resize', onResize)
+    syncBounds()
+    return () => { observer?.disconnect(); window.removeEventListener('resize', onResize) }
+  }, [ready, surface, tabId, syncBounds, applyMenuOverlap])
 
   const navigate = () => {
     const next = normalizeUrl(address)
@@ -135,7 +164,7 @@ export function BrowserShell({
         <IconButton title="复制链接" onClick={() => currentUrl && void writeClipboardText(currentUrl).catch(() => toast.error('复制失败'))}><Copy size={15} /></IconButton>
         <Button variant={shareable ? 'secondary' : 'ghost'} size="icon" type="button" title={shareable ? '取消共享给 Agent' : '共享当前标签给 Agent'} onClick={() => void browserRuntime({ method: shareable ? 'unshare' : 'share', params: { tabId } }).then((descriptor) => setShareable((descriptor as { shareable?: boolean }).shareable === true)).catch(() => toast.error('当前标签不可共享'))}><Share2 size={15} /></Button>
         <IconButton title="在系统浏览器打开" onClick={() => currentUrl && void browserRuntime({ method: 'openExternal', params: { url: currentUrl } }).catch(() => toast.error('无法打开系统浏览器'))}><ExternalLink size={15} /></IconButton>
-        <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" type="button" aria-label="更多浏览器操作" />}><MoreVertical size={16} /></DropdownMenuTrigger><DropdownMenuContent className="min-w-52">
+        <DropdownMenu open={menuOpen} onOpenChange={handleMenuOpenChange}><DropdownMenuTrigger render={<Button variant="ghost" size="icon" type="button" aria-label="更多浏览器操作" />}><MoreVertical size={16} /></DropdownMenuTrigger><DropdownMenuContent ref={menuContentRef} className="min-w-52">
           <DropdownMenuItem onSelect={() => setFindOpen(true)}><Search size={14} />在页面中查找</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void browserRuntime<{ saved: boolean }>({ method: 'screenshot:save', params: { tabId } }).then((result) => result.saved && toast.success('截图已保存')).catch(() => toast.error('截图保存失败'))}><Camera size={14} />截取整页截图</DropdownMenuItem>
           <DropdownMenuSeparator />

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { Check, CircleHelp } from 'lucide-react'
+import { Check, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -18,6 +18,7 @@ interface AskUserBannerProps {
 export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0)
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -25,6 +26,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
 
   useEffect(() => {
     setAnswers({})
+    setActiveQuestionIndex(0)
     setHidden(false)
     setBusy(false)
     setError(null)
@@ -58,6 +60,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
 
   const allAnswered = request.questions.every((q) => answers[q.question])
   const submitDisabled = !allAnswered
+  const activeQuestion = request.questions[activeQuestionIndex]
 
   useEffect(() => {
     if (hidden || typeof window === 'undefined') return
@@ -79,70 +82,71 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   return (
     <InteractiveOverlayFrame
       kind="ask-user"
-      eyebrow="Ask"
-      icon={<CircleHelp size={18} />}
       title="帮 Lume 做一个选择"
+      compact
+      meta={subagentDisplayLabel ? `来自 ${subagentDisplayLabel}` : 'AskUserQuestion'}
+      progress={{
+        current: activeQuestionIndex + 1,
+        total: request.questions.length,
+        onPrevious: activeQuestionIndex > 0 ? () => setActiveQuestionIndex((index) => index - 1) : undefined,
+        onNext: activeQuestionIndex < request.questions.length - 1 ? () => setActiveQuestionIndex((index) => index + 1) : undefined,
+      }}
       busy={busy}
       submitDisabled={submitDisabled}
       submitLabel="提交回答"
       onIgnore={() => setHidden(true)}
       onSubmit={() => void submit()}
     >
-      <div className="space-y-4">
-        {subagentDisplayLabel && (
-          <div className="flex items-center gap-2 rounded-[11px] border border-[#e8edf5] bg-[#f8fafc] px-3 py-2 text-[12px] leading-5 text-[#6f7b8d]">
-            <span className="size-1.5 rounded-full bg-[#5f9cff]" />
-            {subagentDisplayLabel}
-          </div>
+      <div className="space-y-2.5">
+        {activeQuestion ? (
+          <>
+            <div className="px-1">
+              <p className="text-[11px] font-medium text-[#9b9b9b]">{activeQuestion.header || `问题 ${activeQuestionIndex + 1}`}</p>
+              <p className="mt-0.5 text-[15px] font-semibold leading-6 text-[#f4f4f4]">{activeQuestion.question}</p>
+            </div>
+            <div className="space-y-1.5" role="radiogroup" aria-label={activeQuestion.header || activeQuestion.question}>
+              {activeQuestion.options.map((opt, optionIndex) => {
+                const selected = answers[activeQuestion.question] === opt.label
+                return (
+                  <Button
+                    variant="ghost"
+                    key={opt.label}
+                    type="button"
+                    data-enter-submits
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => select(activeQuestion.question, opt.label)}
+                    className={cn(
+                      'group flex min-h-10 w-full items-center gap-2.5 rounded-full border px-2.5 py-1.5 text-left transition-colors',
+                      selected
+                        ? 'border-white/[0.10] bg-[#373737] text-[#f5f5f5]'
+                        : 'border-transparent text-[#9b9b9b] hover:bg-[#333] hover:text-[#e5e5e5]',
+                    )}
+                  >
+                    <span className={cn(
+                      'flex size-8 shrink-0 items-center justify-center rounded-full border text-[12px] font-medium',
+                      selected ? 'border-white/[0.18] bg-[#4a4a4a] text-white' : 'border-white/[0.10] bg-[#333] text-[#aaa]',
+                    )}>
+                      {optionIndex + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">{opt.label}</span>
+                    {opt.description && opt.description !== opt.label && (
+                      <span className="min-w-0 truncate text-[12px] text-[#8c8c8c]">{opt.description}</span>
+                    )}
+                    {selected ? <Check size={15} className="shrink-0 text-[#ededed]" /> : <ChevronRight size={15} className="shrink-0 text-[#777] opacity-0 transition-opacity group-hover:opacity-100" />}
+                  </Button>
+                )
+              })}
+            </div>
+          </>
+        ) : (
+          <p className="px-1 text-[13px] text-[#aaa]">暂无问题</p>
         )}
-        {request.questions.map((q, questionIndex) => (
-          <div key={q.question} className="rounded-[15px] border border-[#e7ebf1] bg-[#fbfcfe] p-3">
-            <div className="mb-2.5 flex items-start gap-2.5">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#eaf2ff] text-[11px] font-bold text-[#4c8df6]">
-                {questionIndex + 1}
-              </span>
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8290a4]">{q.header}</p>
-                <p className="mt-0.5 text-[14px] font-semibold leading-5 text-[#1f232b]">{q.question}</p>
-              </div>
-            </div>
-            <div className="space-y-1.5" role="radiogroup" aria-label={q.header || q.question}>
-              {q.options.map((opt) => (
-                <Button
-                variant="ghost"
-                  key={opt.label}
-                  type="button"
-                  data-enter-submits
-                  role="radio"
-                  aria-checked={answers[q.question] === opt.label}
-                  onClick={() => select(q.question, opt.label)}
-                  className={cn(
-                    'flex min-h-11 w-full items-center rounded-[11px] border px-3 text-left text-[13px] transition-colors',
-                    answers[q.question] === opt.label
-                      ? 'border-[#9fc4ff] bg-[#f2f7ff] text-[#1f232b] shadow-[0_2px_8px_rgba(95,156,255,0.08)]'
-                      : 'border-transparent bg-white text-[#5f6876] hover:border-[#dce5f2] hover:bg-white'
-                  )}
-                >
-                  <span className={cn(
-                    'mr-2.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
-                    answers[q.question] === opt.label ? 'border-[#5f9cff] bg-[#5f9cff] text-white' : 'border-[#cbd3df] bg-white',
-                  )}>
-                    {answers[q.question] === opt.label && <Check size={10} strokeWidth={3} />}
-                  </span>
-                  <span className="min-w-0 flex-1 font-semibold">{opt.label}</span>
-                  {opt.description && opt.description !== opt.label && (
-                    <span className="ml-3 min-w-0 truncate text-[11px] font-medium text-[#96a0af]">{opt.description}</span>
-                  )}
-                </Button>
-              ))}
-            </div>
-          </div>
-        ))}
-        <p className="px-1 text-[11px] text-[#929cab]">
-          已完成 {Object.keys(answers).length} / {request.questions.length} 项 · 选择后按 Enter 提交
+        <p className="px-1 text-[11px] text-[#858585]">
+          已完成 {Object.keys(answers).length} / {request.questions.length} 项
         </p>
         {error && (
-          <p className="px-1 pt-1 text-[12px] leading-5 text-destructive">{error}</p>
+          <p className="px-1 pt-1 text-[12px] text-[#ff9b9b]">{error}</p>
         )}
       </div>
     </InteractiveOverlayFrame>

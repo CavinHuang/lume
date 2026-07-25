@@ -22,8 +22,24 @@ describe("coding run tracker", () => {
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
     tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: result("failed test", true) });
-    await expect(tracker.completionGuard()).resolves.toContain("verification failed");
+    await expect(tracker.completionGuard()).resolves.toMatchObject({
+      type: "continue",
+      message: expect.stringContaining("verification failed")
+    });
     expect(tracker.getVerificationStatus()).toBe("failed");
+  });
+
+  test("stops after one automatic verification repair", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
+    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: result("failed test", true) });
+    await tracker.completionGuard();
+    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: result("failed again", true) });
+    await expect(tracker.completionGuard()).resolves.toMatchObject({
+      type: "stop",
+      errorCode: "verification_failed_after_repair",
+      message: expect.stringContaining("停止继续消耗 token")
+    });
   });
 
   test("persists the baseline failure and identifies the same failure after a later mutation", async () => {

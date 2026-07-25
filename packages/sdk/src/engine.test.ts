@@ -117,6 +117,35 @@ describe("QueryEngine turn limits", () => {
     }))
   })
 
+  test("completion guard can stop with an error instead of reporting success", async () => {
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([{
+        content: [{ type: "text", text: "verification failed" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      }]),
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      completionGuard: async () => ({
+        type: "stop",
+        errorCode: "verification_failed_after_repair",
+        message: "verification failed after one repair"
+      })
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "error_completion_guard",
+      is_error: true,
+      errors: ["verification failed after one repair"]
+    })
+  })
+
   test("preserves provider tool-call result order across concurrent and serial tools", async () => {
     const engine = new QueryEngine({
       cwd: process.cwd(),

@@ -107,6 +107,10 @@ export function createObservedRuntimeEmitter(
     onTodoUpdated: (state) => {
       observer.recordTodoState(state, emit.onRuntimeEvent);
       emit.onTodoUpdated?.(state);
+    },
+    onToolPermissionRequest: (request) => {
+      void observer.flush();
+      emit.onToolPermissionRequest(request);
     }
   };
 }

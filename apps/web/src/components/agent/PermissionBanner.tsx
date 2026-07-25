@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useSetAtom } from 'jotai'
-import { Bot, Check, ChevronRight, ShieldAlert, ShieldOff, TerminalSquare, Wrench } from 'lucide-react'
+import { Bot, Check, ChevronRight, ShieldOff, TerminalSquare, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom, agentThreadPermissionModesAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -107,59 +107,69 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   return (
     <InteractiveOverlayFrame
       kind="tool-permission"
-      eyebrow="Permission"
-      icon={<ShieldAlert size={18} />}
       title="Lume 想要执行一项操作"
+      compact
+      meta={(
+        <span>
+          <span className="font-mono text-[#c5c5c5]">{request.toolName}</span>
+          <span className="mx-1.5 text-[#666]">·</span>
+          {sourceLabel}
+          <span className="mx-1.5 text-[#666]">·</span>
+          {request.risk} risk
+        </span>
+      )}
+      progress={{ current: 1, total: canAllowAlways ? 3 : 2 }}
       busy={busy}
       submitLabel={choice === 'deny' ? '拒绝操作' : '确认执行'}
       onIgnore={() => setHidden(true)}
       onSubmit={() => void respond()}
     >
-      <div className="space-y-4">
-        <div className="rounded-[15px] border border-[#e7ebf1] bg-[#fbfcfe] p-3">
-          <div className="grid gap-2 sm:grid-cols-2">
+      <div className="space-y-2.5">
+        <div className="rounded-[12px] border border-white/[0.08] bg-[#222] p-2.5">
+            <div className="grid gap-1.5 sm:grid-cols-2">
             <InfoCell icon={<Wrench size={14} />} label="请求工具" value={request.toolName} mono />
             <InfoCell icon={<Bot size={14} />} label="请求来源" value={sourceLabel} />
           </div>
-          <div className="mt-3 rounded-[11px] border border-[#dfe5ee] bg-[#1f232b] px-3 py-2.5 text-white shadow-[0_5px_16px_rgba(31,35,43,0.12)]">
-            <div className="mb-1.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.1em] text-[#aeb9c8]">
+          <div className="mt-2 rounded-[10px] border border-white/[0.08] bg-[#1b1b1b] px-2.5 py-2 text-white">
+            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-[#8f8f8f]">
               <TerminalSquare size={13} />
               {invocationLabel}
             </div>
             <pre title={invocationText} className="max-h-10 overflow-hidden whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-[#f5f7fa]">{invocationText}</pre>
           </div>
-          <div className="mt-3 border-t border-[#e8edf3] pt-3">
-            <p className="text-[13px] leading-5 text-[#4e5968]">{request.reason}</p>
+          <div className="mt-2 border-t border-white/[0.08] pt-2">
+            <p className="truncate text-[12px] leading-5 text-[#bdbdbd]">{request.reason}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <span className={cn(
                 'rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]',
-                request.risk === 'high' ? 'bg-[#fff0f0] text-[#d64a4a]' : request.risk === 'medium' ? 'bg-[#fff8e9] text-[#ad7410]' : 'bg-[#edf5ff] text-[#4c82d0]',
+                request.risk === 'high' ? 'bg-[#6f3030] text-[#ffb4b4]' : request.risk === 'medium' ? 'bg-[#60491e] text-[#f5ca82]' : 'bg-[#284a6a] text-[#a8d4ff]',
               )}>
                 {request.risk} risk
               </span>
-              {request.originThreadId && <span className="text-[10px] text-[#9aa3b0]">来自关联会话</span>}
+              {request.originThreadId && <span className="text-[10px] text-[#777]">来自关联会话</span>}
             </div>
           </div>
           {request.pluginSensitive && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-[#8a8f98]">
-              <span className="rounded-full bg-[#f0f1f3] px-1.5 py-0.5 font-mono text-[#5c626d]">{request.pluginSensitive.pluginId}</span>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-[#8f8f8f]">
+              <span className="rounded-full bg-white/[0.08] px-1.5 py-0.5 font-mono text-[#bcbcbc]">{request.pluginSensitive.pluginId}</span>
               <span className="font-mono">{request.pluginSensitive.capabilityKey}</span>
             </div>
           )}
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] leading-4 text-[#9aa3b0]">
+          <div className="mt-1 hidden flex-wrap items-center gap-1.5 text-[10px] leading-4 text-[#777]">
             {request.reasonCode && <span>{request.reasonCode}</span>}
             {classification?.reasonCode && classification.reasonCode !== request.reasonCode && <span>{classification.reasonCode}</span>}
             {request.matchedRuleId && <span>{request.matchedRuleId}</span>}
           </div>
           {classification?.explanation && classification.explanation !== request.reason && (
-            <p className="mt-2 border-t border-[#edf0f4] pt-2 text-[11px] leading-4 text-[#8a8f98]">{classification.explanation}</p>
+            <p className="hidden mt-2 border-t border-white/[0.08] pt-2 text-[11px] leading-4 text-[#888]">{classification.explanation}</p>
           )}
         </div>
 
-        <div>
-          <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8290a4]">你希望如何处理？</p>
-          <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="权限处理方式">
+        <div role="radiogroup" aria-label="权限处理方式">
+          <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#858585]">你希望如何处理？</p>
+          <div className="space-y-1.5">
             <PermissionChoice
+              index={1}
               label="仅这一次"
               hint="下次仍会询问"
               selected={choice === 'allow_once'}
@@ -167,6 +177,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
             />
             {canAllowAlways && (
               <PermissionChoice
+                index={2}
                 label="始终允许"
                 hint={grantLabel || '此类操作'}
                 selected={choice === 'allow_always'}
@@ -174,6 +185,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
               />
             )}
             <PermissionChoice
+              index={canAllowAlways ? 3 : 2}
               label="拒绝"
               hint="阻止这次操作"
               selected={choice === 'deny'}
@@ -195,17 +207,17 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
               if (next) setChoice('allow_once')
             }}
             className={cn(
-              'flex min-h-10 w-full items-center rounded-[11px] border px-3 text-left text-[12px] transition-colors',
+              'flex min-h-9 w-full items-center rounded-full border px-3 text-left text-[12px] transition-colors',
               allowAllInThread
-                ? 'border-[#5f9cff]/35 bg-[#eef5ff] text-[#1f232b]'
-                : 'border-[#e7ebf1] bg-[#fbfcfe] text-[#6f7b8d] hover:border-[#dce5f2] hover:bg-white',
+                ? 'border-white/[0.14] bg-white/[0.10] text-[#f0f0f0]'
+                : 'border-white/[0.08] bg-transparent text-[#919191] hover:bg-white/[0.06] hover:text-[#d0d0d0]',
             )}
           >
-            <span className="mr-2.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-white text-[#5f9cff]">
+            <span className="mr-2 flex size-5 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-[#aaa]">
               <ShieldOff size={13} />
             </span>
-            <span className="min-w-0 flex-1"><span className="font-semibold">本线程内自动允许</span><span className="ml-1 text-[#9aa3b0]">（跳过后续审批）</span></span>
-            {allowAllInThread ? <Check size={15} className="text-[#5f9cff]" /> : <ChevronRight size={15} className="text-[#aab3c0]" />}
+            <span className="min-w-0 flex-1"><span className="font-semibold">本线程内自动执行</span><span className="ml-1 text-[#777]">（硬危险操作仍会拦截）</span></span>
+            {allowAllInThread ? <Check size={14} className="text-[#e7e7e7]" /> : <ChevronRight size={14} className="text-[#777]" />}
           </Button>
         )}
         {error && (
@@ -217,12 +229,14 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
 }
 
 function PermissionChoice({
+  index,
   label,
   hint,
   selected,
   danger = false,
   onClick,
 }: {
+  index: number
   label: string
   hint: string
   selected: boolean
@@ -231,29 +245,30 @@ function PermissionChoice({
 }) {
   return (
     <Button
-                variant="ghost"
+      variant="ghost"
       type="button"
       data-enter-submits
       role="radio"
       aria-checked={selected}
       onClick={onClick}
       className={cn(
-        'flex min-h-[68px] w-full items-start justify-start rounded-[12px] border px-3 py-2.5 text-left transition-colors',
+        'group flex min-h-10 w-full items-center justify-start rounded-full border px-2.5 py-1.5 text-left transition-colors',
         selected
-          ? danger ? 'border-[#f0b5b5] bg-[#fff5f5] text-[#b83c3c]' : 'border-[#9fc4ff] bg-[#f2f7ff] text-[#1f232b]'
-          : 'border-[#e7ebf1] bg-[#fbfcfe] text-[#5f6876] hover:border-[#dce5f2] hover:bg-white',
+          ? danger ? 'border-[#6e3c3c] bg-[#3b2a2a] text-[#ffc0c0]' : 'border-white/[0.10] bg-[#373737] text-[#f5f5f5]'
+          : 'border-transparent text-[#9b9b9b] hover:border-white/[0.06] hover:bg-[#333] hover:text-[#e5e5e5]',
       )}
     >
       <span className={cn(
-        'mr-2.5 mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border',
-        selected ? danger ? 'border-[#d64a4a] bg-[#d64a4a] text-white' : 'border-[#5f9cff] bg-[#5f9cff] text-white' : 'border-[#cbd3df] bg-white',
+        'mr-2 flex size-8 shrink-0 items-center justify-center rounded-full border text-[12px] font-medium',
+        selected ? danger ? 'border-[#8c4d4d] bg-[#6d3434] text-[#ffdada]' : 'border-white/[0.16] bg-[#4a4a4a] text-white' : 'border-white/[0.10] bg-[#333] text-[#aaa]',
       )}>
-        {selected && <Check size={10} strokeWidth={3} />}
+        {index}
       </span>
-      <span className="min-w-0">
-        <span className={cn('block text-[13px] font-semibold', danger && selected && 'text-[#b83c3c]')}>{label}</span>
-        <span className="mt-0.5 block truncate text-[11px] text-[#96a0ad]">{hint}</span>
+      <span className="min-w-0 flex-1 truncate">
+        <span className={cn('text-[13px] font-semibold', danger && selected && 'text-[#ffc0c0]')}>{label}</span>
+        <span className="ml-2 text-[12px] text-[#898989]">{hint}</span>
       </span>
+      {selected ? <Check size={15} className="mr-1 shrink-0 text-[#ddd]" /> : <ChevronRight size={15} className="mr-1 shrink-0 text-[#777] opacity-0 transition-opacity group-hover:opacity-100" />}
     </Button>
   )
 }
@@ -289,11 +304,11 @@ function InfoCell({
   mono?: boolean
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 rounded-[10px] border border-[#e5eaf1] bg-white px-2.5 py-2">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#eef2f7] text-[#657387]">{icon}</span>
+    <div className="flex min-w-0 items-center gap-2 rounded-[9px] border border-white/[0.08] bg-white/[0.04] px-2 py-1.5">
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-[#9b9b9b]">{icon}</span>
       <div className="min-w-0">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[#929cab]">{label}</p>
-        <p className={cn('truncate text-[12px] font-semibold text-[#28313d]', mono && 'font-mono')}>{value}</p>
+        <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-[#777]">{label}</p>
+        <p className={cn('truncate text-[11px] font-semibold text-[#dedede]', mono && 'font-mono')}>{value}</p>
       </div>
     </div>
   )

@@ -25,6 +25,7 @@ export interface LumeGuardrailContext {
   cwd?: string;
   workspaceSlug?: string;
   toolName?: string;
+  permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 }
 
 export interface LumeGuardrail<TInput = unknown> {

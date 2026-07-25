@@ -138,6 +138,15 @@ describe("capability-routing", () => {
     expect(decision.preferredLane).toBe("web");
   });
 
+  test("代码修改请求应优先 coding lane", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "修复这个 TypeScript 报错并补一个最小测试",
+      availableTools: ["read", "write", "edit", "bash"]
+    });
+    expect(decision.preferredLane).toBe("coding");
+    expect(decision.reason).toContain("coding workflow");
+  });
+
   test("没有明确 skill 匹配时默认使用 raw-tools 而不是 skills-first", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "帮我看一下这个文件",

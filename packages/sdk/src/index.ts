@@ -664,6 +664,7 @@ export type {
 
   // Engine types
   QueryEngineConfig,
+  CompletionGuardResult,
 
   // Content block types
   ContentBlockParam,

@@ -500,6 +500,17 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     }
     lines.push(`Capability routing reason: ${preferredRoute.reason}`);
 
+    if (preferredRoute.preferredLane === "coding") {
+      lines.push("");
+      lines.push("<coding_workflow>");
+      lines.push("这是直接 Coding 任务：先快速检查相关文件，再做最小必要修改，并立即运行最窄的相关验证。");
+      lines.push("需求明确时不要先输出长计划，也不要为了展示过程调用无关工具；验证失败最多修复并重跑一次，然后报告真实结果。");
+      if (process.platform === "win32") {
+        lines.push("当前运行环境是 Windows：优先使用 PowerShell 语法，单条命令不要混用 cmd、Unix shell 和 PowerShell；使用工具提供的 cwd，不要依赖 cd 切换目录。");
+      }
+      lines.push("</coding_workflow>");
+    }
+
     const mcpConfig = getWorkspaceMcpConfig(ctx.workspaceSlug);
     const serverEntries = Object.entries(mcpConfig.servers ?? {});
     if (serverEntries.length > 0) {

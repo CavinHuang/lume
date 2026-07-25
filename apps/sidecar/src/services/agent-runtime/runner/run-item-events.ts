@@ -79,7 +79,9 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
         message: run.error?.message ?? "Run failed",
         stack: run.error?.stack,
         retryable: run.error?.retryable
-      }
+      },
+      ...(run.verificationStatus ? { verificationStatus: run.verificationStatus } : {}),
+      ...(run.codingReport ? { codingReport: run.codingReport } : {})
     });
   }
 

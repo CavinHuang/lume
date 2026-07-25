@@ -275,6 +275,8 @@ export interface RuntimeCodingReport {
   changedFiles: string[];
   externalChangedFiles: string[];
   pendingBackground: boolean;
+  verificationRepairAttempts?: number;
+  approvalRequestCount?: number;
   message?: string;
   baselineFailure?: {
     command: string;
@@ -295,6 +297,8 @@ export interface RunFailedRuntimeEvent extends RuntimeEventBase {
     stack?: string;
     retryable?: boolean;
   };
+  verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
+  codingReport?: RuntimeCodingReport;
 }
 
 export interface RunCancelledRuntimeEvent extends RuntimeEventBase {

@@ -21,11 +21,11 @@ type ShellTask = Awaited<ReturnType<typeof startShellTask>>
 
 export const BashTool = defineTool({
   name: 'Bash',
-  description: 'Execute a bash command and return its output. On Windows, use a POSIX bash when available; otherwise commands run through cmd.exe. Invoke PowerShell explicitly when PowerShell syntax is required.',
+  description: 'Execute a shell command and return its output. On Windows, use a configured POSIX bash when available; otherwise commands run through PowerShell. Keep each command in one shell dialect and do not mix cmd.exe, PowerShell, and POSIX syntax.',
   inputSchema: {
     type: 'object',
     properties: {
-      command: { type: 'string', description: 'The shell command to execute. Prefer POSIX syntax; on Windows, use PowerShell explicitly instead of mixing cmd.exe and PowerShell syntax.' },
+      command: { type: 'string', description: 'The shell command to execute. Use one shell dialect per command; on Windows without configured POSIX Bash, prefer PowerShell syntax and do not use cmd.exe or POSIX-only redirection.' },
       timeout: { type: 'number', description: 'Optional timeout in milliseconds (max 600000, default 120000)' },
       description: { type: 'string', description: 'Short description for background task tracking' },
       run_in_background: { type: 'boolean', description: 'Run the command in the background and return a task ID immediately' },
