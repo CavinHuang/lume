@@ -369,6 +369,7 @@ export class QueryEngine {
     tool_input: Record<string, unknown>
   }> = []
   private fileStateCache = new FileStateCache()
+  private workingDirectory: string
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -376,6 +377,7 @@ export class QueryEngine {
     this.compactState = createAutoCompactState()
     this.sessionId = config.sessionId || crypto.randomUUID()
     this.hookRegistry = config.hookRegistry
+    this.workingDirectory = config.cwd
   }
 
   private recordProviderUsage(
@@ -789,7 +791,7 @@ export class QueryEngine {
       description: tool.description,
       decisionReason: `Tool "${tool.name}" requires permission review`,
       permissionSuggestions:
-        filePath && !tool.isReadOnly?.()
+        filePath && !tool.isReadOnly?.(block.input, context)
           ? [{
               type: 'addRules' as const,
               rules: [{ toolName: tool.name }],
@@ -890,7 +892,7 @@ export class QueryEngine {
       session_id: this.sessionId,
       tools: this.config.tools.map(t => t.name),
       model: this.config.model,
-      cwd: this.config.cwd,
+      cwd: this.workingDirectory,
       mcp_servers: this.config.mcpServerStatuses || [],
       permission_mode: this.config.permissionMode || 'bypassPermissions',
       permissionMode: this.config.permissionMode || 'bypassPermissions',
@@ -1375,6 +1377,9 @@ export class QueryEngine {
       apiType: this.provider.apiType,
       sessionId: this.sessionId,
       currentUserMessageId: this.config.currentUserMessageId,
+      setWorkingDirectory: (cwd) => {
+        this.workingDirectory = resolve(cwd)
+      },
       additionalDirectories: this.config.additionalDirectories,
       sandbox: this.config.sandbox,
       toolConfig: this.config.toolConfig,
@@ -1423,7 +1428,7 @@ export class QueryEngine {
 
     for (const [index, block] of toolUseBlocks.entries()) {
       const tool = this.config.tools.find((t) => t.name === block.name)
-      if (tool?.isReadOnly?.() || tool?.isConcurrencySafe?.()) {
+      if (tool?.isReadOnly?.(block.input, context) || tool?.isConcurrencySafe?.(block.input, context)) {
         concurrent.push({ index, block, tool })
       } else {
         serial.push({ index, block, tool })

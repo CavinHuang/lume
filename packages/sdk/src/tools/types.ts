@@ -19,8 +19,8 @@ export function defineTool(config: {
   validateInput?: (input: any, context: ToolContext) => void | string | Promise<void | string>
   outputSchema?: Record<string, unknown>
   getPath?: (input: any, context: ToolContext) => string | undefined | Promise<string | undefined>
-  isReadOnly?: boolean
-  isConcurrencySafe?: boolean
+  isReadOnly?: boolean | ((input: any, context?: ToolContext) => boolean)
+  isConcurrencySafe?: boolean | ((input: any, context?: ToolContext) => boolean)
   prompt?: string | ((context: ToolContext) => Promise<string>)
 }): ToolDefinition {
   return {
@@ -30,8 +30,12 @@ export function defineTool(config: {
     ...(config.validateInput ? { validateInput: config.validateInput } : {}),
     ...(config.outputSchema ? { outputSchema: config.outputSchema } : {}),
     ...(config.getPath ? { getPath: config.getPath } : {}),
-    isReadOnly: () => config.isReadOnly ?? false,
-    isConcurrencySafe: () => config.isConcurrencySafe ?? false,
+    isReadOnly: (input?: unknown, context?: ToolContext) => typeof config.isReadOnly === 'function'
+      ? config.isReadOnly(input, context)
+      : config.isReadOnly ?? false,
+    isConcurrencySafe: (input?: unknown, context?: ToolContext) => typeof config.isConcurrencySafe === 'function'
+      ? config.isConcurrencySafe(input, context)
+      : config.isConcurrencySafe ?? false,
     isEnabled: () => true,
     prompt: typeof config.prompt === 'function'
       ? config.prompt

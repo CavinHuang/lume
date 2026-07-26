@@ -7,6 +7,15 @@ import { clearTasks, TaskOutputTool } from "./task-tools";
 import { resolveShellInvocation } from "../utils/shell-invocation";
 
 describe("BashTool shell invocation", () => {
+  test("classifies read-only shell commands dynamically for permissions and concurrency", () => {
+    expect(BashTool.isReadOnly?.({ command: "git status" })).toBeTrue();
+    expect(BashTool.isConcurrencySafe?.({ command: "rg TODO src" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "git commit -m change" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "rg TODO src > results.txt" })).toBeFalse();
+    expect(BashTool.isReadOnly?.({ command: "powershell -Command Get-ChildItem" })).toBeTrue();
+    expect(BashTool.isReadOnly?.({ command: "powershell -Command Set-Content out.txt x" })).toBeFalse();
+  });
+
   test("uses PowerShell on Windows instead of requiring bash", () => {
     expect(resolveShellInvocation("echo hi", "win32", { ComSpec: "C:\\Windows\\System32\\cmd.exe" })).toEqual({
       command: "powershell.exe",

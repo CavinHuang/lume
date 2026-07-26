@@ -751,8 +751,8 @@ export interface ToolDefinition {
   outputSchema?: Record<string, unknown>
   /** Resolve the primary path for permission metadata and diagnostics. */
   getPath?: (input: any, context: ToolContext) => string | undefined | Promise<string | undefined>
-  isReadOnly?: () => boolean
-  isConcurrencySafe?: () => boolean
+  isReadOnly?: (input?: unknown, context?: ToolContext) => boolean
+  isConcurrencySafe?: (input?: unknown, context?: ToolContext) => boolean
   isEnabled?: () => boolean
   prompt?: (context: ToolContext) => Promise<string>
   runtimeMetadata?: Record<string, unknown>
@@ -777,6 +777,8 @@ export interface ToolContext {
   sessionId?: string
   /** Current user message used to group file checkpoints. */
   currentUserMessageId?: string
+  /** Update the active working directory for subsequent tool calls in this session. */
+  setWorkingDirectory?: (cwd: string) => void
   toolUseId?: string
   additionalDirectories?: string[]
   sandbox?: SandboxSettings

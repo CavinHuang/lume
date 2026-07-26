@@ -374,7 +374,7 @@ describe('runtime-event-message-projection', () => {
     expect(assistantIds[0]).not.toBe(assistantIds[1])
   })
 
-  test('keeps context compaction start and completion visible as a status timeline', () => {
+  test('keeps all context compaction stages in one stable status message', () => {
     expect(projectRuntimeEventMessages([
       event({ type: 'message.user.submitted', text: '继续', messageId: 'user-1' }),
       event({
@@ -415,22 +415,6 @@ describe('runtime-event-message-projection', () => {
       },
       {
         id: 'compact-start',
-        type: 'system',
-        variant: 'context_compaction',
-        status: 'active',
-        text: '正在自动压缩上下文',
-        createdAt: '2026-05-11T00:00:00.000Z',
-      },
-      {
-        id: 'compact-progress',
-        type: 'system',
-        variant: 'context_compaction',
-        status: 'active',
-        text: '正在生成上下文摘要',
-        createdAt: '2026-05-11T00:00:00.000Z',
-      },
-      {
-        id: 'compact-complete',
         type: 'system',
         variant: 'context_compaction',
         status: 'completed',

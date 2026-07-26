@@ -33,8 +33,8 @@ export const BashTool = defineTool({
     },
     required: ['command'],
   },
-  isReadOnly: false,
-  isConcurrencySafe: false,
+  isReadOnly: (input: unknown, context?: ToolContext) => isReadOnlyShellInput(input, context),
+  isConcurrencySafe: (input: unknown, context?: ToolContext) => isReadOnlyShellInput(input, context),
   validateInput(input) {
     if (!input || typeof input !== 'object') return 'Input must be an object.'
     if (typeof input.command !== 'string' || !input.command.trim()) return 'command is required.'
@@ -72,6 +72,51 @@ export const BashTool = defineTool({
     return promoteToBackground(task, input.description, context, true)
   },
 })
+
+function isReadOnlyShellInput(input: unknown, _context?: ToolContext): boolean {
+  if (!input || typeof input !== 'object') return false
+  const command = (input as Record<string, unknown>).command
+  if (typeof command !== 'string' || !command.trim()) return false
+  const normalized = command.trim()
+
+  // These constructs can execute arbitrary code or write through the shell,
+  // even when the visible command starts with a read-looking executable.
+  if (/[>`]|>>|\$\(|`/.test(normalized)) return false
+
+  const analysis = analyzeBashCommand(normalized)
+  if (analysis.status === 'simple') {
+    return analysis.commands.length > 0
+      && analysis.commands.every((segment) => isReadOnlySegment(segment.executable, segment.argv.slice(1)))
+      && !analysis.hasRedirection
+  }
+
+  // PowerShell is intentionally parsed conservatively by the native Bash
+  // parser. Cover the small, unambiguous inspection subset so Windows reads
+  // do not inherit Bash's blanket mutating classification.
+  return isReadOnlyPowerShell(normalized)
+}
+
+const READ_ONLY_EXECUTABLES = new Set([
+  'cat', 'cut', 'dir', 'echo', 'find', 'findstr', 'git', 'grep', 'head', 'less', 'ls', 'pwd',
+  'rg', 'sed', 'sort', 'tail', 'type', 'uniq', 'wc', 'where', 'which',
+])
+
+function isReadOnlySegment(executable: string, args: string[]): boolean {
+  if (!READ_ONLY_EXECUTABLES.has(executable)) return false
+  if (executable !== 'git') return true
+  const subcommand = args.find((arg) => !arg.startsWith('-'))
+  return subcommand !== undefined && new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)
+}
+
+function isReadOnlyPowerShell(command: string): boolean {
+  const normalized = command
+    .replace(/^\s*(?:powershell|pwsh)(?:\.exe)?\s+(?:-NoLogo\s+|-NoProfile\s+|-NonInteractive\s+)*-Command\s+/i, '')
+    .trim()
+  if (!normalized || /[>`]|>>|\$\(|;|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
+    return false
+  }
+  return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|diff|log|show|branch)|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
+}
 
 async function startShellTask({
   command,
@@ -237,7 +282,7 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
   return {
     type: 'tool_result',
     tool_use_id: '',
-    content: `${automatic ? 'Command exceeded the 15s foreground budget and was moved' : 'Background process started'}: ${job.id}\nUse ProcessOutput or TaskOutput to inspect progress.`,
+    content: `${automatic ? 'Command exceeded the 15s foreground budget and was moved' : 'Background process started'}: ${job.id}\nUse ProcessOutput with task_id=${job.id} to inspect progress.`,
     _meta: { execution: runningExecution(task.command, task.outputFile), task: { id: job.id, status: 'running', kind: 'shell', autoBackgrounded: automatic } },
   }
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileEditTool } from "./edit";
@@ -16,6 +16,31 @@ afterEach(async () => {
 });
 
 describe("file tools", () => {
+  test("blocks device and UNC paths before filesystem access", async () => {
+    const readDevice = await FileReadTool.call({ file_path: "/dev/zero" }, { cwd: process.cwd() });
+    const readUnc = await FileReadTool.call({ file_path: "\\\\server\\share\\secret.txt" }, { cwd: process.cwd() });
+    const writeDevice = await FileWriteTool.call({ file_path: "/dev/null", content: "unsafe" }, { cwd: process.cwd() });
+    const editUnc = await FileEditTool.call({ file_path: "//server/share/secret.txt", old_string: "a", new_string: "b" }, { cwd: process.cwd() });
+
+    expect(readDevice.content).toContain("设备文件");
+    expect(readUnc.content).toContain("UNC/SMB");
+    expect(writeDevice.content).toContain("设备文件");
+    expect(editUnc.content).toContain("UNC/SMB");
+  });
+
+  test("suggests nearby paths when Read receives a missing filename", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src", "coding-state.ts"), "export {}\n", "utf8");
+
+    const result = await FileReadTool.call({ file_path: join(root, "src", "coding-stat.ts") }, { cwd: root });
+
+    expect(result.is_error).toBe(true);
+    expect(result.content).toContain("Similar paths");
+    expect(result.content).toContain("coding-state.ts");
+  });
+
   test("captures common Bash mutation targets before execution", () => {
     expect(collectCheckpointPaths("Bash", { command: "echo hi > src/generated.ts" })).toEqual(["src/generated.ts"]);
     expect(collectCheckpointPaths("Bash", { command: "Set-Content -Path src/generated.ts -Value hi" })).toEqual(["src/generated.ts"]);
@@ -39,6 +64,22 @@ describe("file tools", () => {
       Buffer.from([0xef, 0xbb, 0xbf]),
       Buffer.from("const after = 1;\r\n", "utf8"),
     ]));
+  });
+
+  test("matches curly quotes without forcing the model back to shell or REPL editing", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "quotes.ts");
+    await writeFile(filePath, "const message = “hello”;\n", "utf8");
+
+    const result = await FileEditTool.call(
+      { file_path: filePath, old_string: 'const message = "hello";', new_string: 'const message = "updated";' },
+      { cwd: root },
+    );
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.file).toMatchObject({ normalizedQuotes: true, replacements: 1 });
+    expect(await readFile(filePath, "utf8")).toBe('const message = "updated";\n');
   });
 
   test("edits UTF-16LE files while preserving their BOM", async () => {

@@ -17,6 +17,8 @@ export interface ProjectionState {
   // 重建的 assistant 必须用唯一 id（见 assistantIdFor），避免与已 flush 的同 runId 消息
   // id 冲突 → AgentMessages 列表 React key 撞车（duplicate/omit + 跳变）。
   assistantSegmentByRun: Map<string, number>
+  /** One stable divider per run; compaction progress updates it in place. */
+  compactionMessageByRun: Map<string, string>
   fileReferenceBinding?: FileReferenceBinding
   fileReferenceProtocolVersion?: FileReferenceProtocolVersion
 }
@@ -39,6 +41,7 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
     currentAssistant: null,
     terminalClosed: false,
     assistantSegmentByRun: new Map(),
+    compactionMessageByRun: new Map(),
   }
   for (const event of kept) {
     applyRuntimeEvent(state, event)
@@ -135,7 +138,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       )
     }
     state.currentAssistant = null
-    appendContextCompactionNotice(messages, event)
+    appendContextCompactionNotice(state, event)
     state.terminalClosed = false
     return
   }
@@ -365,18 +368,28 @@ function applyAssistantImDelivery(
 }
 
 function appendContextCompactionNotice(
-  messages: RuntimeMessageView[],
+  state: ProjectionState,
   event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>,
 ): void {
-  messages.push({
-    id: event.id,
-    type: 'system',
-    variant: 'context_compaction',
-    status: event.type === 'context.compaction.completed' ? 'completed' : 'active',
+  const existingId = state.compactionMessageByRun.get(event.runId)
+  const existingIndex = existingId
+    ? state.messages.findIndex((message) => message.id === existingId)
+    : -1
+  const next = {
+    id: existingId ?? event.id,
+    type: 'system' as const,
+    variant: 'context_compaction' as const,
+    status: event.type === 'context.compaction.completed' ? 'completed' as const : 'active' as const,
     text: formatContextCompactionNoticeText(event),
     ...(event.type === 'context.compaction.completed' && event.summary ? { summary: event.summary } : {}),
     createdAt: event.createdAt,
-  })
+  }
+  if (existingIndex >= 0) {
+    state.messages[existingIndex] = next
+    return
+  }
+  state.compactionMessageByRun.set(event.runId, next.id)
+  state.messages.push(next)
 }
 
 function formatContextCompactionNoticeText(
@@ -777,7 +790,13 @@ export function applyRuntimeEventsIncremental(
     return { messages: buildMessagesView(state), ref: { state, events } }
   }
   // fallback：全量重投影
-  const state: ProjectionState = { messages: [], currentAssistant: null, terminalClosed: false, assistantSegmentByRun: new Map() }
+  const state: ProjectionState = {
+    messages: [],
+    currentAssistant: null,
+    terminalClosed: false,
+    assistantSegmentByRun: new Map(),
+    compactionMessageByRun: new Map(),
+  }
   const kept = keepLatestVersionTurns(events)
   for (const event of kept) {
     applyRuntimeEvent(state, event)

@@ -5,7 +5,7 @@
 import { writeFile, mkdir, rename, rm, readFile, stat } from 'fs/promises'
 import { dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
-import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
+import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
 import { notifyLspFileChanged } from '../lsp/client.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
@@ -40,6 +40,8 @@ export const FileWriteTool = defineTool({
     return resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
   },
   async call(input, context) {
+    const unsafePathReason = getUnsafeFilePathReason(input.file_path)
+    if (unsafePathReason) return { data: `Error: ${unsafePathReason}`, is_error: true }
     const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
     const sandboxError = ensurePathAllowed(
       filePath,

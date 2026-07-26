@@ -206,16 +206,30 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...ordinaryWikiTools,
     ...computerUseTools,
   ];
-  const customToolNames = customTools.map((tool) => tool.name);
+  // Coding/raw-tools runs should start with the SDK's repository tools only.
+  // Product integrations remain available through their explicit capability
+  // routes instead of competing with Read/Edit/Bash in the initial schema.
+  const directToolRoute = isDirectRepositoryToolRoute(input);
+  const visibleCustomTools = directToolRoute ? [] : customTools;
+  const customToolNames = visibleCustomTools.map((tool) => tool.name);
 
   return {
-    customTools,
+    customTools: visibleCustomTools,
     availableToolNames: [
       ...BASE_RUNTIME_TOOL_NAMES,
-      ...AUTOMATION_TOOL_NAMES,
+      ...(directToolRoute ? [] : AUTOMATION_TOOL_NAMES),
       ...customToolNames
     ]
   };
+}
+
+function isDirectRepositoryToolRoute(input: CreateLumeRuntimeToolsInput): boolean {
+  const preferredRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
+    ? input.messageMetadata.preferredCapabilityRoute
+    : undefined;
+  return preferredRoute === "coding"
+    || preferredRoute === "raw-tools"
+    || hasCodingIntent(input.originalUserInstruction);
 }
 
 function shouldExposeNodeReplTools(input: CreateLumeRuntimeToolsInput): boolean {

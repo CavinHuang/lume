@@ -774,7 +774,7 @@ export class Agent {
       'RemoteTrigger',
     ])
 
-    return async (tool, _input, metadata) => {
+    return async (tool, input, metadata) => {
       const base = {
         title: metadata?.title,
         displayName: metadata?.displayName,
@@ -801,7 +801,7 @@ export class Agent {
       }
 
       if (permMode === 'plan') {
-        if (tool.isReadOnly?.() || readOnlyNames.has(tool.name)) {
+        if (tool.isReadOnly?.(input) || readOnlyNames.has(tool.name)) {
           return { behavior: 'allow', ...base }
         }
         return {
@@ -819,14 +819,14 @@ export class Agent {
             ...base,
           }
         }
-        if (tool.isReadOnly?.() || readOnlyNames.has(tool.name) || editNames.has(tool.name) || tool.name === 'TaskStop') {
+        if (tool.isReadOnly?.(input) || readOnlyNames.has(tool.name) || editNames.has(tool.name) || tool.name === 'TaskStop') {
           return { behavior: 'allow', ...base }
         }
         return { behavior: 'deny', message: `Tool "${tool.name}" is not allowed in acceptEdits mode.`, ...base }
       }
 
       if (permMode === 'default') {
-        if (tool.isReadOnly?.() || readOnlyNames.has(tool.name)) {
+        if (tool.isReadOnly?.(input) || readOnlyNames.has(tool.name)) {
           return { behavior: 'allow', ...base }
         }
         return {

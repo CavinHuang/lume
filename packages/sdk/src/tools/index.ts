@@ -134,7 +134,7 @@ const ALL_TOOLS: ToolDefinition[] = [
 export const CORE_TOOL_NAMES = new Set([
   'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
   'WebFetch', 'WebSearch', 'Agent', 'AskUserQuestion', 'Skill', 'LSP', 'LSPApply',
-  'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
+  'ProcessOutput', 'ProcessStop', 'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
 ])
 
 /**

@@ -486,7 +486,7 @@ export const AgentTool: ToolDefinition = {
         return {
           type: 'tool_result',
           tool_use_id: '',
-          content: `Background agent started: ${backgroundTask.id}\nUse TaskOutput with task_id=${backgroundTask.id} to inspect progress.`,
+          content: `Background agent started: ${backgroundTask.id}\nUse ProcessOutput with task_id=${backgroundTask.id} to inspect progress.`,
           _meta: {
             task: { id: backgroundTask.id, kind: 'agent', agentId, status: 'running' },
             ...(worktree ? { worktree: { ...worktree, retained: true } } : {}),

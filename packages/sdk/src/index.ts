@@ -178,6 +178,11 @@ export {
   SkillTool,
 } from './tools/index.js'
 
+export {
+  ProcessOutputTool,
+  ProcessStopTool,
+} from './tools/process-job-registry.js'
+
 // LSP protocol and client manager
 export {
   collectLspDiagnostics,

@@ -159,6 +159,10 @@ describe("create-lume-tools", () => {
       messageMetadata: { preferredCapabilityRoute: "coding" }
     });
     const toolNames = result.customTools.map((tool) => tool.name);
+    expect(toolNames).toEqual([]);
+    expect(result.availableToolNames).not.toContain("automation_read");
+    expect(result.availableToolNames).not.toContain("automation_set");
+    expect(result.availableToolNames).not.toContain("automation_query");
     expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
     expect(toolNames.some((name) => name.startsWith("mcp__node_repl__"))).toBeFalse();
   });

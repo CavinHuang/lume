@@ -5,7 +5,7 @@
 import { readFile, stat } from 'fs/promises'
 import { extname } from 'path'
 import { defineTool } from './types.js'
-import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
+import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath, suggestNearbyPaths } from '../utils/pathing.js'
 import { isNativeAvailable, nativeSummarize } from '@lume/natives'
 import { readTextFile, readTextFileRange } from '../utils/text-file.js'
 import { estimateTokens } from '../utils/tokens.js'
@@ -93,6 +93,8 @@ export const FileReadTool = defineTool({
     return resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
   },
   async call(input, context) {
+    const unsafePathReason = getUnsafeFilePathReason(input.file_path)
+    if (unsafePathReason) return { data: `Error: ${unsafePathReason}`, is_error: true }
     const filePath = await resolveInputPath(
       context.cwd,
       input.file_path,
@@ -271,7 +273,11 @@ export const FileReadTool = defineTool({
     } catch (err: any) {
       if (err?.name === 'AbortError') return { data: 'Read aborted.', is_error: true }
       if (err.code === 'ENOENT') {
-        return { data: `Error: File not found: ${filePath}`, is_error: true }
+        const suggestions = await suggestNearbyPaths(filePath)
+        return {
+          data: `Error: File not found: ${filePath}${suggestions.length ? `\nSimilar paths:\n${suggestions.map((item) => `- ${item}`).join('\n')}` : ''}`,
+          is_error: true,
+        }
       }
       return { data: `Error reading file: ${err.message}`, is_error: true }
     }

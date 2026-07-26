@@ -6,7 +6,7 @@ import { readFile, stat, writeFile, rename, rm } from 'fs/promises'
 import { dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
-import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
+import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
 import { notifyLspFileChanged } from '../lsp/client.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
@@ -49,6 +49,8 @@ export const FileEditTool = defineTool({
     return resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
   },
   async call(input, context) {
+    const unsafePathReason = getUnsafeFilePathReason(input.file_path)
+    if (unsafePathReason) return { data: `Error: ${unsafePathReason}`, is_error: true }
     const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
     const { old_string, new_string, replace_all } = input
     const sandboxError = ensurePathAllowed(
@@ -77,20 +79,21 @@ export const FileEditTool = defineTool({
         }
       }
 
-      if (!content.includes(old_string)) {
+      const matches = findMatchingRanges(content, old_string)
+      if (matches.length === 0) {
         return { data: `Error: old_string not found in ${filePath}. Make sure it matches exactly including whitespace.`, is_error: true }
       }
 
       if (!replace_all) {
         // Check uniqueness
-        const count = content.split(old_string).length - 1
-        if (count > 1) {
+        if (matches.length > 1) {
           return {
-            data: `Error: old_string appears ${count} times in the file. Provide more context to make it unique, or set replace_all: true.`,
+            data: `Error: old_string appears ${matches.length} times in the file. Provide more context to make it unique, or set replace_all: true.`,
             is_error: true,
           }
         }
-        content = content.replace(old_string, new_string)
+        const match = matches[0]!
+        content = replaceRanges(content, [match], new_string, old_string.length)
         const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded))
         await notifyLspFileChanged(filePath)
@@ -109,13 +112,14 @@ export const FileEditTool = defineTool({
               overwritten: true,
               checkpointable: true,
               checkpointId: context.currentUserMessageId,
+              ...(match.normalized ? { normalizedQuotes: true } : {}),
               ...lineChanges,
             }
           },
         }
       } else {
-        const count = content.split(old_string).length - 1
-        content = content.split(old_string).join(new_string)
+        const count = matches.length
+        content = replaceRanges(content, matches, new_string, old_string.length)
         const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded))
         await notifyLspFileChanged(filePath)
@@ -134,6 +138,7 @@ export const FileEditTool = defineTool({
               overwritten: true,
               checkpointable: true,
               checkpointId: context.currentUserMessageId,
+              ...(matches.some((match) => match.normalized) ? { normalizedQuotes: true } : {}),
               ...lineChanges,
             }
           },
@@ -147,6 +152,43 @@ export const FileEditTool = defineTool({
     }
   },
 })
+
+type TextMatch = { index: number; normalized: boolean }
+
+function findMatchingRanges(content: string, needle: string): TextMatch[] {
+  const exact = collectMatches(content, needle)
+  if (exact.length > 0) return exact.map((index) => ({ index, normalized: false }))
+
+  const normalizedContent = normalizeQuotes(content)
+  const normalizedNeedle = normalizeQuotes(needle)
+  if (normalizedContent === content && normalizedNeedle === needle) return []
+  return collectMatches(normalizedContent, normalizedNeedle).map((index) => ({ index, normalized: true }))
+}
+
+function collectMatches(content: string, needle: string): number[] {
+  if (!needle) return []
+  const matches: number[] = []
+  let index = content.indexOf(needle)
+  while (index >= 0) {
+    matches.push(index)
+    index = content.indexOf(needle, index + needle.length)
+  }
+  return matches
+}
+
+function replaceRanges(content: string, matches: TextMatch[], replacement: string, originalLength: number): string {
+  let result = content
+  for (const match of [...matches].sort((left, right) => right.index - left.index)) {
+    result = result.slice(0, match.index) + replacement + result.slice(match.index + originalLength)
+  }
+  return result
+}
+
+function normalizeQuotes(value: string): string {
+  return value
+    .replace(/[“”＂]/g, '"')
+    .replace(/[‘’＇]/g, "'")
+}
 
 async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
   const dir = dirname(filePath)

@@ -298,7 +298,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       }
       backgroundWaitPrompted = true;
       persist();
-      return "[background pending] 后台命令仍在运行，请在当前 Run 中使用 TaskOutput 等待其终态后再完成。";
+      return "[background pending] 后台命令仍在运行，请在当前 Run 中使用 ProcessOutput 等待其终态后再完成。";
     }
     if (mutationObserved && options.workspaceRoot) {
       changeSet = await refreshAuthoritativeChangeSet();

@@ -11,6 +11,11 @@ import {
   GrepTool,
   LSPTool,
   NotebookEditTool,
+  LSPApplyTool,
+  ProcessOutputTool,
+  ProcessStopTool,
+  EnterWorktreeTool,
+  ExitWorktreeTool,
   registerAgents,
   type SDKMessage,
   type Agent,
@@ -744,6 +749,7 @@ function createBaseSdkAlignedTools(
     includeAskUserQuestion: boolean;
     workspaceSlug?: string;
     renderClient?: RenderClient;
+    originalUserInstruction?: string;
   }
 ): ToolDefinition[] {
   const readOnlyTools: ToolDefinition[] = [
@@ -762,16 +768,40 @@ function createBaseSdkAlignedTools(
     ];
   }
 
+  const worktreeTools = shouldExposeWorktreeTools(options.originalUserInstruction)
+    ? [EnterWorktreeTool, ExitWorktreeTool]
+    : [];
+
   return [
     ...readOnlyTools,
     ...(options.includeAskUserQuestion ? [AskUserQuestionTool] : []),
     FileWriteTool,
     FileEditTool,
     BashTool,
+    ProcessOutputTool,
+    ProcessStopTool,
     NotebookEditTool,
     SkillTool,
-    LSPTool
+    LSPTool,
+    LSPApplyTool,
+    ...worktreeTools
   ];
+}
+
+function shouldExposeWorktreeTools(instruction?: string): boolean {
+  const normalized = (instruction ?? "").trim().toLowerCase();
+  return [
+    "worktree",
+    "git worktree",
+    "isolation",
+    "isolated workspace",
+    "parallel agent",
+    "parallel coding",
+    "并行开发",
+    "并行修改",
+    "隔离工作区",
+    "独立工作区",
+  ].some((marker) => normalized.includes(marker));
 }
 
 function buildRuntimeCoreTools(input: {
@@ -823,7 +853,8 @@ function buildRuntimeCoreTools(input: {
   const baseTools = createBaseSdkAlignedTools(permissionMode, {
     includeAskUserQuestion: automationExecution !== true,
     workspaceSlug: input.workspaceSlug,
-    renderClient: input.renderClient
+    renderClient: input.renderClient,
+    originalUserInstruction: input.originalUserInstruction
   }).map((tool) => tool.name === "Bash" && input.computerUseSurface === "sky"
     ? withDesktopAutomationFallbackGuard(tool, {
       computerUseActive: () => getComputerUseSessionRegistry().isActive(input.sessionId),

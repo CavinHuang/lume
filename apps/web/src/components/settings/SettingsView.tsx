@@ -61,7 +61,7 @@ export function SettingsView() {
     <div className="flex flex-1 min-w-0 min-h-0 gap-8 bg-[var(--background)]">
       <aside className="flex h-full min-h-0 w-[174px] shrink-0 flex-col bg-[var(--surface-1)] px-3 py-5 shadow-[6px_0_18px_-14px_hsl(var(--lume-shadow-panel)_/_0.32)]">
         <h1 className="mb-3 shrink-0 px-2.5 text-[22px] font-semibold leading-7 text-[var(--text-1)]">设置</h1>
-        <ScrollArea className="min-h-0 flex-1 pr-1 [&_[data-slot=scroll-area-scrollbar]]:opacity-100">
+        <ScrollArea className="min-h-0 flex-1 pr-1">
           <nav className="space-y-1.5">
             {SETTINGS_NAV_ITEMS.map((item) => {
               const Icon = item.icon

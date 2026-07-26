@@ -84,9 +84,10 @@ export const EnterWorktreeTool: ToolDefinition = {
   isConcurrencySafe: () => false,
   isEnabled: () => true,
   async prompt() { return 'Create an isolated git worktree for parallel work.' },
-  async call(input: any, context: { cwd: string }): Promise<ToolResult> {
+  async call(input: any, context: { cwd: string; setWorkingDirectory?: (cwd: string) => void }): Promise<ToolResult> {
     try {
       const worktree = createManagedWorktree({ cwd: context.cwd, branch: input.branch, path: input.path })
+      context.setWorkingDirectory?.(worktree.path)
       return {
         type: 'tool_result',
         tool_use_id: '',
@@ -114,13 +115,14 @@ export const ExitWorktreeTool: ToolDefinition = {
   isConcurrencySafe: () => false,
   isEnabled: () => true,
   async prompt() { return 'Exit a git worktree.' },
-  async call(input: any): Promise<ToolResult> {
+  async call(input: any, context: { setWorkingDirectory?: (cwd: string) => void }): Promise<ToolResult> {
     const worktree = getManagedWorktree(input.id)
     if (!worktree) return { type: 'tool_result', tool_use_id: '', content: `Worktree not found: ${input.id}`, is_error: true }
     try {
       const keep = input.action === 'keep'
       if (!keep) removeManagedWorktree(input.id)
       else removeManagedWorktree(input.id, true)
+      context.setWorkingDirectory?.(worktree.originalCwd)
       return {
         type: 'tool_result',
         tool_use_id: '',

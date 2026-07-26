@@ -1363,6 +1363,22 @@ function CodingRunReportCard({
     setRevertedPaths(new Set())
   }, [report.changeSet?.generatedAt])
 
+  useEffect(() => {
+    if (report.changeSet || report.changedFiles.length === 0) return
+    let cancelled = false
+    void sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
+      threadId,
+      paths: report.changedFiles,
+    }).then((refreshed) => {
+      if (!cancelled && refreshed) setLiveChangeSet(refreshed)
+    }).catch(() => {
+      // Historical reports may no longer have an accessible workspace.
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [report.changeSet, report.changedFiles, threadId])
+
   if (report.status === 'not_required' && !report.workspaceChanged && !report.pendingBackground) return null
 
   const currentChangeSet = liveChangeSet ?? report.changeSet
@@ -1376,7 +1392,10 @@ function CodingRunReportCard({
   const hiddenChangeCount = Math.max(0, activeChanges.length - visibleChanges.length)
   const addedLines = liveChangeSet ? liveChangeSet.totalAddedLines : report.totalAddedLines ?? changes.reduce((sum, change) => sum + (change.addedLines ?? 0), 0)
   const removedLines = liveChangeSet ? liveChangeSet.totalRemovedLines : report.totalRemovedLines ?? changes.reduce((sum, change) => sum + (change.removedLines ?? 0), 0)
-  const hasLineStats = changes.some((change) => typeof change.addedLines === 'number' || typeof change.removedLines === 'number')
+  // The compact Coding card always reserves the diff counter row. Older
+  // reports may not have per-file stats, but hiding the counters makes the
+  // result look incomplete and differs from the Review panel.
+  const hasLineStats = changes.length > 0
   const firstReviewPath = activeChanges[0]?.path
   const canUndoRun = Boolean(report.runId && report.canRewind)
   const canRewindTurn = Boolean(report.turnId && report.canRewind)
@@ -1525,12 +1544,10 @@ function CodingRunReportCard({
               >
                 <span className="min-w-0 truncate">{change.path}</span>
               </Button>
-              {typeof change.addedLines === 'number' || typeof change.removedLines === 'number' ? (
-                <span className="shrink-0 tabular-nums">
-                  <span className="text-emerald-500">+{change.addedLines ?? 0}</span>
-                  <span className="ml-2 text-red-500">-{change.removedLines ?? 0}</span>
-                </span>
-              ) : null}
+              <span className="shrink-0 tabular-nums">
+                <span className="text-emerald-500">+{change.addedLines ?? 0}</span>
+                <span className="ml-2 text-red-500">-{change.removedLines ?? 0}</span>
+              </span>
               {change.canUndo === true && (
                 <Button
                   variant="ghost"

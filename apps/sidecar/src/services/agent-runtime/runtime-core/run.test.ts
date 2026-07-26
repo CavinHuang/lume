@@ -433,6 +433,9 @@ describe("runtime-core run", () => {
     expect(toolNames).toContain("TaskList");
     expect(toolNames).toContain("TaskGet");
     expect(toolNames).toContain("TaskStop");
+    expect(toolNames).toContain("ProcessOutput");
+    expect(toolNames).toContain("ProcessStop");
+    expect(toolNames).toContain("LSPApply");
     expect(toolNames).not.toContain("TaskReport");
     expect(toolNames).not.toContain("read");
     expect(toolNames).not.toContain("write");
@@ -849,6 +852,40 @@ describe("runtime-core run", () => {
     expect(result.tools.find((item) => item.name === "TaskGet")).toBeTruthy();
 
     result.session.dispose();
+  });
+
+  test("只有明确隔离或并行请求时才暴露 Worktree 工具", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-worktree-tools-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const ordinary = await createRuntimeCoreSession({
+      lumeSessionId: "ordinary-worktree-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      userMessage: "修复一个小的类型错误"
+    });
+    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "EnterWorktree")).toBeUndefined();
+    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "ExitWorktree")).toBeUndefined();
+    await ordinary.session.dispose();
+
+    const isolated = await createRuntimeCoreSession({
+      lumeSessionId: "isolated-worktree-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      userMessage: "请在隔离 worktree 中并行修改这个模块"
+    });
+    expect(getRuntimeToolDescriptor("isolated-worktree-session", "EnterWorktree")).toBeDefined();
+    expect(getRuntimeToolDescriptor("isolated-worktree-session", "ExitWorktree")).toBeDefined();
+    await isolated.session.dispose();
   });
 
   test("同一个 Lume session 应恢复既有 transcript", async () => {
