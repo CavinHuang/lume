@@ -45,7 +45,7 @@ type ReadResult = { data: unknown; is_error?: boolean; _meta?: Record<string, un
 
 export const FileReadTool = defineTool({
   name: 'Read',
-  description: 'Read text, images, PDFs, and Jupyter notebooks from the filesystem. Text uses 0-based line offsets; PDF pages are 1-based ranges such as "1-3".',
+  description: 'Read text, images, PDFs, and Jupyter notebooks from the filesystem. For code, prefer this basic tool over Node REPL or shell scripts. Text uses 0-based line offsets; use offset/limit for large files. PDF pages are 1-based ranges such as "1-3".',
   inputSchema: {
     type: 'object',
     properties: {
@@ -129,7 +129,7 @@ export const FileReadTool = defineTool({
         return await readPdf(filePath, fileStat.size, input.pages, context.abortSignal)
       }
       if (ext === '.ipynb') {
-        return await readNotebook(filePath, fileStat.mtimeMs, input.offset, input.limit, context)
+        return await readNotebook(filePath, fileStat.mtimeMs, fileStat.size, input.offset, input.limit, context)
       }
       if (BINARY_EXTENSIONS.has(ext)) {
         return {
@@ -142,7 +142,7 @@ export const FileReadTool = defineTool({
       const hasExplicitRange = input.offset !== undefined || input.limit !== undefined
       const offset = input.offset ?? 0
       const limit = input.limit ?? (hasExplicitRange ? 2000 : SUMMARIZE_THRESHOLD_LINES)
-      if (isUnchangedRead(context.fileStateCache?.get(filePath), fileStat.mtimeMs, offset, limit)) {
+      if (isUnchangedRead(context.fileStateCache?.get(filePath), fileStat.mtimeMs, fileStat.size, offset, limit)) {
         return unchangedResult(filePath)
       }
       const shouldReadWholeFile = !hasExplicitRange && SUMMARIZABLE_EXTENSIONS.has(ext)
@@ -154,6 +154,7 @@ export const FileReadTool = defineTool({
         context.fileStateCache?.set(filePath, {
           content: ranged.content,
           timestamp: fileStat.mtimeMs,
+          size: fileStat.size,
           offset,
           limit,
           isPartialView,
@@ -208,9 +209,14 @@ export const FileReadTool = defineTool({
             }
           }
 
+          const summarizedContent = keptSegments.join('\n')
+          const summaryLimitError = validateTextLimits(summarizedContent, filePath, context)
+          if (summaryLimitError) return summaryLimitError
+
           context.fileStateCache?.set(filePath, {
             content,
             timestamp: fileStat.mtimeMs,
+            size: fileStat.size,
             offset,
             limit,
             isPartialView: true,
@@ -219,7 +225,7 @@ export const FileReadTool = defineTool({
           return {
             data: {
               filePath,
-              content: keptSegments.join('\n'),
+              content: summarizedContent,
               totalLines: lines.length,
               summarized: true,
               keptLines,
@@ -233,9 +239,13 @@ export const FileReadTool = defineTool({
       // Default: return raw content with line numbers
       const selectedLines = lines.slice(offset, offset + limit)
       const isPartialView = offset > 0 || offset + limit < lines.length || hasExplicitRange
+      const textLimitError = validateTextLimits(selectedLines.join('\n'), filePath, context)
+      if (textLimitError) return textLimitError
+
       context.fileStateCache?.set(filePath, {
         content: isPartialView ? selectedLines.join('\n') : content,
         timestamp: fileStat.mtimeMs,
+        size: fileStat.size,
         offset,
         limit,
         isPartialView,
@@ -246,8 +256,6 @@ export const FileReadTool = defineTool({
         const lineNum = offset + i + 1
         return `${lineNum}\t${line}`
       }).join('\n')
-      const textLimitError = validateTextLimits(selectedLines.join('\n'), filePath, context)
-      if (textLimitError) return textLimitError
 
       return {
         data: {
@@ -390,6 +398,7 @@ async function readPdf(
 async function readNotebook(
   filePath: string,
   timestamp: number,
+  size: number,
   offsetInput: unknown,
   limitInput: unknown,
   context: ToolContext,
@@ -409,7 +418,7 @@ async function readNotebook(
   const hasExplicitRange = offsetInput !== undefined || limitInput !== undefined
   const offset = Number(offsetInput ?? 0)
   const limit = Number(limitInput ?? notebook.cells.length)
-  if (isUnchangedRead(context.fileStateCache?.get(filePath), timestamp, offset, limit)) {
+  if (isUnchangedRead(context.fileStateCache?.get(filePath), timestamp, size, offset, limit)) {
     return unchangedResult(filePath)
   }
   const cells = hasExplicitRange ? notebook.cells.slice(offset, offset + limit) : notebook.cells
@@ -420,6 +429,7 @@ async function readNotebook(
   context.fileStateCache?.set(filePath, {
     content: textFile.content,
     timestamp,
+    size,
     ...(partial ? { offset, limit } : {}),
     isPartialView: partial,
   })
@@ -462,14 +472,15 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function isUnchangedRead(
-  state: { timestamp: number; offset?: number; limit?: number; isPartialView?: boolean } | undefined,
+  state: { timestamp: number; size?: number; offset?: number; limit?: number } | undefined,
   timestamp: number,
+  size: number,
   offset: number,
   limit: number | undefined,
 ): boolean {
   return !!state
-    && state.isPartialView === false
     && state.timestamp === timestamp
+    && (state.size === undefined || state.size === size)
     && state.offset === offset
     && state.limit === limit
 }

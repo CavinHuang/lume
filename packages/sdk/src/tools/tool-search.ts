@@ -1,33 +1,24 @@
-/**
- * ToolSearchTool - Discover deferred/lazy-loaded tools
- *
- * Allows the model to search for tools that haven't been loaded yet.
- * Supports keyword search and exact name selection.
- */
+/** Discover and invoke tools whose schemas are intentionally deferred. */
 
 import type { ToolDefinition, ToolResult } from '../types.js'
 import { estimateTokens, getContextWindowSize } from '../utils/tokens.js'
 
-// Registry of deferred tools (set by the agent)
-let deferredTools: ToolDefinition[] = []
+let legacyDeferredTools: ToolDefinition[] = []
 
 export type ToolSearchMode = 'standard' | 'tst' | 'tst-auto'
 
-/**
- * Set deferred tools available for search.
- */
 export function setDeferredTools(tools: ToolDefinition[]): void {
-  deferredTools = tools
+  legacyDeferredTools = tools
 }
 
 export function getDeferredTools(): ToolDefinition[] {
-  return [...deferredTools]
+  return [...legacyDeferredTools]
 }
 
 export function getToolSearchMode(): ToolSearchMode {
   const value = (process.env.ENABLE_TOOL_SEARCH || '').trim().toLowerCase()
   if (!value) return 'tst'
-  if (value === 'false' || value === '0' || value === 'off') return 'standard'
+  if (value === 'false' || value === '0' || value === 'off' || value === 'standard') return 'standard'
   if (value === 'auto' || value.startsWith('auto:')) return 'tst-auto'
   return 'tst'
 }
@@ -36,117 +27,112 @@ function getAutoToolSearchPercentage(): number {
   const value = (process.env.ENABLE_TOOL_SEARCH || '').trim().toLowerCase()
   if (!value.startsWith('auto:')) return 10
   const parsed = Number.parseInt(value.slice(5), 10)
-  if (Number.isNaN(parsed)) return 10
-  return Math.max(0, Math.min(100, parsed))
+  return Number.isNaN(parsed) ? 10 : Math.max(0, Math.min(100, parsed))
 }
 
 export function getDeferredToolTokenCount(tools: ToolDefinition[]): number {
-  return tools.reduce(
-    (total, tool) =>
-      total +
-      estimateTokens(tool.name) +
-      estimateTokens(tool.description) +
-      estimateTokens(JSON.stringify(tool.inputSchema)),
-    0,
-  )
+  return tools.reduce((total, tool) => total + estimateTokens(tool.name) + estimateTokens(tool.description) + estimateTokens(JSON.stringify(tool.inputSchema)), 0)
 }
 
-export function shouldEnableAutomaticToolSearch(
-  tools: ToolDefinition[],
-  model: string,
-): boolean {
+export function shouldEnableAutomaticToolSearch(tools: ToolDefinition[], model: string): boolean {
   if (tools.length === 0) return false
-  const threshold = Math.floor(
-    getContextWindowSize(model) * (getAutoToolSearchPercentage() / 100),
-  )
-  return getDeferredToolTokenCount(tools) >= threshold
+  return getDeferredToolTokenCount(tools) >= Math.floor(getContextWindowSize(model) * (getAutoToolSearchPercentage() / 100))
 }
 
-export function isToolSearchEnabled(
-  tools: ToolDefinition[],
-  model: string,
-): boolean {
+export function isToolSearchEnabled(tools: ToolDefinition[], model: string): boolean {
   const mode = getToolSearchMode()
-  if (mode === 'standard') return false
-  if (mode === 'tst') return true
-  return shouldEnableAutomaticToolSearch(tools, model)
+  return mode === 'tst' || (mode === 'tst-auto' && shouldEnableAutomaticToolSearch(tools, model))
 }
 
-export const ToolSearchTool: ToolDefinition = {
-  name: 'ToolSearch',
-  description: 'Search for additional tools that may be available but not yet loaded. Use keyword search or exact name selection.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      query: {
-        type: 'string',
-        description: 'Search query. Use "select:ToolName" for exact match or keywords for search.',
+export function createToolSearchTool(getTools: () => ToolDefinition[]): ToolDefinition {
+  return {
+    name: 'ToolSearch',
+    description: 'Discover additional tools whose full schemas are loaded only when needed. Search by capability or use select:ToolName.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Keywords, or select:ToolName for an exact tool.' },
+        max_results: { type: 'number', description: 'Maximum results to return (default 5).' },
       },
-      max_results: {
-        type: 'number',
-        description: 'Maximum results to return (default: 5)',
-      },
+      required: ['query'],
     },
-    required: ['query'],
-  },
-  isReadOnly: () => true,
-  isConcurrencySafe: () => true,
-  isEnabled: () => true,
-  async prompt() { return 'Search for available tools.' },
-  async call(input: any): Promise<ToolResult> {
-    const { query, max_results = 5 } = input
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
+    isEnabled: () => true,
+    async prompt() { return 'Search for available deferred tools.' },
+    async call(input: any): Promise<ToolResult> {
+      const deferredTools = getTools()
+      const query = typeof input?.query === 'string' ? input.query.trim() : ''
+      const maxResults = Math.max(1, Math.min(Number(input?.max_results ?? 5), 20))
+      if (!query) return failure('query is required.')
+      if (deferredTools.length === 0) return success('No deferred tools available.')
 
-    if (deferredTools.length === 0) {
-      return {
-        type: 'tool_result',
-        tool_use_id: '',
-        content: 'No deferred tools available.',
-      }
-    }
+      const matches = query.startsWith('select:')
+        ? selectTools(deferredTools, query.slice(7))
+        : searchTools(deferredTools, query, maxResults)
+      if (matches.length === 0) return success(`No tools found matching "${query}".`)
 
-    let matches: ToolDefinition[]
-    const normalizedQuery = String(query).trim()
+      return success(JSON.stringify({
+        tools: matches.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })),
+        usage: 'Call ExecuteTool with tool_name and params to invoke a selected tool.',
+      }, null, 2))
+    },
+  }
+}
 
-    if (normalizedQuery.startsWith('select:')) {
-      // Exact name selection
-      const names = normalizedQuery.slice(7).split(',').map((n: string) => n.trim())
-      matches = deferredTools.filter(t => names.includes(t.name))
-    } else {
-      // Keyword search
-      const keywords: string[] = normalizedQuery.toLowerCase().split(/\s+/)
-      matches = deferredTools
-        .map((tool) => {
-          const searchText = `${tool.name} ${tool.description}`.toLowerCase()
-          let score = 0
-          for (const keyword of keywords) {
-            if (tool.name.toLowerCase() === keyword) score += 5
-            else if (tool.name.toLowerCase().includes(keyword)) score += 3
-            else if (searchText.includes(keyword)) score += 1
-          }
-          return { tool, score }
-        })
-        .filter((entry) => entry.score > 0)
-        .sort((left, right) => right.score - left.score || left.tool.name.localeCompare(right.tool.name))
-        .slice(0, max_results)
-        .map((entry) => entry.tool)
-    }
+export function createExecuteTool(getTools: () => ToolDefinition[]): ToolDefinition {
+  return {
+    name: 'ExecuteTool',
+    description: 'Invoke a tool returned by ToolSearch. The selected tool still receives its normal permission checks and hooks.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tool_name: { type: 'string', description: 'Exact name returned by ToolSearch.' },
+        params: { type: 'object', description: 'Parameters matching the selected tool input schema.' },
+      },
+      required: ['tool_name', 'params'],
+    },
+    isReadOnly: () => false,
+    isConcurrencySafe: () => false,
+    isEnabled: () => true,
+    runtimeMetadata: { delegatesPermission: true },
+    validateInput(input) {
+      if (!input || typeof input !== 'object') return 'Input must be an object.'
+      if (typeof input.tool_name !== 'string' || !input.tool_name.trim()) return 'tool_name is required.'
+      if (!input.params || typeof input.params !== 'object' || Array.isArray(input.params)) return 'params must be an object.'
+      if (!getTools().some((tool) => tool.name === input.tool_name)) return `Tool "${input.tool_name}" is not available through ToolSearch.`
+    },
+    async prompt() { return 'Invoke a deferred tool discovered through ToolSearch.' },
+    async call(input, context) {
+      if (!context.executeDeferredTool) return failure('Deferred tool execution is unavailable in this runtime.')
+      return context.executeDeferredTool({ toolName: input.tool_name, params: input.params })
+    },
+  }
+}
 
-    if (matches.length === 0) {
-      return {
-        type: 'tool_result',
-        tool_use_id: '',
-        content: `No tools found matching "${normalizedQuery}"`,
-      }
-    }
+export const ToolSearchTool = createToolSearchTool(getDeferredTools)
 
-    const lines = matches.map((tool) =>
-      `- ${tool.name}: ${tool.description.slice(0, 200)}`
-    )
+function searchTools(tools: ToolDefinition[], query: string, maxResults: number): ToolDefinition[] {
+  const keywords = query.toLowerCase().split(/\s+/).filter(Boolean)
+  return tools.map((tool) => {
+    const text = `${tool.name} ${tool.description}`.toLowerCase()
+    const score = keywords.reduce((total, keyword) => total + (tool.name.toLowerCase() === keyword ? 5 : tool.name.toLowerCase().includes(keyword) ? 3 : text.includes(keyword) ? 1 : 0), 0)
+    return { tool, score }
+  }).filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.tool.name.localeCompare(right.tool.name))
+    .slice(0, maxResults)
+    .map((entry) => entry.tool)
+}
 
-    return {
-      type: 'tool_result',
-      tool_use_id: '',
-      content: `Found ${matches.length} deferred tool(s). Use select:<ToolName> to request an exact tool.\n${lines.join('\n')}`,
-    }
-  },
+function selectTools(tools: ToolDefinition[], selection: string): ToolDefinition[] {
+  const names = new Set(selection.split(',').map((name) => name.trim()).filter(Boolean))
+  return tools.filter((tool) => names.has(tool.name))
+}
+
+function success(content: string): ToolResult {
+  return { type: 'tool_result', tool_use_id: '', content }
+}
+
+function failure(content: string): ToolResult {
+  return { type: 'tool_result', tool_use_id: '', content, is_error: true }
 }

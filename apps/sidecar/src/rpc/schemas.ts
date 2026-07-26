@@ -1245,6 +1245,29 @@ export const pathFileInputSchema = z.object({
   path: idSchema
 });
 
+export const codingFileInputSchema = z.object({
+  threadId: idSchema,
+  path: z.string().trim().min(1),
+  runId: idSchema.optional()
+});
+
+export const codingChangeSetInputSchema = z.object({
+  threadId: idSchema,
+  paths: z.array(z.string().trim().min(1)).optional()
+});
+
+export const codingRunInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema
+});
+
+export const codingTurnInputSchema = z.object({
+  threadId: idSchema,
+  turnId: idSchema,
+  assistantMessageId: idSchema.optional(),
+  confirm: z.literal(true)
+});
+
 export const fileRefSchema = rendererFileRefSchema;
 
 export const fileRefInputSchema = z.object({ ref: fileRefSchema }).strict();

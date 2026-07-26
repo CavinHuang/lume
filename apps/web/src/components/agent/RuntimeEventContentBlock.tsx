@@ -1,13 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Undo2, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, codingReviewPanelActionAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
-import type { RuntimeCodingReport } from '@lume/shared'
+import type { RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { AskUserQuestionBlock } from './AskUserQuestionBlock'
@@ -218,7 +218,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
           />
         )}
         {message.codingReport && (
-          <CodingRunReportCard report={message.codingReport} blocks={contentBlocks} />
+          <CodingRunReportCard report={message.codingReport} assistantMessageId={message.messageId} threadId={threadId} onOpenThreadFile={onOpenThreadFile} />
         )}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
@@ -1343,61 +1343,228 @@ function parseToolCallOutput(output: unknown): unknown {
 
 function CodingRunReportCard({
   report,
-  blocks,
+  assistantMessageId,
+  threadId,
+  onOpenThreadFile,
 }: {
   report: RuntimeCodingReport
-  blocks: RuntimeAssistantBlock[]
+  assistantMessageId?: string
+  threadId: string
+  onOpenThreadFile?: OpenThreadFile
 }) {
-  const toolCalls = blocks
-    .filter((block): block is Extract<RuntimeAssistantBlock, { type: 'tool_call' }> => block.type === 'tool_call')
-    .map((block) => block.toolCall)
-  const latestTool = toolCalls.at(-1)
-  const activeTodo = [...blocks].reverse().find((block): block is Extract<RuntimeAssistantBlock, { type: 'todo_update' }> => block.type === 'todo_update')
+  const codingReviewPanelAction = useSetAtom(codingReviewPanelActionAtom)
+  const [showAllChanges, setShowAllChanges] = useState(false)
+  const [revertedPaths, setRevertedPaths] = useState<Set<string>>(() => new Set())
+  const [liveChangeSet, setLiveChangeSet] = useState(report.changeSet)
   const hasRisk = report.status === 'failed' || Boolean(report.baselineFailure) || report.externalChangedFiles.length > 0
+
+  useEffect(() => {
+    setLiveChangeSet(report.changeSet)
+    setRevertedPaths(new Set())
+  }, [report.changeSet?.generatedAt])
 
   if (report.status === 'not_required' && !report.workspaceChanged && !report.pendingBackground) return null
 
-  const statusLabel = report.status === 'verified'
-    ? '验证通过'
-    : report.status === 'failed'
-      ? '验证失败'
-      : report.status === 'unverified'
-        ? '待验证'
-        : '无需验证'
-  const statusTone = report.status === 'verified'
-    ? 'text-emerald-700 dark:text-emerald-300'
-    : report.status === 'failed'
-      ? 'text-destructive'
-      : 'text-amber-700 dark:text-amber-300'
+  const currentChangeSet = liveChangeSet ?? report.changeSet
+  const changes: RuntimeCodingFileChange[] = currentChangeSet
+    ? currentChangeSet.files
+    : report.fileChanges?.length
+      ? report.fileChanges
+      : report.changedFiles.map((path) => ({ path }))
+  const activeChanges = changes.filter((change) => !revertedPaths.has(change.path))
+  const visibleChanges = showAllChanges ? activeChanges : activeChanges.slice(0, 3)
+  const hiddenChangeCount = Math.max(0, activeChanges.length - visibleChanges.length)
+  const addedLines = liveChangeSet ? liveChangeSet.totalAddedLines : report.totalAddedLines ?? changes.reduce((sum, change) => sum + (change.addedLines ?? 0), 0)
+  const removedLines = liveChangeSet ? liveChangeSet.totalRemovedLines : report.totalRemovedLines ?? changes.reduce((sum, change) => sum + (change.removedLines ?? 0), 0)
+  const hasLineStats = changes.some((change) => typeof change.addedLines === 'number' || typeof change.removedLines === 'number')
+  const firstReviewPath = activeChanges[0]?.path
+  const canUndoRun = Boolean(report.runId && report.canRewind)
+  const canRewindTurn = Boolean(report.turnId && report.canRewind)
+  const canReviewDiff = activeChanges.length > 0 && (currentChangeSet !== undefined || report.fileChanges !== undefined)
+
+  const openReview = async (path: string) => {
+    if (!canReviewDiff) {
+      if (onOpenThreadFile) await onOpenThreadFile(path)
+      else toast.info('当前工作区没有可读取的 Coding diff')
+      return
+    }
+    codingReviewPanelAction({
+      type: 'open',
+      threadId,
+      changes: activeChanges,
+      selectedPath: path,
+      runId: report.runId,
+      turnId: report.turnId,
+      assistantMessageId: report.assistantMessageId ?? assistantMessageId,
+      onRevertRun: canUndoRun ? undoRun : undefined,
+      onRewindTurn: canRewindTurn ? rewindTurn : undefined,
+    })
+  }
+
+  const undoFile = async (path: string) => {
+    try {
+      await sidecarCall(AGENT_IPC_CHANNELS.REVERT_CODING_FILE, { threadId, path, runId: report.runId })
+      setRevertedPaths((current) => new Set(current).add(path))
+      codingReviewPanelAction({ type: 'close', threadId })
+      const refreshed = await sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
+        threadId,
+        paths: changes.map((change) => change.path),
+      })
+      if (refreshed) setLiveChangeSet(refreshed)
+      toast.success(`已撤销 ${path}`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '无法撤销文件变更')
+    }
+  }
+
+  const undoRun = async () => {
+    if (!report.runId || !report.canRewind) return
+    try {
+      const result = await sidecarCall<{ filesChanged: string[] }>(AGENT_IPC_CHANNELS.REVERT_CODING_RUN, {
+        threadId,
+        runId: report.runId,
+      })
+      setRevertedPaths(new Set())
+      const refreshed = await sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
+        threadId,
+        paths: changes.map((change) => change.path),
+      })
+      if (refreshed) setLiveChangeSet(refreshed)
+      codingReviewPanelAction({ type: 'close', threadId })
+      toast.success(`已撤销本次 Coding Run（${result.filesChanged.length} 个文件）`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '无法撤销本次 Coding Run')
+    }
+  }
+
+  const rewindTurn = async () => {
+    const targetAssistantMessageId = report.assistantMessageId ?? assistantMessageId
+    if (!report.turnId || !report.canRewind) return
+    if (typeof window !== 'undefined' && !window.confirm('回退会恢复本次文件并删除此 Turn 之后的会话消息，是否继续？')) return
+    try {
+      await sidecarCall(AGENT_IPC_CHANNELS.REWIND_CODING_TURN, {
+        threadId,
+        turnId: report.turnId,
+        ...(targetAssistantMessageId ? { assistantMessageId: targetAssistantMessageId } : {}),
+        confirm: true,
+      })
+      codingReviewPanelAction({ type: 'close', threadId })
+      toast.success('已回退 Coding 会话')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '无法回退 Coding 会话')
+    }
+  }
 
   return (
-    <div className="w-full max-w-[560px] rounded-[10px] border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-4 py-3 shadow-[0_1px_2px_hsl(var(--lume-shadow-panel)/0.08)]">
-      <div className="flex items-center gap-2 text-[13px] font-semibold text-[var(--lume-text-primary)]">
-        <Terminal size={15} className="text-[var(--lume-accent)]" />
-        <span>编码执行摘要</span>
-        <span className={cn('ml-auto text-[12px]', statusTone)}>{statusLabel}</span>
+    <div className={cn(
+      'w-full max-w-[640px] overflow-hidden rounded-[12px] border bg-[var(--lume-bg-elevated)] shadow-[0_8px_28px_-22px_hsl(var(--lume-shadow-panel)/0.8)]',
+      report.status === 'failed' ? 'border-destructive/30' : 'border-[var(--lume-border-subtle)]',
+    )}>
+      <div className="flex items-start gap-3 px-4 py-3.5">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-foreground/[0.08] text-[var(--lume-text-secondary)]">
+          <Edit3 size={20} strokeWidth={1.8} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-[16px] font-semibold leading-5 text-[var(--lume-text-primary)]">
+            {report.workspaceChanged && changes.length > 0 ? `已编辑 ${changes.length} 个文件` : '编码任务执行完成'}
+          </div>
+          {hasLineStats && (
+            <div className="mt-1 text-[13px] leading-4">
+              <span className="text-emerald-500">+{addedLines}</span>
+              <span className="ml-1 text-red-500">-{removedLines}</span>
+            </div>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!canUndoRun}
+            title={canUndoRun ? '撤销本次 Coding Run 的文件变更' : '本次 Run 没有可用的文件检查点'}
+            className="h-8 gap-1 px-2 text-[12px] text-[var(--lume-text-muted)]"
+            onClick={() => void undoRun()}
+          >
+            撤销本次
+            <Undo2 size={14} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!canRewindTurn}
+            title={canRewindTurn ? '恢复文件并删除此 Turn 之后的会话消息' : '当前 Turn 没有可用的完整回退检查点'}
+            className="h-8 gap-1 px-2 text-[12px] text-[var(--lume-text-muted)]"
+            onClick={() => void rewindTurn()}
+          >
+            回退会话
+            <History size={14} />
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!firstReviewPath || (!canReviewDiff && !onOpenThreadFile)}
+            title={canReviewDiff ? '在右侧面板查看变更' : '当前仅支持打开文件预览'}
+            className="h-8 px-3 text-[12px]"
+            onClick={() => firstReviewPath && void openReview(firstReviewPath)}
+          >
+            审核
+          </Button>
+        </div>
       </div>
-      <div className="mt-2 grid gap-x-4 gap-y-1 text-[12px] text-[var(--lume-text-muted)] sm:grid-cols-2">
-        <span>阶段：{report.pendingBackground ? '等待后台任务' : activeTodo?.data.currentActiveForm ?? (report.workspaceChanged ? '验证工作区' : '执行完成')}</span>
-        <span>执行轮次：{toolCalls.length}</span>
-        {latestTool?.execution?.command && (
-          <span className="min-w-0 sm:col-span-2">最近命令：<code className="break-all text-[11px] text-[var(--lume-text-secondary)]">{latestTool.execution.command}</code></span>
-        )}
-      </div>
-      {report.changedFiles.length > 0 && (
-        <div className="mt-2 border-t border-[var(--lume-border-subtle)] pt-2 text-[12px] text-[var(--lume-text-muted)]">
-          <span>已改文件：</span>
-          <span className="text-[var(--lume-text-secondary)]">{formatFileList(report.changedFiles)}</span>
+      {visibleChanges.length > 0 && (
+        <div className="border-t border-[var(--lume-border-subtle)] bg-foreground/[0.025] px-4 py-1">
+          {visibleChanges.map((change) => (
+            <div
+              key={change.path}
+              className="flex min-h-9 w-full items-center gap-2 rounded-none text-[13px] text-[var(--lume-text-secondary)]"
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 min-w-0 flex-1 justify-start rounded-none px-0 text-left text-[13px] font-normal text-[var(--lume-text-secondary)] hover:bg-transparent hover:text-[var(--lume-text-primary)]"
+                onClick={() => void openReview(change.path)}
+              >
+                <span className="min-w-0 truncate">{change.path}</span>
+              </Button>
+              {typeof change.addedLines === 'number' || typeof change.removedLines === 'number' ? (
+                <span className="shrink-0 tabular-nums">
+                  <span className="text-emerald-500">+{change.addedLines ?? 0}</span>
+                  <span className="ml-2 text-red-500">-{change.removedLines ?? 0}</span>
+                </span>
+              ) : null}
+              {change.canUndo === true && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0 text-[var(--lume-text-muted)] hover:text-[var(--lume-text-primary)]"
+                  title="撤销文件变更"
+                  onClick={() => void undoFile(change.path)}
+                >
+                  <Undo2 size={14} />
+                </Button>
+              )}
+            </div>
+          ))}
         </div>
       )}
+      {hiddenChangeCount > 0 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-9 w-full justify-start gap-1 rounded-none border-t border-[var(--lume-border-subtle)] px-4 text-[13px] font-medium text-[var(--lume-text-secondary)] hover:bg-transparent hover:text-[var(--lume-text-primary)]"
+          onClick={() => setShowAllChanges(true)}
+        >
+          <span>再显示 {hiddenChangeCount} 个文件</span>
+          <ChevronDown size={16} />
+        </Button>
+      )}
       {hasRisk && (
-        <div className="mt-2 flex items-start gap-1.5 text-[12px] text-amber-700 dark:text-amber-300">
+        <div className="flex items-start gap-1.5 border-t border-[var(--lume-border-subtle)] px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-300">
           <TriangleAlert size={13} className="mt-0.5 shrink-0" />
           <span>{report.baselineFailure ? `验证命令失败：${report.baselineFailure.command}` : report.externalChangedFiles.length > 0 ? `检测到外部改动：${formatFileList(report.externalChangedFiles)}` : report.message ?? '编码任务未通过验证'}</span>
         </div>
       )}
       {report.pendingBackground && (
-        <div className="mt-2 text-[12px] text-amber-700 dark:text-amber-300">后台进程仍在运行，完成状态会在 ProcessOutput 返回后更新。</div>
+        <div className="border-t border-[var(--lume-border-subtle)] px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-300">后台进程仍在运行，完成状态会在 ProcessOutput 返回后更新。</div>
       )}
     </div>
   )

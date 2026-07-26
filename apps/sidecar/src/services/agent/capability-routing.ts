@@ -33,6 +33,14 @@ export function resolveSoftToolPolicyForPreferredRoute(
       deny: ["browser"]
     };
   }
+  if (preferredLane === "coding") {
+    return {
+      deny: [
+        "mcp__node_repl__*",
+        "mcp__computer_use__*"
+      ]
+    };
+  }
   return undefined;
 }
 
@@ -76,12 +84,13 @@ export function inferCapabilityLanes(inputTools?: string[], userMessage?: string
   return lanes;
 }
 
-function hasCodingIntent(value?: string): boolean {
+export function hasCodingIntent(value?: string): boolean {
   const message = (value ?? "").trim().toLowerCase();
   if (!message) return false;
   return containsAny(message, [
     "code", "coding", "implement", "implementation", "refactor", "bug", "fix", "test", "build", "typecheck",
-    "代码", "编程", "实现", "修复", "重构", "测试", "编译", "类型错误", "报错"
+    "代码", "编程", "实现", "修复", "重构", "测试", "编译", "类型错误", "报错",
+    "ui", "css", "layout", "component", "界面", "组件", "样式", "弹窗", "层级", "遮挡", "遮住"
   ]);
 }
 
@@ -151,6 +160,14 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
       lanes,
       preferredLane: "skills",
       reason: "loaded skill metadata overlaps with the user request"
+    };
+  }
+
+  if (laneSet.has("coding")) {
+    return {
+      lanes,
+      preferredLane: "coding",
+      reason: "request implies a direct coding workflow"
     };
   }
 
@@ -230,14 +247,6 @@ export function resolvePreferredCapabilityRoute(input: CapabilityRoutingInput): 
       lanes,
       preferredLane: "web",
       reason: "request implies public web retrieval"
-    };
-  }
-
-  if (laneSet.has("coding")) {
-    return {
-      lanes,
-      preferredLane: "coding",
-      reason: "request implies a direct coding workflow"
     };
   }
 

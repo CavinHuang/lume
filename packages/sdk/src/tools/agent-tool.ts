@@ -172,7 +172,8 @@ export const AgentTool: ToolDefinition = {
     if (input?.isolation !== undefined && !['none', 'worktree'].includes(input.isolation)) {
       return { type: 'tool_result', tool_use_id: '', content: 'Invalid input for tool "Agent": Only none and worktree isolation are supported.', is_error: true }
     }
-    const { getAllBaseTools, filterTools } = await import('./index.js')
+    const { getAllBaseTools, filterTools, splitDeferredTools } = await import('./index.js')
+    const { createExecuteTool, createToolSearchTool, isToolSearchEnabled } = await import('./tool-search.js')
     const agentType = input.subagent_type || 'general-purpose'
     let effectiveCwd = input.cwd || context.cwd
 
@@ -198,6 +199,17 @@ export const AgentTool: ToolDefinition = {
     // Remove recursive delegation and all Task/process-management tools from
     // nested SDK subagents. The sidecar applies the same deny set at runtime.
     tools = tools.filter(t => t.name !== 'Agent' && !TASK_MANAGEMENT_TOOL_NAMES.has(t.name))
+    const { core, deferred } = splitDeferredTools(tools)
+    const deferredTools = isToolSearchEnabled(deferred, input.model || context.model || process.env.CODEANY_MODEL || 'claude-sonnet-4-6')
+      ? deferred
+      : []
+    if (deferredTools.length > 0) {
+      tools = [
+        ...core,
+        createToolSearchTool(() => deferredTools),
+        createExecuteTool(() => deferredTools),
+      ]
+    }
 
     // Build system prompt
     let systemPrompt = agentDef?.prompt ||
@@ -272,6 +284,7 @@ export const AgentTool: ToolDefinition = {
         model: subModel,
         provider,
         tools,
+        deferredTools,
         systemPrompt,
         maxTurns: input.max_turns || agentDef?.maxTurns || 10,
         maxTokens: 16384,

@@ -9,6 +9,7 @@ import type { ToolContext } from '../types.js'
 import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
 import { notifyLspFileChanged } from '../lsp/client.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
+import { countLineChanges } from '../utils/line-change-stats.js'
 
 export const FileEditTool = defineTool({
   name: 'Edit',
@@ -90,6 +91,7 @@ export const FileEditTool = defineTool({
           }
         }
         content = content.replace(old_string, new_string)
+        const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded))
         await notifyLspFileChanged(filePath)
         await updateFileState(context, filePath, content)
@@ -100,11 +102,21 @@ export const FileEditTool = defineTool({
             replaceAll: false,
             message: `File edited: ${filePath}`,
           },
-          _meta: { file: { path: filePath, replacements: 1, overwritten: true, checkpointable: true, checkpointId: context.currentUserMessageId } },
+          _meta: {
+            file: {
+              path: filePath,
+              replacements: 1,
+              overwritten: true,
+              checkpointable: true,
+              checkpointId: context.currentUserMessageId,
+              ...lineChanges,
+            }
+          },
         }
       } else {
         const count = content.split(old_string).length - 1
         content = content.split(old_string).join(new_string)
+        const lineChanges = countLineChanges(decoded.content, content)
         await writeFileAtomic(filePath, encodeTextFile(content, decoded))
         await notifyLspFileChanged(filePath)
         await updateFileState(context, filePath, content)
@@ -115,7 +127,16 @@ export const FileEditTool = defineTool({
             replaceAll: true,
             message: `File edited: ${filePath}`,
           },
-          _meta: { file: { path: filePath, replacements: count, overwritten: true, checkpointable: true, checkpointId: context.currentUserMessageId } },
+          _meta: {
+            file: {
+              path: filePath,
+              replacements: count,
+              overwritten: true,
+              checkpointable: true,
+              checkpointId: context.currentUserMessageId,
+              ...lineChanges,
+            }
+          },
         }
       }
     } catch (err: any) {
@@ -145,6 +166,7 @@ async function updateFileState(context: ToolContext, filePath: string, content: 
   context.fileStateCache.set(filePath, {
     content,
     timestamp: fileStat.mtimeMs,
+    size: fileStat.size,
     isPartialView: false,
   })
 }

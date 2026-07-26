@@ -1,6 +1,6 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { FileRef } from '@lume/shared'
+import type { FileRef, RuntimeCodingFileChange } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import {
   closeFileTab,
@@ -33,6 +33,91 @@ export const rightPanelLayoutAtom = atomWithStorage<RightPanelLayoutState>(
   'right-panel-layout',
   { open: true, mode: 'normal' },
 )
+
+export interface CodingReviewPanelState {
+  changes: RuntimeCodingFileChange[]
+  selectedPath: string
+  runId?: string
+  turnId?: string
+  assistantMessageId?: string
+  onRevertRun?: () => Promise<void>
+  onRewindTurn?: () => Promise<void>
+}
+
+export const codingReviewPanelsAtom = atom<Record<string, CodingReviewPanelState>>({})
+export const codingReviewStatusAtom = atom<Record<string, { reviewedPaths: string[]; unseenPaths: string[]; completed: boolean }>>({})
+
+export const codingReviewStatusActionAtom = atom(null, (get, set, action:
+  | { type: 'mark-reviewed'; threadId: string; path: string }
+  | { type: 'complete'; threadId: string; paths: string[] }
+  | { type: 'reset'; threadId: string; paths: string[] }
+) => {
+  const current = get(codingReviewStatusAtom)
+  const state = current[action.threadId] ?? { reviewedPaths: [], unseenPaths: [], completed: false }
+  if (action.type === 'mark-reviewed') {
+    set(codingReviewStatusAtom, {
+      ...current,
+      [action.threadId]: {
+        ...state,
+        reviewedPaths: [...new Set([...state.reviewedPaths, action.path])],
+        unseenPaths: state.unseenPaths.filter((path) => path !== action.path),
+      },
+    })
+    return
+  }
+  if (action.type === 'complete') {
+    set(codingReviewStatusAtom, {
+      ...current,
+      [action.threadId]: {
+        reviewedPaths: [...new Set([...state.reviewedPaths, ...action.paths])],
+        unseenPaths: [],
+        completed: true,
+      },
+    })
+    return
+  }
+  set(codingReviewStatusAtom, {
+    ...current,
+    [action.threadId]: {
+      reviewedPaths: state.reviewedPaths,
+      unseenPaths: [...new Set(action.paths.filter((path) => !state.reviewedPaths.includes(path)))],
+      completed: false,
+    },
+  })
+})
+
+export const codingReviewPanelActionAtom = atom(null, (get, set, action:
+  | { type: 'open'; threadId: string; changes: RuntimeCodingFileChange[]; selectedPath: string; runId?: string; turnId?: string; assistantMessageId?: string; onRevertRun?: () => Promise<void>; onRewindTurn?: () => Promise<void> }
+  | { type: 'close'; threadId: string },
+) => {
+  const current = get(codingReviewPanelsAtom)
+  if (action.type === 'close') {
+    if (!current[action.threadId]) return
+    const next = { ...current }
+    delete next[action.threadId]
+    set(codingReviewPanelsAtom, next)
+    return
+  }
+  set(codingReviewPanelsAtom, {
+    ...current,
+    [action.threadId]: {
+      changes: action.changes,
+      selectedPath: action.selectedPath,
+      runId: action.runId,
+      turnId: action.turnId,
+      assistantMessageId: action.assistantMessageId,
+      onRevertRun: action.onRevertRun,
+      onRewindTurn: action.onRewindTurn,
+    },
+  })
+  const paths = action.changes.map((change) => change.path)
+  set(codingReviewStatusActionAtom, { type: 'reset', threadId: action.threadId, paths })
+  set(rightPanelLayoutAtom, (layout) => ({
+    ...layout,
+    open: true,
+    mode: layout.mode === 'compact' ? 'normal' : layout.mode,
+  }))
+})
 
 export interface RightPanelFileLayoutPreferences {
   treeWidth: number

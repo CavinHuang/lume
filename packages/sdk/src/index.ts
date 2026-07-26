@@ -26,6 +26,8 @@
 // --------------------------------------------------------------------------
 
 export { Agent, createAgent, query } from './agent.js'
+export { rewindCheckpoint } from './utils/file-checkpoints.js'
+export type { FileCheckpoint, FileCheckpointState, FileSnapshot } from './utils/file-checkpoints.js'
 export { QueryController } from './query-controller.js'
 export {
   LumeCapabilityReferenceError,
@@ -150,6 +152,8 @@ export {
 
   // Discovery
   ToolSearchTool,
+  CORE_TOOL_NAMES,
+  splitDeferredTools,
 
   // MCP Resources
   ListMcpResourcesTool,
@@ -519,6 +523,8 @@ export {
 export {
   setDeferredTools,
   getDeferredTools,
+  createToolSearchTool,
+  createExecuteTool,
   getToolSearchMode,
   getDeferredToolTokenCount,
   shouldEnableAutomaticToolSearch,

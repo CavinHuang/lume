@@ -23,7 +23,8 @@ import type {
   AgentWelcomeSuggestion,
   AgentWelcomeSuggestionInput,
   AgentWelcomeSuggestionsResult,
-  LumeRuntimeEvent
+  LumeRuntimeEvent,
+  RuntimeCodingReport
 } from "@lume/shared";
 import { AGENT_IPC_CHANNELS, FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
@@ -68,6 +69,7 @@ import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runt
 import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
+import { createCodingTurnRecord, updateCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
 import type { LumeRunItem } from "../agent-runtime/runner/run-items";
 import type { LumeRunState } from "../agent-runtime/runner/run-state";
@@ -900,6 +902,23 @@ export async function sendAgentMessage(
       ...(sourceMessageId ? { sourceMessageId } : {})
     };
     activeTurnId = createdUserVersion.turnId;
+    runtimeMessageMetadata.turnId = activeTurnId;
+    if (routingTrace.preferredCapabilityRoute === "coding" || routingTrace.preferredCapabilityRoute === "raw-tools") {
+      await createCodingTurnRecord(getRuntimeCoreSessionDir(threadId), {
+        turnId: activeTurnId,
+        threadId,
+        userMessageId: createdUserVersion.message.id,
+        runIds: [],
+        startedAt: new Date().toISOString(),
+        changedFiles: [],
+        verificationStatus: "not_run",
+        verificationRepairAttempts: 0,
+        approvalRequestCount: 0,
+        rewindState: "active",
+        routeReason: routingTrace.reason,
+        toolSelectionReason: "Coding 请求优先使用基础文件工具；仅在明确浏览器或桌面自动化需求时启用插件工具。"
+      });
+    }
     if (sourceMessageId) {
       replaceAgentThreadTranscript(threadId, getLatestVisibleMessagesForThread(threadId));
     }
@@ -1071,6 +1090,18 @@ export async function sendAgentMessage(
       });
       if (visibleAssistantMessage) {
         visibleAssistantMessageId = visibleAssistantMessage.id;
+        if (runtimeResult.codingReport?.runId) {
+          const runStore = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(threadId));
+          const codingRun = await runStore.get(runtimeResult.codingReport.runId);
+          if (codingRun?.codingReport) {
+            await runStore.update(runtimeResult.codingReport.runId, {
+              codingReport: {
+                ...codingRun.codingReport,
+                assistantMessageId: visibleAssistantMessage.id
+              }
+            });
+          }
+        }
         emit.onMessageAppended?.({
           threadId,
           message: visibleAssistantMessage,
@@ -1102,6 +1133,25 @@ export async function sendAgentMessage(
         }
       }
     }
+  }
+  if (runtimeResult.codingReport?.turnId) {
+    const report = runtimeResult.codingReport;
+    const turnId = report.turnId!;
+    await updateCodingTurnRecord(getRuntimeCoreSessionDir(threadId), turnId, {
+      ...(visibleAssistantMessageId ? { assistantMessageId: visibleAssistantMessageId } : {}),
+      ...(report.runId ? { runIds: [report.runId] } : {}),
+      finishedAt: new Date().toISOString(),
+      checkpointId: report.checkpointId,
+      baselineCommit: report.baselineCommit,
+      changedFiles: report.fileChanges ?? report.changeSet?.files ?? report.changedFiles.map((path) => ({ path })),
+      verificationStatus: toCodingTurnVerificationStatus(report),
+      verificationRepairAttempts: report.verificationRepairAttempts ?? 0,
+      approvalRequestCount: report.approvalRequestCount ?? 0,
+      rewindState: report.rewindState ?? "unavailable",
+      routeReason: report.routeReason,
+      toolSelectionReason: report.toolSelectionReason,
+      terminationReason: report.terminationReason
+    });
   }
   if (runtimeCompleted && runtimeResult.status === "completed") {
     log.info("[Agent 会话] 运行完成", {
@@ -1663,3 +1713,12 @@ const WELCOME_SUGGESTIONS_SYSTEM_PROMPT = `你是 Lume 欢迎页的任务建议�
 - 不要解释，不要 markdown
 - 只返回 JSON：
 {"suggestions":[{"title":"规划今天","prompt":"..."}]}`;
+
+function toCodingTurnVerificationStatus(report: RuntimeCodingReport) {
+  if (report.baselineFailure) return "baseline_failed" as const;
+  if (report.status === "verified") return "passed" as const;
+  if (report.status === "failed") {
+    return (report.verificationRepairAttempts ?? 0) > 0 ? "exhausted" as const : "failed" as const;
+  }
+  return "not_run" as const;
+}

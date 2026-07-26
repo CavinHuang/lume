@@ -31,6 +31,7 @@ import {
   assembleToolPool,
   filterTools,
   getAllBaseTools,
+  splitDeferredTools,
 } from './tools/index.js'
 import {
   closeAllConnections,
@@ -64,13 +65,13 @@ import { loadPlugins, type LoadedPlugin } from './plugins/loader.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
 import { loadCommandDefinitions, commandDefinitionsToSlashCommands } from './commands/fs-loader.js'
 import type { CommandDefinition } from './commands/types.js'
-import type { FileCheckpointState } from './utils/file-checkpoints.js'
+import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { rewindCheckpoint } from './utils/file-checkpoints.js'
 import { getDefaultModels } from './utils/models.js'
 import { setMcpConnections } from './tools/mcp-resource-tools.js'
 import { getContextWindowSize } from './utils/tokens.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
-import { isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
+import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
 
 type QueryInput = string | ContentBlockParam[] | SDKUserMessage
 
@@ -247,6 +248,7 @@ export class Agent {
   private baseOptions: AgentOptions
   private cfg: AgentOptions
   private toolPool: ToolDefinition[] = []
+  private deferredToolPool: ToolDefinition[] = []
   private modelId = 'claude-sonnet-4-6'
   private apiType: ApiType = 'anthropic-messages'
   private apiCredentials: { key?: string; baseUrl?: string } = {}
@@ -267,6 +269,7 @@ export class Agent {
   private fileSkillNames = new Set<string>()
   private loadedCommands: CommandDefinition[] = []
   private fileCheckpointState: FileCheckpointState = {}
+  private latestUserMessageId: string | undefined
   private lastContextUsage: ContextUsageResult | null = null
   private disabledMcpServers = new Set<string>()
   private queuedSdkEvents: SDKMessage[] = []
@@ -598,7 +601,7 @@ export class Agent {
       undefined,
       options.disallowedTools,
     )
-    this.toolPool = options.resolveRuntimeTools
+    const runtimeTools = options.resolveRuntimeTools
       ? await options.resolveRuntimeTools(assembledTools, {
         cwd: options.cwd || process.cwd(),
         sessionId: this.sid,
@@ -606,20 +609,17 @@ export class Agent {
         threadType: options.threadType,
       })
       : assembledTools
-
-    const allKnownTools = assembleToolPool(
-      [...getAllBaseTools(), ...this.getPluginTools()],
-      mcpTools,
-      undefined,
-      undefined,
-    )
-    const visibleNames = new Set(this.toolPool.map((tool) => tool.name))
-    const deferredCandidates = allKnownTools.filter((tool) => !visibleNames.has(tool.name))
-    const enableToolSearch = isToolSearchEnabled(
-      deferredCandidates,
-      options.model || this.modelId,
-    )
-    setDeferredTools(enableToolSearch ? deferredCandidates : [])
+    const { core, deferred } = splitDeferredTools(runtimeTools)
+    const enableToolSearch = isToolSearchEnabled(deferred, options.model || this.modelId)
+    this.deferredToolPool = enableToolSearch ? deferred : []
+    setDeferredTools(this.deferredToolPool)
+    this.toolPool = this.deferredToolPool.length > 0
+      ? [
+          ...core,
+          createToolSearchTool(() => this.deferredToolPool),
+          createExecuteTool(() => this.deferredToolPool),
+        ]
+      : runtimeTools
   }
 
   private drainQueuedSdkEvents(): SDKMessage[] {
@@ -912,8 +912,10 @@ export class Agent {
 
 
     let tools = this.toolPool
+    let deferredTools = this.deferredToolPool
     if (overrides?.disallowedTools) {
       tools = filterTools(tools, undefined, overrides.disallowedTools)
+      deferredTools = filterTools(deferredTools, undefined, overrides.disallowedTools)
     }
     if (overrides?.tools) {
       const raw = overrides.tools
@@ -922,6 +924,7 @@ export class Agent {
       } else if (Array.isArray(raw)) {
         tools = raw as ToolDefinition[]
       }
+      deferredTools = []
     }
 
     let provider = this.provider
@@ -944,6 +947,7 @@ export class Agent {
       this.sessionMessages.push(runtimeMessage)
     }
     if (userMessage) {
+      this.latestUserMessageId = userMessage.uuid
       this.sessionMessages.push(userMessage)
       this.messageLog.push({
         type: 'user',
@@ -959,6 +963,7 @@ export class Agent {
       model: opts.model || this.modelId,
       provider,
       tools,
+      deferredTools,
       systemPrompt,
       runtimeContext: runtimeMessage ? opts.runtimeContext?.trim() : undefined,
       promptCache: opts.promptCache,
@@ -999,8 +1004,10 @@ export class Agent {
       toolConfig: opts.toolConfig,
       artifactsRoot: opts.artifactsRoot,
       onToolExecution: opts.onToolExecution,
+      onBeforeToolExecution: opts.onBeforeToolExecution,
       currentUserMessageId: userMessage?.uuid ?? `command:${this.sid}:compact`,
       fileCheckpointState: this.fileCheckpointState,
+      enableFileCheckpointing: opts.enableFileCheckpointing === true,
       mcpServerStatuses: this.collectMcpServerStatuses().map((status) => ({
         name: status.name,
         status: status.status,
@@ -1466,6 +1473,11 @@ export class Agent {
       })
     }
     return result
+  }
+
+  /** Return the checkpoint captured for the most recently submitted user message. */
+  getLatestFileCheckpoint(): FileCheckpoint | undefined {
+    return this.latestUserMessageId ? this.fileCheckpointState[this.latestUserMessageId] : undefined
   }
 
   async close(): Promise<void> {

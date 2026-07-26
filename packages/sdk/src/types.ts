@@ -799,6 +799,15 @@ export interface ToolContext {
     input: unknown
     result: ToolResult
   }) => void
+  /** Called immediately before a tool executes, before filesystem side effects. */
+  onBeforeToolExecution?: (observation: {
+    toolName: string
+    input: unknown
+    userMessageId?: string
+    cwd: string
+  }) => Promise<void> | void
+  /** Internal bridge used by ExecuteTool to run a discovered deferred tool. */
+  executeDeferredTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
 }
 
 export interface ToolExecutionMetadata {
@@ -1396,6 +1405,7 @@ export interface AgentOptions {
   toolConfig?: Record<string, unknown>
   artifactsRoot?: string
   onToolExecution?: ToolContext['onToolExecution']
+  onBeforeToolExecution?: ToolContext['onBeforeToolExecution']
   /** Enable prompt suggestions */
   promptSuggestions?: boolean
   /** Event output style */
@@ -1441,6 +1451,8 @@ export interface QueryEngineConfig {
   /** LLM provider instance (created from apiType) */
   provider: import('./providers/types.js').LLMProvider
   tools: ToolDefinition[]
+  /** Tools omitted from the provider schema and reachable only through ExecuteTool. */
+  deferredTools?: ToolDefinition[]
   systemPrompt?: string
   runtimeContext?: string
   promptCache?: import('./providers/types.js').PromptCachePolicy
@@ -1467,6 +1479,9 @@ export interface QueryEngineConfig {
   toolConfig?: Record<string, unknown>
   artifactsRoot?: string
   onToolExecution?: ToolContext['onToolExecution']
+  onBeforeToolExecution?: ToolContext['onBeforeToolExecution']
+  /** Capture a workspace baseline before each Coding Turn. */
+  enableFileCheckpointing?: boolean
   skillRegistry?: import('./skills/registry.js').SkillRegistry
   currentUserMessageId?: string
   fileCheckpointState?: import('./utils/file-checkpoints.js').FileCheckpointState

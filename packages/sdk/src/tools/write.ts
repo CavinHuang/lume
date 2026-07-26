@@ -3,15 +3,18 @@
  */
 
 import { writeFile, mkdir, rename, rm, readFile, stat } from 'fs/promises'
-import { resolve, dirname, basename, join } from 'path'
+import { dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
-import { ensurePathAllowed } from '../utils/pathing.js'
+import { ensurePathAllowed, resolveInputPath } from '../utils/pathing.js'
 import { notifyLspFileChanged } from '../lsp/client.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
+import { countLineChanges } from '../utils/line-change-stats.js'
+
+const DEFAULT_MAX_WRITE_BYTES = 4 * 1024 * 1024
 
 export const FileWriteTool = defineTool({
   name: 'Write',
-  description: 'Write content to a file. Creates the file if it does not exist, or overwrites if it does. Creates parent directories as needed.',
+  description: 'Write complete file content. Creates the file or overwrites it while preserving an existing text file encoding and line endings. Use Edit for localized changes; stale reads and oversized writes are rejected.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -34,10 +37,10 @@ export const FileWriteTool = defineTool({
     if (typeof input.content !== 'string') return 'content must be a string.'
   },
   getPath(input, context) {
-    return resolve(context.cwd, input.file_path)
+    return resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
   },
   async call(input, context) {
-    const filePath = resolve(context.cwd, input.file_path)
+    const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
     const sandboxError = ensurePathAllowed(
       filePath,
       'write',
@@ -49,9 +52,19 @@ export const FileWriteTool = defineTool({
     }
 
     try {
+      const bytes = Buffer.byteLength(input.content, 'utf8')
+      const maxBytes = configuredPositiveNumber(context, 'writeMaxBytes', DEFAULT_MAX_WRITE_BYTES)
+      if (bytes > maxBytes) {
+        return {
+          data: `Error: Write content for ${filePath} is ${bytes} bytes, exceeding the ${maxBytes}-byte limit. Use Edit or write the file in smaller, deliberate steps.`,
+          is_error: true,
+          _meta: { file: { path: filePath, rejected: 'size', bytes, maxBytes } },
+        }
+      }
       await mkdir(dirname(filePath), { recursive: true })
       let encoded: Uint8Array = Buffer.from(input.content, 'utf8')
       let overwritten = false
+      let previousContent = ''
       const existing = await stat(filePath).catch(() => undefined)
       if (existing?.isDirectory()) {
         return { data: `Error writing file: ${filePath} is a directory`, is_error: true }
@@ -59,8 +72,14 @@ export const FileWriteTool = defineTool({
       if (existing) {
         overwritten = true
         const decoded = decodeTextFile(await readFile(filePath))
+        previousContent = decoded.content
         const previousRead = context.fileStateCache?.get(filePath)
-        if (previousRead && !previousRead.isPartialView && previousRead.content !== decoded.content) {
+        const changedSinceRead = previousRead && (
+          (previousRead.timestamp !== existing.mtimeMs)
+          || (previousRead.size !== undefined && previousRead.size !== existing.size)
+          || (!previousRead.isPartialView && previousRead.content !== decoded.content)
+        )
+        if (changedSinceRead) {
           return {
             data: 'Error: File has been modified since it was read. Read it again before attempting to overwrite it.',
             is_error: true,
@@ -75,11 +94,14 @@ export const FileWriteTool = defineTool({
       context.fileStateCache?.set(filePath, {
         content: input.content,
         timestamp: updated.mtimeMs,
+        size: updated.size,
         isPartialView: false,
       })
 
-      const lines = input.content.split('\n').length
-      const bytes = Buffer.byteLength(input.content, 'utf-8')
+      const lines = input.content.length === 0 ? 0 : input.content.split('\n').length
+      const lineChanges = overwritten
+        ? countLineChanges(previousContent, input.content)
+        : { linesAdded: lines, linesRemoved: 0 }
       return {
         data: {
           filePath,
@@ -88,7 +110,15 @@ export const FileWriteTool = defineTool({
           bytes,
           message: `File written: ${filePath} (${lines} lines, ${bytes} bytes)`,
         },
-        _meta: { file: { path: filePath, overwritten, checkpointable: true, checkpointId: context.currentUserMessageId } },
+        _meta: {
+          file: {
+            path: filePath,
+            overwritten,
+            checkpointable: true,
+            checkpointId: context.currentUserMessageId,
+            ...lineChanges,
+          }
+        },
       }
     } catch (err: any) {
       return { data: `Error writing file: ${err.message}`, is_error: true }
@@ -106,4 +136,9 @@ async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<v
     await rm(tempPath, { force: true }).catch(() => undefined)
     throw error
   }
+}
+
+function configuredPositiveNumber(context: { toolConfig?: Record<string, unknown> }, key: string, fallback: number): number {
+  const value = context.toolConfig?.[key]
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback
 }

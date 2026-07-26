@@ -4,6 +4,8 @@ import {
   activeTabIdAtom,
   agentThreadsAtom,
   agentWorkspacesAtom,
+  codingReviewPanelActionAtom,
+  codingReviewPanelsAtom,
   currentWorkspaceIdAtom,
   rightPanelFileWorkspacesAtom,
   rightPanelLayoutAtom,
@@ -36,6 +38,8 @@ import { RightPanelTabBar } from './RightPanelTabBar'
 import { PlaceholderRightPanelTab } from './PlaceholderRightPanelTab'
 import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
 import { BrowserRightPanelTab } from './BrowserRightPanelTab'
+import { CodingReviewPanel } from './CodingReviewPanel'
+import type { CodingReviewPanelState } from '@/atoms/right-panel-atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
   browser: '浏览器', files: '文件',
@@ -57,6 +61,8 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
   const threadId = activeTab?.type === 'agent' ? activeTab.threadId : undefined
   const thread = threads.find((item) => item.id === threadId)
+  const codingReview = useAtomValue(codingReviewPanelsAtom)[threadId ?? '']
+  const closeCodingReview = useSetAtom(codingReviewPanelActionAtom)
   const workspaceId = thread?.workspaceId ?? currentWorkspaceId ?? undefined
   const agentWorkspace = agentWorkspaces.find((item) => item.id === workspaceId)
   const workspaceSlug = agentWorkspace?.slug
@@ -121,7 +127,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
           ? { kind: 'function', type: firstOpenRightPanelTab(persistedWorkspace.tabs)! }
           : null,
       )
-  const hasOpenTabs = firstOpenRightPanelTab(persistedWorkspace.tabs) !== null || runtimeWorkspace.openTabs.length > 0
+  const hasOpenTabs = firstOpenRightPanelTab(persistedWorkspace.tabs) !== null || runtimeWorkspace.openTabs.length > 0 || Boolean(codingReview)
 
   const updatePersisted = (next: ThreadRightPanelWorkspace) => setPersisted((current) => ({ ...current, [threadId]: next }))
   const action = (value: Parameters<typeof dispatch>[0]) => dispatch(value)
@@ -158,16 +164,18 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
           <div className="flex min-h-0 flex-1 items-center justify-center text-[var(--lume-text-muted)]"><PanelRightOpen size={18} /></div>
         ) : (
           <>
-            <RightPanelTabBar
-              workspace={persistedWorkspace}
-              fileTabs={runtimeWorkspace.openTabs}
-              activeItem={runtimeWorkspace.activeItem}
-              onActivateFunction={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })}
-              onActivateFile={(tabId) => updateRuntime({ ...runtimeWorkspace, activeItem: { kind: 'file', tabId } })}
-              onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
-              onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
-              onOpenFunction={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })}
-            />
+            {!codingReview && (
+              <RightPanelTabBar
+                workspace={persistedWorkspace}
+                fileTabs={runtimeWorkspace.openTabs}
+                activeItem={runtimeWorkspace.activeItem}
+                onActivateFunction={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })}
+                onActivateFile={(tabId) => updateRuntime({ ...runtimeWorkspace, activeItem: { kind: 'file', tabId } })}
+                onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
+                onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
+                onOpenFunction={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })}
+              />
+            )}
             {hasOpenTabs ? (
               <RightPanelActiveContent
                 persisted={persistedWorkspace}
@@ -178,6 +186,9 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
                 openFunctions={openFunctions}
                 onRuntimeChange={updateRuntime}
                 onPersistedChange={updatePersisted}
+                threadId={threadId}
+                codingReview={codingReview}
+                onCloseCodingReview={() => closeCodingReview({ type: 'close', threadId })}
               />
             ) : <RightPanelLauncher onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })} />}
           </>
@@ -187,7 +198,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   )
 }
 
-function RightPanelActiveContent({ persisted, runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, onPersistedChange }: {
+function RightPanelActiveContent({ persisted, runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, onPersistedChange, threadId, codingReview, onCloseCodingReview }: {
   persisted: ThreadRightPanelWorkspace
   runtime: ThreadFileWorkspace
   workspaceSlug?: string
@@ -196,7 +207,13 @@ function RightPanelActiveContent({ persisted, runtime, workspaceSlug, workspaceP
   openFunctions: RightPanelFunction[]
   onRuntimeChange: (workspace: ThreadFileWorkspaceUpdate) => void
   onPersistedChange: (workspace: ThreadRightPanelWorkspace) => void
+  threadId: string
+  codingReview?: CodingReviewPanelState
+  onCloseCodingReview: () => void
 }) {
+  if (codingReview) {
+    return <CodingReviewPanel threadId={threadId} state={codingReview} onClose={onCloseCodingReview} />
+  }
   const active = runtime.activeItem
   if (!active) return <PlaceholderRightPanelTab label="" />
   if (active.kind === 'file' || active.type === 'files') {

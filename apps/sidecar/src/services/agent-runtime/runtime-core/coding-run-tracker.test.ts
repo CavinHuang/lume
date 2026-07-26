@@ -4,8 +4,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createCodingRunTracker } from "./coding-run-tracker";
 
-function result(content: string, isError = false) {
-  return { type: "tool_result" as const, tool_use_id: "tool-1", content, ...(isError ? { is_error: true } : {}) };
+function result(content: string, isError = false, meta?: Record<string, unknown>) {
+  return {
+    type: "tool_result" as const,
+    tool_use_id: "tool-1",
+    content,
+    ...(isError ? { is_error: true } : {}),
+    ...(meta ? { _meta: meta } : {})
+  };
 }
 
 describe("coding run tracker", () => {
@@ -96,6 +102,46 @@ describe("coding run tracker", () => {
       workspaceChanged: true,
       changedFiles: ["generated.ts"],
       pendingBackground: false
+    });
+  });
+
+  test("keeps file line statistics for the coding report", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-stats-"));
+    const filePath = join(root, "changed.ts");
+    writeFileSync(filePath, "before\n", "utf-8");
+    const tracker = createCodingRunTracker({ workspaceRoot: root });
+    await tracker.initialize();
+
+    writeFileSync(filePath, "before\nafter\n", "utf-8");
+    tracker.observe({
+      toolName: "Edit",
+      input: { file_path: "changed.ts" },
+      result: result("edited", false, { file: { linesAdded: 1, linesRemoved: 0 } })
+    });
+
+    await tracker.completionGuard();
+    expect(tracker.getVerificationReport()).toMatchObject({
+      fileChanges: [{ path: "changed.ts", addedLines: 1, removedLines: 0 }],
+      totalAddedLines: 1
+    });
+  });
+
+  test("attributes files changed by an indirect Bash script", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-bash-script-"));
+    const tracker = createCodingRunTracker({ workspaceRoot: root });
+    await tracker.initialize();
+
+    writeFileSync(join(root, "generated.ts"), "export const value = 1;\n", "utf-8");
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: "python -c \"from pathlib import Path; Path('generated.ts').write_text('...')\"" },
+      result: result("done")
+    });
+
+    await expect(tracker.completionGuard()).resolves.toContain("verification needed");
+    expect(tracker.getVerificationReport()).toMatchObject({
+      workspaceChanged: true,
+      changedFiles: ["generated.ts"]
     });
   });
 });

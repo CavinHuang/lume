@@ -1987,6 +1987,16 @@ export const AGENT_IPC_CHANNELS = {
   LIST_PROJECT_DIRECTORY: 'agent:list-project-directory',
   /** 只读读取项目绑定目录文件内容 */
   READ_PROJECT_FILE: 'agent:read-project-file',
+  /** 获取当前 Coding 工作区变更集合 */
+  GET_CODING_CHANGE_SET: 'agent:get-coding-change-set',
+  /** 获取单个 Coding 文件的 old/new diff 内容 */
+  GET_CODING_DIFF: 'agent:get-coding-diff',
+  /** 撤销 Git 工作区中的单个 Coding 文件变更 */
+  REVERT_CODING_FILE: 'agent:revert-coding-file',
+  /** 撤销一次 Coding Run 中捕获的全部文件变更 */
+  REVERT_CODING_RUN: 'agent:revert-coding-run',
+  /** 回退 Coding Turn 的文件状态并截断其后的会话消息 */
+  REWIND_CODING_TURN: 'agent:rewind-coding-turn',
   /** 只读读取项目绑定目录二进制文件 */
   READ_PROJECT_FILE_DATA: 'agent:read-project-file-data',
   /** 将旧版资源只读导出到项目根目录，不覆盖同名内容 */

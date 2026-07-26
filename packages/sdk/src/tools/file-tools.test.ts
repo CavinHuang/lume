@@ -7,7 +7,7 @@ import { FileReadTool } from "./read";
 import { FileWriteTool } from "./write";
 import { NotebookEditTool } from "./notebook-edit";
 import { FileStateCache } from "../utils/fileCache";
-import { captureFileSnapshots, rewindCheckpoint } from "../utils/file-checkpoints";
+import { captureFileSnapshots, collectCheckpointPaths, rewindCheckpoint } from "../utils/file-checkpoints";
 
 const roots: string[] = [];
 
@@ -16,6 +16,10 @@ afterEach(async () => {
 });
 
 describe("file tools", () => {
+  test("captures common Bash mutation targets before execution", () => {
+    expect(collectCheckpointPaths("Bash", { command: "echo hi > src/generated.ts" })).toEqual(["src/generated.ts"]);
+    expect(collectCheckpointPaths("Bash", { command: "Set-Content -Path src/generated.ts -Value hi" })).toEqual(["src/generated.ts"]);
+  });
   test("edits CRLF UTF-8 files without changing their encoding or line endings", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
@@ -89,6 +93,20 @@ describe("file tools", () => {
     expect(result.content).toContain("4\tline-3\n5\tline-4");
   });
 
+  test("deduplicates repeated partial reads without sending the range again", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "file.txt");
+    const cache = new FileStateCache();
+    await writeFile(filePath, "line-0\nline-1\nline-2\n", "utf8");
+
+    await FileReadTool.call({ file_path: filePath, offset: 1, limit: 1 }, { cwd: root, fileStateCache: cache });
+    const second = await FileReadTool.call({ file_path: filePath, offset: 1, limit: 1 }, { cwd: root, fileStateCache: cache });
+
+    expect(second.content).toContain("File unchanged since it was last read");
+    expect(second._meta?.read).toMatchObject({ unchanged: true });
+  });
+
   test("deduplicates an unchanged full text read", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
@@ -118,6 +136,28 @@ describe("file tools", () => {
     expect(result.is_error).toBe(true);
     expect(result.content).toContain("Use offset and limit");
     expect(result._meta?.read).toMatchObject({ maxTokens: 1, truncated: false });
+  });
+
+  test("does not cache a rejected read as if the content had been delivered", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "source.ts");
+    const cache = new FileStateCache();
+    await writeFile(filePath, "const value = 1;\n", "utf8");
+
+    const first = await FileReadTool.call(
+      { file_path: filePath },
+      { cwd: root, fileStateCache: cache, toolConfig: { readMaxTokens: 1 } },
+    );
+    const second = await FileReadTool.call(
+      { file_path: filePath },
+      { cwd: root, fileStateCache: cache, toolConfig: { readMaxTokens: 1 } },
+    );
+
+    expect(first.is_error).toBe(true);
+    expect(second.is_error).toBe(true);
+    expect(second.content).toContain("Use offset and limit");
+    expect(second.content).not.toContain("File unchanged since it was last read");
   });
 
   test("returns provider-compatible image content blocks", async () => {
@@ -237,6 +277,37 @@ describe("file tools", () => {
     expect(result.is_error).toBe(true);
     expect(result.content).toContain("modified since it was read");
     expect(await readFile(filePath, "utf8")).toBe("external\n");
+  });
+
+  test("refuses to overwrite after a partial read when the file changed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "file.txt");
+    const cache = new FileStateCache();
+    await writeFile(filePath, "before\nsecond\n", "utf8");
+    await FileReadTool.call({ file_path: filePath, offset: 0, limit: 1 }, { cwd: root, fileStateCache: cache });
+    await writeFile(filePath, "external\nsecond\n", "utf8");
+
+    const result = await FileWriteTool.call({ file_path: filePath, content: "agent\n" }, { cwd: root, fileStateCache: cache });
+
+    expect(result.is_error).toBe(true);
+    expect(result.content).toContain("modified since it was read");
+    expect(await readFile(filePath, "utf8")).toBe("external\nsecond\n");
+  });
+
+  test("rejects an oversized write before creating or changing the file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "large.txt");
+
+    const result = await FileWriteTool.call(
+      { file_path: filePath, content: "12345" },
+      { cwd: root, toolConfig: { writeMaxBytes: 4 } },
+    );
+
+    expect(result.is_error).toBe(true);
+    expect(result.content).toContain("exceeding the 4-byte limit");
+    await expect(readFile(filePath)).rejects.toThrow();
   });
 
   test("writes UTF-16LE files while preserving their BOM", async () => {

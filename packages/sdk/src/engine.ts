@@ -72,11 +72,10 @@ import {
 } from './utils/messages.js'
 import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
-import { captureFileSnapshots, collectCheckpointPaths } from './utils/file-checkpoints.js'
+import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
 import { resolve } from 'path'
 import { getUserInvocableSkills } from './skills/index.js'
-import { getDeferredTools } from './tools/tool-search.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
 
@@ -261,14 +260,17 @@ function compactionStageMessage(stage: AgentContextCompactionStage): string {
 // ============================================================================
 
 async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
+  const deferredToolGuide = config.deferredTools?.length
+    ? '\n\nSome tools are deferred to keep your context focused. Use ToolSearch to discover them, then call ExecuteTool with the selected tool name and parameters. Do not claim a capability is unavailable before searching when the visible tools do not cover the task.'
+    : ''
   if (config.systemPrompt) {
     const structuredOutputInstruction = buildStructuredOutputInstruction(
       config.jsonSchema,
       config.outputFormat,
     )
-    const base = structuredOutputInstruction
+    const base = (structuredOutputInstruction
       ? `${config.systemPrompt}\n\n${structuredOutputInstruction}`
-      : config.systemPrompt
+      : config.systemPrompt) + deferredToolGuide
     return config.appendSystemPrompt
       ? base + '\n\n' + config.appendSystemPrompt
       : base
@@ -280,6 +282,7 @@ async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
     'You are an AI assistant with access to tools. Use the tools provided to help the user accomplish their tasks.',
     'You should use tools when they would help you complete the task more accurately or efficiently.',
   )
+  if (deferredToolGuide) parts.push(deferredToolGuide.trim())
 
   // List available tools with descriptions
   parts.push('\n# Available Tools\n')
@@ -830,6 +833,14 @@ export class QueryEngine {
       return
     }
 
+    if (this.config.enableFileCheckpointing && this.config.fileCheckpointState && this.config.currentUserMessageId) {
+      await captureWorkspaceFileSnapshots(
+        this.config.fileCheckpointState,
+        this.config.currentUserMessageId,
+        [this.config.cwd, ...(this.config.additionalDirectories ?? [])],
+      )
+    }
+
     yield {
       type: 'system',
       subtype: 'session_state_changed',
@@ -1370,6 +1381,7 @@ export class QueryEngine {
       fileStateCache: this.fileStateCache,
       artifactsRoot: this.config.artifactsRoot,
       onToolExecution: this.config.onToolExecution,
+      onBeforeToolExecution: this.config.onBeforeToolExecution,
       permissionMode: this.config.permissionMode,
       hookRegistry: this.hookRegistry,
       skillRegistry: this.config.skillRegistry,
@@ -1480,6 +1492,26 @@ export class QueryEngine {
       ...context,
       toolUseId: block.id,
     }
+    toolContext.executeDeferredTool = async ({ toolName, params }) => {
+      const target = this.config.deferredTools?.find((candidate) => candidate.name === toolName)
+      if (!target) {
+        return {
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: `Error: Deferred tool "${toolName}" is not available. Search again with ToolSearch.`,
+          is_error: true,
+        }
+      }
+      const delegated = await this.executeSingleTool({
+        type: 'tool_use',
+        id: `${block.id}:${toolName}`,
+        name: target.name,
+        input: params,
+      }, target, context)
+      events.push(...delegated.events)
+      toolsUsed.push(...delegated.toolsUsed)
+      return delegated.result
+    }
     if (!tool) {
       return {
         result: {
@@ -1510,7 +1542,7 @@ export class QueryEngine {
     }
 
     // Check permissions
-    if (this.config.canUseTool) {
+    if (this.config.canUseTool && !tool.runtimeMetadata?.delegatesPermission) {
       const permissionRequestHooks = await this.executeHooks('PermissionRequest', {
         toolName: block.name,
         toolInput: block.input,
@@ -1627,6 +1659,12 @@ export class QueryEngine {
 
     // Execute the tool
     try {
+      await this.config.onBeforeToolExecution?.({
+        toolName: block.name,
+        input: block.input,
+        userMessageId: this.config.currentUserMessageId,
+        cwd: toolContext.cwd,
+      })
       if (this.config.fileCheckpointState && this.config.currentUserMessageId) {
         const checkpointPaths = collectCheckpointPaths(block.name, block.input)
           .map((path) => resolve(toolContext.cwd, path))
@@ -1852,7 +1890,7 @@ export class QueryEngine {
             isLoaded: server.status === 'connected',
           })),
       ),
-      deferredBuiltinTools: getDeferredTools().map((tool) => ({
+      deferredBuiltinTools: (this.config.deferredTools ?? []).map((tool) => ({
         name: tool.name,
         tokens: Math.ceil((tool.description.length + tool.name.length) / 4),
         isLoaded: false,

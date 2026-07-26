@@ -63,7 +63,7 @@ export function diffWorkspaceSnapshots(
     const prior = previous[path];
     if (!prior) {
       added.push(path);
-    } else if (prior.hash !== file.hash || prior.size !== file.size || prior.mtimeMs !== file.mtimeMs) {
+    } else if (prior.hash !== file.hash || prior.size !== file.size) {
       modified.push(path);
     }
   }

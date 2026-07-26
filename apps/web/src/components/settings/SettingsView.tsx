@@ -59,32 +59,34 @@ export function SettingsView() {
 
   return (
     <div className="flex flex-1 min-w-0 min-h-0 gap-8 bg-[var(--background)]">
-      <aside className="w-[174px] shrink-0 bg-[var(--surface-1)] px-3 py-5 shadow-[6px_0_18px_-14px_hsl(var(--lume-shadow-panel)_/_0.32)]">
-        <h1 className="mb-3 px-2.5 text-[22px] font-semibold leading-7 text-[var(--text-1)]">设置</h1>
-        <nav className="space-y-1.5">
-          {SETTINGS_NAV_ITEMS.map((item) => {
-            const Icon = item.icon
-            const selected = tab === item.id
+      <aside className="flex h-full min-h-0 w-[174px] shrink-0 flex-col bg-[var(--surface-1)] px-3 py-5 shadow-[6px_0_18px_-14px_hsl(var(--lume-shadow-panel)_/_0.32)]">
+        <h1 className="mb-3 shrink-0 px-2.5 text-[22px] font-semibold leading-7 text-[var(--text-1)]">设置</h1>
+        <ScrollArea className="min-h-0 flex-1 pr-1 [&_[data-slot=scroll-area-scrollbar]]:opacity-100">
+          <nav className="space-y-1.5">
+            {SETTINGS_NAV_ITEMS.map((item) => {
+              const Icon = item.icon
+              const selected = tab === item.id
 
-            return (
-              <Button
-                variant="ghost"
-                key={item.id}
-                type="button"
-                onClick={() => setTab(item.id)}
-                className={cn(
-                  'flex h-9 w-full items-center justify-start gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors',
-                  selected
-                    ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                    : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
-                )}
-              >
-                <Icon size={16} strokeWidth={1.9} className="shrink-0" />
-                <span>{item.label}</span>
-              </Button>
-            )
-          })}
-        </nav>
+              return (
+                <Button
+                  variant="ghost"
+                  key={item.id}
+                  type="button"
+                  onClick={() => setTab(item.id)}
+                  className={cn(
+                    'flex h-9 w-full items-center justify-start gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors',
+                    selected
+                      ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                      : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
+                  )}
+                >
+                  <Icon size={16} strokeWidth={1.9} className="shrink-0" />
+                  <span>{item.label}</span>
+                </Button>
+              )
+            })}
+          </nav>
+        </ScrollArea>
       </aside>
 
       <ScrollArea className="flex-1 min-w-0 min-h-0 pr-8 pt-4 pb-0">

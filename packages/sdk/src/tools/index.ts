@@ -130,6 +130,13 @@ const ALL_TOOLS: ToolDefinition[] = [
   SkillTool,
 ]
 
+/** Schemas always sent to the provider when deferred tool loading is enabled. */
+export const CORE_TOOL_NAMES = new Set([
+  'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
+  'WebFetch', 'WebSearch', 'Agent', 'AskUserQuestion', 'Skill', 'LSP', 'LSPApply',
+  'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
+])
+
 /**
  * Get all built-in tools.
  */
@@ -246,6 +253,17 @@ export {
   // Skill
   SkillTool,
   createSkillTool,
+}
+
+export function splitDeferredTools(tools: ToolDefinition[]): {
+  core: ToolDefinition[]
+  deferred: ToolDefinition[]
+} {
+  const candidates = tools.filter((tool) => tool.name !== 'ToolSearch' && tool.name !== 'ExecuteTool')
+  return {
+    core: candidates.filter((tool) => CORE_TOOL_NAMES.has(tool.name)),
+    deferred: candidates.filter((tool) => !CORE_TOOL_NAMES.has(tool.name)),
+  }
 }
 
 export type { LspWorkspaceEditPreview } from './lsp-tool.js'

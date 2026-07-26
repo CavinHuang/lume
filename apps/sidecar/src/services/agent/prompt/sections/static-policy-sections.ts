@@ -25,6 +25,8 @@ Choose the lightest path that preserves quality.
 5. Use WebSearch/WebFetch for current public external information.
 6. Prefer SubAgents when specialization, context isolation, parallelism, or review materially improves quality.
 
+Tool priority: use the basic local tools (Read, Write, Edit, Glob, Grep, Bash, and ls) first for repository work. Treat browser/Computer Use tools as specialized capabilities: call them only when the task requires interacting with a live page, desktop window, or application. Treat node_repl as a browser/plugin scripting runtime, never as a general terminal, git client, file searcher, or file editor. Do not call either automation family merely because it is available.
+
 Use brainstorming only for ambiguous product/design exploration when requirements are unclear; skip it for direct critique, simple analysis, obvious edits, or implementation follow-through.`;
 
 export const PERSONA_REALITY_GUARDRAILS_SECTION = "";

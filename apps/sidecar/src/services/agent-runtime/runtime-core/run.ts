@@ -14,6 +14,7 @@ import {
   registerAgents,
   type SDKMessage,
   type Agent,
+  type FileCheckpoint,
   type AgentDefinition,
   type AgentOptions,
   type CompletionGuardResult,
@@ -243,7 +244,11 @@ export interface CreateRuntimeCoreSessionResult {
   memoryContextUsedItems: MemoryV2RecallItem[];
   tools: ToolDefinition[];
   getVerificationStatus: () => CodingVerificationStatus;
+  beforeToolExecution: NonNullable<AgentOptions["onBeforeToolExecution"]>;
+  getBaselineCommit: () => string | undefined;
   getVerificationReport: () => import("./coding-run-tracker").CodingVerificationReport;
+  refreshCodingChangeSet: () => Promise<unknown>;
+  getLatestFileCheckpoint: () => FileCheckpoint | undefined;
 }
 
 interface RuntimeCoreToolset {
@@ -1573,7 +1578,11 @@ export async function createRuntimeCoreSession(
   const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
   const codingRunTracker = createCodingRunTracker({
     workspaceRoot: input.cwd,
-    statePath: join(sessionDir, "coding-state.v1.json")
+    statePath: join(sessionDir, `coding-state-${(input.runId ?? "session").replace(/[^a-zA-Z0-9_-]/g, "_")}.v1.json`),
+    turnId: typeof input.messageMetadata?.turnId === "string" ? input.messageMetadata.turnId : undefined,
+    userMessageId: typeof input.messageMetadata?.messageId === "string" ? input.messageMetadata.messageId : undefined,
+    routeReason: typeof input.messageMetadata?.routeReason === "string" ? input.messageMetadata.routeReason : undefined,
+    toolSelectionReason: typeof input.messageMetadata?.toolSelectionReason === "string" ? input.messageMetadata.toolSelectionReason : undefined
   });
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
@@ -1881,6 +1890,11 @@ export async function createRuntimeCoreSession(
     && !input.runId
     && !boundSubagentIdentity
   );
+  const preferredCapabilityRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
+    ? input.messageMetadata.preferredCapabilityRoute
+    : undefined;
+  const enableFileCheckpointing = preferredCapabilityRoute === "coding"
+    || preferredCapabilityRoute === "raw-tools";
 
   const agentOptions: AgentOptions = {
     apiType: resolveSdkApiType(input.provider, input.openaiApiMode),
@@ -1891,6 +1905,7 @@ export async function createRuntimeCoreSession(
     threadType: input.threadType,
     artifactsRoot: input.artifactsRoot,
     onToolExecution: codingRunTracker.observe,
+    onBeforeToolExecution: codingRunTracker.beforeToolExecution,
     systemPrompt,
     runtimeContext,
     promptCache,
@@ -1936,7 +1951,8 @@ export async function createRuntimeCoreSession(
       sessionMessages: context.messages,
       toolSchemaTokens: estimateToolSchemaTokens(toolset.tools)
     }),
-    persistSession: true
+    persistSession: true,
+    enableFileCheckpointing
   };
 
   const agent = createAgent(agentOptions);
@@ -2006,6 +2022,10 @@ export async function createRuntimeCoreSession(
     memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
     tools: resolvedTools,
     getVerificationStatus: codingRunTracker.getVerificationStatus,
+    beforeToolExecution: codingRunTracker.beforeToolExecution,
+    getBaselineCommit: codingRunTracker.getBaselineCommit,
+    refreshCodingChangeSet: codingRunTracker.refreshChangeSet,
+    getLatestFileCheckpoint: () => agent.getLatestFileCheckpoint(),
     getVerificationReport: () => ({
       ...codingRunTracker.getVerificationReport(),
       approvalRequestCount

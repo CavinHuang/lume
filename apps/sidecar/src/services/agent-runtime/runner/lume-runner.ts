@@ -1,10 +1,11 @@
-import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type SandboxSettings } from "@lume/agent-sdk";
+import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
 import type { LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
 import { resolveAgentThinkingLevel } from "./model-capabilities";
 import type { resolveRuntimeCoreChannelModel } from "../runtime-core/model";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
+import { persistCodingRunCheckpoint } from "../runtime-core/coding-run-checkpoint-service";
 import {
   createRuntimeCoreSession,
   type CreateRuntimeCoreSessionInput,
@@ -73,7 +74,7 @@ interface RuntimeSessionRunInput {
   params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
   runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">
-    & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport">>;
+    & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport" | "refreshCodingChangeSet" | "getLatestFileCheckpoint" | "getBaselineCommit">>;
   options: RunRuntimeCoreAttemptOptions;
   sandbox?: SandboxSettings;
   createCanUseTool: (
@@ -185,16 +186,46 @@ export class LumeRunner {
     coding?: {
       getVerificationStatus?: () => AgentRuntimeRunResult["verificationStatus"];
       getVerificationReport?: () => AgentRuntimeRunResult["codingReport"];
+      refreshCodingChangeSet?: () => Promise<unknown>;
+      getLatestFileCheckpoint?: () => FileCheckpoint | undefined;
+      getBaselineCommit?: () => string | undefined;
     }
   ): Promise<AgentRuntimeRunResult> {
     const result = await consumeRuntimeCoreQueryStream({
       query,
       emit: this.emit
     });
+    await coding?.refreshCodingChangeSet?.();
+    const verificationReport = coding?.getVerificationReport?.();
+    const checkpoint = coding?.getLatestFileCheckpoint?.();
+    let canRewind = false;
+    if (checkpoint) {
+      try {
+        canRewind = await persistCodingRunCheckpoint({
+          sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
+          runId: this.observer.getRunId(),
+          cwd: this.prepared.agentCwd,
+          roots: [this.prepared.projectRoot, this.prepared.lumeWorkDir].filter((root): root is string => Boolean(root)),
+          baselineCommit: coding?.getBaselineCommit?.(),
+          changedPaths: verificationReport?.changedFiles ?? [],
+          checkpoint,
+        });
+      } catch {
+        // A missing rewind record must not change the agent result.
+      }
+    }
     const resultWithCoding = {
       ...result,
       ...(coding?.getVerificationStatus ? { verificationStatus: coding.getVerificationStatus() } : {}),
-      ...(coding?.getVerificationReport ? { codingReport: coding.getVerificationReport() } : {})
+      ...(verificationReport ? {
+        codingReport: {
+          ...verificationReport,
+          runId: this.observer.getRunId(),
+          checkpointId: canRewind ? this.observer.getRunId() : undefined,
+          rewindState: canRewind ? "available" : "unavailable",
+          canRewind,
+        }
+      } : {})
     } satisfies AgentRuntimeRunResult;
     if (resultWithCoding.status === "turn_limited") {
       this.observer.recordTurnLimited(resultWithCoding.errorMessage);
@@ -278,7 +309,10 @@ export class LumeRunner {
 
       const streamResult = await this.runQueryStream(query, {
         getVerificationStatus: runtimeSession.getVerificationStatus,
-        getVerificationReport: runtimeSession.getVerificationReport
+        getVerificationReport: runtimeSession.getVerificationReport,
+        refreshCodingChangeSet: runtimeSession.refreshCodingChangeSet,
+        getLatestFileCheckpoint: runtimeSession.getLatestFileCheckpoint,
+        getBaselineCommit: runtimeSession.getBaselineCommit
       });
       if (streamResult.status !== "completed") {
         return streamResult;
@@ -290,9 +324,10 @@ export class LumeRunner {
         sdkThreadId: session.threadId ?? session.sessionId,
         runtimeThreadId: session.threadId ?? session.sessionId
       });
+      await runtimeSession.refreshCodingChangeSet?.();
       return this.complete(
-        runtimeSession.getVerificationStatus?.(),
-        runtimeSession.getVerificationReport?.(),
+        streamResult.verificationStatus ?? runtimeSession.getVerificationStatus?.(),
+        streamResult.codingReport ?? runtimeSession.getVerificationReport?.(),
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

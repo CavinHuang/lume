@@ -147,6 +147,22 @@ describe("capability-routing", () => {
     expect(decision.reason).toContain("coding workflow");
   });
 
+  test("编码请求优先 coding，即使同时提到浏览器页面", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "修复浏览器页面的弹窗层级问题",
+      availableTools: ["browser", "read", "write", "edit", "bash"]
+    });
+    expect(decision.preferredLane).toBe("coding");
+  });
+
+  test("浏览器 UI 遮挡问题也优先 coding，避免误启用桌面自动化", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "浏览器弹窗层级被网页遮住了，看看界面问题",
+      availableTools: ["browser", "read", "write", "edit", "bash"]
+    });
+    expect(decision.preferredLane).toBe("coding");
+  });
+
   test("没有明确 skill 匹配时默认使用 raw-tools 而不是 skills-first", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "帮我看一下这个文件",
@@ -189,6 +205,12 @@ describe("capability-routing", () => {
     });
     expect(resolveSoftToolPolicyForPreferredRoute("web")).toEqual({
       deny: ["browser"]
+    });
+    expect(resolveSoftToolPolicyForPreferredRoute("coding")).toEqual({
+      deny: [
+        "mcp__node_repl__*",
+        "mcp__computer_use__*"
+      ]
     });
     expect(resolveSoftToolPolicyForPreferredRoute("skills")).toBeUndefined();
   });

@@ -270,18 +270,118 @@ export interface RunCompletedRuntimeEvent extends RuntimeEventBase {
 }
 
 export interface RuntimeCodingReport {
+  /** Lume Run identity used by the review/rewind actions. */
+  runId?: string;
+  /** Stable visible Coding Turn identity. */
+  turnId?: string;
+  /** Persisted user message that started the Coding Turn. */
+  userMessageId?: string;
+  /** Visible assistant message created for this Turn, when available. */
+  assistantMessageId?: string;
+  checkpointId?: string;
+  baselineCommit?: string;
+  rewindState?:
+    | "active"
+    | "available"
+    | "unavailable"
+    | "partial"
+    | "conflict"
+    | "committed_boundary";
+  /** Whether the Run has a persisted pre-edit file checkpoint. */
+  canRewind?: boolean;
   status: "not_required" | "unverified" | "verified" | "failed";
   workspaceChanged: boolean;
   changedFiles: string[];
+  changeSet?: RuntimeCodingChangeSet;
+  fileChanges?: RuntimeCodingFileChange[];
+  totalAddedLines?: number;
+  totalRemovedLines?: number;
   externalChangedFiles: string[];
   pendingBackground: boolean;
   verificationRepairAttempts?: number;
   approvalRequestCount?: number;
+  terminationReason?: string;
+  routeReason?: string;
+  toolSelectionReason?: string;
+  nonRewindableFiles?: string[];
   message?: string;
   baselineFailure?: {
     command: string;
     signature: string;
   };
+}
+
+export type CodingVerificationStatus =
+  | "not_run"
+  | "passed"
+  | "failed"
+  | "baseline_failed"
+  | "exhausted";
+
+export type CodingRewindState =
+  | "active"
+  | "available"
+  | "unavailable"
+  | "partial"
+  | "conflict"
+  | "committed_boundary";
+
+export type CodingChangedFileState =
+  | "normal"
+  | "committed"
+  | "external_modified"
+  | "conflict"
+  | "unpreviewable";
+
+export interface RuntimeCodingFileChange {
+  path: string;
+  status?: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  addedLines?: number;
+  removedLines?: number;
+  source?: "git" | "snapshot" | "tool" | "bash" | "subagent" | "external";
+  canUndo?: boolean;
+  oldContentAvailable?: boolean;
+  newContentAvailable?: boolean;
+  state?: CodingChangedFileState;
+  previousPath?: string;
+}
+
+export interface RuntimeCodingChangeSet {
+  turnId?: string;
+  base: "turn_checkpoint" | "git:HEAD" | "git_head" | "workspace_snapshot";
+  isGitRepo: boolean;
+  files: RuntimeCodingFileChange[];
+  totalAddedLines: number;
+  totalRemovedLines: number;
+  generatedAt: string;
+  pendingRewind?: {
+    operationId: string;
+    status: "prepared" | "files_applying" | "files_applied" | "transcript_applying" | "partial";
+    restoredFiles: string[];
+    conflicts: string[];
+    nonRewindableFiles: string[];
+    error?: string;
+  };
+}
+
+export interface CodingTurnRecord {
+  turnId: string;
+  threadId: string;
+  userMessageId: string;
+  assistantMessageId?: string;
+  runIds: string[];
+  startedAt: string;
+  finishedAt?: string;
+  baselineCommit?: string;
+  checkpointId?: string;
+  changedFiles: RuntimeCodingFileChange[];
+  verificationStatus: CodingVerificationStatus;
+  verificationRepairAttempts: number;
+  approvalRequestCount: number;
+  rewindState: CodingRewindState;
+  routeReason?: string;
+  toolSelectionReason?: string;
+  terminationReason?: string;
 }
 
 export interface RunTurnLimitedRuntimeEvent extends RuntimeEventBase {

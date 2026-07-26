@@ -802,6 +802,21 @@ export function truncateAgentMessagesFrom(threadId: string, messageId: string): 
   return kept;
 }
 
+/** 保留目标消息及其之前的消息，用于 Coding Turn 完整回退。 */
+export function truncateAgentMessagesAfter(threadId: string, messageId: string): {
+  messages: AgentMessage[];
+  removed: number;
+} {
+  const messages = getAgentThreadMessages(threadId);
+  const targetIndex = messages.findIndex((msg) => msg.id === messageId);
+  if (targetIndex === -1) {
+    throw new Error(`消息 ${messageId} 在线程 ${threadId} 中未找到`);
+  }
+  const kept = messages.slice(0, targetIndex + 1);
+  replaceAgentThreadTranscript(threadId, kept);
+  return { messages: kept, removed: messages.length - kept.length };
+}
+
 /**
  * 清空指定线程的全部消息与运行记录，保留线程本身（meta 留存），可在同一会话窗口继续对话。
  * 先停止运行中的线程再清空，避免 runtime 在清空后继续写入。

@@ -33,14 +33,22 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   }, [threadId, request.toolUseId])
 
   const select = (question: string, label: string) => {
-    setAnswers((prev) => ({ ...prev, [question]: label }))
+    const nextAnswers = { ...answers, [question]: label }
+    setAnswers(nextAnswers)
+    if (activeQuestionIndex < request.questions.length - 1) {
+      setActiveQuestionIndex((index) => index + 1)
+      return
+    }
+    if (request.questions.every((item) => nextAnswers[item.question])) {
+      void submit(nextAnswers)
+    }
   }
 
-  const submit = async () => {
+  const submit = async (submittedAnswers = answers) => {
     setBusy(true)
     setError(null)
     try {
-      await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, { threadId, toolUseId: request.toolUseId, answers })
+      await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION, { threadId, toolUseId: request.toolUseId, answers: submittedAnswers })
       dismiss()
     } catch (err) {
       // Release 构建无 DevTools，把提交失败直接显示在卡片上，便于定位。
@@ -84,6 +92,7 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
       kind="ask-user"
       title="帮 Lume 做一个选择"
       compact
+      showSubmit={false}
       meta={subagentDisplayLabel ? `来自 ${subagentDisplayLabel}` : 'AskUserQuestion'}
       progress={{
         current: activeQuestionIndex + 1,

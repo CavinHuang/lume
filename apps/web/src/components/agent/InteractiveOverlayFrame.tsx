@@ -34,6 +34,7 @@ interface InteractiveOverlayFrameProps {
   submitDisabled?: boolean
   submitLabel?: string
   compact?: boolean
+  showSubmit?: boolean
   meta?: ReactNode
   progress?: {
     current: number
@@ -55,6 +56,7 @@ export function InteractiveOverlayFrame({
   submitDisabled = false,
   submitLabel = '提交',
   compact = false,
+  showSubmit = true,
   meta,
   progress,
   onSubmit,
@@ -124,16 +126,18 @@ export function InteractiveOverlayFrame({
             >
               跳过 <kbd className="ml-1 rounded bg-white/[0.08] px-1 py-0.5 font-mono text-[10px] text-[#999]">ESC</kbd>
             </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={onSubmit}
-              disabled={busy || submitDisabled}
-              className="h-8 min-w-[76px] rounded-full border border-white/[0.16] bg-white/[0.08] px-3 text-[12px] font-semibold text-white hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}
-              {submitLabel}
-            </Button>
+            {showSubmit && (
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={onSubmit}
+                disabled={busy || submitDisabled}
+                className="h-8 min-w-[76px] rounded-full border border-white/[0.16] bg-white/[0.08] px-3 text-[12px] font-semibold text-white hover:bg-white/[0.14] disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}
+                {submitLabel}
+              </Button>
+            )}
           </div>
         </section>
       </div>
