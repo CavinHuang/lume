@@ -30,6 +30,7 @@ export interface CodingVerificationReport {
   externalChangedFiles: string[];
   pendingBackground: boolean;
   verificationRepairAttempts?: number;
+  verificationNoEvidenceAttempts?: number;
   approvalRequestCount?: number;
   turnId?: string;
   userMessageId?: string;
@@ -53,6 +54,7 @@ interface PersistedCodingRunState {
   attributedCandidates: string[];
   pendingBackground: boolean;
   verificationRepairAttempts?: number;
+  verificationNoEvidenceAttempts?: number;
   backgroundWaitPrompted?: boolean;
   fileChangeStats?: Record<string, FileChangeStats>;
 }
@@ -84,6 +86,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   const attributedCandidates = new Set<string>();
   let pendingBackground = false;
   let verificationRepairAttempts = 0;
+  let verificationNoEvidenceAttempts = 0;
   let backgroundWaitPrompted = false;
   const fileChangeStats = new Map<string, FileChangeStats>();
   let changeSet: RuntimeCodingChangeSet | undefined;
@@ -125,6 +128,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       attributedCandidates: [...attributedCandidates],
       pendingBackground,
       verificationRepairAttempts,
+      verificationNoEvidenceAttempts,
       backgroundWaitPrompted,
       fileChangeStats: Object.fromEntries(fileChangeStats)
     };
@@ -157,6 +161,9 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       pendingBackground = state.pendingBackground === true;
       verificationRepairAttempts = typeof state.verificationRepairAttempts === "number"
         ? Math.max(0, state.verificationRepairAttempts)
+        : 0;
+      verificationNoEvidenceAttempts = typeof state.verificationNoEvidenceAttempts === "number"
+        ? Math.max(0, state.verificationNoEvidenceAttempts)
         : 0;
       backgroundWaitPrompted = state.backgroundWaitPrompted === true;
       for (const [path, stats] of Object.entries(state.fileChangeStats ?? {})) {
@@ -261,6 +268,14 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       return;
     }
     const signature = verificationSignature(input.result);
+    if (getExecutionMetadata(input.result)?.semanticOutcome === "no_matches" && input.result.is_error !== true) {
+      verificationNoEvidenceAttempts += 1;
+      verificationStatus = "unverified";
+      verificationMessage = "验证命令只返回了搜索无匹配，未提供完整测试或类型检查结果。请直接运行原始验证命令，不要用 grep、findstr、Select-String 或 head 过滤。";
+      promptedWithoutEvidence = false;
+      persist();
+      return;
+    }
     if (!mutationObserved && input.result.is_error === true) {
       baselineVerification = { command, signature };
       persist();
@@ -282,6 +297,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     }
     verificationStatus = "verified";
     verificationMessage = "";
+    verificationNoEvidenceAttempts = 0;
     baselineFailure = undefined;
     persist();
   }
@@ -302,6 +318,13 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     }
     if (mutationObserved && options.workspaceRoot) {
       changeSet = await refreshAuthoritativeChangeSet();
+    }
+    if (verificationNoEvidenceAttempts >= 2) {
+      return {
+        type: "stop",
+        errorCode: "verification_inconclusive",
+        message: "验证命令连续返回搜索无匹配，无法确认测试或类型检查结果，已停止继续尝试。请直接运行未过滤的验证命令并查看完整输出。"
+      };
     }
     if (!mutationObserved || verificationStatus === "verified" || verificationStatus === "not_required") return undefined;
     if (verificationStatus === "failed") {
@@ -332,7 +355,9 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     completionGuard,
     getVerificationStatus: () => verificationStatus,
     getVerificationReport: (): CodingVerificationReport => {
-      const changedFiles = flattenWorkspaceSnapshotDiff(workspaceDiff).filter((path) => attributedCandidates.has(path));
+      const snapshotChangedFiles = flattenWorkspaceSnapshotDiff(workspaceDiff).filter((path) => attributedCandidates.has(path));
+      const authoritativeFiles = changeSet?.files.map((file) => file.path) ?? [];
+      const changedFiles = [...new Set([...snapshotChangedFiles, ...authoritativeFiles])];
       const externalChangedFiles = flattenWorkspaceSnapshotDiff(workspaceDiff).filter((path) => !attributedCandidates.has(path));
       const authoritativeChangeSet = changeSet?.isGitRepo ? changeSet : undefined;
       const fileChanges = authoritativeChangeSet?.files.length
@@ -358,6 +383,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         externalChangedFiles,
         pendingBackground,
         verificationRepairAttempts,
+        verificationNoEvidenceAttempts,
         ...(options.turnId ? { turnId: options.turnId } : {}),
         ...(options.userMessageId ? { userMessageId: options.userMessageId } : {}),
         ...(options.routeReason ? { routeReason: options.routeReason } : {}),
@@ -446,6 +472,7 @@ function verificationSignature(result: ToolResult): string {
 function getExecutionMetadata(result: ToolResult): {
   command?: string;
   terminationReason?: string;
+  semanticOutcome?: string;
 } | undefined {
   const execution = result._meta?.execution;
   return execution && typeof execution === "object"

@@ -10,6 +10,7 @@ import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '..
 import { notifyLspFileChanged } from '../lsp/client.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
+import { withFileMutationLock } from '../utils/file-mutation-lock.js'
 
 export const FileEditTool = defineTool({
   name: 'Edit',
@@ -67,15 +68,16 @@ export const FileEditTool = defineTool({
       return { data: 'Error: old_string and new_string are identical', is_error: true }
     }
 
-    try {
+    return withFileMutationLock(filePath, async () => { try {
       const decoded = decodeTextFile(await readFile(filePath))
       let content = decoded.content
 
       const previousRead = context.fileStateCache?.get(filePath)
       if (previousRead && !previousRead.isPartialView && previousRead.content !== content) {
         return {
-          data: 'Error: File has been modified since it was read. Read it again before attempting to edit it.',
+          data: `Error: File has been modified since it was read: ${filePath}. The earlier edit may have succeeded or another process changed it. Read the file again before attempting another Edit.`,
           is_error: true,
+          _meta: { file: { path: filePath, conflict: 'stale_read', retryable: true } },
         }
       }
 
@@ -148,8 +150,8 @@ export const FileEditTool = defineTool({
       if (err.code === 'ENOENT') {
         return { data: `Error: File not found: ${filePath}`, is_error: true }
       }
-      return { data: `Error editing file: ${err.message}`, is_error: true }
-    }
+      return { data: `Error editing file ${filePath}: ${err.code ? `[${err.code}] ` : ''}${err.message}`, is_error: true }
+    } })
   },
 })
 

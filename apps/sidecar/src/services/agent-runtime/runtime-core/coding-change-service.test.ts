@@ -64,4 +64,13 @@ describe("coding-change-service", () => {
       { type: "context", oldLine: 4, newLine: 5, text: "return true;" },
     ]);
   });
+
+  test("保留 unified diff 中的空白新增行和上下文行", () => {
+    const lines = parseUnifiedDiff("@@ -1,2 +1,3 @@\n const value = 1\n+\n+const next = 2\n");
+    expect(lines).toEqual([
+      { type: "context", oldLine: 1, newLine: 1, text: "const value = 1" },
+      { type: "added", newLine: 2, text: "" },
+      { type: "added", newLine: 3, text: "const next = 2" },
+    ]);
+  });
 });

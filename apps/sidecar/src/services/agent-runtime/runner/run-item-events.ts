@@ -293,6 +293,9 @@ function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").
     ...(typeof record.outputLimitReached === "boolean" ? { outputLimitReached: record.outputLimitReached } : {}),
     durationMs: record.durationMs,
     command: record.command,
+    ...(record.shell === "bash" || record.shell === "powershell" ? { shell: record.shell } : {}),
+    ...(record.semanticOutcome === "no_matches" || record.semanticOutcome === "condition_false" || record.semanticOutcome === "files_differ"
+      ? { semanticOutcome: record.semanticOutcome } : {}),
     ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),
     ...(typeof record.workspaceChanged === "boolean" ? { workspaceChanged: record.workspaceChanged } : {}),
     ...(resultRef?.kind === "file" && typeof resultRef.path === "string" && typeof resultRef.size === "number"

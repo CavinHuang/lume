@@ -3,6 +3,7 @@
 import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { StringDecoder } from 'node:string_decoder'
 import { createProcessJobRecord, registerProcessStopHandler, unregisterProcessStopHandler, updateProcessJob } from './process-job-registry.js'
 import { defineTool } from './types.js'
 import type { ToolContext, ToolExecutionMetadata, ToolResult } from '../types.js'
@@ -47,6 +48,15 @@ export const BashTool = defineTool({
     const purpose = typeof input.purpose === 'string' && input.purpose.trim() ? input.purpose.trim() : undefined
     const blocked = findBlockedCommand(command, context.sandbox?.excludedCommands ?? [])
     if (blocked) return { data: `Sandbox blocked command prefix "${blocked}"`, is_error: true }
+    const shell = resolveShellInvocation(command)
+    const dialectError = getShellDialectError(command, shell.command)
+    if (dialectError) {
+      return {
+        data: dialectError,
+        is_error: true,
+        _meta: { error: { code: 'mixed_shell_dialect', shell: shellKind(shell.command), command } },
+      }
+    }
 
     const task = await startShellTask({ command, timeoutMs, purpose, context })
     if (input.run_in_background) return promoteToBackground(task, input.description, context)
@@ -135,6 +145,7 @@ async function startShellTask({
   await writeFile(outputFile, '', 'utf8')
 
   const shell = resolveShellInvocation(command)
+  const shellType = shellKind(shell.command)
   const sandbox = withBundledRipgrepSandbox(context.sandbox)
   const detached = process.platform !== 'win32'
   const proc = spawnWithProcessSandbox(shell.command, shell.args, {
@@ -148,6 +159,8 @@ async function startShellTask({
   let outputBytes = 0
   let stdoutPreview = ''
   let stderrPreview = ''
+  const stdoutDecoder = new StringDecoder('utf8')
+  const stderrDecoder = new StringDecoder('utf8')
   let terminationReason: ToolExecutionMetadata['terminationReason'] = 'completed'
   let settled = false
   let writeChain = Promise.resolve()
@@ -176,7 +189,7 @@ async function startShellTask({
     const accepted = remaining > 0 ? chunk.subarray(0, remaining) : Buffer.alloc(0)
     outputBytes += accepted.length
     if (accepted.length > 0) {
-      const text = accepted.toString('utf8')
+      const text = (stream === 'stdout' ? stdoutDecoder : stderrDecoder).write(accepted)
       if (stream === 'stdout') stdoutPreview = appendPreview(stdoutPreview, text)
       else stderrPreview = appendPreview(stderrPreview, text)
       writeChain = writeChain.then(() => appendFile(outputFile, accepted))
@@ -212,6 +225,10 @@ async function startShellTask({
       clearTimeout(timeoutTimer)
       context.abortSignal?.removeEventListener('abort', abortHandler)
       if (progressTimer) clearInterval(progressTimer)
+      const stdoutTail = stdoutDecoder.end()
+      const stderrTail = stderrDecoder.end()
+      if (stdoutTail) stdoutPreview = appendPreview(stdoutPreview, stdoutTail)
+      if (stderrTail) stderrPreview = appendPreview(stderrPreview, stderrTail)
       if (spawnError) stderrPreview = appendPreview(stderrPreview, spawnError)
       await writeChain.catch(() => undefined)
       const interpretation = interpretShellExit(command, code ?? 1)
@@ -219,6 +236,8 @@ async function startShellTask({
       if (spawnError) terminationReason = 'spawn_error'
       const execution = await createExecutionMetadata({
         command,
+        shell: shellType,
+        ...(interpretation.semanticOutcome ? { semanticOutcome: interpretation.semanticOutcome } : {}),
         purpose,
         outputFile,
         outputBytes,
@@ -228,8 +247,19 @@ async function startShellTask({
         startedAt,
         terminationReason,
       })
-      const output = [stdoutPreview, stderrPreview, spawnError, code !== 0 && code !== null ? interpretation.message : '']
-        .filter(Boolean).join('\n') || '(no output)'
+      const output = [
+        terminationReason === 'completed'
+          ? (interpretation.semanticOutcome === 'no_matches'
+            ? 'Command completed: no matches found (exit code 1).'
+            : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
+          : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`,
+        stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
+        stderrPreview ? `stderr:\n${stderrPreview}` : '',
+        spawnError ? `process error: ${spawnError}` : '',
+        code !== 0 && code !== null
+          ? `Bash failed (${shellType}, exit code ${code}): ${interpretation.message}`
+          : '',
+      ].filter(Boolean).join('\n') || '(no output)'
       const result = { output, isError: terminationReason !== 'completed' || interpretation.isError, execution }
       completedResult = result
       completeBackgroundTask(result)
@@ -272,7 +302,7 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
     status: 'running',
     outputFile: task.outputFile,
     taskType: 'shell',
-    metadata: { execution: runningExecution(task.command, task.outputFile) },
+    metadata: { execution: runningExecution(task.command, task.outputFile, shellKind(resolveShellInvocation(task.command).command)) },
   })
   task.promote(job.id, subject)
   context.emitEvent?.({
@@ -283,7 +313,7 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
     type: 'tool_result',
     tool_use_id: '',
     content: `${automatic ? 'Command exceeded the 15s foreground budget and was moved' : 'Background process started'}: ${job.id}\nUse ProcessOutput with task_id=${job.id} to inspect progress.`,
-    _meta: { execution: runningExecution(task.command, task.outputFile), task: { id: job.id, status: 'running', kind: 'shell', autoBackgrounded: automatic } },
+    _meta: { execution: runningExecution(task.command, task.outputFile, shellKind(resolveShellInvocation(task.command).command)), task: { id: job.id, status: 'running', kind: 'shell', autoBackgrounded: automatic } },
   }
 }
 
@@ -297,16 +327,16 @@ function toToolResult(result: ShellTaskResult): ToolResult {
   return { type: 'tool_result', tool_use_id: '', content: boundedPreview(result.output, MAX_RESULT_CHARS), ...(result.isError ? { is_error: true } : {}), _meta: { execution: result.execution } }
 }
 
-function runningExecution(command: string, outputFile: string): ToolExecutionMetadata {
+function runningExecution(command: string, outputFile: string, shell: 'bash' | 'powershell' = process.platform === 'win32' ? 'powershell' : 'bash'): ToolExecutionMetadata {
   return {
-    version: 1, durationMs: 0, command: redactSensitiveText(command), terminationReason: 'running',
+    version: 1, durationMs: 0, command: redactSensitiveText(command), shell, terminationReason: 'running',
     resultRef: { kind: 'file', path: outputFile, size: 0, mimeType: 'text/plain' },
   }
 }
 
 async function createExecutionMetadata(input: {
   command: string; purpose?: string; outputFile: string; outputBytes: number; stdoutPreview: string; stderrPreview: string
-  code: number | null; startedAt: number; terminationReason: ToolExecutionMetadata['terminationReason']
+  code: number | null; startedAt: number; shell: 'bash' | 'powershell'; semanticOutcome?: 'no_matches' | 'condition_false' | 'files_differ'; terminationReason: ToolExecutionMetadata['terminationReason']
 }): Promise<ToolExecutionMetadata> {
   let size = input.outputBytes
   try { size = (await stat(input.outputFile)).size } catch { /* keep captured byte count */ }
@@ -315,10 +345,23 @@ async function createExecutionMetadata(input: {
     ...(input.terminationReason === 'timeout' ? { timedOut: true } : {}),
     ...(input.terminationReason === 'aborted' ? { aborted: true } : {}),
     ...(input.terminationReason === 'output_limit' ? { outputLimitReached: true } : {}),
-    durationMs: Date.now() - input.startedAt, command: redactSensitiveText(input.command),
+    durationMs: Date.now() - input.startedAt, command: redactSensitiveText(input.command), shell: input.shell,
+    ...(input.semanticOutcome ? { semanticOutcome: input.semanticOutcome } : {}),
     ...(input.purpose ? { purpose: input.purpose } : {}), terminationReason: input.terminationReason,
     resultRef: { kind: 'file', path: input.outputFile, size, mimeType: 'text/plain' },
   }
+}
+
+function shellKind(command: string): 'bash' | 'powershell' {
+  return /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(command) ? 'powershell' : 'bash'
+}
+
+function getShellDialectError(command: string, shellCommand: string): string | undefined {
+  if (shellKind(shellCommand) !== 'powershell') return undefined
+  if (/\bcd\s+\/d\b/i.test(command) || /\bfindstr\b[\s\S]*\|\s*head\b/i.test(command)) {
+    return `Bash command was not executed: the current shell is PowerShell, but the command mixes cmd/POSIX syntax (${command.match(/\bcd\s+\/d\b/i)?.[0] ?? 'mixed pipeline'}). Use PowerShell syntax such as Set-Location, Select-String, and Select-Object -Last, or configure an explicit POSIX Bash.`
+  }
+  return undefined
 }
 
 function withBundledRipgrepSandbox(sandbox: ToolContext['sandbox']): ToolContext['sandbox'] {
@@ -366,12 +409,12 @@ function redactSensitiveText(value: string): string {
     .replace(/((?:api[_-]?key|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
 }
 
-function interpretShellExit(command: string, exitCode: number): { isError: boolean; message: string } {
+export function interpretShellExit(command: string, exitCode: number): { isError: boolean; message: string; semanticOutcome?: 'no_matches' | 'condition_false' | 'files_differ' } {
   const lastCommand = command.split(/\r?\n|&&|\|\||[|;&]/).map((part) => part.trim()).filter(Boolean).pop() || command.trim()
   const executable = lastCommand.match(/^(?:['"]([^'"]+)['"]|(\S+))/)?.slice(1).find(Boolean) || ''
   const name = executable.split(/[\\/]/).pop()?.replace(/\.(?:exe|cmd|bat)$/i, '').toLowerCase()
-  if (exitCode === 1 && (name === 'grep' || name === 'rg' || name === 'findstr')) return { isError: false, message: 'No matches found' }
-  if (exitCode === 1 && (name === 'diff' || name === 'test' || name === '[')) return { isError: false, message: name === 'diff' ? 'Files differ' : 'Condition is false' }
+  if (exitCode === 1 && (name === 'grep' || name === 'rg' || name === 'findstr' || name === 'select-string')) return { isError: false, message: 'No matches found', semanticOutcome: 'no_matches' }
+  if (exitCode === 1 && (name === 'diff' || name === 'test' || name === '[')) return { isError: false, message: name === 'diff' ? 'Files differ' : 'Condition is false', semanticOutcome: name === 'diff' ? 'files_differ' : 'condition_false' }
   return { isError: exitCode !== 0, message: `Exit code: ${exitCode}` }
 }
 

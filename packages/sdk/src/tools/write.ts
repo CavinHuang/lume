@@ -9,6 +9,7 @@ import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '..
 import { notifyLspFileChanged } from '../lsp/client.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
+import { withFileMutationLock } from '../utils/file-mutation-lock.js'
 
 const DEFAULT_MAX_WRITE_BYTES = 4 * 1024 * 1024
 
@@ -53,7 +54,7 @@ export const FileWriteTool = defineTool({
       return { data: sandboxError, is_error: true }
     }
 
-    try {
+    return withFileMutationLock(filePath, async () => { try {
       const bytes = Buffer.byteLength(input.content, 'utf8')
       const maxBytes = configuredPositiveNumber(context, 'writeMaxBytes', DEFAULT_MAX_WRITE_BYTES)
       if (bytes > maxBytes) {
@@ -83,8 +84,9 @@ export const FileWriteTool = defineTool({
         )
         if (changedSinceRead) {
           return {
-            data: 'Error: File has been modified since it was read. Read it again before attempting to overwrite it.',
+            data: `Error: File has been modified since it was read: ${filePath}. Read it again before attempting to overwrite it; this prevents a later Write from overwriting an earlier successful edit.`,
             is_error: true,
+            _meta: { file: { path: filePath, conflict: 'stale_read', retryable: true } },
           }
         }
         encoded = encodeTextFile(input.content, decoded)
@@ -123,8 +125,8 @@ export const FileWriteTool = defineTool({
         },
       }
     } catch (err: any) {
-      return { data: `Error writing file: ${err.message}`, is_error: true }
-    }
+      return { data: `Error writing file ${filePath}: ${err.code ? `[${err.code}] ` : ''}${err.message}`, is_error: true }
+    } })
   },
 })
 

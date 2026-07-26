@@ -423,6 +423,10 @@ export function WelcomeView({
         })
       attempt.meta = meta
 
+      // Seed the per-thread override before the message page mounts. Otherwise
+      // its config/plan-phase effects can briefly apply the global default.
+      setThreadPermissionModes((prev) => ({ ...prev, [meta.id]: permissionMode }))
+
       let messageAttachments: AgentMessageAttachmentInput[] = []
       if (pendingFiles.length > 0) {
         const savedFiles = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
@@ -470,7 +474,6 @@ export function WelcomeView({
       } as any)
       pendingWelcomeSubmissionRef.current = null
 
-      setThreadPermissionModes((prev) => ({ ...prev, [meta.id]: permissionMode }))
       setTabs((prev) => {
         const withoutWelcome = prev.filter((t) => t.id !== '__welcome__')
         return [

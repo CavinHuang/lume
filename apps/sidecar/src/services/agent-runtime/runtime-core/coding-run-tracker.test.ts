@@ -48,6 +48,22 @@ describe("coding run tracker", () => {
     });
   });
 
+  test("does not treat a filtered no-match result as verification evidence", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
+    const noMatches = result("Command completed: no matches found", false, {
+      execution: { version: 1, durationMs: 1, command: "bun test | Select-String error", terminationReason: "completed", semanticOutcome: "no_matches" }
+    });
+    tracker.observe({ toolName: "Bash", input: { command: "bun test | Select-String error", purpose: "verification" }, result: noMatches });
+    await expect(tracker.completionGuard()).resolves.toContain("verification needed");
+    expect(tracker.getVerificationStatus()).toBe("unverified");
+    tracker.observe({ toolName: "Bash", input: { command: "bun test | Select-String error", purpose: "verification" }, result: noMatches });
+    await expect(tracker.completionGuard()).resolves.toMatchObject({
+      type: "stop",
+      errorCode: "verification_inconclusive"
+    });
+  });
+
   test("persists the baseline failure and identifies the same failure after a later mutation", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-coding-state-"));
     const statePath = join(root, "session", "coding-state.v1.json");

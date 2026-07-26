@@ -417,6 +417,11 @@ export function AgentInput({
 
   useEffect(() => {
     setPermissionMode((current) => {
+      const threadPermissionMode = threadPermissionModes[threadId]
+      if (threadPermissionMode) {
+        autoSelectedPlanModeRef.current = false
+        return threadPermissionMode
+      }
       const next = syncPermissionModeWithPlanModePhase({
         permissionMode: current,
         defaultPermissionMode: defaultPermissionModeRef.current,
@@ -426,7 +431,7 @@ export function AgentInput({
       autoSelectedPlanModeRef.current = next.autoSelectedPlan
       return next.permissionMode
     })
-  }, [planModePhase?.phase, threadId])
+  }, [planModePhase?.phase, threadId, threadPermissionModes])
 
   useEffect(() => {
     const targetId = thread?.workspaceId ?? currentWorkspaceId

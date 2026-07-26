@@ -57,7 +57,7 @@ export function defineTool(config: {
         return {
           type: 'tool_result',
           tool_use_id: '',
-          content: `Error: ${err.message}`,
+          content: formatToolError(err, config.name),
           is_error: true,
         }
       }
@@ -100,6 +100,19 @@ function normalizeToolCallResult(
     is_error: result.is_error || false,
     ...(result._meta ? { _meta: result._meta } : {}),
   }
+}
+
+/** Keep provider-facing failures actionable without leaking a stack trace. */
+export function formatToolError(error: unknown, toolName?: string): string {
+  if (error instanceof Error) {
+    const record = error as Error & { code?: unknown; cause?: unknown }
+    const name = record.name && record.name !== 'Error' ? `${record.name}: ` : ''
+    const code = typeof record.code === 'string' ? ` [${record.code}]` : ''
+    const prefix = toolName ? `Error in ${toolName}` : 'Error'
+    const cause = record.cause instanceof Error ? ` Cause: ${record.cause.message}` : ''
+    return `${prefix}${code}: ${name}${record.message || 'Unknown error'}${cause}`
+  }
+  return `${toolName ? `Error in ${toolName}` : 'Error'}: ${String(error)}`
 }
 
 function isToolResult(value: unknown): value is ToolResult {

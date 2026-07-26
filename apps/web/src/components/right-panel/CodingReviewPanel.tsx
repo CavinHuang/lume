@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { History, Loader2, Undo2, X } from 'lucide-react'
+import { Check, ChevronDown, History, Loader2, Undo2, X } from 'lucide-react'
+import { highlightToTokens } from '@lume/ui'
+import type { HighlightToken } from '@lume/ui'
 import type { RuntimeCodingFileChange } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
@@ -46,6 +48,8 @@ export function CodingReviewPanel({ threadId, state, onClose }: {
   const visibleChanges = activeTab === 'workspace' ? workspaceChanges : state.changes
   const filteredChanges = visibleChanges.filter((change) => change.path.toLowerCase().includes(filter.toLowerCase()))
   const selectedChange = filteredChanges.find((change) => change.path === selectedPath) ?? filteredChanges[0]
+  const totalAdded = visibleChanges.reduce((sum, change) => sum + (change.addedLines ?? 0), 0)
+  const totalRemoved = visibleChanges.reduce((sum, change) => sum + (change.removedLines ?? 0), 0)
 
   useEffect(() => {
     void sidecarCall<{ files?: RuntimeCodingFileChange[]; pendingRewind?: { operationId: string; status: string; error?: string } } | RuntimeCodingFileChange[]>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, { threadId })
@@ -85,7 +89,12 @@ export function CodingReviewPanel({ threadId, state, onClose }: {
     }).then((next) => {
       if (!cancelled) setReview(next)
     }).catch((cause) => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : '无法加载 Coding diff')
+      if (!cancelled) {
+        const message = cause instanceof Error ? cause.message : String(cause)
+        setError(message.includes('unsupported renderer sidecar method')
+          ? '当前桌面端未加载 Coding diff RPC，请重启 Lume 后重试。'
+          : message || '无法加载 Coding diff')
+      }
     }).finally(() => {
       if (!cancelled) setLoading(false)
     })
@@ -130,35 +139,36 @@ export function CodingReviewPanel({ threadId, state, onClose }: {
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col bg-[var(--lume-bg-panel)]" aria-label="Coding 变更审核">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--lume-border-subtle)] px-3">
+    <section className="flex min-h-0 flex-1 flex-col bg-[#181818] text-[#e8e8e8]" aria-label="Coding 变更审核">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] px-4">
+        <div className="flex size-7 items-center justify-center rounded-md border border-white/15 text-[#a8a8a8]"><span className="text-sm">✎</span></div>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-[var(--lume-text-primary)]">审核变更</div>
-          <div className="text-[11px] text-[var(--lume-text-muted)]">{visibleChanges.length} 个文件</div>
+          <div className="truncate text-sm font-semibold">已编辑的文件 <ChevronDown className="ml-1 inline size-3.5 text-white/50" /></div>
+          <div className="text-[11px] text-white/45">本次 Coding Turn · {visibleChanges.length} 个文件 <span className="ml-2 text-emerald-300">+{totalAdded}</span> <span className="ml-1 text-red-300">-{totalRemoved}</span></div>
         </div>
         {state.onRevertRun && (
-          <Button variant="ghost" size="sm" disabled={reverting} onClick={() => void revertRun()} title="撤销本次 Coding Run">
+          <Button variant="ghost" size="sm" className="text-white/65 hover:bg-white/10 hover:text-white" disabled={reverting} onClick={() => void revertRun()} title="撤销本次 Coding Run">
             {reverting ? <Loader2 className="animate-spin" /> : <Undo2 />}
             撤销本次
           </Button>
         )}
         {state.onRewindTurn && (
-          <Button variant="ghost" size="sm" disabled={rewinding} onClick={() => void rewindTurn()} title="恢复文件并删除此 Turn 之后的会话消息">
+          <Button variant="ghost" size="sm" className="text-white/65 hover:bg-white/10 hover:text-white" disabled={rewinding} onClick={() => void rewindTurn()} title="恢复文件并删除此 Turn 之后的会话消息">
             {rewinding ? <Loader2 className="animate-spin" /> : <History />}
             回退会话
           </Button>
         )}
-        <Button variant="ghost" size="icon-sm" onClick={onClose} title="关闭审核面板" aria-label="关闭审核面板">
+        <Button variant="ghost" size="icon-sm" className="text-white/60 hover:bg-white/10 hover:text-white" onClick={onClose} title="关闭审核面板" aria-label="关闭审核面板">
           <X />
         </Button>
       </header>
       {pendingRewind && (
-        <div className="border-b border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+        <div className="border-b border-amber-400/20 bg-amber-400/10 px-4 py-2 text-xs text-amber-200">
           存在未完成的回退事务（{pendingRewind.operationId.slice(0, 8)}…，{pendingRewind.status}）。请检查已恢复和冲突文件后再继续。
           {pendingRewind.error && <div className="mt-1 break-words opacity-80">{pendingRewind.error}</div>}
         </div>
       )}
-      <nav className="flex h-10 shrink-0 items-end gap-4 border-b border-[var(--lume-border-subtle)] px-3" aria-label="Coding 变更范围">
+      <nav className="flex h-11 shrink-0 items-end gap-5 border-b border-white/[0.08] px-4" aria-label="Coding 变更范围">
         {([
           ['session', '会话文件'],
           ['workspace', '工作区文件'],
@@ -168,7 +178,7 @@ export function CodingReviewPanel({ threadId, state, onClose }: {
             key={value}
             variant="ghost"
             size="sm"
-            className={cn('h-9 rounded-none border-b-2 px-0 text-xs', activeTab === value ? 'border-foreground text-foreground' : 'border-transparent text-muted-foreground')}
+            className={cn('h-10 rounded-none border-b-2 px-0 text-xs', activeTab === value ? 'border-white text-white' : 'border-transparent text-white/45 hover:text-white/80')}
             onClick={() => {
               setActiveTab(value)
               const next = (value === 'workspace' ? workspaceChanges : state.changes)[0]?.path
@@ -179,28 +189,28 @@ export function CodingReviewPanel({ threadId, state, onClose }: {
           </Button>
         ))}
       </nav>
-      <div className="flex shrink-0 items-center gap-2 border-b border-[var(--lume-border-subtle)] px-3 py-2">
+      <div className="flex shrink-0 items-center gap-3 border-b border-white/[0.08] px-4 py-2">
         <Input
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
           placeholder="筛选文件"
           aria-label="筛选 Coding 文件"
-          className="h-7 min-w-0 flex-1 px-2 text-xs"
+          className="h-8 min-w-0 flex-1 border-white/15 bg-white/[0.06] text-xs text-white placeholder:text-white/35 focus-visible:ring-white/20"
         />
-        <span className="shrink-0 text-[11px] text-muted-foreground">
+        <span className="shrink-0 text-[11px] text-white/45">
           {reviewStatus?.unseenPaths.length ?? 0} 个未查看
         </span>
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 px-2 text-xs"
+          className="h-8 px-2 text-xs text-white/75 hover:bg-white/10 hover:text-white"
           onClick={() => reviewStatusAction({ type: 'complete', threadId, paths: state.changes.map((change) => change.path) })}
         >
-          {reviewStatus?.completed ? '已审核' : '审核完成'}
+          {reviewStatus?.completed ? <><Check className="mr-1 size-3.5" />已审核</> : '审核完成'}
         </Button>
       </div>
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(150px,0.36fr)_minmax(0,1fr)]">
-        <div className="min-h-0 overflow-auto border-r border-[var(--lume-border-subtle)] p-1.5">
+        <div className="min-h-0 overflow-auto border-r border-white/[0.08] p-2">
           {filteredChanges.map((change) => (
             <ChangeFileButton
               key={change.path}
@@ -212,20 +222,20 @@ export function CodingReviewPanel({ threadId, state, onClose }: {
             />
           ))}
         </div>
-        <div className="min-w-0 min-h-0 overflow-auto p-2">
+        <div className="min-w-0 min-h-0 overflow-auto bg-[#111111] p-3">
           {loading ? (
-            <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 size-4 animate-spin" />正在加载 diff…</div>
+            <div className="flex min-h-32 items-center justify-center text-sm text-white/45"><Loader2 className="mr-2 size-4 animate-spin" />正在加载 diff…</div>
           ) : error ? (
-            <div className="flex min-h-32 items-center justify-center px-4 text-center text-sm text-destructive">{error}</div>
+            <div className="m-3 rounded-md border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-200">{error}</div>
           ) : review ? (
-            review.lines.length > 0 ? <UnifiedDiffPane lines={review.lines} /> : (
+            review.lines.length > 0 ? <UnifiedDiffPane lines={review.lines} path={review.path} /> : (
               <div className="grid min-h-40 gap-3 xl:grid-cols-2">
                 <DiffPane title="修改前" content={review.oldContent} tone="removed" />
                 <DiffPane title="修改后" content={review.newContent} tone="added" />
               </div>
             )
           ) : (
-            <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">选择文件查看变更</div>
+            <div className="flex min-h-32 items-center justify-center text-sm text-white/40">选择文件查看变更</div>
           )}
         </div>
       </div>
@@ -242,17 +252,17 @@ function ChangeFileButton({ change, selected, onClick, onRevert, canRevert }: {
 }) {
   return (
     <div className={cn(
-      'mb-0.5 flex min-h-10 w-full items-center rounded-md',
-      selected ? 'bg-accent text-accent-foreground' : 'text-muted-foreground',
+      'mb-1 flex min-h-11 w-full items-center rounded-md border border-transparent',
+      selected ? 'border-white/10 bg-white/[0.10] text-white' : 'text-white/55 hover:bg-white/[0.05]',
     )}>
       <Button
         variant="ghost"
         size="sm"
-        className="h-auto min-w-0 flex-1 justify-start rounded-md px-2 py-1.5 text-left text-xs font-normal"
+        className="h-auto min-w-0 flex-1 justify-start rounded-md px-2 py-2 text-left text-xs font-normal text-inherit hover:bg-transparent hover:text-white"
         onClick={onClick}
       >
         <span className={cn(
-          'mr-1 shrink-0 text-[10px] font-semibold uppercase',
+          'mr-2 shrink-0 text-[10px] font-semibold uppercase',
           change.status === 'added' || change.status === 'untracked' ? 'text-emerald-500' :
             change.status === 'deleted' ? 'text-red-500' :
               change.state === 'conflict' || change.state === 'external_modified' ? 'text-amber-500' : 'text-muted-foreground',
@@ -287,10 +297,12 @@ function ChangeFileButton({ change, selected, onClick, onRevert, canRevert }: {
   )
 }
 
-function UnifiedDiffPane({ lines }: { lines: CodingDiffLine[] }) {
+function UnifiedDiffPane({ lines, path }: { lines: CodingDiffLine[]; path: string }) {
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-muted/20">
-      <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">逐行变更</div>
+    <div className="min-w-0 overflow-hidden rounded-lg border border-white/[0.10] bg-[#1b1b1b] shadow-2xl">
+      <div className="flex items-center justify-between border-b border-white/[0.08] px-3 py-2 text-xs font-medium text-white/55">
+        <span>逐行变更</span><span className="text-[10px] text-white/30">统一 diff</span>
+      </div>
       <pre className="max-h-[calc(100vh-7rem)] overflow-auto p-0 text-xs leading-5">
         <code>
           {lines.map((line, index) => (
@@ -298,19 +310,48 @@ function UnifiedDiffPane({ lines }: { lines: CodingDiffLine[] }) {
               key={`${line.type}-${line.oldLine ?? ''}-${line.newLine ?? ''}-${index}`}
               className={cn(
                 'grid grid-cols-[3.25rem_3.25rem_minmax(0,1fr)] px-2',
-                line.type === 'added' ? 'bg-emerald-500/15 text-emerald-950 dark:text-emerald-100' :
-                  line.type === 'removed' ? 'bg-red-500/15 text-red-950 dark:text-red-100' : 'text-foreground/75',
+                line.type === 'added' ? 'bg-[#12351f] text-[#b6f4c6]' :
+                  line.type === 'removed' ? 'bg-[#3b1d1b] text-[#ffb8b0]' : 'text-white/65',
               )}
             >
-              <span className="select-none border-r border-border/50 pr-2 text-right text-muted-foreground/60">{line.oldLine ?? ''}</span>
-              <span className="select-none border-r border-border/50 pr-2 text-right text-muted-foreground/60">{line.newLine ?? ''}</span>
-              <span className="min-w-0 whitespace-pre-wrap break-words pl-2"><span className="select-none opacity-60">{line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}</span>{line.text || ' '}</span>
+              <span className="select-none border-r border-white/[0.08] pr-2 text-right text-white/25">{line.oldLine ?? ''}</span>
+              <span className="select-none border-r border-white/[0.08] pr-2 text-right text-white/25">{line.newLine ?? ''}</span>
+              <DiffSyntaxLine line={line} language={languageForPath(path)} />
             </div>
           ))}
         </code>
       </pre>
     </div>
   )
+}
+
+function DiffSyntaxLine({ line, language }: { line: CodingDiffLine; language: string }) {
+  const highlighted = useMemo(() => highlightToTokens({ code: line.text, language, theme: 'github-dark' }), [line.text, language])
+  const tokens: HighlightToken[] = highlighted?.lines[0] ?? []
+  const tokenLength = tokens.reduce((sum, token) => sum + token.content.length, 0)
+  return (
+    <span className="min-w-0 whitespace-pre-wrap break-words pl-2">
+      <span className="mr-1 select-none opacity-50">{line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}</span>
+      {tokens.map((token, index) => <span key={index} style={token.color ? { color: token.color } : undefined}>{token.content}</span>)}
+      {tokenLength < line.text.length && line.text.slice(tokenLength)}
+      {line.text.length === 0 && ' '}
+    </span>
+  )
+}
+
+function languageForPath(path: string): string {
+  const extension = path.split('.').pop()?.toLowerCase()
+  return extension === 'tsx' ? 'tsx'
+    : extension === 'ts' ? 'typescript'
+      : extension === 'jsx' ? 'jsx'
+        : extension === 'js' ? 'javascript'
+          : extension === 'json' ? 'json'
+            : extension === 'css' ? 'css'
+              : extension === 'html' ? 'html'
+                : extension === 'md' ? 'markdown'
+                  : extension === 'py' ? 'python'
+                    : extension === 'sh' || extension === 'bash' ? 'shellscript'
+                      : 'text'
 }
 
 function DiffPane({ title, content, tone }: { title: string; content: string; tone: 'added' | 'removed' }) {

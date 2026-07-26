@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool } from "./bash";
+import { BashTool, interpretShellExit } from "./bash";
 import { clearTasks, TaskOutputTool } from "./task-tools";
+import { createProcessJobRecord } from "./process-job-registry";
 import { resolveShellInvocation } from "../utils/shell-invocation";
 
 describe("BashTool shell invocation", () => {
@@ -73,6 +74,14 @@ describe("BashTool shell invocation", () => {
     expect(result.content).toContain("No matches found");
   });
 
+  test("recognizes PowerShell Select-String no-match as a semantic result", () => {
+    expect(interpretShellExit("bun test | Select-String error", 1)).toEqual({
+      isError: false,
+      message: "No matches found",
+      semanticOutcome: "no_matches",
+    });
+  });
+
   test("returns a running result and exposes terminal metadata through TaskOutput", async () => {
     clearTasks();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-background-"));
@@ -90,5 +99,13 @@ describe("BashTool shell invocation", () => {
     const incremental = await TaskOutputTool.call({ task_id: taskId, block: false, offset: 0, limit: 4 }, context);
     expect(incremental.content).toContain("back");
     expect(incremental._meta?.task).toMatchObject({ outputOffset: 0, nextOffset: 4, truncated: true });
+  });
+
+  test("keeps UTF-8 intact when TaskOutput resumes inside a multibyte character", async () => {
+    clearTasks();
+    const job = createProcessJobRecord({ subject: "utf8", status: "completed", output: "甲乙丙" });
+    const result = await TaskOutputTool.call({ task_id: job.id, block: false, offset: 1, limit: 4 }, { cwd: tmpdir() });
+    expect(result.content).toContain("乙");
+    expect(result.content).not.toContain("�");
   });
 });

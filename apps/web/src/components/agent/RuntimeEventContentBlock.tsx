@@ -1595,7 +1595,8 @@ function formatFileList(files: string[]): string {
 function ToolExecutionDetails({ toolCall }: { toolCall: RuntimeToolCallView }) {
   const execution = toolCall.execution
   const resultRef = toolCall.resultRef ?? execution?.resultRef
-  if (!execution && !resultRef) return null
+  const errorText = toolCall.status === 'failed' ? formatToolErrorOutput(toolCall.output) : ''
+  if (!execution && !resultRef && !errorText) return null
 
   const terminationLabel = execution?.terminationReason === 'completed'
     ? '正常结束'
@@ -1613,15 +1614,24 @@ function ToolExecutionDetails({ toolCall }: { toolCall: RuntimeToolCallView }) {
 
   return (
     <div className="mb-2 space-y-1 rounded-md bg-foreground/[0.03] px-2.5 py-2 text-[11px] text-foreground/55">
+      {errorText && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-destructive/[0.06] p-2 font-mono text-[11px] leading-5 text-destructive">{errorText}</pre>}
       {execution?.command && <div className="break-all"><span className="mr-1 text-foreground/40">命令</span><code>{execution.command}</code></div>}
       <div className="flex flex-wrap gap-x-3 gap-y-1">
         {terminationLabel && <span>结果：{terminationLabel}</span>}
         {typeof execution?.exitCode === 'number' && <span>退出码：{execution.exitCode}</span>}
+        {execution?.shell && <span>Shell：{execution.shell === 'powershell' ? 'PowerShell' : 'Bash'}</span>}
         {typeof execution?.durationMs === 'number' && <span>耗时：{formatDurationLabel(execution.durationMs)}</span>}
       </div>
+      {execution?.stderrPreview && <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words text-[10px] text-amber-600 dark:text-amber-300">stderr: {execution.stderrPreview}</pre>}
       {resultRef && <div className="break-all"><span className="mr-1 text-foreground/40">结果文件</span>{resultRef.path}</div>}
     </div>
   )
+}
+
+function formatToolErrorOutput(output: unknown): string {
+  if (typeof output === 'string') return output.slice(0, 8_000)
+  if (!output || typeof output !== 'object') return String(output ?? '')
+  try { return JSON.stringify(output, null, 2).slice(0, 8_000) } catch { return String(output) }
 }
 
 function MinimalAssistantContent({

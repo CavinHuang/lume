@@ -299,6 +299,7 @@ export interface RuntimeCodingReport {
   externalChangedFiles: string[];
   pendingBackground: boolean;
   verificationRepairAttempts?: number;
+  verificationNoEvidenceAttempts?: number;
   approvalRequestCount?: number;
   terminationReason?: string;
   routeReason?: string;
@@ -533,6 +534,8 @@ export interface ToolExecutionMetadata {
   outputLimitReached?: boolean;
   durationMs: number;
   command: string;
+  shell?: "bash" | "powershell";
+  semanticOutcome?: "no_matches" | "condition_false" | "files_differ";
   purpose?: string;
   workspaceChanged?: boolean;
   resultRef?: {

@@ -135,21 +135,38 @@ async function readJobOutput(job: ProcessJob, offset: number, limit: number): Pr
   if (!job.outputFile) {
     const text = job.output ?? ''
     const bytes = Buffer.from(text)
-    const chunk = bytes.subarray(offset, offset + limit)
-    return { text: chunk.toString('utf8'), size: bytes.length, nextOffset: offset + chunk.length, truncated: offset + chunk.length < bytes.length }
+    return decodeUtf8Window(bytes, bytes.length, offset, limit, 0)
   }
   try {
     const info = await stat(job.outputFile)
-    const start = Math.min(offset, info.size)
-    const bytes = Buffer.alloc(Math.min(limit, info.size - start))
+    const readStart = Math.max(0, Math.min(offset, info.size) - 3)
+    const bytes = Buffer.alloc(Math.min(limit + 6, info.size - readStart))
     const file = await open(job.outputFile, 'r')
     try {
-      const { bytesRead } = await file.read(bytes, 0, bytes.length, start)
-      return { text: bytes.subarray(0, bytesRead).toString('utf8'), size: info.size, nextOffset: start + bytesRead, truncated: start + bytesRead < info.size }
+      const { bytesRead } = await file.read(bytes, 0, bytes.length, readStart)
+      return decodeUtf8Window(bytes.subarray(0, bytesRead), info.size, offset, limit, readStart)
     } finally {
       await file.close()
     }
   } catch {
     return { text: job.output ?? '', size: Buffer.byteLength(job.output ?? ''), nextOffset: offset, truncated: false }
   }
+}
+
+function decodeUtf8Window(bytes: Buffer, size: number, requestedOffset: number, limit: number, baseOffset: number): { text: string; size: number; nextOffset: number; truncated: boolean } {
+  let start = Math.max(0, requestedOffset - baseOffset)
+  while (start < bytes.length && isUtf8Continuation(bytes[start]!)) start += 1
+  let end = Math.min(bytes.length, start + limit)
+  while (end < bytes.length && isUtf8Continuation(bytes[end]!)) end += 1
+  const nextOffset = Math.min(size, baseOffset + end)
+  return {
+    text: bytes.subarray(start, end).toString('utf8'),
+    size,
+    nextOffset,
+    truncated: nextOffset < size,
+  }
+}
+
+function isUtf8Continuation(byte: number): boolean {
+  return (byte & 0xc0) === 0x80
 }

@@ -155,9 +155,10 @@ export function parseUnifiedDiff(output: string): CodingDiffLine[] {
       inHunk = true;
       continue;
     }
-    if (!inHunk || rawLine === "\\ No newline at end of file" || rawLine.length === 0) continue;
+    if (!inHunk || rawLine === "\\ No newline at end of file") continue;
 
     const marker = rawLine[0];
+    if (marker !== " " && marker !== "+" && marker !== "-") continue;
     const text = rawLine.slice(1);
     if (marker === " ") {
       lines.push({ type: "context", oldLine, newLine, text });
