@@ -46,6 +46,7 @@ import type {
   AgentToolPermissionRequest,
   OpenAiApiMode,
   LumeRuntimeEvent,
+  RuntimeCodingReport,
   FileReferenceBinding,
   SubagentTaskReport,
   SubagentTask,
@@ -130,6 +131,7 @@ import {
   getTodoCompletionBlocker,
   readLatestTodoState
 } from "../runner/todo-state";
+import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import {
   collectAppendContextEffects,
   type LumeWorkflowHookExecutionResult
@@ -159,6 +161,7 @@ export interface CreateRuntimeCoreSessionInput {
   plansRoot?: string;
   artifactsRoot?: string;
   projectRoot?: string;
+  additionalDirectories?: string[];
   fileContextId?: string;
   fileReferenceBinding?: FileReferenceBinding;
   agentDir: string;
@@ -186,6 +189,7 @@ export interface CreateRuntimeCoreSessionInput {
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
+  persistCodingReport?: (report: RuntimeCodingReport) => void;
   emitAdvisorReview?: (review: {
     severity: "clear" | "suggestion" | "concern" | "blocker";
     summary: string;
@@ -1607,8 +1611,10 @@ export async function createRuntimeCoreSession(
 ): Promise<CreateRuntimeCoreSessionResult> {
   const boundSubagentIdentity = resolveBoundSubagentIdentity(input);
   const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
+  const runId = input.runId ?? input.lumeSessionId;
   const codingRunTracker = createCodingRunTracker({
     workspaceRoot: input.cwd,
+    additionalRoots: input.additionalDirectories,
     statePath: join(sessionDir, `coding-state-${(input.runId ?? "session").replace(/[^a-zA-Z0-9_-]/g, "_")}.v1.json`),
     turnId: typeof input.messageMetadata?.turnId === "string" ? input.messageMetadata.turnId : undefined,
     userMessageId: typeof input.messageMetadata?.messageId === "string" ? input.messageMetadata.messageId : undefined,
@@ -1617,6 +1623,117 @@ export async function createRuntimeCoreSession(
   });
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
+  const publishCodingReport = (): void => {
+    const codingReport: RuntimeCodingReport = {
+      ...codingRunTracker.getVerificationReport(),
+      runId,
+      approvalRequestCount,
+    };
+    if (!codingReport.workspaceChanged && !codingReport.pendingBackground && (codingReport.gitActions?.length ?? 0) === 0) return;
+    input.persistCodingReport?.(codingReport);
+    try {
+      input.emitRuntimeEvent?.({
+        id: `${runId}:coding-report:${Date.now()}`,
+        type: "coding.report.updated",
+        threadId: input.lumeSessionId,
+        runId,
+        createdAt: new Date().toISOString(),
+        codingReport,
+      });
+    } catch (error) {
+      log.warn("Failed to emit Coding report update", {
+        sessionId: input.lumeSessionId,
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const handleToolExecution = (toolInput: Parameters<typeof codingRunTracker.observe>[0]): void => {
+    codingRunTracker.observe(toolInput);
+    const task = toolInput.result._meta?.task as { id?: string; status?: string } | undefined;
+    if (input.runId && task?.id && task.status === "running") {
+      const toolName = toolInput.toolName;
+      const toolKind = toolName.toLowerCase() === "processoutput" ? "read" : "execute";
+      const now = new Date().toISOString();
+      void createFileBackedRunContinuationStore(sessionDir).upsert({
+        version: 2,
+        runId: input.runId,
+        threadId: input.lumeSessionId,
+        status: "waiting_background",
+        checkpoint: {
+          step: "waiting_for_tool_result",
+          toolCallId: task.id,
+          toolName,
+          toolKind,
+          processJobId: task.id,
+          toolCall: {
+            id: task.id,
+            name: toolName,
+            input: toolInput.input,
+            inputHash: createHash("sha256").update(JSON.stringify(toolInput.input ?? null)).digest("hex"),
+            kind: toolKind
+          }
+        },
+        reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+    publishCodingReport();
+  };
+  const handleAsyncEvent = (event: SDKMessage): void => {
+    const updatesCodingReport = codingRunTracker.observeAsyncEvent(event);
+    if (input.runId && event.type === "system" && event.subtype === "task_notification" && event.status !== "attention") {
+      const continuationStore = createFileBackedRunContinuationStore(sessionDir);
+      void continuationStore.get(input.runId).then((continuation) => {
+        if (!continuation || continuation.version !== 2 || continuation.checkpoint.processJobId !== event.task_id) return;
+        return continuationStore.update(input.runId!, {
+          status: "ready_to_resume",
+          checkpoint: {
+            ...continuation.checkpoint,
+            step: "after_tool_result",
+            syntheticToolResult: {
+              type: "tool_result",
+              tool_use_id: event.tool_use_id ?? continuation.checkpoint.toolCallId ?? "",
+              content: event.message ?? event.summary ?? "",
+              ...(event.status === "failed" || event.status === "stopped" || event.status === "interrupted"
+                ? { is_error: true }
+                : {}),
+              ...(event.execution ? { _meta: { execution: event.execution } } : {})
+            }
+          },
+          reason: `后台命令已进入终态：${event.status}。`
+        });
+      }).catch((error) => {
+        log.warn("Failed to persist background continuation result", {
+          sessionId: input.lumeSessionId,
+          runId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
+    try {
+      input.emitSdkMessage?.(event);
+    } catch (error) {
+      log.warn("Failed to emit asynchronous SDK event", {
+        sessionId: input.lumeSessionId,
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (!updatesCodingReport) return;
+    void codingRunTracker.refreshChangeSet()
+      .catch((error) => {
+        log.warn("Failed to refresh Coding changes after background task completion", {
+          sessionId: input.lumeSessionId,
+          runId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        publishCodingReport();
+      });
+  };
   const emitToolPermissionRequest = input.emitToolPermissionRequest
     ? (request: AgentToolPermissionRequest) => {
       approvalRequestCount += 1;
@@ -1661,6 +1778,7 @@ export async function createRuntimeCoreSession(
   const computerUsePlugin = registeredPlugins.find((plugin) => plugin.pluginId === "computer-use");
   log.info("Computer Use capability selected", {
     sessionId: input.lumeSessionId,
+    runId: input.runId,
     computerUseSurface,
     pluginVersion: computerUsePlugin?.version,
     modelRef: input.modelRef,
@@ -1813,7 +1931,6 @@ export async function createRuntimeCoreSession(
     ]
   });
   const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
-  const runId = input.runId ?? input.lumeSessionId;
   const beforeContextResult = await executeWorkflowHookSafely(input.workflowHooks, {
     event: "context.beforeAssemble",
     runId,
@@ -1926,6 +2043,13 @@ export async function createRuntimeCoreSession(
     : undefined;
   const enableFileCheckpointing = preferredCapabilityRoute === "coding"
     || preferredCapabilityRoute === "raw-tools";
+  const additionalDirectories = [...new Set([
+    ...(input.additionalDirectories ?? []),
+    input.lumeWorkDir,
+    input.artifactsRoot,
+  ].filter((directory): directory is string => Boolean(directory))
+    .map((directory) => resolve(directory))
+    .filter((directory) => directory !== resolve(input.cwd)))];
 
   const agentOptions: AgentOptions = {
     apiType: resolveSdkApiType(input.provider, input.openaiApiMode),
@@ -1935,7 +2059,8 @@ export async function createRuntimeCoreSession(
     cwd: input.cwd,
     threadType: input.threadType,
     artifactsRoot: input.artifactsRoot,
-    onToolExecution: codingRunTracker.observe,
+    onAsyncEvent: handleAsyncEvent,
+    onToolExecution: handleToolExecution,
     onBeforeToolExecution: codingRunTracker.beforeToolExecution,
     systemPrompt,
     runtimeContext,
@@ -1971,7 +2096,7 @@ export async function createRuntimeCoreSession(
     ...(codingCompletionEnabled && (input.userMessage?.trim() || existingCompletionGuard)
       ? { completionGuard }
       : {}),
-    additionalDirectories: input.lumeWorkDir && input.lumeWorkDir !== input.cwd ? [input.lumeWorkDir] : undefined,
+    additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,

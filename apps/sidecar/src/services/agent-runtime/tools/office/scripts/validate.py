@@ -105,7 +105,7 @@ def validate(path: str, original: str | None = None, verbose: bool = False, auto
         if repairs:
             print(f"Auto-repaired {repairs} issue(s)")
 
-    success = all(validator.validate() for validator in validators)
+    success = len(missing_required) == 0 and all(validator.validate() for validator in validators)
     return {
         "ok": success,
         "kind": file_extension,
@@ -113,7 +113,7 @@ def validate(path: str, original: str | None = None, verbose: bool = False, auto
         "entries": _list_entries(unpacked),
         "truncated": False,
         "requiredEntries": _required_entries(file_extension),
-        "missingRequiredEntries": _missing_required(unpacked, file_extension),
+        "missingRequiredEntries": missing_required,
         "warnings": [],
         "details": "All validations PASSED!" if success else "Validation failed",
     }

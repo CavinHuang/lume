@@ -35,6 +35,15 @@ import {
   type WorkspaceMcpManager
 } from "../../mcp/workspace-mcp-manager";
 
+function availableTools(result: Awaited<ReturnType<typeof createRuntimeCoreSession>>): ToolDefinition[] {
+  const deferred = (result.agent as unknown as { deferredToolPool?: ToolDefinition[] }).deferredToolPool ?? [];
+  return [...result.tools, ...deferred];
+}
+
+function availableToolNames(result: Awaited<ReturnType<typeof createRuntimeCoreSession>>): string[] {
+  return availableTools(result).map((tool) => tool.name);
+}
+
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
   const prevAliceConfigDir = process.env.ALICE_CONFIG_DIR;
@@ -92,7 +101,8 @@ describe("runtime-core run", () => {
     expect(result.session.threadId).toBe(result.sessionManager.getSessionId());
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
-    expect(result.session.getActiveToolNames()).toContain("ls");
+    expect(result.session.getActiveToolNames()).toContain("Read");
+    expect(result.session.getActiveToolNames()).not.toContain("ls");
     expect(result.session.getActiveToolNames()).toContain("AskUserQuestion");
     expect(result.session.getActiveToolNames()).toContain("TaskList");
     expect(result.session.getActiveToolNames()).toContain("TaskGet");
@@ -123,8 +133,8 @@ describe("runtime-core run", () => {
   test("新运行时只暴露持久化 Agent 任务工具，子会话不能继续派生", async () => {
     const parent = await createRuntimeCoreSession(createHookRuntimeSessionInput({ permissionMode: "default", runId: "parent-run" }));
     expect(parent.session.getActiveToolNames()).toContain("Agent");
-    expect(parent.session.getActiveToolNames()).toContain("FinishAgentTask");
-    expect(parent.session.getActiveToolNames()).toContain("RetireSubagent");
+    expect(availableToolNames(parent)).toContain("FinishAgentTask");
+    expect(availableToolNames(parent)).toContain("RetireSubagent");
     expect(parent.session.getActiveToolNames()).not.toContain("Delegate");
     expect(parent.session.getActiveToolNames()).not.toContain("WaitForDelegations");
     await parent.session.dispose();
@@ -418,7 +428,7 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits"
     });
 
-    const toolNames = result.session.getActiveToolNames();
+    const toolNames = availableToolNames(result);
     expect(toolNames).toContain("Read");
     expect(toolNames).toContain("Write");
     expect(toolNames).toContain("Edit");
@@ -479,7 +489,7 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits"
     });
 
-    const toolNames = result.session.getActiveToolNames();
+    const toolNames = availableToolNames(result);
     expect(toolNames).toContain("guanlan_search");
     expect(toolNames).toContain("guanlan_read");
     expect(toolNames).toContain("guanlan_hotnews");
@@ -539,7 +549,7 @@ describe("runtime-core run", () => {
         permissionMode: "acceptEdits"
       });
 
-      const toolNames = result.session.getActiveToolNames();
+      const toolNames = availableToolNames(result);
       expect(createRuntimeToolsCalls).toBe(1);
       expect(toolNames).toContain("mcp__github__search_issues");
       expect(toolNames).toContain("ListMcpResourcesTool");
@@ -747,7 +757,7 @@ describe("runtime-core run", () => {
       permissionMode: "plan"
     });
 
-    expect(result.session.getActiveToolNames()).toContain("demo_echo");
+    expect(availableToolNames(result)).toContain("demo_echo");
     expect(getRuntimeToolDescriptor("plugin-session", "demo_echo")).toMatchObject({
       canonicalName: "demo_echo",
       source: "plugin",
@@ -1035,7 +1045,7 @@ describe("runtime-core run", () => {
     expect(result.runtimeContext).toContain('<todo_state source="lume_runtime">');
     expect(result.runtimeContext).toContain('"content":"D"');
     expect(result.userMessageForModel).toBe("继续");
-    const todoTool = result.tools.find((tool) => tool.name === "TodoWrite");
+    const todoTool = availableTools(result).find((tool) => tool.name === "TodoWrite");
     expect(todoTool).toBeTruthy();
     const completionGuard = (result.agent as any).baseOptions.completionGuard as () => Promise<string | undefined>;
     expect(await completionGuard()).toContain("正在进行：D");

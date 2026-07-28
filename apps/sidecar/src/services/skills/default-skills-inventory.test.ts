@@ -79,25 +79,6 @@ describe("default skills inventory", () => {
     expect(content).not.toContain("write_file");
   });
 
-  test("bundles an auto-invocable gallery-share skill backed by local Reading share cards", () => {
-    const { content, meta } = readDefaultSkill("gallery-share");
-
-    expect(meta.slug).toBe("gallery-share");
-    expect(meta.name).toBe("画廊分享助手");
-    expect(meta.description).toContain("画廊");
-    expect(meta.disableModelInvocation).not.toBe(true);
-    expect(meta.allowedTools).toEqual([
-      "lume_reading_snapshot",
-      "lume_generate_share_card",
-      "read_file"
-    ]);
-    expect(meta.allowedTools ?? []).not.toContain("gallery_submit");
-    expect(meta.allowedTools ?? []).not.toContain("chat_search");
-    expect(content).toContain("lume_generate_share_card");
-    expect(content).toContain("只生成本地分享卡片");
-    expect(content).toContain("不要声称已经投稿");
-  });
-
   test("bundles an auto-invocable ui-stylist skill backed by personalize_ui", () => {
     const { content, meta } = readDefaultSkill("ui-stylist");
 
@@ -179,7 +160,6 @@ const ALICE_COMPATIBLE_GENERAL_SKILLS = [
   "agent-wiki",
   "code-review",
   "explain-code",
-  "gallery-share",
   "image-gen",
   "skill-creator",
   "system-info",

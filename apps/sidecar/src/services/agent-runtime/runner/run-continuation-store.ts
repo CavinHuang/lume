@@ -33,9 +33,24 @@ class FileBackedRunContinuationStore implements RunContinuationStore {
   async update(runId: string, patch: Partial<RunContinuationState>): Promise<void> {
     const current = await this.get(runId);
     if (!current) return;
+    if (current.version === 1 && patch.status === "ready_to_execute") {
+      await this.upsert({
+        ...current,
+        status: "not_resumable",
+        reason: "历史 V1 checkpoint 不包含可验证的原工具输入，禁止推断并自动执行。",
+        updatedAt: patch.updatedAt ?? new Date().toISOString()
+      });
+      return;
+    }
     await this.upsert({
       ...current,
       ...patch,
+      ...(patch.checkpoint ? {
+        checkpoint: {
+          ...current.checkpoint,
+          ...patch.checkpoint
+        }
+      } : {}),
       updatedAt: patch.updatedAt ?? new Date().toISOString()
     });
   }

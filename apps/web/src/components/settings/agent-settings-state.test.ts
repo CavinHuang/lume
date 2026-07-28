@@ -47,7 +47,9 @@ describe('model provider settings state', () => {
   test('buildModelProviderRows covers every supported provider from the channel contract', () => {
     const rows = buildModelProviderRows([])
 
-    expect(rows.map((row) => row.provider)).toEqual(Object.keys(PROVIDER_LABELS))
+    expect(rows.map((row) => row.provider)).toEqual(
+      Object.keys(PROVIDER_LABELS).filter((provider) => provider !== 'custom'),
+    )
     expect(rows[0]).toEqual(expect.objectContaining({
       provider: 'anthropic',
       label: PROVIDER_LABELS.anthropic,

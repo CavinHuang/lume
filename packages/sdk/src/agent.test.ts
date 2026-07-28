@@ -187,6 +187,23 @@ describe("Agent runtime tool resolver", () => {
     await agent.close()
   })
 
+  test("keeps host-required runtime tools in the active schema", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    const required = {
+      ...tool("TaskReport"),
+      runtimeMetadata: { requiredDuringSkillScope: true },
+    }
+    const agent = createAgent({
+      persistSession: false,
+      tools: [tool("Read"), required],
+    })
+    await agent.getInitializationResult()
+
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toEqual(["Read", "TaskReport"])
+    expect((agent as any).deferredToolPool).toEqual([])
+    await agent.close()
+  })
+
   test("keeps deferred tool discovery isolated between agent sessions", async () => {
     process.env.ENABLE_TOOL_SEARCH = "tst"
     const first = createAgent({ persistSession: false, tools: [tool("Read"), tool("PrivateAlpha")] })

@@ -18,7 +18,9 @@ mock.module("@/lib/desktop-api", () => ({
     throw new Error(`unexpected ${method}`)
   },
   openInSystem: async (path: string) => { calls.push({ fn: "openInSystem", args: [path] }) },
+  openGuardedFileRefInSystem: async () => undefined,
   revealPathInSystem: async (path: string) => { calls.push({ fn: "revealPathInSystem", args: [path] }) },
+  revealGuardedFileRefInSystem: async () => undefined,
   saveFilePathDialog: async (filename: string, filters?: unknown) => {
     calls.push({ fn: "saveFilePathDialog", args: [filename, filters] })
     return { path: saveDialogResult }
@@ -26,6 +28,8 @@ mock.module("@/lib/desktop-api", () => ({
   copyFile: async (source: string, target: string) => {
     calls.push({ fn: "copyFile", args: [source, target] })
   },
+  saveGuardedFileRefAs: async () => ({ path: null }),
+  writeClipboardImage: async () => undefined,
   writeClipboardText: async (text: string) => {
     calls.push({ fn: "writeClipboardText", args: [text] })
   },

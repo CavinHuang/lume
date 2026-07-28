@@ -3,7 +3,9 @@
  */
 
 import { execFileSync } from 'child_process'
-import { join, resolve } from 'path'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { homedir } from 'os'
+import { dirname, isAbsolute, join, relative, resolve } from 'path'
 import type { ToolDefinition, ToolResult } from '../types.js'
 
 export interface ManagedWorktree {
@@ -11,9 +13,58 @@ export interface ManagedWorktree {
   path: string
   branch: string
   originalCwd: string
+  repoRoot?: string
+  createdAt?: string
 }
 
 const activeWorktrees = new Map<string, ManagedWorktree>()
+const registryPath = join(homedir(), '.lume', 'coding-worktrees.json')
+
+function loadRegistry(): ManagedWorktree[] {
+  try {
+    const value = JSON.parse(readFileSync(registryPath, 'utf8'))
+    return Array.isArray(value) ? value.filter(isManagedWorktree) : []
+  } catch {
+    return []
+  }
+}
+
+function saveRegistry(worktrees: ManagedWorktree[]): void {
+  mkdirSync(dirname(registryPath), { recursive: true })
+  const temporary = `${registryPath}.${process.pid}.${Date.now()}.tmp`
+  writeFileSync(temporary, JSON.stringify(worktrees, null, 2), 'utf8')
+  renameSync(temporary, registryPath)
+}
+
+function isManagedWorktree(value: unknown): value is ManagedWorktree {
+  if (!value || typeof value !== 'object') return false
+  const item = value as Partial<ManagedWorktree>
+  return typeof item.id === 'string'
+    && typeof item.path === 'string'
+    && typeof item.branch === 'string'
+    && typeof item.originalCwd === 'string'
+}
+
+function assertValidBranch(branch: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/.test(branch) || branch.includes('..') || branch.includes('@{') || branch.endsWith('.lock')) {
+    throw new Error('Invalid worktree branch name')
+  }
+}
+
+function resolveRepositoryRoot(cwd: string): string {
+  return resolve(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, stdio: 'pipe', encoding: 'utf8' }).trim())
+}
+
+function assertWorktreePath(repoRoot: string, worktreePath: string): void {
+  const relativePath = relative(repoRoot, worktreePath)
+  if (!relativePath || (!relativePath.startsWith('..' + '\\') && !relativePath.startsWith('../') && !isAbsolute(relativePath))) {
+    throw new Error('Worktree path must be outside the main repository')
+  }
+}
+
+function isWorktreeDirty(path: string): boolean {
+  return execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: path, stdio: 'pipe', encoding: 'utf8' }).trim().length > 0
+}
 
 export function createManagedWorktree(input: {
   cwd: string
@@ -21,17 +72,27 @@ export function createManagedWorktree(input: {
   path?: string
 }): ManagedWorktree {
   const originalCwd = resolve(input.cwd)
-  execFileSync('git', ['rev-parse', '--git-dir'], { cwd: originalCwd, stdio: 'pipe' })
+  const repoRoot = resolveRepositoryRoot(originalCwd)
 
   const branch = input.branch || `lume-worktree-${Date.now()}`
+  assertValidBranch(branch)
   const worktreePath = resolve(input.path || join(originalCwd, '..', `.worktree-${branch}`))
+  assertWorktreePath(repoRoot, worktreePath)
+
+  const existing = [...activeWorktrees.values(), ...loadRegistry()].find((item) => item.branch === branch || item.path === worktreePath)
+  if (existing && existsSync(existing.path)) {
+    activeWorktrees.set(existing.id, existing)
+    return existing
+  }
+  if (existsSync(worktreePath)) throw new Error(`Worktree path already exists: ${worktreePath}`)
+
   try {
-    execFileSync('git', ['branch', branch], { cwd: originalCwd, stdio: 'pipe' })
+    execFileSync('git', ['branch', branch], { cwd: repoRoot, stdio: 'pipe' })
   } catch {
     // The branch may already exist; worktree add will report the real error.
   }
   execFileSync('git', ['worktree', 'add', worktreePath, branch], {
-    cwd: originalCwd,
+    cwd: repoRoot,
     stdio: 'pipe',
   })
 
@@ -40,13 +101,23 @@ export function createManagedWorktree(input: {
     path: worktreePath,
     branch,
     originalCwd,
+    repoRoot,
+    createdAt: new Date().toISOString(),
   }
   activeWorktrees.set(worktree.id, worktree)
+  saveRegistry([...loadRegistry().filter((item) => item.id !== worktree.id), worktree])
   return worktree
 }
 
 export function getManagedWorktree(id: string): ManagedWorktree | undefined {
-  return activeWorktrees.get(id)
+  const active = activeWorktrees.get(id)
+  if (active) return active
+  const persisted = loadRegistry().find((item) => item.id === id)
+  if (persisted && existsSync(persisted.path)) {
+    activeWorktrees.set(id, persisted)
+    return persisted
+  }
+  return undefined
 }
 
 export function removeManagedWorktree(id: string, keep = false): ManagedWorktree | undefined {
@@ -54,19 +125,18 @@ export function removeManagedWorktree(id: string, keep = false): ManagedWorktree
   if (!worktree) return undefined
   if (keep) return worktree
 
-  execFileSync('git', ['worktree', 'remove', worktree.path, '--force'], {
-    cwd: worktree.originalCwd,
+  if (!existsSync(worktree.path)) {
+    activeWorktrees.delete(id)
+    saveRegistry(loadRegistry().filter((item) => item.id !== id))
+    return worktree
+  }
+  if (isWorktreeDirty(worktree.path)) throw new Error('Worktree has uncommitted or untracked changes; keep it or clean it explicitly before removal')
+  execFileSync('git', ['worktree', 'remove', worktree.path], {
+    cwd: worktree.repoRoot ?? worktree.originalCwd,
     stdio: 'pipe',
   })
-  try {
-    execFileSync('git', ['branch', '-D', worktree.branch], {
-      cwd: worktree.originalCwd,
-      stdio: 'pipe',
-    })
-  } catch {
-    // Keep the worktree cleanup successful when a branch has already moved.
-  }
   activeWorktrees.delete(id)
+  saveRegistry(loadRegistry().filter((item) => item.id !== id))
   return worktree
 }
 

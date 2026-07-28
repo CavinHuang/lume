@@ -897,6 +897,8 @@ export interface AgentQueuedMessage {
   workspaceId?: string
   desktopContextSnapshotId?: string
   capabilityFingerprints?: Array<{ uri: string; fingerprint: string }>
+  /** Internal runtime continuation; not user-editable queue content. */
+  internal?: boolean
 }
 
 /** Main-agent-owned persistent Task claim used by task-linked Agent/Delegate dispatch. */

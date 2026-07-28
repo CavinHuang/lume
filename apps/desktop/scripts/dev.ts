@@ -76,10 +76,14 @@ if (!existsSync(nativeBinaryPath)) {
   }
 }
 
-const ripgrepResourcesResult = spawnSync("node", [buildRipgrepResourcesScript], {
-  cwd: resolve(desktopRoot, "..", ".."),
-  stdio: "inherit",
-});
+const ripgrepResourcesResult = spawnSync(
+  "node",
+  [buildRipgrepResourcesScript, "--allow-system-fallback"],
+  {
+    cwd: resolve(desktopRoot, "..", ".."),
+    stdio: "inherit",
+  },
+);
 if (ripgrepResourcesResult.status !== 0) {
   process.exit(ripgrepResourcesResult.status ?? 1);
 }

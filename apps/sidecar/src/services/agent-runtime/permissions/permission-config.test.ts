@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   resolveConfiguredPermissionRules,
   resolveConfiguredPrivateWriteRoots
@@ -39,20 +39,21 @@ describe("permission config adapter", () => {
   });
 
   test("resolves private write roots for thread, workspace, skills, and plugins", () => {
+    const agentCwd = join(tempConfigDir, "thread");
     const roots = resolveConfiguredPrivateWriteRoots({
-      agentCwd: "/tmp/thread",
+      agentCwd,
       workspaceSlug: "demo",
       configuredRoots: ["custom-private"]
     });
 
-    expect(roots).toContain("/tmp/thread/.lume");
-    expect(roots).toContain("/tmp/thread/plans");
-    expect(roots).toContain("/tmp/thread/artifacts");
-    expect(roots).toContain("/tmp/thread/files");
+    expect(roots).toContain(resolve(agentCwd, ".lume"));
+    expect(roots).toContain(resolve(agentCwd, "plans"));
+    expect(roots).toContain(resolve(agentCwd, "artifacts"));
+    expect(roots).toContain(resolve(agentCwd, "files"));
     expect(roots).toContain(join(tempConfigDir, "default-skills"));
     expect(roots).toContain(join(tempConfigDir, "skills"));
     expect(roots).toContain(join(tempConfigDir, "agent-workspaces", "demo", "skills"));
     expect(roots).toContain(join(homedir(), ".lume", "plugins"));
-    expect(roots).toContain("/tmp/thread/custom-private");
+    expect(roots).toContain(resolve(agentCwd, "custom-private"));
   });
 });

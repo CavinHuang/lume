@@ -1,12 +1,24 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
 import type { Channel } from '@lume/shared'
-import {
+
+mock.module('sonner', () => ({
+  toast: {
+    error: () => undefined,
+    success: () => undefined,
+  },
+}))
+mock.module('@/components/ui/button', () => ({ Button: () => null }))
+mock.module('@/components/ui/label', () => ({ Label: () => null }))
+mock.module('@/components/model-selection/ModelOptionList', () => ({ ModelOptionList: () => null }))
+mock.module('@/lib/model-meta-context', () => ({ useModelMetaVersion: () => 0 }))
+
+const {
   buildFallbackOptionGroups,
   buildStrategySavePayload,
   getDefaultStrategyDraft,
   hasStrategyChanges,
   sanitizeFallbackChain,
-} from './DefaultModelStrategyPanel'
+} = await import('./DefaultModelStrategyPanel')
 
 const channels: Channel[] = [
   {

@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { basename, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { getConfigDir, getLumeConfigYamlPath } from "../services/infra/config-paths";
+import {
+  getAgentThreadRootPath,
+  getConfigDir,
+  getLumeConfigYamlPath
+} from "../services/infra/config-paths";
 import {
   appendAgentTranscriptMessage,
   updateAgentThreadMeta
@@ -40,7 +44,20 @@ mock.module("../services/agent/agent-service", () => ({
       mode: "sent" as const,
       queuedCount: 0
     };
-  }
+  },
+  sendAgentMessage: async () => undefined,
+  generateAgentTitle: async () => undefined,
+  generateWelcomeSuggestions: async () => [],
+  getAgentSubmissionReceipt: () => undefined,
+  listAgentMessageQueue: () => [],
+  promoteQueuedAgentMessageToGuidance: () => undefined,
+  prepareAgentDispatchInput: async (input: unknown) => input,
+  removeQueuedAgentMessage: () => undefined,
+  reorderAgentMessageQueue: () => undefined,
+  updateQueuedAgentMessage: () => undefined,
+  stopAgent: async () => undefined,
+  submitAgentToolPermission: () => false,
+  submitAskUserQuestionAnswers: () => false
 }));
 
 async function createRuntime() {
@@ -180,6 +197,7 @@ describe("cli-runtime", () => {
       title: "Fallback thread"
     });
 
+    getAgentThreadRootPath(workspace.slug, thread.id);
     updateAgentThreadMeta(thread.id, { workspaceId: undefined });
 
     const threads = await runtime.listThreads();

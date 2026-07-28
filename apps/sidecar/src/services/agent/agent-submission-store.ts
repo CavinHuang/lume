@@ -30,19 +30,34 @@ interface DatabaseSyncLike {
   close(): void;
 }
 
+interface BunDatabaseLike {
+  exec(sql: string): void;
+  query(sql: string): DatabaseStatementLike;
+  close(): void;
+}
+
 export class AgentSubmissionStore {
   readonly #db: DatabaseSyncLike;
   readonly #now: () => number;
 
   constructor(input: { dbPath: string; now?: () => number }) {
     const runtimeRequire = createRequire(import.meta.url);
-    let Database: new (path: string) => DatabaseSyncLike;
-    try {
-      Database = (runtimeRequire("node:sqlite") as { DatabaseSync: new (path: string) => DatabaseSyncLike }).DatabaseSync;
-    } catch {
-      Database = (runtimeRequire("bun:sqlite") as { Database: new (path: string) => DatabaseSyncLike }).Database;
+    if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
+      const BunDatabase = (runtimeRequire("bun:sqlite") as {
+        Database: new (path: string) => BunDatabaseLike;
+      }).Database;
+      const db = new BunDatabase(input.dbPath);
+      this.#db = {
+        exec: (sql) => db.exec(sql),
+        prepare: (sql) => db.query(sql),
+        close: () => db.close(),
+      };
+    } else {
+      const NodeDatabase = (runtimeRequire("node:sqlite") as {
+        DatabaseSync: new (path: string) => DatabaseSyncLike;
+      }).DatabaseSync;
+      this.#db = new NodeDatabase(input.dbPath);
     }
-    this.#db = new Database(input.dbPath);
     this.#now = input.now ?? Date.now;
     this.#db.exec("PRAGMA journal_mode = WAL;");
     migrateSubmissionStore(this.#db);
@@ -401,6 +416,12 @@ export function getAgentSubmissionStore(): AgentSubmissionStore {
     singletonPath = dbPath;
   }
   return singleton;
+}
+
+export function resetAgentSubmissionStoreForTests(): void {
+  singleton?.close();
+  singleton = undefined;
+  singletonPath = undefined;
 }
 
 export function hashAgentSubmission(input: AgentSendInput): string {

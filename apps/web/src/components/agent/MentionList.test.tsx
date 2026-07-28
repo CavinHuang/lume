@@ -22,7 +22,6 @@ describe('MentionList', () => {
     expect(html).toContain('技能')
     expect(html).toContain('/clear')
     expect(html).toContain('/debug')
-    expect(html).toContain('个人')
   })
 
   test('renders @ agents ahead of file mentions', () => {

@@ -1,7 +1,59 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { highlightCode, highlightToTokens, type HighlightTokensResult } from '@lume/ui'
 import { getSourcePreviewLanguage } from './file-preview-utils'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
+
+const MAX_HIGHLIGHT_CACHE_BYTES = 24 * 1024 * 1024
+const highlightCache = new Map<string, { result: HighlightTokensResult; size: number }>()
+const highlightThemeListeners = new Set<() => void>()
+let highlightCacheBytes = 0
+let highlightThemeObserver: MutationObserver | null = null
+
+function highlightCacheKey(content: string, language: string, theme: string): string {
+  return `${theme}\u0000${language}\u0000${content}`
+}
+
+function readHighlightCache(key: string): HighlightTokensResult | null {
+  const cached = highlightCache.get(key)
+  if (!cached) return null
+  highlightCache.delete(key)
+  highlightCache.set(key, cached)
+  return cached.result
+}
+
+function writeHighlightCache(key: string, content: string, result: HighlightTokensResult): void {
+  const size = content.length * 6
+  if (size > MAX_HIGHLIGHT_CACHE_BYTES) return
+  const previous = highlightCache.get(key)
+  if (previous) highlightCacheBytes -= previous.size
+  highlightCache.delete(key)
+  highlightCache.set(key, { result, size })
+  highlightCacheBytes += size
+  while (highlightCacheBytes > MAX_HIGHLIGHT_CACHE_BYTES) {
+    const oldestKey = highlightCache.keys().next().value
+    if (typeof oldestKey !== 'string') break
+    const oldest = highlightCache.get(oldestKey)
+    highlightCache.delete(oldestKey)
+    highlightCacheBytes -= oldest?.size ?? 0
+  }
+}
+
+function subscribeHighlightTheme(listener: () => void): () => void {
+  highlightThemeListeners.add(listener)
+  if (!highlightThemeObserver && typeof MutationObserver !== 'undefined') {
+    highlightThemeObserver = new MutationObserver(() => {
+      for (const notify of highlightThemeListeners) notify()
+    })
+    highlightThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+  }
+  return () => {
+    highlightThemeListeners.delete(listener)
+    if (highlightThemeListeners.size === 0) {
+      highlightThemeObserver?.disconnect()
+      highlightThemeObserver = null
+    }
+  }
+}
 
 export function RightPanelSourcePreview({
   content,
@@ -14,40 +66,11 @@ export function RightPanelSourcePreview({
   lineSelection?: ThreadFileLineSelection
   navigationRevision?: number
 }) {
-  const language = getSourcePreviewLanguage(filePath)
   const lineRefs = useRef(new Map<number, HTMLSpanElement>())
-  const [theme, setTheme] = useState(getHighlightTheme)
-  const [highlighted, setHighlighted] = useState<HighlightTokensResult | null>(() => (
-    highlightToTokens({ code: content, language, theme })
-  ))
-  const lines = useMemo(() => content.replace(/\r\n/g, '\n').split('\n'), [content])
+  const { highlighted, lines } = useSourceHighlight(content, filePath)
   const backgroundColor = highlighted?.bgColor ?? 'var(--surface-2)'
   const gutterWidth = `${Math.max(3, String(lines.length).length + 1)}ch`
   const selectionOutOfRange = Boolean(lineSelection && lineSelection.end > lines.length)
-
-  useEffect(() => {
-    const observer = new MutationObserver(() => setTheme(getHighlightTheme()))
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-    return () => observer.disconnect()
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    const options = { code: content, language, theme }
-    const syncResult = highlightToTokens(options)
-    if (syncResult) {
-      setHighlighted(syncResult)
-      return
-    }
-
-    setHighlighted(null)
-    void highlightCode(options)
-      .then(() => {
-        if (!cancelled) setHighlighted(highlightToTokens(options))
-      })
-      .catch((error) => console.error('[RightPanelSourcePreview] 高亮失败:', error))
-    return () => { cancelled = true }
-  }, [content, language, theme])
 
   useEffect(() => {
     if (!lineSelection || !highlighted || selectionOutOfRange) return
@@ -103,6 +126,86 @@ export function RightPanelSourcePreview({
     </pre>
     </div>
   )
+}
+
+export function useSourceHighlight(content: string, filePath: string, options: {
+  defer?: boolean
+  enabled?: boolean
+  maxCharacters?: number
+} = {}): {
+  highlighted: HighlightTokensResult | null
+  lines: string[]
+} {
+  const language = getSourcePreviewLanguage(filePath)
+  const theme = useSyncExternalStore(subscribeHighlightTheme, getHighlightTheme, getHighlightTheme)
+  const canHighlight = options.enabled !== false && content.length <= (options.maxCharacters ?? Number.POSITIVE_INFINITY)
+  const cacheKey = useMemo(() => highlightCacheKey(content, language, theme), [content, language, theme])
+  const [highlighted, setHighlighted] = useState<HighlightTokensResult | null>(() => {
+    if (options.defer || !canHighlight) return null
+    const cached = readHighlightCache(cacheKey)
+    if (cached) return cached
+    const result = highlightToTokens({ code: content, language, theme })
+    if (result) writeHighlightCache(cacheKey, content, result)
+    return result
+  })
+  const completedKeyRef = useRef(highlighted ? cacheKey : '')
+  const lines = useMemo(() => content.replace(/\r\n/g, '\n').split('\n'), [content])
+
+  useEffect(() => {
+    let cancelled = false
+    let idleId: number | undefined
+    let timerId: number | undefined
+    if (!canHighlight) {
+      completedKeyRef.current = ''
+      setHighlighted(null)
+      return
+    }
+
+    if (completedKeyRef.current === cacheKey) return
+    const cached = readHighlightCache(cacheKey)
+    if (cached) {
+      completedKeyRef.current = cacheKey
+      setHighlighted(cached)
+      return
+    }
+
+    setHighlighted(null)
+    const highlightOptions = { code: content, language, theme }
+    const commit = (result: HighlightTokensResult | null) => {
+      if (!result || cancelled) return
+      writeHighlightCache(cacheKey, content, result)
+      completedKeyRef.current = cacheKey
+      setHighlighted(result)
+    }
+    const runHighlight = () => {
+      const syncResult = highlightToTokens(highlightOptions)
+      if (syncResult) {
+        commit(syncResult)
+        return
+      }
+      void highlightCode(highlightOptions)
+        .then(() => commit(highlightToTokens(highlightOptions)))
+        .catch((error) => console.error('[RightPanelSourcePreview] 高亮失败:', error))
+    }
+
+    if (options.defer && typeof window !== 'undefined') {
+      if (typeof window.requestIdleCallback === 'function') {
+        idleId = window.requestIdleCallback(runHighlight)
+      } else {
+        timerId = window.setTimeout(runHighlight, 0)
+      }
+    } else {
+      runHighlight()
+    }
+
+    return () => {
+      cancelled = true
+      if (idleId !== undefined) window.cancelIdleCallback(idleId)
+      if (timerId !== undefined) window.clearTimeout(timerId)
+    }
+  }, [cacheKey, canHighlight, content, language, options.defer, theme])
+
+  return { highlighted, lines }
 }
 
 function getHighlightTheme(): 'github-light' | 'github-dark' {

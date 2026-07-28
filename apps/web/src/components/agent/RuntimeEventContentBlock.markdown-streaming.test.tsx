@@ -53,6 +53,7 @@ mock.module('@/lib/desktop-api', () => ({
   revealGuardedFileRefInSystem: async () => undefined,
   revealPathInSystem: async () => undefined,
   createFilePreviewScope: async () => ({ token: 'preview', url: 'lume-file://preview', expiresAt: 0 }),
+  createGuardedFilePreviewScope: async () => ({ token: 'guarded-preview', url: 'lume-file://preview', expiresAt: 0 }),
   revokeFilePreviewScope: async () => undefined,
   saveFilePathDialog: async () => undefined,
   saveGuardedFileRefAs: async () => ({ path: null }),
@@ -60,10 +61,13 @@ mock.module('@/lib/desktop-api', () => ({
   sidecarHealthcheck: async () => undefined,
   sidecarCall: async () => undefined,
   statFilePaths: async () => ({ files: [] }),
+  getMcpConfig: async () => ({ mcpServers: {} }),
+  getMcpStatus: async () => ({ servers: [] }),
   submitTaskApproval: async () => undefined,
   writeClipboardImage: async () => undefined,
   writeClipboardText: async () => undefined,
   writeBinaryFile: async () => undefined,
+  isDesktopRuntime: () => true,
 }))
 
 mock.module('./tool-result-renderers', () => ({

@@ -2,6 +2,7 @@ import type {
   AgentAskUserQuestionQuestion,
   AgentAskUserQuestionRequest
 } from "@lume/shared";
+import { createHash } from "node:crypto";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import type { LumeInterruption } from "./interruption";
 import { listPendingRuntimeCoreInterruptionRecords } from "./interruption-index";
@@ -46,7 +47,7 @@ export async function persistAskUserInterruption(request: AgentAskUserQuestionRe
   await createFileBackedLumeInterruptionStore(sessionDir).upsert(interruption);
   if (request.runId) {
     await createFileBackedRunContinuationStore(sessionDir).upsert({
-      version: 1,
+      version: 2,
       runId: request.runId,
       threadId: request.threadId,
       status: "waiting_for_interruption",
@@ -55,7 +56,14 @@ export async function persistAskUserInterruption(request: AgentAskUserQuestionRe
         interruptionId: interruption.id,
         toolCallId: request.toolUseId,
         toolName: "AskUserQuestion",
-        toolKind: "control"
+        toolKind: "control",
+        toolCall: {
+          id: request.toolUseId,
+          name: "AskUserQuestion",
+          input: { questions: request.questions },
+          inputHash: hashAskUserInput(request.questions),
+          kind: "control"
+        }
       },
       reason: "等待 AskUserQuestion 用户回答。",
       createdAt: now,
@@ -63,6 +71,10 @@ export async function persistAskUserInterruption(request: AgentAskUserQuestionRe
     });
   }
   return interruption;
+}
+
+function hashAskUserInput(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
 export async function resolveAskUserInterruption(input: {

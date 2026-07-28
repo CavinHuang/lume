@@ -116,6 +116,29 @@
   }
 }
 
+/* Coding 摘要按卡片自身宽度换行，避免操作按钮把标题压成竖排。 */
+.coding-summary-card {
+  container: coding-summary / inline-size;
+}
+
+@container coding-summary (max-width: 500px) {
+  .coding-summary-header {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    align-items: center;
+    column-gap: 0.75rem;
+    row-gap: 0.5rem;
+  }
+
+  .coding-summary-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
 /* x-markdown dark mode — 变量由 dark.css 的 .x-markdown-dark 选择器提供 */
 
 /* Wiki 操作栏按内容区宽度切换，避免侧栏占用空间后仍按整个窗口宽度判断。 */

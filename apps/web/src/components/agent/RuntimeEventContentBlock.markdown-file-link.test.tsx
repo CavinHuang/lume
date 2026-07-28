@@ -20,16 +20,40 @@ mock.module('@ant-design/x-markdown', () => ({
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
+  createFilePreviewScope: async () => ({ token: 'preview', url: 'lume-file://preview', expiresAt: 0 }),
+  createGuardedFilePreviewScope: async () => ({ token: 'guarded-preview', url: 'lume-file://preview', expiresAt: 0 }),
+  localFilePreviewUrl: (path: string) => `asset://${path}`,
+  openFileRefInSystem: async () => undefined,
+  openGuardedFileRefInSystem: async () => undefined,
   openInSystem: async () => undefined,
+  openExternal: async () => undefined,
+  openFileDialog: async () => undefined,
+  openFolderDialog: async () => undefined,
   revealPathInSystem: async () => undefined,
+  revealFileRefInSystem: async () => undefined,
+  revealGuardedFileRefInSystem: async () => undefined,
+  readTextFile: async () => '',
   saveTextFileDialog: async () => undefined,
   saveFilePathDialog: async () => undefined,
-  copyFile: async () => undefined,
-  openGuardedFileRefInSystem: async () => undefined,
-  revealGuardedFileRefInSystem: async () => undefined,
   saveGuardedFileRefAs: async () => undefined,
   sidecarCall: async () => undefined,
+  sidecarHealthcheck: async () => undefined,
+  statFilePaths: async () => ({ files: [] }),
+  revokeFilePreviewScope: async () => undefined,
+  writeClipboardImage: async () => undefined,
   writeClipboardText: async () => undefined,
+  writeBinaryFile: async () => undefined,
+  copyFile: async () => undefined,
+  healthcheck: async () => undefined,
+  checkDesktopUpdate: async () => undefined,
+  downloadDesktopUpdate: async () => undefined,
+  installDesktopUpdateAndRelaunch: async () => undefined,
+  getMcpConfig: async () => ({ mcpServers: {} }),
+  getMcpStatus: async () => ({ servers: [] }),
+  submitTaskApproval: async () => undefined,
+  getThreadMessages: async () => [],
+  getThreadRuntimeEvents: async () => [],
+  isDesktopRuntime: () => true,
 }))
 
 mock.module('./tool-result-renderers', () => ({
@@ -99,7 +123,9 @@ describe('RuntimeEventContentBlock markdown file links', () => {
     expect(linkMarkup).toContain('config file.json')
 
     const directoryMarkup = renderToStaticMarkup(
-      <MarkdownCode onOpenThreadFile={() => 'opened'}>@project/src/components/</MarkdownCode>,
+      <MessageFileReferenceBindingProvider value={{ fileContextId: 'context-1' }} protocolVersion={1}>
+        <MarkdownCode onOpenThreadFile={() => 'opened'}>@project/src/components/</MarkdownCode>
+      </MessageFileReferenceBindingProvider>,
     )
     expect(directoryMarkup).toContain('lucide-folder')
     expect(directoryMarkup).toContain('data-invalid="true"')

@@ -1,6 +1,6 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { FileRef, RuntimeCodingFileChange } from '@lume/shared'
+import type { CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import {
   closeFileTab,
@@ -35,11 +35,18 @@ export const rightPanelLayoutAtom = atomWithStorage<RightPanelLayoutState>(
 )
 
 export interface CodingReviewPanelState {
+  active: boolean
   changes: RuntimeCodingFileChange[]
   selectedPath: string
+  selectedRootId?: string
   runId?: string
   turnId?: string
   assistantMessageId?: string
+  phase?: CodingTurnPhase
+  verificationRecords?: CodingVerificationRecord[]
+  recommendedVerificationCommands?: string[]
+  gitActions?: CodingGitAction[]
+  review?: CodingReviewSummary
   onRevertRun?: () => Promise<void>
   onRewindTurn?: () => Promise<void>
 }
@@ -47,31 +54,25 @@ export interface CodingReviewPanelState {
 export const codingReviewPanelsAtom = atom<Record<string, CodingReviewPanelState>>({})
 export const codingReviewStatusAtom = atom<Record<string, { reviewedPaths: string[]; unseenPaths: string[]; completed: boolean }>>({})
 
+export function codingReviewFileKey(file: Pick<RuntimeCodingFileChange, 'path' | 'rootId'>): string {
+  return `${file.rootId ?? ''}:${file.path.replace(/\\/g, '/')}`
+}
+
 export const codingReviewStatusActionAtom = atom(null, (get, set, action:
   | { type: 'mark-reviewed'; threadId: string; path: string }
-  | { type: 'complete'; threadId: string; paths: string[] }
   | { type: 'reset'; threadId: string; paths: string[] }
 ) => {
   const current = get(codingReviewStatusAtom)
   const state = current[action.threadId] ?? { reviewedPaths: [], unseenPaths: [], completed: false }
   if (action.type === 'mark-reviewed') {
+    const unseenPaths = state.unseenPaths.filter((path) => path !== action.path)
     set(codingReviewStatusAtom, {
       ...current,
       [action.threadId]: {
         ...state,
         reviewedPaths: [...new Set([...state.reviewedPaths, action.path])],
-        unseenPaths: state.unseenPaths.filter((path) => path !== action.path),
-      },
-    })
-    return
-  }
-  if (action.type === 'complete') {
-    set(codingReviewStatusAtom, {
-      ...current,
-      [action.threadId]: {
-        reviewedPaths: [...new Set([...state.reviewedPaths, ...action.paths])],
-        unseenPaths: [],
-        completed: true,
+        unseenPaths,
+        completed: unseenPaths.length === 0,
       },
     })
     return
@@ -87,7 +88,10 @@ export const codingReviewStatusActionAtom = atom(null, (get, set, action:
 })
 
 export const codingReviewPanelActionAtom = atom(null, (get, set, action:
-  | { type: 'open'; threadId: string; changes: RuntimeCodingFileChange[]; selectedPath: string; runId?: string; turnId?: string; assistantMessageId?: string; onRevertRun?: () => Promise<void>; onRewindTurn?: () => Promise<void> }
+  | { type: 'open'; threadId: string; changes: RuntimeCodingFileChange[]; selectedPath: string; selectedRootId?: string; runId?: string; turnId?: string; assistantMessageId?: string; phase?: CodingTurnPhase; verificationRecords?: CodingVerificationRecord[]; recommendedVerificationCommands?: string[]; gitActions?: CodingGitAction[]; review?: CodingReviewSummary; onRevertRun?: () => Promise<void>; onRewindTurn?: () => Promise<void> }
+  | { type: 'update'; threadId: string; patch: Partial<Pick<CodingReviewPanelState, 'phase' | 'verificationRecords' | 'recommendedVerificationCommands' | 'gitActions' | 'review'>> }
+  | { type: 'activate'; threadId: string }
+  | { type: 'deactivate'; threadId: string }
   | { type: 'close'; threadId: string },
 ) => {
   const current = get(codingReviewPanelsAtom)
@@ -98,19 +102,44 @@ export const codingReviewPanelActionAtom = atom(null, (get, set, action:
     set(codingReviewPanelsAtom, next)
     return
   }
+  if (action.type === 'activate' || action.type === 'deactivate') {
+    const panel = current[action.threadId]
+    if (!panel || panel.active === (action.type === 'activate')) return
+    set(codingReviewPanelsAtom, {
+      ...current,
+      [action.threadId]: { ...panel, active: action.type === 'activate' },
+    })
+    return
+  }
+  if (action.type === 'update') {
+    const panel = current[action.threadId]
+    if (!panel) return
+    set(codingReviewPanelsAtom, {
+      ...current,
+      [action.threadId]: { ...panel, ...action.patch },
+    })
+    return
+  }
   set(codingReviewPanelsAtom, {
     ...current,
     [action.threadId]: {
+      active: true,
       changes: action.changes,
       selectedPath: action.selectedPath,
+      selectedRootId: action.selectedRootId,
       runId: action.runId,
       turnId: action.turnId,
       assistantMessageId: action.assistantMessageId,
+      phase: action.phase,
+      verificationRecords: action.verificationRecords,
+      recommendedVerificationCommands: action.recommendedVerificationCommands,
+      gitActions: action.gitActions,
+      review: action.review,
       onRevertRun: action.onRevertRun,
       onRewindTurn: action.onRewindTurn,
     },
   })
-  const paths = action.changes.map((change) => change.path)
+  const paths = action.changes.map(codingReviewFileKey)
   set(codingReviewStatusActionAtom, { type: 'reset', threadId: action.threadId, paths })
   set(rightPanelLayoutAtom, (layout) => ({
     ...layout,

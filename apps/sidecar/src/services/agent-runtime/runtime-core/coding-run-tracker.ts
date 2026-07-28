@@ -1,5 +1,14 @@
-import type { CompletionGuardResult, ToolResult } from "@lume/agent-sdk";
-import type { RuntimeCodingChangeSet } from "@lume/shared";
+import {
+  type CompletionGuardResult,
+  type SDKMessage,
+  type ToolResult,
+} from "@lume/agent-sdk";
+import type {
+  CodingGitAction,
+  CodingTurnPhase,
+  CodingVerificationRecord,
+  RuntimeCodingChangeSet,
+} from "@lume/shared";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, relative, resolve } from "node:path";
@@ -11,10 +20,12 @@ import {
   type WorkspaceSnapshotDiff
 } from "./workspace-snapshot";
 import { getCodingChangeSet } from "./coding-change-service";
+import { selectVerificationCommands } from "./coding-verification";
 
 export type CodingVerificationStatus = "not_required" | "unverified" | "verified" | "failed";
 
 export interface CodingVerificationReport {
+  phase: CodingTurnPhase;
   status: CodingVerificationStatus;
   message?: string;
   baselineFailure?: {
@@ -31,6 +42,9 @@ export interface CodingVerificationReport {
   pendingBackground: boolean;
   verificationRepairAttempts?: number;
   verificationNoEvidenceAttempts?: number;
+  verificationRecords?: CodingVerificationRecord[];
+  recommendedVerificationCommands?: string[];
+  gitActions?: CodingGitAction[];
   approvalRequestCount?: number;
   turnId?: string;
   userMessageId?: string;
@@ -53,10 +67,15 @@ interface PersistedCodingRunState {
   baselineFailure?: { command: string; signature: string };
   attributedCandidates: string[];
   pendingBackground: boolean;
+  pendingBackgroundTaskIds?: string[];
+  pendingVerificationTaskIds?: string[];
+  /** Legacy v1 field retained only for in-flight state migration. */
+  blockingBackgroundTaskIds?: string[];
   verificationRepairAttempts?: number;
   verificationNoEvidenceAttempts?: number;
-  backgroundWaitPrompted?: boolean;
   fileChangeStats?: Record<string, FileChangeStats>;
+  verificationRecords?: CodingVerificationRecord[];
+  gitActions?: CodingGitAction[];
 }
 
 interface FileChangeStats {
@@ -66,6 +85,7 @@ interface FileChangeStats {
 
 export interface CodingRunTrackerOptions {
   workspaceRoot?: string;
+  additionalRoots?: string[];
   statePath?: string;
   turnId?: string;
   userMessageId?: string;
@@ -85,13 +105,17 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   let workspaceDiff: WorkspaceSnapshotDiff = { added: [], modified: [], deleted: [] };
   const attributedCandidates = new Set<string>();
   let pendingBackground = false;
+  const pendingBackgroundTaskIds = new Set<string>();
+  const pendingVerificationTaskIds = new Set<string>();
   let verificationRepairAttempts = 0;
   let verificationNoEvidenceAttempts = 0;
-  let backgroundWaitPrompted = false;
   const fileChangeStats = new Map<string, FileChangeStats>();
   let changeSet: RuntimeCodingChangeSet | undefined;
   let pendingSnapshot: Promise<void> = Promise.resolve();
   let baselineCommit: string | undefined;
+  const verificationRecords: CodingVerificationRecord[] = [];
+  const gitActions: CodingGitAction[] = [];
+  let recommendedVerificationCommands: string[] = [];
 
   async function beforeToolExecution(input: {
     toolName: string;
@@ -127,10 +151,13 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       baselineFailure,
       attributedCandidates: [...attributedCandidates],
       pendingBackground,
+      pendingBackgroundTaskIds: [...pendingBackgroundTaskIds],
+      pendingVerificationTaskIds: [...pendingVerificationTaskIds],
       verificationRepairAttempts,
       verificationNoEvidenceAttempts,
-      backgroundWaitPrompted,
-      fileChangeStats: Object.fromEntries(fileChangeStats)
+      fileChangeStats: Object.fromEntries(fileChangeStats),
+      verificationRecords,
+      gitActions
     };
     try {
       mkdirSync(dirname(options.statePath), { recursive: true });
@@ -159,13 +186,17 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       baselineFailure = state.baselineFailure;
       for (const path of state.attributedCandidates ?? []) attributedCandidates.add(path);
       pendingBackground = state.pendingBackground === true;
+      for (const taskId of state.pendingBackgroundTaskIds ?? []) pendingBackgroundTaskIds.add(taskId);
+      for (const taskId of state.pendingVerificationTaskIds ?? []) pendingVerificationTaskIds.add(taskId);
+      if (!state.pendingVerificationTaskIds) {
+        for (const taskId of state.blockingBackgroundTaskIds ?? []) pendingVerificationTaskIds.add(taskId);
+      }
       verificationRepairAttempts = typeof state.verificationRepairAttempts === "number"
         ? Math.max(0, state.verificationRepairAttempts)
         : 0;
       verificationNoEvidenceAttempts = typeof state.verificationNoEvidenceAttempts === "number"
         ? Math.max(0, state.verificationNoEvidenceAttempts)
         : 0;
-      backgroundWaitPrompted = state.backgroundWaitPrompted === true;
       for (const [path, stats] of Object.entries(state.fileChangeStats ?? {})) {
         if (!stats || typeof stats !== "object") continue;
         const addedLines = Number(stats.addedLines);
@@ -174,8 +205,10 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
           fileChangeStats.set(path, {
             addedLines: Math.max(0, addedLines),
             removedLines: Math.max(0, removedLines),
-          });
-        }
+        });
+      }
+      verificationRecords.splice(0, verificationRecords.length, ...(state.verificationRecords ?? []).slice(-8));
+      gitActions.splice(0, gitActions.length, ...(state.gitActions ?? []).slice(-16));
       }
     } catch {
       // Ignore corrupt or partial state and establish a fresh baseline.
@@ -185,12 +218,15 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   async function initialize(): Promise<void> {
     restore();
     if (options.workspaceRoot) {
-      const result = spawnSync("git", ["rev-parse", "HEAD"], {
-        cwd: options.workspaceRoot,
-        encoding: "utf8",
-        windowsHide: true,
-      });
-      if (result.status === 0) baselineCommit = result.stdout.trim() || undefined;
+      if (hasGitMetadata(options.workspaceRoot)) {
+        const result = spawnSync("git", ["rev-parse", "HEAD"], {
+          cwd: options.workspaceRoot,
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: 1000,
+        });
+        if (result.status === 0) baselineCommit = result.stdout.trim() || undefined;
+      }
     }
     if (!options.workspaceRoot || baselineSnapshot) return;
     try {
@@ -207,10 +243,15 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     const result = input.result;
     if (!options.workspaceRoot) return;
     const name = toolName.toLowerCase();
+    const isProcessOutput = name === "taskoutput" || name === "processoutput";
     const execution = getExecutionMetadata(result);
+    const task = getTaskMetadata(result);
+    const processOutputRunning = task?.status
+      ? task.status === "running"
+      : execution?.terminationReason === "running";
     const shouldSnapshot = name === "bash"
       || ["write", "edit", "notebookedit", "lsp"].includes(name)
-      || (name === "taskoutput" && execution?.terminationReason !== "running");
+      || (isProcessOutput && !processOutputRunning);
     if (!shouldSnapshot) return;
     pendingSnapshot = pendingSnapshot.then(async () => {
       try {
@@ -223,8 +264,8 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
           : false;
         const observedWorkspaceChanges = flattenWorkspaceSnapshotDiff(workspaceDiff);
         const shellProducedChanges = name === "bash" && observedWorkspaceChanges.length > 0;
-        const taskProducedChanges = name === "taskoutput"
-          && execution?.terminationReason !== "running"
+        const taskProducedChanges = isProcessOutput
+          && !processOutputRunning
           && observedWorkspaceChanges.length > 0;
         if (shellProducedChanges || taskProducedChanges || (executionMutation && result.is_error !== true)) {
           for (const path of observedWorkspaceChanges) attributedCandidates.add(path);
@@ -240,9 +281,40 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
 
   function observe(input: { toolName: string; input: unknown; result: ToolResult }): void {
     const name = input.toolName.toLowerCase();
+    const isProcessOutput = name === "taskoutput" || name === "processoutput";
     const execution = getExecutionMetadata(input.result);
-    if (name === "bash" && execution?.terminationReason === "running") pendingBackground = true;
-    if (name === "taskoutput" && execution && execution.terminationReason !== "running") pendingBackground = false;
+    const task = getTaskMetadata(input.result);
+    const raw = input.input && typeof input.input === "object" ? input.input as Record<string, unknown> : {};
+    const shellCommand = typeof raw.command === "string" ? raw.command : execution?.command ?? "";
+    if (name === "bash" && shellCommand) recordGitAction(shellCommand, input.result, execution);
+    if (name === "bash" && execution?.terminationReason === "running") {
+      pendingBackground = true;
+      if (task?.id) {
+        pendingBackgroundTaskIds.add(task.id);
+        const raw = input.input && typeof input.input === "object" ? input.input as Record<string, unknown> : {};
+        const command = typeof raw.command === "string" ? raw.command : execution.command ?? "";
+        const purpose = typeof raw.purpose === "string" ? raw.purpose : execution.purpose ?? "";
+        if (isVerificationCommand(command, purpose)) pendingVerificationTaskIds.add(task.id);
+      }
+    }
+    if (isProcessOutput && (execution || task)) {
+      if (execution?.command) updateGitAction(execution.command, input.result, execution);
+      const processOutputRunning = task?.status
+        ? task.status === "running"
+        : execution?.terminationReason === "running";
+      if (processOutputRunning) {
+        pendingBackground = true;
+        if (task?.id) pendingBackgroundTaskIds.add(task.id);
+      } else {
+        if (task?.id) {
+          pendingBackgroundTaskIds.delete(task.id);
+          pendingVerificationTaskIds.delete(task.id);
+        } else if (pendingBackgroundTaskIds.size === 0) {
+          pendingBackground = false;
+        }
+        pendingBackground = pendingBackgroundTaskIds.size > 0;
+      }
+    }
     const bashMutation = name === "bash" && isLikelyMutationCommand(input);
     if ((["write", "edit", "notebookedit", "lsp"].includes(name) || bashMutation) && input.result.is_error !== true) {
       mutationObserved = true;
@@ -256,19 +328,31 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
     }
     queueSnapshot(input);
-    if (name !== "bash") {
+    if (name !== "bash" && !isProcessOutput) {
       persist();
       return;
     }
-    const raw = input.input && typeof input.input === "object" ? input.input as Record<string, unknown> : {};
-    const command = typeof raw.command === "string" ? raw.command : "";
-    const purpose = typeof raw.purpose === "string" ? raw.purpose : "";
+    if ((isProcessOutput && !execution) || executionOutcome(execution) === "running") {
+      persist();
+      return;
+    }
+    const command = name === "bash" && typeof raw.command === "string" ? raw.command : execution?.command ?? "";
+    const purpose = name === "bash" && typeof raw.purpose === "string" ? raw.purpose : execution?.purpose ?? "";
     if (!isVerificationCommand(command, purpose)) {
       persist();
       return;
     }
     const signature = verificationSignature(input.result);
-    if (getExecutionMetadata(input.result)?.semanticOutcome === "no_matches" && input.result.is_error !== true) {
+    const outcome = executionOutcome(execution);
+    if (outcome === "interrupted") {
+      verificationStatus = "unverified";
+      verificationMessage = "后台验证在应用或执行器恢复期间被中断，结果不确定；这不计为代码验证失败。";
+      recordVerification(command, input.result, execution, signature, "inconclusive");
+      persist();
+      return;
+    }
+    recordVerification(command, input.result, execution, signature);
+    if (execution?.semanticOutcome === "no_matches" && outcome === "succeeded") {
       verificationNoEvidenceAttempts += 1;
       verificationStatus = "unverified";
       verificationMessage = "验证命令只返回了搜索无匹配，未提供完整测试或类型检查结果。请直接运行原始验证命令，不要用 grep、findstr、Select-String 或 head 过滤。";
@@ -276,12 +360,12 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       persist();
       return;
     }
-    if (!mutationObserved && input.result.is_error === true) {
+    if (!mutationObserved && outcome !== "succeeded") {
       baselineVerification = { command, signature };
       persist();
       return;
     }
-    if (input.result.is_error === true) {
+    if (outcome !== "succeeded") {
       if (baselineVerification?.command === command && baselineVerification.signature === signature) {
         baselineFailure = { command, signature };
         verificationStatus = "unverified";
@@ -304,17 +388,14 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
 
   async function completionGuard(): Promise<CompletionGuardResult> {
     await pendingSnapshot;
-    if (pendingBackground) {
-      if (backgroundWaitPrompted) {
-        return {
-          type: "stop",
-          errorCode: "background_pending",
-          message: "后台命令仍未结束，已停止本轮以避免重复等待。"
-        };
-      }
-      backgroundWaitPrompted = true;
+    const verificationStillRunning = [...pendingVerificationTaskIds]
+      .some((taskId) => pendingBackgroundTaskIds.has(taskId));
+    if (verificationStillRunning) {
       persist();
-      return "[background pending] 后台命令仍在运行，请在当前 Run 中使用 ProcessOutput 等待其终态后再完成。";
+      // Claude Code treats an auto-backgrounded command as a completed tool
+      // call. Verification remains pending and is updated by its terminal
+      // task notification instead of holding this model turn open.
+      return undefined;
     }
     if (mutationObserved && options.workspaceRoot) {
       changeSet = await refreshAuthoritativeChangeSet();
@@ -344,11 +425,44 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     }
     if (promptedWithoutEvidence) return undefined;
     promptedWithoutEvidence = true;
-    return "[verification needed] 当前 Run 已产生文件或命令变更。请执行相关测试、类型检查、Lint、构建或最小验证；若项目没有可靠入口，完成时明确说明未验证。";
+    const workspaceRoot = options.workspaceRoot;
+    recommendedVerificationCommands = workspaceRoot
+      ? selectVerificationCommands({
+        workspaceRoot,
+        changedFiles: changeSet?.files.map((file) => file.path) ?? [],
+      }).map((candidate) => candidate.command)
+      : [];
+    const suggestions = recommendedVerificationCommands.length > 0
+      ? `运行以下仓库已有验证脚本（最多选择相关的两项）：\n${recommendedVerificationCommands.map((command) => `- ${command}`).join("\n")}`
+      : "当前仓库没有可可靠识别的验证脚本，请明确说明未验证，不要猜测命令。";
+    return `[verification needed] 当前 Run 已产生文件或命令变更。${suggestions}`;
+  }
+
+  function observeAsyncEvent(message: SDKMessage): boolean {
+    if (message.type !== "system" || message.subtype !== "task_notification" || !message.execution) {
+      return false;
+    }
+    const status = normalizeBackgroundTaskStatus(message.status);
+    observe({
+      toolName: "ProcessOutput",
+      input: { task_id: message.task_id },
+      result: {
+        type: "tool_result",
+        tool_use_id: message.tool_use_id ?? "",
+        content: message.message ?? message.summary ?? `Background process ${status}`,
+        ...(status === "failed" || status === "stopped" ? { is_error: true } : {}),
+        _meta: {
+          execution: message.execution,
+          task: { id: message.task_id, status, kind: "shell" }
+        }
+      }
+    });
+    return true;
   }
 
   return {
     observe,
+    observeAsyncEvent,
     initialize,
     beforeToolExecution,
     getBaselineCommit: () => baselineCommit,
@@ -371,6 +485,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       const totalRemovedLines = authoritativeChangeSet?.totalRemovedLines
         ?? fileChanges.reduce((sum, change) => sum + (change.removedLines ?? 0), 0);
       return {
+        phase: getCodingTurnPhase(),
         status: verificationStatus,
         ...(verificationMessage ? { message: verificationMessage } : {}),
         ...(baselineFailure ? { baselineFailure } : {}),
@@ -384,6 +499,9 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         pendingBackground,
         verificationRepairAttempts,
         verificationNoEvidenceAttempts,
+        verificationRecords: [...verificationRecords],
+        ...(recommendedVerificationCommands.length > 0 ? { recommendedVerificationCommands } : {}),
+        gitActions: [...gitActions],
         ...(options.turnId ? { turnId: options.turnId } : {}),
         ...(options.userMessageId ? { userMessageId: options.userMessageId } : {}),
         ...(options.routeReason ? { routeReason: options.routeReason } : {}),
@@ -402,7 +520,90 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   async function refreshAuthoritativeChangeSet(): Promise<RuntimeCodingChangeSet> {
     const workspaceRoot = options.workspaceRoot!;
     const absolutePaths = [...attributedCandidates].map((path) => resolve(workspaceRoot, path));
-    return getCodingChangeSet(workspaceRoot, { paths: absolutePaths, turnId: options.turnId });
+    return getCodingChangeSet(workspaceRoot, {
+      paths: absolutePaths,
+      turnId: options.turnId,
+      roots: options.additionalRoots
+    });
+  }
+
+  function getCodingTurnPhase(): CodingTurnPhase {
+    if (verificationStatus === "failed") return "failed";
+    if (pendingBackground) return "verifying";
+    if (!mutationObserved) return "executing";
+    if (verificationStatus === "verified") return "ready_for_review";
+    return promptedWithoutEvidence ? "verifying" : "executing";
+  }
+
+  function recordVerification(
+    command: string,
+    result: ToolResult,
+    execution: ReturnType<typeof getExecutionMetadata>,
+    signature: string,
+    forcedStatus?: CodingVerificationRecord["status"],
+  ): void {
+    const status: CodingVerificationRecord["status"] = forcedStatus ?? (executionOutcome(execution) !== "succeeded"
+      ? "failed"
+      : execution?.semanticOutcome === "no_matches"
+        ? "inconclusive"
+        : "passed");
+    verificationRecords.push({
+      command,
+      status,
+      startedAt: new Date(Date.now() - (execution?.durationMs ?? 0)).toISOString(),
+      finishedAt: new Date().toISOString(),
+      ...(execution?.durationMs !== undefined ? { durationMs: execution.durationMs } : {}),
+      ...(status === "failed" || status === "inconclusive" ? { message: signature.slice(0, 800) } : {}),
+    });
+    if (verificationRecords.length > 8) verificationRecords.splice(0, verificationRecords.length - 8);
+  }
+
+  function recordGitAction(
+    command: string,
+    result: ToolResult,
+    execution: ReturnType<typeof getExecutionMetadata>,
+  ): void {
+    const match = command.match(/\bgit\s+(commit|push|merge|rebase|reset|clean|checkout|restore|cherry-pick|revert)\b/i);
+    if (!match) return;
+    const kind = normalizeGitActionKind(match[1]!);
+    gitActions.push({
+      kind,
+      command: command.slice(0, 500),
+      status: execution?.terminationReason === "running"
+        ? "running"
+        : result.is_error === true
+          ? "failed"
+          : "completed",
+      createdAt: new Date().toISOString(),
+    });
+    if (gitActions.length > 16) gitActions.splice(0, gitActions.length - 16);
+    persist();
+  }
+
+  function updateGitAction(
+    command: string,
+    result: ToolResult,
+    execution: ReturnType<typeof getExecutionMetadata>,
+  ): void {
+    const existing = [...gitActions].reverse().find((action) => action.status === "running" && action.command === command.slice(0, 500));
+    if (!existing) return;
+    existing.status = result.is_error === true ? "failed" : execution?.terminationReason === "running" ? "running" : "completed";
+    persist();
+  }
+}
+
+function normalizeGitActionKind(value: string): CodingGitAction["kind"] {
+  if (value === "cherry-pick" || value === "revert") return "other";
+  return value as CodingGitAction["kind"];
+}
+
+function hasGitMetadata(start: string): boolean {
+  let current = resolve(start);
+  while (true) {
+    if (existsSync(resolve(current, ".git"))) return true;
+    const parent = dirname(current);
+    if (parent === current) return false;
+    current = parent;
   }
 }
 
@@ -434,13 +635,13 @@ function readFileChangeStats(result: ToolResult): FileChangeStats | undefined {
 
 function isVerificationCommand(command: string, purpose: string): boolean {
   if (purpose.trim().toLowerCase() === "verification") return true;
-  return /(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest|bun)(\s|$)/i.test(command);
+  return /(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest)(\s|$)/i.test(command);
 }
 
 function isLikelyMutationCommand(input: { input: unknown }): boolean {
   const raw = input.input && typeof input.input === "object" ? input.input as Record<string, unknown> : {};
   const command = typeof raw.command === "string" ? raw.command : "";
-  return /(^|\s)(rm|mv|cp|mkdir|rmdir|touch|del|copy|move|npm|pnpm|yarn|bun|git\s+(apply|checkout|clean|reset)|sed\s+-i|perl\s+-i)(\s|$)/i.test(command)
+  return /(^|\s)(rm|mv|cp|mkdir|rmdir|touch|del|copy|move|git\s+(apply|checkout|clean|reset)|sed\s+-i|perl\s+-i)(\s|$)/i.test(command)
     || /(?:>>?|\|\s*(?:tee|Set-Content)|Set-Content|Out-File|writeFile|write_text|unlink\s*\()/i.test(command);
 }
 
@@ -470,12 +671,49 @@ function verificationSignature(result: ToolResult): string {
 }
 
 function getExecutionMetadata(result: ToolResult): {
+  version?: number;
+  outcome?: string;
   command?: string;
+  purpose?: string;
+  durationMs?: number;
   terminationReason?: string;
   semanticOutcome?: string;
 } | undefined {
   const execution = result._meta?.execution;
   return execution && typeof execution === "object"
-    ? execution as { command?: string; terminationReason?: string }
+    ? execution as { version?: number; outcome?: string; command?: string; purpose?: string; durationMs?: number; terminationReason?: string; semanticOutcome?: string }
     : undefined;
+}
+
+function executionOutcome(execution: ReturnType<typeof getExecutionMetadata>): "running" | "succeeded" | "failed" | "timed_out" | "cancelled" | "interrupted" {
+  if (execution?.version === 2) {
+    if (execution.outcome === "running" || execution.outcome === "succeeded" || execution.outcome === "failed"
+      || execution.outcome === "timed_out" || execution.outcome === "cancelled" || execution.outcome === "interrupted") {
+      return execution.outcome;
+    }
+    return "failed";
+  }
+  if (execution?.terminationReason === "running") return "running";
+  if (execution?.terminationReason === "completed") return "succeeded";
+  if (execution?.terminationReason === "timeout") return "timed_out";
+  if (execution?.terminationReason === "aborted") return "cancelled";
+  if (execution?.terminationReason === "interrupted") return "interrupted";
+  return "failed";
+}
+
+function getTaskMetadata(result: ToolResult): {
+  id?: string;
+  status?: string;
+  autoBackgrounded?: boolean;
+} | undefined {
+  const task = result._meta?.task;
+  return task && typeof task === "object"
+    ? task as { id?: string; status?: string; autoBackgrounded?: boolean }
+    : undefined;
+}
+
+function normalizeBackgroundTaskStatus(status: string): "completed" | "failed" | "stopped" {
+  if (status === "completed") return "completed";
+  if (status === "stopped" || status === "cancelled" || status === "aborted") return "stopped";
+  return "failed";
 }

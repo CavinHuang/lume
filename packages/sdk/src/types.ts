@@ -405,6 +405,7 @@ export interface SDKTaskNotificationMessage {
   tool_use_id?: string
   output_file?: string
   summary?: string
+  execution?: ToolExecutionMetadata
   usage?: {
     total_tokens: number
     tool_uses: number
@@ -515,6 +516,7 @@ export interface SDKTaskStartedMessage {
   task_type?: string
   workflow_name?: string
   prompt?: string
+  output_file?: string
   uuid?: string
   session_id: string
 }
@@ -775,6 +777,8 @@ export interface ToolContext {
   /** Parent agent's API type */
   apiType?: import('./providers/types.js').ApiType
   sessionId?: string
+  /** Host Run identity used to correlate durable process jobs. */
+  runId?: string
   /** Current user message used to group file checkpoints. */
   currentUserMessageId?: string
   /** Update the active working directory for subsequent tool calls in this session. */
@@ -812,7 +816,14 @@ export interface ToolContext {
   executeDeferredTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
 }
 
-export interface ToolExecutionMetadata {
+export interface FileResultRef {
+  kind: 'file'
+  path: string
+  size: number
+  mimeType?: string
+}
+
+export interface ToolExecutionMetadataV1 {
   version: 1
   exitCode?: number | null
   stdoutPreview?: string
@@ -826,14 +837,32 @@ export interface ToolExecutionMetadata {
   semanticOutcome?: 'no_matches' | 'condition_false' | 'files_differ'
   purpose?: string
   workspaceChanged?: boolean
-  resultRef?: {
-    kind: 'file'
-    path: string
-    size: number
-    mimeType?: string
-  }
+  resultRef?: FileResultRef
   terminationReason: 'completed' | 'nonzero' | 'timeout' | 'aborted' | 'output_limit' | 'spawn_error' | 'running'
 }
+
+export interface ToolExecutionMetadataV2 {
+  version: 2
+  outcome: 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled' | 'interrupted'
+  exitCode?: number | null
+  stdoutPreview?: string
+  stderrPreview?: string
+  stdoutRef?: FileResultRef
+  stderrRef?: FileResultRef
+  timedOut?: boolean
+  aborted?: boolean
+  outputLimitReached?: boolean
+  durationMs: number
+  command: string
+  shell: 'bash' | 'powershell'
+  semanticOutcome?: 'no_matches' | 'condition_false' | 'files_differ'
+  purpose?: string
+  workspaceChanged?: boolean
+  resultRef?: FileResultRef
+  terminationReason: 'completed' | 'nonzero' | 'timeout' | 'aborted' | 'output_limit' | 'spawn_error' | 'running' | 'interrupted'
+}
+
+export type ToolExecutionMetadata = ToolExecutionMetadataV1 | ToolExecutionMetadataV2
 
 export interface ToolResult {
   type: 'tool_result'
@@ -1389,6 +1418,8 @@ export interface AgentOptions {
   persistSession?: boolean
   /** Explicit session ID */
   sessionId?: string
+  /** Host Run identity for durable tool recovery. */
+  runId?: string
   /** Enable file checkpointing (for rewindFiles) */
   enableFileCheckpointing?: boolean
   /** Sandbox configuration */
@@ -1410,6 +1441,8 @@ export interface AgentOptions {
   artifactsRoot?: string
   onToolExecution?: ToolContext['onToolExecution']
   onBeforeToolExecution?: ToolContext['onBeforeToolExecution']
+  /** Receives tool events emitted after the originating tool call has returned. */
+  onAsyncEvent?: (event: SDKMessage) => void
   /** Enable prompt suggestions */
   promptSuggestions?: boolean
   /** Event output style */
@@ -1476,6 +1509,8 @@ export interface QueryEngineConfig {
   hookRegistry?: import('./hooks.js').HookRegistry
   /** Session ID for hook context */
   sessionId?: string
+  /** Host Run identity for durable tool recovery. */
+  runId?: string
   permissionMode?: PermissionMode
   promptSuggestions?: boolean
   additionalDirectories?: string[]
@@ -1484,6 +1519,8 @@ export interface QueryEngineConfig {
   artifactsRoot?: string
   onToolExecution?: ToolContext['onToolExecution']
   onBeforeToolExecution?: ToolContext['onBeforeToolExecution']
+  /** Receives terminal background events after the tool call has returned. */
+  onAsyncEvent?: (event: SDKMessage) => void
   /** Capture a workspace baseline before each Coding Turn. */
   enableFileCheckpointing?: boolean
   skillRegistry?: import('./skills/registry.js').SkillRegistry

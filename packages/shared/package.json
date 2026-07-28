@@ -17,6 +17,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "bun test",
+    "test:unit": "bun test src",
+    "test:smoke": "bun test src",
     "sync:models": "bun run scripts/sync-models.ts"
   }
 }

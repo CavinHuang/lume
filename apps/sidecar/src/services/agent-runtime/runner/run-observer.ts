@@ -5,6 +5,7 @@ import type {
   LumeRuntimeEvent,
   RuntimeBillingUsageSummary,
   RuntimeNormalizedUsage,
+  RuntimeCodingReport,
   RuntimeUsageContextSnapshot,
   SDKMessage
 } from "@lume/shared";
@@ -294,6 +295,15 @@ export class LumeRunObserver {
       })) {
         this.emitRuntimeEvent(emitRuntimeEvent, event);
       }
+    });
+  }
+
+  recordCodingReport(report: RuntimeCodingReport): void {
+    this.enqueue(async () => {
+      await this.stateStore.update(this.state.runId, {
+        codingReport: report,
+        verificationStatus: report.status,
+      });
     });
   }
 

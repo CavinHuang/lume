@@ -34,6 +34,7 @@ import { markWikiProposalSecurityGateAvailable } from "./services/wiki/wiki-capa
 import { createBrowserBroker } from "./services/browser/browser-broker";
 import { setActiveBrowserBroker } from "./services/browser/browser-broker-holder";
 import { ExternalChromeTransport } from "./services/browser/external-chrome-transport";
+import { startBackgroundProcessRecovery } from "./services/agent/background-process-recovery";
 
 const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
@@ -315,6 +316,7 @@ async function boot(): Promise<void> {
     void handleRpcLine(trimmed);
   });
   writeNotification("system.ready", { native });
+  const stopBackgroundProcessRecovery = startBackgroundProcessRecovery(writeNotification);
 
   // 单例守卫仍然早于所有 runner：ready 只表示 RPC/native 已可用，
   // 不让单例检查或可选启动项阻塞桌面端握手。
@@ -398,6 +400,7 @@ async function boot(): Promise<void> {
     unsubscribeSubagentAnnounce();
     unsubscribeSubagentWork();
     unsubscribeThreadListChanged();
+    stopBackgroundProcessRecovery();
     stopWorkspaceWatcher();
     void getWorkspaceMcpManager().disposeAll().catch(() => {});
     void stopAutomationRunner().catch(() => {});

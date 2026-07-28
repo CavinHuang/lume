@@ -188,6 +188,10 @@ export function useGlobalAgentListeners() {
             setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
             break
           }
+          if (event.type === 'background.task.completed') {
+            setStreamingStates((prev) => ({ ...prev, [threadId]: event.status === 'failed' ? 'errored' : 'idle' }))
+            break
+          }
           if (
             event.type === 'context.compaction.started'
             || event.type === 'context.compaction.progress'

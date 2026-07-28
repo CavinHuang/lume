@@ -176,6 +176,8 @@ import {
   getCodingFileDiff
 } from "../services/agent-runtime/runtime-core/coding-change-service";
 import {
+  getCodingFileDiffFromCheckpoint,
+  getCodingRunRoots,
   revertCodingFileFromCheckpoint,
   revertCodingRun
 } from "../services/agent-runtime/runtime-core/coding-run-checkpoint-service";
@@ -212,6 +214,7 @@ import {
   saveAgentProxySettings
 } from "../services/system/proxy-settings-manager";
 import { readBootstrapFile, writeBootstrapFile } from "../services/system/workspace-bootstrap-service";
+import { resumeAutomationAfterInteraction } from "../services/automation/automation-runner-service";
 import {
   agentAppendInputSchema,
   agentCreateThreadInputSchema,
@@ -461,10 +464,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }, { appendUserMessage: false });
       return { finalOutput };
     });
-    return service.resumeRun({
+    const result = await service.resumeRun({
       runId,
       interruptionId: input.interruptionId
     });
+    if (result.status === "resumed") {
+      resumeAutomationAfterInteraction(input.threadId);
+    }
+    return result;
   };
 
   const createExecutionStartCallback = (input: AgentSendInput) => () => {
@@ -1430,7 +1437,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET]: async (params) => {
       const input = validateInput(codingChangeSetInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET);
       const workdir = resolveAgentThreadWorkdir(input.threadId);
-      const changeSet = await getCodingChangeSet(workdir.agentCwd, { paths: input.paths });
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      const changeSet = await getCodingChangeSet(workdir.agentCwd, {
+        paths: input.paths,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
       const pendingRewind = (await listIncompleteCodingRewindJournals(getRuntimeCoreSessionDir(input.threadId)))
         .filter((journal) => journal.status !== "failed" && journal.status !== "completed")
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
@@ -1451,7 +1465,23 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.GET_CODING_DIFF]: async (params) => {
       const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_DIFF);
       const workdir = resolveAgentThreadWorkdir(input.threadId);
-      return getCodingFileDiff(workdir.agentCwd, input.path);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      if (input.runId) {
+        const checkpointDiff = await getCodingFileDiffFromCheckpoint({
+          sessionDir: getRuntimeCoreSessionDir(input.threadId),
+          runId: input.runId,
+          path: input.path,
+          rootId: input.rootId,
+        });
+        if (checkpointDiff) return checkpointDiff;
+      }
+      return getCodingFileDiff(workdir.agentCwd, input.path, {
+        rootId: input.rootId,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
     },
     [AGENT_IPC_CHANNELS.REVERT_CODING_FILE]: async (params) => {
       const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.REVERT_CODING_FILE);
@@ -1464,7 +1494,8 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return revertCodingFileFromCheckpoint({
         sessionDir: getRuntimeCoreSessionDir(input.threadId),
         runId: input.runId,
-        path: input.path
+        path: input.path,
+        rootId: input.rootId
       });
     },
     [AGENT_IPC_CHANNELS.REVERT_CODING_RUN]: async (params) => {

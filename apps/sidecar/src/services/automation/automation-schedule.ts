@@ -3,16 +3,15 @@ import type { AutomationSchedule } from "@lume/shared";
 interface CronFieldSpec {
   min: number;
   max: number;
-  dateValue: (date: Date) => number;
   allowSundaySeven?: boolean;
 }
 
 const CRON_FIELD_SPECS: CronFieldSpec[] = [
-  { min: 0, max: 59, dateValue: (date) => date.getMinutes() },
-  { min: 0, max: 23, dateValue: (date) => date.getHours() },
-  { min: 1, max: 31, dateValue: (date) => date.getDate() },
-  { min: 1, max: 12, dateValue: (date) => date.getMonth() + 1 },
-  { min: 0, max: 7, dateValue: (date) => date.getDay(), allowSundaySeven: true }
+  { min: 0, max: 59 },
+  { min: 0, max: 23 },
+  { min: 1, max: 31 },
+  { min: 1, max: 12 },
+  { min: 0, max: 7, allowSundaySeven: true }
 ];
 
 function parseInteger(value: string): number | null {
@@ -114,25 +113,29 @@ export function validateCronExpression(expr: string): void {
   });
 }
 
-export function matchCronExpression(expr: string, date: Date): boolean {
+export function matchCronExpression(expr: string, date: Date, timezone?: string): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
+  const values = zonedCronValues(date, timezone);
   return parts.every((field, index) => {
     const spec = CRON_FIELD_SPECS[index];
-    return spec ? cronFieldMatches(field, spec, spec.dateValue(date)) : false;
+    return spec ? cronFieldMatches(field, spec, values[index]!) : false;
   });
 }
 
-function getNextCronRunAt(expr: string, fromMs: number): number | null {
+export function getNextCronRunAt(expr: string, fromMs: number, timezone?: string): number | null {
   validateCronExpression(expr);
+  const resolvedTimezone = resolveTimezone(timezone);
   const candidate = new Date(fromMs);
   candidate.setSeconds(0, 0);
   let timestamp = candidate.getTime() + 60_000;
   const maxTimestamp = fromMs + 366 * 24 * 60 * 60_000;
+  const previousLocalMinute = zonedMinuteKey(new Date(fromMs), resolvedTimezone);
 
   while (timestamp <= maxTimestamp) {
     const date = new Date(timestamp);
-    if (matchCronExpression(expr, date)) {
+    const localMinute = zonedMinuteKey(date, resolvedTimezone);
+    if (localMinute !== previousLocalMinute && matchCronExpression(expr, date, resolvedTimezone)) {
       return timestamp;
     }
     timestamp += 60_000;
@@ -150,18 +153,22 @@ export function validateAutomationSchedule(schedule: AutomationSchedule): void {
       throw new Error("cron 类型任务缺少 cronExpr");
     }
     validateCronExpression(schedule.cronExpr);
+    resolveTimezone(schedule.timezone);
+    validateMisfirePolicy(schedule.misfirePolicy);
     return;
   }
   if (schedule.type === "once") {
     if (typeof schedule.runAt !== "number" || !Number.isFinite(schedule.runAt) || schedule.runAt <= 0) {
       throw new Error("once 类型任务缺少有效 runAt");
     }
+    validateMisfirePolicy(schedule.misfirePolicy);
     return;
   }
   if (schedule.type === "interval") {
     if (typeof schedule.intervalMs !== "number" || !Number.isFinite(schedule.intervalMs) || schedule.intervalMs <= 0) {
       throw new Error("interval 类型任务缺少有效 intervalMs");
     }
+    validateMisfirePolicy(schedule.misfirePolicy);
     return;
   }
   if (schedule.type === "manual") {
@@ -170,10 +177,68 @@ export function validateAutomationSchedule(schedule: AutomationSchedule): void {
   throw new Error(`不支持的 schedule.type: ${(schedule as { type?: string }).type ?? "unknown"}`);
 }
 
-export function getNextAutomationRunAt(schedule: AutomationSchedule, fromMs = Date.now()): number | null {
+export function getNextAutomationRunAt(schedule: AutomationSchedule, fromMs = Date.now(), anchorMs = fromMs): number | null {
   validateAutomationSchedule(schedule);
   if (schedule.type === "manual") return null;
   if (schedule.type === "once") return schedule.runAt ?? null;
-  if (schedule.type === "interval") return fromMs + (schedule.intervalMs ?? 0);
-  return getNextCronRunAt(schedule.cronExpr ?? "", fromMs);
+  if (schedule.type === "interval") {
+    const intervalMs = schedule.intervalMs ?? 0;
+    const elapsed = Math.max(0, fromMs - anchorMs);
+    return anchorMs + (Math.floor(elapsed / intervalMs) + 1) * intervalMs;
+  }
+  return getNextCronRunAt(schedule.cronExpr ?? "", fromMs, schedule.timezone);
+}
+
+export function getAutomationTimezone(schedule: AutomationSchedule): string {
+  return resolveTimezone(schedule.timezone);
+}
+
+function resolveTimezone(timezone?: string): string {
+  const resolved = timezone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: resolved }).format(0);
+  } catch {
+    throw new Error(`无效的 IANA 时区: ${resolved}`);
+  }
+  return resolved;
+}
+
+function validateMisfirePolicy(value: AutomationSchedule["misfirePolicy"]): void {
+  if (value !== undefined && value !== "run_latest" && value !== "skip") {
+    throw new Error(`不支持的 misfirePolicy: ${String(value)}`);
+  }
+}
+
+function zonedCronValues(date: Date, timezone?: string): number[] {
+  const resolvedTimezone = resolveTimezone(timezone);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: resolvedTimezone,
+    minute: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+    day: "2-digit",
+    month: "2-digit",
+    weekday: "short"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday ?? "");
+  return [
+    Number(values.minute),
+    Number(values.hour),
+    Number(values.day),
+    Number(values.month),
+    weekday
+  ];
+}
+
+function zonedMinuteKey(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).format(date);
 }

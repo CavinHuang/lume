@@ -245,7 +245,7 @@ describe("tool-permission-session", () => {
     expect(resolved?.resolution?.rememberDecision).toBeTrue();
   });
 
-  test("工具审批解决后不应生成会重新发起模型调用的 cold-start checkpoint", async () => {
+  test("工具审批解决后应保存可执行一次的 V2 cold-start checkpoint", async () => {
     process.env.LUME_CONFIG_DIR = mkdtempSync(join(tmpdir(), "lume-tool-permission-continuation-"));
     const threadId = "continuation-thread";
     const runId = "run-continuation";
@@ -280,14 +280,21 @@ describe("tool-permission-session", () => {
 
     const continuation = await continuationStore.get(runId);
     expect(continuation).toMatchObject({
-      status: "not_resumable",
+      version: 2,
+      status: "ready_to_execute",
       checkpoint: {
-        step: "before_model_call",
+        step: "before_tool_execution",
         toolCallId: "continuation-tool",
-        toolName: "Bash"
+        toolName: "Bash",
+        toolCall: {
+          id: "continuation-tool",
+          name: "Bash",
+          input: { command: "git status" },
+          kind: "execute"
+        }
       }
     });
-    expect(continuation?.reason).toContain("工具审批已解决");
+    expect(continuation?.reason).toContain("执行原工具调用一次");
   });
 
   test("自动化执行的工具审批应持久化为 automation_approval", async () => {

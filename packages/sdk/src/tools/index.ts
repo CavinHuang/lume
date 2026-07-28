@@ -261,8 +261,14 @@ export function splitDeferredTools(tools: ToolDefinition[]): {
 } {
   const candidates = tools.filter((tool) => tool.name !== 'ToolSearch' && tool.name !== 'ExecuteTool')
   return {
-    core: candidates.filter((tool) => CORE_TOOL_NAMES.has(tool.name)),
-    deferred: candidates.filter((tool) => !CORE_TOOL_NAMES.has(tool.name)),
+    core: candidates.filter((tool) =>
+      CORE_TOOL_NAMES.has(tool.name)
+      || tool.runtimeMetadata?.requiredDuringSkillScope === true
+    ),
+    deferred: candidates.filter((tool) =>
+      !CORE_TOOL_NAMES.has(tool.name)
+      && tool.runtimeMetadata?.requiredDuringSkillScope !== true
+    ),
   }
 }
 

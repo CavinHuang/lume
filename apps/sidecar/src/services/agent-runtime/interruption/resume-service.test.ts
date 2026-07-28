@@ -177,4 +177,81 @@ describe("LumeResumeService", () => {
     expect(result.error).toContain("缺少可注入的工具结果");
     expect((await continuationStore.get("run-1"))?.status).toBe("not_resumable");
   });
+
+  test("resumes a V2 approved tool from the persisted original input", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-resume-v2-approved-"));
+    const runStateStore = createFileBackedLumeRunStateStore(dir);
+    const continuationStore = createFileBackedRunContinuationStore(dir);
+    await runStateStore.create(makeRunState());
+    await continuationStore.upsert({
+      version: 2,
+      runId: "run-1",
+      threadId: "thread-1",
+      status: "ready_to_execute",
+      checkpoint: {
+        step: "before_tool_execution",
+        toolCallId: "tool-1",
+        toolName: "Read",
+        toolKind: "read",
+        toolCall: {
+          id: "tool-1",
+          name: "Read",
+          input: { file_path: "README.md" },
+          inputHash: "hash-1",
+          kind: "read"
+        }
+      },
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    let receivedInput: unknown;
+    const result = await new LumeResumeService(
+      { runStateStore, continuationStore },
+      async (checkpoint) => {
+        receivedInput = checkpoint.checkpoint.toolCall?.input;
+        return { finalOutput: "resumed" };
+      }
+    ).resumeRun({ runId: "run-1" });
+
+    expect(result.status).toBe("resumed");
+    expect(receivedInput).toEqual({ file_path: "README.md" });
+  });
+
+  test("does not replay a V2 side-effect tool with an unknown result", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-resume-v2-unknown-"));
+    const runStateStore = createFileBackedLumeRunStateStore(dir);
+    const continuationStore = createFileBackedRunContinuationStore(dir);
+    await runStateStore.create(makeRunState());
+    await continuationStore.upsert({
+      version: 2,
+      runId: "run-1",
+      threadId: "thread-1",
+      status: "tool_running",
+      checkpoint: {
+        step: "waiting_for_tool_result",
+        toolCallId: "tool-1",
+        toolName: "Write",
+        toolKind: "write",
+        toolCall: {
+          id: "tool-1",
+          name: "Write",
+          input: { file_path: "out.txt", content: "value" },
+          inputHash: "hash-2",
+          kind: "write"
+        }
+      },
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    const result = await new LumeResumeService(
+      { runStateStore, continuationStore },
+      async () => ({ finalOutput: "should-not-run" })
+    ).resumeRun({ runId: "run-1" });
+
+    expect(result.status).toBe("not_resumable");
+    expect(result.error).toContain("interrupted_unknown");
+    expect((await continuationStore.get("run-1"))?.status).toBe("interrupted");
+  });
 });

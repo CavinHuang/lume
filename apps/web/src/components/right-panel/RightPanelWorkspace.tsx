@@ -164,18 +164,29 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
           <div className="flex min-h-0 flex-1 items-center justify-center text-[var(--lume-text-muted)]"><PanelRightOpen size={18} /></div>
         ) : (
           <>
-            {!codingReview && (
-              <RightPanelTabBar
-                workspace={persistedWorkspace}
-                fileTabs={runtimeWorkspace.openTabs}
-                activeItem={runtimeWorkspace.activeItem}
-                onActivateFunction={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })}
-                onActivateFile={(tabId) => updateRuntime({ ...runtimeWorkspace, activeItem: { kind: 'file', tabId } })}
-                onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
-                onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
-                onOpenFunction={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })}
-              />
-            )}
+            <RightPanelTabBar
+              workspace={persistedWorkspace}
+              fileTabs={runtimeWorkspace.openTabs}
+              activeItem={runtimeWorkspace.activeItem}
+              reviewOpen={Boolean(codingReview)}
+              reviewActive={codingReview?.active}
+              onActivateReview={() => closeCodingReview({ type: 'activate', threadId })}
+              onCloseReview={() => closeCodingReview({ type: 'close', threadId })}
+              onActivateFunction={(fn) => {
+                closeCodingReview({ type: 'deactivate', threadId })
+                action({ type: 'activate-function', threadId, function: fn, binding })
+              }}
+              onActivateFile={(tabId) => {
+                closeCodingReview({ type: 'deactivate', threadId })
+                updateRuntime((current) => ({ ...current, activeItem: { kind: 'file', tabId } }))
+              }}
+              onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
+              onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
+              onOpenFunction={(fn) => {
+                closeCodingReview({ type: 'deactivate', threadId })
+                action({ type: 'activate-function', threadId, function: fn, binding })
+              }}
+            />
             {hasOpenTabs ? (
               <RightPanelActiveContent
                 persisted={persistedWorkspace}
@@ -188,7 +199,15 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
                 onPersistedChange={updatePersisted}
                 threadId={threadId}
                 codingReview={codingReview}
-                onCloseCodingReview={() => closeCodingReview({ type: 'close', threadId })}
+                onOpenCodingFile={workspaceSlug ? (path) => {
+                  closeCodingReview({ type: 'deactivate', threadId })
+                  action({
+                    type: 'open-file',
+                    threadId,
+                    ref: { source: 'project', scopeId: workspaceSlug, relativePath: path.replace(/\\/g, '/') },
+                    binding,
+                  })
+                } : undefined}
               />
             ) : <RightPanelLauncher onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })} />}
           </>
@@ -198,7 +217,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   )
 }
 
-function RightPanelActiveContent({ persisted, runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, onPersistedChange, threadId, codingReview, onCloseCodingReview }: {
+function RightPanelActiveContent({ persisted, runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, onPersistedChange, threadId, codingReview, onOpenCodingFile }: {
   persisted: ThreadRightPanelWorkspace
   runtime: ThreadFileWorkspace
   workspaceSlug?: string
@@ -209,10 +228,10 @@ function RightPanelActiveContent({ persisted, runtime, workspaceSlug, workspaceP
   onPersistedChange: (workspace: ThreadRightPanelWorkspace) => void
   threadId: string
   codingReview?: CodingReviewPanelState
-  onCloseCodingReview: () => void
+  onOpenCodingFile?: (path: string) => void
 }) {
-  if (codingReview) {
-    return <CodingReviewPanel threadId={threadId} state={codingReview} onClose={onCloseCodingReview} />
+  if (codingReview?.active) {
+    return <CodingReviewPanel threadId={threadId} state={codingReview} onOpenFile={onOpenCodingFile} />
   }
   const active = runtime.activeItem
   if (!active) return <PlaceholderRightPanelTab label="" />

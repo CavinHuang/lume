@@ -14,20 +14,49 @@ function result(content: string, isError = false, meta?: Record<string, unknown>
   };
 }
 
+function verificationResult(content: string, outcome: "succeeded" | "failed") {
+  return result(content, outcome === "failed", {
+    execution: {
+      version: 2,
+      outcome,
+      exitCode: outcome === "succeeded" ? 0 : 1,
+      terminationReason: outcome === "succeeded" ? "completed" : "exit_code",
+      durationMs: 1,
+      shell: "powershell",
+      command: "bun test",
+      purpose: "verification",
+    }
+  });
+}
+
 describe("coding run tracker", () => {
   test("requires verification after a successful mutation and clears it after verification", async () => {
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Edit", input: { file_path: "a.ts" }, result: result("edited") });
     await expect(tracker.completionGuard()).resolves.toContain("verification needed");
-    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: result("pass") });
+    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult("pass", "succeeded") });
     await expect(tracker.completionGuard()).resolves.toBeUndefined();
     expect(tracker.getVerificationStatus()).toBe("verified");
+    expect(tracker.getVerificationReport()).toMatchObject({
+      phase: "ready_for_review",
+      verificationRecords: [{ command: "bun test", status: "passed" }],
+    });
+  });
+
+  test("records governed git actions without treating them as completion evidence", () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({ toolName: "Bash", input: { command: "git commit -am \"checkpoint\"" }, result: result("[main abc123] checkpoint") });
+
+    expect(tracker.getVerificationReport().gitActions).toEqual([
+      expect.objectContaining({ kind: "commit", status: "completed" }),
+    ]);
+    expect(tracker.getVerificationStatus()).toBe("not_required");
   });
 
   test("feeds a failed verification back to the same run", async () => {
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
-    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: result("failed test", true) });
+    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult("failed test", "failed") });
     await expect(tracker.completionGuard()).resolves.toMatchObject({
       type: "continue",
       message: expect.stringContaining("verification failed")
@@ -38,9 +67,9 @@ describe("coding run tracker", () => {
   test("stops after one automatic verification repair", async () => {
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
-    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: result("failed test", true) });
+    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult("failed test", "failed") });
     await tracker.completionGuard();
-    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: result("failed again", true) });
+    tracker.observe({ toolName: "Bash", input: { command: "bun test", purpose: "verification" }, result: verificationResult("failed again", "failed") });
     await expect(tracker.completionGuard()).resolves.toMatchObject({
       type: "stop",
       errorCode: "verification_failed_after_repair",
@@ -72,7 +101,7 @@ describe("coding run tracker", () => {
     baseline.observe({
       toolName: "Bash",
       input: { command: "bun test", purpose: "verification" },
-      result: result("baseline failure", true)
+      result: verificationResult("baseline failure", "failed")
     });
 
     const resumed = createCodingRunTracker({ workspaceRoot: root, statePath });
@@ -81,7 +110,7 @@ describe("coding run tracker", () => {
     resumed.observe({
       toolName: "Bash",
       input: { command: "bun test", purpose: "verification" },
-      result: result("baseline failure", true)
+      result: verificationResult("baseline failure", "failed")
     });
 
     const report = resumed.getVerificationReport();
@@ -90,7 +119,7 @@ describe("coding run tracker", () => {
     await expect(resumed.completionGuard()).resolves.toBeUndefined();
   });
 
-  test("waits for background TaskOutput before evaluating workspace changes", async () => {
+  test("keeps a running background task recoverable without failing the Run", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-coding-background-"));
     const tracker = createCodingRunTracker({ workspaceRoot: root });
     await tracker.initialize();
@@ -102,11 +131,12 @@ describe("coding run tracker", () => {
         _meta: { execution: { version: 1, durationMs: 0, command: "bun test", terminationReason: "running" } }
       }
     });
-    await expect(tracker.completionGuard()).resolves.toContain("background pending");
+    await expect(tracker.completionGuard()).resolves.toBeUndefined();
+    expect(tracker.getVerificationReport().pendingBackground).toBe(true);
 
     writeFileSync(join(root, "generated.ts"), "export const generated = true;", "utf-8");
     tracker.observe({
-      toolName: "TaskOutput",
+      toolName: "ProcessOutput",
       input: { task_id: "task_1" },
       result: {
         ...result("completed"),
@@ -119,6 +149,146 @@ describe("coding run tracker", () => {
       changedFiles: ["generated.ts"],
       pendingBackground: false
     });
+  });
+
+  test("updates an auto-backgrounded verification from its terminal notification", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({ toolName: "Write", input: { file_path: "a.ts" }, result: result("written") });
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: "bun test", purpose: "verification" },
+      result: {
+        ...result("moved to background"),
+        _meta: {
+          execution: { version: 1, durationMs: 0, command: "bun test", purpose: "verification", terminationReason: "running" },
+          task: { id: "task_1", status: "running", kind: "shell", autoBackgrounded: true }
+        }
+      }
+    });
+
+    await expect(tracker.completionGuard()).resolves.toBeUndefined();
+    expect(tracker.getVerificationStatus()).toBe("unverified");
+    expect(tracker.observeAsyncEvent({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "task_1",
+      status: "completed",
+      summary: "2 pass",
+      execution: {
+        version: 1,
+        durationMs: 20_000,
+        command: "bun test",
+        purpose: "verification",
+        terminationReason: "completed"
+      },
+      session_id: "session"
+    })).toBe(true);
+    expect(tracker.getVerificationStatus()).toBe("verified");
+    expect(tracker.getVerificationReport().pendingBackground).toBe(false);
+  });
+
+  test("records a failed auto-backgrounded verification without aborting the finished turn", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({ toolName: "Edit", input: { file_path: "a.ts" }, result: result("edited") });
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: "bun test", purpose: "verification" },
+      result: {
+        ...result("moved to background"),
+        _meta: {
+          execution: { version: 1, durationMs: 0, command: "bun test", purpose: "verification", terminationReason: "running" },
+          task: { id: "task_2", status: "running", kind: "shell", autoBackgrounded: true }
+        }
+      }
+    });
+
+    await expect(tracker.completionGuard()).resolves.toBeUndefined();
+    tracker.observeAsyncEvent({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "task_2",
+      status: "failed",
+      summary: "test failed",
+      execution: {
+        version: 1,
+        durationMs: 20_000,
+        command: "bun test",
+        purpose: "verification",
+        terminationReason: "nonzero"
+      },
+      session_id: "session"
+    });
+    await expect(tracker.completionGuard()).resolves.toMatchObject({
+      type: "continue",
+      message: expect.stringContaining("verification failed")
+    });
+    expect(tracker.getVerificationReport().pendingBackground).toBe(false);
+  });
+
+  test("does not wait for or fail an explicitly long-lived background process", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: "bun run dev", run_in_background: true },
+      result: {
+        ...result("background process started"),
+        _meta: {
+          execution: { version: 1, durationMs: 0, command: "bun run dev", terminationReason: "running" },
+          task: { id: "task_dev", status: "running", kind: "shell", autoBackgrounded: false }
+        }
+      }
+    });
+
+    await expect(tracker.completionGuard()).resolves.toBeUndefined();
+    expect(tracker.getVerificationReport().pendingBackground).toBe(true);
+  });
+
+  test("does not append another model turn when an auto-backgrounded check is still running", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({ toolName: "Edit", input: { file_path: "a.ts" }, result: result("edited") });
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: "bun test", purpose: "verification" },
+      result: {
+        ...result("moved to background"),
+        _meta: {
+          execution: { version: 1, durationMs: 0, command: "bun test", purpose: "verification", terminationReason: "running" },
+          task: { id: "task_slow", status: "running", kind: "shell", autoBackgrounded: true }
+        }
+      }
+    });
+
+    await expect(tracker.completionGuard()).resolves.toBeUndefined();
+    expect(tracker.getVerificationStatus()).toBe("unverified");
+    expect(tracker.getVerificationReport().pendingBackground).toBe(true);
+  });
+
+  test("clears a stopped task even if its execution metadata has not caught up yet", async () => {
+    const tracker = createCodingRunTracker();
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: "long-running-command" },
+      result: {
+        ...result("moved to background"),
+        _meta: {
+          execution: { version: 1, durationMs: 0, command: "long-running-command", terminationReason: "running" },
+          task: { id: "task_stopped", status: "running", kind: "shell", autoBackgrounded: true }
+        }
+      }
+    });
+    tracker.observe({
+      toolName: "ProcessOutput",
+      input: { task_id: "task_stopped" },
+      result: {
+        ...result("stopped"),
+        _meta: {
+          execution: { version: 1, durationMs: 0, command: "long-running-command", terminationReason: "running" },
+          task: { id: "task_stopped", status: "stopped", kind: "shell" }
+        }
+      }
+    });
+
+    expect(tracker.getVerificationReport().pendingBackground).toBe(false);
   });
 
   test("keeps file line statistics for the coding report", async () => {

@@ -113,6 +113,7 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
     workspaceId: input.workspaceId?.trim() || undefined,
     threadId: input.threadId?.trim() || undefined,
     schedule: input.schedule,
+    scheduleAnchorAt: now,
     ...(input.triggerModes ? { triggerModes: input.triggerModes } : {}),
     ...(input.source ? { source: input.source } : {}),
     ...(input.systemAction ? { systemAction: input.systemAction } : {}),
@@ -120,7 +121,7 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
     ...(input.defaultModel ? { defaultModel: input.defaultModel.trim() } : {}),
     ...(input.toolResourceIds ? { toolResourceIds: input.toolResourceIds } : {}),
     prompt: normalizePrompt(input.prompt),
-    nextRunAt: enabled ? getNextAutomationRunAt(input.schedule, now) : null,
+    nextRunAt: enabled ? getNextAutomationRunAt(input.schedule, now, now) : null,
     createdAt: now,
     updatedAt: now
   };
@@ -153,6 +154,7 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
     ...(input.workspaceId !== undefined ? { workspaceId: input.workspaceId.trim() || undefined } : {}),
     ...(input.threadId !== undefined ? { threadId: input.threadId.trim() || undefined } : {}),
     schedule,
+    scheduleAnchorAt: input.schedule !== undefined ? updatedAt : (existing.scheduleAnchorAt ?? existing.createdAt),
     ...(input.triggerModes !== undefined ? { triggerModes: input.triggerModes } : {}),
     ...(input.source !== undefined ? { source: input.source } : {}),
     ...(input.systemAction !== undefined ? { systemAction: input.systemAction } : {}),
@@ -160,7 +162,7 @@ export function updateAutomationJob(input: AutomationUpdateJobInput): Automation
     ...(input.defaultModel !== undefined ? { defaultModel: input.defaultModel.trim() || undefined } : {}),
     ...(input.toolResourceIds !== undefined ? { toolResourceIds: input.toolResourceIds } : {}),
     ...(input.prompt !== undefined ? { prompt: normalizePrompt(input.prompt) } : {}),
-    ...(shouldRecomputeNextRun ? { nextRunAt: enabled ? getNextAutomationRunAt(schedule, updatedAt) : null } : {}),
+    ...(shouldRecomputeNextRun ? { nextRunAt: enabled ? getNextAutomationRunAt(schedule, updatedAt, input.schedule !== undefined ? updatedAt : (existing.scheduleAnchorAt ?? existing.createdAt)) : null } : {}),
     updatedAt
   };
   index.jobs[targetIndex] = updated;
@@ -188,7 +190,24 @@ export function recordAutomationJobRun(input: { id: string; startedAt: number })
   const updated: AutomationJob = {
     ...existing,
     lastRunAt: input.startedAt,
-    nextRunAt: existing.enabled ? getNextAutomationRunAt(existing.schedule, input.startedAt) : null,
+    nextRunAt: existing.enabled ? getNextAutomationRunAt(existing.schedule, input.startedAt, existing.scheduleAnchorAt ?? existing.createdAt) : null,
+    updatedAt: Date.now()
+  };
+  index.jobs[targetIndex] = updated;
+  writeIndex(index);
+  return updated;
+}
+
+export function advanceAutomationJobSchedule(input: { id: string; fromAt: number }): AutomationJob {
+  const index = readIndex();
+  const targetIndex = index.jobs.findIndex((item) => item.id === input.id);
+  if (targetIndex < 0) throw new Error(`自动化任务不存在: ${input.id}`);
+  const existing = index.jobs[targetIndex] as AutomationJob;
+  const updated: AutomationJob = {
+    ...existing,
+    nextRunAt: existing.enabled
+      ? getNextAutomationRunAt(existing.schedule, input.fromAt, existing.scheduleAnchorAt ?? existing.createdAt)
+      : null,
     updatedAt: Date.now()
   };
   index.jobs[targetIndex] = updated;

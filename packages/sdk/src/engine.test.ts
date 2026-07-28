@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { QueryEngine } from "./engine.js"
 import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./providers/types.js"
+import type { SDKMessage, ToolContext } from "./types.js"
 import { normalizeProviderUsage } from "./utils/usage.js"
 
 class StaticProvider implements LLMProvider {
@@ -52,6 +53,79 @@ function wait(ms: number): Promise<null> {
 }
 
 describe("QueryEngine turn limits", () => {
+  test("forwards exactly terminal task notifications emitted after a tool call returns", async () => {
+    let emitAfterReturn: NonNullable<ToolContext["emitEvent"]> | undefined
+    const asyncEvents: SDKMessage[] = []
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        {
+          content: [{ type: "tool_use", id: "background-1", name: "Background", input: {} }],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        },
+        {
+          content: [{ type: "text", text: "background command accepted" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 }
+        }
+      ]),
+      tools: [{
+        name: "Background",
+        description: "starts background work",
+        inputSchema: { type: "object", properties: {} },
+        async call(_input, context) {
+          emitAfterReturn = context.emitEvent
+          context.emitEvent?.({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task_1",
+            description: "background work",
+            session_id: "session"
+          })
+          return { type: "tool_result" as const, tool_use_id: "", content: "started" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      onAsyncEvent: (event) => asyncEvents.push(event)
+    })
+
+    const events = await collectEvents(engine)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "task_started",
+      task_id: "task_1"
+    }))
+
+    emitAfterReturn?.({
+      type: "system",
+      subtype: "local_command_output",
+      content: "late progress",
+      session_id: "session"
+    })
+    emitAfterReturn?.({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "task_1",
+      status: "completed",
+      session_id: "session"
+    })
+
+    expect(asyncEvents).toEqual([
+      expect.objectContaining({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task_1",
+        status: "completed"
+      })
+    ])
+  })
+
   test("treats a natural completion on the final allowed turn as success", async () => {
     const engine = new QueryEngine({
       cwd: process.cwd(),

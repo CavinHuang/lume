@@ -2,10 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, interpretShellExit } from "./bash";
+import { BashTool, interpretShellExit, looksLikeInteractivePrompt } from "./bash";
 import { clearTasks, TaskOutputTool } from "./task-tools";
-import { createProcessJobRecord } from "./process-job-registry";
+import {
+  createProcessJobRecord,
+  ProcessStopTool,
+  updateProcessJob,
+  waitForProcessJobTerminal,
+} from "./process-job-registry";
 import { resolveShellInvocation } from "../utils/shell-invocation";
+import type { SDKMessage } from "../types";
 
 describe("BashTool shell invocation", () => {
   test("classifies read-only shell commands dynamically for permissions and concurrency", () => {
@@ -52,7 +58,8 @@ describe("BashTool shell invocation", () => {
     const result = await BashTool.call({ command, purpose: "verification", timeout: 10_000 }, { cwd: root });
     expect(result.content).toContain("hello");
     expect(result._meta?.execution).toMatchObject({
-      version: 1,
+      version: 2,
+      outcome: "succeeded",
       command,
       purpose: "verification",
       terminationReason: "completed",
@@ -82,24 +89,121 @@ describe("BashTool shell invocation", () => {
     });
   });
 
+  test("rejects filtered pipelines as verification evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-verification-"));
+    const command = process.platform === "win32"
+      ? "bun test | Select-String pass"
+      : "bun test | grep pass";
+    const result = await BashTool.call({ command, purpose: "verification" }, { cwd: root });
+    expect(result.is_error).toBeTrue();
+    expect(result._meta?.error).toMatchObject({ code: "verification_pipeline_not_allowed" });
+    expect(result._meta?.execution).toMatchObject({ version: 2, outcome: "failed" });
+  });
+
   test("returns a running result and exposes terminal metadata through TaskOutput", async () => {
     clearTasks();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-background-"));
-    const command = process.platform === "win32" ? "echo background" : "printf background";
-    const context = { cwd: root, sessionId: "background-test", artifactsRoot: join(root, "artifacts") };
+    const command = process.platform === "win32"
+      ? "Start-Sleep -Milliseconds 500; Write-Output background"
+      : "sleep 0.5; printf background";
+    const events: SDKMessage[] = [];
+    const context = {
+      cwd: root,
+      sessionId: "background-test",
+      artifactsRoot: join(root, "artifacts"),
+      emitEvent: (event: SDKMessage) => events.push(event),
+    };
     const started = await BashTool.call({ command, run_in_background: true }, context);
     const taskId = String(started.content).match(/task_\d+/)?.[0];
     expect(taskId).toBeTruthy();
+    expect(started.content).toContain("You will be notified when it completes");
+    expect(started.content).toContain("Output is being written to:");
     expect(started._meta?.execution).toMatchObject({ terminationReason: "running" });
 
-    const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 5_000 }, context);
+    const completed = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 10_000 }, context);
     expect(completed.content).toContain("background");
     expect(completed._meta?.execution).toMatchObject({ terminationReason: "completed", command });
 
     const incremental = await TaskOutputTool.call({ task_id: taskId, block: false, offset: 0, limit: 4 }, context);
     expect(incremental.content).toContain("back");
     expect(incremental._meta?.task).toMatchObject({ outputOffset: 0, nextOffset: 4, truncated: true });
+    expect(events.filter((event) =>
+      event.type === "system"
+      && event.subtype === "task_notification"
+      && event.task_id === taskId
+    )).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "task_notification",
+      task_id: taskId,
+      status: "completed",
+      output_file: expect.stringContaining("process-jobs"),
+    }));
+  }, 15_000);
+
+  test("only classifies likely interactive prompts as stalled input", () => {
+    expect(looksLikeInteractivePrompt("Install dependencies? (Y/n)")).toBeTrue();
+    expect(looksLikeInteractivePrompt("Are you sure you want to continue?")).toBeTrue();
+    expect(looksLikeInteractivePrompt("Press Enter to continue")).toBeTrue();
+    expect(looksLikeInteractivePrompt("building package 48 of 100")).toBeFalse();
+    expect(looksLikeInteractivePrompt("test suite still running")).toBeFalse();
   });
+
+  test("does not emit a duplicate terminal notification after ProcessStop", async () => {
+    clearTasks();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-stop-"));
+    const command = process.platform === "win32"
+      ? "Start-Sleep -Seconds 5; Write-Output should-not-complete"
+      : "sleep 5; printf should-not-complete";
+    const events: SDKMessage[] = [];
+    let backgroundCompletions = 0;
+    const context = {
+      cwd: root,
+      sessionId: "background-stop-test",
+      artifactsRoot: join(root, "artifacts"),
+      emitEvent: (event: SDKMessage) => events.push(event),
+      onBackgroundTaskCompleted: () => {
+        backgroundCompletions += 1;
+      },
+    };
+    const started = await BashTool.call({ command, run_in_background: true }, context);
+    const taskId = String(started.content).match(/task_\d+/)?.[0];
+    expect(taskId).toBeTruthy();
+
+    const stopped = await ProcessStopTool.call({ task_id: taskId }, context);
+    expect(stopped.content).toContain("stopped");
+    for (let attempt = 0; attempt < 100 && backgroundCompletions === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    expect(events.filter((event) =>
+      event.type === "system"
+      && event.subtype === "task_notification"
+      && event.task_id === taskId
+    )).toHaveLength(0);
+    expect(backgroundCompletions).toBe(1);
+  }, 15_000);
+
+  test("reattaches a durable background command after the in-memory registry is cleared", async () => {
+    clearTasks();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-recovery-"));
+    const command = process.platform === "win32"
+      ? "Start-Sleep -Milliseconds 300; Write-Output recovered"
+      : "sleep 0.3; printf recovered";
+    const context = {
+      cwd: root,
+      sessionId: "background-recovery-test",
+      artifactsRoot: join(root, "artifacts"),
+    };
+    const started = await BashTool.call({ command, run_in_background: true }, context);
+    const taskId = String(started.content).match(/task_\d+/)?.[0];
+    expect(taskId).toBeTruthy();
+
+    clearTasks();
+    const recovered = await TaskOutputTool.call({ task_id: taskId, block: true, timeout: 10_000 }, context);
+    expect(recovered.content).toContain("recovered");
+    expect(recovered._meta?.execution).toMatchObject({ version: 2, outcome: "succeeded" });
+  }, 15_000);
 
   test("keeps UTF-8 intact when TaskOutput resumes inside a multibyte character", async () => {
     clearTasks();
@@ -107,5 +211,42 @@ describe("BashTool shell invocation", () => {
     const result = await TaskOutputTool.call({ task_id: job.id, block: false, offset: 1, limit: 4 }, { cwd: tmpdir() });
     expect(result.content).toContain("乙");
     expect(result.content).not.toContain("�");
+  });
+
+  test("returns a concrete diagnostic when the background output file is unavailable", async () => {
+    clearTasks();
+    const missingFile = join(tmpdir(), `missing-background-${crypto.randomUUID()}.log`);
+    const job = createProcessJobRecord({
+      subject: "missing output",
+      status: "completed",
+      outputFile: missingFile,
+      output: "last captured output",
+    });
+
+    const result = await TaskOutputTool.call({ task_id: job.id, block: false }, { cwd: tmpdir() });
+
+    expect(result.content).toContain("Unable to read background output file");
+    expect(result.content).toContain("missing-background-");
+    expect(result.content).toContain("last captured output");
+  });
+
+  test("wakes host-side waiters when a background process reaches a terminal state", async () => {
+    clearTasks();
+    const job = createProcessJobRecord({ subject: "waiter", status: "running" });
+    const waiting = waitForProcessJobTerminal(job.id, 5_000);
+
+    updateProcessJob(job.id, { status: "completed", output: "done" });
+
+    await expect(waiting).resolves.toMatchObject({ id: job.id, status: "completed", output: "done" });
+  });
+
+  test("returns the running state when a host-side wait reaches its timeout", async () => {
+    clearTasks();
+    const job = createProcessJobRecord({ subject: "slow", status: "running" });
+
+    await expect(waitForProcessJobTerminal(job.id, 10)).resolves.toMatchObject({
+      id: job.id,
+      status: "running",
+    });
   });
 });

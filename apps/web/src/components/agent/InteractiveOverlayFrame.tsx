@@ -34,6 +34,7 @@ interface InteractiveOverlayFrameProps {
   submitDisabled?: boolean
   submitLabel?: string
   compact?: boolean
+  followTheme?: boolean
   showSubmit?: boolean
   meta?: ReactNode
   progress?: {
@@ -56,6 +57,7 @@ export function InteractiveOverlayFrame({
   submitDisabled = false,
   submitLabel = '提交',
   compact = false,
+  followTheme = false,
   showSubmit = true,
   meta,
   progress,
@@ -67,15 +69,29 @@ export function InteractiveOverlayFrame({
       <div className="px-3 pb-2 sm:px-6">
         <section
           data-interactive-overlay={kind}
-          className="mx-auto max-w-[920px] rounded-[20px] border border-white/[0.06] bg-[#292929] px-4 py-3.5 text-white shadow-[0_16px_48px_rgba(0,0,0,0.28)] sm:px-5"
+          className={cn(
+            'mx-auto max-w-[920px] rounded-[18px] border px-4 py-3 shadow-[0_16px_48px_rgba(0,0,0,0.20)] sm:px-5',
+            followTheme
+              ? 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] text-[var(--lume-text-primary)]'
+              : 'border-white/[0.06] bg-[#292929] text-white',
+          )}
         >
-          <div className="flex min-h-7 items-center gap-3">
+          <div className="flex min-h-6 items-center gap-2.5">
             <div className="min-w-0 flex-1">
-              <h3 className="truncate text-[15px] font-semibold leading-6 text-[#f5f5f5]">{title}</h3>
-              {meta && <div className="mt-0.5 truncate text-[11px] text-[#9c9c9c]">{meta}</div>}
+              <h3 className={cn(
+                'truncate text-[15px] font-semibold leading-6',
+                followTheme ? 'text-[var(--lume-text-primary)]' : 'text-[#f5f5f5]',
+              )}>{title}</h3>
+              {meta && <div className={cn(
+                'truncate text-[10.5px] leading-4',
+                followTheme ? 'text-[var(--lume-text-muted)]' : 'text-[#9c9c9c]',
+              )}>{meta}</div>}
             </div>
             {progress && (
-              <div className="flex shrink-0 items-center gap-1 text-[12px] text-[#929292]">
+              <div className={cn(
+                'flex shrink-0 items-center gap-0.5 text-[11px]',
+                followTheme ? 'text-[var(--lume-text-muted)]' : 'text-[#929292]',
+              )}>
                 {progress.onPrevious || progress.onNext ? (
                   <Button
                     variant="ghost"
@@ -84,12 +100,14 @@ export function InteractiveOverlayFrame({
                     disabled={!progress.onPrevious || progress.current <= 1}
                     onClick={progress.onPrevious}
                     aria-label="上一个选项"
-                    className="text-[#777] hover:bg-white/[0.08] hover:text-white disabled:opacity-30"
+                    className={followTheme
+                      ? 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)] disabled:opacity-30'
+                      : 'text-[#777] hover:bg-white/[0.08] hover:text-white disabled:opacity-30'}
                   >
-                    <ChevronLeft size={15} />
+                    <ChevronLeft size={14} />
                   </Button>
                 ) : null}
-                <span className="min-w-[44px] text-center tabular-nums">{progress.current} of {progress.total}</span>
+                <span className="min-w-[40px] text-center tabular-nums">{progress.current} of {progress.total}</span>
                 {progress.onPrevious || progress.onNext ? (
                   <Button
                     variant="ghost"
@@ -98,9 +116,11 @@ export function InteractiveOverlayFrame({
                     disabled={!progress.onNext || progress.current >= progress.total}
                     onClick={progress.onNext}
                     aria-label="下一个选项"
-                    className="text-[#777] hover:bg-white/[0.08] hover:text-white disabled:opacity-30"
+                    className={followTheme
+                      ? 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)] disabled:opacity-30'
+                      : 'text-[#777] hover:bg-white/[0.08] hover:text-white disabled:opacity-30'}
                   >
-                    <ChevronRight size={15} />
+                    <ChevronRight size={14} />
                   </Button>
                 ) : null}
               </div>
@@ -111,20 +131,35 @@ export function InteractiveOverlayFrame({
               type="button"
               onClick={onIgnore}
               aria-label="关闭"
-              className="text-[#888] hover:bg-white/[0.08] hover:text-white"
+              className={followTheme
+                ? 'text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]'
+                : 'text-[#888] hover:bg-white/[0.08] hover:text-white'}
             >
-              <X size={16} />
+              <X size={14} />
             </Button>
           </div>
-          <div className="mt-3">{children}</div>
-          <div className="mt-3 flex items-center justify-between gap-3">
+          <div className="mt-2.5">{children}</div>
+          <div className={cn(
+            'mt-2.5 flex items-center gap-3',
+            showSubmit ? 'justify-between' : 'justify-end',
+          )}>
             <Button
               variant="ghost"
               type="button"
               onClick={onIgnore}
-              className="h-8 rounded-full border border-white/[0.12] px-3 text-[12px] font-semibold text-[#d0d0d0] hover:bg-white/[0.08] hover:text-white"
+              className={cn(
+                'h-7 rounded-full border px-2.5 text-[11px] font-semibold',
+                followTheme
+                  ? 'border-[var(--lume-border-subtle)] text-[var(--lume-text-secondary)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]'
+                  : 'border-white/[0.12] text-[#d0d0d0] hover:bg-white/[0.08] hover:text-white',
+              )}
             >
-              跳过 <kbd className="ml-1 rounded bg-white/[0.08] px-1 py-0.5 font-mono text-[10px] text-[#999]">ESC</kbd>
+              跳过 <kbd className={cn(
+                'ml-1 rounded px-1 py-0.5 font-mono text-[9px]',
+                followTheme
+                  ? 'bg-[var(--lume-bg-elevated)] text-[var(--lume-text-muted)]'
+                  : 'bg-white/[0.08] text-[#999]',
+              )}>ESC</kbd>
             </Button>
             {showSubmit && (
               <Button

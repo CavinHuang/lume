@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   projectAssistantMessageFinalRuntimeEvent,
+  projectRunItemToRuntimeEvents,
   projectRunStateToRuntimeEvents
 } from "./run-item-events";
 import type { LumeRunState } from "./run-state";
@@ -27,6 +28,57 @@ function baseRun(overrides: Partial<LumeRunState> = {}): LumeRunState {
 }
 
 describe("projectRunStateToRuntimeEvents", () => {
+  test("projects a parent background task completion as a dedicated runtime event", () => {
+    const events = projectRunItemToRuntimeEvents(baseRun(), {
+      type: "system_event",
+      id: "task-notification-1",
+      name: "task_notification",
+      payload: {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-1",
+        status: "completed",
+        summary: "检查已完成",
+        usage: { total_tokens: 12, tool_uses: 2, duration_ms: 80 }
+      },
+      createdAt: "2026-04-30T00:00:02.000Z"
+    }, {
+      includeAssistantText: true,
+      includeAssistantThinking: true,
+      includeModelStreamText: true
+    });
+
+    expect(events).toEqual([expect.objectContaining({
+      id: "background-task:thread-1:task-1:completed",
+      type: "background.task.completed",
+      runId: "background-task:task-1",
+      taskId: "task-1",
+      status: "completed",
+      summary: "检查已完成",
+      usage: { totalTokens: 12, toolUses: 2, durationMs: 80 }
+    })]);
+  });
+
+  test("does not duplicate subagent completion as a parent background event", () => {
+    const events = projectRunItemToRuntimeEvents(baseRun(), {
+      type: "system_event",
+      id: "task-notification-subagent-1",
+      name: "task_notification",
+      payload: {
+        task_id: "task-1",
+        subagent_run_id: "subagent-1",
+        status: "completed"
+      },
+      createdAt: "2026-04-30T00:00:02.000Z"
+    }, {
+      includeAssistantText: true,
+      includeAssistantThinking: true,
+      includeModelStreamText: true
+    });
+
+    expect(events).toEqual([]);
+  });
+
   test("projects kernel run facts into product runtime events", () => {
     const run = baseRun({
       runId: "run-runtime-1",

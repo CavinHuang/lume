@@ -279,10 +279,41 @@ function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   const terminationReason = record.terminationReason;
-  if (record.version !== 1 || typeof record.command !== "string" || typeof record.durationMs !== "number") return undefined;
-  if (terminationReason !== "completed" && terminationReason !== "nonzero" && terminationReason !== "timeout" && terminationReason !== "aborted" && terminationReason !== "output_limit" && terminationReason !== "spawn_error" && terminationReason !== "running") return undefined;
+  if ((record.version !== 1 && record.version !== 2) || typeof record.command !== "string" || typeof record.durationMs !== "number") return undefined;
+  if (terminationReason !== "completed" && terminationReason !== "nonzero" && terminationReason !== "timeout" && terminationReason !== "aborted" && terminationReason !== "output_limit" && terminationReason !== "spawn_error" && terminationReason !== "running" && terminationReason !== "interrupted") return undefined;
   const ref = record.resultRef;
   const resultRef = ref && typeof ref === "object" && !Array.isArray(ref) ? ref as Record<string, unknown> : undefined;
+  const stdoutRef = normalizeFileResultRef(record.stdoutRef);
+  const stderrRef = normalizeFileResultRef(record.stderrRef);
+  if (record.version === 2) {
+    const outcome = record.outcome;
+    if (outcome !== "running" && outcome !== "succeeded" && outcome !== "failed" && outcome !== "timed_out" && outcome !== "cancelled" && outcome !== "interrupted") return undefined;
+    if (record.shell !== "bash" && record.shell !== "powershell") return undefined;
+    return {
+      version: 2,
+      outcome,
+      ...(typeof record.exitCode === "number" || record.exitCode === null ? { exitCode: record.exitCode } : {}),
+      ...(typeof record.stdoutPreview === "string" ? { stdoutPreview: record.stdoutPreview } : {}),
+      ...(typeof record.stderrPreview === "string" ? { stderrPreview: record.stderrPreview } : {}),
+      ...(stdoutRef ? { stdoutRef } : {}),
+      ...(stderrRef ? { stderrRef } : {}),
+      ...(typeof record.timedOut === "boolean" ? { timedOut: record.timedOut } : {}),
+      ...(typeof record.aborted === "boolean" ? { aborted: record.aborted } : {}),
+      ...(typeof record.outputLimitReached === "boolean" ? { outputLimitReached: record.outputLimitReached } : {}),
+      durationMs: record.durationMs,
+      command: record.command,
+      shell: record.shell,
+      ...(record.semanticOutcome === "no_matches" || record.semanticOutcome === "condition_false" || record.semanticOutcome === "files_differ"
+        ? { semanticOutcome: record.semanticOutcome } : {}),
+      ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),
+      ...(typeof record.workspaceChanged === "boolean" ? { workspaceChanged: record.workspaceChanged } : {}),
+      ...(resultRef?.kind === "file" && typeof resultRef.path === "string" && typeof resultRef.size === "number"
+        ? { resultRef: resultRef as unknown as import("@lume/shared").FileResultRef }
+        : {}),
+      terminationReason,
+    };
+  }
+  if (terminationReason === "interrupted") return undefined;
   return {
     version: 1,
     ...(typeof record.exitCode === "number" || record.exitCode === null ? { exitCode: record.exitCode } : {}),
@@ -299,10 +330,17 @@ function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").
     ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),
     ...(typeof record.workspaceChanged === "boolean" ? { workspaceChanged: record.workspaceChanged } : {}),
     ...(resultRef?.kind === "file" && typeof resultRef.path === "string" && typeof resultRef.size === "number"
-      ? { resultRef: resultRef as import("@lume/shared").ToolExecutionMetadata["resultRef"] }
+      ? { resultRef: resultRef as unknown as import("@lume/shared").ToolExecutionMetadata["resultRef"] }
       : {}),
     terminationReason,
   };
+}
+
+function normalizeFileResultRef(value: unknown): import("@lume/shared").FileResultRef | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.kind !== "file" || typeof record.path !== "string" || typeof record.size !== "number") return undefined;
+  return record as unknown as import("@lume/shared").FileResultRef;
 }
 
 function subagentRuntimeFields(item: LumeRunItem): Pick<LumeRuntimeEvent, "subagentRunId" | "parentToolUseId"> {
@@ -358,6 +396,10 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
       modelRef,
       ...(typeof payload.durationMs === "number" ? { durationMs: payload.durationMs } : {})
     }];
+  }
+  if (item.name === "task_notification") {
+    const event = projectBackgroundTaskNotificationRuntimeEvent(run.threadId, payload, item.createdAt);
+    return event ? [event] : [];
   }
   if (item.name === "context_compaction_started") {
     return [{
@@ -427,6 +469,44 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
     }];
   }
   return [];
+}
+
+export function projectBackgroundTaskNotificationRuntimeEvent(
+  threadId: string,
+  payload: unknown,
+  createdAt: string
+): Extract<LumeRuntimeEvent, { type: "background.task.completed" }> | null {
+  const record = asRecord(payload);
+  const taskId = stringField(record.task_id);
+  const status = normalizeBackgroundTaskStatus(record.status);
+  if (!taskId || !status || stringField(record.subagent_run_id)) return null;
+  const usage = asRecord(record.usage);
+  const execution = normalizeToolExecutionMetadata(record.execution);
+  return {
+    id: `background-task:${threadId}:${taskId}:completed`,
+    type: "background.task.completed",
+    threadId,
+    runId: `background-task:${taskId}`,
+    createdAt,
+    taskId,
+    status,
+    ...(stringField(record.summary) ? { summary: stringField(record.summary) } : {}),
+    ...(stringField(record.message) ? { message: stringField(record.message) } : {}),
+    ...(stringField(record.output_file) ? { outputFile: stringField(record.output_file) } : {}),
+    ...(stringField(record.tool_use_id) ? { toolUseId: stringField(record.tool_use_id) } : {}),
+    ...(typeof usage.total_tokens === "number" && typeof usage.tool_uses === "number" && typeof usage.duration_ms === "number"
+      ? { usage: { totalTokens: usage.total_tokens, toolUses: usage.tool_uses, durationMs: usage.duration_ms } }
+      : {}),
+    ...(execution ? { execution } : {})
+  };
+}
+
+function normalizeBackgroundTaskStatus(value: unknown): Extract<LumeRuntimeEvent, { type: "background.task.completed" }>['status'] | undefined {
+  if (value === "completed") return "completed";
+  if (value === "failed") return "failed";
+  if (value === "stopped" || value === "killed") return "stopped";
+  if (value === "cancelled" || value === "canceled") return "cancelled";
+  return undefined;
 }
 
 type MemoryContextUsedItem = Extract<LumeRuntimeEvent, { type: "memory.context.used" }>["items"][number];

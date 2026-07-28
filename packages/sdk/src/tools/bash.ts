@@ -1,10 +1,21 @@
 /** Execute shell commands with one lifecycle for foreground and background work. */
 
-import { appendFile, mkdir, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, open, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
-import { createProcessJobRecord, registerProcessStopHandler, unregisterProcessStopHandler, updateProcessJob } from './process-job-registry.js'
+import {
+  createProcessJobRecord,
+  discardProcessJob,
+  getProcessJob,
+  markProcessJobNotified,
+  processJobsRootForArtifacts,
+  registerProcessStopHandler,
+  removeProcessJob,
+  unregisterProcessStopHandler,
+  updateProcessJob,
+} from './process-job-registry.js'
+import { PROCESS_JOB_WORKER_SOURCE } from './process-job-worker.js'
 import { defineTool } from './types.js'
 import type { ToolContext, ToolExecutionMetadata, ToolResult } from '../types.js'
 import { bundledRipgrepDirectory } from '../utils/ripgrep.js'
@@ -17,12 +28,29 @@ const MAX_RESULT_CHARS = 100_000
 const PREVIEW_CHARS = 4_000
 const AUTO_BACKGROUND_MS = 15_000
 const PROGRESS_THRESHOLD_MS = 2_000
+const STALL_CHECK_INTERVAL_MS = 5_000
+const STALL_THRESHOLD_MS = 45_000
+
+const INTERACTIVE_PROMPT_PATTERNS = [
+  /\(y\/n\)/i,
+  /\[y\/n\]/i,
+  /\(yes\/no\)/i,
+  /\b(?:Do you|Would you|Shall I|Are you sure|Ready to)\b.*\? *$/i,
+  /Press (any key|Enter)/i,
+  /Continue\?/i,
+  /Overwrite\?/i,
+]
+
+export function looksLikeInteractivePrompt(output: string): boolean {
+  const lastLine = output.trimEnd().split(/\r?\n/).pop() ?? ''
+  return INTERACTIVE_PROMPT_PATTERNS.some((pattern) => pattern.test(lastLine))
+}
 
 type ShellTask = Awaited<ReturnType<typeof startShellTask>>
 
 export const BashTool = defineTool({
   name: 'Bash',
-  description: 'Execute a shell command and return its output. On Windows, use a configured POSIX bash when available; otherwise commands run through PowerShell. Keep each command in one shell dialect and do not mix cmd.exe, PowerShell, and POSIX syntax.',
+  description: 'Execute a shell command and return its output. Commands still running after the foreground budget continue in the background and emit one terminal notification; do not poll ProcessOutput. Read the returned output file when full logs are needed. On Windows, use a configured POSIX bash when available; otherwise commands run through PowerShell. Keep each command in one shell dialect and do not mix cmd.exe, PowerShell, and POSIX syntax.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -46,6 +74,28 @@ export const BashTool = defineTool({
     const command = String(input.command)
     const timeoutMs = Math.min(Number(input.timeout ?? 120_000), 600_000)
     const purpose = typeof input.purpose === 'string' && input.purpose.trim() ? input.purpose.trim() : undefined
+    const verificationError = purpose?.toLowerCase() === 'verification'
+      ? getVerificationPipelineError(command)
+      : undefined
+    if (verificationError) {
+      return {
+        data: verificationError,
+        is_error: true,
+        _meta: {
+          error: { code: 'verification_pipeline_not_allowed', command },
+          execution: {
+            version: 2,
+            outcome: 'failed',
+            exitCode: null,
+            durationMs: 0,
+            command: redactSensitiveText(command),
+            shell: shellKind(resolveShellInvocation(command).command),
+            purpose,
+            terminationReason: 'spawn_error',
+          },
+        },
+      }
+    }
     const blocked = findBlockedCommand(command, context.sandbox?.excludedCommands ?? [])
     if (blocked) return { data: `Sandbox blocked command prefix "${blocked}"`, is_error: true }
     const shell = resolveShellInvocation(command)
@@ -65,7 +115,7 @@ export const BashTool = defineTool({
       task.done,
       delay(PROGRESS_THRESHOLD_MS).then(() => null),
     ])
-    if (initial) return toToolResult(initial)
+    if (initial) return finishForegroundTask(task, initial)
 
     context.emitEvent?.({
       type: 'system',
@@ -78,7 +128,7 @@ export const BashTool = defineTool({
       task.done,
       delay(Math.max(0, AUTO_BACKGROUND_MS - PROGRESS_THRESHOLD_MS)).then(() => null),
     ])
-    if (completion) return toToolResult(completion)
+    if (completion) return finishForegroundTask(task, completion)
     return promoteToBackground(task, input.description, context, true)
   },
 })
@@ -128,7 +178,19 @@ function isReadOnlyPowerShell(command: string): boolean {
   return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|diff|log|show|branch)|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
 }
 
-async function startShellTask({
+async function startShellTask(input: {
+  command: string
+  timeoutMs: number
+  purpose?: string
+  context: ToolContext
+}) {
+  if (input.context.artifactsRoot && input.context.sessionId) {
+    return startDurableShellTask(input)
+  }
+  return startDirectShellTask(input)
+}
+
+async function startDirectShellTask({
   command,
   timeoutMs,
   purpose,
@@ -166,20 +228,31 @@ async function startShellTask({
   let writeChain = Promise.resolve()
   let attachedTaskId: string | undefined
   let progressTimer: ReturnType<typeof setInterval> | undefined
+  let stallTimer: ReturnType<typeof setInterval> | undefined
   let completedResult: ShellTaskResult | undefined
+  let backgroundCompletionHandled = false
+  let lastOutputAt = startedAt
 
   const completeBackgroundTask = (result: ShellTaskResult) => {
-    if (!attachedTaskId) return
+    if (!attachedTaskId || backgroundCompletionHandled) return
+    backgroundCompletionHandled = true
+    if (stallTimer) clearInterval(stallTimer)
     const status = result.execution.terminationReason === 'completed' ? 'completed'
       : result.execution.terminationReason === 'aborted' ? 'stopped' : 'failed'
     updateProcessJob(attachedTaskId, { status, output: boundedPreview(result.output, MAX_RESULT_CHARS), metadata: { execution: result.execution } })
     unregisterProcessStopHandler(attachedTaskId)
-    context.emitEvent?.({
-      type: 'system', subtype: 'task_notification', task_id: attachedTaskId,
-      status: status === 'completed' ? 'completed' : 'failed', output_file: outputFile,
-      summary: status === 'completed' ? 'Task completed' : `Task ${result.execution.terminationReason}`,
-      execution: result.execution, session_id: context.sessionId || '',
-    } as any)
+    if (markProcessJobNotified(attachedTaskId)) {
+      context.emitEvent?.({
+        type: 'system', subtype: 'task_notification', task_id: attachedTaskId,
+        ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+        status, output_file: outputFile,
+        summary: status === 'completed'
+          ? `Background command completed. Full output: ${outputFile}`
+          : `Background command ${status} (${result.execution.terminationReason}). Full output: ${outputFile}`,
+        message: boundedPreview(result.output),
+        execution: result.execution, session_id: context.sessionId || '',
+      })
+    }
     context.onBackgroundTaskCompleted?.()
   }
 
@@ -189,6 +262,7 @@ async function startShellTask({
     const accepted = remaining > 0 ? chunk.subarray(0, remaining) : Buffer.alloc(0)
     outputBytes += accepted.length
     if (accepted.length > 0) {
+      lastOutputAt = Date.now()
       const text = (stream === 'stdout' ? stdoutDecoder : stderrDecoder).write(accepted)
       if (stream === 'stdout') stdoutPreview = appendPreview(stdoutPreview, text)
       else stderrPreview = appendPreview(stderrPreview, text)
@@ -272,15 +346,13 @@ async function startShellTask({
   return {
     command,
     outputFile,
+    job: undefined,
     done,
-    promote(taskId: string, subject: string) {
-      if (attachedTaskId) return
+    promote(taskId: string, subject: string): ShellTaskResult | undefined {
+      if (attachedTaskId) return undefined
+      if (completedResult) return completedResult
       attachedTaskId = taskId
       registerProcessStopHandler(taskId, () => stop('aborted'))
-      if (completedResult) {
-        completeBackgroundTask(completedResult)
-        return
-      }
       progressTimer = setInterval(() => {
         context.emitEvent?.({
           type: 'system', subtype: 'task_progress', task_id: taskId, description: subject,
@@ -289,30 +361,335 @@ async function startShellTask({
         })
       }, 1_000)
       progressTimer.unref?.()
+      let stallNotified = false
+      stallTimer = setInterval(() => {
+        if (stallNotified || Date.now() - lastOutputAt < STALL_THRESHOLD_MS) return
+        const tail = `${stdoutPreview}\n${stderrPreview}`.trimEnd()
+        if (!looksLikeInteractivePrompt(tail)) {
+          lastOutputAt = Date.now()
+          return
+        }
+        stallNotified = true
+        if (stallTimer) clearInterval(stallTimer)
+        context.emitEvent?.({
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: taskId,
+          ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+          status: 'attention',
+          output_file: outputFile,
+          summary: `Background command "${subject}" appears to be waiting for interactive input`,
+          message: [
+            tail ? `Last output:\n${boundedPreview(tail, 1_024)}` : '',
+            'The command may be blocked on an interactive prompt. Stop it and rerun with piped input or a non-interactive flag.',
+          ].filter(Boolean).join('\n\n'),
+          session_id: context.sessionId || '',
+        })
+      }, STALL_CHECK_INTERVAL_MS)
+      stallTimer.unref?.()
       proc.unref()
+      return undefined
+    },
+  }
+}
+
+async function startDurableShellTask({
+  command,
+  timeoutMs,
+  purpose,
+  context,
+}: {
+  command: string
+  timeoutMs: number
+  purpose?: string
+  context: ToolContext
+}) {
+  const jobsRoot = processJobsRootForArtifacts(context.artifactsRoot)!
+  await mkdir(jobsRoot, { recursive: true })
+  const shell = resolveShellInvocation(command)
+  const shellType = shellKind(shell.command)
+  const processToken = crypto.randomUUID()
+  const job = createProcessJobRecord({
+    subject: 'Shell command',
+    description: redactSensitiveText(command),
+    status: 'running',
+    threadId: context.sessionId,
+    runId: context.runId,
+    toolUseId: context.toolUseId,
+    taskType: 'shell',
+    processToken,
+    metadata: {
+      execution: runningExecution(command, '', shellType),
+    },
+  })
+  const jobDir = join(jobsRoot, job.id)
+  const outputFile = join(jobDir, 'output.log')
+  const stdoutFile = join(jobDir, 'stdout.log')
+  const stderrFile = join(jobDir, 'stderr.log')
+  const resultFile = join(jobDir, 'result.json')
+  const specPath = join(jobDir, 'launch.json')
+  await mkdir(jobDir, { recursive: true })
+  await Promise.all([
+    writeFile(outputFile, ''),
+    writeFile(stdoutFile, ''),
+    writeFile(stderrFile, ''),
+  ])
+  updateProcessJob(job.id, {
+    jobDir,
+    outputFile,
+    stdoutFile,
+    stderrFile,
+    resultFile,
+    metadata: {
+      execution: runningExecution(command, outputFile, shellType),
+    },
+  })
+  await writeFile(specPath, JSON.stringify({
+    command: shell.command,
+    args: shell.args,
+    cwd: context.cwd,
+    timeoutMs,
+    maxOutputBytes: MAX_OUTPUT_BYTES,
+    processToken,
+    statePath: join(jobDir, 'state.json'),
+    resultFile,
+    outputFile,
+    stdoutFile,
+    stderrFile,
+    redactedCommand: redactSensitiveText(command),
+    shell: shellType,
+    purpose,
+  }), 'utf8')
+
+  const sandbox = withBundledRipgrepSandbox(context.sandbox)
+  const worker = spawnWithProcessSandbox(process.execPath, ['-e', PROCESS_JOB_WORKER_SOURCE, specPath], {
+    cwd: context.cwd,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    timeoutMs: timeoutMs + 10_000,
+    detached: true,
+    stdio: 'ignore',
+  }, sandbox)
+  updateProcessJob(job.id, {
+    workerPid: worker.pid,
+    heartbeatAt: Date.now(),
+  })
+  worker.unref()
+
+  let attachedTaskId: string | undefined
+  let completedResult: ShellTaskResult | undefined
+  let outputOffset = 0
+  let stdoutOffset = 0
+  let stderrOffset = 0
+  let stdoutPreview = ''
+  let stderrPreview = ''
+  let progressTimer: ReturnType<typeof setInterval> | undefined
+  let stallTimer: ReturnType<typeof setInterval> | undefined
+  let lastOutputAt = Date.now()
+  let settled = false
+  let backgroundCompletionHandled = false
+  const startedAt = Date.now()
+
+  const emitNewOutput = async () => {
+    const stdout = await readIncrementalFile(stdoutFile, stdoutOffset)
+    stdoutOffset = stdout.nextOffset
+    if (stdout.text) {
+      lastOutputAt = Date.now()
+      stdoutPreview = appendPreview(stdoutPreview, stdout.text)
+      context.emitEvent?.({
+        type: 'system',
+        subtype: 'local_command_output',
+        content: boundedPreview(stdout.text),
+        session_id: context.sessionId || '',
+      })
+    }
+    const stderr = await readIncrementalFile(stderrFile, stderrOffset)
+    stderrOffset = stderr.nextOffset
+    if (stderr.text) {
+      lastOutputAt = Date.now()
+      stderrPreview = appendPreview(stderrPreview, stderr.text)
+      context.emitEvent?.({
+        type: 'system',
+        subtype: 'local_command_output',
+        content: boundedPreview(stderr.text),
+        session_id: context.sessionId || '',
+      })
+    }
+    const combined = await readIncrementalFile(outputFile, outputOffset, false)
+    outputOffset = combined.nextOffset
+  }
+
+  const completeBackgroundTask = (result: ShellTaskResult) => {
+    if (!attachedTaskId || backgroundCompletionHandled) return
+    backgroundCompletionHandled = true
+    if (progressTimer) clearInterval(progressTimer)
+    if (stallTimer) clearInterval(stallTimer)
+    const status = executionOutcome(result.execution) === 'succeeded'
+      ? 'completed'
+      : executionOutcome(result.execution) === 'cancelled' ? 'stopped' : 'failed'
+    updateProcessJob(attachedTaskId, {
+      status,
+      output: boundedPreview(result.output, MAX_RESULT_CHARS),
+      metadata: { execution: result.execution },
+    })
+    unregisterProcessStopHandler(attachedTaskId)
+    if (markProcessJobNotified(attachedTaskId)) {
+      context.emitEvent?.({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: attachedTaskId,
+        ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+        status,
+        output_file: outputFile,
+        summary: status === 'completed'
+          ? `Background command completed. Full output: ${outputFile}`
+          : `Background command ${status} (${result.execution.terminationReason}). Full output: ${outputFile}`,
+        message: boundedPreview(result.output),
+        execution: result.execution,
+        session_id: context.sessionId || '',
+      })
+    }
+    context.onBackgroundTaskCompleted?.()
+  }
+
+  const done = new Promise<ShellTaskResult>((resolveDone) => {
+    const poll = setInterval(() => {
+      void (async () => {
+        await emitNewOutput()
+        const latest = getProcessJob(job.id)
+        if (!latest || latest.status === 'running') return
+        clearInterval(poll)
+        if (settled) return
+        settled = true
+        await emitNewOutput()
+        const execution = normalizePersistedExecution(
+          command,
+          purpose,
+          shellType,
+          outputFile,
+          latest.metadata?.execution,
+          startedAt,
+        )
+        const interpretation = interpretShellExit(command, execution.exitCode ?? 1)
+        const normalizedExecution = applySemanticOutcome(execution, interpretation)
+        const output = formatShellResult(normalizedExecution, stdoutPreview, stderrPreview, interpretation)
+        const result = {
+          output,
+          isError: executionOutcome(normalizedExecution) !== 'succeeded',
+          execution: normalizedExecution,
+        }
+        completedResult = result
+        completeBackgroundTask(result)
+        resolveDone(result)
+      })()
+    }, 100)
+    poll.unref?.()
+  })
+
+  const stop = () => {
+    const latest = getProcessJob(job.id)
+    if (!latest || latest.status !== 'running') return
+    try {
+      worker.kill('SIGTERM')
+    } catch {
+      // The durable worker may already have exited between the state read and
+      // the signal. Its persisted result remains the source of truth.
+    }
+    const execution = normalizePersistedExecution(command, purpose, shellType, outputFile, {
+      version: 2,
+      outcome: 'cancelled',
+      terminationReason: 'aborted',
+      exitCode: null,
+      durationMs: Date.now() - startedAt,
+      command: redactSensitiveText(command),
+      shell: shellType,
+    }, startedAt)
+    updateProcessJob(job.id, { status: 'stopped', metadata: { execution } })
+  }
+  context.abortSignal?.addEventListener('abort', stop, { once: true })
+
+  return {
+    command,
+    outputFile,
+    job,
+    done,
+    promote(taskId: string, subject: string): ShellTaskResult | undefined {
+      if (attachedTaskId) return undefined
+      if (completedResult) return completedResult
+      attachedTaskId = taskId
+      updateProcessJob(taskId, { subject, description: redactSensitiveText(command) })
+      registerProcessStopHandler(taskId, stop)
+      progressTimer = setInterval(() => {
+        context.emitEvent?.({
+          type: 'system',
+          subtype: 'task_progress',
+          task_id: taskId,
+          description: subject,
+          last_tool_name: 'Bash',
+          usage: { total_tokens: 0, tool_uses: 1, duration_ms: Date.now() - startedAt },
+          session_id: context.sessionId || '',
+        })
+      }, 1_000)
+      progressTimer.unref?.()
+      let stallNotified = false
+      stallTimer = setInterval(() => {
+        if (stallNotified || Date.now() - lastOutputAt < STALL_THRESHOLD_MS) return
+        const tail = `${stdoutPreview}\n${stderrPreview}`.trimEnd()
+        if (!looksLikeInteractivePrompt(tail)) return
+        stallNotified = true
+        context.emitEvent?.({
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: taskId,
+          ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+          status: 'attention',
+          output_file: outputFile,
+          summary: `Background command "${subject}" appears to be waiting for interactive input`,
+          message: [
+            tail ? `Last output:\n${boundedPreview(tail, 1_024)}` : '',
+            'The command may be blocked on an interactive prompt. Stop it and rerun with piped input or a non-interactive flag.',
+          ].filter(Boolean).join('\n\n'),
+          session_id: context.sessionId || '',
+        })
+      }, STALL_CHECK_INTERVAL_MS)
+      stallTimer.unref?.()
+      return undefined
     },
   }
 }
 
 async function promoteToBackground(task: ShellTask, description: unknown, context: ToolContext, automatic = false): Promise<ToolResult> {
   const subject = typeof description === 'string' && description.trim() ? description.trim() : 'Background shell command'
-  const job = createProcessJobRecord({
-    subject,
-    description: task.command,
-    status: 'running',
-    outputFile: task.outputFile,
-    taskType: 'shell',
-    metadata: { execution: runningExecution(task.command, task.outputFile, shellKind(resolveShellInvocation(task.command).command)) },
-  })
-  task.promote(job.id, subject)
+  const job = task.job ?? createProcessJobRecord({
+      subject,
+      description: task.command,
+      status: 'running',
+      threadId: context.sessionId,
+      runId: context.runId,
+      toolUseId: context.toolUseId,
+      outputFile: task.outputFile,
+      taskType: 'shell',
+      metadata: { execution: runningExecution(task.command, task.outputFile, shellKind(resolveShellInvocation(task.command).command)) },
+    })
+  updateProcessJob(job.id, { subject, description: redactSensitiveText(task.command) })
+  const completedDuringPromotion = task.promote(job.id, subject)
+  if (completedDuringPromotion) {
+    if (job.jobDir) discardProcessJob(job.id)
+    else removeProcessJob(job.id)
+    return toToolResult(completedDuringPromotion)
+  }
   context.emitEvent?.({
     type: 'system', subtype: 'task_started', task_id: job.id, description: subject, task_type: 'shell',
-    prompt: task.command, session_id: context.sessionId || '',
+    ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+    prompt: task.command, output_file: task.outputFile, session_id: context.sessionId || '',
   })
   return {
     type: 'tool_result',
     tool_use_id: '',
-    content: `${automatic ? 'Command exceeded the 15s foreground budget and was moved' : 'Background process started'}: ${job.id}\nUse ProcessOutput with task_id=${job.id} to inspect progress.`,
+    content: [
+      `${automatic ? 'Command exceeded the foreground budget and is continuing in the background' : 'Background process started'}: ${job.id}`,
+      `Output is being written to: ${task.outputFile}`,
+      'You will be notified when it completes. Do not poll ProcessOutput.',
+    ].join('\n'),
     _meta: { execution: runningExecution(task.command, task.outputFile, shellKind(resolveShellInvocation(task.command).command)), task: { id: job.id, status: 'running', kind: 'shell', autoBackgrounded: automatic } },
   }
 }
@@ -327,10 +704,20 @@ function toToolResult(result: ShellTaskResult): ToolResult {
   return { type: 'tool_result', tool_use_id: '', content: boundedPreview(result.output, MAX_RESULT_CHARS), ...(result.isError ? { is_error: true } : {}), _meta: { execution: result.execution } }
 }
 
+function finishForegroundTask(task: ShellTask, result: ShellTaskResult): ToolResult {
+  if (task.job?.jobDir) discardProcessJob(task.job.id)
+  return toToolResult(result)
+}
+
 function runningExecution(command: string, outputFile: string, shell: 'bash' | 'powershell' = process.platform === 'win32' ? 'powershell' : 'bash'): ToolExecutionMetadata {
   return {
-    version: 1, durationMs: 0, command: redactSensitiveText(command), shell, terminationReason: 'running',
-    resultRef: { kind: 'file', path: outputFile, size: 0, mimeType: 'text/plain' },
+    version: 2,
+    outcome: 'running',
+    durationMs: 0,
+    command: redactSensitiveText(command),
+    shell,
+    terminationReason: 'running',
+    ...(outputFile ? { resultRef: { kind: 'file' as const, path: outputFile, size: 0, mimeType: 'text/plain' } } : {}),
   }
 }
 
@@ -340,8 +727,15 @@ async function createExecutionMetadata(input: {
 }): Promise<ToolExecutionMetadata> {
   let size = input.outputBytes
   try { size = (await stat(input.outputFile)).size } catch { /* keep captured byte count */ }
+  const outcome = input.terminationReason === 'completed'
+    ? 'succeeded'
+    : input.terminationReason === 'timeout'
+      ? 'timed_out'
+      : input.terminationReason === 'aborted'
+        ? 'cancelled'
+        : 'failed'
   return {
-    version: 1, exitCode: input.code, stdoutPreview: boundedPreview(input.stdoutPreview), stderrPreview: boundedPreview(input.stderrPreview),
+    version: 2, outcome, exitCode: input.code, stdoutPreview: boundedPreview(input.stdoutPreview), stderrPreview: boundedPreview(input.stderrPreview),
     ...(input.terminationReason === 'timeout' ? { timedOut: true } : {}),
     ...(input.terminationReason === 'aborted' ? { aborted: true } : {}),
     ...(input.terminationReason === 'output_limit' ? { outputLimitReached: true } : {}),
@@ -349,6 +743,112 @@ async function createExecutionMetadata(input: {
     ...(input.semanticOutcome ? { semanticOutcome: input.semanticOutcome } : {}),
     ...(input.purpose ? { purpose: input.purpose } : {}), terminationReason: input.terminationReason,
     resultRef: { kind: 'file', path: input.outputFile, size, mimeType: 'text/plain' },
+  }
+}
+
+function executionOutcome(execution: ToolExecutionMetadata): 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled' | 'interrupted' {
+  if (execution.version === 2) return execution.outcome
+  if (execution.terminationReason === 'running') return 'running'
+  if (execution.terminationReason === 'completed') return 'succeeded'
+  if (execution.terminationReason === 'timeout') return 'timed_out'
+  if (execution.terminationReason === 'aborted') return 'cancelled'
+  return 'failed'
+}
+
+function normalizePersistedExecution(
+  command: string,
+  purpose: string | undefined,
+  shell: 'bash' | 'powershell',
+  outputFile: string,
+  value: unknown,
+  startedAt: number,
+): ToolExecutionMetadata {
+  const record = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const terminationReason = typeof record.terminationReason === 'string'
+    ? record.terminationReason as ToolExecutionMetadata['terminationReason']
+    : 'interrupted'
+  const inferredOutcome = terminationReason === 'completed'
+    ? 'succeeded'
+    : terminationReason === 'timeout'
+      ? 'timed_out'
+      : terminationReason === 'aborted'
+        ? 'cancelled'
+        : terminationReason === 'running'
+          ? 'running'
+          : terminationReason === 'interrupted'
+            ? 'interrupted'
+            : 'failed'
+  return {
+    ...record,
+    version: 2,
+    outcome: typeof record.outcome === 'string'
+      ? record.outcome as 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled' | 'interrupted'
+      : inferredOutcome,
+    exitCode: typeof record.exitCode === 'number' || record.exitCode === null ? record.exitCode : null,
+    durationMs: typeof record.durationMs === 'number' ? record.durationMs : Date.now() - startedAt,
+    command: redactSensitiveText(command),
+    shell,
+    ...(purpose ? { purpose } : {}),
+    terminationReason,
+    resultRef: record.resultRef && typeof record.resultRef === 'object'
+      ? record.resultRef as ToolExecutionMetadata['resultRef']
+      : { kind: 'file', path: outputFile, size: 0, mimeType: 'text/plain' },
+  } as ToolExecutionMetadata
+}
+
+function applySemanticOutcome(
+  execution: ToolExecutionMetadata,
+  interpretation: ReturnType<typeof interpretShellExit>,
+): ToolExecutionMetadata {
+  if (!interpretation.semanticOutcome || execution.version !== 2) return execution
+  return {
+    ...execution,
+    outcome: 'succeeded' as const,
+    semanticOutcome: interpretation.semanticOutcome,
+    terminationReason: 'completed',
+  }
+}
+
+function formatShellResult(
+  execution: ToolExecutionMetadata,
+  stdoutPreview: string,
+  stderrPreview: string,
+  interpretation: ReturnType<typeof interpretShellExit>,
+): string {
+  const outcome = executionOutcome(execution)
+  const firstLine = outcome === 'succeeded'
+    ? (interpretation.semanticOutcome === 'no_matches'
+      ? 'Command completed: no matches found (exit code 1).'
+      : `Command completed successfully (exit code ${execution.exitCode ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
+    : `Command terminated (${execution.terminationReason}${execution.exitCode !== null && execution.exitCode !== undefined ? `, exit code ${execution.exitCode}` : ''}).`
+  return [
+    firstLine,
+    stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
+    stderrPreview ? `stderr:\n${stderrPreview}` : '',
+    outcome !== 'succeeded' && execution.exitCode !== null && execution.exitCode !== undefined
+      ? `Bash failed (${execution.shell ?? 'bash'}, exit code ${execution.exitCode}): ${interpretation.message}`
+      : '',
+  ].filter(Boolean).join('\n') || '(no output)'
+}
+
+async function readIncrementalFile(path: string, offset: number, decode = true): Promise<{ text: string; nextOffset: number }> {
+  try {
+    const info = await stat(path)
+    if (info.size <= offset) return { text: '', nextOffset: offset }
+    const length = Math.min(info.size - offset, 65_536)
+    const buffer = Buffer.alloc(length)
+    const file = await open(path, 'r')
+    try {
+      const { bytesRead } = await file.read(buffer, 0, length, offset)
+      return {
+        text: decode ? buffer.subarray(0, bytesRead).toString('utf8') : '',
+        nextOffset: offset + bytesRead,
+      }
+    } finally {
+      await file.close()
+    }
+  } catch {
+    return { text: '', nextOffset: offset }
   }
 }
 
@@ -362,6 +862,11 @@ function getShellDialectError(command: string, shellCommand: string): string | u
     return `Bash command was not executed: the current shell is PowerShell, but the command mixes cmd/POSIX syntax (${command.match(/\bcd\s+\/d\b/i)?.[0] ?? 'mixed pipeline'}). Use PowerShell syntax such as Set-Location, Select-String, and Select-Object -Last, or configure an explicit POSIX Bash.`
   }
   return undefined
+}
+
+function getVerificationPipelineError(command: string): string | undefined {
+  if (!/\|\s*(?:Select-String|findstr|grep|rg|head|tail)\b/i.test(command)) return undefined
+  return 'Verification command was not executed: filtered pipelines cannot prove the test, typecheck, or build result. Run the validation command directly and use its structured exit code and output.'
 }
 
 function withBundledRipgrepSandbox(sandbox: ToolContext['sandbox']): ToolContext['sandbox'] {

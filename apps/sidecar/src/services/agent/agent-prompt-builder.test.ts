@@ -487,7 +487,7 @@ describe("agent-prompt-builder", () => {
     expect(prompt).not.toContain("## TOOLS.md");
     expect(prompt).not.toContain("## HEARTBEAT.md");
     expect(prompt).not.toContain("Ping the user every morning.");
-    expect(prompt).toContain("~/.lume/agent-workspaces/" + workspaceSlug + "/session-sanitized-context/");
+    expect(prompt).toContain("当前工作目录由 runtime context 提供");
     expect(prompt).toContain("Do not use or reveal runtime metadata as the user's identity");
   });
 

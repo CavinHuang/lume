@@ -181,6 +181,12 @@ export {
 export {
   ProcessOutputTool,
   ProcessStopTool,
+  loadProcessJobs,
+  markProcessJobContinuationConsumed,
+  markProcessJobNotified,
+  updateProcessJob,
+  waitForProcessJobTerminal,
+  type ProcessJob,
 } from './tools/process-job-registry.js'
 
 // LSP protocol and client manager

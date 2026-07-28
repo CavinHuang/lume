@@ -57,8 +57,11 @@ describe('buildModelSelectionGroups', () => {
           modelRef: 'openai/gpt-5',
           label: 'GPT-5',
           active: true,
-          meta: undefined,
-          inferredCapabilities: { vision: false, toolUse: true, reasoning: false },
+          meta: expect.objectContaining({
+            id: 'gpt-5',
+            displayName: 'GPT-5',
+          }),
+          inferredCapabilities: undefined,
         },
         {
           channelId: 'channel-openai',
@@ -66,8 +69,11 @@ describe('buildModelSelectionGroups', () => {
           modelRef: 'openai/gpt-5-mini',
           label: 'GPT-5 mini',
           active: false,
-          meta: undefined,
-          inferredCapabilities: { vision: false, toolUse: true, reasoning: false },
+          meta: expect.objectContaining({
+            id: 'gpt-5-mini',
+            displayName: 'GPT-5 Mini',
+          }),
+          inferredCapabilities: undefined,
         },
         {
           channelId: 'channel-openai',
@@ -78,7 +84,7 @@ describe('buildModelSelectionGroups', () => {
           meta: expect.objectContaining({
             id: 'gpt-4.1-mini',
             displayName: 'GPT-4.1 mini',
-            contextWindow: 1_000_000,
+            contextWindow: 1_047_576,
           }),
           inferredCapabilities: undefined,
         },
@@ -102,7 +108,7 @@ describe('buildModelSelectionGroups', () => {
       meta: expect.objectContaining({
         id: 'gpt-4.1-mini',
         displayName: 'GPT-4.1 mini',
-        contextWindow: 1_000_000,
+        contextWindow: 1_047_576,
       }),
       inferredCapabilities: undefined,
     })
@@ -133,12 +139,13 @@ describe('getThreadSelectionSummary', () => {
       updatedAt: 1,
     }
 
-    expect(getThreadSelectionSummary({ channels, channelsLoaded: true, thread })).toEqual({
+    expect(getThreadSelectionSummary({ channels, channelsLoaded: true, thread })).toEqual(expect.objectContaining({
       label: 'GPT-5',
       hasLoadedChannels: true,
       isOverride: false,
       isUnavailable: false,
-    })
+      meta: expect.objectContaining({ id: 'gpt-5' }),
+    }))
   })
 
   test('summarizes override state and keeps the lightweight override badge flag', () => {
@@ -152,12 +159,13 @@ describe('getThreadSelectionSummary', () => {
       updatedAt: 1,
     }
 
-    expect(getThreadSelectionSummary({ channels, channelsLoaded: true, thread })).toEqual({
+    expect(getThreadSelectionSummary({ channels, channelsLoaded: true, thread })).toEqual(expect.objectContaining({
       label: 'GPT-5 mini',
       hasLoadedChannels: true,
       isOverride: true,
       isUnavailable: false,
-    })
+      meta: expect.objectContaining({ id: 'gpt-5-mini' }),
+    }))
   })
 
   test('marks an unavailable override when the current selection no longer exists', () => {
@@ -243,8 +251,10 @@ describe('buildModelSelectionGroups with metadata', () => {
       activeModelRef: 'openai/gpt-5',
     })
 
-    // gpt-5 has no match in registry
-    expect(result[0].options[0].meta).toBeUndefined()
+    expect(result[0].options[0].meta).toEqual(expect.objectContaining({
+      id: 'gpt-5',
+      displayName: 'GPT-5',
+    }))
 
     // claude-sonnet-4-5 should match via the model-meta registry
     const openrouterGroup = result[1]

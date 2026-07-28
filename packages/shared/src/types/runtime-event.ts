@@ -6,6 +6,7 @@ import type { MemoryClaim } from "./memory";
 export type RuntimeEventType =
   | "run.started"
   | "run.completed"
+  | "coding.report.updated"
   | "run.turn_limited"
   | "run.failed"
   | "run.cancelled"
@@ -22,6 +23,7 @@ export type RuntimeEventType =
   | "plan.preview"
   | "todo.state_updated"
   | "task.progress"
+  | "background.task.completed"
   | "im.delivery"
   | "permission.requested"
   | "permission.resolved"
@@ -269,6 +271,11 @@ export interface RunCompletedRuntimeEvent extends RuntimeEventBase {
   codingReport?: RuntimeCodingReport;
 }
 
+export interface CodingReportUpdatedRuntimeEvent extends RuntimeEventBase {
+  type: "coding.report.updated";
+  codingReport: RuntimeCodingReport;
+}
+
 export interface RuntimeCodingReport {
   /** Lume Run identity used by the review/rewind actions. */
   runId?: string;
@@ -278,6 +285,7 @@ export interface RuntimeCodingReport {
   userMessageId?: string;
   /** Visible assistant message created for this Turn, when available. */
   assistantMessageId?: string;
+  phase?: CodingTurnPhase;
   checkpointId?: string;
   baselineCommit?: string;
   rewindState?:
@@ -310,6 +318,69 @@ export interface RuntimeCodingReport {
     command: string;
     signature: string;
   };
+  /** Verification commands observed or selected by the runtime for this Turn. */
+  verificationRecords?: CodingVerificationRecord[];
+  recommendedVerificationCommands?: string[];
+  gitActions?: CodingGitAction[];
+  review?: CodingReviewSummary;
+}
+
+export type CodingTurnPhase =
+  | "planning"
+  | "awaiting_approval"
+  | "executing"
+  | "verifying"
+  | "ready_for_review"
+  | "completed"
+  | "failed"
+  | "rewind_conflict";
+
+export interface CodingVerificationRecord {
+  command: string;
+  status: "running" | "passed" | "failed" | "inconclusive";
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  message?: string;
+}
+
+export type BackgroundTaskCompletedRuntimeStatus = "completed" | "failed" | "stopped" | "cancelled";
+
+export interface BackgroundTaskCompletedRuntimeEvent extends RuntimeEventBase {
+  type: "background.task.completed";
+  taskId: string;
+  status: BackgroundTaskCompletedRuntimeStatus;
+  summary?: string;
+  message?: string;
+  outputFile?: string;
+  toolUseId?: string;
+  usage?: {
+    totalTokens: number;
+    toolUses: number;
+    durationMs: number;
+  };
+  execution?: ToolExecutionMetadata;
+}
+
+export interface CodingGitAction {
+  kind: "commit" | "push" | "merge" | "rebase" | "reset" | "clean" | "checkout" | "restore" | "other";
+  command: string;
+  status: "running" | "completed" | "failed";
+  createdAt: string;
+}
+
+export interface CodingReviewFinding {
+  severity: "blocker" | "concern" | "suggestion" | "question";
+  path: string;
+  line?: number;
+  summary: string;
+  evidence?: string;
+  recommendation?: string;
+}
+
+export interface CodingReviewSummary {
+  status: "pending" | "complete";
+  findings: CodingReviewFinding[];
 }
 
 export type CodingVerificationStatus =
@@ -335,6 +406,8 @@ export type CodingChangedFileState =
   | "unpreviewable";
 
 export interface RuntimeCodingFileChange {
+  /** Stable root identity for multi-root/multi-repository reviews. */
+  rootId?: string;
   path: string;
   status?: "added" | "modified" | "deleted" | "renamed" | "untracked";
   addedLines?: number;
@@ -349,6 +422,11 @@ export interface RuntimeCodingFileChange {
 
 export interface RuntimeCodingChangeSet {
   turnId?: string;
+  repositories?: RuntimeCodingRepository[];
+  branch?: {
+    name: string;
+    upstream?: string;
+  };
   base: "turn_checkpoint" | "git:HEAD" | "git_head" | "workspace_snapshot";
   isGitRepo: boolean;
   files: RuntimeCodingFileChange[];
@@ -365,11 +443,23 @@ export interface RuntimeCodingChangeSet {
   };
 }
 
+export interface RuntimeCodingRepository {
+  rootId: string;
+  rootLabel: string;
+  kind: "git" | "snapshot";
+  base: string;
+  branch?: {
+    name: string;
+    upstream?: string;
+  };
+}
+
 export interface CodingTurnRecord {
   turnId: string;
   threadId: string;
   userMessageId: string;
   assistantMessageId?: string;
+  phase?: CodingTurnPhase;
   runIds: string[];
   startedAt: string;
   finishedAt?: string;
@@ -383,6 +473,9 @@ export interface CodingTurnRecord {
   routeReason?: string;
   toolSelectionReason?: string;
   terminationReason?: string;
+  verificationRecords?: CodingVerificationRecord[];
+  gitActions?: CodingGitAction[];
+  review?: CodingReviewSummary;
 }
 
 export interface RunTurnLimitedRuntimeEvent extends RuntimeEventBase {
@@ -524,7 +617,14 @@ export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {
   progress?: RuntimeNormalizedUsage;
 }
 
-export interface ToolExecutionMetadata {
+export interface FileResultRef {
+  kind: "file";
+  path: string;
+  size: number;
+  mimeType?: string;
+}
+
+export interface ToolExecutionMetadataV1 {
   version: 1;
   exitCode?: number | null;
   stdoutPreview?: string;
@@ -538,14 +638,32 @@ export interface ToolExecutionMetadata {
   semanticOutcome?: "no_matches" | "condition_false" | "files_differ";
   purpose?: string;
   workspaceChanged?: boolean;
-  resultRef?: {
-    kind: "file";
-    path: string;
-    size: number;
-    mimeType?: string;
-  };
+  resultRef?: FileResultRef;
   terminationReason: "completed" | "nonzero" | "timeout" | "aborted" | "output_limit" | "spawn_error" | "running";
 }
+
+export interface ToolExecutionMetadataV2 {
+  version: 2;
+  outcome: "running" | "succeeded" | "failed" | "timed_out" | "cancelled" | "interrupted";
+  exitCode?: number | null;
+  stdoutPreview?: string;
+  stderrPreview?: string;
+  stdoutRef?: FileResultRef;
+  stderrRef?: FileResultRef;
+  timedOut?: boolean;
+  aborted?: boolean;
+  outputLimitReached?: boolean;
+  durationMs: number;
+  command: string;
+  shell: "bash" | "powershell";
+  semanticOutcome?: "no_matches" | "condition_false" | "files_differ";
+  purpose?: string;
+  workspaceChanged?: boolean;
+  resultRef?: FileResultRef;
+  terminationReason: "completed" | "nonzero" | "timeout" | "aborted" | "output_limit" | "spawn_error" | "running" | "interrupted";
+}
+
+export type ToolExecutionMetadata = ToolExecutionMetadataV1 | ToolExecutionMetadataV2;
 
 export interface AdvisorReviewedRuntimeEvent extends RuntimeEventBase {
   type: "advisor.reviewed";
@@ -572,8 +690,10 @@ export type LumeRuntimeEvent =
   | PlanPreviewRuntimeEvent
   | TodoStateUpdatedRuntimeEvent
   | TaskProgressRuntimeEvent
+  | BackgroundTaskCompletedRuntimeEvent
   | ImDeliveryRuntimeEvent
   | RunCompletedRuntimeEvent
+  | CodingReportUpdatedRuntimeEvent
   | RunTurnLimitedRuntimeEvent
   | RunFailedRuntimeEvent
   | RunCancelledRuntimeEvent

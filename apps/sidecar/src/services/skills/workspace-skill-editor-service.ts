@@ -78,10 +78,14 @@ function resolveLegacyProjectSkillsDir(workspaceSlug: string): string {
 }
 
 function resolveProjectSkillPath(workspaceSlug: string, skillSlug: string): string {
-  const alicePath = resolveSkillPath(resolveAliceProjectSkillsDir(workspaceSlug), skillSlug);
+  return resolveProjectSkillPathFromRoot(resolveProjectRootFromWorkspace(workspaceSlug), skillSlug);
+}
+
+function resolveProjectSkillPathFromRoot(projectRoot: string, skillSlug: string): string {
+  const alicePath = resolveSkillPath(join(projectRoot, ".alice", "skills"), skillSlug);
   if (existsSync(alicePath)) return alicePath;
 
-  const legacyPath = resolveSkillPath(resolveLegacyProjectSkillsDir(workspaceSlug), skillSlug);
+  const legacyPath = resolveSkillPath(join(projectRoot, ".lume", "skills"), skillSlug);
   return existsSync(legacyPath) ? legacyPath : alicePath;
 }
 
@@ -111,7 +115,9 @@ function resolveEditableSkillPath(input: {
     return resolveUserSkillPath(skillSlug);
   }
   if (input.storageScope === "project") {
-    return resolveProjectSkillPath(input.workspaceSlug, skillSlug);
+    return input.cwd?.trim()
+      ? resolveProjectSkillPathFromRoot(assertExistingDirectory(input.cwd), skillSlug)
+      : resolveProjectSkillPath(input.workspaceSlug, skillSlug);
   }
   return resolveWorkspaceSkillPath(input.workspaceSlug, skillSlug);
 }

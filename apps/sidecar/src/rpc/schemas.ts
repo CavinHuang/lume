@@ -1248,11 +1248,13 @@ export const pathFileInputSchema = z.object({
 export const codingFileInputSchema = z.object({
   threadId: idSchema,
   path: z.string().trim().min(1),
-  runId: idSchema.optional()
+  runId: idSchema.optional(),
+  rootId: idSchema.optional()
 });
 
 export const codingChangeSetInputSchema = z.object({
   threadId: idSchema,
+  runId: idSchema.optional(),
   paths: z.array(z.string().trim().min(1)).optional()
 });
 

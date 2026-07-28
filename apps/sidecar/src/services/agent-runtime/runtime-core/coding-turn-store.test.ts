@@ -12,6 +12,7 @@ function record(): CodingTurnRecord {
     userMessageId: "user-1",
     runIds: ["run-1"],
     startedAt: new Date(0).toISOString(),
+    phase: "planning",
     changedFiles: [],
     verificationStatus: "not_run",
     verificationRepairAttempts: 0,
@@ -27,11 +28,16 @@ describe("coding turn store", () => {
     const updated = await updateCodingTurnRecord(sessionDir, "turn-1", {
       runIds: ["run-1", "run-2"],
       rewindState: "available",
+      phase: "ready_for_review",
+      verificationRecords: [{ command: "bun test", status: "passed" }],
+      gitActions: [],
       finishedAt: new Date(1).toISOString(),
     });
 
     expect(updated?.runIds).toEqual(["run-1", "run-2"]);
     expect((await getCodingTurnRecord(sessionDir, "turn-1"))?.rewindState).toBe("available");
+    expect((await getCodingTurnRecord(sessionDir, "turn-1"))?.phase).toBe("ready_for_review");
+    expect((await getCodingTurnRecord(sessionDir, "turn-1"))?.verificationRecords?.[0]?.status).toBe("passed");
   });
 
   test("does not invent a record for a historical turn", async () => {

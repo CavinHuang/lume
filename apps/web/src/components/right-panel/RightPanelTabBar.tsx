@@ -1,4 +1,4 @@
-import { FolderOpen, Globe, List, Plus, X, type LucideIcon } from 'lucide-react'
+import { FileDiff, FolderOpen, Globe, List, Plus, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import {
@@ -23,6 +23,7 @@ import {
 } from './right-panel-state'
 
 export type RightPanelTabItem =
+  | { kind: 'review'; id: string; label: string }
   | { kind: 'function'; id: string; type: RightPanelFunction; label: string }
   | { kind: 'file'; id: string; tab: RightPanelFileTab; label: string }
 
@@ -34,9 +35,11 @@ const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: LucideIco
 export function buildRightPanelTabItems(
   workspace: ThreadRightPanelWorkspace,
   fileTabs: RightPanelFileTab[],
+  reviewOpen = false,
 ): RightPanelTabItem[] {
   const labels = disambiguateFileTabLabels(fileTabs)
   const result: RightPanelTabItem[] = []
+  if (reviewOpen) result.push({ kind: 'review', id: 'review', label: '审阅' })
   for (const type of RIGHT_PANEL_FUNCTION_ORDER) {
     if (!workspace.tabs[type]) continue
     result.push({ kind: 'function', id: `function:${type}`, type, label: FUNCTION_META[type].label })
@@ -54,10 +57,14 @@ interface RightPanelTabBarProps {
   workspace: ThreadRightPanelWorkspace
   fileTabs: RightPanelFileTab[]
   activeItem: RightPanelActiveItem | null
+  reviewOpen?: boolean
+  reviewActive?: boolean
   onActivateFunction: (type: RightPanelFunction) => void
   onActivateFile: (tabId: string) => void
   onCloseFunction: (type: RightPanelFunction) => void
   onCloseFile: (tabId: string) => void
+  onActivateReview?: () => void
+  onCloseReview?: () => void
   onOpenFunction: (type: RightPanelFunction) => void
 }
 
@@ -65,8 +72,8 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef<HTMLDivElement | null>(null)
   const items = useMemo(
-    () => buildRightPanelTabItems(props.workspace, props.fileTabs),
-    [props.workspace, props.fileTabs],
+    () => buildRightPanelTabItems(props.workspace, props.fileTabs, props.reviewOpen),
+    [props.workspace, props.fileTabs, props.reviewOpen],
   )
   const availableFunctions = getAvailableRightPanelFunctions(props.workspace)
 
@@ -74,17 +81,25 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
     activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [props.activeItem])
 
-  const isActive = (item: RightPanelTabItem) => item.kind === 'function'
-    ? props.activeItem?.kind === 'function' && props.activeItem.type === item.type
-    : props.activeItem?.kind === 'file' && props.activeItem.tabId === item.id
+  const isActive = (item: RightPanelTabItem) => item.kind === 'review'
+    ? props.reviewActive === true
+    : item.kind === 'function'
+      ? !props.reviewActive && props.activeItem?.kind === 'function' && props.activeItem.type === item.type
+      : !props.reviewActive && props.activeItem?.kind === 'file' && props.activeItem.tabId === item.id
 
-  const activate = (item: RightPanelTabItem) => item.kind === 'function'
-    ? props.onActivateFunction(item.type)
-    : props.onActivateFile(item.id)
+  const activate = (item: RightPanelTabItem) => item.kind === 'review'
+    ? props.onActivateReview?.()
+    : item.kind === 'function'
+      ? props.onActivateFunction(item.type)
+      : props.onActivateFile(item.id)
 
-  const close = (item: RightPanelTabItem) => item.kind === 'function'
-    ? props.onCloseFunction(item.type)
-    : props.onCloseFile(item.id)
+  const close = (item: RightPanelTabItem) => {
+    const fallback = isActive(item) ? getRightPanelCloseFallback(items, item.id) : undefined
+    if (item.kind === 'review') props.onCloseReview?.()
+    else if (item.kind === 'function') props.onCloseFunction(item.type)
+    else props.onCloseFile(item.id)
+    if (fallback) activate(fallback)
+  }
 
   return (
     <div className="flex h-9 shrink-0 items-center gap-1 border-b border-[var(--lume-border-subtle)] px-1.5">
@@ -98,7 +113,7 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
       >
         {items.map((item) => {
           const active = isActive(item)
-          const Icon = item.kind === 'function' ? FUNCTION_META[item.type].Icon : null
+          const Icon = item.kind === 'review' ? FileDiff : item.kind === 'function' ? FUNCTION_META[item.type].Icon : null
           const title = item.kind === 'file'
             ? `${item.tab.ref.source}: ${item.tab.ref.relativePath}`
             : item.label
@@ -185,6 +200,15 @@ export function shouldCloseRightPanelFunctionMenuForTarget(
 
 export function shouldCloseTabForMouseButton(button: number): boolean {
   return button === 1
+}
+
+export function getRightPanelCloseFallback(
+  items: RightPanelTabItem[],
+  closingId: string,
+): RightPanelTabItem | undefined {
+  const index = items.findIndex((item) => item.id === closingId)
+  if (index < 0) return undefined
+  return items[index + 1] ?? items[index - 1]
 }
 
 export function closeAllTabsMenuItem(

@@ -984,6 +984,7 @@ export class Agent {
       },
       hookRegistry: this.hookRegistry,
       sessionId: this.sid,
+      runId: opts.runId,
       permissionMode: opts.permissionMode,
       promptSuggestions: opts.promptSuggestions,
       additionalDirectories: opts.additionalDirectories,
@@ -1005,6 +1006,13 @@ export class Agent {
       artifactsRoot: opts.artifactsRoot,
       onToolExecution: opts.onToolExecution,
       onBeforeToolExecution: opts.onBeforeToolExecution,
+      onAsyncEvent: (event) => {
+        if (opts.onAsyncEvent) {
+          opts.onAsyncEvent(event)
+          return
+        }
+        this.queuedSdkEvents.push(event)
+      },
       currentUserMessageId: userMessage?.uuid ?? `command:${this.sid}:compact`,
       fileCheckpointState: this.fileCheckpointState,
       enableFileCheckpointing: opts.enableFileCheckpointing === true,

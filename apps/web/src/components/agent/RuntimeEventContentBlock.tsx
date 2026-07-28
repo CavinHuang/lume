@@ -6,6 +6,7 @@ import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, codingReviewPanelActionAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
+import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
 import type { RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
@@ -36,6 +37,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentFileReference, type OpenThreadFile } from './AgentFileReference'
 import { collectAssistantSources, type AssistantSourceReference } from './source-references'
+import { prefetchSessionCodingDiffs, requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
@@ -1353,6 +1355,7 @@ function CodingRunReportCard({
   onOpenThreadFile?: OpenThreadFile
 }) {
   const codingReviewPanelAction = useSetAtom(codingReviewPanelActionAtom)
+  const cardRef = useRef<HTMLDivElement | null>(null)
   const [showAllChanges, setShowAllChanges] = useState(false)
   const [revertedPaths, setRevertedPaths] = useState<Set<string>>(() => new Set())
   const [liveChangeSet, setLiveChangeSet] = useState(report.changeSet)
@@ -1379,15 +1382,13 @@ function CodingRunReportCard({
     }
   }, [report.changeSet, report.changedFiles, threadId])
 
-  if (report.status === 'not_required' && !report.workspaceChanged && !report.pendingBackground) return null
-
   const currentChangeSet = liveChangeSet ?? report.changeSet
   const changes: RuntimeCodingFileChange[] = currentChangeSet
     ? currentChangeSet.files
     : report.fileChanges?.length
       ? report.fileChanges
       : report.changedFiles.map((path) => ({ path }))
-  const activeChanges = changes.filter((change) => !revertedPaths.has(change.path))
+  const activeChanges = changes.filter((change) => !revertedPaths.has(codingReviewFileKey(change)))
   const visibleChanges = showAllChanges ? activeChanges : activeChanges.slice(0, 3)
   const hiddenChangeCount = Math.max(0, activeChanges.length - visibleChanges.length)
   const addedLines = liveChangeSet ? liveChangeSet.totalAddedLines : report.totalAddedLines ?? changes.reduce((sum, change) => sum + (change.addedLines ?? 0), 0)
@@ -1396,14 +1397,51 @@ function CodingRunReportCard({
   // reports may not have per-file stats, but hiding the counters makes the
   // result look incomplete and differs from the Review panel.
   const hasLineStats = changes.length > 0
-  const firstReviewPath = activeChanges[0]?.path
+  const firstReviewChange = activeChanges[0]
   const canUndoRun = Boolean(report.runId && report.canRewind)
   const canRewindTurn = Boolean(report.turnId && report.canRewind)
   const canReviewDiff = activeChanges.length > 0 && (currentChangeSet !== undefined || report.fileChanges !== undefined)
+  const reviewPathsKey = activeChanges.map(codingReviewFileKey).join('\u0000')
 
-  const openReview = async (path: string) => {
+  useEffect(() => {
+    codingReviewPanelAction({
+      type: 'update',
+      threadId,
+      patch: {
+        phase: report.phase,
+        verificationRecords: report.verificationRecords,
+        recommendedVerificationCommands: report.recommendedVerificationCommands,
+        gitActions: report.gitActions,
+        review: report.review,
+      },
+    })
+  }, [codingReviewPanelAction, report.gitActions, report.phase, report.recommendedVerificationCommands, report.review, report.verificationRecords, threadId])
+  const prefetchReviewDiffs = (limit = activeChanges.length) => {
+    if (!report.runId) return
+    void prefetchSessionCodingDiffs(
+      threadId,
+      report.runId,
+      activeChanges.slice(0, limit).map((change) => ({ path: change.path, rootId: change.rootId })),
+    )
+  }
+
+  useEffect(() => {
+    const element = cardRef.current
+    if (!element || !report.runId || !canReviewDiff || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return
+      prefetchReviewDiffs(3)
+      observer.disconnect()
+    }, { rootMargin: '240px 0px' })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [canReviewDiff, report.runId, reviewPathsKey, threadId])
+
+  if (report.status === 'not_required' && !report.workspaceChanged && !report.pendingBackground) return null
+
+  const openReview = async (change: RuntimeCodingFileChange, expand = true) => {
     if (!canReviewDiff) {
-      if (onOpenThreadFile) await onOpenThreadFile(path)
+      if (onOpenThreadFile) await onOpenThreadFile(change.path)
       else toast.info('当前工作区没有可读取的 Coding diff')
       return
     }
@@ -1411,26 +1449,33 @@ function CodingRunReportCard({
       type: 'open',
       threadId,
       changes: activeChanges,
-      selectedPath: path,
+      selectedPath: expand ? change.path : '',
+      selectedRootId: expand ? change.rootId : undefined,
       runId: report.runId,
       turnId: report.turnId,
       assistantMessageId: report.assistantMessageId ?? assistantMessageId,
+      phase: report.phase,
+      verificationRecords: report.verificationRecords,
+      recommendedVerificationCommands: report.recommendedVerificationCommands,
+      gitActions: report.gitActions,
+      review: report.review,
       onRevertRun: canUndoRun ? undoRun : undefined,
       onRewindTurn: canRewindTurn ? rewindTurn : undefined,
     })
   }
 
-  const undoFile = async (path: string) => {
+  const undoFile = async (change: RuntimeCodingFileChange) => {
     try {
-      await sidecarCall(AGENT_IPC_CHANNELS.REVERT_CODING_FILE, { threadId, path, runId: report.runId })
-      setRevertedPaths((current) => new Set(current).add(path))
+      await sidecarCall(AGENT_IPC_CHANNELS.REVERT_CODING_FILE, { threadId, path: change.path, rootId: change.rootId, runId: report.runId })
+      setRevertedPaths((current) => new Set(current).add(codingReviewFileKey(change)))
       codingReviewPanelAction({ type: 'close', threadId })
       const refreshed = await sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
         threadId,
+        runId: report.runId,
         paths: changes.map((change) => change.path),
       })
       if (refreshed) setLiveChangeSet(refreshed)
-      toast.success(`已撤销 ${path}`)
+      toast.success(`已撤销 ${change.path}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '无法撤销文件变更')
     }
@@ -1446,6 +1491,7 @@ function CodingRunReportCard({
       setRevertedPaths(new Set())
       const refreshed = await sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
         threadId,
+        runId: report.runId,
         paths: changes.map((change) => change.path),
       })
       if (refreshed) setLiveChangeSet(refreshed)
@@ -1475,32 +1521,32 @@ function CodingRunReportCard({
   }
 
   return (
-    <div className={cn(
-      'w-full max-w-[640px] overflow-hidden rounded-[12px] border bg-[var(--lume-bg-elevated)] shadow-[0_8px_28px_-22px_hsl(var(--lume-shadow-panel)/0.8)]',
+    <div ref={cardRef} onPointerEnter={() => prefetchReviewDiffs()} className={cn(
+      'coding-summary-card w-full max-w-[640px] overflow-hidden rounded-[12px] border bg-[var(--lume-bg-elevated)] shadow-[0_8px_28px_-22px_hsl(var(--lume-shadow-panel)/0.8)]',
       report.status === 'failed' ? 'border-destructive/30' : 'border-[var(--lume-border-subtle)]',
     )}>
-      <div className="flex items-start gap-3 px-4 py-3.5">
+      <div className="coding-summary-header flex items-start gap-3 px-4 py-3.5">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-foreground/[0.08] text-[var(--lume-text-secondary)]">
           <Edit3 size={20} strokeWidth={1.8} />
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[16px] font-semibold leading-5 text-[var(--lume-text-primary)]">
+        <div className="coding-summary-title min-w-0 flex-1">
+          <div className="truncate whitespace-nowrap text-[16px] font-semibold leading-5 text-[var(--lume-text-primary)]">
             {report.workspaceChanged && changes.length > 0 ? `已编辑 ${changes.length} 个文件` : '编码任务执行完成'}
           </div>
           {hasLineStats && (
-            <div className="mt-1 text-[13px] leading-4">
+            <div className="mt-1 whitespace-nowrap text-[13px] leading-4">
               <span className="text-emerald-500">+{addedLines}</span>
               <span className="ml-1 text-red-500">-{removedLines}</span>
             </div>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="coding-summary-actions flex shrink-0 items-center gap-1.5">
           <Button
             variant="ghost"
             size="sm"
             disabled={!canUndoRun}
             title={canUndoRun ? '撤销本次 Coding Run 的文件变更' : '本次 Run 没有可用的文件检查点'}
-            className="h-8 gap-1 px-2 text-[12px] text-[var(--lume-text-muted)]"
+            className="h-8 gap-1 whitespace-nowrap px-2 text-[12px] text-[var(--lume-text-muted)]"
             onClick={() => void undoRun()}
           >
             撤销本次
@@ -1511,7 +1557,7 @@ function CodingRunReportCard({
             size="sm"
             disabled={!canRewindTurn}
             title={canRewindTurn ? '恢复文件并删除此 Turn 之后的会话消息' : '当前 Turn 没有可用的完整回退检查点'}
-            className="h-8 gap-1 px-2 text-[12px] text-[var(--lume-text-muted)]"
+            className="h-8 gap-1 whitespace-nowrap px-2 text-[12px] text-[var(--lume-text-muted)]"
             onClick={() => void rewindTurn()}
           >
             回退会话
@@ -1520,10 +1566,12 @@ function CodingRunReportCard({
           <Button
             variant="outline"
             size="sm"
-            disabled={!firstReviewPath || (!canReviewDiff && !onOpenThreadFile)}
+            disabled={!firstReviewChange || (!canReviewDiff && !onOpenThreadFile)}
             title={canReviewDiff ? '在右侧面板查看变更' : '当前仅支持打开文件预览'}
             className="h-8 px-3 text-[12px]"
-            onClick={() => firstReviewPath && void openReview(firstReviewPath)}
+            onPointerEnter={() => prefetchReviewDiffs()}
+            onFocus={() => prefetchReviewDiffs()}
+            onClick={() => firstReviewChange && void openReview(firstReviewChange, false)}
           >
             审核
           </Button>
@@ -1533,14 +1581,16 @@ function CodingRunReportCard({
         <div className="border-t border-[var(--lume-border-subtle)] bg-foreground/[0.025] px-4 py-1">
           {visibleChanges.map((change) => (
             <div
-              key={change.path}
+              key={codingReviewFileKey(change)}
               className="flex min-h-9 w-full items-center gap-2 rounded-none text-[13px] text-[var(--lume-text-secondary)]"
             >
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-9 min-w-0 flex-1 justify-start rounded-none px-0 text-left text-[13px] font-normal text-[var(--lume-text-secondary)] hover:bg-transparent hover:text-[var(--lume-text-primary)]"
-                onClick={() => void openReview(change.path)}
+                onPointerEnter={() => report.runId && void requestSessionCodingDiff(threadId, report.runId, change.path, change.rootId).catch(() => undefined)}
+                onFocus={() => report.runId && void requestSessionCodingDiff(threadId, report.runId, change.path, change.rootId).catch(() => undefined)}
+                onClick={() => void openReview(change)}
               >
                 <span className="min-w-0 truncate">{change.path}</span>
               </Button>
@@ -1554,7 +1604,7 @@ function CodingRunReportCard({
                   size="icon"
                   className="size-7 shrink-0 text-[var(--lume-text-muted)] hover:text-[var(--lume-text-primary)]"
                   title="撤销文件变更"
-                  onClick={() => void undoFile(change.path)}
+                  onClick={() => void undoFile(change)}
                 >
                   <Undo2 size={14} />
                 </Button>
@@ -1581,7 +1631,7 @@ function CodingRunReportCard({
         </div>
       )}
       {report.pendingBackground && (
-        <div className="border-t border-[var(--lume-border-subtle)] px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-300">后台进程仍在运行，完成状态会在 ProcessOutput 返回后更新。</div>
+        <div className="border-t border-[var(--lume-border-subtle)] px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-300">后台命令仍在运行，不影响继续对话；可稍后查看或停止任务。</div>
       )}
     </div>
   )

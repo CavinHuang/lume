@@ -222,8 +222,10 @@ export class LumeRunner {
           ...verificationReport,
           runId: this.observer.getRunId(),
           checkpointId: canRewind ? this.observer.getRunId() : undefined,
-          rewindState: canRewind ? "available" : "unavailable",
-          canRewind,
+          rewindState: verificationReport.gitActions?.some((action) => action.kind === "commit" && action.status === "completed")
+            ? "committed_boundary"
+            : canRewind ? "available" : "unavailable",
+          canRewind: canRewind && !verificationReport.gitActions?.some((action) => action.kind === "commit" && action.status === "completed"),
         }
       } : {})
     } satisfies AgentRuntimeRunResult;
@@ -404,6 +406,7 @@ export class LumeRunner {
       messageMetadata: input.messageMetadata,
       emitSdkMessage: this.emit.onSdkMessage,
       emitRuntimeEvent: this.emit.onRuntimeEvent,
+      persistCodingReport: (report) => this.observer.recordCodingReport(report),
       emitAdvisorReview: (review) => this.observer.recordAdvisorReview(review, this.emit.onRuntimeEvent),
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,

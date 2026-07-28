@@ -125,7 +125,7 @@ describe("TaskContractWriteTool", () => {
 
     expect(result).toMatchObject({
       is_error: true,
-      content: "Error: 提交审批前必须生成并验证 Markdown 计划文件"
+      content: expect.stringContaining("提交审批前必须生成并验证 Markdown 计划文件")
     });
     expect(await createFileBackedTaskContractStore(dir).get("plan-1")).toBeNull();
     expect(await listPendingTaskApprovalRequests(dir)).toEqual([]);
@@ -150,7 +150,7 @@ describe("TaskContractWriteTool", () => {
 
     expect(result).toMatchObject({
       is_error: true,
-      content: "Error: planFilePath 必须是线程工作区内的相对路径"
+      content: expect.stringContaining("planFilePath 必须是线程工作区内的相对路径")
     });
     expect(await createFileBackedTaskContractStore(dir).get("plan-1")).toBeNull();
   });

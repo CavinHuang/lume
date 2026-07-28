@@ -265,6 +265,7 @@ describe("AgentTool parallel execution", () => {
       })
     }
 
+    const events: SDKMessage[] = []
     const pending = AgentTool.call({
       prompt: "legacy background child task",
       description: "background",
@@ -278,6 +279,7 @@ describe("AgentTool parallel execution", () => {
       model: "test-model",
       apiType: "anthropic-messages",
       sessionId: "parent-thread",
+      emitEvent: (event) => events.push(event),
       onSubagentEnd: async () => {
         endStarted = true
       }
@@ -300,6 +302,16 @@ describe("AgentTool parallel execution", () => {
       sessionId: "parent-thread",
     })
     expect(String(output.content)).toContain("child done")
+    await waitFor(() => events.some((event) =>
+      event.type === "system"
+      && event.subtype === "task_notification"
+      && event.task_id === taskId
+    ))
+    expect(events.filter((event) =>
+      event.type === "system"
+      && event.subtype === "task_notification"
+      && event.task_id === taskId
+    )).toHaveLength(1)
   })
 })
 

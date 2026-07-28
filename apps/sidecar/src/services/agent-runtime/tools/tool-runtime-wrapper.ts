@@ -128,7 +128,7 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
       } as any);
 
       let result: ToolResult = errorResult(context.toolUseId, `${tool.name} 未返回结果`);
-      const backgroundLease = lease && descriptor.canonicalName === "bash" && requestsBackgroundExecution(rawInput)
+      const backgroundLease = lease && descriptor.canonicalName === "bash"
         ? releaseLease
         : undefined;
       try {

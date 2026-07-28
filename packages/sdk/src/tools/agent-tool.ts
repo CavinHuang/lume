@@ -13,8 +13,14 @@ import { finalizeSubagentOutputFromState, summarizeSubagentAssistantEvent } from
 import { annotateSubagentStreamingEvent } from './agent-tool-events.js'
 import { getSkill } from '../skills/registry.js'
 import { recordSkillUsage } from '../skills/evolution.js'
-import { createProcessJobRecord, unregisterProcessStopHandler, updateProcessJob, type ProcessJob } from './process-job-registry.js'
-import { createManagedWorktree, removeManagedWorktree, type ManagedWorktree } from './worktree-tools.js'
+import {
+  createProcessJobRecord,
+  markProcessJobNotified,
+  unregisterProcessStopHandler,
+  updateProcessJob,
+  type ProcessJob,
+} from './process-job-registry.js'
+import { createManagedWorktree, type ManagedWorktree } from './worktree-tools.js'
 
 // Store for registered agent definitions
 let registeredAgents: Record<string, AgentDefinition> = {}
@@ -407,9 +413,6 @@ export const AgentTool: ToolDefinition = {
     const runManagedSubagent = async () => {
       prepareWorktree()
       const output = await runSubagent()
-      if (worktree && subagentStatus === 'completed') {
-        removeManagedWorktree(worktree.id)
-      }
       return output
     }
 
@@ -431,6 +434,7 @@ export const AgentTool: ToolDefinition = {
           type: 'system',
           subtype: 'task_started',
           task_id: backgroundTask.id,
+          ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
           description: backgroundTask.subject,
           task_type: 'agent',
           prompt: input.prompt,
@@ -453,14 +457,18 @@ export const AgentTool: ToolDefinition = {
               output,
               error: subagentStatus === 'errored' ? subagentErrorMessage : undefined,
             })
-            context.emitEvent?.({
-              type: 'system',
-              subtype: 'task_notification',
-              task_id: backgroundTask!.id,
-              status: subagentStatus === 'completed' ? 'completed' : subagentStatus,
-              summary: backgroundTask!.subject,
-              session_id: context.sessionId || '',
-            })
+            if (markProcessJobNotified(backgroundTask!.id)) {
+              context.emitEvent?.({
+                type: 'system',
+                subtype: 'task_notification',
+                task_id: backgroundTask!.id,
+                ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+                status,
+                message: output,
+                summary: backgroundTask!.subject,
+                session_id: context.sessionId || '',
+              })
+            }
             context.onBackgroundTaskCompleted?.()
           })
           .catch(async (err: any) => {
@@ -472,21 +480,25 @@ export const AgentTool: ToolDefinition = {
             unregisterProcessStopHandler(backgroundTask!.id)
             context.abortSignal?.removeEventListener('abort', parentAbortHandler)
             await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })
-            context.emitEvent?.({
-              type: 'system',
-              subtype: 'task_notification',
-              task_id: backgroundTask!.id,
-              status: 'failed',
-              summary: err.message,
-              session_id: context.sessionId || '',
-            })
+            if (markProcessJobNotified(backgroundTask!.id)) {
+              context.emitEvent?.({
+                type: 'system',
+                subtype: 'task_notification',
+                task_id: backgroundTask!.id,
+                ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
+                status: 'failed',
+                message: `Subagent error: ${err.message}`,
+                summary: err.message,
+                session_id: context.sessionId || '',
+              })
+            }
             context.onBackgroundTaskCompleted?.()
           })
 
         return {
           type: 'tool_result',
           tool_use_id: '',
-          content: `Background agent started: ${backgroundTask.id}\nUse ProcessOutput with task_id=${backgroundTask.id} to inspect progress.`,
+          content: `Background agent started: ${backgroundTask.id}\nYou will be notified when it completes. Do not poll ProcessOutput.`,
           _meta: {
             task: { id: backgroundTask.id, kind: 'agent', agentId, status: 'running' },
             ...(worktree ? { worktree: { ...worktree, retained: true } } : {}),
@@ -513,7 +525,7 @@ export const AgentTool: ToolDefinition = {
             : ''
         ),
         ...(errored || aborted ? { is_error: true } : {}),
-        ...(worktree ? { _meta: { worktree: { ...worktree, retained: false } } } : {}),
+        ...(worktree ? { _meta: { worktree: { ...worktree, retained: true } } } : {}),
       }
     } catch (err: any) {
       await context.onSubagentEnd?.({ runId: agentId, status: 'errored', error: err.message })

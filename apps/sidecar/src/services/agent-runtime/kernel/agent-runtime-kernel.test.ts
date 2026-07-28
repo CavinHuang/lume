@@ -67,6 +67,34 @@ describe("AgentRuntimeKernel", () => {
     expect(queuedCounts.at(-1)).toBe(0);
   });
 
+  test("后台续跑排在用户消息之后", async () => {
+    const started: string[] = [];
+    let release!: () => void;
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      execute: async (dispatch) => {
+        started.push(dispatch.input.userMessage);
+        if (dispatch.input.userMessage === "first") {
+          await new Promise<void>((resolve) => { release = resolve; });
+        }
+      },
+      onQueuedCountChange: () => undefined,
+      onDispatchError: () => undefined
+    });
+
+    kernel.dispatch({ threadId: "thread-a", userMessage: "first" }, { onError: () => undefined });
+    kernel.dispatch(
+      { threadId: "thread-a", userMessage: "background wake" },
+      { onError: () => undefined },
+      { priority: "background" }
+    );
+    kernel.dispatch({ threadId: "thread-a", userMessage: "user message" }, { onError: () => undefined });
+
+    release();
+    await waitFor(() => started.includes("background wake"));
+    expect(started).toEqual(["first", "user message", "background wake"]);
+    await kernel.waitForIdleForTest();
+  });
+
   test("listQueued 应返回队列项快照并支持重排执行顺序", async () => {
     const started: string[] = [];
     const releases = new Map<string, () => void>();

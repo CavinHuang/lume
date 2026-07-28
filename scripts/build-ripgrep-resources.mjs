@@ -9,6 +9,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT_ROOT = resolve(REPO_ROOT, "apps", "desktop", "resources", "ripgrep");
 const VERSION = "15.0.0";
 const RELEASE_ROOT = `https://github.com/BurntSushi/ripgrep/releases/download/${VERSION}`;
+const allowSystemFallback = process.argv.includes("--allow-system-fallback");
 
 const TARGETS = {
   "win32-x64-msvc": {
@@ -38,11 +39,14 @@ for (const targetId of targetIds) {
 async function buildTarget(targetId, target) {
   const outDir = join(OUT_ROOT, targetId);
   const versionFile = join(outDir, "VERSION");
+  const fallbackFile = join(outDir, "SYSTEM-FALLBACK");
+  const hasBundledLicense = existsSync(join(outDir, "LICENSE.ripgrep"));
+  const hasDevelopmentFallback = allowSystemFallback && existsSync(fallbackFile);
   if (
     existsSync(join(outDir, target.executable)) &&
-    existsSync(join(outDir, "LICENSE.ripgrep")) &&
     existsSync(versionFile) &&
-    readFileSync(versionFile, "utf8").trim() === VERSION
+    readFileSync(versionFile, "utf8").trim() === VERSION &&
+    (hasBundledLicense || hasDevelopmentFallback)
   ) {
     console.error(`[ripgrep-resources] using ${join(outDir, target.executable)}`);
     return;
@@ -51,10 +55,20 @@ async function buildTarget(targetId, target) {
   try {
     const archivePath = join(tempRoot, target.asset);
     const extractRoot = join(tempRoot, "extract");
-    const response = await fetch(`${RELEASE_ROOT}/${target.asset}`, {
-      headers: { "user-agent": "lume-desktop-build", accept: "application/octet-stream" },
-    });
-    if (!response.ok) fail(`failed to download ${target.asset}: HTTP ${response.status}`);
+    let response;
+    try {
+      response = await fetch(`${RELEASE_ROOT}/${target.asset}`, {
+        headers: { "user-agent": "lume-desktop-build", accept: "application/octet-stream" },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (allowSystemFallback && useSystemFallback(targetId, target, message)) return;
+      fail(`failed to download ${target.asset}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!response.ok) {
+      if (allowSystemFallback && useSystemFallback(targetId, target, `HTTP ${response.status}`)) return;
+      fail(`failed to download ${target.asset}: HTTP ${response.status}`);
+    }
     const bytes = Buffer.from(await response.arrayBuffer());
     const actualHash = createHash("sha256").update(bytes).digest("hex");
     if (actualHash !== target.sha256) {
@@ -80,6 +94,29 @@ async function buildTarget(targetId, target) {
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
+}
+
+function useSystemFallback(targetId, target, reason) {
+  if (targetId !== currentTargetId()) return false;
+  const lookup = process.platform === "win32" ? "where.exe" : "which";
+  const result = spawnSync(lookup, [target.executable], { encoding: "utf8" });
+  if (result.status !== 0) return false;
+  const executablePath = result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && existsSync(line));
+  if (!executablePath) return false;
+
+  const outDir = join(OUT_ROOT, targetId);
+  rmSync(outDir, { recursive: true, force: true });
+  mkdirSync(outDir, { recursive: true });
+  copyFileSync(executablePath, join(outDir, target.executable));
+  writeFileSync(join(outDir, "VERSION"), `${VERSION}\n`);
+  writeFileSync(join(outDir, "SYSTEM-FALLBACK"), `${executablePath}\n`);
+  console.error(
+    `[ripgrep-resources] download unavailable (${reason}); using system ${executablePath} for development`,
+  );
+  return true;
 }
 
 function extractArchive(archivePath, extractRoot, isZip) {

@@ -32,6 +32,7 @@ import {
   getRuntimeCoreSessionDirPath
 } from "../agent-runtime/runtime-core/session-store";
 import { getAgentMessageVersionStorePath, readAgentMessageVersionStore } from "./agent-message-version-store";
+import { resetAgentSubmissionStoreForTests } from "./agent-submission-store";
 
 describe("agent-thread-manager advanced ops", () => {
   let previousConfigDir: string | undefined;
@@ -44,6 +45,7 @@ describe("agent-thread-manager advanced ops", () => {
   });
 
   afterEach(() => {
+    resetAgentSubmissionStoreForTests();
     if (previousConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {

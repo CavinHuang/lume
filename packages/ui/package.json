@@ -11,7 +11,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun test src",
+    "test:smoke": "bun test src/mermaid-block/MermaidBlock.test.tsx"
   },
   "peerDependencies": {
     "react": "^18.3.1",

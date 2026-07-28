@@ -1,7 +1,8 @@
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from "@lume/shared";
-import { projectRunStateToRuntimeEvents } from "../runner/run-item-events";
+import { projectBackgroundTaskNotificationRuntimeEvent, projectRunStateToRuntimeEvents } from "../runner/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
 import { createFileBackedTaskStore } from "../task/task-store";
+import { getAgentThreadSDKMessages } from "../../agent/agent-thread-manager";
 
 export async function listThreadRuntimeEvents(input: {
   sessionDir: string;
@@ -9,11 +10,23 @@ export async function listThreadRuntimeEvents(input: {
 }): Promise<AgentThreadRuntimeEventsResult> {
   const runs = await createFileBackedLumeRunStateStore(input.sessionDir).listByThread(input.threadId);
   const taskEvents = createFileBackedTaskStore(input.sessionDir, { taskListId: input.threadId }).listEvents();
+  const backgroundTaskEvents = getAgentThreadSDKMessages(input.threadId)
+    .filter((message) => message.type === "system" && message.subtype === "task_notification")
+    .map((message) => {
+      const createdAt = (message as SDKMessageWithCreatedAt)._createdAt;
+      return projectBackgroundTaskNotificationRuntimeEvent(
+        input.threadId,
+        message,
+        typeof createdAt === "number" ? new Date(createdAt).toISOString() : new Date(0).toISOString()
+      );
+    })
+    .filter((event): event is Extract<LumeRuntimeEvent, { type: "background.task.completed" }> => event !== null);
 
   return {
     threadId: input.threadId,
     events: assignRunSequences(sortRuntimeEvents([
       ...runs.flatMap((run) => projectRunStateToRuntimeEvents(run)),
+      ...backgroundTaskEvents,
       ...taskEvents.map((event) => ({
         id: `task.progress:${event.taskListId}:${event.sequence}`,
         type: "task.progress" as const,
@@ -35,6 +48,8 @@ export async function listThreadRuntimeEvents(input: {
     ]))
   };
 }
+
+type SDKMessageWithCreatedAt = { _createdAt?: number };
 
 /** Event timestamps can collide across parallel child runs; sequence is the stable order within one run. */
 function assignRunSequences(events: LumeRuntimeEvent[]): LumeRuntimeEvent[] {

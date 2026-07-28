@@ -7,6 +7,9 @@
     "dev": "vite --port 3000 --host",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun scripts/run-unit-tests.mjs",
+    "test:smoke": "bun test src/components/right-panel/CodingReviewPanel.test.ts src/components/agent/runtime-event-message-projection.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

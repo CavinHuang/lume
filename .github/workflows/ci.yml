@@ -1,0 +1,63 @@
+name: PR Verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-verification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core verification (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Unit tests
+        run: bun run test:core
+      - name: Core smoke
+        run: bun run test:smoke
+
+  windows:
+    name: Windows reliability
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: PowerShell, background process, Coding and scheduling tests
+        run: bun run test:windows
+
+  macos:
+    name: macOS desktop reliability
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Desktop typecheck
+        run: bun run --filter @lume/desktop typecheck
+      - name: Desktop and background process smoke
+        run: |
+          bun run --filter @lume/desktop test:smoke
+          bun run --filter @lume/agent-sdk test:smoke

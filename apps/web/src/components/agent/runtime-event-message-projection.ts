@@ -163,6 +163,29 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'coding.report.updated') {
+    if (state.currentAssistant?.id.startsWith(`assistant:${event.runId}`)) {
+      state.currentAssistant.codingReport = {
+        ...state.currentAssistant.codingReport,
+        ...event.codingReport,
+      }
+      return
+    }
+    for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+      const message = state.messages[index]
+      if (message?.type !== 'assistant' || !message.id.startsWith(`assistant:${event.runId}`)) continue
+      state.messages[index] = {
+        ...message,
+        codingReport: {
+          ...message.codingReport,
+          ...event.codingReport,
+        },
+      }
+      break
+    }
+    return
+  }
+
   if (state.terminalClosed) {
     return
   }
@@ -307,7 +330,12 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     if (event.type === 'run.completed') {
       state.currentAssistant.messageId = event.finalMessageId
       state.currentAssistant.completedAt = event.createdAt
-      if (event.codingReport) state.currentAssistant.codingReport = event.codingReport
+      if (event.codingReport) {
+        state.currentAssistant.codingReport = {
+          ...state.currentAssistant.codingReport,
+          ...event.codingReport,
+        }
+      }
     }
     state.currentAssistant.status = 'completed'
     flushAssistant(state.messages, state.currentAssistant)

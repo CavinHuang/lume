@@ -1376,6 +1376,7 @@ export class QueryEngine {
       model: this.config.model,
       apiType: this.provider.apiType,
       sessionId: this.sessionId,
+      runId: this.config.runId,
       currentUserMessageId: this.config.currentUserMessageId,
       setWorkingDirectory: (cwd) => {
         this.workingDirectory = resolve(cwd)
@@ -1496,6 +1497,20 @@ export class QueryEngine {
     const toolContext: ToolContext = {
       ...context,
       toolUseId: block.id,
+    }
+    let toolCallActive = true
+    toolContext.emitEvent = (event) => {
+      if (toolCallActive) {
+        context.emitEvent?.(event)
+        return
+      }
+      if (event.type === 'system' && event.subtype === 'task_notification') {
+        try {
+          this.config.onAsyncEvent?.(event)
+        } catch {
+          // Host event delivery must not break terminal process cleanup.
+        }
+      }
     }
     toolContext.executeDeferredTool = async ({ toolName, params }) => {
       const target = this.config.deferredTools?.find((candidate) => candidate.name === toolName)
@@ -1683,6 +1698,7 @@ export class QueryEngine {
       const startedAt = performance.now()
       const eventStartIndex = events.length
       const result = await tool.call(block.input, toolContext)
+      toolCallActive = false
       toolContext.onToolExecution?.({
         toolName: block.name,
         input: block.input,
@@ -1747,6 +1763,7 @@ export class QueryEngine {
         toolsUsed,
       }
     } catch (err: any) {
+      toolCallActive = false
       // Hook: PostToolUseFailure
       const postFailureHooks = await this.executeHooks('PostToolUseFailure', {
         toolName: block.name,

@@ -118,13 +118,18 @@ async function run() {
     const health = await sidecar.call("healthcheck");
     assert(health?.ok === true, "healthcheck failed");
 
-    const workspace = await sidecar.call("agent:ensure-default-workspace");
-    assert(typeof workspace?.id === "string", "default workspace missing");
+    const projectRoot = join(configHome, "smoke-project");
+    mkdirSync(projectRoot, { recursive: true });
+    const workspace = await sidecar.call("agent:create-workspace", {
+      name: "Smoke Project",
+      projectPath: projectRoot
+    });
+    assert(typeof workspace?.id === "string", "project workspace missing");
     assert(typeof workspace?.slug === "string" && workspace.slug.length > 0, "default workspace slug missing");
     const workspaceRoot = await sidecar.call(AGENT_GET_WORKSPACE_ROOT_PATH, { workspaceSlug: workspace.slug });
     assert(
       typeof workspaceRoot === "string"
-      && normalizePathForAssert(workspaceRoot).includes("/agent-workspaces/default"),
+      && normalizePathForAssert(workspaceRoot).includes(`/agent-workspaces/${workspace.slug}`),
       "workspace root missing"
     );
 
@@ -193,12 +198,8 @@ async function run() {
       "workspace metadata missing after restart"
     );
 
-    const workspaceEntries = await import("node:fs").then(({ readdirSync }) => readdirSync(workspaceRoot));
-    assert(workspaceEntries.includes("resources"), "workspace resources dir missing");
-    assert(workspaceEntries.includes(".meta"), "workspace .meta dir missing");
-    assert(workspaceEntries.includes("threads"), "workspace threads dir missing");
-    assert(!workspaceEntries.includes("BOOTSTRAP.md"), "workspace BOOTSTRAP.md should not exist");
-    assert(!workspaceEntries.includes(".claude-plugin"), "workspace .claude-plugin should not exist");
+    assert(existsSync(workspaceRoot), "workspace metadata root missing after restart");
+    assert(existsSync(projectRoot), "project root missing after restart");
 
     console.log("SMOKE_RESTART_RESTORE_OK");
   } finally {

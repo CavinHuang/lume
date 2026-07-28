@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { Check, ChevronRight } from 'lucide-react'
+import { Check, ChevronRight, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -10,6 +10,7 @@ import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 interface AskUserBannerProps {
   threadId: string
   request: AgentAskUserQuestionRequest
@@ -19,6 +20,8 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0)
+  const [customQuestion, setCustomQuestion] = useState<string | null>(null)
+  const [customAnswer, setCustomAnswer] = useState('')
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -27,6 +30,8 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   useEffect(() => {
     setAnswers({})
     setActiveQuestionIndex(0)
+    setCustomQuestion(null)
+    setCustomAnswer('')
     setHidden(false)
     setBusy(false)
     setError(null)
@@ -69,6 +74,13 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   const allAnswered = request.questions.every((q) => answers[q.question])
   const submitDisabled = !allAnswered
   const activeQuestion = request.questions[activeQuestionIndex]
+  const submitCustomAnswer = () => {
+    const answer = customAnswer.trim()
+    if (!activeQuestion || !answer) return
+    setCustomQuestion(null)
+    setCustomAnswer('')
+    select(activeQuestion.question, answer)
+  }
 
   useEffect(() => {
     if (hidden || typeof window === 'undefined') return
@@ -90,10 +102,11 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
   return (
     <InteractiveOverlayFrame
       kind="ask-user"
-      title="帮 Lume 做一个选择"
+      title={activeQuestion?.question || '需要你的选择'}
       compact
+      followTheme
       showSubmit={false}
-      meta={subagentDisplayLabel ? `来自 ${subagentDisplayLabel}` : 'AskUserQuestion'}
+      meta={subagentDisplayLabel ? `来自 ${subagentDisplayLabel}` : undefined}
       progress={{
         current: activeQuestionIndex + 1,
         total: request.questions.length,
@@ -106,14 +119,9 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
       onIgnore={() => setHidden(true)}
       onSubmit={() => void submit()}
     >
-      <div className="space-y-2.5">
+      <div className="space-y-1.5">
         {activeQuestion ? (
-          <>
-            <div className="px-1">
-              <p className="text-[11px] font-medium text-[#9b9b9b]">{activeQuestion.header || `问题 ${activeQuestionIndex + 1}`}</p>
-              <p className="mt-0.5 text-[15px] font-semibold leading-6 text-[#f4f4f4]">{activeQuestion.question}</p>
-            </div>
-            <div className="space-y-1.5" role="radiogroup" aria-label={activeQuestion.header || activeQuestion.question}>
+          <div className="space-y-1" role="radiogroup" aria-label={activeQuestion.header || activeQuestion.question}>
               {activeQuestion.options.map((opt, optionIndex) => {
                 const selected = answers[activeQuestion.question] === opt.label
                 return (
@@ -126,36 +134,84 @@ export function AskUserBanner({ threadId, request }: AskUserBannerProps) {
                     aria-checked={selected}
                     onClick={() => select(activeQuestion.question, opt.label)}
                     className={cn(
-                      'group flex min-h-10 w-full items-center gap-2.5 rounded-full border px-2.5 py-1.5 text-left transition-colors',
+                      'group flex min-h-10 w-full items-center justify-start gap-2.5 rounded-2xl border px-2.5 py-1.5 text-left transition-colors',
                       selected
-                        ? 'border-white/[0.10] bg-[#373737] text-[#f5f5f5]'
-                        : 'border-transparent text-[#9b9b9b] hover:bg-[#333] hover:text-[#e5e5e5]',
+                        ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_28%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-accent)_8%,var(--lume-bg-elevated))] text-[var(--lume-text-primary)]'
+                        : 'border-transparent text-[var(--lume-text-secondary)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]',
                     )}
                   >
                     <span className={cn(
-                      'flex size-8 shrink-0 items-center justify-center rounded-full border text-[12px] font-medium',
-                      selected ? 'border-white/[0.18] bg-[#4a4a4a] text-white' : 'border-white/[0.10] bg-[#333] text-[#aaa]',
+                      'flex size-8 shrink-0 items-center justify-center rounded-full border text-[12px] font-medium tabular-nums',
+                      selected
+                        ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_40%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-accent)_14%,var(--lume-bg-elevated))] text-[var(--lume-text-primary)]'
+                        : 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-muted)]',
                     )}>
                       {optionIndex + 1}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">{opt.label}</span>
-                    {opt.description && opt.description !== opt.label && (
-                      <span className="min-w-0 truncate text-[12px] text-[#8c8c8c]">{opt.description}</span>
-                    )}
-                    {selected ? <Check size={15} className="shrink-0 text-[#ededed]" /> : <ChevronRight size={15} className="shrink-0 text-[#777] opacity-0 transition-opacity group-hover:opacity-100" />}
+                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                      <span className="shrink-0 text-[13px] font-semibold">{opt.label}</span>
+                      {opt.description && opt.description !== opt.label && (
+                        <span className="min-w-0 truncate text-[12px] text-[var(--lume-text-muted)]">{opt.description}</span>
+                      )}
+                    </span>
+                    {selected
+                      ? <Check size={14} className="shrink-0 text-[var(--lume-accent)]" />
+                      : <ChevronRight size={14} className="shrink-0 text-[var(--lume-text-muted)] opacity-0 transition-opacity group-hover:opacity-100" />}
                   </Button>
                 )
               })}
+              {customQuestion === activeQuestion.question ? (
+                <div className="flex min-h-10 items-center gap-2 rounded-2xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-2.5 py-1">
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[var(--lume-border-subtle)] text-[var(--lume-text-muted)]">
+                    <Pencil size={13} />
+                  </span>
+                  <Input
+                    autoFocus
+                    value={customAnswer}
+                    onChange={(event) => setCustomAnswer(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') submitCustomAnswer()
+                      if (event.key === 'Escape') {
+                        event.stopPropagation()
+                        setCustomQuestion(null)
+                      }
+                    }}
+                    placeholder="告诉 Lume 应该如何做得不同"
+                    className="h-7 border-0 bg-transparent px-0 text-[12px] shadow-none focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    type="button"
+                    disabled={!customAnswer.trim()}
+                    onClick={submitCustomAnswer}
+                    className="text-[var(--lume-text-secondary)]"
+                  >
+                    确认
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="ghost"
+                  type="button"
+                  onClick={() => {
+                    setCustomQuestion(activeQuestion.question)
+                    setCustomAnswer('')
+                  }}
+                  className="flex min-h-9 w-full items-center justify-start gap-2.5 rounded-2xl px-2.5 py-1 text-left text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-secondary)]"
+                >
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[var(--lume-border-subtle)]">
+                    <Pencil size={13} />
+                  </span>
+                  <span className="truncate text-[12px]">都不合适，告诉 Lume 应该如何做得不同</span>
+                </Button>
+              )}
             </div>
-          </>
         ) : (
-          <p className="px-1 text-[13px] text-[#aaa]">暂无问题</p>
+          <p className="px-1 text-[12px] text-[var(--lume-text-muted)]">暂无问题</p>
         )}
-        <p className="px-1 text-[11px] text-[#858585]">
-          已完成 {Object.keys(answers).length} / {request.questions.length} 项
-        </p>
         {error && (
-          <p className="px-1 pt-1 text-[12px] text-[#ff9b9b]">{error}</p>
+          <p className="px-1 pt-1 text-[11px] text-[var(--destructive)]">{error}</p>
         )}
       </div>
     </InteractiveOverlayFrame>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentThread } from "../../agent/agent-thread-manager";
@@ -28,10 +28,12 @@ describe("runtime-core attempt observability", () => {
 
   test("records run state and trace files without changing runtime output", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-attempt-observability-"));
+    const projectDir = join(configDir, "project");
+    mkdirSync(projectDir);
     process.env.LUME_CONFIG_DIR = configDir;
     process.env.LUME_AGENT_RUNTIME_MOCK_SUCCESS = "1";
 
-    const workspace = createAgentWorkspace("Observability Workspace");
+    const workspace = createAgentWorkspace("Observability Workspace", { projectPath: projectDir });
     const channel = createChannel({
       name: "mock-observability",
       provider: "openai",
@@ -73,7 +75,7 @@ describe("runtime-core attempt observability", () => {
       }
     );
 
-    expect(result.status).toBe("completed");
+    expect(result).toEqual({ status: "completed" });
     const sessionDir = getRuntimeCoreSessionDir(thread.id);
     const runFiles = readdirSync(join(sessionDir, "runs"));
     const traceFiles = readdirSync(join(sessionDir, "traces"));
