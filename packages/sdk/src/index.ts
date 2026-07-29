@@ -203,6 +203,7 @@ export {
   resolveLspServerConfigsForFile,
   setLspIdleTimeout,
   shutdownLspClients,
+  warmupLspClients,
 } from './lsp/client.js'
 export type {
   LspAggregatedDiagnostic,
@@ -224,6 +225,13 @@ export type {
   LspWatchedFileChange,
   LspWorkspaceEdit,
 } from './lsp/client.js'
+export {
+  DEFAULT_LSP_SERVERS,
+  findLspWorkspaceRoot,
+  resolveLspExecutable,
+  supportsLspFile,
+} from './lsp/registry.js'
+export type { LspRegistryServer, LspServerRole } from './lsp/registry.js'
 
 // --------------------------------------------------------------------------
 // MCP Client
@@ -625,6 +633,7 @@ export type {
   ToolInputSchema,
   ToolContext,
   ToolResult,
+  PersistedToolContinuation,
 
   // Permission types
   PermissionMode,

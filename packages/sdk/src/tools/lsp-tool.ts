@@ -6,8 +6,8 @@
  * workspace does not expose `typescript-language-server --stdio`.
  */
 
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, relative, resolve, join } from 'node:path'
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, relative, resolve, join, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
@@ -26,6 +26,7 @@ import {
   type LspTextEdit,
   type LspWorkspaceEdit,
 } from '../lsp/client.js'
+import { prepareLspWritethroughBatch } from '../lsp/writethrough.js'
 
 const locationOperations = new Set([
   'goToDefinition',
@@ -33,7 +34,7 @@ const locationOperations = new Set([
   'goToImplementation',
 ])
 
-const LSP_MUTATION_OPERATIONS = new Set(['rename', 'codeActions', 'formatting', 'rangeFormatting', 'applyWorkspaceEdit'])
+const LSP_MUTATION_OPERATIONS = new Set(['rename', 'renameFile', 'codeActions', 'formatting', 'rangeFormatting', 'applyWorkspaceEdit'])
 const LSP_READONLY_REQUESTS = new Set([
   'textDocument/definition',
   'textDocument/references',
@@ -52,7 +53,9 @@ const LSP_READONLY_REQUESTS = new Set([
 function isMutationRequest(operation: string, input: Record<string, any>): boolean {
   if (operation === 'request') return !LSP_READONLY_REQUESTS.has(typeof input.query === 'string' ? input.query.trim() : '')
   if (!LSP_MUTATION_OPERATIONS.has(operation)) return false
-  return operation === 'rename' || operation === 'applyWorkspaceEdit' ? input.apply !== false : input.apply === true
+  return operation === 'rename' || operation === 'renameFile' || operation === 'applyWorkspaceEdit'
+    ? input.apply !== false
+    : input.apply === true
 }
 
 function createLspTool(allowWrite: boolean) {
@@ -84,6 +87,7 @@ function createLspTool(allowWrite: boolean) {
           'outgoingCalls',
           'diagnostics',
           'rename',
+          'renameFile',
           'codeActions',
       'formatting',
           'rangeFormatting',
@@ -97,8 +101,12 @@ function createLspTool(allowWrite: boolean) {
       file_path: { type: 'string', description: 'Workspace-relative or absolute file path' },
       line: { type: 'number', description: '0-based line' },
       character: { type: 'number', description: '0-based UTF-16 character' },
+      line_number: { type: 'number', description: '1-based line; cannot be combined with line/character or symbol' },
+      symbol: { type: 'string', description: 'Symbol substring, optionally suffixed with #N to select the Nth occurrence' },
       query: { type: 'string', description: 'Workspace symbol query' },
       new_name: { type: 'string', description: 'New symbol name for rename' },
+      new_path: { type: 'string', description: 'Destination path for renameFile' },
+      timeout_ms: { type: 'number', description: 'Request timeout in milliseconds (max 300000)' },
       item: { type: 'object', description: 'Call hierarchy item returned by prepareCallHierarchy' },
       diagnostics: { type: 'array', description: 'Diagnostics passed to textDocument/codeAction' },
       only: { type: 'array', description: 'Code action kinds to request' },
@@ -129,7 +137,11 @@ function createLspTool(allowWrite: boolean) {
           is_error: true,
         }
       }
-      const filePath = input.file_path ? resolve(context.cwd, String(input.file_path)) : undefined
+      const diagnosticsPattern = operation === 'diagnostics' && typeof input.file_path === 'string' && input.file_path.includes('*')
+        ? input.file_path
+        : undefined
+      const workspaceDiagnostics = diagnosticsPattern === '*'
+      const filePath = input.file_path && !diagnosticsPattern ? resolve(context.cwd, String(input.file_path)) : undefined
       if (filePath) {
         const sandboxError = ensurePathAllowed(
           filePath,
@@ -139,24 +151,65 @@ function createLspTool(allowWrite: boolean) {
         )
         if (sandboxError) return { data: sandboxError, is_error: true }
       }
-      if (locationOperations.has(operation) || ['definition', 'references', 'implementation', 'typeDefinition', 'hover', 'documentSymbol', 'symbols', 'rename', 'prepareRename', 'diagnostics', 'prepareCallHierarchy', 'codeActions', 'formatting', 'rangeFormatting'].includes(operation)) {
+      if (locationOperations.has(operation) || ['definition', 'references', 'implementation', 'typeDefinition', 'hover', 'documentSymbol', 'symbols', 'rename', 'renameFile', 'prepareRename', 'diagnostics', 'prepareCallHierarchy', 'codeActions', 'formatting', 'rangeFormatting'].includes(operation)) {
+        if (diagnosticsPattern) {
+          // Workspace and glob diagnostics intentionally have no single file.
+        } else
         if (!filePath) return { data: 'file_path is required for this operation', is_error: true }
-        if (operation !== 'diagnostics' && (typeof input.line !== 'number' || typeof input.character !== 'number')) {
-          return { data: 'line and character are required for this operation', is_error: true }
+        if (!['diagnostics', 'documentSymbol', 'symbols', 'formatting', 'renameFile'].includes(operation)) {
+          const positionError = validatePositionInput(input)
+          if (positionError) return { data: positionError, is_error: true }
         }
+      }
+      if (operation === 'renameFile' && (typeof input.new_path !== 'string' || !input.new_path.trim())) {
+        return { data: 'new_path is required for renameFile', is_error: true }
       }
       if ((operation === 'incomingCalls' || operation === 'outgoingCalls') && !input.item) {
         return { data: 'item is required for call hierarchy traversal', is_error: true }
       }
+      const fileIsDirectory = operation === 'renameFile' && filePath
+        ? (await stat(filePath).catch(() => undefined))?.isDirectory() === true
+        : false
+      if (diagnosticsPattern && !workspaceDiagnostics) {
+        const matches = await expandDiagnosticGlob(context.cwd, diagnosticsPattern, 20)
+        if (matches.length === 0) return { data: 'No files matched the diagnostics glob', is_error: true }
+        const output: string[] = []
+        for (const match of matches) {
+          const matchedClients = await getLspClientsForFile(context.cwd, context.toolConfig, match).catch(() => [])
+          if (matchedClients.length === 0) continue
+          await Promise.all(matchedClients.map((candidate) => candidate.syncFile(match)))
+          output.push(formatDiagnostics(
+            await collectLspDiagnostics(matchedClients, match, 3_000, context.abortSignal),
+            match,
+            context.cwd,
+          ))
+        }
+        return { data: output.join('\n') || 'No matching LSP diagnostics available' }
+      }
 
-      const clients = await getLspClientsForFile(context.cwd, context.toolConfig, filePath)
+      const clients = await getLspClientsForFile(context.cwd, context.toolConfig, fileIsDirectory ? undefined : filePath).catch((error) => {
+        if (workspaceDiagnostics) return []
+        throw error
+      })
+      if (workspaceDiagnostics && clients.length === 0) {
+        const fallback = await executeWorkspaceDiagnosticsFallback(context)
+        const fallbackMeta = '_meta' in fallback ? fallback._meta : undefined
+        return {
+          data: toolResultText(fallback),
+          ...(fallback.is_error ? { is_error: true } : {}),
+          ...(fallbackMeta ? { _meta: fallbackMeta } : {}),
+        }
+      }
       const client = selectClient(clients, input.server)
       if (!client) return { data: 'No matching LSP server is available', is_error: true }
-      if (filePath) await Promise.all(clients.map((candidate) => candidate.syncFile(filePath)))
-      const requestAll = <T>(method: string, params: unknown, timeoutMs = 15_000) =>
+      if (filePath && !fileIsDirectory) await Promise.all(clients.map((candidate) => candidate.syncFile(filePath)))
+      const requestTimeoutMs = typeof input.timeout_ms === 'number'
+        ? Math.min(Math.max(Math.floor(input.timeout_ms), 1), 300_000)
+        : undefined
+      const requestAll = <T>(method: string, params: unknown, timeoutMs = requestTimeoutMs) =>
         requestLspClients<T>(clients, method, params, timeoutMs, context.abortSignal)
-      const position = filePath
-        ? { line: Number(input.line), character: Number(input.character) }
+      const position = filePath && operationNeedsPosition(operation)
+        ? await resolveAgentPosition(filePath, input)
         : undefined
       const endPosition = filePath && typeof input.end_line === 'number' && typeof input.end_character === 'number'
         ? { line: Number(input.end_line), character: Number(input.end_character) }
@@ -207,6 +260,20 @@ function createLspTool(allowWrite: boolean) {
           result = aggregateServerArrays(await requestAll('callHierarchy/outgoingCalls', { item: input.item }))
           break
         case 'diagnostics':
+          if (workspaceDiagnostics) {
+            const workspaceResults = await requestAll<unknown>('workspace/diagnostic', { previousResultIds: [] })
+            if (workspaceResults.some(({ result }) => result !== null && result !== undefined)) {
+              result = workspaceResults
+              break
+            }
+            const fallback = await executeWorkspaceDiagnosticsFallback(context)
+            const fallbackMeta = '_meta' in fallback ? fallback._meta : undefined
+            return {
+              data: toolResultText(fallback),
+              ...(fallback.is_error ? { is_error: true } : {}),
+              ...(fallbackMeta ? { _meta: fallbackMeta } : {}),
+            }
+          }
           result = formatDiagnostics(await collectLspDiagnostics(clients, filePath!, 3_000, context.abortSignal), filePath!, context.cwd)
           break
         case 'codeActions': {
@@ -229,13 +296,14 @@ function createLspTool(allowWrite: boolean) {
           if (input.apply === true) {
             const selected = selectCodeAction(resolvedActions, input.action_index)
             if (!selected) return { data: 'No applicable code action returned', is_error: true }
-            const changedFiles = selected.edit ? await applyWorkspaceEdit(selected.edit, context) : []
+            const applied = selected.edit ? await applyWorkspaceEdit(selected.edit, context) : { changedFiles: [], lsp: undefined }
             const actionClient = selectClient(clients, selected.server)
             const commandResult = selected.command && typeof selected.command === 'object' && actionClient
               ? await actionClient.request('workspace/executeCommand', selected.command, 15_000, context.abortSignal)
               : undefined
             result = {
-              applied: changedFiles,
+              applied: applied.changedFiles,
+              ...(applied.lsp ? { lsp: applied.lsp } : {}),
               ...(selected.command ? { command: selected.command } : {}),
               ...(commandResult !== undefined ? { commandResult } : {}),
               title: selected.title,
@@ -267,8 +335,20 @@ function createLspTool(allowWrite: boolean) {
           result = clients.map((candidate) => ({ server: candidate.serverName, capabilities: candidate.getStatus().capabilities }))
           break
         case 'reload':
-          await Promise.all(clients.map((candidate) => candidate.reload()))
-          result = { reloaded: clients.map((candidate) => candidate.serverName) }
+          {
+            const targets = typeof input.server === 'string' && input.server.trim()
+              ? clients.filter((candidate) => candidate.serverName === input.server.trim())
+              : clients
+            if (targets.length === 0) return { data: 'No matching LSP server is available to reload', is_error: true }
+            const targetNames = new Set(targets.map((candidate) => candidate.serverName))
+            await Promise.all(targets.map((candidate) => candidate.reload()))
+            const rebuilt = await getLspClientsForFile(context.cwd, context.toolConfig, filePath).catch(() => [])
+            result = {
+              reloaded: rebuilt
+                .filter((candidate) => targetNames.has(candidate.serverName))
+                .map((candidate) => candidate.serverName),
+            }
+          }
           break
         case 'request': {
           const method = typeof input.query === 'string' ? input.query.trim() : ''
@@ -282,12 +362,17 @@ function createLspTool(allowWrite: boolean) {
         case 'applyWorkspaceEdit': {
           const payload = typeof input.payload === 'string' ? JSON.parse(input.payload) : input.payload
           if (!payload || typeof payload !== 'object') return { data: 'payload must be a WorkspaceEdit object', is_error: true }
-          result = { server: client.serverName, changedFiles: await applyWorkspaceEdit(payload as LspWorkspaceEdit, context) }
+          result = { server: client.serverName, ...(await applyWorkspaceEdit(payload as LspWorkspaceEdit, context)) }
           break
         }
         case 'rename': {
-          if (!input.new_name || !/^[A-Za-z_$][\w$]*$/.test(String(input.new_name))) {
-            return { data: 'new_name must be a valid identifier', is_error: true }
+          if (
+            typeof input.new_name !== 'string'
+            || !input.new_name.trim()
+            || input.new_name.length > 512
+            || /[\0\r\n]/.test(input.new_name)
+          ) {
+            return { data: 'new_name must be a non-empty symbol name without control line breaks', is_error: true }
           }
           const renameClient = await selectRenameClient(clients, filePath!, position!, context.abortSignal, input.server)
           if (!renameClient) return { data: 'No LSP server accepted prepareRename', is_error: true }
@@ -301,8 +386,41 @@ function createLspTool(allowWrite: boolean) {
               message: `Rename preview for ${input.new_name}`,
             }
           } else {
-            const changedFiles = await applyWorkspaceEdit(edit, context)
-            result = { server: renameClient.serverName, changedFiles, message: `Renamed symbol to ${input.new_name}` }
+            const applied = await applyWorkspaceEdit(edit, context)
+            result = { server: renameClient.serverName, ...applied, message: `Renamed symbol to ${input.new_name}` }
+          }
+          break
+        }
+        case 'renameFile': {
+          const newPath = resolve(context.cwd, String(input.new_path))
+          const writeError = ensurePathAllowed(newPath, 'write', context.sandbox, context.additionalDirectories)
+          if (writeError) return { data: writeError, is_error: true }
+          const files = [{ oldUri: uriFor(filePath!), newUri: uriFor(newPath) }]
+          const edits = await requestAll<LspWorkspaceEdit | null>('workspace/willRenameFiles', { files })
+          const merged = mergeRenameWorkspaceEdits(
+            edits,
+            new Map(clients.map((candidate) => [candidate.serverName, candidate.serverRole])),
+          )
+          const renameOperation: LspWorkspaceEdit = {
+            ...merged,
+            documentChanges: [
+              ...(merged.documentChanges ?? []),
+              { kind: 'rename', oldUri: files[0]!.oldUri, newUri: files[0]!.newUri },
+            ],
+          }
+          if (input.apply === false) {
+            result = {
+              servers: edits.map(({ server }) => server),
+              preview: formatWorkspaceEditPreview(renameOperation, context.cwd, client.serverName),
+            }
+          } else {
+            const applied = await applyWorkspaceEdit(renameOperation, context)
+            await Promise.all(clients.map((candidate) => candidate.notifyRenamedFiles(files).catch(() => undefined)))
+            result = {
+              servers: edits.map(({ server }) => server),
+              ...applied,
+              message: `Renamed ${relative(context.cwd, filePath!) || filePath} to ${relative(context.cwd, newPath) || newPath}`,
+            }
           }
           break
         }
@@ -326,6 +444,210 @@ export const LSPApplyTool = createLspTool(true)
 
 function uriFor(filePath: string): string {
   return pathToFileURL(filePath).toString()
+}
+
+function operationNeedsPosition(operation: string): boolean {
+  return locationOperations.has(operation) || [
+    'definition',
+    'references',
+    'implementation',
+    'typeDefinition',
+    'hover',
+    'rename',
+    'prepareRename',
+    'prepareCallHierarchy',
+    'codeActions',
+    'rangeFormatting',
+  ].includes(operation)
+}
+
+function validatePositionInput(input: Record<string, any>): string | undefined {
+  const hasZeroBased = input.line !== undefined || input.character !== undefined
+  const hasLineNumber = input.line_number !== undefined
+  const hasSymbol = input.symbol !== undefined
+  if ([hasZeroBased, hasLineNumber, hasSymbol].filter(Boolean).length !== 1) {
+    return 'Provide exactly one position form: line+character, line_number, or symbol'
+  }
+  if (hasZeroBased && (
+    !Number.isInteger(input.line) || input.line < 0
+    || !Number.isInteger(input.character) || input.character < 0
+  )) return 'line and character must both be non-negative integers'
+  if (hasLineNumber && (!Number.isInteger(input.line_number) || input.line_number < 1)) {
+    return 'line_number must be a positive 1-based integer'
+  }
+  if (hasSymbol && (typeof input.symbol !== 'string' || !input.symbol.trim())) {
+    return 'symbol must be a non-empty substring'
+  }
+}
+
+export async function resolveAgentPosition(filePath: string, input: Record<string, any>): Promise<{ line: number; character: number }> {
+  if (typeof input.line === 'number' && typeof input.character === 'number') {
+    return { line: input.line, character: input.character }
+  }
+  if (typeof input.line_number === 'number') return { line: input.line_number - 1, character: 0 }
+  const raw = String(input.symbol)
+  const suffix = raw.match(/#(\d+)$/)
+  const occurrence = suffix ? Number(suffix[1]) : 1
+  const symbol = suffix ? raw.slice(0, -suffix[0].length) : raw
+  if (!symbol || occurrence < 1) throw new Error('symbol must use a positive occurrence suffix such as symbol#2')
+  const lines = (await readFile(filePath, 'utf8')).split(/\r?\n/)
+  let seen = 0
+  for (let line = 0; line < lines.length; line += 1) {
+    let from = 0
+    while (from <= lines[line]!.length) {
+      const character = lines[line]!.indexOf(symbol, from)
+      if (character < 0) break
+      seen += 1
+      if (seen === occurrence) return { line, character }
+      from = character + Math.max(symbol.length, 1)
+    }
+  }
+  throw new Error(`Symbol occurrence not found: ${raw}`)
+}
+
+export function mergeRenameWorkspaceEdits(
+  results: Array<{ server: string; result: LspWorkspaceEdit | null }>,
+  roles: ReadonlyMap<string, 'primary' | 'linter'> = new Map(),
+): LspWorkspaceEdit {
+  const changes: Record<string, Array<LspTextEdit & { sourceServer: string }>> = {}
+  const documentChanges: NonNullable<LspWorkspaceEdit['documentChanges']> = []
+  for (const { server, result } of results) {
+    if (!result) continue
+    for (const [uri, edits] of Object.entries(result.changes ?? {})) {
+      const target = changes[uri] ?? []
+      for (const edit of edits) {
+        const duplicate = target.find((candidate) =>
+          JSON.stringify(candidate.range) === JSON.stringify(edit.range)
+          && candidate.newText === edit.newText
+        )
+        if (duplicate) continue
+        const conflicts = target.filter((candidate) => rangesOverlap(candidate.range, edit.range))
+        if (conflicts.length > 0) {
+          const incomingRole = roles.get(server) ?? 'primary'
+          const existingRoles = conflicts.map((candidate) => roles.get(candidate.sourceServer) ?? 'primary')
+          if (incomingRole === 'linter' && existingRoles.includes('primary')) continue
+          if (incomingRole === 'primary' && existingRoles.every((role) => role === 'linter')) {
+            for (const conflict of conflicts) target.splice(target.indexOf(conflict), 1)
+          } else {
+            throw new Error(`Conflicting workspace/willRenameFiles edits from ${server} for ${safeFilePath(uri)}`)
+          }
+        }
+        target.push({ ...edit, sourceServer: server })
+      }
+      changes[uri] = target
+    }
+    for (const change of result.documentChanges ?? []) {
+      const key = JSON.stringify(change)
+      if (!documentChanges.some((candidate) => JSON.stringify(candidate) === key)) documentChanges.push(change)
+    }
+  }
+  return {
+    ...(Object.keys(changes).length > 0 ? {
+      changes: Object.fromEntries(Object.entries(changes).map(([uri, edits]) => [
+        uri,
+        edits.map(({ sourceServer: _sourceServer, ...edit }) => edit),
+      ])),
+    } : {}),
+    ...(documentChanges.length > 0 ? { documentChanges } : {}),
+  }
+}
+
+function rangesOverlap(left: LspTextEdit['range'], right: LspTextEdit['range']): boolean {
+  const compare = (a: { line: number; character: number }, b: { line: number; character: number }) =>
+    a.line - b.line || a.character - b.character
+  return compare(left.start, right.end) < 0 && compare(right.start, left.end) < 0
+}
+
+async function executeWorkspaceDiagnosticsFallback(context: ToolContext) {
+  if (!context.executeNestedTool) {
+    return { content: 'Workspace diagnostics requires the nested Bash execution bridge', is_error: true }
+  }
+  const command = await workspaceDiagnosticsCommand(context.cwd)
+  if (!command) return { content: 'No supported workspace diagnostics marker was found', is_error: true }
+  return context.executeNestedTool({
+    toolName: 'Bash',
+    params: {
+      command,
+      purpose: 'verification',
+      description: 'LSP workspace diagnostics fallback',
+    },
+  })
+}
+
+export async function workspaceDiagnosticsCommand(cwd: string): Promise<string | undefined> {
+  if (await exists(resolve(cwd, 'tsconfig.json'))) return 'npx tsc --noEmit'
+  if (await exists(resolve(cwd, 'Cargo.toml'))) return 'cargo check --message-format=short'
+  if (await exists(resolve(cwd, 'go.work'))) {
+    const modules = parseGoWorkUsePaths(await readFile(resolve(cwd, 'go.work'), 'utf8'))
+    return modules.length > 0
+      ? `go build ${modules.map((module) => quoteShellArgument(`${module.replace(/[\\/]$/, '')}/...`)).join(' ')}`
+      : 'go build ./...'
+  }
+  if (await exists(resolve(cwd, 'go.mod'))) return 'go build ./...'
+  if (await exists(resolve(cwd, 'pyproject.toml')) || await exists(resolve(cwd, 'pyrightconfig.json'))) return 'pyright'
+  return undefined
+}
+
+function parseGoWorkUsePaths(content: string): string[] {
+  const paths: string[] = []
+  let inUseBlock = false
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.replace(/\/\/.*$/, '').trim()
+    if (!line) continue
+    if (inUseBlock) {
+      if (line === ')') {
+        inUseBlock = false
+      } else {
+        paths.push(unquoteGoPath(line))
+      }
+      continue
+    }
+    if (line === 'use (') {
+      inUseBlock = true
+      continue
+    }
+    if (line.startsWith('use ')) paths.push(unquoteGoPath(line.slice(4).trim()))
+  }
+  return [...new Set(paths.filter(Boolean))]
+}
+
+function unquoteGoPath(value: string): string {
+  return value.replace(/^(['"])(.*)\1$/, '$2').trim()
+}
+
+function quoteShellArgument(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`
+}
+
+function toolResultText(result: { content?: unknown; data?: unknown }): unknown {
+  if (result.content !== undefined) return result.content
+  return result.data ?? ''
+}
+
+async function expandDiagnosticGlob(cwd: string, pattern: string, limit: number): Promise<string[]> {
+  const normalized = pattern.replace(/\\/g, '/')
+  const expression = new RegExp(`^${normalized.split('*').map(escapeRegExp).join('.*')}$`, 'i')
+  const output: string[] = []
+  const visit = async (directory: string): Promise<void> => {
+    if (output.length >= limit) return
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (output.length >= limit) return
+      if (entry.name === 'node_modules' || entry.name === '.git') continue
+      const absolute = join(directory, entry.name)
+      if (entry.isDirectory()) await visit(absolute)
+      else {
+        const candidate = relative(cwd, absolute).replace(/\\/g, '/')
+        if (expression.test(candidate)) output.push(absolute)
+      }
+    }
+  }
+  await visit(resolve(cwd))
+  return output
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function selectClient(clients: LspClient[], server: unknown): LspClient | undefined {
@@ -560,8 +882,8 @@ async function applyTextEditsWorkspace(filePath: string, edits: LspTextEdit[], c
   return [absolute]
 }
 
-async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefined, context: ToolContext): Promise<string[]> {
-  if (!edit) return []
+export async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefined, context: ToolContext) {
+  if (!edit) return { changedFiles: [], lsp: undefined }
   type WorkspaceStep =
     | { kind: 'edit'; path: string; edits: LspTextEdit[] }
     | { kind: 'create'; path: string; options?: { overwrite?: boolean; ignoreIfExists?: boolean } }
@@ -587,15 +909,19 @@ async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefined, con
   // First pass validates all operations and builds the final virtual workspace.
   // No filesystem mutation happens until this pass completes.
   const existence = new Map<string, boolean>()
+  const directories = new Set<string>()
   const original = new Map<string, string>()
   const virtual = new Map<string, string>()
   const ignored = new Set<WorkspaceStep>()
   const resourceContent = new Map<WorkspaceStep, string | undefined>()
   const load = async (filePath: string): Promise<boolean> => {
     if (existence.has(filePath)) return existence.get(filePath)!
-    const present = await exists(filePath)
+    const info = await stat(filePath).catch(() => undefined)
+    const present = Boolean(info)
     existence.set(filePath, present)
-    if (present) {
+    if (info?.isDirectory()) {
+      directories.add(filePath)
+    } else if (present) {
       const content = await readFile(filePath, 'utf8')
       original.set(filePath, content)
       virtual.set(filePath, content)
@@ -632,10 +958,30 @@ async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefined, con
       resourceContent.set(step, virtual.get(step.oldPath))
       existence.set(step.oldPath, false)
       existence.set(step.newPath, true)
-      virtual.set(step.newPath, virtual.get(step.oldPath)!)
-      virtual.delete(step.oldPath)
-      original.set(step.newPath, original.get(step.oldPath)!)
-      original.delete(step.oldPath)
+      if (directories.has(step.oldPath)) {
+        if (isPathInsideOrEqual(step.oldPath, step.newPath)) {
+          throw new Error(`LSP cannot rename a directory into itself: ${step.oldPath}`)
+        }
+        for (const [oldChildPath, content] of [...virtual.entries()]) {
+          if (!isPathInsideOrEqual(step.oldPath, oldChildPath) || oldChildPath === step.oldPath) continue
+          const newChildPath = join(step.newPath, relative(step.oldPath, oldChildPath))
+          virtual.delete(oldChildPath)
+          virtual.set(newChildPath, content)
+          existence.set(oldChildPath, false)
+          existence.set(newChildPath, true)
+          if (original.has(oldChildPath)) {
+            original.set(newChildPath, original.get(oldChildPath)!)
+            original.delete(oldChildPath)
+          }
+        }
+        directories.delete(step.oldPath)
+        directories.add(step.newPath)
+      } else {
+        virtual.set(step.newPath, virtual.get(step.oldPath)!)
+        virtual.delete(step.oldPath)
+        original.set(step.newPath, original.get(step.oldPath)!)
+        original.delete(step.oldPath)
+      }
     } else {
       assertWriteAllowed(step.path, context)
       if (!(await load(step.path))) {
@@ -647,9 +993,27 @@ async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefined, con
       }
       resourceContent.set(step, virtual.get(step.path))
       existence.set(step.path, false)
-      virtual.delete(step.path)
+      if (directories.has(step.path)) {
+        for (const childPath of [...virtual.keys()]) {
+          if (isPathInsideOrEqual(step.path, childPath)) virtual.delete(childPath)
+        }
+      } else {
+        virtual.delete(step.path)
+      }
     }
   }
+
+  const lspBatch = await prepareLspWritethroughBatch({
+    files: [...virtual.entries()]
+      .filter(([filePath, content]) => original.get(filePath) !== content || !original.has(filePath))
+      .map(([filePath, content]) => ({
+        filePath,
+        content,
+        existedBefore: original.has(filePath),
+      })),
+    context,
+  })
+  for (const [filePath, content] of lspBatch.contents) virtual.set(filePath, content)
 
   const changedFiles: string[] = []
   const changed = new Set<string>()
@@ -665,7 +1029,6 @@ async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefined, con
     if (original.get(filePath) !== content || !(await exists(filePath))) {
       await mkdir(dirname(filePath), { recursive: true })
       await writeFileAtomic(filePath, content)
-      await notifyLspFileChanged(filePath)
       markChanged(filePath)
     }
   }
@@ -703,12 +1066,18 @@ async function applyWorkspaceEdit(edit: LspWorkspaceEdit | null | undefined, con
     }
   }
   for (const filePath of virtual.keys()) await flush(filePath)
-  return changedFiles
+  const lsp = await lspBatch.commit()
+  return { changedFiles, lsp }
 }
 
 function assertWriteAllowed(filePath: string, context: ToolContext): void {
   const sandboxError = ensurePathAllowed(filePath, 'write', context.sandbox, context.additionalDirectories)
   if (sandboxError) throw new Error(sandboxError)
+}
+
+function isPathInsideOrEqual(parentPath: string, candidatePath: string): boolean {
+  const child = relative(parentPath, candidatePath)
+  return child === '' || (child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child))
 }
 
 async function exists(filePath: string): Promise<boolean> {

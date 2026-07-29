@@ -53,6 +53,106 @@ function wait(ms: number): Promise<null> {
 }
 
 describe("QueryEngine turn limits", () => {
+  test("executes a persisted approved tool exactly once before the resumed model request", async () => {
+    let calls = 0
+    let approvals = 0
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "resumed" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          calls += 1
+          return { type: "tool_result", tool_use_id: "", content: "persisted content" }
+        },
+      }],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => {
+        approvals += 1
+        return { behavior: "allow" }
+      },
+      toolContinuation: {
+        toolCall: { id: "tool-resume-1", name: "Read", input: { file_path: "README.md" } },
+      },
+    })
+
+    await collectEvents(engine, "ignored continuation prompt")
+
+    expect(calls).toBe(1)
+    expect(approvals).toBe(1)
+    expect(provider.requests[0]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: [expect.objectContaining({ type: "tool_result", tool_use_id: "tool-resume-1" })],
+      }),
+    ]))
+    expect(provider.requests[0]?.messages).not.toContainEqual({
+      role: "user",
+      content: "ignored continuation prompt",
+    })
+  })
+
+  test("injects a persisted terminal tool result without executing the tool again", async () => {
+    let calls = 0
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "continued from result" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Bash",
+        description: "bash",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          calls += 1
+          return { type: "tool_result", tool_use_id: "", content: "should not execute" }
+        },
+      }],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      toolContinuation: {
+        toolCall: { id: "tool-resume-2", name: "Bash", input: { command: "bun test" } },
+        toolResult: {
+          type: "tool_result",
+          tool_use_id: "tool-resume-2",
+          content: "2 pass",
+        },
+      },
+    })
+
+    await collectEvents(engine)
+
+    expect(calls).toBe(0)
+    expect(provider.requests[0]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: [expect.objectContaining({
+          type: "tool_result",
+          tool_use_id: "tool-resume-2",
+          content: "2 pass",
+        })],
+      }),
+    ]))
+  })
+
   test("forwards exactly terminal task notifications emitted after a tool call returns", async () => {
     let emitAfterReturn: NonNullable<ToolContext["emitEvent"]> | undefined
     const asyncEvents: SDKMessage[] = []
@@ -124,6 +224,95 @@ describe("QueryEngine turn limits", () => {
         status: "completed"
       })
     ])
+  })
+
+  test("injects delayed LSP diagnostics into the next model request without starting a hidden turn", async () => {
+    const provider = new StaticProvider([
+      {
+        content: [
+          { type: "tool_use", id: "edit-1", name: "Edit", input: {} },
+          { type: "tool_use", id: "write-1", name: "Write", input: {} },
+        ],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      {
+        content: [{ type: "text", text: "fixed after diagnostics" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ])
+    const asyncEvents: SDKMessage[] = []
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [
+        {
+          name: "Edit",
+          description: "edit",
+          inputSchema: { type: "object", properties: {} },
+          async call(_input, context) {
+            setTimeout(() => {
+              context.emitEvent?.({
+                type: "system",
+                subtype: "lsp_diagnostics",
+                session_id: "session",
+                tool_use_id: "edit-1",
+                file_path: "src/example.ts",
+                mutation_version: 1,
+                sha256: "abc",
+                delayed: true,
+                diagnostics: {
+                  servers: ["typescript-language-server"],
+                  total: 1,
+                  errors: 1,
+                  warnings: 0,
+                  truncated: false,
+                  items: [{
+                    severity: 1,
+                    message: "Cannot find name 'missing'.",
+                    range: {
+                      start: { line: 2, character: 4 },
+                      end: { line: 2, character: 11 },
+                    },
+                  }],
+                },
+              })
+            }, 0)
+            return { type: "tool_result" as const, tool_use_id: "", content: "edited" }
+          },
+        },
+        {
+          name: "Write",
+          description: "write",
+          inputSchema: { type: "object", properties: {} },
+          async call() {
+            await wait(20)
+            return { type: "tool_result" as const, tool_use_id: "", content: "written" }
+          },
+        },
+      ],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      onAsyncEvent: (event) => asyncEvents.push(event),
+    })
+
+    await collectEvents(engine)
+
+    expect(provider.requests).toHaveLength(2)
+    expect(provider.requests[1]?.messages).toContainEqual(expect.objectContaining({
+      role: "runtime",
+      content: expect.stringContaining("<internal_context type=\"lsp_diagnostics\">"),
+    }))
+    expect(provider.requests[1]?.messages).toContainEqual(expect.objectContaining({
+      role: "runtime",
+      content: expect.stringContaining("Cannot find name 'missing'."),
+    }))
+    expect(asyncEvents).toHaveLength(1)
   })
 
   test("treats a natural completion on the final allowed turn as success", async () => {

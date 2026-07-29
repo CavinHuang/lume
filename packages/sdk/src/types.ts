@@ -69,6 +69,7 @@ export type SDKMessage =
   | SDKCompactBoundaryMessage
   | SDKStatusMessage
   | SDKTaskNotificationMessage
+  | SDKLspDiagnosticsMessage
   | SDKRateLimitEvent
   | SDKHookStartedMessage
   | SDKHookProgressMessage
@@ -222,6 +223,46 @@ export interface SDKSystemMessage {
   plugins?: Array<{ name: string; path: string; source?: string }>
   output_style?: string
   claude_code_version?: string
+}
+
+export interface SDKLspDiagnosticsMessage {
+  type: 'system'
+  subtype: 'lsp_diagnostics'
+  session_id?: string
+  tool_use_id?: string
+  file_path: string
+  mutation_version: number
+  sha256: string
+  delayed: boolean
+  diagnostics: LspDiagnosticBatch
+}
+
+export interface LspDiagnosticBatch {
+  servers: string[]
+  total: number
+  errors: number
+  warnings: number
+  truncated: boolean
+  items: Array<{
+    server?: string
+    source?: string
+    severity?: 1 | 2 | 3 | 4
+    code?: string | number
+    message: string
+    range: {
+      start: { line: number; character: number }
+      end: { line: number; character: number }
+    }
+  }>
+  artifact?: FileResultRef
+}
+
+export interface LspWritethroughResult {
+  servers: string[]
+  formatted: boolean
+  diagnostics?: LspDiagnosticBatch
+  diagnosticsDelayed: boolean
+  mutationVersion: number
 }
 
 export type AgentContextCompactionTrigger = 'auto' | 'manual' | 'prompt_too_long'
@@ -814,6 +855,18 @@ export interface ToolContext {
   }) => Promise<void> | void
   /** Internal bridge used by ExecuteTool to run a discovered deferred tool. */
   executeDeferredTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
+  /** Runs a registered core or deferred tool through the normal permission and event chain. */
+  executeNestedTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
+}
+
+export interface PersistedToolContinuation {
+  toolCall: {
+    id: string
+    name: string
+    input: unknown
+  }
+  /** Omit when the approved original tool still needs to execute once. */
+  toolResult?: ToolResult
 }
 
 export interface FileResultRef {
@@ -1420,6 +1473,8 @@ export interface AgentOptions {
   sessionId?: string
   /** Host Run identity for durable tool recovery. */
   runId?: string
+  /** Host-owned exact tool continuation restored after a cold start. */
+  toolContinuation?: PersistedToolContinuation
   /** Enable file checkpointing (for rewindFiles) */
   enableFileCheckpointing?: boolean
   /** Sandbox configuration */
@@ -1511,6 +1566,8 @@ export interface QueryEngineConfig {
   sessionId?: string
   /** Host Run identity for durable tool recovery. */
   runId?: string
+  /** Execute or inject one persisted tool call before the next model request. */
+  toolContinuation?: PersistedToolContinuation
   permissionMode?: PermissionMode
   promptSuggestions?: boolean
   additionalDirectories?: string[]

@@ -79,6 +79,21 @@ import { getUserInvocableSkills } from './skills/index.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { FileStateCache } from './utils/fileCache.js'
 
+function renderLspDiagnosticsForModel(
+  event: Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>,
+): string {
+  const header = `Delayed LSP diagnostics for ${event.file_path} (mutation ${event.mutation_version})`
+  if (event.diagnostics.items.length === 0) return `${header}: no new diagnostics`
+  return [
+    header,
+    ...event.diagnostics.items.map((diagnostic) => {
+      const position = `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}`
+      const severity = diagnostic.severity === 1 ? 'error' : diagnostic.severity === 2 ? 'warning' : 'info'
+      return `- ${position} ${severity}${diagnostic.code !== undefined ? ` [${diagnostic.code}]` : ''}: ${diagnostic.message}`
+    }),
+  ].join('\n')
+}
+
 // ============================================================================
 // Tool format conversion
 // ============================================================================
@@ -370,6 +385,7 @@ export class QueryEngine {
   }> = []
   private fileStateCache = new FileStateCache()
   private workingDirectory: string
+  private pendingLspDiagnostics: Array<Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>> = []
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -817,9 +833,9 @@ export class QueryEngine {
     for (const event of sessionStartHooks.events) yield event
 
     // Hook: UserPromptSubmit
-    const userHookResults = await this.executeHooks('UserPromptSubmit', {
-      toolInput: prompt,
-    })
+    const userHookResults = this.config.toolContinuation
+      ? { events: [], outputs: [] }
+      : await this.executeHooks('UserPromptSubmit', { toolInput: prompt })
     for (const event of userHookResults.events) yield event
     // Check if any hook blocks the submission
     if (userHookResults.outputs.some((r) => r.block)) {
@@ -879,8 +895,11 @@ export class QueryEngine {
       this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
     }
 
-    // Add user message
-    this.messages.push({ role: 'user', content: prompt as any })
+    // Exact cold-start continuation resumes at the persisted tool boundary,
+    // so it must not add a second model-facing user prompt.
+    if (!this.config.toolContinuation) {
+      this.messages.push({ role: 'user', content: prompt as any })
+    }
 
     // Build system prompt
     const systemPrompt = await buildSystemPrompt(this.config)
@@ -904,6 +923,50 @@ export class QueryEngine {
       output_style: this.config.initialization?.outputStyle || 'text',
       claude_code_version: this.config.initialization?.claudeCodeVersion || 'open-agent-sdk/0.2.0',
     } as SDKMessage
+
+    if (this.config.toolContinuation) {
+      const persisted = this.config.toolContinuation
+      const block: ToolUseBlock = {
+        type: 'tool_use',
+        id: persisted.toolCall.id,
+        name: persisted.toolCall.name,
+        input: persisted.toolCall.input,
+      }
+      if (!this.messages.some((message) => (
+        message.role === 'assistant'
+        && Array.isArray(message.content)
+        && message.content.some((content) => content.type === 'tool_use' && content.id === block.id)
+      ))) {
+        this.messages.push({ role: 'assistant', content: [block] })
+      }
+      const execution = persisted.toolResult
+        ? { results: [{ ...persisted.toolResult, tool_use_id: block.id, tool_name: block.name }], events: [], toolsUsed: [block.name] }
+        : await this.executeTools([block])
+      for (const event of execution.events) yield event
+      for (const result of execution.results) {
+        yield {
+          type: 'tool_result',
+          result: {
+            tool_use_id: result.tool_use_id,
+            tool_name: result.tool_name || block.name,
+            output: formatToolResultOutput(result.content),
+            content: result.content,
+            is_error: result.is_error === true,
+            ...(result._meta ? { _meta: result._meta } : {}),
+          },
+        }
+      }
+      this.messages.push({
+        role: 'user',
+        content: execution.results.map((result) => ({
+          type: 'tool_result' as const,
+          tool_use_id: result.tool_use_id,
+          content: result.content,
+          is_error: result.is_error,
+          ...(result._meta ? { _meta: result._meta } : {}),
+        })),
+      })
+    }
 
     // Agentic loop
     let turnsRemaining = this.config.maxTurns
@@ -946,6 +1009,15 @@ export class QueryEngine {
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
       )
+      const delayedLspDiagnostics = this.pendingLspDiagnostics.splice(0)
+      if (delayedLspDiagnostics.length > 0) {
+        apiMessages.push({
+          role: 'runtime',
+          content: `<internal_context type="lsp_diagnostics">\n${delayedLspDiagnostics
+            .map((event) => renderLspDiagnosticsForModel(event))
+            .join('\n\n')}\n</internal_context>`,
+        })
+      }
       const transientRuntimeContext = [
         internalContextBlocks.length > 0
           ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
@@ -1504,7 +1576,8 @@ export class QueryEngine {
         context.emitEvent?.(event)
         return
       }
-      if (event.type === 'system' && event.subtype === 'task_notification') {
+      if (event.type === 'system' && (event.subtype === 'task_notification' || event.subtype === 'lsp_diagnostics')) {
+        if (event.subtype === 'lsp_diagnostics') this.pendingLspDiagnostics.push(event)
         try {
           this.config.onAsyncEvent?.(event)
         } catch {
@@ -1512,13 +1585,14 @@ export class QueryEngine {
         }
       }
     }
-    toolContext.executeDeferredTool = async ({ toolName, params }) => {
-      const target = this.config.deferredTools?.find((candidate) => candidate.name === toolName)
+    toolContext.executeNestedTool = async ({ toolName, params }) => {
+      const target = this.config.tools.find((candidate) => candidate.name === toolName)
+        ?? this.config.deferredTools?.find((candidate) => candidate.name === toolName)
       if (!target) {
         return {
           type: 'tool_result',
           tool_use_id: block.id,
-          content: `Error: Deferred tool "${toolName}" is not available. Search again with ToolSearch.`,
+          content: `Error: Nested tool "${toolName}" is not available.`,
           is_error: true,
         }
       }
@@ -1532,6 +1606,7 @@ export class QueryEngine {
       toolsUsed.push(...delegated.toolsUsed)
       return delegated.result
     }
+    toolContext.executeDeferredTool = toolContext.executeNestedTool
     if (!tool) {
       return {
         result: {

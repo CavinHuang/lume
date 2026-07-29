@@ -6,7 +6,7 @@ import { writeFile, mkdir, rename, rm, readFile, stat } from 'fs/promises'
 import { dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
-import { notifyLspFileChanged } from '../lsp/client.js'
+import { prepareLspWritethrough } from '../lsp/writethrough.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
@@ -55,7 +55,8 @@ export const FileWriteTool = defineTool({
     }
 
     return withFileMutationLock(filePath, async () => { try {
-      const bytes = Buffer.byteLength(input.content, 'utf8')
+      let content = input.content
+      let bytes = Buffer.byteLength(content, 'utf8')
       const maxBytes = configuredPositiveNumber(context, 'writeMaxBytes', DEFAULT_MAX_WRITE_BYTES)
       if (bytes > maxBytes) {
         return {
@@ -65,9 +66,10 @@ export const FileWriteTool = defineTool({
         }
       }
       await mkdir(dirname(filePath), { recursive: true })
-      let encoded: Uint8Array = Buffer.from(input.content, 'utf8')
+      let encoded: Uint8Array = Buffer.from(content, 'utf8')
       let overwritten = false
       let previousContent = ''
+      let existingEncoding: ReturnType<typeof decodeTextFile> | undefined
       const existing = await stat(filePath).catch(() => undefined)
       if (existing?.isDirectory()) {
         return { data: `Error writing file: ${filePath} is a directory`, is_error: true }
@@ -75,6 +77,7 @@ export const FileWriteTool = defineTool({
       if (existing) {
         overwritten = true
         const decoded = decodeTextFile(await readFile(filePath))
+        existingEncoding = decoded
         previousContent = decoded.content
         const previousRead = context.fileStateCache?.get(filePath)
         const changedSinceRead = previousRead && (
@@ -89,22 +92,32 @@ export const FileWriteTool = defineTool({
             _meta: { file: { path: filePath, conflict: 'stale_read', retryable: true } },
           }
         }
-        encoded = encodeTextFile(input.content, decoded)
       }
+      const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: overwritten })
+      content = lsp.content
+      bytes = Buffer.byteLength(content, 'utf8')
+      if (bytes > maxBytes) {
+        return {
+          data: `Error: LSP-formatted content for ${filePath} exceeds the ${maxBytes}-byte limit.`,
+          is_error: true,
+          _meta: { file: { path: filePath, rejected: 'size', bytes, maxBytes } },
+        }
+      }
+      encoded = existingEncoding ? encodeTextFile(content, existingEncoding) : Buffer.from(content, 'utf8')
       await writeFileAtomic(filePath, encoded)
-      await notifyLspFileChanged(filePath)
+      const lspResult = await lsp.commit()
 
       const updated = await stat(filePath)
       context.fileStateCache?.set(filePath, {
-        content: input.content,
+        content,
         timestamp: updated.mtimeMs,
         size: updated.size,
         isPartialView: false,
       })
 
-      const lines = input.content.length === 0 ? 0 : input.content.split('\n').length
+      const lines = content.length === 0 ? 0 : content.split('\n').length
       const lineChanges = overwritten
-        ? countLineChanges(previousContent, input.content)
+        ? countLineChanges(previousContent, content)
         : { linesAdded: lines, linesRemoved: 0 }
       return {
         data: {
@@ -121,7 +134,8 @@ export const FileWriteTool = defineTool({
             checkpointable: true,
             checkpointId: context.currentUserMessageId,
             ...lineChanges,
-          }
+          },
+          lsp: lspResult,
         },
       }
     } catch (err: any) {

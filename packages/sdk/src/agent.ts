@@ -942,7 +942,9 @@ export class Agent {
     const runtimeMessage = !isManualCompactCommand && opts.runtimeContext?.trim()
       ? toSessionMessage('runtime', opts.runtimeContext.trim())
       : null
-    const userMessage = isManualCompactCommand ? null : toSessionMessage('user', normalizedPrompt)
+    const userMessage = isManualCompactCommand || opts.toolContinuation
+      ? null
+      : toSessionMessage('user', normalizedPrompt)
     if (runtimeMessage) {
       this.sessionMessages.push(runtimeMessage)
     }
@@ -985,6 +987,7 @@ export class Agent {
       hookRegistry: this.hookRegistry,
       sessionId: this.sid,
       runId: opts.runId,
+      toolContinuation: opts.toolContinuation,
       permissionMode: opts.permissionMode,
       promptSuggestions: opts.promptSuggestions,
       additionalDirectories: opts.additionalDirectories,
@@ -1081,6 +1084,9 @@ export class Agent {
       this.lastContextUsage = engine.getContextUsage()
       this.currentEngine = null
       if (compactionBoundarySeen) {
+        this.sessionMessages = sessionMessagesFromHistory(this.history)
+      }
+      if (opts.toolContinuation) {
         this.sessionMessages = sessionMessagesFromHistory(this.history)
       }
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
