@@ -79,6 +79,40 @@ describe("projectRunStateToRuntimeEvents", () => {
     expect(events).toEqual([]);
   });
 
+  test("projects delayed LSP diagnostics without a chat status item", () => {
+    const events = projectRunItemToRuntimeEvents(baseRun(), {
+      type: "system_event",
+      id: "lsp-1",
+      name: "lsp_diagnostics",
+      payload: {
+        tool_use_id: "edit-1",
+        file_path: "src/index.ts",
+        mutation_version: 2,
+        sha256: "abc",
+        delayed: true,
+        diagnostics: {
+          servers: ["typescript-language-server"],
+          total: 1,
+          errors: 1,
+          warnings: 0,
+          truncated: false,
+          items: []
+        }
+      },
+      createdAt: "2026-04-30T00:00:02.000Z"
+    }, {
+      includeAssistantText: true,
+      includeAssistantThinking: true,
+      includeModelStreamText: true
+    });
+    expect(events).toEqual([expect.objectContaining({
+      type: "lsp.diagnostics.updated",
+      toolUseId: "edit-1",
+      mutationVersion: 2,
+      delayed: true
+    })]);
+  });
+
   test("projects kernel run facts into product runtime events", () => {
     const run = baseRun({
       runId: "run-runtime-1",

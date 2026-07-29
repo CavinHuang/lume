@@ -1,4 +1,5 @@
 import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
+import { createHash } from "node:crypto";
 import type { LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
@@ -47,6 +48,7 @@ import type { LumeRunState } from "./run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createWikiProtectedSandbox, resolveWikiRuntimeCapability } from "../../wiki/wiki-runtime-capability";
 import { WIKI_CAPABILITIES } from "../../wiki/wiki-capabilities";
+import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -74,7 +76,7 @@ interface RuntimeSessionRunInput {
   params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
   runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">
-    & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport" | "refreshCodingChangeSet" | "getLatestFileCheckpoint" | "getBaselineCommit">>;
+    & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport" | "refreshCodingChangeSet" | "getLatestFileCheckpoint" | "getBaselineCommit" | "getBaselineCommits" | "getWorkspaceRoots">>;
   options: RunRuntimeCoreAttemptOptions;
   sandbox?: SandboxSettings;
   createCanUseTool: (
@@ -189,6 +191,8 @@ export class LumeRunner {
       refreshCodingChangeSet?: () => Promise<unknown>;
       getLatestFileCheckpoint?: () => FileCheckpoint | undefined;
       getBaselineCommit?: () => string | undefined;
+      getBaselineCommits?: () => Record<string, string>;
+      getWorkspaceRoots?: () => string[];
     }
   ): Promise<AgentRuntimeRunResult> {
     const result = await consumeRuntimeCoreQueryStream({
@@ -205,8 +209,13 @@ export class LumeRunner {
           sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
           runId: this.observer.getRunId(),
           cwd: this.prepared.agentCwd,
-          roots: [this.prepared.projectRoot, this.prepared.lumeWorkDir].filter((root): root is string => Boolean(root)),
+          roots: [
+            ...(coding?.getWorkspaceRoots?.() ?? []),
+            this.prepared.projectRoot,
+            this.prepared.lumeWorkDir,
+          ].filter((root): root is string => Boolean(root)),
           baselineCommit: coding?.getBaselineCommit?.(),
+          baselineCommits: coding?.getBaselineCommits?.(),
           changedPaths: verificationReport?.changedFiles ?? [],
           checkpoint,
         });
@@ -225,7 +234,9 @@ export class LumeRunner {
           rewindState: verificationReport.gitActions?.some((action) => action.kind === "commit" && action.status === "completed")
             ? "committed_boundary"
             : canRewind ? "available" : "unavailable",
-          canRewind: canRewind && !verificationReport.gitActions?.some((action) => action.kind === "commit" && action.status === "completed"),
+          // A commit only makes the affected repository files non-rewindable.
+          // Other roots can still be restored from the same Turn checkpoint.
+          canRewind,
         }
       } : {})
     } satisfies AgentRuntimeRunResult;
@@ -301,8 +312,12 @@ export class LumeRunner {
       await applyResolvedThinkingLevel(agent, thinkingLevel);
       const maxTurns = resolveRuntimeCoreMaxTurns(input);
 
+      const canUseTool = createContinuationPermissionHandler(
+        createCanUseTool(askUserAbortController.signal, this.workflowHooks),
+        input.messageMetadata,
+      );
       const query = agent.query(runtimeSession.userMessageForModel || input.userMessage, {
-        canUseTool: createCanUseTool(askUserAbortController.signal, this.workflowHooks),
+        canUseTool,
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
         sandbox: sandbox ?? createWikiProtectedSandbox(),
@@ -314,7 +329,9 @@ export class LumeRunner {
         getVerificationReport: runtimeSession.getVerificationReport,
         refreshCodingChangeSet: runtimeSession.refreshCodingChangeSet,
         getLatestFileCheckpoint: runtimeSession.getLatestFileCheckpoint,
-        getBaselineCommit: runtimeSession.getBaselineCommit
+        getBaselineCommit: runtimeSession.getBaselineCommit,
+        getBaselineCommits: runtimeSession.getBaselineCommits,
+        getWorkspaceRoots: runtimeSession.getWorkspaceRoots
       });
       if (streamResult.status !== "completed") {
         return streamResult;
@@ -372,6 +389,10 @@ export class LumeRunner {
       plansRoot: prepared.plansRoot,
       artifactsRoot: prepared.artifactsRoot,
       projectRoot: prepared.projectRoot,
+      additionalDirectories: resolveConfiguredAdditionalDirectories(
+        getEffectiveLumeConfig(prepared.workspaceSlug).permissions?.privateWriteRoots,
+        prepared.agentCwd,
+      ),
       fileContextId: prepared.fileContextId,
       fileReferenceBinding: runtime.fileReferenceBinding,
       agentDir: prepared.agentDir,
@@ -693,6 +714,37 @@ export class LumeRunner {
       }
     }
   }
+}
+
+function createContinuationPermissionHandler(
+  base: CanUseToolFn,
+  messageMetadata: Record<string, unknown> | undefined,
+): CanUseToolFn {
+  const runtimeContinuation = messageMetadata?.runtimeContinuation;
+  if (!runtimeContinuation || typeof runtimeContinuation !== "object") return base;
+  const checkpoint = (runtimeContinuation as Record<string, unknown>).checkpoint;
+  if (!checkpoint || typeof checkpoint !== "object") return base;
+  const toolCall = (checkpoint as Record<string, unknown>).toolCall;
+  if (!toolCall || typeof toolCall !== "object") return base;
+  const call = toolCall as Record<string, unknown>;
+  if (typeof call.id !== "string" || typeof call.name !== "string" || typeof call.inputHash !== "string") return base;
+  let consumed = false;
+  return async (tool, input, metadata) => {
+    const inputHash = createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex");
+    if (
+      !consumed
+      && metadata?.toolUseId === call.id
+      && tool.name === call.name
+      && inputHash === call.inputHash
+    ) {
+      consumed = true;
+      return {
+        behavior: "allow",
+        decisionReason: "cold_start_exact_tool_continuation",
+      };
+    }
+    return base(tool, input, metadata);
+  };
 }
 
 function compactMemoryHistoryText(value: string, maxLength = 220): string {

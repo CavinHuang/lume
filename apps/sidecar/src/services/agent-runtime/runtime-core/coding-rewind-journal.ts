@@ -101,8 +101,10 @@ export async function listIncompleteCodingRewindJournals(
       const parsed = JSON.parse(await readFile(join(resolvedSessionDir, name), "utf8")) as CodingRewindJournal;
       if (parsed.version !== 1 || parsed.status === "completed" || parsed.status === "failed") continue;
       result.push({ ...parsed, sessionDir: resolvedSessionDir });
-    } catch {
-      // A corrupt journal must not be silently replayed. The checkpoint remains independently guarded.
+    } catch (error) {
+      throw new Error(
+        `Coding 回退日志损坏，已阻止继续恢复: ${name}（${error instanceof Error ? error.message : String(error)}）`,
+      );
     }
   }
   return result;

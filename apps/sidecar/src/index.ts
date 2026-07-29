@@ -1,4 +1,5 @@
 import { argv } from "node:process";
+import { shutdownLspClients } from "@lume/agent-sdk";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
@@ -396,14 +397,21 @@ async function boot(): Promise<void> {
   const unsubscribeThreadListChanged = subscribeThreadListChanged(() => {
     writeNotification(AGENT_IPC_CHANNELS.THREAD_LIST_CHANGED, null);
   });
-  const stopWatcher = (): void => {
+  let stopping: Promise<void> | undefined;
+  const stopWatcher = (): Promise<void> => {
+    if (stopping) return stopping;
+    stopping = (async () => {
     unsubscribeSubagentAnnounce();
     unsubscribeSubagentWork();
     unsubscribeThreadListChanged();
     stopBackgroundProcessRecovery();
     stopWorkspaceWatcher();
-    void getWorkspaceMcpManager().disposeAll().catch(() => {});
-    void stopAutomationRunner().catch(() => {});
+    await Promise.allSettled([
+      getWorkspaceMcpManager().disposeAll(),
+      stopAutomationRunner(),
+      shutdownLspClients(),
+      externalChromeTransport?.close() ?? Promise.resolve(),
+    ]);
     const { stopRoutineRunner } = require("./services/routine/routine-runner");
     stopRoutineRunner();
     imRuntimeManager.stopAll();
@@ -414,17 +422,18 @@ async function boot(): Promise<void> {
     pendingSettingsMutations.clear();
     for (const pending of pendingBrowserMainRequests.values()) { clearTimeout(pending.timeout); pending.reject(new Error("sidecar is stopping")); }
     pendingBrowserMainRequests.clear();
-    void externalChromeTransport?.close().catch(() => {});
     setActiveBrowserBroker(null);
     flushLogTransport();
+    })();
+    return stopping;
   };
-  process.once("exit", stopWatcher);
-  process.once("SIGINT", () => {
-    stopWatcher();
+  process.once("exit", () => { void stopWatcher(); });
+  process.once("SIGINT", async () => {
+    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
     process.exit(0);
   });
-  process.once("SIGTERM", () => {
-    stopWatcher();
+  process.once("SIGTERM", async () => {
+    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 2_000))]);
     process.exit(0);
   });
 

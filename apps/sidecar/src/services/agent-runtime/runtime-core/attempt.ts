@@ -455,6 +455,7 @@ export function createCanUseToolHandler(
       context: {
         threadId: params.runtime.sessionId,
         cwd: prepared.agentCwd,
+        additionalDirectories: privateWriteRoots,
         workspaceSlug: prepared.workspaceSlug
       }
     });

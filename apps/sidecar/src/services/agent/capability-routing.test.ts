@@ -104,6 +104,14 @@ describe("capability-routing", () => {
     expect(decision.preferredLane).toBe("browser");
   });
 
+  test("浏览器交互中仅提到页面或弹窗时不应误判为 coding", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "打开当前页面并点击登录弹窗",
+      availableTools: ["browser", "read", "write", "edit", "bash"]
+    });
+    expect(decision.preferredLane).toBe("browser");
+  });
+
   test("历史连续性请求应优先 memory", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "回忆一下我们之前确认过的偏好",
@@ -208,6 +216,16 @@ describe("capability-routing", () => {
     });
     expect(resolveSoftToolPolicyForPreferredRoute("coding")).toEqual({
       deny: [
+        "web_search",
+        "web_fetch",
+        "mcp__node_repl__*",
+        "mcp__computer_use__*"
+      ]
+    });
+    expect(resolveSoftToolPolicyForPreferredRoute("raw-tools")).toEqual({
+      deny: [
+        "web_search",
+        "web_fetch",
         "mcp__node_repl__*",
         "mcp__computer_use__*"
       ]

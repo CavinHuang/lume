@@ -177,6 +177,7 @@ import {
 } from "../services/agent-runtime/runtime-core/coding-change-service";
 import {
   getCodingFileDiffFromCheckpoint,
+  getCodingRunCheckpointPaths,
   getCodingRunRoots,
   revertCodingFileFromCheckpoint,
   revertCodingRun
@@ -420,8 +421,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         },
         messageMetadata: {
           ...(state.input.messageMetadata ?? {}),
+          hiddenFromChat: true,
           runtimeContinuation: {
             sourceRunId: state.runId,
+            status: checkpoint.status,
             checkpoint: checkpoint.checkpoint,
             reason: checkpoint.reason
           }
@@ -1536,36 +1539,53 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
 
       const incompleteJournals = await listIncompleteCodingRewindJournals(sessionDir);
-      const activeJournal = incompleteJournals.find((candidate) => candidate.status !== "partial");
+      const resumableJournal = incompleteJournals.find((candidate) => (
+        candidate.turnId === input.turnId
+        && candidate.runId === run.codingReport?.runId
+        && candidate.assistantMessageId === resolvedAssistantMessageId
+      ));
+      const activeJournal = incompleteJournals.find((candidate) => candidate !== resumableJournal);
       if (activeJournal) {
-        throw new Error(`存在未完成的 Coding 回退事务（${activeJournal.operationId}），请先处理恢复状态`);
+        throw new Error(`存在另一个未完成的 Coding 回退事务（${activeJournal.operationId}），请先处理恢复状态`);
       }
-      const partialJournal = incompleteJournals.find((candidate) => candidate.status === "partial" && candidate.turnId === input.turnId);
-      if (partialJournal && (partialJournal.conflicts.length > 0 || partialJournal.nonRewindableFiles.length > 0 || partialJournal.restoredFiles.length === 0)) {
-        throw new Error(`Coding 回退事务 ${partialJournal.operationId} 处于 partial 状态，请先处理冲突文件后再继续`);
-      }
-      let journal = partialJournal ?? await createCodingRewindJournal({
+      const checkpointPaths = await getCodingRunCheckpointPaths({
+        sessionDir,
+        runId: run.codingReport.runId,
+      });
+      let journal = resumableJournal ?? await createCodingRewindJournal({
         sessionDir,
         runId: run.codingReport.runId,
         turnId: input.turnId,
         assistantMessageId: resolvedAssistantMessageId!,
-        files: run.codingReport.changedFiles
+        files: checkpointPaths
       });
 
       let fileResult: Awaited<ReturnType<typeof revertCodingRun>>;
-      if (partialJournal) {
+      if (journal.status === "files_applied" || journal.status === "transcript_applying") {
         fileResult = {
-          filesChanged: partialJournal.restoredFiles,
+          filesChanged: journal.restoredFiles,
           conflicts: [],
           nonRewindableFiles: [],
           status: "restored"
         };
       } else {
         try {
-          journal = await updateCodingRewindJournal(journal, { status: "files_applying" });
+          journal = await updateCodingRewindJournal(journal, {
+            status: "files_applying",
+            conflicts: [],
+            nonRewindableFiles: [],
+            error: undefined,
+          });
+          const pendingPaths = journal.files.filter((path) => !journal.restoredFiles.includes(path));
           fileResult = await revertCodingRun({
             sessionDir,
             runId: run.codingReport.runId,
+            ...(pendingPaths.length > 0 ? { paths: pendingPaths } : {}),
+            onFileRestored: async (path) => {
+              journal = await updateCodingRewindJournal(journal, {
+                restoredFiles: [...new Set([...journal.restoredFiles, path])],
+              });
+            },
           });
         } catch (error) {
           await updateCodingRewindJournal(journal, {
@@ -1581,7 +1601,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
       journal = await updateCodingRewindJournal(journal, {
         status: fileResult.status === "restored" ? "files_applied" : "partial",
-        restoredFiles: fileResult.filesChanged,
+        restoredFiles: [...new Set([...journal.restoredFiles, ...fileResult.filesChanged])],
         conflicts: fileResult.conflicts,
         nonRewindableFiles: fileResult.nonRewindableFiles
       });

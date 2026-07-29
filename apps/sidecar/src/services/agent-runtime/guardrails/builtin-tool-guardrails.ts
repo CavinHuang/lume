@@ -9,7 +9,7 @@ export const runtimeToolSafetyGuardrail: LumeGuardrail<RunToolInputGuardrailsInp
   name: "Runtime tool safety",
   scope: "tool_input",
   mode: "blocking",
-  async run(input) {
+  async run(input, context) {
     const decision = evaluateRuntimeToolSafety(input.toolName, input.input);
     if (decision.behavior === "deny") {
       return {
@@ -32,16 +32,19 @@ export const fileWriteBoundaryGuardrail: LumeGuardrail<RunToolInputGuardrailsInp
   name: "File write boundary",
   scope: "tool_input",
   mode: "blocking",
-  async run(input) {
+  async run(input, context) {
     const normalized = canonicalizeAgentToolName(input.toolName);
     if (!["write", "edit", "multiedit", "notebookedit"].includes(normalized)) {
       return { behavior: "allow" };
     }
     const cwd = input.context.cwd;
     if (!cwd) return { behavior: "allow" };
+    const roots = [cwd, ...(context.additionalDirectories ?? input.context.additionalDirectories ?? [])]
+      .map((root) => resolve(root));
     const paths = collectFileWritePaths(input.input);
     for (const path of paths) {
-      if (!isInsideDirectory(resolve(cwd), resolve(cwd, path))) {
+      const absolutePath = resolve(cwd, path);
+      if (!roots.some((root) => isInsideDirectory(root, absolutePath))) {
         return {
           behavior: "reject",
           reason: "禁止写入 workspace 外路径"

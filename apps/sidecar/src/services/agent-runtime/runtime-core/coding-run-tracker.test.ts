@@ -187,6 +187,37 @@ describe("coding run tracker", () => {
     expect(tracker.getVerificationReport().pendingBackground).toBe(false);
   });
 
+  test("persists delayed LSP diagnostics in the Coding report without changing verification", () => {
+    const workspaceRoot = join(tmpdir(), "lume-lsp-report");
+    const tracker = createCodingRunTracker({ workspaceRoot });
+    expect(tracker.observeAsyncEvent({
+      type: "system",
+      subtype: "lsp_diagnostics",
+      file_path: join(workspaceRoot, "src", "index.ts"),
+      mutation_version: 2,
+      sha256: "abc",
+      delayed: true,
+      diagnostics: {
+        servers: ["typescript-language-server"],
+        total: 2,
+        errors: 1,
+        warnings: 1,
+        truncated: false,
+        items: [],
+      },
+    })).toBe(true);
+
+    expect(tracker.getVerificationReport()).toMatchObject({
+      status: "not_required",
+      lspDiagnostics: {
+        files: ["src/index.ts"],
+        total: 2,
+        errors: 1,
+        warnings: 1,
+      },
+    });
+  });
+
   test("records a failed auto-backgrounded verification without aborting the finished turn", async () => {
     const tracker = createCodingRunTracker();
     tracker.observe({ toolName: "Edit", input: { file_path: "a.ts" }, result: result("edited") });
@@ -328,6 +359,36 @@ describe("coding run tracker", () => {
     expect(tracker.getVerificationReport()).toMatchObject({
       workspaceChanged: true,
       changedFiles: ["generated.ts"]
+    });
+  });
+
+  test("attributes indirect changes in an authorized additional root", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-coding-main-root-"));
+    const additionalRoot = mkdtempSync(join(tmpdir(), "lume-coding-additional-root-"));
+    writeFileSync(join(additionalRoot, "package.json"), JSON.stringify({
+      scripts: { typecheck: "tsc --noEmit" },
+    }), "utf-8");
+    const tracker = createCodingRunTracker({
+      workspaceRoot: root,
+      additionalRoots: [additionalRoot],
+    });
+    await tracker.initialize();
+
+    const generatedPath = join(additionalRoot, "generated.ts");
+    writeFileSync(generatedPath, "export const value = 1;\n", "utf-8");
+    tracker.observe({
+      toolName: "Bash",
+      input: { command: `Set-Content -Path '${generatedPath}' -Value 'generated'` },
+      result: result("done"),
+    });
+
+    await expect(tracker.completionGuard()).resolves.toContain("verification needed");
+    expect(tracker.getVerificationReport()).toMatchObject({
+      workspaceChanged: true,
+      changedFiles: expect.arrayContaining([generatedPath]),
+      recommendedVerificationCommands: [
+        `bun run --cwd ${additionalRoot} typecheck`,
+      ],
     });
   });
 });

@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { selectVerificationCommands } from "./coding-verification";
+import {
+  selectVerificationCommands,
+  selectVerificationCommandsForWorkspaces,
+} from "./coding-verification";
 
 const roots: string[] = [];
 
@@ -36,5 +39,46 @@ describe("coding verification command selection", () => {
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "empty" }), "utf8");
 
     expect(selectVerificationCommands({ workspaceRoot: root, changedFiles: ["README.md"] })).toEqual([]);
+  });
+
+  test("selects at least one explicit command for every changed workspace", () => {
+    const first = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    const second = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    roots.push(first, second);
+    writeFileSync(join(first, "package.json"), JSON.stringify({ scripts: { typecheck: "tsc" } }), "utf8");
+    writeFileSync(join(second, "go.mod"), "module example.com/second\n\ngo 1.22\n", "utf8");
+
+    const commands = selectVerificationCommandsForWorkspaces([
+      { workspaceRoot: first, rootId: "first", changedFiles: ["src/main.ts"] },
+      { workspaceRoot: second, rootId: "second", changedFiles: ["main.go"] },
+    ]);
+
+    expect(commands.map((item) => item.rootId)).toEqual(["first", "second"]);
+    expect(commands[0]?.command).toContain(first);
+    expect(commands[1]?.command).toBe(`go -C ${second} test ./...`);
+  });
+
+  test("discovers configured Python, Rust and dotnet verification commands", () => {
+    const python = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    const rust = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    const dotnet = mkdtempSync(join(process.env.TEMP ?? process.env.TMP ?? ".", "lume-verification-"));
+    roots.push(python, rust, dotnet);
+    writeFileSync(join(python, "pyproject.toml"), "[tool.pytest.ini_options]\n", "utf8");
+    writeFileSync(join(rust, "Cargo.toml"), "[package]\nname='demo'\nversion='0.1.0'\n", "utf8");
+    writeFileSync(join(dotnet, "Demo.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />", "utf8");
+    mkdirSync(join(python, "tests"));
+
+    expect(selectVerificationCommands({
+      workspaceRoot: python,
+      changedFiles: ["tests/test_demo.py"],
+    }).map((item) => item.script)).toContain("pytest");
+    expect(selectVerificationCommands({
+      workspaceRoot: rust,
+      changedFiles: ["src/lib.rs"],
+    })[0]?.script).toBe("cargo:check");
+    expect(selectVerificationCommands({
+      workspaceRoot: dotnet,
+      changedFiles: ["Program.cs"],
+    })[0]?.command).toContain("dotnet test");
   });
 });

@@ -38,9 +38,19 @@ export function resolveConfiguredPrivateWriteRoots(input: {
     getUserSkillsDir(),
     getAliceUserSkillsDir(),
     ...(input.workspaceSlug ? [getWorkspaceSkillsDir(input.workspaceSlug)] : []),
-    ...(input.configuredRoots ?? []).map((root) => resolvePrivateRoot(root, input.agentCwd))
+    ...resolveConfiguredAdditionalDirectories(input.configuredRoots, input.agentCwd)
   ];
   return Array.from(new Set(roots.filter((root) => root.trim().length > 0)));
+}
+
+export function resolveConfiguredAdditionalDirectories(
+  roots: string[] | undefined,
+  cwd: string,
+): string[] {
+  return [...new Set((roots ?? [])
+    .map((root) => root.trim())
+    .filter(Boolean)
+    .map((root) => resolvePrivateRoot(root, cwd)))];
 }
 
 function resolvePrivateRoot(root: string, cwd: string): string {

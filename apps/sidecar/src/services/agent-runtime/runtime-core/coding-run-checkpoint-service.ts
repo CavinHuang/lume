@@ -37,6 +37,8 @@ export interface CodingRunCheckpointRecord {
   cwd: string;
   roots?: string[];
   baselineCommit?: string;
+  baselineCommits?: Record<string, string>;
+  repositories?: Record<string, string>;
   after?: Record<string, CodingFileFingerprint>;
   afterSnapshots?: Record<string, FileSnapshot>;
   diffs?: Record<string, PersistedCodingFileDiff>;
@@ -91,6 +93,7 @@ export async function persistCodingRunCheckpoint(input: {
   cwd: string;
   roots?: string[];
   baselineCommit?: string;
+  baselineCommits?: Record<string, string>;
   changedPaths?: string[];
   checkpoint?: FileCheckpoint;
 }): Promise<boolean> {
@@ -114,6 +117,8 @@ export async function persistCodingRunCheckpoint(input: {
     cwd: resolve(input.cwd),
     roots,
     baselineCommit: input.baselineCommit,
+    baselineCommits: input.baselineCommits,
+    repositories: discoverRepositoryRoots(roots),
     after: await captureFingerprints(Object.keys(checkpoint.files)),
     afterSnapshots,
     checkpoint,
@@ -204,17 +209,13 @@ function getBeforeSnapshotText(
 }
 
 function readBaselineContent(record: CodingRunCheckpointRecord, absolutePath: string): string | null {
-  if (!record.baselineCommit || !/^[0-9a-f]{7,64}$/i.test(record.baselineCommit)) return null;
-  const rootResult = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-    cwd: record.cwd,
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  if (rootResult.status !== 0) return null;
-  const gitRoot = rootResult.stdout.trim();
+  const gitRoot = findGitRootForPath(absolutePath);
   if (!gitRoot || !isPathInside(gitRoot, absolutePath)) return null;
+  const baselineCommit = record.baselineCommits?.[resolve(gitRoot)]
+    ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
+  if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
   const gitPath = relative(gitRoot, absolutePath).split(sep).join("/");
-  const result = spawnSync("git", ["show", `${record.baselineCommit}:${gitPath}`], {
+  const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {
     cwd: gitRoot,
     encoding: "utf8",
     windowsHide: true,
@@ -268,9 +269,7 @@ export async function getCodingFileDiffFromCheckpoint(input: {
   if (!record) return null;
 
   const roots = record.roots?.length ? record.roots : [record.cwd];
-  const selectedRoot = input.rootId
-    ? roots.find((root) => codingRootId(root) === input.rootId)
-    : record.cwd;
+  const selectedRoot = resolveRepositoryRoot(record, input.rootId);
   if (!selectedRoot) throw new Error(`找不到 Coding 根目录: ${input.rootId}`);
   const absolutePath = resolve(selectedRoot, input.path);
   if (!roots.some((root) => isPathInside(root, absolutePath))) {
@@ -306,7 +305,7 @@ export async function getCodingFileDiffFromCheckpoint(input: {
     : input.path;
 
   return {
-    rootId: codingRootId(selectedRoot),
+    rootId: input.rootId ?? codingRootId(selectedRoot),
     path: displayPath,
     status: !before.existed && after.existed ? "added" : before.existed && !after.existed ? "deleted" : "modified",
     oldContent,
@@ -327,6 +326,16 @@ export async function getCodingRunRoots(input: {
     runId: input.runId,
   });
   return record?.roots?.length ? [...record.roots] : record?.cwd ? [record.cwd] : [];
+}
+
+export async function getCodingRunCheckpointPaths(input: {
+  sessionDir: string;
+  runId: string;
+}): Promise<string[]> {
+  const record = await loadCodingRunCheckpoint(input);
+  if (!record) return [];
+  const roots = record.roots?.length ? record.roots : [record.cwd];
+  return Object.keys(restrictCheckpointToRoots(roots, record.checkpoint).files);
 }
 
 function cacheCheckpoint(path: string, record: CodingRunCheckpointRecord, size: number): void {
@@ -470,6 +479,8 @@ async function createSnapshotDiffLines(oldContent: string, newContent: string) {
 export async function revertCodingRun(input: {
   sessionDir: string;
   runId: string;
+  paths?: string[];
+  onFileRestored?: (path: string) => Promise<void> | void;
 }): Promise<{
   filesChanged: string[];
   conflicts: string[];
@@ -481,21 +492,39 @@ export async function revertCodingRun(input: {
 
   const roots = record.roots?.length ? record.roots : [record.cwd];
   const checkpoint = restrictCheckpointToRoots(roots, record.checkpoint);
-  const paths = Object.keys(checkpoint.files);
+  const requestedPaths = input.paths?.length
+    ? new Set(input.paths.map((path) => isAbsolute(path) ? resolve(path) : resolve(record.cwd, path)))
+    : undefined;
+  const paths = Object.keys(checkpoint.files)
+    .filter((path) => !requestedPaths || requestedPaths.has(resolve(path)));
   if (paths.length === 0) throw new Error("当前 Coding Run 没有工作区内的文件检查点");
-  if (hasCommitBoundary(record)) {
-    return { filesChanged: [], conflicts: [], nonRewindableFiles: paths, status: "committed_boundary" };
-  }
-  const conflicts = await findFingerprintConflicts(record, paths);
+  const committedPaths = paths.filter((path) => hasCommitBoundaryForPath(record, path));
+  const rewindablePaths = paths.filter((path) => !committedPaths.includes(path));
+  const alreadyRestored = await findAlreadyRestoredFiles(record, rewindablePaths);
+  const conflicts = (await findFingerprintConflicts(record, rewindablePaths))
+    .filter((path) => !alreadyRestored.includes(path));
   await Promise.all(paths.map((path) => assertNoSymlinkPathForRoots(roots, path)));
-  const safePaths = paths.filter((path) => !conflicts.includes(path));
-  const result = await rewindCheckpoint({ ...checkpoint, files: Object.fromEntries(safePaths.map((path) => [path, checkpoint.files[path]!])) });
-  if (!result.canRewind) throw new Error(result.error ?? "无法撤销 Coding Run");
+  const safePaths = rewindablePaths.filter((path) => !conflicts.includes(path) && !alreadyRestored.includes(path));
+  const filesChanged = [...alreadyRestored];
+  const skippedFiles: string[] = [];
+  for (const path of safePaths) {
+    const snapshot = checkpoint.files[path]!;
+    const result = await rewindCheckpoint({ ...checkpoint, files: { [path]: snapshot } });
+    if (!result.canRewind) throw new Error(result.error ?? `无法撤销 Coding 文件: ${path}`);
+    if (result.skippedFiles?.includes(path)) {
+      skippedFiles.push(path);
+      continue;
+    }
+    filesChanged.push(path);
+    await input.onFileRestored?.(path);
+  }
   return {
-    filesChanged: result.filesChanged ?? safePaths,
+    filesChanged,
     conflicts,
-    nonRewindableFiles: [...conflicts, ...(result.skippedFiles ?? [])],
-    status: conflicts.length > 0 || (result.skippedFiles?.length ?? 0) > 0 ? "conflict" : "restored"
+    nonRewindableFiles: [...committedPaths, ...conflicts, ...skippedFiles],
+    status: committedPaths.length > 0
+      ? "committed_boundary"
+      : conflicts.length > 0 || skippedFiles.length > 0 ? "conflict" : "restored"
   };
 }
 
@@ -508,15 +537,13 @@ export async function revertCodingFileFromCheckpoint(input: {
   const record = await loadCodingRunCheckpoint(input);
   if (!record) throw new Error("当前 Coding Run 没有可撤销的文件检查点");
   const roots = record.roots?.length ? record.roots : [record.cwd];
-  const selectedRoot = input.rootId
-    ? roots.find((root) => codingRootId(root) === input.rootId)
-    : record.cwd;
+  const selectedRoot = resolveRepositoryRoot(record, input.rootId);
   if (!selectedRoot) throw new Error(`找不到 Coding 根目录: ${input.rootId}`);
   const safePath = resolve(selectedRoot, input.path);
   await assertNoSymlinkPathForRoots(roots, safePath);
   const snapshot = Object.values(record.checkpoint.files).find((candidate) => resolve(candidate.path) === safePath);
   if (!snapshot) throw new Error("该文件不属于当前 Coding Run 的检查点");
-  if (hasCommitBoundary(record)) {
+  if (hasCommitBoundaryForPath(record, snapshot.path)) {
     return { filesChanged: [], nonRewindableFiles: [snapshot.path], status: "committed_boundary" };
   }
   const conflicts = await findFingerprintConflicts(record, [snapshot.path]);
@@ -547,19 +574,99 @@ async function findFingerprintConflicts(record: CodingRunCheckpointRecord, paths
   });
 }
 
+async function findAlreadyRestoredFiles(record: CodingRunCheckpointRecord, paths: string[]): Promise<string[]> {
+  const current = await captureFingerprints(paths);
+  return paths.filter((path) => {
+    const snapshot = record.checkpoint.files[path];
+    if (!snapshot || snapshot.unsupported) return false;
+    const expected = fingerprintSnapshot(snapshot);
+    const actual = current[path] ?? { exists: false };
+    return fingerprintsEqual(expected, actual);
+  });
+}
+
+function fingerprintSnapshot(snapshot: FileSnapshot): CodingFileFingerprint {
+  if (!snapshot.existed) return { exists: false };
+  const content = encodeSnapshot(snapshot);
+  return {
+    exists: true,
+    size: content.length,
+    hash: createHash("sha256").update(content).digest("hex"),
+  };
+}
+
+function encodeSnapshot(snapshot: FileSnapshot): Buffer {
+  if (snapshot.contentBase64) return Buffer.from(snapshot.contentBase64, "base64");
+  const lineEnding = snapshot.lineEnding ?? "LF";
+  const normalized = (snapshot.content ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const restored = lineEnding === "CRLF"
+    ? normalized.replace(/\n/g, "\r\n")
+    : lineEnding === "CR" ? normalized.replace(/\n/g, "\r") : normalized;
+  const encoding = snapshot.encoding ?? "utf8";
+  const body = Buffer.from(restored, encoding);
+  if (!snapshot.bom) return body;
+  return encoding === "utf16le"
+    ? Buffer.concat([Buffer.from([0xff, 0xfe]), body])
+    : Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]);
+}
+
 async function assertNoSymlinkPathForRoots(roots: string[], path: string): Promise<void> {
   const root = roots.find((candidate) => isPathInside(candidate, path));
   if (!root) throw new Error(`拒绝恢复工作区外的文件: ${path}`);
   await assertNoSymlinkPath(root, path);
 }
 
-function hasCommitBoundary(record: CodingRunCheckpointRecord): boolean {
-  if (!record.baselineCommit) return false;
+function hasCommitBoundaryForPath(record: CodingRunCheckpointRecord, path: string): boolean {
+  const gitRoot = findGitRootForPath(path);
+  if (!gitRoot) return false;
+  const baselineCommit = record.baselineCommits?.[resolve(gitRoot)]
+    ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
+  if (!baselineCommit) return false;
   const result = spawnSync("git", ["rev-parse", "HEAD"], {
-    cwd: record.cwd,
+    cwd: gitRoot,
     encoding: "utf8",
     windowsHide: true,
   });
   const currentCommit = result.status === 0 ? result.stdout.trim() : "";
-  return Boolean(currentCommit && currentCommit !== record.baselineCommit);
+  return Boolean(currentCommit && currentCommit !== baselineCommit);
+}
+
+function discoverRepositoryRoots(roots: string[]): Record<string, string> {
+  const repositories: Record<string, string> = {};
+  for (const root of roots) {
+    const gitRoot = findGitRootForPath(root) ?? resolve(root);
+    repositories[codingRootId(gitRoot)] = gitRoot;
+  }
+  return repositories;
+}
+
+function resolveRepositoryRoot(record: CodingRunCheckpointRecord, rootId?: string): string | undefined {
+  if (!rootId) return record.cwd;
+  const persisted = record.repositories?.[rootId];
+  if (persisted) return persisted;
+  const roots = record.roots?.length ? record.roots : [record.cwd];
+  return roots.find((root) => codingRootId(findGitRootForPath(root) ?? root) === rootId);
+}
+
+function findGitRootForPath(path: string): string | null {
+  let cwd = resolve(path);
+  try {
+    const metadata = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 1000,
+    });
+    if (metadata.status === 0 && metadata.stdout.trim()) return resolve(metadata.stdout.trim());
+  } catch {
+    // A file path is not a valid cwd; retry from its parent.
+  }
+  cwd = dirname(cwd);
+  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 1000,
+  });
+  return result.status === 0 && result.stdout.trim() ? resolve(result.stdout.trim()) : null;
 }

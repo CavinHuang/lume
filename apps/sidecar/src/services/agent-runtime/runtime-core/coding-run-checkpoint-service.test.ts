@@ -193,6 +193,99 @@ describe("coding run checkpoints", () => {
 
     expect(await persistCodingRunCheckpoint({ sessionDir: join(cwd, "session"), runId: "run-2", cwd, checkpoint })).toBe(false);
   });
+
+  test("restores rewindable repositories while preserving files across a committed boundary", async () => {
+    const firstRoot = await mkdtemp(join(tmpdir(), "lume-coding-repo-a-"));
+    const secondRoot = await mkdtemp(join(tmpdir(), "lume-coding-repo-b-"));
+    temporaryDirectories.push(firstRoot, secondRoot);
+    const firstPath = join(firstRoot, "file.ts");
+    const secondPath = join(secondRoot, "file.ts");
+    for (const root of [firstRoot, secondRoot]) {
+      runGit(root, ["init"]);
+      runGit(root, ["config", "user.email", "lume@example.test"]);
+      runGit(root, ["config", "user.name", "Lume Test"]);
+    }
+    await writeFile(firstPath, "before-a\n", "utf8");
+    await writeFile(secondPath, "before-b\n", "utf8");
+    runGit(firstRoot, ["add", "file.ts"]);
+    runGit(firstRoot, ["commit", "-m", "baseline"]);
+    runGit(secondRoot, ["add", "file.ts"]);
+    runGit(secondRoot, ["commit", "-m", "baseline"]);
+    const firstBaseline = runGit(firstRoot, ["rev-parse", "HEAD"]);
+    const secondBaseline = runGit(secondRoot, ["rev-parse", "HEAD"]);
+
+    await writeFile(firstPath, "after-a\n", "utf8");
+    await writeFile(secondPath, "after-b\n", "utf8");
+    const sessionDir = join(firstRoot, "session");
+    await persistCodingRunCheckpoint({
+      sessionDir,
+      runId: "multi-repo-run",
+      cwd: firstRoot,
+      roots: [secondRoot],
+      baselineCommit: firstBaseline,
+      baselineCommits: {
+        [firstRoot]: firstBaseline,
+        [secondRoot]: secondBaseline,
+      },
+      checkpoint: {
+        userMessageId: "message-1",
+        createdAt: new Date().toISOString(),
+        files: {
+          [firstPath]: { path: firstPath, existed: true, content: "before-a\n", encoding: "utf8", lineEnding: "LF" },
+          [secondPath]: { path: secondPath, existed: true, content: "before-b\n", encoding: "utf8", lineEnding: "LF" },
+        },
+      },
+    });
+    runGit(secondRoot, ["add", "file.ts"]);
+    runGit(secondRoot, ["commit", "-m", "turn commit"]);
+
+    const result = await revertCodingRun({ sessionDir, runId: "multi-repo-run" });
+
+    expect(result.status).toBe("committed_boundary");
+    expect(result.filesChanged).toEqual([firstPath]);
+    expect(result.nonRewindableFiles).toContain(secondPath);
+    expect(await readFile(firstPath, "utf8")).toBe("before-a\n");
+    expect(await readFile(secondPath, "utf8")).toBe("after-b\n");
+  }, 30_000);
+
+  test("resumes a partially applied file rewind without treating restored files as conflicts", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "lume-coding-resumable-rewind-"));
+    temporaryDirectories.push(cwd);
+    const firstPath = join(cwd, "first.ts");
+    const secondPath = join(cwd, "second.ts");
+    await writeFile(firstPath, "after-first\n", "utf8");
+    await writeFile(secondPath, "after-second\n", "utf8");
+    const sessionDir = join(cwd, "session");
+    await persistCodingRunCheckpoint({
+      sessionDir,
+      runId: "resumable-run",
+      cwd,
+      checkpoint: {
+        userMessageId: "message-1",
+        createdAt: new Date().toISOString(),
+        files: {
+          [firstPath]: { path: firstPath, existed: true, content: "before-first\n", encoding: "utf8", lineEnding: "LF" },
+          [secondPath]: { path: secondPath, existed: true, content: "before-second\n", encoding: "utf8", lineEnding: "LF" },
+        },
+      },
+    });
+
+    await expect(revertCodingRun({
+      sessionDir,
+      runId: "resumable-run",
+      onFileRestored: async () => {
+        throw new Error("simulated journal interruption");
+      },
+    })).rejects.toThrow("simulated journal interruption");
+    expect(await readFile(firstPath, "utf8")).toBe("before-first\n");
+    expect(await readFile(secondPath, "utf8")).toBe("after-second\n");
+
+    const resumed = await revertCodingRun({ sessionDir, runId: "resumable-run" });
+
+    expect(resumed.status).toBe("restored");
+    expect(resumed.filesChanged).toEqual([firstPath, secondPath]);
+    expect(await readFile(secondPath, "utf8")).toBe("before-second\n");
+  });
 });
 
 function runGit(cwd: string, args: string[]): string {

@@ -11,7 +11,7 @@ import type {
 } from "@lume/shared";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import {
   captureWorkspaceSnapshot,
   diffWorkspaceSnapshots,
@@ -19,8 +19,11 @@ import {
   type WorkspaceSnapshot,
   type WorkspaceSnapshotDiff
 } from "./workspace-snapshot";
-import { getCodingChangeSet } from "./coding-change-service";
-import { selectVerificationCommands } from "./coding-verification";
+import { discoverCodingRoots, getCodingChangeSet } from "./coding-change-service";
+import {
+  selectVerificationCommands,
+  selectVerificationCommandsForWorkspaces,
+} from "./coding-verification";
 
 export type CodingVerificationStatus = "not_required" | "unverified" | "verified" | "failed";
 
@@ -44,6 +47,13 @@ export interface CodingVerificationReport {
   verificationNoEvidenceAttempts?: number;
   verificationRecords?: CodingVerificationRecord[];
   recommendedVerificationCommands?: string[];
+  lspDiagnostics?: {
+    files: string[];
+    total: number;
+    errors: number;
+    warnings: number;
+    updatedAt: string;
+  };
   gitActions?: CodingGitAction[];
   approvalRequestCount?: number;
   turnId?: string;
@@ -54,11 +64,15 @@ export interface CodingVerificationReport {
 }
 
 interface PersistedCodingRunState {
-  version: 1;
+  version: 1 | 2;
   workspaceRoot: string;
+  workspaceRoots?: string[];
   baselineCommit?: string;
+  baselineCommits?: Record<string, string>;
   baselineSnapshot?: WorkspaceSnapshot;
   latestSnapshot?: WorkspaceSnapshot;
+  baselineSnapshots?: Record<string, WorkspaceSnapshot>;
+  latestSnapshots?: Record<string, WorkspaceSnapshot>;
   mutationObserved: boolean;
   verificationStatus: CodingVerificationStatus;
   verificationMessage: string;
@@ -75,6 +89,12 @@ interface PersistedCodingRunState {
   verificationNoEvidenceAttempts?: number;
   fileChangeStats?: Record<string, FileChangeStats>;
   verificationRecords?: CodingVerificationRecord[];
+  lspDiagnostics?: Record<string, {
+    total: number;
+    errors: number;
+    warnings: number;
+    updatedAt: string;
+  }>;
   gitActions?: CodingGitAction[];
 }
 
@@ -94,6 +114,7 @@ export interface CodingRunTrackerOptions {
 }
 
 export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
+  const workspaceRoots = uniqueWorkspaceRoots(options.workspaceRoot, options.additionalRoots);
   let mutationObserved = false;
   let verificationStatus: CodingVerificationStatus = "not_required";
   let verificationMessage = "";
@@ -103,6 +124,9 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   let baselineSnapshot: WorkspaceSnapshot | undefined;
   let latestSnapshot: WorkspaceSnapshot | undefined;
   let workspaceDiff: WorkspaceSnapshotDiff = { added: [], modified: [], deleted: [] };
+  let baselineSnapshots: Record<string, WorkspaceSnapshot> = {};
+  let latestSnapshots: Record<string, WorkspaceSnapshot> = {};
+  let workspaceDiffs: Record<string, WorkspaceSnapshotDiff> = {};
   const attributedCandidates = new Set<string>();
   let pendingBackground = false;
   const pendingBackgroundTaskIds = new Set<string>();
@@ -113,7 +137,14 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   let changeSet: RuntimeCodingChangeSet | undefined;
   let pendingSnapshot: Promise<void> = Promise.resolve();
   let baselineCommit: string | undefined;
+  let baselineCommits: Record<string, string> = {};
   const verificationRecords: CodingVerificationRecord[] = [];
+  const lspDiagnostics = new Map<string, {
+    total: number;
+    errors: number;
+    warnings: number;
+    updatedAt: string;
+  }>();
   const gitActions: CodingGitAction[] = [];
   let recommendedVerificationCommands: string[] = [];
 
@@ -123,10 +154,11 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     userMessageId?: string;
     cwd: string;
   }): Promise<void> {
-    if (!options.workspaceRoot) return;
+    if (workspaceRoots.length === 0) return;
     pendingSnapshot = pendingSnapshot.then(async () => {
       try {
-        latestSnapshot = await captureWorkspaceSnapshot(options.workspaceRoot!);
+        latestSnapshots = await captureWorkspaceSnapshots(workspaceRoots);
+        latestSnapshot = options.workspaceRoot ? latestSnapshots[resolve(options.workspaceRoot)] : undefined;
         persist();
       } catch {
         // The post-tool snapshot remains authoritative when a pre-snapshot fails.
@@ -138,11 +170,15 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   function persist(): void {
     if (!options.statePath || !options.workspaceRoot) return;
     const state: PersistedCodingRunState = {
-      version: 1,
+      version: 2,
       workspaceRoot: options.workspaceRoot,
+      workspaceRoots,
       baselineCommit,
+      baselineCommits,
       baselineSnapshot,
       latestSnapshot,
+      baselineSnapshots,
+      latestSnapshots,
       mutationObserved,
       verificationStatus,
       verificationMessage,
@@ -157,6 +193,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
       verificationNoEvidenceAttempts,
       fileChangeStats: Object.fromEntries(fileChangeStats),
       verificationRecords,
+      lspDiagnostics: Object.fromEntries(lspDiagnostics),
       gitActions
     };
     try {
@@ -173,11 +210,22 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     if (!options.statePath || !options.workspaceRoot || !existsSync(options.statePath)) return;
     try {
       const state = JSON.parse(readFileSync(options.statePath, "utf-8")) as Partial<PersistedCodingRunState>;
-      if (state.version !== 1 || state.workspaceRoot !== options.workspaceRoot) return;
+      if ((state.version !== 1 && state.version !== 2) || state.workspaceRoot !== options.workspaceRoot) return;
+      if (state.version === 2 && state.workspaceRoots && !sameWorkspaceRoots(state.workspaceRoots, workspaceRoots)) return;
       baselineSnapshot = state.baselineSnapshot;
       baselineCommit = state.baselineCommit;
+      baselineCommits = state.baselineCommits ?? {};
       latestSnapshot = state.latestSnapshot;
-      if (baselineSnapshot && latestSnapshot) workspaceDiff = diffWorkspaceSnapshots(baselineSnapshot, latestSnapshot);
+      baselineSnapshots = state.baselineSnapshots ?? (
+        baselineSnapshot ? { [resolve(options.workspaceRoot)]: baselineSnapshot } : {}
+      );
+      latestSnapshots = state.latestSnapshots ?? (
+        latestSnapshot ? { [resolve(options.workspaceRoot)]: latestSnapshot } : {}
+      );
+      workspaceDiffs = diffSnapshotCollections(baselineSnapshots, latestSnapshots);
+      workspaceDiff = options.workspaceRoot
+        ? workspaceDiffs[resolve(options.workspaceRoot)] ?? { added: [], modified: [], deleted: [] }
+        : { added: [], modified: [], deleted: [] };
       mutationObserved = state.mutationObserved === true;
       verificationStatus = state.verificationStatus ?? "not_required";
       verificationMessage = state.verificationMessage ?? "";
@@ -208,6 +256,10 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         });
       }
       verificationRecords.splice(0, verificationRecords.length, ...(state.verificationRecords ?? []).slice(-8));
+      for (const [path, diagnostics] of Object.entries(state.lspDiagnostics ?? {})) {
+        if (!diagnostics || typeof diagnostics !== "object") continue;
+        lspDiagnostics.set(path, diagnostics);
+      }
       gitActions.splice(0, gitActions.length, ...(state.gitActions ?? []).slice(-16));
       }
     } catch {
@@ -228,9 +280,14 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         if (result.status === 0) baselineCommit = result.stdout.trim() || undefined;
       }
     }
-    if (!options.workspaceRoot || baselineSnapshot) return;
+    if (Object.keys(baselineCommits).length === 0) {
+      baselineCommits = captureGitBaselines(workspaceRoots);
+    }
+    if (workspaceRoots.length === 0 || Object.keys(baselineSnapshots).length > 0) return;
     try {
-      baselineSnapshot = await captureWorkspaceSnapshot(options.workspaceRoot);
+      baselineSnapshots = await captureWorkspaceSnapshots(workspaceRoots);
+      latestSnapshots = baselineSnapshots;
+      baselineSnapshot = options.workspaceRoot ? baselineSnapshots[resolve(options.workspaceRoot)] : undefined;
       latestSnapshot = baselineSnapshot;
       persist();
     } catch {
@@ -241,7 +298,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   function queueSnapshot(input: { toolName: string; input: unknown; result: ToolResult }): void {
     const toolName = input.toolName;
     const result = input.result;
-    if (!options.workspaceRoot) return;
+    if (workspaceRoots.length === 0) return;
     const name = toolName.toLowerCase();
     const isProcessOutput = name === "taskoutput" || name === "processoutput";
     const execution = getExecutionMetadata(result);
@@ -255,19 +312,27 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     if (!shouldSnapshot) return;
     pendingSnapshot = pendingSnapshot.then(async () => {
       try {
-        const snapshot = await captureWorkspaceSnapshot(options.workspaceRoot!);
-        if (!baselineSnapshot) baselineSnapshot = snapshot;
-        latestSnapshot = snapshot;
-        workspaceDiff = diffWorkspaceSnapshots(baselineSnapshot, snapshot);
+        const snapshots = await captureWorkspaceSnapshots(workspaceRoots);
+        if (Object.keys(baselineSnapshots).length === 0) baselineSnapshots = snapshots;
+        latestSnapshots = snapshots;
+        workspaceDiffs = diffSnapshotCollections(baselineSnapshots, snapshots);
+        baselineSnapshot = options.workspaceRoot ? baselineSnapshots[resolve(options.workspaceRoot)] : undefined;
+        latestSnapshot = options.workspaceRoot ? latestSnapshots[resolve(options.workspaceRoot)] : undefined;
+        workspaceDiff = options.workspaceRoot
+          ? workspaceDiffs[resolve(options.workspaceRoot)] ?? { added: [], modified: [], deleted: [] }
+          : { added: [], modified: [], deleted: [] };
         const executionMutation = execution?.command
           ? isLikelyMutationCommand({ input: { command: execution.command } })
           : false;
-        const observedWorkspaceChanges = flattenWorkspaceSnapshotDiff(workspaceDiff);
+        const observedWorkspaceChanges = flattenAbsoluteWorkspaceChanges(workspaceDiffs);
         const shellProducedChanges = name === "bash" && observedWorkspaceChanges.length > 0;
         const taskProducedChanges = isProcessOutput
           && !processOutputRunning
           && observedWorkspaceChanges.length > 0;
-        if (shellProducedChanges || taskProducedChanges || (executionMutation && result.is_error !== true)) {
+        const fileToolProducedChanges = ["write", "edit", "notebookedit", "lsp"].includes(name)
+          && result.is_error !== true
+          && observedWorkspaceChanges.length > 0;
+        if (shellProducedChanges || taskProducedChanges || fileToolProducedChanges || (executionMutation && result.is_error !== true)) {
           for (const path of observedWorkspaceChanges) attributedCandidates.add(path);
           mutationObserved = true;
           if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
@@ -319,7 +384,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     if ((["write", "edit", "notebookedit", "lsp"].includes(name) || bashMutation) && input.result.is_error !== true) {
       mutationObserved = true;
       if (name !== "bash") {
-        const path = readMutationPath(input.input, options.workspaceRoot);
+        const path = readMutationPath(input.input, input.result, options.workspaceRoot, workspaceRoots);
         if (path) {
           attributedCandidates.add(path);
           mergeFileChangeStats(fileChangeStats, path, readFileChangeStats(input.result));
@@ -426,12 +491,25 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     if (promptedWithoutEvidence) return undefined;
     promptedWithoutEvidence = true;
     const workspaceRoot = options.workspaceRoot;
-    recommendedVerificationCommands = workspaceRoot
-      ? selectVerificationCommands({
-        workspaceRoot,
-        changedFiles: changeSet?.files.map((file) => file.path) ?? [],
-      }).map((candidate) => candidate.command)
-      : [];
+    if (workspaceRoot && changeSet?.files.some((file) => file.rootId)) {
+      const discoveredRoots = await discoverCodingRoots(workspaceRoots);
+      recommendedVerificationCommands = selectVerificationCommandsForWorkspaces(
+        discoveredRoots.map((root) => ({
+          workspaceRoot: root.path,
+          rootId: root.repository.rootId,
+          changedFiles: changeSet?.files
+            .filter((file) => file.rootId === root.repository.rootId)
+            .map((file) => file.path) ?? [],
+        }))
+      ).map((candidate) => candidate.command);
+    } else {
+      recommendedVerificationCommands = workspaceRoot
+        ? selectVerificationCommands({
+          workspaceRoot,
+          changedFiles: changeSet?.files.map((file) => file.path) ?? [],
+        }).map((candidate) => candidate.command)
+        : [];
+    }
     const suggestions = recommendedVerificationCommands.length > 0
       ? `运行以下仓库已有验证脚本（最多选择相关的两项）：\n${recommendedVerificationCommands.map((command) => `- ${command}`).join("\n")}`
       : "当前仓库没有可可靠识别的验证脚本，请明确说明未验证，不要猜测命令。";
@@ -439,6 +517,16 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   }
 
   function observeAsyncEvent(message: SDKMessage): boolean {
+    if (message.type === "system" && message.subtype === "lsp_diagnostics") {
+      lspDiagnostics.set(message.file_path, {
+        total: message.diagnostics.total,
+        errors: message.diagnostics.errors,
+        warnings: message.diagnostics.warnings,
+        updatedAt: new Date().toISOString()
+      });
+      persist();
+      return true;
+    }
     if (message.type !== "system" || message.subtype !== "task_notification" || !message.execution) {
       return false;
     }
@@ -466,24 +554,36 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     initialize,
     beforeToolExecution,
     getBaselineCommit: () => baselineCommit,
+    getBaselineCommits: () => ({ ...baselineCommits }),
     completionGuard,
     getVerificationStatus: () => verificationStatus,
     getVerificationReport: (): CodingVerificationReport => {
-      const snapshotChangedFiles = flattenWorkspaceSnapshotDiff(workspaceDiff).filter((path) => attributedCandidates.has(path));
+      const allSnapshotChanges = flattenAbsoluteWorkspaceChanges(workspaceDiffs);
+      const snapshotChangedFiles = allSnapshotChanges
+        .filter((path) => attributedCandidates.has(path))
+        .map((path) => displayWorkspacePath(path, options.workspaceRoot));
       const authoritativeFiles = changeSet?.files.map((file) => file.path) ?? [];
       const changedFiles = [...new Set([...snapshotChangedFiles, ...authoritativeFiles])];
-      const externalChangedFiles = flattenWorkspaceSnapshotDiff(workspaceDiff).filter((path) => !attributedCandidates.has(path));
+      const externalChangedFiles = allSnapshotChanges
+        .filter((path) => !attributedCandidates.has(path))
+        .map((path) => displayWorkspacePath(path, options.workspaceRoot));
       const authoritativeChangeSet = changeSet?.isGitRepo ? changeSet : undefined;
       const fileChanges = authoritativeChangeSet?.files.length
         ? authoritativeChangeSet.files
-        : changedFiles.map((path) => ({
-          path,
-          ...(fileChangeStats.has(path) ? fileChangeStats.get(path) : {})
-        }));
+        : changedFiles.map((path) => {
+          const absolutePath = options.workspaceRoot && !isAbsolute(path)
+            ? resolve(options.workspaceRoot, path)
+            : path;
+          return {
+            path,
+            ...(fileChangeStats.get(absolutePath) ?? fileChangeStats.get(path) ?? {})
+          };
+        });
       const totalAddedLines = authoritativeChangeSet?.totalAddedLines
         ?? fileChanges.reduce((sum, change) => sum + (change.addedLines ?? 0), 0);
       const totalRemovedLines = authoritativeChangeSet?.totalRemovedLines
         ?? fileChanges.reduce((sum, change) => sum + (change.removedLines ?? 0), 0);
+      const lspEntries = [...lspDiagnostics.entries()];
       return {
         phase: getCodingTurnPhase(),
         status: verificationStatus,
@@ -500,6 +600,17 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
         verificationRepairAttempts,
         verificationNoEvidenceAttempts,
         verificationRecords: [...verificationRecords],
+        ...(lspEntries.length > 0 ? {
+          lspDiagnostics: {
+            files: lspEntries.map(([path]) => displayWorkspacePath(path, options.workspaceRoot)),
+            total: lspEntries.reduce((sum, [, diagnostics]) => sum + diagnostics.total, 0),
+            errors: lspEntries.reduce((sum, [, diagnostics]) => sum + diagnostics.errors, 0),
+            warnings: lspEntries.reduce((sum, [, diagnostics]) => sum + diagnostics.warnings, 0),
+            updatedAt: lspEntries.reduce((latest, [, diagnostics]) =>
+              diagnostics.updatedAt > latest ? diagnostics.updatedAt : latest, ""
+            )
+          }
+        } : {}),
         ...(recommendedVerificationCommands.length > 0 ? { recommendedVerificationCommands } : {}),
         gitActions: [...gitActions],
         ...(options.turnId ? { turnId: options.turnId } : {}),
@@ -519,7 +630,7 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
 
   async function refreshAuthoritativeChangeSet(): Promise<RuntimeCodingChangeSet> {
     const workspaceRoot = options.workspaceRoot!;
-    const absolutePaths = [...attributedCandidates].map((path) => resolve(workspaceRoot, path));
+    const absolutePaths = [...attributedCandidates];
     return getCodingChangeSet(workspaceRoot, {
       paths: absolutePaths,
       turnId: options.turnId,
@@ -607,6 +718,30 @@ function hasGitMetadata(start: string): boolean {
   }
 }
 
+function captureGitBaselines(roots: string[]): Record<string, string> {
+  const baselines: Record<string, string> = {};
+  for (const root of roots) {
+    if (!hasGitMetadata(root)) continue;
+    const rootResult = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 1000,
+    });
+    const gitRoot = rootResult.status === 0 ? rootResult.stdout.trim() : "";
+    if (!gitRoot || baselines[resolve(gitRoot)]) continue;
+    const commitResult = spawnSync("git", ["rev-parse", "HEAD"], {
+      cwd: gitRoot,
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 1000,
+    });
+    const commit = commitResult.status === 0 ? commitResult.stdout.trim() : "";
+    if (commit) baselines[resolve(gitRoot)] = commit;
+  }
+  return baselines;
+}
+
 function mergeFileChangeStats(
   statsByPath: Map<string, FileChangeStats>,
   path: string,
@@ -645,15 +780,73 @@ function isLikelyMutationCommand(input: { input: unknown }): boolean {
     || /(?:>>?|\|\s*(?:tee|Set-Content)|Set-Content|Out-File|writeFile|write_text|unlink\s*\()/i.test(command);
 }
 
-function readMutationPath(input: unknown, workspaceRoot?: string): string | undefined {
+function readMutationPath(
+  input: unknown,
+  result: ToolResult,
+  workspaceRoot: string | undefined,
+  workspaceRoots: string[],
+): string | undefined {
+  const resolvedPath = result._meta?.file && typeof result._meta.file === "object"
+    ? (result._meta.file as Record<string, unknown>).path
+    : undefined;
+  if (typeof resolvedPath === "string" && workspaceRoots.some((root) => isPathInside(root, resolvedPath))) {
+    return resolve(resolvedPath);
+  }
   if (!input || typeof input !== "object") return undefined;
   const value = (input as Record<string, unknown>).file_path
     ?? (input as Record<string, unknown>).notebook_path
     ?? (input as Record<string, unknown>).path;
   if (typeof value !== "string" || !value.trim() || !workspaceRoot) return undefined;
   const canonical = resolve(workspaceRoot, value);
-  const relativePath = relative(workspaceRoot, canonical).split("\\").join("/");
-  return relativePath === ".." || relativePath.startsWith("../") ? undefined : relativePath;
+  return workspaceRoots.some((root) => isPathInside(root, canonical)) ? canonical : undefined;
+}
+
+function uniqueWorkspaceRoots(workspaceRoot?: string, additionalRoots: string[] = []): string[] {
+  const roots = [workspaceRoot, ...additionalRoots]
+    .filter((root): root is string => Boolean(root))
+    .map((root) => resolve(root));
+  return [...new Set(roots.map((root) => process.platform === "win32" ? root.toLowerCase() : root))]
+    .map((normalized) => roots.find((root) => (
+      (process.platform === "win32" ? root.toLowerCase() : root) === normalized
+    ))!);
+}
+
+function sameWorkspaceRoots(left: string[], right: string[]): boolean {
+  const normalizeRoot = (root: string) => process.platform === "win32"
+    ? resolve(root).toLowerCase()
+    : resolve(root);
+  return [...left].map(normalizeRoot).sort().join("\n") === [...right].map(normalizeRoot).sort().join("\n");
+}
+
+async function captureWorkspaceSnapshots(roots: string[]): Promise<Record<string, WorkspaceSnapshot>> {
+  const entries = await Promise.all(roots.map(async (root) => [root, await captureWorkspaceSnapshot(root)] as const));
+  return Object.fromEntries(entries);
+}
+
+function diffSnapshotCollections(
+  before: Record<string, WorkspaceSnapshot>,
+  after: Record<string, WorkspaceSnapshot>,
+): Record<string, WorkspaceSnapshotDiff> {
+  return Object.fromEntries(Object.entries(after).map(([root, snapshot]) => [
+    root,
+    diffWorkspaceSnapshots(before[root], snapshot),
+  ]));
+}
+
+function flattenAbsoluteWorkspaceChanges(diffs: Record<string, WorkspaceSnapshotDiff>): string[] {
+  return [...new Set(Object.entries(diffs).flatMap(([root, diff]) => (
+    flattenWorkspaceSnapshotDiff(diff).map((path) => resolve(root, path))
+  )))];
+}
+
+function displayWorkspacePath(path: string, workspaceRoot?: string): string {
+  if (!workspaceRoot || !isPathInside(workspaceRoot, path)) return path;
+  return relative(workspaceRoot, path).split("\\").join("/");
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const relativePath = relative(resolve(root), resolve(candidate));
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 function stringifyResult(result: ToolResult): string {

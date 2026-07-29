@@ -56,6 +56,24 @@ describe("guardrail-runner", () => {
     expect(result).toEqual({ behavior: "allow" });
   });
 
+  test("allows file writes inside an explicitly authorized additional directory", async () => {
+    const runner = new LumeGuardrailRunner(builtinToolInputGuardrails);
+    const cwd = "/tmp/lume-workspace";
+    const additional = "/tmp/lume-shared";
+
+    const result = await runner.runToolInputGuardrails({
+      toolName: "Write",
+      input: { file_path: join(additional, "notes.txt"), content: "hello" },
+      context: {
+        threadId: "thread-1",
+        cwd,
+        additionalDirectories: [additional],
+      }
+    });
+
+    expect(result).toEqual({ behavior: "allow" });
+  });
+
   test("requires approval before writing obvious secrets to memory", async () => {
     const runner = new LumeGuardrailRunner(builtinToolInputGuardrails);
 

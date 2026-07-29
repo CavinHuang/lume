@@ -459,6 +459,34 @@ describe("runtime-core run", () => {
     result.session.dispose();
   });
 
+  test("Coding 路由仅暴露仓库基础工具，不混入 Web 和任务编排工具", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-coding-tools-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "coding-tool-session",
+      cwd,
+      agentDir,
+      userMessage: "修复这个 TypeScript 错误",
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      messageMetadata: { preferredCapabilityRoute: "coding" }
+    });
+
+    const toolNames = availableToolNames(result);
+    for (const toolName of ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit", "LSP", "LSPApply", "ProcessOutput", "ProcessStop"]) {
+      expect(toolNames).toContain(toolName);
+    }
+    for (const toolName of ["WebSearch", "WebFetch", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {
+      expect(toolNames).not.toContain(toolName);
+    }
+
+    result.session.dispose();
+  });
+
   test("开启 Guanlan 后应暴露 Guanlan 内置工具", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-guanlan-config-"));
     process.env.LUME_CONFIG_DIR = configDir;

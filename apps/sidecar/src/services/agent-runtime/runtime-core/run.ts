@@ -36,7 +36,10 @@ import {
   defineTool,
   finalizeSubagentOutputFromState,
   summarizeSubagentAssistantEvent,
-  type ToolDefinition
+  type ToolDefinition,
+  type PersistedToolContinuation,
+  warmupLspClients,
+  setLspIdleTimeout
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
@@ -77,6 +80,7 @@ import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
+import { hasCodingIntent } from "../../agent/capability-routing";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { buildSubagentWorkContext, resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
@@ -102,6 +106,7 @@ import type { RegisteredPlugin } from "../plugins/plugin-registry.js";
 import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
 import { DEFAULT_PLUGIN_STATE_PATH, FilePluginStateStore } from "../plugins/plugin-state-store.js";
 import { buildPluginAgentHooks } from "../plugins/plugin-hooks-bridge.js";
+import { resolveRuntimeLspConfig } from "../lsp/lsp-config.js";
 import {
   buildPluginMcpManager,
   buildPluginIdIndex,
@@ -208,6 +213,7 @@ export interface CreateRuntimeCoreSessionInput {
   trace?: ContextAssemblyInput["trace"];
   wikiProposalEnabled?: boolean;
   processSandbox?: SandboxSettings;
+  toolConfig?: Record<string, unknown>;
 }
 
 interface BoundSubagentIdentity {
@@ -255,9 +261,11 @@ export interface CreateRuntimeCoreSessionResult {
   getVerificationStatus: () => CodingVerificationStatus;
   beforeToolExecution: NonNullable<AgentOptions["onBeforeToolExecution"]>;
   getBaselineCommit: () => string | undefined;
+  getBaselineCommits: () => Record<string, string>;
   getVerificationReport: () => import("./coding-run-tracker").CodingVerificationReport;
   refreshCodingChangeSet: () => Promise<unknown>;
   getLatestFileCheckpoint: () => FileCheckpoint | undefined;
+  getWorkspaceRoots: () => string[];
 }
 
 interface RuntimeCoreToolset {
@@ -751,6 +759,7 @@ function createBaseSdkAlignedTools(
   permissionMode: AgentSendInput["permissionMode"],
   options: {
     includeAskUserQuestion: boolean;
+    includeWebTools: boolean;
     workspaceSlug?: string;
     renderClient?: RenderClient;
     originalUserInstruction?: string;
@@ -761,7 +770,9 @@ function createBaseSdkAlignedTools(
     GlobTool,
     GrepTool,
     ListDirectoryTool,
-    ...createSdkWebTools({ workspaceSlug: options.workspaceSlug, renderClient: options.renderClient })
+    ...(options.includeWebTools
+      ? createSdkWebTools({ workspaceSlug: options.workspaceSlug, renderClient: options.renderClient })
+      : [])
   ];
 
   if (permissionMode === "plan") {
@@ -854,8 +865,13 @@ function buildRuntimeCoreTools(input: {
     input.chatType ?? "direct"
   );
   const automationExecution = isAutomationExecution(input.messageMetadata);
+  const directRepositoryRoute = isDirectRepositoryRuntimeRoute(
+    input.messageMetadata,
+    input.originalUserInstruction
+  );
   const baseTools = createBaseSdkAlignedTools(permissionMode, {
     includeAskUserQuestion: automationExecution !== true,
+    includeWebTools: !directRepositoryRoute,
     workspaceSlug: input.workspaceSlug,
     renderClient: input.renderClient,
     originalUserInstruction: input.originalUserInstruction
@@ -1089,9 +1105,11 @@ function buildRuntimeCoreTools(input: {
   })
 
   const mainTaskTools = mainTaskRuntime?.tools ?? [];
-  const taskLoopTools = input.threadType === "subagent"
-    ? (input.boundSubagentReportTool ? [input.boundSubagentReportTool, todoTool] : [todoTool])
-    : [...(isMainTaskThread ? mainTaskTools : []), sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
+  const taskLoopTools = directRepositoryRoute && isMainTaskThread
+    ? []
+    : input.threadType === "subagent"
+      ? (input.boundSubagentReportTool ? [input.boundSubagentReportTool, todoTool] : [todoTool])
+      : [...(isMainTaskThread ? mainTaskTools : []), sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
 
   const delegateTool: ToolDefinition = {
     ...AgentTool,
@@ -1331,17 +1349,29 @@ function buildRuntimeCoreTools(input: {
       { source: "sdk", tools: baseTools },
       { source: "task", tools: taskLoopTools },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
-      ...(input.mcpTools?.length
+      ...(!directRepositoryRoute && input.mcpTools?.length
         ? [{ source: "mcp" as const, tools: sortDiscoveredTools(input.mcpTools) }]
         : []),
-      ...(input.pluginCommandTools?.length
+      ...(!directRepositoryRoute && input.pluginCommandTools?.length
         ? [{ source: "plugin" as const, tools: sortDiscoveredTools(input.pluginCommandTools) }]
         : []),
-      ...(input.pluginMcpTools?.length
+      ...(!directRepositoryRoute && input.pluginMcpTools?.length
         ? [{ source: "plugin" as const, tools: sortDiscoveredTools(input.pluginMcpTools) }]
         : [])
     ]
   });
+}
+
+function isDirectRepositoryRuntimeRoute(
+  messageMetadata?: Record<string, unknown>,
+  originalUserInstruction?: string
+): boolean {
+  const preferredRoute = typeof messageMetadata?.preferredCapabilityRoute === "string"
+    ? messageMetadata.preferredCapabilityRoute
+    : undefined;
+  return preferredRoute === "coding"
+    || preferredRoute === "raw-tools"
+    || hasCodingIntent(originalUserInstruction);
 }
 
 function sortDiscoveredTools(tools: ToolDefinition[]): ToolDefinition[] {
@@ -1654,6 +1684,7 @@ export async function createRuntimeCoreSession(
     if (input.runId && task?.id && task.status === "running") {
       const toolName = toolInput.toolName;
       const toolKind = toolName.toLowerCase() === "processoutput" ? "read" : "execute";
+      const toolUseId = toolInput.result.tool_use_id || task.id;
       const now = new Date().toISOString();
       void createFileBackedRunContinuationStore(sessionDir).upsert({
         version: 2,
@@ -1662,12 +1693,12 @@ export async function createRuntimeCoreSession(
         status: "waiting_background",
         checkpoint: {
           step: "waiting_for_tool_result",
-          toolCallId: task.id,
+          toolCallId: toolUseId,
           toolName,
           toolKind,
           processJobId: task.id,
           toolCall: {
-            id: task.id,
+            id: toolUseId,
             name: toolName,
             input: toolInput.input,
             inputHash: createHash("sha256").update(JSON.stringify(toolInput.input ?? null)).digest("hex"),
@@ -1775,6 +1806,29 @@ export async function createRuntimeCoreSession(
     // Do not auto-load project-local .lume/plugins just because the Agent cwd is a real project.
     directories: pluginConfig.directories,
   });
+  const discoveredLspConfig = await resolveRuntimeLspConfig({
+    cwd: input.cwd,
+    user: getEffectiveLumeConfig(input.workspaceSlug).lsp,
+    plugins: registeredPlugins,
+  });
+  const runLspConfig = input.toolConfig?.lsp && typeof input.toolConfig.lsp === "object" && !Array.isArray(input.toolConfig.lsp)
+    ? input.toolConfig.lsp as Record<string, unknown>
+    : undefined;
+  const lspConfig = {
+    ...discoveredLspConfig,
+    ...(runLspConfig ?? {}),
+    ...(discoveredLspConfig.servers || (runLspConfig?.servers && typeof runLspConfig.servers === "object")
+      ? {
+        servers: {
+          ...(discoveredLspConfig.servers ?? {}),
+          ...(runLspConfig?.servers && typeof runLspConfig.servers === "object"
+            ? runLspConfig.servers as Record<string, unknown>
+            : {}),
+        },
+      }
+      : {}),
+  };
+  setLspIdleTimeout(lspConfig.idleTimeoutMs);
   const computerUsePlugin = registeredPlugins.find((plugin) => plugin.pluginId === "computer-use");
   log.info("Computer Use capability selected", {
     sessionId: input.lumeSessionId,
@@ -2050,6 +2104,11 @@ export async function createRuntimeCoreSession(
   ].filter((directory): directory is string => Boolean(directory))
     .map((directory) => resolve(directory))
     .filter((directory) => directory !== resolve(input.cwd)))];
+  const toolContinuation = resolvePersistedToolContinuation(input.messageMetadata);
+  const runtimeToolConfig = {
+    ...(input.toolConfig ?? {}),
+    ...(Object.keys(lspConfig).length > 0 ? { lsp: lspConfig } : {}),
+  };
 
   const agentOptions: AgentOptions = {
     apiType: resolveSdkApiType(input.provider, input.openaiApiMode),
@@ -2059,6 +2118,7 @@ export async function createRuntimeCoreSession(
     cwd: input.cwd,
     threadType: input.threadType,
     artifactsRoot: input.artifactsRoot,
+    ...(Object.keys(runtimeToolConfig).length > 0 ? { toolConfig: runtimeToolConfig } : {}),
     onAsyncEvent: handleAsyncEvent,
     onToolExecution: handleToolExecution,
     onBeforeToolExecution: codingRunTracker.beforeToolExecution,
@@ -2067,6 +2127,7 @@ export async function createRuntimeCoreSession(
     promptCache,
     tools: toolset.tools,
     sessionId: input.lumeSessionId,
+    ...(toolContinuation ? { toolContinuation } : {}),
     ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
       ? { resume: input.lumeSessionId }
       : {}),
@@ -2112,6 +2173,13 @@ export async function createRuntimeCoreSession(
   };
 
   const agent = createAgent(agentOptions);
+  if (
+    (preferredCapabilityRoute === "coding" || preferredCapabilityRoute === "raw-tools")
+    && lspConfig?.enabled !== false
+    && lspConfig?.lazy !== true
+  ) {
+    void warmupLspClients(input.cwd, agentOptions.toolConfig, 5_000).catch(() => undefined);
+  }
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 
@@ -2180,12 +2248,55 @@ export async function createRuntimeCoreSession(
     getVerificationStatus: codingRunTracker.getVerificationStatus,
     beforeToolExecution: codingRunTracker.beforeToolExecution,
     getBaselineCommit: codingRunTracker.getBaselineCommit,
+    getBaselineCommits: codingRunTracker.getBaselineCommits,
+    getWorkspaceRoots: () => [resolve(input.cwd), ...additionalDirectories],
     refreshCodingChangeSet: codingRunTracker.refreshChangeSet,
     getLatestFileCheckpoint: () => agent.getLatestFileCheckpoint(),
     getVerificationReport: () => ({
       ...codingRunTracker.getVerificationReport(),
       approvalRequestCount
     })
+  };
+}
+
+function resolvePersistedToolContinuation(
+  metadata: Record<string, unknown> | undefined,
+): PersistedToolContinuation | undefined {
+  const runtimeContinuation = metadata?.runtimeContinuation;
+  if (!runtimeContinuation || typeof runtimeContinuation !== "object") return undefined;
+  const record = runtimeContinuation as Record<string, unknown>;
+  const checkpoint = record.checkpoint;
+  if (!checkpoint || typeof checkpoint !== "object") return undefined;
+  const checkpointRecord = checkpoint as Record<string, unknown>;
+  const toolCall = checkpointRecord.toolCall;
+  if (!toolCall || typeof toolCall !== "object") return undefined;
+  const call = toolCall as Record<string, unknown>;
+  if (typeof call.id !== "string" || typeof call.name !== "string") return undefined;
+  const inputHash = createHash("sha256").update(JSON.stringify(call.input ?? null)).digest("hex");
+  if (typeof call.inputHash === "string" && call.inputHash !== inputHash) {
+    throw new Error("cold-start continuation 的工具输入指纹不匹配");
+  }
+  const synthetic = checkpointRecord.syntheticToolResult;
+  const toolResult = synthetic && typeof synthetic === "object"
+    ? synthetic as ToolResult
+    : synthetic === undefined ? undefined : {
+      type: "tool_result" as const,
+      tool_use_id: call.id,
+      content: typeof synthetic === "string" ? synthetic : JSON.stringify(synthetic),
+    };
+  return {
+    toolCall: {
+      id: call.id,
+      name: call.name,
+      input: call.input,
+    },
+    ...(toolResult ? {
+      toolResult: {
+        ...toolResult,
+        type: "tool_result",
+        tool_use_id: call.id,
+      },
+    } : {}),
   };
 }
 

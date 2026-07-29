@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -50,5 +50,13 @@ describe("coding rewind journal", () => {
     });
     await updateCodingRewindJournal(journal, { status: "completed", removedMessageCount: 2 });
     await expect(listIncompleteCodingRewindJournals(sessionDir)).resolves.toEqual([]);
+  });
+
+  test("surfaces a corrupt journal instead of silently ignoring recovery state", async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), "lume-coding-journal-"));
+    temporaryDirectories.push(sessionDir);
+    await writeFile(join(sessionDir, "coding-rewind-corrupt.json"), "{not-json", "utf8");
+
+    await expect(listIncompleteCodingRewindJournals(sessionDir)).rejects.toThrow("回退日志损坏");
   });
 });
