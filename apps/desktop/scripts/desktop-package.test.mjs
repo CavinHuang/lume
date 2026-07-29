@@ -196,7 +196,7 @@ test('desktop package includes bundled capability plugins', () => {
   assert.match(main, /'apps', 'sidecar', 'bundled-plugins'/)
 })
 
-test('desktop package includes the transparent Lume logo for the macOS tray', () => {
+test('desktop package includes the Lume logo for the macOS tray', () => {
   assert.deepEqual(
     pkg.build.extraResources.find((entry) => entry.to === 'tray-icon.png'),
     {
@@ -209,7 +209,7 @@ test('desktop package includes the transparent Lume logo for the macOS tray', ()
   const main = readFileSync(resolve(DESKTOP_ROOT, 'src/main.ts'), 'utf8')
   const trayManager = readFileSync(resolve(DESKTOP_ROOT, 'src/tray-manager.ts'), 'utf8')
   assert.match(main, /process\.resourcesPath, 'tray-icon\.png'/)
-  assert.match(trayManager, /setTemplateImage\(true\)/)
+  assert.doesNotMatch(trayManager, /setTemplateImage\(true\)/)
 })
 
 test('desktop package includes sidecar runtime data', () => {

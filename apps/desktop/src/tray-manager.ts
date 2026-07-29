@@ -13,7 +13,6 @@ function buildTrayIcon(iconPath: string): NativeImage {
   if (process.platform !== 'darwin') return source
   const sized = source.resize({ width: 22, height: 22, quality: 'best' })
   if (sized.isEmpty()) throw new Error('tray icon is empty after resize')
-  sized.setTemplateImage(true)
   return sized
 }
 
