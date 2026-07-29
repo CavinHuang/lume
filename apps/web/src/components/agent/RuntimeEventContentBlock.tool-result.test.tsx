@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { RuntimeMessageView } from './runtime-message-view'
 
 mock.module('@lume/ui', () => ({
+  CodeBlock: ({ children }: { children: React.ReactNode }) => <section data-code-block="true">{children}</section>,
   useSmoothStream: ({ content }: { content: string }) => ({ displayedContent: content }),
   MermaidBlock: ({ code }: { code: string }) => <section data-mermaid-block="true">{code}</section>,
 }))

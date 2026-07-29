@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
 import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Undo2, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
-import { MermaidBlock, useSmoothStream } from '@lume/ui'
+import { CodeBlock, MermaidBlock, useSmoothStream } from '@lume/ui'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -2274,7 +2274,7 @@ export function MarkdownPre({
     )
   }
 
-  return <pre {...rest}>{children}</pre>
+  return <CodeBlock onCopy={writeClipboardText}>{children}</CodeBlock>
 }
 
 export function MarkdownCode({

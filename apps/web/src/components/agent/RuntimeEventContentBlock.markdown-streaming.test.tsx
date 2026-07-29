@@ -5,6 +5,7 @@ import type { LumeRuntimeEvent } from '@lume/shared'
 import type { RuntimeMessageView } from './runtime-message-view'
 
 mock.module('@lume/ui', () => ({
+  CodeBlock: ({ children }: { children: React.ReactNode }) => <section data-code-block="true">{children}</section>,
   useSmoothStream: ({ content }: { content: string }) => ({ displayedContent: content }),
   MermaidBlock: ({ code }: { code: string }) => <section data-mermaid-block="true">{code}</section>,
 }))
@@ -172,7 +173,7 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
     expect(markup).not.toContain('data-mermaid-block')
   })
 
-  test('keeps ordinary pre blocks unchanged', () => {
+  test('renders ordinary pre blocks through the shared code block', () => {
     const markup = renderToStaticMarkup(
       <MarkdownPre
         className="language-typescript"
@@ -189,7 +190,8 @@ describe('RuntimeEventContentBlock markdown streaming config', () => {
       </MarkdownPre>,
     )
 
-    expect(markup).toContain('<pre class="language-typescript">')
+    expect(markup).toContain('data-code-block="true"')
+    expect(markup).toContain('const answer = 42')
     expect(markup).not.toContain('data-mermaid-block')
   })
 

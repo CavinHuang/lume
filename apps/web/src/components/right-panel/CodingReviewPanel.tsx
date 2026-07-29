@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useAtomValue, useSetAtom } from 'jotai'
 import { CaseSensitive, Check, ChevronDown, ChevronRight, Columns2, Copy, ExternalLink, EyeOff, FileSearch, FileText, Folder, FolderOpen, History, Image, ListChevronsDownUp, ListChevronsUpDown, Loader2, MoreHorizontal, RefreshCw, Search, Undo2, WrapText } from 'lucide-react'
 import type { HighlightToken } from '@lume/ui'
-import type { CodingTurnPhase, RuntimeCodingFileChange } from '@lume/shared'
+import type { RuntimeCodingFileChange } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -569,13 +569,6 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
           {unseenCount > 0 && <span className="ml-auto text-[11px] text-[var(--lume-text-muted)]">{unseenCount} 个未查看</span>}
         </div>
       </header>
-      <CodingTurnStatusStrip
-        phase={state.phase}
-        verificationRecords={state.verificationRecords}
-        recommendedVerificationCommands={state.recommendedVerificationCommands}
-        gitActions={state.gitActions}
-        review={state.review}
-      />
       {pendingRewind && <div className="border-b border-[color:color-mix(in_oklab,var(--lume-warning)_28%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-warning)_10%,var(--lume-bg-panel))] px-3 py-1.5 text-[11px] text-[var(--lume-warning)]">存在未完成的回退事务（{pendingRewind.operationId.slice(0, 8)}…，{pendingRewind.status}）。{pendingRewind.error && <span className="ml-1 opacity-80">{pendingRewind.error}</span>}</div>}
       {actionError && <div className="border-b border-[color:color-mix(in_oklab,var(--lume-danger)_28%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-danger)_8%,var(--lume-bg-panel))] px-3 py-1.5 text-[11px] text-[var(--lume-danger)]">{actionError}</div>}
       <div className="relative min-h-0 flex-1">
@@ -640,64 +633,6 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
         )}
       </div>
     </section>
-  )
-}
-
-function CodingTurnStatusStrip({
-  phase,
-  verificationRecords,
-  recommendedVerificationCommands,
-  gitActions,
-  review,
-}: {
-  phase?: CodingTurnPhase
-  verificationRecords?: CodingReviewPanelState['verificationRecords']
-  recommendedVerificationCommands?: string[]
-  gitActions?: CodingReviewPanelState['gitActions']
-  review?: CodingReviewPanelState['review']
-}) {
-  const latestVerification = verificationRecords?.at(-1)
-  const latestGitAction = gitActions?.at(-1)
-  const phaseLabel: Record<CodingTurnPhase, string> = {
-    planning: '计划中',
-    awaiting_approval: '等待审批',
-    executing: '执行中',
-    verifying: '验证中',
-    ready_for_review: '待审阅',
-    completed: '已完成',
-    failed: '失败',
-    rewind_conflict: '回退冲突',
-  }
-  const verificationLabel = latestVerification
-    ? `${latestVerification.status === 'passed' ? '验证通过' : latestVerification.status === 'failed' ? '验证失败' : latestVerification.status === 'inconclusive' ? '验证不完整' : '验证中'} · ${latestVerification.command}`
-    : recommendedVerificationCommands?.length
-      ? `建议验证 · ${recommendedVerificationCommands[0]}`
-      : '暂无验证证据'
-
-  return (
-    <div className="border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)]/45 px-3 py-2 text-[11px] text-[var(--lume-text-muted)]" aria-label="Coding Turn 状态">
-      <div className="mb-1.5 flex items-center gap-1.5" aria-label="Coding Turn 阶段时间线">
-        {(["planning", "awaiting_approval", "executing", "verifying", "ready_for_review"] as CodingTurnPhase[]).map((step, index, steps) => {
-          const currentIndex = phase ? steps.indexOf(phase) : -1
-          const active = currentIndex >= index
-          return (
-            <div key={step} className="flex min-w-0 flex-1 items-center gap-1.5">
-              <span className={cn("size-1.5 shrink-0 rounded-full", active ? "bg-[var(--lume-accent)]" : "bg-[var(--lume-border-strong)]")} />
-              <span className={cn("truncate", active && "text-[var(--lume-text-secondary)]")}>{phaseLabel[step]}</span>
-              {index < steps.length - 1 && <span className={cn("h-px min-w-1 flex-1", active && currentIndex > index ? "bg-[var(--lume-accent)]/60" : "bg-[var(--lume-border-subtle)]")} />}
-            </div>
-          )
-        })}
-      </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="font-medium text-[var(--lume-text-primary)]">{phase ? phaseLabel[phase] : 'Coding Turn'}</span>
-        <span className={cn(
-          latestVerification?.status === 'failed' ? 'text-[var(--lume-danger)]' : latestVerification?.status === 'passed' ? 'text-[var(--lume-success)]' : 'text-[var(--lume-text-secondary)]',
-        )} title={latestVerification?.message}>{verificationLabel}</span>
-        {latestGitAction && <span title={latestGitAction.command}>Git · {latestGitAction.kind} · {latestGitAction.status}</span>}
-        {review && <span>审阅 · {review.findings.length ? `${review.findings.length} 个发现` : review.status === 'complete' ? '通过' : '待审阅'}</span>}
-      </div>
-    </div>
   )
 }
 
