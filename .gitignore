@@ -40,3 +40,5 @@ tmp-ui-audit/
 # 临时计划与研究产物，仅本地使用，不进版本库
 /PLAN-*.md
 /codex-*.txt
+# 运行时误写到根的 undefined/ 目录（用户数据目录解析为 undefined 的 bug 产物，需排查根因）
+/undefined/
