@@ -9,7 +9,7 @@ import {
 } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import type { ToolDefinition, ToolExecutionMetadata, ToolResult } from '../types.js'
 import { defineTool } from './types.js'
 
@@ -26,6 +26,7 @@ export interface ProcessJob {
   toolUseId?: string
   workerPid?: number
   processToken?: string
+  workerIdentity?: string
   startedAt?: number
   updatedAt?: number
   heartbeatAt?: number
@@ -333,7 +334,17 @@ function persistProcessJob(job: ProcessJob): void {
     mkdirSync(job.jobDir, { recursive: true })
     const statePath = join(job.jobDir, 'state.json')
     const temporary = `${statePath}.${process.pid}.${Date.now()}.tmp`
-    const serializable = { ...job, stop: undefined }
+    const persisted = readPersistedJob(statePath)
+    const persistedWorkerIdentity = persisted && persisted.processToken === job.processToken
+      ? persisted.workerIdentity
+      : undefined
+    const serializable = {
+      ...job,
+      ...(!job.workerIdentity && persistedWorkerIdentity
+        ? { workerIdentity: persistedWorkerIdentity }
+        : {}),
+      stop: undefined,
+    }
     writeFileSync(temporary, JSON.stringify(serializable, null, 2), 'utf8')
     renameSync(temporary, statePath)
   } catch {
@@ -365,14 +376,19 @@ function isPersistedWorkerAlive(job: ProcessJob): boolean {
   if (job.heartbeatAt && Date.now() - job.heartbeatAt > 15_000) return false
   try {
     process.kill(job.workerPid, 0)
-    return true
   } catch {
     return false
   }
+  if (!job.workerIdentity) return true
+  if (!job.processToken) return false
+  const processIdentity = readProcessIdentity(job.workerPid)
+  return processIdentity !== undefined
+    && job.workerIdentity === `${job.processToken}:${processIdentity}`
 }
 
 function stopPersistedWorker(job: ProcessJob): void {
   if (!job.workerPid || job.workerPid <= 0) return
+  if (job.workerIdentity && !isPersistedWorkerAlive(job)) return
   if (process.platform === 'win32') {
     const child = spawn('taskkill', ['/PID', String(job.workerPid), '/T', '/F'], {
       stdio: 'ignore',
@@ -390,6 +406,38 @@ function stopPersistedWorker(job: ProcessJob): void {
       // Process already exited.
     }
   }
+}
+
+function readProcessIdentity(pid: number): string | undefined {
+  if (!Number.isInteger(pid) || pid <= 0) return undefined
+  if (process.platform === 'linux') {
+    try {
+      const statLine = readFileSync(`/proc/${pid}/stat`, 'utf8')
+      const processNameEnd = statLine.lastIndexOf(')')
+      const fieldsAfterName = statLine.slice(processNameEnd + 2).trim().split(/\s+/)
+      const startTimeTicks = fieldsAfterName[19]
+      return startTimeTicks ? `linux:${startTimeTicks}` : undefined
+    } catch {
+      return undefined
+    }
+  }
+  if (process.platform === 'win32') {
+    const result = spawnSync('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `([DateTimeOffset]((Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime())).ToUnixTimeSeconds()`,
+    ], { encoding: 'utf8', windowsHide: true, timeout: 5_000 })
+    const ticks = result.status === 0 ? result.stdout.trim() : ''
+    return ticks ? `win32:${ticks}` : undefined
+  }
+  const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    encoding: 'utf8',
+    timeout: 5_000,
+  })
+  const startedAt = result.status === 0 ? result.stdout.trim().replace(/\s+/g, ' ') : ''
+  return startedAt ? `${process.platform}:${startedAt}` : undefined
 }
 
 function interruptedExecution(job: ProcessJob): Record<string, unknown> {

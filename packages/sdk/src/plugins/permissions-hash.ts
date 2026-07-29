@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { NormalizedPlugin } from "./normalized.js";
 
 /**
@@ -32,6 +34,8 @@ interface PermissionSummary {
     skills: string[];
     hooksConfigPath: string | null;
     mcpServersConfigPath: string | null;
+    lspServersConfigPath: string | null;
+    lspServersConfigHash: string | null;
     commandTools: Array<Record<string, unknown>>;
   };
 }
@@ -59,9 +63,20 @@ function canonicalSummary(plugin: NormalizedPlugin): PermissionSummary {
         .map((skill) => skill.root),
       hooksConfigPath: plugin.capabilities.hooksConfigPath ?? null,
       mcpServersConfigPath: plugin.capabilities.mcpServersConfigPath ?? null,
+      lspServersConfigPath: plugin.capabilities.lspServersConfigPath ?? null,
+      lspServersConfigHash: capabilityFileHash(plugin, plugin.capabilities.lspServersConfigPath),
       commandTools,
     },
   };
+}
+
+function capabilityFileHash(plugin: NormalizedPlugin, path: string | undefined): string | null {
+  if (!path) return null;
+  try {
+    return createHash("sha256").update(readFileSync(resolve(plugin.root, path))).digest("hex");
+  } catch {
+    return "missing";
+  }
 }
 
 /**

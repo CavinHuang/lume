@@ -6,6 +6,7 @@ import { BashTool, interpretShellExit, looksLikeInteractivePrompt } from "./bash
 import { clearTasks, TaskOutputTool } from "./task-tools";
 import {
   createProcessJobRecord,
+  loadProcessJobs,
   ProcessStopTool,
   updateProcessJob,
   waitForProcessJobTerminal,
@@ -204,6 +205,36 @@ describe("BashTool shell invocation", () => {
     expect(recovered.content).toContain("recovered");
     expect(recovered._meta?.execution).toMatchObject({ version: 2, outcome: "succeeded" });
   }, 15_000);
+
+  test("does not reattach a reused worker PID with a different process identity", async () => {
+    clearTasks();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-identity-"));
+    const jobDir = join(root, "task_identity");
+    createProcessJobRecord({
+      id: "task_identity",
+      subject: "identity mismatch",
+      status: "running",
+      jobDir,
+      workerPid: process.pid,
+      processToken: "expected-token",
+      workerIdentity: "expected-token:not-the-current-process",
+      heartbeatAt: Date.now(),
+    });
+
+    clearTasks();
+    const [recovered] = loadProcessJobs(root);
+
+    expect(recovered).toMatchObject({
+      id: "task_identity",
+      status: "interrupted",
+      metadata: {
+        execution: {
+          version: 2,
+          outcome: "interrupted",
+        },
+      },
+    });
+  });
 
   test("keeps UTF-8 intact when TaskOutput resumes inside a multibyte character", async () => {
     clearTasks();

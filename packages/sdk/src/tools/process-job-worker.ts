@@ -18,6 +18,34 @@ function writeJsonAtomic(path, value) {
   fs.renameSync(temporary, path)
 }
 
+function readProcessIdentity(pid) {
+  if (process.platform === 'linux') {
+    try {
+      const statLine = fs.readFileSync('/proc/' + pid + '/stat', 'utf8')
+      const processNameEnd = statLine.lastIndexOf(')')
+      const fieldsAfterName = statLine.slice(processNameEnd + 2).trim().split(/\s+/)
+      return fieldsAfterName[19] ? 'linux:' + fieldsAfterName[19] : undefined
+    } catch {
+      return undefined
+    }
+  }
+  if (process.platform === 'win32') {
+    return 'win32:' + Math.floor((Date.now() - process.uptime() * 1000) / 1000)
+  }
+  try {
+    const startedAt = cp.execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      timeout: 5000
+    }).trim().replace(/\s+/g, ' ')
+    return startedAt ? process.platform + ':' + startedAt : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const processIdentity = readProcessIdentity(process.pid)
+const workerIdentity = processIdentity ? spec.processToken + ':' + processIdentity : undefined
+
 function updateState(patch) {
   let current = {}
   try { current = JSON.parse(fs.readFileSync(spec.statePath, 'utf8')) } catch {}
@@ -25,6 +53,7 @@ function updateState(patch) {
     version: 2,
     workerPid: process.pid,
     processToken: spec.processToken,
+    workerIdentity,
     updatedAt: Date.now()
   })
   writeJsonAtomic(spec.statePath, next)

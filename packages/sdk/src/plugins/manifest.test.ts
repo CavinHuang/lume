@@ -69,6 +69,21 @@ describe("LumePluginManifest", () => {
     expect(() => parseManifest(raw)).toThrow("hooks");
   });
 
+  test("validates plugin LSP config as a package-relative path", () => {
+    expect(parseManifest({
+      schema: "lume-plugin/v1",
+      name: "my-plugin",
+      version: "1.0.0",
+      lspServers: "./lsp.yaml",
+    }).lspServers).toBe("./lsp.yaml");
+    expect(() => parseManifest({
+      schema: "lume-plugin/v1",
+      name: "my-plugin",
+      version: "1.0.0",
+      lspServers: "../lsp.yaml",
+    })).toThrow("lspServers");
+  });
+
   test("validates version is semver-like", () => {
     const raw = {
       schema: "lume-plugin/v1",
