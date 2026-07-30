@@ -273,6 +273,28 @@ describe("ContextAssembler", () => {
     expect(result.userMessageForModel).toContain("brief.md (text/markdown, 2 KB): docs/brief.md");
   });
 
+  test("adds structured diff comments to the model-facing user message", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-comments",
+      runId: "run-comments",
+      userMessage: "please review",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["Read"],
+      tokenBudget: 1000,
+      commentAttachments: [{
+        id: "comment-1",
+        origin: "diff",
+        position: { path: "src/app.ts", side: "right", line: 12, startLine: 10 },
+        body: "这里需要处理空值",
+        localDiffHunk: "@@ -10,3 +10,3 @@"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain("<diff_comments trust=\"user\">");
+    expect(result.userMessageForModel).toContain("src/app.ts");
+    expect(result.userMessageForModel).toContain("这里需要处理空值");
+  });
+
   test("records context assembly and memory retrieval spans when trace context is provided", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-context-trace-"));
     try {

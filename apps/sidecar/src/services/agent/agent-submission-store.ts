@@ -430,6 +430,7 @@ export function hashAgentSubmission(input: AgentSendInput): string {
     userMessage: input.userMessage,
     messageParts: input.messageParts,
     messageAttachments: input.messageAttachments,
+    commentAttachments: input.commentAttachments,
     modelRef: input.modelRef,
     channelId: input.channelId,
     modelId: input.modelId,

@@ -1,4 +1,4 @@
-import type { AgentMessageAttachmentInput, AgentSendInput } from "@lume/shared";
+import type { AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentSendInput } from "@lume/shared";
 import { estimateTokens, type ContentBlockParam, type TodoState } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
 import {
@@ -38,6 +38,7 @@ export interface ContextAssemblyInput {
   automationExecution?: boolean;
   agentSystemPrompt?: string;
   messageAttachments?: AgentMessageAttachmentInput[];
+  commentAttachments?: AgentDiffCommentAttachment[];
   lumeWorkDir?: string;
   projectRoot?: string;
   availableTools: string[];
@@ -272,6 +273,9 @@ export class ContextAssembler {
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");
     const attachmentBrief = buildMessageAttachmentBrief(input.messageAttachments);
+    const commentBrief = input.commentAttachments?.length
+      ? `<diff_comments trust="user">\n${JSON.stringify(input.commentAttachments).replaceAll("<", "\\u003c")}\n</diff_comments>`
+      : "";
     const desktopContextForPrompt = promptDesktopContext(input.desktopContext);
     const desktopContextBrief = desktopContextForPrompt
       ? `<desktop_context trust="untrusted">\n${JSON.stringify(desktopContextForPrompt)}\n</desktop_context>`
@@ -279,7 +283,8 @@ export class ContextAssembler {
     const userMessageForModel = [
       memoryContext.userMessageForModel,
       desktopContextBrief,
-      attachmentBrief
+      attachmentBrief,
+      commentBrief,
     ]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
       .join("\n\n");

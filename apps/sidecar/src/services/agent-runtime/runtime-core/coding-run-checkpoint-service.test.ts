@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { FileCheckpoint } from "@lume/agent-sdk";
 import {
+  getCodingDiffMediaFromCheckpoint,
   getCodingFileDiffFromCheckpoint,
   loadCodingRunCheckpoint,
   persistCodingRunCheckpoint,
@@ -99,6 +100,49 @@ describe("coding run checkpoints", () => {
       addedLines: 1,
       removedLines: 1,
     });
+  });
+
+  test("keeps historical before and after image bytes behind the media IPC shape", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "lume-coding-media-checkpoint-"));
+    temporaryDirectories.push(cwd);
+    const sessionDir = join(cwd, "session");
+    const path = join(cwd, "image.png");
+    const before = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1]);
+    const after = Buffer.from([0x89, 0x50, 0x4e, 0x47, 2]);
+    await writeFile(path, after);
+    await persistCodingRunCheckpoint({
+      sessionDir,
+      runId: "run-media",
+      cwd,
+      checkpoint: {
+        userMessageId: "message-media",
+        createdAt: new Date().toISOString(),
+        files: {
+          [path]: { path, existed: true, contentBase64: before.toString("base64") },
+        },
+      },
+    });
+    await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47, 3]));
+
+    await expect(getCodingFileDiffFromCheckpoint({
+      sessionDir,
+      runId: "run-media",
+      path: "image.png",
+    })).resolves.toMatchObject({ kind: "media", mediaKind: "image", beforeAvailable: true, afterAvailable: true });
+    const oldMedia = await getCodingDiffMediaFromCheckpoint({
+      sessionDir,
+      runId: "run-media",
+      path: "image.png",
+      side: "before",
+    });
+    const newMedia = await getCodingDiffMediaFromCheckpoint({
+      sessionDir,
+      runId: "run-media",
+      path: "image.png",
+      side: "after",
+    });
+    expect(Buffer.from(oldMedia!.dataBase64, "base64")).toEqual(before);
+    expect(Buffer.from(newMedia!.dataBase64, "base64")).toEqual(after);
   });
 
   test("precomputes separated edits once and preserves unchanged lines between them", async () => {

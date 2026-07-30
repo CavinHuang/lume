@@ -1,14 +1,19 @@
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { rewindCheckpoint, type FileCheckpoint, type FileSnapshot } from "@lume/agent-sdk";
+import type { CodingDiffMediaResult } from "@lume/shared";
 import {
+  createCodingBinaryDiffPayload,
+  createCodingMediaDiffPayload,
   createContentDiffLines,
+  createCodingTextDiffPayload,
   parseUnifiedDiff,
   type CodingDiffLine,
-  type CodingFileDiff,
+  type CodingFileDiffResult,
 } from "./coding-change-service";
 
 const CHECKPOINT_FILE_PREFIX = "coding-checkpoint-";
@@ -169,7 +174,10 @@ async function capturePreviewSnapshot(path: string): Promise<FileSnapshot> {
     const utf8Bom = content.length >= 3 && content[0] === 0xef && content[1] === 0xbb && content[2] === 0xbf;
     const body = content.subarray(utf16 ? 2 : utf8Bom ? 3 : 0);
     if (!utf16 && body.subarray(0, 8192).includes(0)) {
-      return { path, existed: true, unsupported: true };
+      return { path, existed: true, contentBase64: content.toString("base64"), mtimeMs: metadata.mtimeMs };
+    }
+    if (/\.(?:7z|a|avi|avif|bin|bmp|class|dll|dylib|eot|exe|flac|gif|gz|ico|jar|jpe?g|m4a|mkv|mov|mp3|mp4|o|ogg|otf|pdf|png|so|tar|tiff?|ttf|wav|webm|webp|woff2?|xz|zip)$/i.test(path)) {
+      return { path, existed: true, contentBase64: content.toString("base64"), mtimeMs: metadata.mtimeMs };
     }
     const decoded = body.toString(utf16 ? "utf16le" : "utf8");
     return {
@@ -264,7 +272,7 @@ export async function getCodingFileDiffFromCheckpoint(input: {
   runId: string;
   path: string;
   rootId?: string;
-}): Promise<CodingFileDiff | null> {
+}): Promise<CodingFileDiffResult | null> {
   const record = await loadCodingRunCheckpoint(input);
   if (!record) return null;
 
@@ -291,6 +299,37 @@ export async function getCodingFileDiffFromCheckpoint(input: {
     after = await capturePreviewSnapshot(absolutePath);
   }
 
+  const displayPath = isPathInside(record.cwd, absolutePath)
+    ? relative(record.cwd, absolutePath).split(sep).join("/")
+    : input.path;
+  const status = !before.existed && after.existed ? "added" : before.existed && !after.existed ? "deleted" : "modified";
+  const fingerprint = snapshotPairFingerprint(before, after);
+  const mediaKind = checkpointMediaKind(displayPath);
+  if (mediaKind) {
+    return createCodingMediaDiffPayload({
+      rootId: input.rootId ?? codingRootId(selectedRoot),
+      path: displayPath,
+      status,
+      mediaKind,
+      patch: "",
+      fingerprint,
+      addedLines: 0,
+      removedLines: 0,
+      beforeAvailable: before.existed,
+      afterAvailable: after.existed,
+    });
+  }
+  if (before.contentBase64 || after.contentBase64 || checkpointBinaryPath(displayPath)) {
+    return createCodingBinaryDiffPayload({
+      rootId: input.rootId ?? codingRootId(selectedRoot),
+      path: displayPath,
+      status,
+      patch: "",
+      fingerprint,
+      addedLines: 0,
+      removedLines: 0,
+    });
+  }
   const oldContent = getBeforeSnapshotText(record, before, absolutePath);
   const newContent = getSnapshotText(after);
   let persistedDiff = record.diffs?.[absolutePath];
@@ -300,20 +339,132 @@ export async function getCodingFileDiffFromCheckpoint(input: {
     persistedDiff = diffs?.[absolutePath];
   }
   const lines = persistedDiff?.lines ?? await createSnapshotDiffLines(oldContent, newContent);
-  const displayPath = isPathInside(record.cwd, absolutePath)
-    ? relative(record.cwd, absolutePath).split(sep).join("/")
-    : input.path;
-
-  return {
+  return createCodingTextDiffPayload({
     rootId: input.rootId ?? codingRootId(selectedRoot),
     path: displayPath,
-    status: !before.existed && after.existed ? "added" : before.existed && !after.existed ? "deleted" : "modified",
+    status,
     oldContent,
     newContent,
     lines,
     addedLines: persistedDiff?.addedLines ?? lines.filter((line) => line.type === "added").length,
     removedLines: persistedDiff?.removedLines ?? lines.filter((line) => line.type === "removed").length,
+  });
+}
+
+export async function getCodingDiffMediaFromCheckpoint(input: {
+  sessionDir: string;
+  runId: string;
+  path: string;
+  rootId?: string;
+  side: "before" | "after";
+}): Promise<CodingDiffMediaResult | null> {
+  const record = await loadCodingRunCheckpoint(input);
+  if (!record) return null;
+  const roots = record.roots?.length ? record.roots : [record.cwd];
+  const selectedRoot = resolveRepositoryRoot(record, input.rootId);
+  if (!selectedRoot) throw new Error(`找不到 Coding 根目录: ${input.rootId}`);
+  const absolutePath = resolve(selectedRoot, input.path);
+  if (!roots.some((root) => isPathInside(root, absolutePath))) {
+    throw new Error("文件路径超出 Coding Run 的授权目录");
+  }
+  await assertNoSymlinkPathForRoots(roots, absolutePath);
+  const before = Object.values(record.checkpoint.files)
+    .find((snapshot) => resolve(snapshot.path) === absolutePath);
+  if (!before) return null;
+  let after = record.afterSnapshots?.[absolutePath];
+  if (!after) {
+    const expected = record.after?.[absolutePath];
+    const current = (await captureFingerprints([absolutePath]))[absolutePath] ?? { exists: false };
+    if (!expected || !fingerprintsEqual(expected, current)) {
+      throw new Error("该历史 Run 未保存最终媒体，且文件已在后续发生变化");
+    }
+    after = await capturePreviewSnapshot(absolutePath);
+  }
+  const snapshot = input.side === "before" ? before : after;
+  const data = snapshotBuffer(record, snapshot, absolutePath, input.side);
+  if (!data) throw new Error(input.side === "before" ? "文件没有可用的旧版本" : "文件没有可用的新版本");
+  if (data.length > 15 * 1024 * 1024) throw new Error("媒体文件过大，无法预览");
+  return {
+    mediaType: checkpointMediaType(input.path),
+    size: data.length,
+    dataBase64: data.toString("base64"),
   };
+}
+
+function snapshotPairFingerprint(before: FileSnapshot, after: FileSnapshot): string {
+  const hash = createHash("sha256");
+  for (const snapshot of [before, after]) {
+    hash.update(snapshot.existed ? "1" : "0");
+    hash.update("\0");
+    hash.update(snapshot.contentBase64 ?? snapshot.content ?? (snapshot.unsupported ? "unsupported" : ""));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+function checkpointMediaKind(path: string): "image" | "pdf" | undefined {
+  if (/\.pdf$/i.test(path)) return "pdf";
+  if (/\.(?:avif|bmp|gif|ico|jpe?g|png|tiff?|webp)$/i.test(path)) return "image";
+  return undefined;
+}
+
+function checkpointBinaryPath(path: string): boolean {
+  return /\.(?:7z|a|avi|bin|class|dll|dylib|eot|exe|flac|gz|jar|m4a|mkv|mov|mp3|mp4|o|ogg|otf|so|tar|ttf|wav|webm|woff2?|xz|zip)$/i.test(path);
+}
+
+function checkpointMediaType(path: string): string {
+  const extension = path.toLowerCase().match(/\.([^.\\/]+)$/)?.[1];
+  const types: Record<string, string> = {
+    avif: "image/avif", bmp: "image/bmp", gif: "image/gif", ico: "image/x-icon",
+    jpeg: "image/jpeg", jpg: "image/jpeg", png: "image/png", tif: "image/tiff",
+    tiff: "image/tiff", webp: "image/webp", pdf: "application/pdf",
+  };
+  return types[extension ?? ""] ?? "application/octet-stream";
+}
+
+function snapshotBuffer(
+  record: CodingRunCheckpointRecord,
+  snapshot: FileSnapshot,
+  absolutePath: string,
+  side: "before" | "after",
+): Buffer | null {
+  if (!snapshot.existed) return null;
+  if (snapshot.contentBase64) return Buffer.from(snapshot.contentBase64, "base64");
+  if (snapshot.content !== undefined) {
+    const body = Buffer.from(snapshot.content, snapshot.encoding === "utf16le" ? "utf16le" : "utf8");
+    if (!snapshot.bom) return body;
+    return Buffer.concat([
+      snapshot.encoding === "utf16le" ? Buffer.from([0xff, 0xfe]) : Buffer.from([0xef, 0xbb, 0xbf]),
+      body,
+    ]);
+  }
+  if (side === "before") return readBaselineBuffer(record, absolutePath);
+  const expected = record.after?.[absolutePath];
+  try {
+    const current = {
+      exists: true,
+      size: statSync(absolutePath).size,
+      hash: createHash("sha256").update(readFileSync(absolutePath)).digest("hex"),
+    };
+    return expected && fingerprintsEqual(expected, current) ? readFileSync(absolutePath) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readBaselineBuffer(record: CodingRunCheckpointRecord, absolutePath: string): Buffer | null {
+  const gitRoot = findGitRootForPath(absolutePath);
+  if (!gitRoot || !isPathInside(gitRoot, absolutePath)) return null;
+  const baselineCommit = record.baselineCommits?.[resolve(gitRoot)]
+    ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
+  if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
+  const gitPath = relative(gitRoot, absolutePath).split(sep).join("/");
+  const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {
+    cwd: gitRoot,
+    windowsHide: true,
+    maxBuffer: 15 * 1024 * 1024,
+  });
+  return result.status === 0 && Buffer.isBuffer(result.stdout) ? result.stdout : null;
 }
 
 export async function getCodingRunRoots(input: {

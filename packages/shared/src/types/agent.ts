@@ -852,6 +852,8 @@ export interface AgentSendInput {
   thinkingLevel?: AgentThinkingLevel
   /** 已保存到线程文件区、并绑定到本轮用户消息的附件引用 */
   messageAttachments?: AgentMessageAttachmentInput[]
+  /** Diff 审阅中创建、随本轮消息发送的结构化行评论。 */
+  commentAttachments?: AgentDiffCommentAttachment[]
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
   /** 重发目标消息 ID */
@@ -888,6 +890,7 @@ export interface AgentQueuedMessage {
   blockedReason?: string
   messageParts?: AgentUserMessagePart[]
   messageAttachments?: AgentMessageAttachmentInput[]
+  commentAttachments?: AgentDiffCommentAttachment[]
   clientSubmissionId?: string
   modelRef?: string
   channelId?: string
@@ -899,6 +902,22 @@ export interface AgentQueuedMessage {
   capabilityFingerprints?: Array<{ uri: string; fingerprint: string }>
   /** Internal runtime continuation; not user-editable queue content. */
   internal?: boolean
+}
+
+export interface AgentDiffCommentAttachment {
+  id: string
+  origin: 'diff'
+  position: {
+    path: string
+    rootId?: string
+    runId?: string
+    side: 'left' | 'right'
+    line: number
+    startLine?: number
+    startSide?: 'left' | 'right'
+  }
+  body: string
+  localDiffHunk?: string
 }
 
 /** Main-agent-owned persistent Task claim used by task-linked Agent/Delegate dispatch. */
@@ -988,6 +1007,7 @@ export interface AgentUpdateQueuedMessageInput {
   userMessage: string
   messageParts?: AgentUserMessagePart[]
   messageAttachments?: AgentMessageAttachmentInput[]
+  commentAttachments?: AgentDiffCommentAttachment[]
 }
 
 export interface AgentMessageQueueOperationResult {
@@ -1991,14 +2011,24 @@ export const AGENT_IPC_CHANNELS = {
   READ_PROJECT_FILE: 'agent:read-project-file',
   /** 获取当前 Coding 工作区变更集合 */
   GET_CODING_CHANGE_SET: 'agent:get-coding-change-set',
+  /** 获取 Review 可用的分支与最近提交来源 */
+  GET_CODING_REVIEW_SOURCES: 'agent:get-coding-review-sources',
+  /** 搜索当前 Review 来源中的文件路径和 Diff hunk 内容 */
+  SEARCH_CODING_REVIEW: 'agent:search-coding-review',
   /** 获取单个 Coding 文件的 old/new diff 内容 */
   GET_CODING_DIFF: 'agent:get-coding-diff',
-  /** 撤销 Git 工作区中的单个 Coding 文件变更 */
-  REVERT_CODING_FILE: 'agent:revert-coding-file',
-  /** 撤销一次 Coding Run 中捕获的全部文件变更 */
-  REVERT_CODING_RUN: 'agent:revert-coding-run',
-  /** 回退 Coding Turn 的文件状态并截断其后的会话消息 */
-  REWIND_CODING_TURN: 'agent:rewind-coding-turn',
+  /** 执行经过 Sidecar 重新校验的文件或 hunk Git 操作 */
+  APPLY_CODING_DIFF_ACTION: 'agent:apply-coding-diff-action',
+  /** 按需读取 Diff before/after 富媒体内容 */
+  GET_CODING_DIFF_MEDIA: 'agent:get-coding-diff-media',
+  /** 获取源码行 Git blame 元数据 */
+  GET_CODING_BLAME: 'agent:get-coding-blame',
+  /** 获取经过项目边界校验的 Coding 文件打开目标 */
+  GET_CODING_FILE_OPEN_TARGETS: 'agent:get-coding-file-open-targets',
+  /** 获取当前 Coding 仓库可提交、可推送状态 */
+  GET_CODING_REPOSITORY_PUBLISH_STATE: 'agent:get-coding-repository-publish-state',
+  /** 提交已暂存内容或推送当前分支 */
+  APPLY_CODING_REPOSITORY_PUBLISH_ACTION: 'agent:apply-coding-repository-publish-action',
   /** 只读读取项目绑定目录二进制文件 */
   READ_PROJECT_FILE_DATA: 'agent:read-project-file-data',
   /** 将旧版资源只读导出到项目根目录，不覆盖同名内容 */

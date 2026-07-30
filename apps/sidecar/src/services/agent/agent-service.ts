@@ -960,6 +960,7 @@ export async function sendAgentMessage(
     ...(input.messageMetadata ?? {}),
     ...(input.traceContext ? { traceContext: input.traceContext } : {}),
     ...(input.messageAttachments?.length ? { messageAttachments: input.messageAttachments } : {}),
+    ...(input.commentAttachments?.length ? { commentAttachments: input.commentAttachments } : {}),
     ...(input.messageParts ? { messageParts: normalizedUserMessage.parts } : {}),
     ...(normalizedUserMessage.capabilityReferences.length ? {
       capabilityReferences: normalizedUserMessage.capabilityReferences.map((reference) => reference.uri),
@@ -1532,6 +1533,7 @@ export function promoteQueuedAgentMessageToGuidance(
     !candidate
     || isBackgroundWakeInput(candidate.input)
     || candidate.input.messageAttachments?.length
+    || candidate.input.commentAttachments?.length
     || candidate.input.messageParts?.some((part) => part.type === "capability_ref")
     || typeof candidate.input.messageMetadata?.desktopContextSnapshotId === "string"
     || !candidate.input.userMessage.trim()
@@ -1576,6 +1578,7 @@ export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): 
       userMessage: input.userMessage,
       ...(input.messageParts ? { messageParts: input.messageParts } : {}),
       ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
+      ...(input.commentAttachments ? { commentAttachments: input.commentAttachments } : {}),
       messageMetadata
     });
     if (!updated) {
@@ -1696,6 +1699,7 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
     ...(dispatch.blockedReason ? { blockedReason: dispatch.blockedReason } : {}),
     ...(dispatch.input.messageParts ? { messageParts: dispatch.input.messageParts } : {}),
     ...(dispatch.input.messageAttachments ? { messageAttachments: dispatch.input.messageAttachments } : {}),
+    ...(dispatch.input.commentAttachments ? { commentAttachments: dispatch.input.commentAttachments } : {}),
     ...(dispatch.input.clientSubmissionId ? { clientSubmissionId: dispatch.input.clientSubmissionId } : {}),
     ...(dispatch.input.modelRef ? { modelRef: dispatch.input.modelRef } : {}),
     ...(dispatch.input.channelId ? { channelId: dispatch.input.channelId } : {}),

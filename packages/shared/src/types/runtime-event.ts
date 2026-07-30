@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding, FileReferenceProtocolVersion } from "./agent";
+import type { AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding, FileReferenceProtocolVersion } from "./agent";
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
@@ -80,6 +80,7 @@ export interface UserMessageSubmittedRuntimeEvent extends RuntimeEventBase {
   type: "message.user.submitted";
   text: string;
   attachments?: AgentMessageAttachmentInput[];
+  commentAttachments?: AgentDiffCommentAttachment[];
   messageId?: string;
   versionGroupId?: string;
   versionIndex?: number;
@@ -426,6 +427,230 @@ export interface RuntimeCodingFileChange {
   newContentAvailable?: boolean;
   state?: CodingChangedFileState;
   previousPath?: string;
+}
+
+export type CodingReviewStageFilter = "uncommitted" | "unstaged" | "staged";
+
+export type CodingReviewSource =
+  | { kind: CodingReviewStageFilter }
+  | { kind: "branch"; baseRef: string }
+  | { kind: "commit"; commitSha: string };
+
+export interface CodingReviewCommit {
+  sha: string
+  subject: string
+  authoredAt: string
+}
+
+export interface CodingReviewSourcesResult {
+  available: boolean
+  rootId?: string
+  currentBranch?: string
+  defaultBaseRef?: string
+  branches: string[]
+  commits: CodingReviewCommit[]
+  reason?: string
+}
+
+export interface CodingReviewSearchFile {
+  path: string
+  rootId?: string
+}
+
+export interface CodingReviewSearchMatch {
+  path: string
+  rootId?: string
+  kind: 'path' | 'line'
+  side?: 'additions' | 'deletions' | 'context'
+  lineNumber?: number
+  preview: string
+  matchStart: number
+  matchLength: number
+}
+
+export interface CodingReviewSearchInput {
+  threadId: string
+  runId?: string
+  reviewSource?: CodingReviewSource
+  files: CodingReviewSearchFile[]
+  query: string
+  limit?: number
+}
+
+export interface CodingReviewSearchResult {
+  matches: CodingReviewSearchMatch[]
+  truncated: boolean
+}
+
+export interface CodingDiffActions {
+  isGit: boolean
+  staged: boolean
+  unstaged: boolean
+  canStage: boolean
+  canUnstage: boolean
+  unavailableReason?: string
+}
+
+export interface CodingTextDiffPayload {
+  kind: 'text'
+  rootId?: string
+  path: string
+  status: RuntimeCodingFileChange['status']
+  oldContent: string
+  newContent: string
+  patch: string
+  diffHash: string
+  addedLines: number
+  removedLines: number
+  actions: CodingDiffActions
+}
+
+export interface CodingMediaDiffPayload {
+  kind: 'media'
+  mediaKind: 'markdown' | 'image' | 'svg' | 'pdf'
+  rootId?: string
+  path: string
+  status: RuntimeCodingFileChange['status']
+  diffHash: string
+  addedLines: number
+  removedLines: number
+  beforeAvailable: boolean
+  afterAvailable: boolean
+  actions: CodingDiffActions
+}
+
+export interface CodingBinaryDiffPayload {
+  kind: 'binary'
+  rootId?: string
+  path: string
+  status: RuntimeCodingFileChange['status']
+  diffHash: string
+  addedLines: number
+  removedLines: number
+  actions: CodingDiffActions
+}
+
+export type CodingDiffPayload = CodingTextDiffPayload | CodingMediaDiffPayload | CodingBinaryDiffPayload
+
+interface CodingDiffActionBase {
+  threadId: string
+  runId?: string
+  rootId?: string
+  stageFilter?: CodingReviewStageFilter
+  action: 'stage' | 'unstage'
+}
+
+export interface CodingFileDiffActionInput extends CodingDiffActionBase {
+  path: string
+  scope: 'file' | 'hunk'
+  hunkIndex?: number
+  expectedDiffHash: string
+}
+
+export interface CodingSectionDiffActionInput extends CodingDiffActionBase {
+  scope: 'section'
+  files: Array<{
+    path: string
+    expectedDiffHash: string
+  }>
+}
+
+export type CodingDiffActionInput = CodingFileDiffActionInput | CodingSectionDiffActionInput
+
+export interface CodingDiffActionResult {
+  ok: true
+  diff?: CodingDiffPayload
+}
+
+export interface CodingDiffMediaInput {
+  threadId: string
+  runId?: string
+  rootId?: string
+  reviewSource?: CodingReviewSource
+  path: string
+  side: 'before' | 'after'
+}
+
+export interface CodingDiffMediaResult {
+  mediaType: string
+  size: number
+  dataBase64: string
+}
+
+export interface CodingBlameLine {
+  lineNumber: number
+  commit: string
+  author: string
+  authorTime?: string
+  summary?: string
+  committed: boolean
+  commitUrl?: string
+}
+
+export interface CodingBlameResult {
+  available: boolean
+  lines: CodingBlameLine[]
+}
+
+export interface CodingFileOpenTargets {
+  absolutePath?: string
+  remoteFileUrl?: string
+  remoteProvider?: 'github' | 'gitlab'
+  revision?: string
+}
+
+export type CodingRepositoryPublishState =
+  | {
+      available: false
+      reason: string
+    }
+  | {
+      available: true
+      rootId: string
+      rootLabel: string
+      branch: string
+      upstream?: string
+      head: string
+      indexHash: string
+      worktreeHash: string
+      stagedCount: number
+      unstagedCount: number
+      untrackedCount: number
+      ahead: number
+      behind: number
+      canCommit: boolean
+      canPush: boolean
+    }
+
+interface CodingRepositoryPublishActionBase {
+  threadId: string
+  runId?: string
+  rootId?: string
+  expectedBranch: string
+  expectedHead: string
+}
+
+export interface CodingRepositoryCommitInput extends CodingRepositoryPublishActionBase {
+  action: 'commit' | 'commit_and_push'
+  message: string
+  expectedIndexHash: string
+  includeUnstagedChanges?: boolean
+  expectedWorktreeHash?: string
+}
+
+export interface CodingRepositoryPushInput extends CodingRepositoryPublishActionBase {
+  action: 'push'
+}
+
+export type CodingRepositoryPublishActionInput =
+  | CodingRepositoryCommitInput
+  | CodingRepositoryPushInput
+
+export interface CodingRepositoryPublishActionResult {
+  state: CodingRepositoryPublishState
+  commitHash?: string
+  pushCompleted: boolean
+  error?: string
 }
 
 export interface RuntimeCodingChangeSet {

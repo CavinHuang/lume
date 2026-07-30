@@ -191,6 +191,7 @@ export interface CreateRuntimeCoreSessionInput {
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
   messageAttachments?: AgentSendInput["messageAttachments"];
+  commentAttachments?: AgentSendInput["commentAttachments"];
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -2038,6 +2039,7 @@ export async function createRuntimeCoreSession(
       : subagentDefinition?.prompt,
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
+    commentAttachments: input.commentAttachments,
     availableTools: toolset.availableToolNames,
     enabledPlugins,
     tokenBudget: contextTokenBudget,

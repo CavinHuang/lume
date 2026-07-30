@@ -424,6 +424,7 @@ export class LumeRunner {
       chatType: input.chatType,
       permissionMode: input.permissionMode,
       messageAttachments: input.messageAttachments,
+      commentAttachments: input.commentAttachments,
       messageMetadata: input.messageMetadata,
       emitSdkMessage: this.emit.onSdkMessage,
       emitRuntimeEvent: this.emit.onRuntimeEvent,

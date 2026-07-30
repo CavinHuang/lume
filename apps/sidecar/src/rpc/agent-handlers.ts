@@ -25,7 +25,6 @@ import {
   toggleAgentThreadPin,
   forkAgentThread,
   truncateAgentMessagesFrom,
-  truncateAgentMessagesAfter,
   clearAgentThreadMessages,
   updateAgentThreadMeta,
   archiveAgentThread,
@@ -38,7 +37,7 @@ import {
   cleanupExpiredTrash,
   emptyTrash,
 } from "../services/agent/agent-thread-manager";
-import { getAgentMessageVersions, getLatestVisibleAssistantMessageForTurn } from "../services/agent/agent-message-versioning-service";
+import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentSubmissionStore } from "../services/agent/agent-submission-store";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import {
@@ -172,22 +171,24 @@ import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-c
 import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
 import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
 import {
+  applyCodingDiffAction,
+  getCodingBlame,
   getCodingChangeSet,
+  getCodingDiffMedia,
+  getCodingFileOpenTargets,
+  searchCodingDiffLines,
+  searchCodingReview,
+  type SearchableCodingDiff,
+  getCodingReviewSources,
+  getCodingRepositoryPublishState,
+  applyCodingRepositoryPublishAction,
   getCodingFileDiff
 } from "../services/agent-runtime/runtime-core/coding-change-service";
 import {
+  getCodingDiffMediaFromCheckpoint,
   getCodingFileDiffFromCheckpoint,
-  getCodingRunCheckpointPaths,
-  getCodingRunRoots,
-  revertCodingFileFromCheckpoint,
-  revertCodingRun
+  getCodingRunRoots
 } from "../services/agent-runtime/runtime-core/coding-run-checkpoint-service";
-import {
-  createCodingRewindJournal,
-  listIncompleteCodingRewindJournals,
-  updateCodingRewindJournal
-} from "../services/agent-runtime/runtime-core/coding-rewind-journal";
-import { getCodingTurnRecord, updateCodingTurnRecord } from "../services/agent-runtime/runtime-core/coding-turn-store";
 import {
   buildColdStartContinuationMessage,
   LumeResumeService,
@@ -242,9 +243,12 @@ import {
   attachWorkspaceResourceToThreadInputSchema,
   copyFolderToThreadInputSchema,
   codingChangeSetInputSchema,
+  codingDiffActionInputSchema,
+  codingDiffMediaInputSchema,
   codingFileInputSchema,
-  codingRunInputSchema,
-  codingTurnInputSchema,
+  codingRepositoryInputSchema,
+  codingRepositoryPublishActionInputSchema,
+  codingReviewSearchInputSchema,
   deleteSkillInputSchema,
   editableSkillInputSchema,
   fileRefInputSchema,
@@ -1437,6 +1441,68 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(workspaceRequiredPathInputSchema, params, AGENT_IPC_CHANNELS.READ_PROJECT_FILE);
       return readProjectPath(input.workspaceSlug, input.path);
     },
+    [AGENT_IPC_CHANNELS.GET_CODING_REVIEW_SOURCES]: async (params) => {
+      const input = validateInput(
+        codingRepositoryInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_CODING_REVIEW_SOURCES
+      );
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingReviewSources(workdir.agentCwd, {
+        rootId: input.rootId,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.SEARCH_CODING_REVIEW]: async (params) => {
+      const input = validateInput(
+        codingReviewSearchInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.SEARCH_CODING_REVIEW
+      );
+      if (input.runId && !input.reviewSource) {
+        const queue = input.files.map((file, index) => ({ file, index }));
+        const files: Array<SearchableCodingDiff | undefined> = new Array(input.files.length);
+        const worker = async () => {
+          while (queue.length > 0) {
+            const item = queue.shift();
+            if (!item) return;
+            const { file, index } = item;
+            const diff = await getCodingFileDiffFromCheckpoint({
+              sessionDir: getRuntimeCoreSessionDir(input.threadId),
+              runId: input.runId!,
+              path: file.path,
+              rootId: file.rootId,
+            }).catch(() => null);
+            files[index] = {
+              ...file,
+              lines: diff?.kind === "text" ? diff.lines : [],
+            };
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(6, queue.length) }, worker));
+        return searchCodingDiffLines(
+          files.filter((file): file is SearchableCodingDiff => file !== undefined),
+          input.query,
+          input.limit
+        );
+      }
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return searchCodingReview(workdir.agentCwd, {
+        query: input.query,
+        limit: input.limit,
+        files: input.files,
+        reviewSource: input.reviewSource,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
     [AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET]: async (params) => {
       const input = validateInput(codingChangeSetInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET);
       const workdir = resolveAgentThreadWorkdir(input.threadId);
@@ -1446,24 +1512,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       });
       const changeSet = await getCodingChangeSet(workdir.agentCwd, {
         paths: input.paths,
+        reviewSource: input.reviewSource,
         roots: roots.filter((root) => root !== workdir.agentCwd),
       });
-      const pendingRewind = (await listIncompleteCodingRewindJournals(getRuntimeCoreSessionDir(input.threadId)))
-        .filter((journal) => journal.status !== "failed" && journal.status !== "completed")
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-      return pendingRewind
-        ? {
-            ...changeSet,
-            pendingRewind: {
-              operationId: pendingRewind.operationId,
-              status: pendingRewind.status,
-              restoredFiles: pendingRewind.restoredFiles,
-              conflicts: pendingRewind.conflicts,
-              nonRewindableFiles: pendingRewind.nonRewindableFiles,
-              ...(pendingRewind.error ? { error: pendingRewind.error } : {})
-            }
-          }
-        : changeSet;
+      return changeSet;
     },
     [AGENT_IPC_CHANNELS.GET_CODING_DIFF]: async (params) => {
       const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_DIFF);
@@ -1472,6 +1524,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         sessionDir: getRuntimeCoreSessionDir(input.threadId),
         runId: input.runId,
       });
+      const diffOptions = {
+        rootId: input.rootId,
+        reviewSource: input.reviewSource,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      };
       if (input.runId) {
         const checkpointDiff = await getCodingFileDiffFromCheckpoint({
           sessionDir: getRuntimeCoreSessionDir(input.threadId),
@@ -1479,197 +1536,129 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           path: input.path,
           rootId: input.rootId,
         });
-        if (checkpointDiff) return checkpointDiff;
+        if (checkpointDiff) {
+          const currentDiff = await getCodingFileDiff(workdir.agentCwd, input.path, diffOptions).catch(() => null);
+          if (
+            currentDiff?.kind === "text"
+            && checkpointDiff.kind === "text"
+            && currentDiff.oldContent === checkpointDiff.oldContent
+            && currentDiff.newContent === checkpointDiff.newContent
+          ) {
+            return currentDiff;
+          }
+          return checkpointDiff;
+        }
       }
-      return getCodingFileDiff(workdir.agentCwd, input.path, {
+      return getCodingFileDiff(workdir.agentCwd, input.path, diffOptions);
+    },
+    [AGENT_IPC_CHANNELS.APPLY_CODING_DIFF_ACTION]: async (params) => {
+      const input = validateInput(codingDiffActionInputSchema, params, AGENT_IPC_CHANNELS.APPLY_CODING_DIFF_ACTION);
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        throw new Error("Coding Run 尚未结束，无法修改文件或 Git index");
+      }
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      const actionPaths = input.scope === "section"
+        ? input.files.map((file) => file.path)
+        : [input.path];
+      const changeSet = await getCodingChangeSet(workdir.agentCwd, {
+        paths: actionPaths,
+        reviewSource: { kind: input.stageFilter ?? "uncommitted" },
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+      const repository = input.rootId
+        ? changeSet.repositories?.find((candidate) => candidate.rootId === input.rootId)
+        : changeSet.repositories?.[0];
+      if (repository?.kind !== "git") {
+        throw new Error("非 Git 项目不支持 Git Diff 操作");
+      }
+      return applyCodingDiffAction(workdir.agentCwd, input, {
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.GET_CODING_DIFF_MEDIA]: async (params) => {
+      const input = validateInput(codingDiffMediaInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_DIFF_MEDIA);
+      if (input.runId) {
+        const checkpointMedia = await getCodingDiffMediaFromCheckpoint({
+          sessionDir: getRuntimeCoreSessionDir(input.threadId),
+          runId: input.runId,
+          path: input.path,
+          rootId: input.rootId,
+          side: input.side,
+        });
+        if (checkpointMedia) return checkpointMedia;
+      }
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingDiffMedia(workdir.agentCwd, input.path, input.side, {
+        rootId: input.rootId,
+        reviewSource: input.reviewSource,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.GET_CODING_BLAME]: async (params) => {
+      const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_BLAME);
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingBlame(workdir.agentCwd, input.path, {
         rootId: input.rootId,
         roots: roots.filter((root) => root !== workdir.agentCwd),
       });
     },
-    [AGENT_IPC_CHANNELS.REVERT_CODING_FILE]: async (params) => {
-      const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.REVERT_CODING_FILE);
-      if (isAgentRuntimeSessionActive(input.threadId)) {
-        throw new Error("Coding Run 尚未结束，无法撤销文件");
-      }
-      if (!input.runId) {
-        throw new Error("单文件撤销需要绑定当前 Coding Run 的检查点");
-      }
-      return revertCodingFileFromCheckpoint({
-        sessionDir: getRuntimeCoreSessionDir(input.threadId),
-        runId: input.runId,
-        path: input.path,
-        rootId: input.rootId
-      });
-    },
-    [AGENT_IPC_CHANNELS.REVERT_CODING_RUN]: async (params) => {
-      const input = validateInput(codingRunInputSchema, params, AGENT_IPC_CHANNELS.REVERT_CODING_RUN);
-      if (isAgentRuntimeSessionActive(input.threadId)) {
-        throw new Error("Coding Run 尚未结束，无法撤销文件");
-      }
-      return revertCodingRun({
+    [AGENT_IPC_CHANNELS.GET_CODING_FILE_OPEN_TARGETS]: async (params) => {
+      const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_FILE_OPEN_TARGETS);
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
         sessionDir: getRuntimeCoreSessionDir(input.threadId),
         runId: input.runId,
       });
+      return getCodingFileOpenTargets(workdir.agentCwd, input.path, {
+        rootId: input.rootId,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
     },
-    [AGENT_IPC_CHANNELS.REWIND_CODING_TURN]: async (params) => {
-      const input = validateInput(codingTurnInputSchema, params, AGENT_IPC_CHANNELS.REWIND_CODING_TURN);
+    [AGENT_IPC_CHANNELS.GET_CODING_REPOSITORY_PUBLISH_STATE]: async (params) => {
+      const input = validateInput(
+        codingRepositoryInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_CODING_REPOSITORY_PUBLISH_STATE,
+      );
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingRepositoryPublishState(workdir.agentCwd, {
+        rootId: input.rootId,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.APPLY_CODING_REPOSITORY_PUBLISH_ACTION]: async (params) => {
+      const input = validateInput(
+        codingRepositoryPublishActionInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.APPLY_CODING_REPOSITORY_PUBLISH_ACTION,
+      );
       if (isAgentRuntimeSessionActive(input.threadId)) {
-        throw new Error("Coding Run 尚未结束，无法回退会话");
+        throw new Error("Coding Run 尚未结束，无法提交或推送");
       }
-      const resolvedAssistantMessageId = input.assistantMessageId
-        ?? getLatestVisibleAssistantMessageForTurn(input.threadId, input.turnId)?.id;
-      const messages = getAgentThreadMessages(input.threadId);
-      const target = resolvedAssistantMessageId
-        ? messages.find((message) => message.id === resolvedAssistantMessageId)
-        : undefined;
-      if (!target || target.role !== "assistant") {
-        throw new Error("找不到可回退的 Assistant 消息");
-      }
-      const runStore = createFileBackedLumeRunStateStore(getRuntimeCoreSessionDir(input.threadId));
-      const run = (await runStore.listByThread(input.threadId))
-        .reverse()
-        .find((candidate) => candidate.codingReport?.turnId === input.turnId);
-      if (!run?.codingReport?.runId || run.codingReport.canRewind !== true) {
-        throw new Error("当前 Coding Turn 没有可用的文件检查点");
-      }
-      const sessionDir = getRuntimeCoreSessionDir(input.threadId);
-      const turnRecord = await getCodingTurnRecord(sessionDir, input.turnId);
-      if (!turnRecord || !turnRecord.runIds.includes(run.codingReport.runId) || turnRecord.checkpointId !== run.codingReport.checkpointId) {
-        throw new Error("当前会话缺少完整的 Coding Turn 记录，无法安全回退");
-      }
-
-      const incompleteJournals = await listIncompleteCodingRewindJournals(sessionDir);
-      const resumableJournal = incompleteJournals.find((candidate) => (
-        candidate.turnId === input.turnId
-        && candidate.runId === run.codingReport?.runId
-        && candidate.assistantMessageId === resolvedAssistantMessageId
-      ));
-      const activeJournal = incompleteJournals.find((candidate) => candidate !== resumableJournal);
-      if (activeJournal) {
-        throw new Error(`存在另一个未完成的 Coding 回退事务（${activeJournal.operationId}），请先处理恢复状态`);
-      }
-      const checkpointPaths = await getCodingRunCheckpointPaths({
-        sessionDir,
-        runId: run.codingReport.runId,
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
       });
-      let journal = resumableJournal ?? await createCodingRewindJournal({
-        sessionDir,
-        runId: run.codingReport.runId,
-        turnId: input.turnId,
-        assistantMessageId: resolvedAssistantMessageId!,
-        files: checkpointPaths
+      return applyCodingRepositoryPublishAction(workdir.agentCwd, input, {
+        roots: roots.filter((root) => root !== workdir.agentCwd),
       });
-
-      let fileResult: Awaited<ReturnType<typeof revertCodingRun>>;
-      if (journal.status === "files_applied" || journal.status === "transcript_applying") {
-        fileResult = {
-          filesChanged: journal.restoredFiles,
-          conflicts: [],
-          nonRewindableFiles: [],
-          status: "restored"
-        };
-      } else {
-        try {
-          journal = await updateCodingRewindJournal(journal, {
-            status: "files_applying",
-            conflicts: [],
-            nonRewindableFiles: [],
-            error: undefined,
-          });
-          const pendingPaths = journal.files.filter((path) => !journal.restoredFiles.includes(path));
-          fileResult = await revertCodingRun({
-            sessionDir,
-            runId: run.codingReport.runId,
-            ...(pendingPaths.length > 0 ? { paths: pendingPaths } : {}),
-            onFileRestored: async (path) => {
-              journal = await updateCodingRewindJournal(journal, {
-                restoredFiles: [...new Set([...journal.restoredFiles, path])],
-              });
-            },
-          });
-        } catch (error) {
-          await updateCodingRewindJournal(journal, {
-            status: "failed",
-            error: error instanceof Error ? error.message : String(error)
-          });
-          await runStore.update(run.runId, {
-            codingReport: { ...run.codingReport, rewindState: "partial" }
-          });
-          await updateCodingTurnRecord(sessionDir, input.turnId, { rewindState: "partial", terminationReason: "rewind_failed" });
-          throw error;
-        }
-      }
-      journal = await updateCodingRewindJournal(journal, {
-        status: fileResult.status === "restored" ? "files_applied" : "partial",
-        restoredFiles: [...new Set([...journal.restoredFiles, ...fileResult.filesChanged])],
-        conflicts: fileResult.conflicts,
-        nonRewindableFiles: fileResult.nonRewindableFiles
-      });
-      if (fileResult.status !== "restored") {
-        await runStore.update(run.runId, {
-          codingReport: {
-            ...run.codingReport,
-            rewindState: fileResult.status === "conflict" ? "conflict" : "committed_boundary",
-            nonRewindableFiles: fileResult.nonRewindableFiles
-          }
-        });
-        await updateCodingTurnRecord(sessionDir, input.turnId, {
-          rewindState: fileResult.status === "conflict" ? "conflict" : "committed_boundary",
-          terminationReason: "rewind_preflight_blocked"
-        });
-        return {
-          turnId: input.turnId,
-          keptAssistantMessageId: resolvedAssistantMessageId!,
-          removedMessageCount: 0,
-          fileRewind: {
-            status: "partial" as const,
-            restoredFiles: fileResult.filesChanged,
-            skippedFiles: fileResult.nonRewindableFiles,
-            conflicts: fileResult.conflicts,
-            nonRewindableFiles: fileResult.nonRewindableFiles
-          },
-          transcriptRewind: { status: "unchanged" as const }
-        };
-      }
-      let transcriptResult: ReturnType<typeof truncateAgentMessagesAfter>;
-      try {
-        journal = await updateCodingRewindJournal(journal, { status: "transcript_applying" });
-        transcriptResult = truncateAgentMessagesAfter(input.threadId, resolvedAssistantMessageId!);
-      } catch (error) {
-        await updateCodingRewindJournal(journal, {
-          status: "partial",
-          error: error instanceof Error ? error.message : String(error)
-        });
-        await runStore.update(run.runId, {
-          codingReport: { ...run.codingReport, rewindState: "partial" }
-        });
-        await updateCodingTurnRecord(sessionDir, input.turnId, { rewindState: "partial", terminationReason: "transcript_rewind_failed" });
-        throw new Error(`文件已恢复，但会话截断失败：${error instanceof Error ? error.message : String(error)}`);
-      }
-      await updateCodingRewindJournal(journal, {
-        status: "completed",
-        removedMessageCount: transcriptResult.removed
-      });
-      await runStore.update(run.runId, {
-        codingReport: { ...run.codingReport, rewindState: "unavailable", canRewind: false }
-      });
-      await updateCodingTurnRecord(sessionDir, input.turnId, {
-        rewindState: "unavailable",
-        terminationReason: "rewind_completed"
-      });
-      return {
-        turnId: input.turnId,
-        keptAssistantMessageId: resolvedAssistantMessageId!,
-        removedMessageCount: transcriptResult.removed,
-        fileRewind: {
-          status: "restored" as const,
-          restoredFiles: fileResult.filesChanged,
-          skippedFiles: [],
-          conflicts: [],
-          nonRewindableFiles: fileResult.nonRewindableFiles
-        },
-        transcriptRewind: { status: "truncated" as const }
-      };
     },
     [AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA]: async (params) => {
       const input = validateInput(workspaceRequiredPathInputSchema, params, AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA);
