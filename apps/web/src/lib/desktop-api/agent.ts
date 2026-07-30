@@ -77,6 +77,7 @@ export const agentSend = async (input: AgentSendInput) => {
               status: 'queued' as const,
               ...(input.messageParts ? { messageParts: input.messageParts } : {}),
               ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
+              ...(input.commentAttachments ? { commentAttachments: input.commentAttachments } : {}),
             },
           }
         : {}),

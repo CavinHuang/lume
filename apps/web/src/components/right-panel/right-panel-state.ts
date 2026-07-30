@@ -1,3 +1,5 @@
+import type { LumeRuntimeEvent, RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
+
 export type RightPanelFunction = 'browser' | 'files'
 
 export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['browser', 'files']
@@ -20,6 +22,46 @@ export interface BrowserTabState {
 
 export interface FilesTabState {
   type: 'files'
+}
+
+export interface RightPanelReviewLaunchTarget {
+  report: RuntimeCodingReport
+  changes: RuntimeCodingFileChange[]
+  recency: 'current' | 'previous'
+}
+
+export function getRightPanelReviewLaunchTarget(
+  events: LumeRuntimeEvent[],
+): RightPanelReviewLaunchTarget | null {
+  let latestRunId: string | undefined
+  const reports = new Map<string, RuntimeCodingReport>()
+
+  for (const event of events) {
+    if (event.type === 'run.started' && !event.parentToolUseId && !event.subagentRunId) {
+      latestRunId = event.runId
+    }
+    const report = event.type === 'coding.report.updated'
+      ? event.codingReport
+      : event.type === 'run.completed'
+        ? event.codingReport
+        : undefined
+    if (!report || event.parentToolUseId || event.subagentRunId) continue
+    const runId = report.runId ?? event.runId
+    const merged = { ...reports.get(runId), ...report, runId }
+    reports.delete(runId)
+    reports.set(runId, merged)
+  }
+
+  for (const [runId, report] of [...reports.entries()].reverse()) {
+    const changes = report.changeSet?.files ?? report.fileChanges ?? []
+    if (changes.length === 0) continue
+    return {
+      report,
+      changes,
+      recency: latestRunId && latestRunId !== runId ? 'previous' : 'current',
+    }
+  }
+  return null
 }
 
 export function createEmptyRightPanelWorkspace(): ThreadRightPanelWorkspace {

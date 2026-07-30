@@ -74,6 +74,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       text: event.text,
       createdAt: event.createdAt,
       ...(event.attachments && event.attachments.length > 0 ? { attachments: event.attachments } : {}),
+      ...(event.commentAttachments?.length ? { commentAttachments: event.commentAttachments } : {}),
       ...(event.messageParts ? { messageParts: event.messageParts } : {}),
       ...(event.capabilityReferences ? { capabilityReferences: event.capabilityReferences } : {}),
       ...(event.messageId ? { messageId: event.messageId } : {}),

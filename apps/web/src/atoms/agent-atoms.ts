@@ -1,6 +1,6 @@
 import { atom, type Atom, type WritableAtom } from 'jotai'
 import { atomFamily, atomWithStorage, selectAtom } from 'jotai/utils'
-import type { AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, AgentListSubagentWorkResult, PlanModePhaseChangedEvent, AgentSendInput, AgentMessageQueueSnapshot } from '@lume/shared'
+import type { AgentDiffCommentAttachment, AgentThreadMeta, AgentRuntimeStatus, AgentPendingInteractiveState, SubagentRunRecord, AgentListSubagentWorkResult, PlanModePhaseChangedEvent, AgentSendInput, AgentMessageQueueSnapshot } from '@lume/shared'
 import type { RuntimeEventState } from '@/hooks/runtime-event-state'
 import type { DesktopActionVisualOverlayState } from '@/hooks/desktop-action-visual-state'
 import type { AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
@@ -76,6 +76,12 @@ export const agentInputDraftAtom = atomWithStorage<Record<string, AgentInputDraf
   {},
 )
 export const agentInputDraftFamily = createThreadSliceFamily(agentInputDraftAtom)
+
+export const agentDiffCommentDraftsAtom = atomWithStorage<Record<string, AgentDiffCommentAttachment[]>>(
+  'agent-diff-comment-drafts',
+  {},
+)
+export const agentDiffCommentDraftsFamily = createThreadSliceFamily(agentDiffCommentDraftsAtom)
 
 export const agentInputHistoryAtom = atomWithStorage<Record<string, AgentInputDraftJSON[]>>(
   'agent-input-history',

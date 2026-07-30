@@ -1,6 +1,6 @@
 import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import { cn } from '@/lib/utils'
-import { Send, Square, FileText, Plus, LoaderCircle, MonitorOff } from 'lucide-react'
+import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
@@ -19,7 +19,7 @@ import {
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { activeTabIdAtom, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { debounce } from 'throttle-debounce'
 import {
@@ -28,6 +28,7 @@ import {
   LUME_CONFIG_IPC_CHANNELS,
   type AgentMessage,
   type AgentMessageAttachmentInput,
+  type AgentDiffCommentAttachment,
   type AgentSavedFile,
   type Channel,
   type DesktopContextTarget,
@@ -252,6 +253,8 @@ export function AgentInput({
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
   const draft = useAtomValue(agentInputDraftFamily(threadId))
+  const commentAttachments: AgentDiffCommentAttachment[] = useAtomValue(agentDiffCommentDraftsFamily(threadId)) ?? []
+  const setCommentDrafts = useSetAtom(agentDiffCommentDraftsAtom)
   const setDraftState = useSetAtom(agentInputDraftAtom)
   const isNavigatingHistoryRef = useRef(false) // true = 当前编辑器内容由程序填充（恢复/回溯），不应存为草稿
   const historyIndexRef = useRef(-1) // -1 = 未回溯（显示草稿）；0..n = 回溯到 history[index]
@@ -632,7 +635,7 @@ export function AgentInput({
     })
   }, [threadId, editor])
 
-  const hasComposerPayload = editorText.trim().length > 0 || pendingAttachments.length > 0
+  const hasComposerPayload = editorText.trim().length > 0 || pendingAttachments.length > 0 || commentAttachments.length > 0
   const submitState = deriveAgentInputSubmitState({
     hasText: hasComposerPayload,
     streaming,
@@ -668,17 +671,23 @@ export function AgentInput({
         delete next[threadId]
         return next
       })
+      setCommentDrafts((prev) => {
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
       toast.success('已清空对话')
     } catch (error) {
       console.error('[AgentInput] 清空对话失败:', error)
       toast.error('清空失败')
     }
-  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues])
+  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues, setCommentDrafts])
 
   const handleSlashCommandExecute = useCallback((id: string) => {
     if (!editor) return
     const actionHasConflictingPayload = editor.getText().trim() !== `/${id}`
       || pendingAttachments.length > 0
+      || commentAttachments.length > 0
       || Boolean(selectedDesktopContextTarget)
     if (actionHasConflictingPayload) {
       toast.error('请先清空正文、附件和当前应用上下文，再执行该动作')
@@ -758,7 +767,7 @@ export function AgentInput({
       })()
       return
     }
-  }, [editor, threadId, threads, doClear, pendingAttachments.length, selectedDesktopContextTarget, streaming])
+  }, [editor, threadId, threads, doClear, pendingAttachments.length, commentAttachments.length, selectedDesktopContextTarget, streaming])
 
   slashCommandExecuteRef.current = handleSlashCommandExecute
 
@@ -770,7 +779,7 @@ export function AgentInput({
     }
     const serialized = serializeAgentEditorMessage(editor.getJSON(), applyAgentRoleMentions)
     const rawText = serialized.userMessage
-    if (!rawText && pendingAttachments.length === 0) return
+    if (!rawText && pendingAttachments.length === 0 && commentAttachments.length === 0) return
 
     const queueEdit = editingQueuedMessageRef.current
     if (queueEdit) {
@@ -808,7 +817,7 @@ export function AgentInput({
     }
 
     setLocalSending(true)
-    const text = rawText || '请解读这些附件。'
+    const text = rawText || (commentAttachments.length > 0 ? '请处理这些代码审阅意见。' : '请解读这些附件。')
     let sendMessageMetadata = effectiveMessageMetadata
     if (selectedDesktopContextTarget) {
       const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
@@ -834,6 +843,7 @@ export function AgentInput({
       userMessage: text,
       messageParts: serialized.messageParts,
       attachments: pendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
+      commentAttachments,
       thinkingLevel,
       permissionMode,
       workspaceId: workspaceIdRef.current,
@@ -897,6 +907,7 @@ export function AgentInput({
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+        ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
         ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
@@ -905,6 +916,12 @@ export function AgentInput({
       setEditorText('')
       pushHistoryEntry(sentJson)
       clearDraftState()
+      setCommentDrafts((prev) => {
+        if (!prev[threadId]) return prev
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
       ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
       editor.commands.focus('end')
       onMessageMetadataConsumed()
@@ -920,6 +937,7 @@ export function AgentInput({
           createdAt,
           text,
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+          ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
           ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
             ? { messageParts: serialized.messageParts }
             : {}),
@@ -952,6 +970,7 @@ export function AgentInput({
     onClearPendingAttachments,
     onMessageMetadataConsumed,
     pendingAttachments,
+    commentAttachments,
     effectiveMessageMetadata,
     messageMetadata,
     desktopContextTarget,
@@ -960,6 +979,7 @@ export function AgentInput({
     setRuntimeEvents,
     setStreamingStates,
     setMessageQueues,
+    setCommentDrafts,
     streaming,
     thinkingLevel,
     threadId,
@@ -1304,22 +1324,50 @@ export function AgentInput({
               </>
             }
             topContent={
-              editingQueuedMessage?.item.messageAttachments?.length ? (
-                <div className="px-3 pb-2 pt-3">
-                  <PendingAttachmentList
-                    attachments={editingQueuedMessage.item.messageAttachments}
-                    hideRemove
-                    onRemove={() => undefined}
-                  />
-                </div>
-              ) : !editingQueuedMessage && pendingAttachments.length > 0 ? (
-                <div className="px-3 pb-2 pt-3">
-                  <PendingAttachmentList
-                    attachments={pendingAttachments}
-                    onRemove={onRemovePendingAttachment}
-                  />
-                </div>
-              ) : undefined
+              editingQueuedMessage?.item.messageAttachments?.length
+              || editingQueuedMessage?.item.commentAttachments?.length
+              || (!editingQueuedMessage && (pendingAttachments.length > 0 || commentAttachments.length > 0))
+                ? (
+                    <div className="space-y-2 px-3 pb-2 pt-3">
+                      {editingQueuedMessage?.item.messageAttachments?.length ? (
+                        <PendingAttachmentList
+                          attachments={editingQueuedMessage.item.messageAttachments}
+                          hideRemove
+                          onRemove={() => undefined}
+                        />
+                      ) : !editingQueuedMessage && pendingAttachments.length > 0 ? (
+                        <PendingAttachmentList
+                          attachments={pendingAttachments}
+                          onRemove={onRemovePendingAttachment}
+                        />
+                      ) : null}
+                      {(editingQueuedMessage?.item.commentAttachments ?? commentAttachments).map((comment) => (
+                        <div key={comment.id} className="flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2.5 py-1.5 text-xs">
+                          <MessageSquareText size={13} className="shrink-0 text-[var(--lume-accent)]" />
+                          <span className="min-w-0 flex-1 truncate">
+                            {comment.position.path}:L{comment.position.startLine ?? comment.position.line}
+                            {(comment.position.startLine ?? comment.position.line) !== comment.position.line ? `–L${comment.position.line}` : ''}
+                            {' · '}{comment.body}
+                          </span>
+                          {!editingQueuedMessage && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label="移除审阅意见"
+                              onClick={() => setCommentDrafts((prev) => ({
+                                ...prev,
+                                [threadId]: (prev[threadId] ?? []).filter((item) => item.id !== comment.id),
+                              }))}
+                            >
+                              <X size={12} />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                : undefined
             }
             supportingContent={
               !editingQueuedMessage && selectedDesktopContextTarget ? (

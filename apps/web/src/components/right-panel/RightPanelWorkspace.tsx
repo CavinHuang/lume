@@ -2,6 +2,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   activeTabIdAtom,
+  agentRuntimeEventsFamily,
   agentThreadsAtom,
   agentWorkspacesAtom,
   codingReviewPanelActionAtom,
@@ -28,6 +29,7 @@ import {
   createEmptyRightPanelWorkspace,
   firstOpenRightPanelTab,
   getOpenRightPanelFunctions,
+  getRightPanelReviewLaunchTarget,
   sanitizeRightPanelWorkspace,
   type RightPanelFunction,
   type ThreadRightPanelWorkspace,
@@ -61,6 +63,11 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const activeTab = tabs.find((tab) => tab.id === activeTabId)
   const threadId = activeTab?.type === 'agent' ? activeTab.threadId : undefined
   const thread = threads.find((item) => item.id === threadId)
+  const runtimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId ?? ''))?.events ?? []
+  const reviewLaunchTarget = useMemo(
+    () => getRightPanelReviewLaunchTarget(runtimeEvents),
+    [runtimeEvents],
+  )
   const codingReview = useAtomValue(codingReviewPanelsAtom)[threadId ?? '']
   const closeCodingReview = useSetAtom(codingReviewPanelActionAtom)
   const workspaceId = thread?.workspaceId ?? currentWorkspaceId ?? undefined
@@ -209,7 +216,32 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
                   })
                 } : undefined}
               />
-            ) : <RightPanelLauncher onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })} />}
+            ) : (
+              <RightPanelLauncher
+                review={reviewLaunchTarget ? {
+                  recency: reviewLaunchTarget.recency,
+                  fileCount: reviewLaunchTarget.changes.length,
+                } : undefined}
+                onOpenReview={reviewLaunchTarget ? () => {
+                  const { report, changes } = reviewLaunchTarget
+                  closeCodingReview({
+                    type: 'open',
+                    threadId,
+                    changes,
+                    selectedPath: '',
+                    runId: report.runId,
+                    turnId: report.turnId,
+                    assistantMessageId: report.assistantMessageId,
+                    phase: report.phase,
+                    verificationRecords: report.verificationRecords,
+                    recommendedVerificationCommands: report.recommendedVerificationCommands,
+                    gitActions: report.gitActions,
+                    review: report.review,
+                  })
+                } : undefined}
+                onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })}
+              />
+            )}
           </>
         )}
       </div>
@@ -236,7 +268,7 @@ function RightPanelActiveContent({ persisted, runtime, workspaceSlug, workspaceP
   const active = runtime.activeItem
   if (!active) return <PlaceholderRightPanelTab label="" />
   if (active.kind === 'file' || active.type === 'files') {
-    return <FilesRightPanelWorkspace workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
+    return <FilesRightPanelWorkspace threadId={threadId} workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
   }
   const tabState = persisted.tabs[active.type]
   if (tabState?.type === 'browser') {

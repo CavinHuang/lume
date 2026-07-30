@@ -11,6 +11,7 @@ import {
   Search,
 } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import { toast } from 'sonner'
 import { useAtom } from 'jotai'
 import { type Tab } from '@/atoms'
@@ -232,6 +233,7 @@ export function FilePreviewTabView({ tab }: FilePreviewTabViewProps) {
                   <XMarkdown
                     className="x-markdown text-[15px] leading-8 text-white/90"
                     rootClassName="x-markdown-dark"
+                    components={DIFF_AWARE_MARKDOWN_COMPONENTS}
                   >
                     {content}
                   </XMarkdown>

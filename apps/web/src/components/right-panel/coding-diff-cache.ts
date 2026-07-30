@@ -1,23 +1,7 @@
-import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type CodingDiffPayload } from '@lume/shared'
 import { sidecarCall } from '@/lib/desktop-api'
 
-export interface CodingDiffPayload {
-  rootId?: string
-  path: string
-  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked'
-  oldContent: string
-  newContent: string
-  lines: CodingDiffLine[]
-  addedLines: number
-  removedLines: number
-}
-
-export interface CodingDiffLine {
-  type: 'context' | 'added' | 'removed'
-  oldLine?: number
-  newLine?: number
-  text: string
-}
+export type { CodingDiffPayload } from '@lume/shared'
 
 const MAX_SHARED_DIFF_CACHE_BYTES = 32 * 1024 * 1024
 const sharedDiffCache = new Map<string, { payload: CodingDiffPayload; size: number }>()
@@ -83,8 +67,9 @@ export function removeSessionCodingDiff(threadId: string, runId: string, path: s
 }
 
 function writeSessionCodingDiff(key: string, payload: CodingDiffPayload): void {
-  const size = (payload.oldContent.length + payload.newContent.length
-    + payload.lines.reduce((sum, line) => sum + line.text.length, 0)) * 2
+  const size = payload.kind === 'text'
+    ? (payload.oldContent.length + payload.newContent.length + payload.patch.length) * 2
+    : 2048
   if (size > MAX_SHARED_DIFF_CACHE_BYTES) return
   const previous = sharedDiffCache.get(key)
   if (previous) sharedDiffCacheBytes -= previous.size

@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Undo2, Workflow, Wrench, X } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, MessageSquareText, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
-import { CodeBlock, MermaidBlock, useSmoothStream } from '@lume/ui'
+import { MermaidBlock, useSmoothStream } from '@lume/ui'
+import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -496,6 +497,20 @@ function UserMessageBlock({
             onOpenFile={(attachment) => onOpenThreadFile?.(attachment.threadPath, attachment.fileRef)}
             onOpenImage={(attachment) => onOpenThreadImage?.(attachment)}
           />
+        )}
+        {message.commentAttachments && message.commentAttachments.length > 0 && (
+          <div className={cn('flex flex-wrap gap-1.5', leftAligned ? 'justify-start' : 'justify-end')}>
+            {message.commentAttachments.map((comment) => (
+              <span
+                key={comment.id}
+                className="inline-flex max-w-[520px] items-center gap-1.5 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2 py-1 text-[12px] font-normal text-[var(--lume-text-secondary)]"
+                title={comment.body}
+              >
+                <MessageSquareText size={12} className="shrink-0 text-[var(--lume-accent)]" />
+                <span className="truncate">{comment.position.path}:L{comment.position.startLine ?? comment.position.line}{(comment.position.startLine ?? comment.position.line) !== comment.position.line ? `–L${comment.position.line}` : ''} · {comment.body}</span>
+              </span>
+            ))}
+          </div>
         )}
         <div className={cn(
           'text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)]',
@@ -1357,13 +1372,11 @@ function CodingRunReportCard({
   const codingReviewPanelAction = useSetAtom(codingReviewPanelActionAtom)
   const cardRef = useRef<HTMLDivElement | null>(null)
   const [showAllChanges, setShowAllChanges] = useState(false)
-  const [revertedPaths, setRevertedPaths] = useState<Set<string>>(() => new Set())
   const [liveChangeSet, setLiveChangeSet] = useState(report.changeSet)
   const hasRisk = report.status === 'failed' || Boolean(report.baselineFailure) || report.externalChangedFiles.length > 0
 
   useEffect(() => {
     setLiveChangeSet(report.changeSet)
-    setRevertedPaths(new Set())
   }, [report.changeSet?.generatedAt])
 
   useEffect(() => {
@@ -1388,7 +1401,7 @@ function CodingRunReportCard({
     : report.fileChanges?.length
       ? report.fileChanges
       : report.changedFiles.map((path) => ({ path }))
-  const activeChanges = changes.filter((change) => !revertedPaths.has(codingReviewFileKey(change)))
+  const activeChanges = changes
   const visibleChanges = showAllChanges ? activeChanges : activeChanges.slice(0, 3)
   const hiddenChangeCount = Math.max(0, activeChanges.length - visibleChanges.length)
   const addedLines = liveChangeSet ? liveChangeSet.totalAddedLines : report.totalAddedLines ?? changes.reduce((sum, change) => sum + (change.addedLines ?? 0), 0)
@@ -1398,8 +1411,6 @@ function CodingRunReportCard({
   // result look incomplete and differs from the Review panel.
   const hasLineStats = changes.length > 0
   const firstReviewChange = activeChanges[0]
-  const canUndoRun = Boolean(report.runId && report.canRewind)
-  const canRewindTurn = Boolean(report.turnId && report.canRewind)
   const canReviewDiff = activeChanges.length > 0 && (currentChangeSet !== undefined || report.fileChanges !== undefined)
   const reviewPathsKey = activeChanges.map(codingReviewFileKey).join('\u0000')
 
@@ -1459,65 +1470,7 @@ function CodingRunReportCard({
       recommendedVerificationCommands: report.recommendedVerificationCommands,
       gitActions: report.gitActions,
       review: report.review,
-      onRevertRun: canUndoRun ? undoRun : undefined,
-      onRewindTurn: canRewindTurn ? rewindTurn : undefined,
     })
-  }
-
-  const undoFile = async (change: RuntimeCodingFileChange) => {
-    try {
-      await sidecarCall(AGENT_IPC_CHANNELS.REVERT_CODING_FILE, { threadId, path: change.path, rootId: change.rootId, runId: report.runId })
-      setRevertedPaths((current) => new Set(current).add(codingReviewFileKey(change)))
-      codingReviewPanelAction({ type: 'close', threadId })
-      const refreshed = await sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
-        threadId,
-        runId: report.runId,
-        paths: changes.map((change) => change.path),
-      })
-      if (refreshed) setLiveChangeSet(refreshed)
-      toast.success(`已撤销 ${change.path}`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '无法撤销文件变更')
-    }
-  }
-
-  const undoRun = async () => {
-    if (!report.runId || !report.canRewind) return
-    try {
-      const result = await sidecarCall<{ filesChanged: string[] }>(AGENT_IPC_CHANNELS.REVERT_CODING_RUN, {
-        threadId,
-        runId: report.runId,
-      })
-      setRevertedPaths(new Set())
-      const refreshed = await sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
-        threadId,
-        runId: report.runId,
-        paths: changes.map((change) => change.path),
-      })
-      if (refreshed) setLiveChangeSet(refreshed)
-      codingReviewPanelAction({ type: 'close', threadId })
-      toast.success(`已撤销本次 Coding Run（${result.filesChanged.length} 个文件）`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '无法撤销本次 Coding Run')
-    }
-  }
-
-  const rewindTurn = async () => {
-    const targetAssistantMessageId = report.assistantMessageId ?? assistantMessageId
-    if (!report.turnId || !report.canRewind) return
-    if (typeof window !== 'undefined' && !window.confirm('回退会恢复本次文件并删除此 Turn 之后的会话消息，是否继续？')) return
-    try {
-      await sidecarCall(AGENT_IPC_CHANNELS.REWIND_CODING_TURN, {
-        threadId,
-        turnId: report.turnId,
-        ...(targetAssistantMessageId ? { assistantMessageId: targetAssistantMessageId } : {}),
-        confirm: true,
-      })
-      codingReviewPanelAction({ type: 'close', threadId })
-      toast.success('已回退 Coding 会话')
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '无法回退 Coding 会话')
-    }
   }
 
   return (
@@ -1541,28 +1494,6 @@ function CodingRunReportCard({
           )}
         </div>
         <div className="coding-summary-actions flex shrink-0 items-center gap-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!canUndoRun}
-            title={canUndoRun ? '撤销本次 Coding Run 的文件变更' : '本次 Run 没有可用的文件检查点'}
-            className="h-8 gap-1 whitespace-nowrap px-2 text-[12px] text-[var(--lume-text-muted)]"
-            onClick={() => void undoRun()}
-          >
-            撤销本次
-            <Undo2 size={14} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!canRewindTurn}
-            title={canRewindTurn ? '恢复文件并删除此 Turn 之后的会话消息' : '当前 Turn 没有可用的完整回退检查点'}
-            className="h-8 gap-1 whitespace-nowrap px-2 text-[12px] text-[var(--lume-text-muted)]"
-            onClick={() => void rewindTurn()}
-          >
-            回退会话
-            <History size={14} />
-          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -1598,17 +1529,6 @@ function CodingRunReportCard({
                 <span className="text-emerald-500">+{change.addedLines ?? 0}</span>
                 <span className="ml-2 text-red-500">-{change.removedLines ?? 0}</span>
               </span>
-              {change.canUndo === true && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7 shrink-0 text-[var(--lume-text-muted)] hover:text-[var(--lume-text-primary)]"
-                  title="撤销文件变更"
-                  onClick={() => void undoFile(change)}
-                >
-                  <Undo2 size={14} />
-                </Button>
-              )}
             </div>
           ))}
         </div>
@@ -2274,7 +2194,7 @@ export function MarkdownPre({
     )
   }
 
-  return <CodeBlock onCopy={writeClipboardText}>{children}</CodeBlock>
+  return <DiffAwareMarkdownPre streamStatus={streamStatus}>{children}</DiffAwareMarkdownPre>
 }
 
 export function MarkdownCode({

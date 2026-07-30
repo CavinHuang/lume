@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import { Archive, ChevronRight, FileText, Folder, FolderOpen, Import, Inbox, LoaderCircle, MessageSquare, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RefreshCw, Save, Search, ShieldAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { WikiPageRecord, WikiPageType, WikiPrivacyImpactPreview, WikiProposalSummaryV1, WikiReadResult, WikiSnapshot, WikiSourceRef } from '@lume/shared'
@@ -271,7 +272,7 @@ export function WikiView() {
             <Input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="标签，用逗号分隔" />
             <div className="rounded-md border border-[var(--border)] p-3"><div className="mb-2 text-xs text-[var(--text-3)]">关联工作区</div><div className="flex flex-wrap gap-2">{workspaces.filter((workspace) => workspace.id !== primaryWorkspaceId).map((workspace) => <Button key={workspace.id} type="button" size="xs" variant={associatedWorkspaceIds.includes(workspace.id) ? 'secondary' : 'outline'} onClick={() => setAssociatedWorkspaceIds((items) => items.includes(workspace.id) ? items.filter((id) => id !== workspace.id) : [...items, workspace.id])}>{workspace.name}</Button>)}</div></div>
             <Textarea value={body} onChange={(event) => setBody(event.target.value)} className="min-h-[560px] font-mono text-sm" />
-          </div> : <XMarkdown className="wiki-page-markdown x-markdown text-[15px] leading-7 text-[var(--text-1)]" rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}>{selected.page.body}</XMarkdown>}</article></ScrollArea>
+          </div> : <XMarkdown components={DIFF_AWARE_MARKDOWN_COMPONENTS} className="wiki-page-markdown x-markdown text-[15px] leading-7 text-[var(--text-1)]" rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}>{selected.page.body}</XMarkdown>}</article></ScrollArea>
           {inspectorOpen ? <aside className="w-[280px] shrink-0 border-l border-[var(--border)] p-4"><Button variant="ghost" size="sm" className="mb-3 w-full justify-between" onClick={() => setInspectorOpen(false)}>详情 <ChevronRight size={14} /></Button><Inspector page={selected.page} read={selected} snapshot={snapshot} disableMutations={busy || isDirty} onUndo={(batchId) => void act(async () => { await undoWikiBatch(batchId); await load() })} onReload={load} /></aside> : <Button variant="outline" size="icon-sm" className="absolute right-2 top-2 z-20 bg-[var(--surface-1)] shadow-sm" onClick={() => setInspectorOpen(true)} title="展开详情" aria-label="展开详情"><PanelRightOpen size={15} /></Button>}
         </div> : <div className="flex flex-1 items-center justify-center">{loading ? <div className="flex items-center gap-2 text-sm text-[var(--text-3)]"><LoaderCircle className="animate-spin" size={16} />正在加载知识库…</div> : <div className="space-y-3 text-center"><div className="text-sm text-[var(--text-3)]">导入一份内容，开始建立你的 Wiki</div><Button size="sm" onClick={openImport}><Import size={14} />导入内容</Button></div>}</div>}
       </main>

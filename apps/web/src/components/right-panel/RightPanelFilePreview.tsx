@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { useAtom } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
-import { Copy, ExternalLink, FolderSearch, PanelLeftClose, PanelLeftOpen, RotateCw } from 'lucide-react'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
+import { Copy, ExternalLink, FolderSearch, GitCommitHorizontal, PanelLeftClose, PanelLeftOpen, RotateCw } from 'lucide-react'
 import type { FileEntry, FileRef, GuardedFileRef } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { Button } from '@/components/ui/button'
@@ -23,10 +25,12 @@ import { RightPanelSourcePreview } from './RightPanelSourcePreview'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import type { RightPanelFileTarget } from './right-panel-files-state'
 import { FileLinkContextMenu } from '@/components/ui/FileLinkContextMenu'
+import { rightPanelBlameEnabledAtom } from '@/atoms'
 
 interface PreviewPayload { content: string; truncated: boolean }
 
 export function RightPanelFilePreview({
+  threadId,
   fileRef,
   guardedRef,
   lineSelection,
@@ -37,6 +41,7 @@ export function RightPanelFilePreview({
   treeCollapsed = false,
   onToggleTree,
 }: {
+  threadId: string
   fileRef: FileRef | null
   guardedRef?: GuardedFileRef
   lineSelection?: ThreadFileLineSelection
@@ -56,6 +61,7 @@ export function RightPanelFilePreview({
   const [imageOriginalSize, setImageOriginalSize] = useState(false)
   const [metadata, setMetadata] = useState<FileEntry | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [blameEnabled, setBlameEnabled] = useAtom(rightPanelBlameEnabledAtom)
   const kind = classifyFilePreview(fileRef?.relativePath ?? '')
 
   const refresh = () => setRefreshKey((value) => value + 1)
@@ -181,6 +187,12 @@ export function RightPanelFilePreview({
           </Button>
         )}
         {kind === 'image' && <Button variant="ghost" size="sm" onClick={() => setImageOriginalSize((value) => !value)}>{imageOriginalSize ? '适应' : '原始尺寸'}</Button>}
+        {fileRef.source === 'project' && (kind === 'text' || sourceMode) && (
+          <Button variant={blameEnabled ? 'secondary' : 'ghost'} size="sm" onClick={() => setBlameEnabled((value) => !value)} title="显示 Git blame">
+            <GitCommitHorizontal size={13} />
+            Blame
+          </Button>
+        )}
         {payload && <Button variant="ghost" size="sm" onClick={() => void writeClipboardText(payload.content)}>复制内容</Button>}
         <Button variant="ghost" size="icon-sm" onClick={refresh} title="重新读取预览"><RotateCw size={14} /></Button>
         <Button variant="ghost" size="icon-sm" disabled={!desktop} onClick={() => void (guardedRef ? openGuardedFileRefInSystem(guardedRef) : openFileRefInSystem(fileRef))} title={desktop ? '系统打开' : '仅桌面端可用'}><ExternalLink size={14} /></Button>
@@ -213,11 +225,13 @@ export function RightPanelFilePreview({
             {kind === 'html' && !sourceMode ? (
               <RightPanelHtmlPreview fileRef={fileRef} guardedRef={guardedRef} source={payload.content} onOpenFile={onOpenFile} onMissing={onMissing} onPreviewScopeChange={onPreviewScopeChange} />
             ) : kind === 'markdown' && !sourceMode ? (
-              <XMarkdown className="x-markdown text-[13px] leading-6">{payload.content}</XMarkdown>
+              <XMarkdown components={DIFF_AWARE_MARKDOWN_COMPONENTS} className="x-markdown text-[13px] leading-6">{payload.content}</XMarkdown>
             ) : (
               <RightPanelSourcePreview
+                threadId={threadId}
                 content={payload.content}
                 filePath={fileRef.relativePath}
+                blameEnabled={fileRef.source === 'project' && blameEnabled}
                 lineSelection={kind === 'text' || kind === 'markdown' ? lineSelection : undefined}
                 navigationRevision={navigationRevision}
               />

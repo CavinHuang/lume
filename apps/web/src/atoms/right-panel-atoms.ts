@@ -34,6 +34,37 @@ export const rightPanelLayoutAtom = atomWithStorage<RightPanelLayoutState>(
   { open: true, mode: 'normal' },
 )
 
+export const rightPanelBlameEnabledAtom = atomWithStorage<boolean>(
+  'right-panel-blame-enabled',
+  false,
+)
+
+export interface CodingReviewPreferences {
+  viewMode: 'unified' | 'split'
+  wrapLines: boolean
+  omitFullFile: boolean
+  richPreview: boolean
+  wordDiffs: boolean
+  hideWhitespace: boolean
+}
+
+export const codingReviewPreferencesAtom = atomWithStorage<CodingReviewPreferences>(
+  'coding-review-preferences',
+  {
+    viewMode: 'unified',
+    wrapLines: false,
+    omitFullFile: false,
+    richPreview: false,
+    wordDiffs: true,
+    hideWhitespace: false,
+  },
+)
+
+export const codingReviewScrollPositionsAtom = atomWithStorage<Record<string, number>>(
+  'coding-review-scroll-positions',
+  {},
+)
+
 export interface CodingReviewPanelState {
   active: boolean
   changes: RuntimeCodingFileChange[]
@@ -47,8 +78,6 @@ export interface CodingReviewPanelState {
   recommendedVerificationCommands?: string[]
   gitActions?: CodingGitAction[]
   review?: CodingReviewSummary
-  onRevertRun?: () => Promise<void>
-  onRewindTurn?: () => Promise<void>
 }
 
 export const codingReviewPanelsAtom = atom<Record<string, CodingReviewPanelState>>({})
@@ -60,6 +89,7 @@ export function codingReviewFileKey(file: Pick<RuntimeCodingFileChange, 'path' |
 
 export const codingReviewStatusActionAtom = atom(null, (get, set, action:
   | { type: 'mark-reviewed'; threadId: string; path: string }
+  | { type: 'mark-unreviewed'; threadId: string; path: string }
   | { type: 'reset'; threadId: string; paths: string[] }
 ) => {
   const current = get(codingReviewStatusAtom)
@@ -77,6 +107,18 @@ export const codingReviewStatusActionAtom = atom(null, (get, set, action:
     })
     return
   }
+  if (action.type === 'mark-unreviewed') {
+    set(codingReviewStatusAtom, {
+      ...current,
+      [action.threadId]: {
+        ...state,
+        reviewedPaths: state.reviewedPaths.filter((path) => path !== action.path),
+        unseenPaths: [...new Set([...state.unseenPaths, action.path])],
+        completed: false,
+      },
+    })
+    return
+  }
   set(codingReviewStatusAtom, {
     ...current,
     [action.threadId]: {
@@ -88,7 +130,7 @@ export const codingReviewStatusActionAtom = atom(null, (get, set, action:
 })
 
 export const codingReviewPanelActionAtom = atom(null, (get, set, action:
-  | { type: 'open'; threadId: string; changes: RuntimeCodingFileChange[]; selectedPath: string; selectedRootId?: string; runId?: string; turnId?: string; assistantMessageId?: string; phase?: CodingTurnPhase; verificationRecords?: CodingVerificationRecord[]; recommendedVerificationCommands?: string[]; gitActions?: CodingGitAction[]; review?: CodingReviewSummary; onRevertRun?: () => Promise<void>; onRewindTurn?: () => Promise<void> }
+  | { type: 'open'; threadId: string; changes: RuntimeCodingFileChange[]; selectedPath: string; selectedRootId?: string; runId?: string; turnId?: string; assistantMessageId?: string; phase?: CodingTurnPhase; verificationRecords?: CodingVerificationRecord[]; recommendedVerificationCommands?: string[]; gitActions?: CodingGitAction[]; review?: CodingReviewSummary }
   | { type: 'update'; threadId: string; patch: Partial<Pick<CodingReviewPanelState, 'phase' | 'verificationRecords' | 'recommendedVerificationCommands' | 'gitActions' | 'review'>> }
   | { type: 'activate'; threadId: string }
   | { type: 'deactivate'; threadId: string }
@@ -135,8 +177,6 @@ export const codingReviewPanelActionAtom = atom(null, (get, set, action:
       recommendedVerificationCommands: action.recommendedVerificationCommands,
       gitActions: action.gitActions,
       review: action.review,
-      onRevertRun: action.onRevertRun,
-      onRewindTurn: action.onRewindTurn,
     },
   })
   const paths = action.changes.map(codingReviewFileKey)

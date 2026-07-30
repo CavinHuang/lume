@@ -1,77 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildDiffFileTree, buildDiffHighlightSlice, buildFullDiffSections, buildSplitDiffRows, estimateDiffBodyHeight } from './CodingReviewPanel'
-
-describe('CodingReviewPanel full diff', () => {
-  test('estimates a bounded placeholder height without preparing the full file', () => {
-    const lines = [
-      { type: 'context' as const, oldLine: 10, newLine: 10, text: 'before' },
-      { type: 'removed' as const, oldLine: 11, text: 'old' },
-      { type: 'added' as const, newLine: 11, text: 'new' },
-      { type: 'context' as const, oldLine: 80, newLine: 80, text: 'after' },
-    ]
-
-    expect(estimateDiffBodyHeight({ lines })).toBe(136)
-    expect(estimateDiffBodyHeight({ lines: Array.from({ length: 1000 }, (_, index) => ({
-      type: 'added' as const,
-      newLine: index + 1,
-      text: `line ${index + 1}`,
-    })) })).toBe(900)
-  })
-
-  test('collapses leading and trailing unchanged file ranges around a hunk', () => {
-    const oldLines = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`)
-    const newLines = [...oldLines]
-    newLines[42] = 'changed line 43'
-
-    const sections = buildFullDiffSections([
-      { type: 'context', oldLine: 40, newLine: 40, text: 'line 40' },
-      { type: 'context', oldLine: 41, newLine: 41, text: 'line 41' },
-      { type: 'context', oldLine: 42, newLine: 42, text: 'line 42' },
-      { type: 'removed', oldLine: 43, text: 'line 43' },
-      { type: 'added', newLine: 43, text: 'changed line 43' },
-      { type: 'context', oldLine: 44, newLine: 44, text: 'line 44' },
-      { type: 'context', oldLine: 45, newLine: 45, text: 'line 45' },
-      { type: 'context', oldLine: 46, newLine: 46, text: 'line 46' },
-    ], `${oldLines.join('\n')}\n`, `${newLines.join('\n')}\n`)
-
-    expect(sections.filter((section) => section.type === 'collapsed').map((section) => section.lines.length))
-      .toEqual([39, 54])
-    expect(sections.flatMap((section) => section.type === 'lines' ? section.lines : [])
-      .filter((line) => line.type !== 'context')).toEqual([
-        { type: 'removed', oldLine: 43, text: 'line 43' },
-        { type: 'added', newLine: 43, text: 'changed line 43' },
-      ])
-  })
-})
-
-describe('CodingReviewPanel split diff', () => {
-  test('aligns removed and added blocks while preserving context on both sides', () => {
-    expect(buildSplitDiffRows([
-      { type: 'context', oldLine: 1, newLine: 1, text: 'same' },
-      { type: 'removed', oldLine: 2, text: 'old a' },
-      { type: 'removed', oldLine: 3, text: 'old b' },
-      { type: 'added', newLine: 2, text: 'new a' },
-      { type: 'context', oldLine: 4, newLine: 3, text: 'same again' },
-    ])).toEqual([
-      {
-        oldLine: { type: 'context', oldLine: 1, newLine: 1, text: 'same' },
-        newLine: { type: 'context', oldLine: 1, newLine: 1, text: 'same' },
-      },
-      {
-        oldLine: { type: 'removed', oldLine: 2, text: 'old a' },
-        newLine: { type: 'added', newLine: 2, text: 'new a' },
-      },
-      {
-        oldLine: { type: 'removed', oldLine: 3, text: 'old b' },
-        newLine: undefined,
-      },
-      {
-        oldLine: { type: 'context', oldLine: 4, newLine: 3, text: 'same again' },
-        newLine: { type: 'context', oldLine: 4, newLine: 3, text: 'same again' },
-      },
-    ])
-  })
-})
+import { buildDiffFileTree, buildGitApplyCommand, codingPublishActionDisabledReason, isReviewFileTooLarge, REVIEW_DIFF_CONTEXT_OPTIONS } from './CodingReviewPanel'
 
 describe('CodingReviewPanel diff file tree', () => {
   test('compacts single-child folder chains and keeps files sorted', () => {
@@ -90,23 +18,76 @@ describe('CodingReviewPanel diff file tree', () => {
       },
     ])
   })
-})
 
-describe('CodingReviewPanel visible diff highlighting', () => {
-  test('builds separate old and new snippets from rendered rows only', () => {
-    const lines = [
-      { type: 'context' as const, oldLine: 10, newLine: 10, text: 'same' },
-      { type: 'removed' as const, oldLine: 11, text: 'old' },
-      { type: 'added' as const, newLine: 11, text: 'new' },
-    ]
+  test('builds a copyable git apply command from canonical patches', () => {
+    const command = buildGitApplyCommand([
+      'diff --git a/a.ts b/a.ts\r\n--- a/a.ts\r\n+++ b/a.ts\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n',
+      'diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -1 +1 @@\n-before\n+after\n',
+    ])
+    expect(command).toStartWith('(cd "$(git rev-parse --show-toplevel)" && git apply --3way')
+    expect(command).toContain('diff --git a/a.ts b/a.ts\n')
+    expect(command).toContain('diff --git a/b.ts b/b.ts\n')
+    expect(command).toEndWith('\nEOF\n)')
+  })
 
-    expect(buildDiffHighlightSlice(lines, 'old')).toEqual({
-      code: 'same\nold',
-      lineNumbers: [10, 11],
+  test('keeps full file content available while collapsing unchanged regions by default', () => {
+    expect(REVIEW_DIFF_CONTEXT_OPTIONS).toEqual({
+      expandUnchanged: false,
+      collapsedContextThreshold: 1,
+      expansionLineCount: 20,
     })
-    expect(buildDiffHighlightSlice(lines, 'new')).toEqual({
-      code: 'same\nnew',
-      lineNumbers: [10, 11],
-    })
+  })
+
+  test('uses the Codex per-file changed-line limit before rendering Pierre', () => {
+    const base = {
+      kind: 'text' as const,
+      path: 'large.ts',
+      status: 'modified' as const,
+      oldContent: '',
+      newContent: '',
+      patch: '--- a/large.ts\n+++ b/large.ts\n@@ -0,0 +1 @@\n+value\n',
+      diffHash: 'hash',
+      removedLines: 0,
+      actions: {
+        isGit: true,
+        staged: false,
+        unstaged: true,
+        canStage: true,
+        canUnstage: false,
+      },
+    }
+    expect(isReviewFileTooLarge({ ...base, addedLines: 15_000 })).toBe(false)
+    expect(isReviewFileTooLarge({ ...base, addedLines: 15_001 })).toBe(true)
+  })
+
+  test('exposes Codex-style commit and push disabled reasons', () => {
+    const state = {
+      available: true as const,
+      rootId: 'root',
+      rootLabel: 'lume',
+      branch: 'main',
+      head: 'a'.repeat(40),
+      indexHash: 'b'.repeat(64),
+      worktreeHash: 'c'.repeat(64),
+      stagedCount: 0,
+      unstagedCount: 1,
+      untrackedCount: 0,
+      ahead: 0,
+      behind: 0,
+      canCommit: false,
+      canPush: true,
+    }
+    expect(codingPublishActionDisabledReason(state, 'commit', {
+      commitMessage: 'test: commit',
+      includeUnstagedChanges: false,
+    })).toContain('包含未暂存')
+    expect(codingPublishActionDisabledReason(state, 'commit', {
+      commitMessage: 'test: commit',
+      includeUnstagedChanges: true,
+    })).toBeUndefined()
+    expect(codingPublishActionDisabledReason(state, 'push', {
+      commitMessage: '',
+      includeUnstagedChanges: false,
+    })).toBe('没有待推送的本地提交')
   })
 })

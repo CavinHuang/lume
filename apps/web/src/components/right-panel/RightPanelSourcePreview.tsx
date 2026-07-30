@@ -1,215 +1,253 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { highlightCode, highlightToTokens, type HighlightTokensResult } from '@lume/ui'
-import { getSourcePreviewLanguage } from './file-preview-utils'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { AlertTriangle, Copy } from 'lucide-react'
+import { AGENT_IPC_CHANNELS, type AgentDiffCommentAttachment, type CodingBlameResult } from '@lume/shared'
+import type { DiffLineAnnotation, LineAnnotation, PostRenderPhase, SelectedLineRange } from '@pierre/diffs'
+import { createPierreFileDiff, PierreDiffView, PierreFileView } from '@/components/diff/PierreDiffView'
+import { normalizeDiffSnippet } from '@/components/diff/diff-normalize'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
+import { agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentRuntimeEventsFamily } from '@/atoms/agent-atoms'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { sidecarCall, writeClipboardText } from '@/lib/desktop-api'
 
-const MAX_HIGHLIGHT_CACHE_BYTES = 24 * 1024 * 1024
-const highlightCache = new Map<string, { result: HighlightTokensResult; size: number }>()
-const highlightThemeListeners = new Set<() => void>()
-let highlightCacheBytes = 0
-let highlightThemeObserver: MutationObserver | null = null
-
-function highlightCacheKey(content: string, language: string, theme: string): string {
-  return `${theme}\u0000${language}\u0000${content}`
-}
-
-function readHighlightCache(key: string): HighlightTokensResult | null {
-  const cached = highlightCache.get(key)
-  if (!cached) return null
-  highlightCache.delete(key)
-  highlightCache.set(key, cached)
-  return cached.result
-}
-
-function writeHighlightCache(key: string, content: string, result: HighlightTokensResult): void {
-  const size = content.length * 6
-  if (size > MAX_HIGHLIGHT_CACHE_BYTES) return
-  const previous = highlightCache.get(key)
-  if (previous) highlightCacheBytes -= previous.size
-  highlightCache.delete(key)
-  highlightCache.set(key, { result, size })
-  highlightCacheBytes += size
-  while (highlightCacheBytes > MAX_HIGHLIGHT_CACHE_BYTES) {
-    const oldestKey = highlightCache.keys().next().value
-    if (typeof oldestKey !== 'string') break
-    const oldest = highlightCache.get(oldestKey)
-    highlightCache.delete(oldestKey)
-    highlightCacheBytes -= oldest?.size ?? 0
-  }
-}
-
-function subscribeHighlightTheme(listener: () => void): () => void {
-  highlightThemeListeners.add(listener)
-  if (!highlightThemeObserver && typeof MutationObserver !== 'undefined') {
-    highlightThemeObserver = new MutationObserver(() => {
-      for (const notify of highlightThemeListeners) notify()
-    })
-    highlightThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-  }
-  return () => {
-    highlightThemeListeners.delete(listener)
-    if (highlightThemeListeners.size === 0) {
-      highlightThemeObserver?.disconnect()
-      highlightThemeObserver = null
-    }
-  }
-}
+type SourceCommentAnnotation =
+  | { kind: 'comment-editor' }
+  | { kind: 'readonly-comment'; comment: AgentDiffCommentAttachment; pending: boolean }
 
 export function RightPanelSourcePreview({
+  threadId,
   content,
   filePath,
   lineSelection,
   navigationRevision,
+  onLineSelected,
+  blameEnabled = false,
 }: {
+  threadId?: string
   content: string
   filePath: string
   lineSelection?: ThreadFileLineSelection
   navigationRevision?: number
+  onLineSelected?: (range: SelectedLineRange | null) => void
+  blameEnabled?: boolean
 }) {
-  const lineRefs = useRef(new Map<number, HTMLSpanElement>())
-  const { highlighted, lines } = useSourceHighlight(content, filePath)
-  const backgroundColor = highlighted?.bgColor ?? 'var(--surface-2)'
-  const gutterWidth = `${Math.max(3, String(lines.length).length + 1)}ch`
-  const selectionOutOfRange = Boolean(lineSelection && lineSelection.end > lines.length)
-
+  const [blame, setBlame] = useState<CodingBlameResult>({ available: false, lines: [] })
+  const [localSelection, setLocalSelection] = useState<SelectedLineRange | null>(null)
+  const [commentRange, setCommentRange] = useState<SelectedLineRange | null>(null)
+  const [commentText, setCommentText] = useState('')
+  const commentDrafts = useAtomValue(agentDiffCommentDraftsFamily(threadId ?? '')) ?? []
+  const runtimeEvents = useAtomValue(agentRuntimeEventsFamily(threadId ?? ''))?.events ?? []
+  const setCommentDrafts = useSetAtom(agentDiffCommentDraftsAtom)
+  const lineCount = useMemo(() => content.replace(/\r\n?/g, '\n').split('\n').length, [content])
+  const selectionOutOfRange = Boolean(lineSelection && lineSelection.end > lineCount)
+  const selectedLines = useMemo<SelectedLineRange | null>(() => {
+    if (!lineSelection || selectionOutOfRange) return localSelection
+    return { start: lineSelection.start, end: lineSelection.end }
+  }, [lineSelection, localSelection, selectionOutOfRange])
+  const relatedComments = useMemo(() => {
+    const matches = (comment: AgentDiffCommentAttachment) => (
+      comment.position.path.replace(/\\/g, '/') === filePath.replace(/\\/g, '/')
+    )
+    const sent = runtimeEvents.flatMap((event) => (
+      event.type === 'message.user.submitted' ? event.commentAttachments ?? [] : []
+    )).filter(matches)
+    const uniqueSent = [...new Map(sent.map((comment) => [comment.id, comment])).values()]
+    return [
+      ...commentDrafts.filter(matches).map((comment) => ({ comment, pending: true })),
+      ...uniqueSent.filter((comment) => !commentDrafts.some((draft) => draft.id === comment.id))
+        .map((comment) => ({ comment, pending: false })),
+    ]
+  }, [commentDrafts, filePath, runtimeEvents])
+  const lineAnnotations = useMemo<LineAnnotation<SourceCommentAnnotation>[]>(() => [
+    ...(commentRange ? [{ lineNumber: commentRange.end, metadata: { kind: 'comment-editor' } as const }] : []),
+    ...relatedComments.map(({ comment, pending }) => ({
+      lineNumber: comment.position.line,
+      metadata: { kind: 'readonly-comment' as const, comment, pending },
+    })),
+  ], [commentRange, relatedComments])
+  const diffLineAnnotations = useMemo<DiffLineAnnotation<SourceCommentAnnotation>[]>(() => {
+    const annotations: DiffLineAnnotation<SourceCommentAnnotation>[] = []
+    if (commentRange) {
+      annotations.push({
+        side: (commentRange.endSide ?? commentRange.side) === 'deletions' ? 'deletions' : 'additions',
+        lineNumber: commentRange.end,
+        metadata: { kind: 'comment-editor' },
+      })
+    }
+    for (const { comment, pending } of relatedComments) {
+      annotations.push({
+        side: comment.position.side === 'left' ? 'deletions' : 'additions',
+        lineNumber: comment.position.line,
+        metadata: { kind: 'readonly-comment', comment, pending },
+      })
+    }
+    return annotations
+  }, [commentRange, relatedComments])
+  const patchResult = useMemo(() => {
+    if (!/\.(?:diff|patch)$/i.test(filePath)) return null
+    try {
+      const patch = normalizeDiffSnippet(content, filePath)
+      createPierreFileDiff({ patch, filePath })
+      return { patch, error: null }
+    } catch (error) {
+      return { patch: null, error: error instanceof Error ? error.message : 'Diff 解析失败' }
+    }
+  }, [content, filePath])
   useEffect(() => {
-    if (!lineSelection || !highlighted || selectionOutOfRange) return
-    lineRefs.current.get(lineSelection.start)?.scrollIntoView({ block: 'center' })
-  }, [content, highlighted, lineSelection?.start, lineSelection?.end, navigationRevision, selectionOutOfRange])
+    if (!blameEnabled || !threadId) {
+      setBlame({ available: false, lines: [] })
+      return
+    }
+    let cancelled = false
+    void sidecarCall<CodingBlameResult>(AGENT_IPC_CHANNELS.GET_CODING_BLAME, {
+      threadId,
+      path: filePath,
+    }).then((result) => {
+      if (!cancelled) setBlame(result)
+    }).catch(() => {
+      if (!cancelled) setBlame({ available: false, lines: [] })
+    })
+    return () => { cancelled = true }
+  }, [blameEnabled, content, filePath, threadId])
+  const handlePostRender = useCallback((node: HTMLElement, _instance: unknown, phase: PostRenderPhase) => {
+    if (phase === 'unmount') return
+    if (selectedLines) {
+      node.querySelector<HTMLElement>(`[data-line="${selectedLines.start}"]`)?.scrollIntoView({ block: 'center' })
+    }
+    if (!blameEnabled || !blame.available) return
+    const byLine = new Map(blame.lines.map((line) => [line.lineNumber, line]))
+    for (const row of node.querySelectorAll<HTMLElement>('[data-line]')) {
+      row.querySelector('[data-lume-blame]')?.remove()
+      const line = byLine.get(Number(row.dataset.line))
+      const number = row.querySelector<HTMLElement>('[data-line-number-content]')
+      if (!line || !number) continue
+      const label = document.createElement('span')
+      label.dataset.lumeBlame = ''
+      label.textContent = line.committed ? line.author : '未提交'
+      label.title = [
+        line.committed ? line.commit.slice(0, 8) : '未提交',
+        line.author,
+        line.authorTime ? new Date(line.authorTime).toLocaleString() : '',
+        line.summary ?? '',
+        line.commitUrl ?? '',
+      ].filter(Boolean).join(' · ')
+      number.prepend(label)
+    }
+  }, [blame, blameEnabled, navigationRevision, selectedLines])
+  const openComment = (range: SelectedLineRange | null) => {
+    setLocalSelection(range)
+    setCommentRange(range)
+    onLineSelected?.(range)
+  }
+  const closeComment = () => {
+    setCommentRange(null)
+    setLocalSelection(null)
+    setCommentText('')
+  }
+  const saveComment = () => {
+    if (!threadId || !commentRange || !commentText.trim()) return
+    const attachment: AgentDiffCommentAttachment = {
+      id: crypto.randomUUID(),
+      origin: 'diff',
+      position: {
+        path: filePath,
+        side: (commentRange.endSide ?? commentRange.side) === 'deletions' ? 'left' : 'right',
+        line: commentRange.end,
+        startLine: commentRange.start,
+        startSide: commentRange.side === 'deletions' ? 'left' : 'right',
+      },
+      body: commentText.trim(),
+      localDiffHunk: content.replace(/\r\n?/g, '\n').split('\n')
+        .slice(Math.max(0, commentRange.start - 2), Math.min(lineCount, commentRange.end + 1))
+        .map((line, index) => `${Math.max(1, commentRange.start - 1) + index}: ${line}`)
+        .join('\n'),
+    }
+    setCommentDrafts((current) => ({
+      ...current,
+      [threadId]: [...(current[threadId] ?? []), attachment],
+    }))
+    closeComment()
+  }
+  const renderCommentEditor = (annotation: LineAnnotation<SourceCommentAnnotation> | DiffLineAnnotation<SourceCommentAnnotation>) => (
+    annotation.metadata.kind === 'readonly-comment' ? (
+      <div className="m-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] px-3 py-2 text-xs text-[var(--lume-text-secondary)]">
+        <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--lume-text-muted)]">
+          {annotation.metadata.pending ? '待发送的审阅意见' : '已发送的审阅意见'}
+        </div>
+        <p className="m-0 whitespace-pre-wrap">{annotation.metadata.comment.body}</p>
+      </div>
+    ) : <div className="m-2 rounded-lg border border-[var(--lume-border-strong)] bg-[var(--lume-bg-elevated)] p-2 shadow-sm">
+      <Textarea
+        value={commentText}
+        onChange={(event) => setCommentText(event.target.value)}
+        placeholder="留下审阅意见…"
+        className="min-h-16 resize-y text-xs"
+        autoFocus
+      />
+      <div className="mt-2 flex justify-end gap-1.5">
+        <Button variant="ghost" size="xs" onClick={closeComment}>取消</Button>
+        <Button size="xs" disabled={!commentText.trim()} onClick={saveComment}>添加意见</Button>
+      </div>
+    </div>
+  )
 
   return (
     <div className="min-h-full min-w-full">
-    {selectionOutOfRange && (
-      <p role="status" className="m-0 border-b border-amber-500/20 bg-amber-500/8 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-400">
-        无法定位 L{lineSelection!.start}{lineSelection!.end === lineSelection!.start ? '' : `–L${lineSelection!.end}`}：当前可读内容只有 {lines.length} 行。
-      </p>
-    )}
-    <pre
-      className="m-0 min-h-full min-w-full w-max py-2 font-mono text-[12px] leading-5"
-      style={{
-        backgroundColor,
-        color: highlighted?.fgColor ?? 'var(--text-1)',
-        tabSize: 2,
-      }}
-    >
-      <code>
-        {lines.map((line, lineIndex) => (
-          <span
-            key={lineIndex}
-            ref={(element) => {
-              if (element) lineRefs.current.set(lineIndex + 1, element)
-              else lineRefs.current.delete(lineIndex + 1)
-            }}
-            data-line-number={lineIndex + 1}
-            className="flex min-h-5"
-            style={lineSelection && !selectionOutOfRange && lineIndex + 1 >= lineSelection.start && lineIndex + 1 <= lineSelection.end
-              ? { backgroundColor: 'color-mix(in oklab, var(--lume-accent) 14%, transparent)' }
-              : undefined}
-          >
-            <span
-              aria-hidden
-              className="sticky left-0 shrink-0 select-none border-r border-current/10 pr-1.5 text-right opacity-35"
-              style={{ width: gutterWidth, backgroundColor }}
-            >
-              {lineIndex + 1}
-            </span>
-            <span className="min-w-max pl-2 pr-3">
-              {(highlighted?.lines[lineIndex] ?? []).length > 0
-                ? highlighted!.lines[lineIndex]!.map((token, tokenIndex) => (
-                    <span key={tokenIndex} style={token.color ? { color: token.color } : undefined}>{token.content}</span>
-                  ))
-                : line}
-            </span>
-          </span>
-        ))}
-      </code>
-    </pre>
+      {selectionOutOfRange && (
+        <p role="status" className="m-0 border-b border-amber-500/20 bg-amber-500/8 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-400">
+          无法定位 L{lineSelection!.start}{lineSelection!.end === lineSelection!.start ? '' : `–L${lineSelection!.end}`}：当前可读内容只有 {lineCount} 行。
+        </p>
+      )}
+      {patchResult?.patch ? (
+        <PierreDiffView<SourceCommentAnnotation>
+          patch={patchResult.patch}
+          filePath={filePath}
+          expandUnchanged
+          selectedLines={selectedLines}
+          lineAnnotations={diffLineAnnotations}
+          enableLineSelection
+          enableGutterUtility={Boolean(threadId)}
+          onLineSelected={openComment}
+          onLineSelectionChange={setLocalSelection}
+          onGutterUtilityClick={openComment}
+          renderAnnotation={renderCommentEditor}
+        />
+      ) : patchResult ? (
+        <div className="m-3 flex items-center gap-2 rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <AlertTriangle size={14} />
+          <span className="min-w-0 flex-1">{patchResult.error}</span>
+          <Button type="button" variant="ghost" size="xs" onClick={() => void writeClipboardText(content)}>
+            <Copy size={12} />
+            复制原文
+          </Button>
+        </div>
+      ) : (
+      <PierreFileView<SourceCommentAnnotation>
+        content={content}
+        filePath={filePath}
+        selectedLines={selectedLines}
+        lineAnnotations={lineAnnotations}
+        enableGutterUtility={Boolean(threadId)}
+        onLineSelected={openComment}
+        onGutterUtilityClick={openComment}
+        renderAnnotation={renderCommentEditor}
+        onPostRender={handlePostRender as never}
+        unsafeCSS={blameEnabled ? `
+          [data-line-number-content] { min-width: 11rem; }
+          [data-lume-blame] {
+            display: inline-block;
+            width: 7.5rem;
+            margin-right: .5rem;
+            overflow: hidden;
+            color: var(--lume-text-muted);
+            text-overflow: ellipsis;
+            vertical-align: bottom;
+            white-space: nowrap;
+          }
+        ` : undefined}
+      />
+      )}
     </div>
   )
-}
-
-export function useSourceHighlight(content: string, filePath: string, options: {
-  defer?: boolean
-  enabled?: boolean
-  maxCharacters?: number
-} = {}): {
-  highlighted: HighlightTokensResult | null
-  lines: string[]
-} {
-  const language = getSourcePreviewLanguage(filePath)
-  const theme = useSyncExternalStore(subscribeHighlightTheme, getHighlightTheme, getHighlightTheme)
-  const canHighlight = options.enabled !== false && content.length <= (options.maxCharacters ?? Number.POSITIVE_INFINITY)
-  const cacheKey = useMemo(() => highlightCacheKey(content, language, theme), [content, language, theme])
-  const [highlighted, setHighlighted] = useState<HighlightTokensResult | null>(() => {
-    if (options.defer || !canHighlight) return null
-    const cached = readHighlightCache(cacheKey)
-    if (cached) return cached
-    const result = highlightToTokens({ code: content, language, theme })
-    if (result) writeHighlightCache(cacheKey, content, result)
-    return result
-  })
-  const completedKeyRef = useRef(highlighted ? cacheKey : '')
-  const lines = useMemo(() => content.replace(/\r\n/g, '\n').split('\n'), [content])
-
-  useEffect(() => {
-    let cancelled = false
-    let idleId: number | undefined
-    let timerId: number | undefined
-    if (!canHighlight) {
-      completedKeyRef.current = ''
-      setHighlighted(null)
-      return
-    }
-
-    if (completedKeyRef.current === cacheKey) return
-    const cached = readHighlightCache(cacheKey)
-    if (cached) {
-      completedKeyRef.current = cacheKey
-      setHighlighted(cached)
-      return
-    }
-
-    setHighlighted(null)
-    const highlightOptions = { code: content, language, theme }
-    const commit = (result: HighlightTokensResult | null) => {
-      if (!result || cancelled) return
-      writeHighlightCache(cacheKey, content, result)
-      completedKeyRef.current = cacheKey
-      setHighlighted(result)
-    }
-    const runHighlight = () => {
-      const syncResult = highlightToTokens(highlightOptions)
-      if (syncResult) {
-        commit(syncResult)
-        return
-      }
-      void highlightCode(highlightOptions)
-        .then(() => commit(highlightToTokens(highlightOptions)))
-        .catch((error) => console.error('[RightPanelSourcePreview] 高亮失败:', error))
-    }
-
-    if (options.defer && typeof window !== 'undefined') {
-      if (typeof window.requestIdleCallback === 'function') {
-        idleId = window.requestIdleCallback(runHighlight)
-      } else {
-        timerId = window.setTimeout(runHighlight, 0)
-      }
-    } else {
-      runHighlight()
-    }
-
-    return () => {
-      cancelled = true
-      if (idleId !== undefined) window.cancelIdleCallback(idleId)
-      if (timerId !== undefined) window.clearTimeout(timerId)
-    }
-  }, [cacheKey, canHighlight, content, language, options.defer, theme])
-
-  return { highlighted, lines }
-}
-
-function getHighlightTheme(): 'github-light' | 'github-dark' {
-  return typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-    ? 'github-dark'
-    : 'github-light'
 }

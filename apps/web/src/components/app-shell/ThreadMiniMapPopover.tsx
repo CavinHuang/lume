@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { ReactNode, RefObject } from 'react'
+import { isValidElement, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useAtomValue } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DiffAwareMarkdownPre, isDiffFenceLanguage } from '@/components/markdown/DiffAwareMarkdownPre'
 import { AlertTriangle, Bot, Loader2, User } from 'lucide-react'
 import { agentRuntimeEventsFamily } from '@/atoms'
 import { projectRuntimeEventMessages } from '@/components/agent/runtime-event-message-projection'
@@ -356,10 +357,20 @@ const PREVIEW_MD_COMPONENTS = {
   blockquote: ({ children }: { children?: ReactNode }) => (
     <blockquote className="my-0 border-l-2 border-border/50 pl-2">{children}</blockquote>
   ),
-  pre: ({ children }: { children?: ReactNode }) => <pre className="my-0 truncate text-[11px] opacity-70">{children}</pre>,
+  pre: MiniMapMarkdownPre,
   code: ({ children }: { children?: ReactNode }) => <code className="rounded bg-muted/50 px-0.5 text-[11px]">{children}</code>,
   img: () => null,
   a: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+}
+
+function MiniMapMarkdownPre({ children }: { children?: ReactNode }) {
+  const code = Array.isArray(children) ? children.find(isValidElement) : children
+  const props = isValidElement(code) ? code.props as { className?: string; class?: string; lang?: string } : undefined
+  const classes = [props?.className, props?.class].filter(Boolean).join(' ')
+  const language = (props?.lang ?? classes.match(/(?:language|lang)-([^\s]+)/)?.[1] ?? '').toLowerCase()
+  return isDiffFenceLanguage(language)
+    ? <DiffAwareMarkdownPre>{children}</DiffAwareMarkdownPre>
+    : <pre className="my-0 truncate text-[11px] opacity-70">{children}</pre>
 }
 
 export function PreviewText({ text }: { text: string }) {

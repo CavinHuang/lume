@@ -26,6 +26,7 @@ import {
 } from './right-panel-layout'
 
 export function FilesRightPanelWorkspace({
+  threadId,
   workspace,
   workspaceSlug,
   workspaceProjectPath,
@@ -33,6 +34,7 @@ export function FilesRightPanelWorkspace({
   openFunctions,
   onWorkspaceChange,
 }: {
+  threadId: string
   workspace: ThreadFileWorkspace
   workspaceSlug?: string
   workspaceProjectPath?: string
@@ -133,6 +135,7 @@ export function FilesRightPanelWorkspace({
       {wide && !treeCollapsed && <div role="separator" aria-orientation="vertical" aria-label="调整文件树宽度" className="w-1.5 shrink-0 cursor-col-resize hover:bg-primary/10" onPointerDown={startResize} />}
       <div className={cn('min-h-0 min-w-0 flex-1', !wide && showTree && 'hidden')}>
         <RightPanelFilePreview
+          threadId={threadId}
           fileRef={previewRef}
           lineSelection={activeTab?.lineSelection}
           navigationRevision={activeTab?.navigationRevision}

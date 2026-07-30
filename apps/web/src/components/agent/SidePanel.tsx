@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, Copy, MoreHorizontal, Search } from 'lucide-react'
 import { useAtom } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import { FileBrowser } from '@/components/file-browser/FileBrowser'
 import { WorkspaceFileBrowser } from '@/components/file-browser/WorkspaceFileBrowser'
 import { TaskProgressPanel } from './TaskProgressPanel'
@@ -318,6 +319,7 @@ export function SidePanel({
                             {enhancedView && selectedIsMarkdown ? (
                               <XMarkdown
                                 className="x-markdown text-[15px] leading-8 text-[var(--text-1)]"
+                                components={DIFF_AWARE_MARKDOWN_COMPONENTS}
                               >
                                 {previewContent}
                               </XMarkdown>

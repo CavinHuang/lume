@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import type { GeneralSettings, UpdateGeneralSettingsInput } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -474,6 +475,7 @@ function ReleaseNotes({ body }: { body: string }) {
     <XMarkdown
       className="x-markdown text-[13px] leading-6"
       rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}
+      components={DIFF_AWARE_MARKDOWN_COMPONENTS}
     >
       {body}
     </XMarkdown>

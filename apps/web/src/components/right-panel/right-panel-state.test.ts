@@ -6,6 +6,7 @@ import {
   createEmptyRightPanelWorkspace,
   firstOpenRightPanelTab,
   getAvailableRightPanelFunctions,
+  getRightPanelReviewLaunchTarget,
   migrateLegacyRightPanelHints,
   openRightPanelTab,
   sanitizeRightPanelWorkspace,
@@ -76,5 +77,68 @@ describe('right-panel-state', () => {
       files: createDefaultRightPanelTab('files'),
       browser: createDefaultRightPanelTab('browser'),
     })).toBe('browser')
+  })
+
+  test('review launcher opens the current changed turn or falls back to the previous turn', () => {
+    const previousReport = {
+      runId: 'run-1',
+      status: 'unverified' as const,
+      workspaceChanged: true,
+      changedFiles: ['src/previous.ts'],
+      fileChanges: [{ path: 'src/previous.ts' }],
+      externalChangedFiles: [],
+      pendingBackground: false,
+    }
+    const currentReport = {
+      ...previousReport,
+      runId: 'run-2',
+      changedFiles: ['src/current.ts'],
+      fileChanges: [{ path: 'src/current.ts' }],
+    }
+    const baseEvents = [
+      {
+        id: 'started-1',
+        type: 'run.started' as const,
+        threadId: 'thread-1',
+        runId: 'run-1',
+        createdAt: '2026-07-30T00:00:00.000Z',
+      },
+      {
+        id: 'report-1',
+        type: 'coding.report.updated' as const,
+        threadId: 'thread-1',
+        runId: 'run-1',
+        createdAt: '2026-07-30T00:01:00.000Z',
+        codingReport: previousReport,
+      },
+      {
+        id: 'started-2',
+        type: 'run.started' as const,
+        threadId: 'thread-1',
+        runId: 'run-2',
+        createdAt: '2026-07-30T00:02:00.000Z',
+      },
+    ]
+
+    expect(getRightPanelReviewLaunchTarget(baseEvents)).toMatchObject({
+      recency: 'previous',
+      report: { runId: 'run-1' },
+      changes: [{ path: 'src/previous.ts' }],
+    })
+    expect(getRightPanelReviewLaunchTarget([
+      ...baseEvents,
+      {
+        id: 'report-2',
+        type: 'coding.report.updated' as const,
+        threadId: 'thread-1',
+        runId: 'run-2',
+        createdAt: '2026-07-30T00:03:00.000Z',
+        codingReport: currentReport,
+      },
+    ])).toMatchObject({
+      recency: 'current',
+      report: { runId: 'run-2' },
+      changes: [{ path: 'src/current.ts' }],
+    })
   })
 })

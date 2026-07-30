@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 
 import { FlaskConical, Globe, Newspaper } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import { CollapsibleResult } from './collapsible-result'
 import { openExternal } from '@/lib/desktop-api'
 
@@ -75,7 +76,7 @@ export function GuanlanTextResult({ variant, input, result }: GuanlanTextResultP
         renderContent={(text) =>
           config.markdown ? (
             <div className="text-[12px] leading-6 text-foreground/80 bg-muted/20 rounded-lg p-3 overflow-x-auto [&_.x-markdown]:text-[12px] [&_.x-markdown]:leading-6 [&_.x-markdown_h1]:text-[16px] [&_.x-markdown_h1]:font-bold [&_.x-markdown_h2]:text-[14px] [&_.x-markdown_h2]:font-bold [&_.x-markdown_h3]:text-[13px] [&_.x-markdown_h3]:font-semibold [&_.x-markdown_a]:text-primary [&_.x-markdown_a:hover]:underline [&_.x-markdown_pre]:bg-muted/40 [&_.x-markdown_pre]:rounded-md [&_.x-markdown_code]:text-[11px] [&_.x-markdown_table]:w-full [&_.x-markdown_th]:text-left [&_.x-markdown_th]:p-1.5 [&_.x-markdown_td]:p-1.5">
-              <XMarkdown>{text}</XMarkdown>
+              <XMarkdown components={DIFF_AWARE_MARKDOWN_COMPONENTS}>{text}</XMarkdown>
             </div>
           ) : (
             <pre className="text-[11px] text-foreground/80 whitespace-pre-wrap break-words font-mono bg-muted/20 rounded-lg p-3 overflow-x-auto">
