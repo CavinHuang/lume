@@ -12,6 +12,8 @@
 
 import { createHighlighter, bundledLanguages, createJavaScriptRegexEngine } from 'shiki'
 import type { HighlighterGeneric, BundledLanguage, BundledTheme } from 'shiki'
+import { CODEX_THEMES } from './codex-themes'
+import { getCodeThemeName } from './theme-runtime'
 
 /** Shiki 高亮器实例类型 */
 type ShikiHighlighter = HighlighterGeneric<BundledLanguage, BundledTheme>
@@ -24,7 +26,7 @@ const DEFAULT_LANGS: BundledLanguage[] = [
 ]
 
 /** 默认加载的主题 */
-const DEFAULT_THEMES: BundledTheme[] = ['github-light', 'github-dark']
+const DEFAULT_THEMES = [...CODEX_THEMES]
 
 /** 常见语言别名映射 */
 const LANGUAGE_ALIASES: Record<string, string> = {
@@ -162,7 +164,7 @@ async function resolveAndLoadLanguage(highlighter: ShikiHighlighter, lang: strin
  * 异步高亮代码，返回 HTML 字符串（首次初始化 + 按需加载语言时使用）
  */
 export async function highlightCode(options: HighlightOptions): Promise<HighlightResult> {
-  const { code, language, theme = 'github-dark' } = options
+  const { code, language, theme = getCodeThemeName() } = options
 
   const highlighter = await getHighlighter()
   const resolvedLang = await resolveAndLoadLanguage(highlighter, language)
@@ -182,7 +184,7 @@ export async function highlightCode(options: HighlightOptions): Promise<Highligh
 export function highlightCodeSync(options: HighlightOptions): HighlightResult | null {
   if (!cachedHighlighter) return null
 
-  const { code, language, theme = 'github-dark' } = options
+  const { code, language, theme = getCodeThemeName() } = options
   const lang = resolveLoadedLanguage(cachedHighlighter, language)
 
   const html = cachedHighlighter.codeToHtml(code, {
@@ -204,7 +206,7 @@ export function highlightCodeSync(options: HighlightOptions): HighlightResult | 
 export function highlightToTokens(options: HighlightOptions): HighlightTokensResult | null {
   if (!cachedHighlighter) return null
 
-  const { code, language, theme = 'github-dark' } = options
+  const { code, language, theme = getCodeThemeName() } = options
   const lang = resolveLoadedLanguage(cachedHighlighter, language)
 
   const result = cachedHighlighter.codeToTokens(code, {

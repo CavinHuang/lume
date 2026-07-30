@@ -14,4 +14,13 @@ export {
   type HighlightResult,
   type HighlightToken,
   type HighlightTokensResult,
+  CODEX_DARK_THEME,
+  CODEX_DARK_THEME_NAME,
+  CODEX_LIGHT_THEME,
+  CODEX_LIGHT_THEME_NAME,
+  CODEX_THEMES,
+  getCodeThemeName,
+  getCodeThemeType,
+  useCodeTheme,
+  type CodeThemeName,
 } from './highlight/index'
