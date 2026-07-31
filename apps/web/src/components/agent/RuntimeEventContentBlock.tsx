@@ -507,7 +507,10 @@ function UserMessageBlock({
                 title={comment.body}
               >
                 <MessageSquareText size={12} className="shrink-0 text-[var(--lume-accent)]" />
-                <span className="truncate">{comment.position.path}:L{comment.position.startLine ?? comment.position.line}{(comment.position.startLine ?? comment.position.line) !== comment.position.line ? `–L${comment.position.line}` : ''} · {comment.body}</span>
+                <span className="truncate">
+                  {comment.intent === 'modify' ? '修改请求 · ' : comment.intent === 'context' ? '代码上下文 · ' : ''}
+                  {comment.position.path}:L{comment.position.startLine ?? comment.position.line}{(comment.position.startLine ?? comment.position.line) !== comment.position.line ? `–L${comment.position.line}` : ''} · {comment.body}
+                </span>
               </span>
             ))}
           </div>
@@ -896,6 +899,7 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
     <RuntimeEventToolCallBlock
       toolCall={block.toolCall}
       threadId={threadId}
+      onOpenThreadFile={onOpenThreadFile}
       onUserResizeStart={onUserResizeStart}
     />
   )
@@ -905,6 +909,7 @@ type MinimalProcessGroupProps = {
   blocks: RuntimeAssistantBlock[]
   threadId: string
   isStreamingMessage: boolean
+  onOpenThreadFile?: OpenThreadFile
   onUserResizeStart?: () => void
 }
 
@@ -967,6 +972,7 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
   blocks,
   threadId,
   isStreamingMessage,
+  onOpenThreadFile,
   onUserResizeStart,
 }: MinimalProcessGroupProps) {
   const [expanded, setExpanded] = useState(false)
@@ -1107,7 +1113,7 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
                   />
                 )
               }
-              return <MinimalToolCallRow key={block.id} toolCall={block.toolCall} />
+              return <MinimalToolCallRow key={block.id} toolCall={block.toolCall} onOpenThreadFile={onOpenThreadFile} />
             }
             return null
           })}
@@ -1117,7 +1123,13 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
   )
 }, areMinimalProcessGroupPropsEqual)
 
-const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { toolCall: RuntimeToolCallView }) {
+const MinimalToolCallRow = memo(function MinimalToolCallRow({
+  toolCall,
+  onOpenThreadFile,
+}: {
+  toolCall: RuntimeToolCallView
+  onOpenThreadFile?: OpenThreadFile
+}) {
   const [open, setOpen] = useState(false)
   const input = asRecord(toolCall.input)
   const isRunning = toolCall.status === 'running'
@@ -1161,7 +1173,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { tool
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
-            <ToolExecutionDetails toolCall={toolCall} />
+            <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
             <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>
@@ -1562,9 +1574,16 @@ function formatFileList(files: string[]): string {
   return `${files.slice(0, 4).join('、')} 等 ${files.length} 个文件`
 }
 
-function ToolExecutionDetails({ toolCall }: { toolCall: RuntimeToolCallView }) {
+function ToolExecutionDetails({
+  toolCall,
+  onOpenThreadFile,
+}: {
+  toolCall: RuntimeToolCallView
+  onOpenThreadFile?: OpenThreadFile
+}) {
   const execution = toolCall.execution
   const resultRef = toolCall.resultRef ?? execution?.resultRef
+  const authorizedResultRef = resultRef?.fileRef
   const errorText = toolCall.status === 'failed' ? formatToolErrorOutput(toolCall.output) : ''
   if (!execution && !resultRef && !errorText) return null
 
@@ -1593,7 +1612,24 @@ function ToolExecutionDetails({ toolCall }: { toolCall: RuntimeToolCallView }) {
         {typeof execution?.durationMs === 'number' && <span>耗时：{formatDurationLabel(execution.durationMs)}</span>}
       </div>
       {execution?.stderrPreview && <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words text-[10px] text-amber-600 dark:text-amber-300">stderr: {execution.stderrPreview}</pre>}
-      {resultRef && <div className="break-all"><span className="mr-1 text-foreground/40">结果文件</span>{resultRef.path}</div>}
+      {resultRef && (
+        <div className="flex min-w-0 items-center gap-1">
+          <span className="shrink-0 text-foreground/40">结果文件</span>
+          {authorizedResultRef && onOpenThreadFile ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-auto min-w-0 justify-start gap-1 p-0 text-[11px] font-normal text-[var(--lume-accent)] hover:bg-transparent"
+              onClick={() => void onOpenThreadFile(authorizedResultRef.relativePath, authorizedResultRef)}
+            >
+              <Package size={11} className="shrink-0" />
+              <span className="truncate">{authorizedResultRef.relativePath.replace(/^artifacts\//, '')}</span>
+            </Button>
+          ) : (
+            <span className="min-w-0 break-all">{resultRef.path}</span>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -1656,6 +1692,7 @@ function MinimalAssistantContent({
             blocks={segment.blocks}
             threadId={threadId}
             isStreamingMessage={isStreamingMessage}
+            onOpenThreadFile={onOpenThreadFile}
             onUserResizeStart={onUserResizeStart}
           />
         )
@@ -2298,10 +2335,12 @@ function IncompleteTable() {
 const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   toolCall,
   threadId,
+  onOpenThreadFile,
   onUserResizeStart,
 }: {
   toolCall: RuntimeToolCallView
   threadId: string
+  onOpenThreadFile?: OpenThreadFile
   onUserResizeStart?: () => void
 }) {
   const [collapsed, setCollapsed] = useState(true)
@@ -2389,7 +2428,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">
-            <ToolExecutionDetails toolCall={toolCall} />
+            <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
             <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>

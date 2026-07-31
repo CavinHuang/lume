@@ -345,11 +345,40 @@ export function mapExternalChromeRequest(request: BrowserActionRequest): { metho
     case "forward": return { method: "navigate_tab_forward", params: { ...params, tabId } };
     case "reload": return { method: "navigate_tab_reload", params: { ...params, tabId } };
     case "snapshot": return { method: "playwright_dom_snapshot", params: { ...params, tabId } };
-    case "screenshot": return { method: "tab_screenshot", params: { ...params, tabId, options: { fullPage: request.params?.fullPage === true } } };
+    case "screenshot": return { method: "tab_screenshot", params: { ...params, tabId, options: { format: request.params?.format, quality: request.params?.quality, fullPage: request.params?.fullPage === true, clip: request.params?.clip } } };
     case "url": return { method: "tab_url", params: { ...params, tabId } };
     case "title": return { method: "tab_title", params: { ...params, tabId } };
+    case "nameSession": return { method: "browser_name_session", params };
+    case "history:list": return { method: "browser_user_history", params };
+    case "browser:visibility:get": return { method: "browser_visibility_get", params };
+    case "browser:visibility:set": return { method: "browser_visibility_set", params: { ...params, visible: request.params?.visible } };
+    case "browser:viewport:set": return { method: "browser_viewport_set", params: { ...params, options: { width: request.params?.width, height: request.params?.height, deviceScaleFactor: request.params?.deviceScaleFactor, mobile: request.params?.mobile } } };
+    case "browser:viewport:reset": return { method: "browser_viewport_reset", params };
     case "dialog:get": return { method: "tab_js_dialog_get", params: { ...params, tabId } };
     case "dialog:handle": return { method: "tab_js_dialog_handle", params: { ...params, tabId } };
+    case "elementInfo": return { method: "playwright_element_info", params: { ...params, tabId, options: request.params?.options ?? request.params } };
+    case "elementScreenshot": return { method: "playwright_element_screenshot", params: { ...params, tabId, options: request.params?.options ?? request.params } };
+    case "evaluate:readonly": return { method: "playwright_evaluate", params: { ...params, tabId, expression: request.params?.script ?? request.params?.expression, arg: request.params?.arg, timeoutMs: request.params?.timeoutMs } };
+    case "wait:filechooser": return { method: "playwright_wait_for_file_chooser", params: { ...params, tabId, options: { timeoutMs: request.params?.timeoutMs } } };
+    case "filechooser:setFiles": return { method: "playwright_file_chooser_set_files", params: { ...params, tabId, chooserId: request.params?.fileChooserId ?? request.params?.chooserId } };
+    case "wait:download": return { method: "playwright_wait_for_download", params: { ...params, tabId, options: { timeoutMs: request.params?.timeoutMs } } };
+    case "download:path": return { method: "playwright_download_path", params };
+    case "pageAssets:list": return { method: "tab_page_assets_list", params: { ...params, tabId } };
+    case "pageAssets:bundle": return { method: "tab_page_assets_bundle", params: { ...params, tabId, options: request.params?.options ?? { inventoryId: request.params?.inventoryId, assetIds: request.params?.assetIds } } };
+    case "webmcp:list": return { method: "webmcp_list_tools", params: { ...params, tabId } };
+    case "webmcp:invoke": return { method: "webmcp_invoke_tool", params: { ...params, tabId, tool_name: request.params?.toolName ?? request.params?.tool_name, input: request.params?.input, timeout_ms: request.params?.timeoutMs ?? request.params?.timeout_ms } };
+    case "dev:logs": return { method: "tab_dev_logs", params: { ...params, tabId, options: request.params } };
+    case "dom:visible": return { method: "dom_cua_get_visible_dom", params: { ...params, tabId } };
+    case "dom:click": return { method: "dom_cua_click", params: { ...params, tabId, node_id: request.params?.nodeId } };
+    case "dom:doubleClick": return { method: "dom_cua_double_click", params: { ...params, tabId, node_id: request.params?.nodeId } };
+    case "dom:type": return { method: "dom_cua_type", params: { ...params, tabId, node_id: request.params?.nodeId } };
+    case "dom:keypress": return { method: "dom_cua_keypress", params: { ...params, tabId, node_id: request.params?.nodeId } };
+    case "dom:scroll": return { method: "dom_cua_scroll", params: { ...params, tabId, node_id: request.params?.nodeId, deltaX: request.params?.scrollX, deltaY: request.params?.scrollY } };
+    case "downloadMedia": return request.params?.locator
+      ? { method: "playwright_locator_download_media", params: { ...params, tabId, locator: request.params.locator } }
+      : request.params?.nodeId
+        ? { method: "dom_cua_download_media", params: { ...params, tabId, node_id: request.params.nodeId } }
+        : { method: "cua_download_media", params: { ...params, tabId } };
     case "click": return locator ? { method: "playwright_locator_click", params: { ...params, tabId, locator } } : { method: "cua_click", params: { ...params, tabId } };
     case "doubleClick": case "dblclick": return locator ? { method: "playwright_locator_dblclick", params: { ...params, tabId, locator } } : { method: "cua_double_click", params: { ...params, tabId } };
     case "hover": return locator ? { method: "playwright_locator_hover", params: { ...params, tabId, locator } } : { method: "cua_move", params: { ...params, tabId } };
@@ -376,6 +405,7 @@ export function mapExternalChromeRequest(request: BrowserActionRequest): { metho
     case "locator:allTextContents": return { method: "playwright_locator_all_text_contents", params: { ...params, tabId, locator } };
     case "locator:readAll": return { method: "playwright_locator_read_all", params: { ...params, tabId, locator } };
     case "locator:waitFor": return { method: "playwright_locator_wait_for", params: { ...params, tabId, locator } };
+    case "locator:evaluate": return { method: "playwright_locator_evaluate", params: { ...params, tabId, locator, expression: request.params?.expression ?? request.params?.script, arg: request.params?.arg, timeoutMs: request.params?.timeoutMs } };
     case "wait:url": return { method: "playwright_wait_for_url", params: { ...params, tabId, url: request.params?.url, options: { timeoutMs: request.params?.timeoutMs } } };
     case "wait:load": return { method: "playwright_wait_for_load_state", params: { ...params, tabId } };
     case "wait:timeout": return { method: "playwright_wait_for_timeout", params: { ...params, tabId } };
@@ -385,6 +415,15 @@ export function mapExternalChromeRequest(request: BrowserActionRequest): { metho
     case "playwright_element_info": case "playwright_element_screenshot": case "tab_cdp_events": case "tab_dev_logs":
     case "dom_cua_get_visible_dom": case "dom_cua_click": case "dom_cua_double_click": case "dom_cua_type": case "dom_cua_keypress": case "dom_cua_scroll":
       return { method: request.method, params: { ...params, tabId } };
-    default: throw new Error("unsupported external browser method");
+    default:
+      if (EXTERNAL_CHROME_PASSTHROUGH_METHODS.has(request.method)) return { method: request.method, params: { ...params, tabId } };
+      throw new Error("unsupported external browser method");
   }
 }
+
+const EXTERNAL_CHROME_PASSTHROUGH_METHODS = new Set([
+  "browser_documentation", "browser_capabilities_list", "browser_capability_documentation",
+  "tab_capabilities_list", "tab_capability_documentation", "tab_cdp_read_events",
+  "tab_content_export", "tab_content_export_gsuite", "tab_browser_auth_handoff", "tab_browser_auth_request",
+  "webmcp_list_tools", "webmcp_invoke_tool",
+]);

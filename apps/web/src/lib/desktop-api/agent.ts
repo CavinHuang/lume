@@ -78,6 +78,7 @@ export const agentSend = async (input: AgentSendInput) => {
               ...(input.messageParts ? { messageParts: input.messageParts } : {}),
               ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
               ...(input.commentAttachments ? { commentAttachments: input.commentAttachments } : {}),
+              ...(input.browserAttachments ? { browserAttachments: input.browserAttachments } : {}),
             },
           }
         : {}),

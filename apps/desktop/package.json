@@ -46,6 +46,7 @@
     "files": [
       "dist/main/main.mjs",
       "dist/preload/preload.cjs",
+      "dist/preload/browser-overlay-preload.cjs",
       "assets"
     ],
     "extraResources": [

@@ -17,8 +17,13 @@ try {
   if (!build.success) throw new Error(build.logs.map(String).join('\n'))
   const builtModule = build.outputs[0]?.path
   if (!builtModule) throw new Error('browser runtime module was not built')
+  const overlaySource = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'browser-overlay-preload.ts')
+  const overlayBuild = await Bun.build({ entrypoints: [overlaySource], target: 'node', format: 'cjs', external: ['electron'] })
+  if (!overlayBuild.success || !overlayBuild.outputs[0]) throw new Error(overlayBuild.logs.map(String).join('\n'))
+  const overlayPreloadPath = join(appRoot, 'browser-overlay-preload.cjs')
+  writeFileSync(overlayPreloadPath, Buffer.from(await overlayBuild.outputs[0].arrayBuffer()))
   writeFileSync(join(appRoot, 'package.json'), JSON.stringify({ name: 'lume-browser-runtime-e2e', type: 'module', main: 'main.mjs' }))
-  writeFileSync(join(appRoot, 'main.mjs'), electronFixtureMain(builtModule.replace(/\\/g, '/')))
+  writeFileSync(join(appRoot, 'main.mjs'), electronFixtureMain(builtModule.replace(/\\/g, '/'), overlayPreloadPath.replace(/\\/g, '/')))
 
   const child = spawn(findElectronBinary(), [`--user-data-dir=${join(root, 'user-data')}`, appRoot], {
     env: { ...process.env, LUME_BROWSER_E2E_CONFIG: configRoot, LUME_BROWSER_E2E_RESULT: resultPath },
@@ -56,7 +61,7 @@ function findElectronBinary() {
   throw new Error('A real Electron binary is required')
 }
 
-function electronFixtureMain(modulePath) {
+function electronFixtureMain(modulePath, overlayPreloadPath) {
   return `
 import { app, BrowserWindow } from 'electron'
 import { createServer } from 'node:http'
@@ -68,6 +73,11 @@ const resultPath = process.env.LUME_BROWSER_E2E_RESULT
 const configRoot = process.env.LUME_BROWSER_E2E_CONFIG
 let assertions = 0
 const check = (value, message) => { assertions += 1; if (!value) throw new Error(message) }
+const checkRejects = async (action, code, message) => {
+  assertions += 1
+  try { await action() } catch (error) { if (String(error?.message ?? error).includes(code)) return }
+  throw new Error(message)
+}
 const waitUntil = async (predicate, timeoutMs = 5000) => {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -76,6 +86,14 @@ const waitUntil = async (predicate, timeoutMs = 5000) => {
   }
   throw new Error('timed out waiting for fixture state')
 }
+let frameOrigin = ''
+const frameServer = createServer((_request, response) => {
+  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+  response.end(\`<!doctype html><title>Cross origin frame</title>
+    <input id="frame-name" aria-label="Frame name">
+    <button id="frame-submit" onclick="document.querySelector('#frame-result').textContent=document.querySelector('#frame-name').value">Frame apply</button>
+    <output id="frame-result"></output>\`)
+})
 const server = createServer((request, response) => {
   if (request.url === '/download') {
     response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="fixture.txt"' })
@@ -87,10 +105,28 @@ const server = createServer((request, response) => {
     <label>Name <input id="name" aria-label="Name"></label>
     <button id="submit" onclick="document.querySelector('#result').textContent=document.querySelector('#name').value">Apply</button>
     <a id="download" href="/download" download="fixture.txt">Download</a>
-    <output id="result"></output>\`)
+    <output id="result"></output>
+    <iframe id="cross-origin-frame" src="\${frameOrigin}/"></iframe>
+    <script>
+      document.modelContext = {
+        getTools: () => [{
+          name: 'set_result',
+          title: 'Set result',
+          description: 'Updates the fixture result.',
+          inputSchema: JSON.stringify({ type: 'object', properties: { value: { type: 'string' } } }),
+        }],
+        executeTool: (_tool, input) => {
+          const value = JSON.parse(input);
+          document.querySelector('#result').textContent = value.value;
+          return JSON.stringify({ applied: value.value });
+        },
+      };
+    </script>\`)
 })
 
 app.whenReady().then(async () => {
+  await new Promise(resolveListen => frameServer.listen(0, '127.0.0.1', resolveListen))
+  frameOrigin = 'http://127.0.0.1:' + frameServer.address().port
   await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen))
   const origin = 'http://127.0.0.1:' + server.address().port
   const win = new BrowserWindow({ show: true, x: -10_000, y: -10_000, width: 900, height: 700, skipTaskbar: true, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } })
@@ -101,7 +137,8 @@ app.whenReady().then(async () => {
     emit: event => events.push(event),
     isAgentPluginEnabled: () => true,
     initialSettings: {
-      siteOverrides: { [origin]: 'allow' },
+      siteOverrides: { [origin]: 'allow', [frameOrigin]: 'allow' },
+      sitePermissionOverrides: { [origin]: { browse: 'allow', download: 'allow' }, [frameOrigin]: { browse: 'allow' } },
       agentCursorVisible: false,
       downloadDirectory: join(configRoot, 'user-downloads'),
       downloadAskBeforeSave: false,
@@ -109,13 +146,16 @@ app.whenReady().then(async () => {
     },
     journalEncryption: { available: true, encrypt: value => Buffer.from(value) },
     credentialStorage: { isEncryptionAvailable: () => true, encryptString: value => Buffer.from(value), decryptString: value => value.toString() },
+    overlayPreloadPath: ${JSON.stringify(overlayPreloadPath)},
   })
   runtime.setAgentPluginEnabled(true)
   const context = { actor: 'agent', browserSessionId: 'fixture-session', browserTurnId: 'fixture-turn', capability: 'browser' }
   const call = (method, params = {}) => runtime.dispatch({ requestId: crypto.randomUUID(), context, method, params })
   try {
     const handshake = await call('handshake')
-    check(handshake.protocolVersion === 5 && handshake.minSupported === 5 && handshake.maxSupported === 5, 'browser protocol handshake drifted from the canonical client')
+    check(handshake.protocolVersion === 6 && handshake.minSupported === 5 && handshake.maxSupported === 6, 'browser protocol handshake drifted from the canonical client')
+    check(handshake.capabilities.some(capability => capability.id === 'pageAssets'), 'pageAssets capability was not advertised')
+    check(handshake.capabilities.some(capability => capability.id === 'webmcp'), 'WebMCP capability was not advertised')
     const created = await call('ensure', { tabId: 'fixture-tab' })
     check(created.tabId === 'fixture-tab' && created.backend === 'iab', 'logical tab was not created')
     const bounded = await call('bounds', { tabId: 'fixture-tab', x: 20, y: 30, width: 640, height: 480, surface: 'main', visible: true })
@@ -142,17 +182,34 @@ app.whenReady().then(async () => {
     const inputValue = await view.webContents.executeJavaScript("document.querySelector('#name').value")
     check(inputValue === 'Lume Agent', 'locator fill did not update the input: ' + JSON.stringify(inputValue))
     check(await call('locator:inputValue', { tabId: 'fixture-tab', locator: locator('#name') }) === 'Lume Agent', 'locator inputValue did not read the isolated-world DOM')
+    check(await call('evaluate:readonly', { tabId: 'fixture-tab', expression: '(arg) => document.querySelector(arg).value', arg: '#name' }) === 'Lume Agent', 'page evaluate did not return its direct read-only value')
+    check(await call('locator:evaluate', { tabId: 'fixture-tab', locator: locator('#name'), expression: '(element, suffix) => element.value + suffix', arg: '!' }) === 'Lume Agent!', 'locator evaluate did not receive the strict element')
+    await checkRejects(() => call('locator:evaluate', { tabId: 'fixture-tab', locator: locator('#name'), expression: '(element) => { element.value = \"mutated\"; return element.value }' }), 'action_denied', 'locator evaluate allowed a side effect')
+    check(await call('locator:inputValue', { tabId: 'fixture-tab', locator: locator('#name') }) === 'Lume Agent', 'rejected locator evaluate changed the page')
     check(await call('locator:count', { tabId: 'fixture-tab', locator: locator('button') }) === 1, 'locator count was incorrect')
     await call('locator:waitFor', { tabId: 'fixture-tab', locator: locator('#submit'), state: 'visible', timeoutMs: 1000 })
     await call('wait:url', { tabId: 'fixture-tab', url: origin + '/*', timeoutMs: 1000 })
     await call('click', { tabId: 'fixture-tab', locator: locator('#submit') })
     const pageResult = await view.webContents.executeJavaScript("document.querySelector('#result').textContent")
     check(pageResult === 'Lume Agent', 'locator fill/click did not update the page')
+    const webMcpTools = await call('webmcp:list', { tabId: 'fixture-tab' })
+    check(webMcpTools.tools.length === 1 && webMcpTools.tools[0].name === 'set_result' && webMcpTools.tools[0].input_schema.type === 'object', 'WebMCP tools were not normalized')
+    const webMcpResult = await call('webmcp:invoke', { tabId: 'fixture-tab', toolName: 'set_result', input: { value: 'WebMCP Agent' } })
+    check(webMcpResult.result.applied === 'WebMCP Agent' && await view.webContents.executeJavaScript("document.querySelector('#result').textContent") === 'WebMCP Agent', 'WebMCP tool invocation failed')
     await view.webContents.executeJavaScript("document.querySelector('#result').textContent = ''")
     await call('press', { tabId: 'fixture-tab', locator: locator('#submit'), key: 'Enter' })
     check(await view.webContents.executeJavaScript("document.querySelector('#result').textContent") === 'Lume Agent', 'locator press did not focus and activate the target')
+    const frameLocator = selector => ({ version: 1, steps: [{ kind: 'frame', selector: '#cross-origin-frame' }, { kind: 'css', selector }] })
+    await call('locator:waitFor', { tabId: 'fixture-tab', locator: frameLocator('#frame-name'), state: 'visible', timeoutMs: 3000 })
+    await call('fill', { tabId: 'fixture-tab', locator: frameLocator('#frame-name'), text: 'Cross origin Agent' })
+    check(await call('locator:inputValue', { tabId: 'fixture-tab', locator: frameLocator('#frame-name') }) === 'Cross origin Agent', 'cross-origin frame fill/read failed')
+    check(await call('locator:evaluate', { tabId: 'fixture-tab', locator: frameLocator('#frame-name'), expression: '(element) => element.value' }) === 'Cross origin Agent', 'cross-origin frame locator evaluate failed')
+    await call('click', { tabId: 'fixture-tab', locator: frameLocator('#frame-submit') })
+    check(await call('locator:innerText', { tabId: 'fixture-tab', locator: frameLocator('#frame-result') }) === 'Cross origin Agent', 'cross-origin frame click failed')
     const snapshot = await call('snapshot', { tabId: 'fixture-tab' })
-    check(Array.isArray(snapshot.documents) && snapshot.documents.length === 1, 'DOM snapshot was not captured')
+    check(Array.isArray(snapshot.documents) && snapshot.documents.length >= 2, 'DOM snapshot did not include the cross-origin frame')
+    const pageAssets = await call('pageAssets:list', { tabId: 'fixture-tab' })
+    check(pageAssets.summary.totalCount >= 1 && pageAssets.assets.some(asset => asset.url === origin + '/download'), 'page asset inventory missed an observed download asset')
     const screenshot = await call('screenshot', { tabId: 'fixture-tab' })
     check(typeof screenshot === 'string' && screenshot.length > 100, 'viewport screenshot was empty')
     await call('zoom:set', { tabId: 'fixture-tab', factor: 1.25 })
@@ -161,6 +218,15 @@ app.whenReady().then(async () => {
     check((await call('list')).length === 1, 'logical tab list drifted from native views')
     const userContext = { actor: 'user', browserSessionId: 'renderer', browserTurnId: 'renderer' }
     const userCall = (method, params = {}) => runtime.dispatch({ requestId: crypto.randomUUID(), context: userContext, method, params })
+    const overlayResultPromise = userCall('overlay:compose', {
+      tabId: 'fixture-tab',
+      kind: 'annotation',
+      anchor: { kind: 'element', url: (await call('url', { tabId: 'fixture-tab' })), generation: (await call('get', { tabId: 'fixture-tab' })).generation, framePath: [], rect: { x: 20, y: 20, width: 80, height: 20 } },
+    })
+    await waitUntil(() => BrowserWindow.getAllWindows().length === 2)
+    const overlayWindow = BrowserWindow.getAllWindows().find(candidate => candidate !== win)
+    await overlayWindow.webContents.executeJavaScript("document.querySelector('#body').value='Native overlay review'; document.querySelector('#submit').click()")
+    check((await overlayResultPromise).body === 'Native overlay review', 'native browser review overlay did not return its sandboxed result')
     await userCall('ensure', { tabId: 'user-download-tab' })
     await userCall('navigate', { tabId: 'user-download-tab', url: origin + '/' })
     const userView = win.contentView.children.find(child => child.webContents && child !== view)
@@ -197,6 +263,7 @@ app.whenReady().then(async () => {
     runtime.destroy()
     win.destroy()
     await new Promise(resolveClose => server.close(resolveClose))
+    await new Promise(resolveClose => frameServer.close(resolveClose))
     app.quit()
   }
 }).catch(error => {

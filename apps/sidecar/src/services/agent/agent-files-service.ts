@@ -17,6 +17,8 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  watch,
+  type FSWatcher,
   writeFileSync
 } from "node:fs";
 import { spawn } from "node:child_process";
@@ -34,11 +36,15 @@ import type {
   ExternalAttachmentMeta,
   FileEntry,
   FileRef,
+  FileRefChangedEvent,
+  FileRefReadResult,
   FileReferenceBinding,
   GuardedFileRef,
   GuardedFileRefErrorCode,
   GuardedFileRefValidationResult,
   FileSearchResult,
+  WriteFileRefInput,
+  WriteFileRefResult,
   WorkspaceCopyFolderInput,
   WorkspaceSaveFilesInput
 } from "@lume/shared";
@@ -304,10 +310,14 @@ export function statGuardedFileRef(guarded: GuardedFileRef): FileEntry {
   return statResolvedFileRef(resolveGuardedFileRef(guarded));
 }
 
-export function readGuardedFileRef(guarded: GuardedFileRef): { content: string; truncated: boolean } {
+export function readGuardedFileRef(
+  guarded: GuardedFileRef
+): Extract<FileRefReadResult, { kind: "text" }> {
   const resolved = resolveGuardedFileRef(guarded);
   if (!statSync(resolved.absolutePath).isFile()) throw new GuardedFileRefError("KIND_MISMATCH", "目标不是文件");
-  return readPreviewableText(resolved.absolutePath);
+  const result = readFileRefDocument(resolved, false);
+  if (result.kind !== "text") throw new GuardedFileRefError("KIND_MISMATCH", "目标不是可预览文本文件");
+  return result;
 }
 
 export function listGuardedFileRefDirectory(guarded: GuardedFileRef): FileEntry[] {
@@ -377,6 +387,58 @@ export function resolveAuthorizedFileRef(ref: FileRef): ResolvedAuthorizedFileRe
   return { ref: { ...ref, relativePath }, relativePath, rootPath, absolutePath };
 }
 
+/** Resolve BrowserClient upload inputs against the current thread's project/session roots. */
+export function resolveAuthorizedBrowserUploadPaths(threadId: string, inputs: string[]): string[] {
+  const thread = getAgentThreadMeta(threadId);
+  if (!thread) throw new AuthorizedFileRefError("UNAVAILABLE", "浏览器上传所属线程不可用");
+  const fileContextId = thread.fileContextId?.trim() || thread.id;
+  const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
+  const roots = [
+    ...(workspace?.projectPath ? [{ source: "project" as const, scopeId: workspace.slug, root: realpathSync(workspace.projectPath) }] : []),
+    { source: "session" as const, scopeId: fileContextId, root: realpathSync(getAgentFileContextRootPath(fileContextId)) },
+  ];
+  return inputs.slice(0, 20).map((input) => {
+    const encoded = input.startsWith("lume-file-ref:") ? input.slice("lume-file-ref:".length) : "";
+    let ref: FileRef | undefined;
+    if (encoded) {
+      try {
+        const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as Partial<FileRef>;
+        if ((parsed.source === "project" || parsed.source === "session")
+          && typeof parsed.scopeId === "string"
+          && typeof parsed.relativePath === "string") {
+          ref = { source: parsed.source, scopeId: parsed.scopeId, relativePath: parsed.relativePath };
+        }
+      } catch { /* malformed references remain unauthorized */ }
+      if (!ref) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传 FileRef 非法");
+    } else {
+      const candidateInput = input.trim();
+      if (!candidateInput) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传路径为空");
+      for (const root of roots) {
+        const candidate = resolve(isAbsolute(candidateInput) ? candidateInput : join(root.root, candidateInput));
+        if (!isWithin(root.root, candidate)) continue;
+        ref = {
+          source: root.source,
+          scopeId: root.scopeId,
+          relativePath: relative(root.root, candidate).split(sep).join("/"),
+        };
+        break;
+      }
+      if (!ref) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传路径不属于当前任务");
+    }
+    if (ref.source === "project" && (!workspace || ref.scopeId !== workspace.slug)) {
+      throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传项目引用与当前任务不一致");
+    }
+    if (ref.source === "session" && ref.scopeId !== fileContextId) {
+      throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传会话引用与当前任务不一致");
+    }
+    const resolved = resolveAuthorizedFileRef(ref);
+    const metadata = lstatSync(resolved.absolutePath);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传目标必须是普通文件");
+    if (metadata.size > 100 * 1024 * 1024) throw new AuthorizedFileRefError("OUT_OF_SCOPE", "浏览器上传文件超过 100 MB");
+    return resolved.absolutePath;
+  });
+}
+
 function mapAuthorizedFileSystemError(
   error: unknown,
   fallbackMessage: string,
@@ -422,10 +484,247 @@ function statResolvedFileRef(resolved: ResolvedAuthorizedFileRef): FileEntry {
   };
 }
 
-export function readAuthorizedFileRef(ref: FileRef): { content: string; truncated: boolean } {
+export function readAuthorizedFileRef(ref: FileRef): FileRefReadResult {
   const resolved = resolveAuthorizedFileRef(ref);
   if (!statSync(resolved.absolutePath).isFile()) throw new Error("FileRef 目标不是文件");
-  return readPreviewableText(resolved.absolutePath);
+  return readFileRefDocument(resolved, ref.source === "project" || ref.source === "session");
+}
+
+export function writeAuthorizedFileRef(input: WriteFileRefInput): WriteFileRefResult {
+  if (input.ref.source !== "project" && input.ref.source !== "session") {
+    throw new Error("该文件来源为只读");
+  }
+  const resolved = resolveAuthorizedFileRef(input.ref);
+  const metadata = statSync(resolved.absolutePath);
+  if (!metadata.isFile()) throw new Error("FileRef 目标不是文件");
+  if (metadata.size > FILE_EDITABLE_LIMIT_BYTES) throw new Error("超过 10 MB 的文件不能编辑");
+  if (Math.abs(metadata.mtimeMs - input.expectedMtimeMs) > 0.5) {
+    return { outcome: "conflict", mtimeMs: metadata.mtimeMs, size: metadata.size };
+  }
+  const document = readFileRefDocument(resolved, true);
+  if (document.kind !== "text" || !document.editable) throw new Error("该文件编码不支持编辑");
+  const normalized = normalizeLineEndings(input.content, document.lineEnding);
+  const encoded = encodeTextDocument(normalized, document.encoding, document.bom);
+  if (encoded.byteLength > FILE_EDITABLE_LIMIT_BYTES) {
+    throw new Error("保存内容超过 10 MB 编辑上限");
+  }
+  const temporaryPath = join(
+    dirname(resolved.absolutePath),
+    `.lume-${basename(resolved.absolutePath)}-${randomUUID()}.tmp`
+  );
+  try {
+    writeFileSync(temporaryPath, encoded, { mode: metadata.mode });
+    const checked = resolveAuthorizedFileRef(input.ref);
+    const current = statSync(checked.absolutePath);
+    if (Math.abs(current.mtimeMs - input.expectedMtimeMs) > 0.5) {
+      return { outcome: "conflict", mtimeMs: current.mtimeMs, size: current.size };
+    }
+    renameSync(temporaryPath, checked.absolutePath);
+    const saved = statSync(checked.absolutePath);
+    markAuthorizedFileRefSelfWrite(input.ref, saved.mtimeMs, saved.size);
+    return { outcome: "saved", mtimeMs: saved.mtimeMs, size: saved.size };
+  } finally {
+    if (existsSync(temporaryPath)) rmSync(temporaryPath, { force: true });
+  }
+}
+
+const FILE_EDITABLE_LIMIT_BYTES = 10 * 1024 * 1024;
+const FILE_LOAD_LIMIT_BYTES = 20 * 1024 * 1024;
+
+function readFileRefDocument(resolved: ResolvedAuthorizedFileRef, allowEditing: boolean): FileRefReadResult {
+  const metadata = statSync(resolved.absolutePath);
+  const mimeType = inferFileMimeType(resolved.absolutePath);
+  if (metadata.size > FILE_LOAD_LIMIT_BYTES) {
+    return {
+      kind: "too-large",
+      size: metadata.size,
+      mtimeMs: metadata.mtimeMs,
+      mimeType,
+      editable: false,
+      truncated: true
+    };
+  }
+  const bytes = readFileSync(resolved.absolutePath);
+  const decoded = decodeTextDocument(bytes);
+  if (!decoded) {
+    return {
+      kind: "binary",
+      size: metadata.size,
+      mtimeMs: metadata.mtimeMs,
+      mimeType,
+      editable: false,
+      truncated: true
+    };
+  }
+  return {
+    kind: "text",
+    content: decoded.content,
+    size: metadata.size,
+    mtimeMs: metadata.mtimeMs,
+    mimeType,
+    encoding: decoded.encoding,
+    bom: decoded.bom,
+    lineEnding: detectLineEnding(decoded.content),
+    editable: allowEditing && metadata.size <= FILE_EDITABLE_LIMIT_BYTES,
+    truncated: false
+  };
+}
+
+function decodeTextDocument(bytes: Buffer): {
+  content: string;
+  encoding: "utf-8" | "utf-16le";
+  bom: boolean;
+} | null {
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return { content: bytes.subarray(2).toString("utf16le"), encoding: "utf-16le", bom: true };
+  }
+  const hasUtf8Bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  const contentBytes = hasUtf8Bom ? bytes.subarray(3) : bytes;
+  if (contentBytes.subarray(0, Math.min(contentBytes.length, 8192)).includes(0)) return null;
+  try {
+    return {
+      content: new TextDecoder("utf-8", { fatal: true }).decode(contentBytes),
+      encoding: "utf-8",
+      bom: hasUtf8Bom
+    };
+  } catch {
+    return null;
+  }
+}
+
+function detectLineEnding(content: string): "lf" | "crlf" | "mixed" | "none" {
+  const crlf = (content.match(/\r\n/g) ?? []).length;
+  const lf = (content.match(/(?<!\r)\n/g) ?? []).length;
+  if (crlf > 0 && lf > 0) return "mixed";
+  if (crlf > 0) return "crlf";
+  if (lf > 0) return "lf";
+  return "none";
+}
+
+function normalizeLineEndings(content: string, lineEnding: "lf" | "crlf" | "mixed" | "none"): string {
+  if (lineEnding === "lf") return content.replace(/\r\n/g, "\n");
+  if (lineEnding === "crlf") return content.replace(/\r?\n/g, "\r\n");
+  return content;
+}
+
+function encodeTextDocument(content: string, encoding: "utf-8" | "utf-16le", bom: boolean): Buffer {
+  const body = Buffer.from(content, encoding === "utf-16le" ? "utf16le" : "utf8");
+  if (!bom) return body;
+  return Buffer.concat([
+    encoding === "utf-16le" ? Buffer.from([0xff, 0xfe]) : Buffer.from([0xef, 0xbb, 0xbf]),
+    body
+  ]);
+}
+
+function inferFileMimeType(path: string): string {
+  const extension = extname(path).toLowerCase();
+  return ({
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".pdf": "application/pdf",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".pdb": "chemical/x-pdb"
+  } as Record<string, string>)[extension] ?? "text/plain";
+}
+
+type FileRefNotificationEmitter = (method: string, params: unknown) => void;
+interface FileWatchGroup {
+  watcher: FSWatcher;
+  ref: FileRef;
+  absolutePath: string;
+  subscriptions: Map<string, FileRefNotificationEmitter>;
+}
+
+const fileWatchGroups = new Map<string, FileWatchGroup>();
+const fileWatchKeysById = new Map<string, string>();
+const selfWrites = new Map<string, { until: number; mtimeMs: number; size: number }>();
+
+function authorizedFileRefWatchKey(ref: FileRef): string {
+  const path = normalizeAuthorizedRelativePath(ref.relativePath);
+  const normalized = process.platform === "win32" ? path.toLowerCase() : path;
+  return `${ref.source}:${ref.scopeId}:${normalized}`;
+}
+
+function markAuthorizedFileRefSelfWrite(ref: FileRef, mtimeMs: number, size: number): void {
+  const key = authorizedFileRefWatchKey(ref);
+  if (!fileWatchGroups.has(key)) return;
+  selfWrites.set(key, { until: Date.now() + 1_000, mtimeMs, size });
+}
+
+export function watchAuthorizedFileRef(
+  ref: FileRef,
+  emit: FileRefNotificationEmitter
+): { watchId: string } {
+  const resolved = resolveAuthorizedFileRef(ref);
+  if (!statSync(resolved.absolutePath).isFile()) throw new Error("FileRef 目标不是文件");
+  const key = authorizedFileRefWatchKey(ref);
+  let group = fileWatchGroups.get(key);
+  if (!group) {
+    const subscriptions = new Map<string, FileRefNotificationEmitter>();
+    const watcher = watch(dirname(resolved.absolutePath), (eventType, filename) => {
+      if (filename && String(filename).toLowerCase() !== basename(resolved.absolutePath).toLowerCase()) return;
+      const currentGroup = fileWatchGroups.get(key);
+      if (!currentGroup) return;
+      let change: FileRefChangedEvent["change"] = "deleted";
+      let mtimeMs: number | undefined;
+      let size: number | undefined;
+      try {
+        const metadata = statSync(currentGroup.absolutePath);
+        mtimeMs = metadata.mtimeMs;
+        size = metadata.size;
+        change = eventType === "rename" ? "renamed" : "changed";
+      } catch {
+        // The file may disappear between the directory event and stat.
+      }
+      const selfWrite = selfWrites.get(key);
+      if (selfWrite
+        && selfWrite.until >= Date.now()
+        && mtimeMs === selfWrite.mtimeMs
+        && size === selfWrite.size) {
+        return;
+      }
+      selfWrites.delete(key);
+      for (const [watchId, notify] of currentGroup.subscriptions) {
+        notify("agent:file-ref-changed", {
+          watchId,
+          ref: currentGroup.ref,
+          change,
+          ...(mtimeMs === undefined ? {} : { mtimeMs })
+        } satisfies FileRefChangedEvent);
+      }
+    });
+    group = { watcher, ref: resolved.ref, absolutePath: resolved.absolutePath, subscriptions };
+    fileWatchGroups.set(key, group);
+  }
+  const watchId = randomUUID();
+  group.subscriptions.set(watchId, emit);
+  fileWatchKeysById.set(watchId, key);
+  return { watchId };
+}
+
+export function unwatchAuthorizedFileRef(watchId: string): { ok: true } {
+  const key = fileWatchKeysById.get(watchId);
+  if (!key) return { ok: true };
+  fileWatchKeysById.delete(watchId);
+  const group = fileWatchGroups.get(key);
+  group?.subscriptions.delete(watchId);
+  if (group && group.subscriptions.size === 0) {
+    group.watcher.close();
+    fileWatchGroups.delete(key);
+    selfWrites.delete(key);
+  }
+  return { ok: true };
 }
 
 export function renameAuthorizedFileRef(ref: FileRef, newName: string): { ok: true; ref: FileRef } {

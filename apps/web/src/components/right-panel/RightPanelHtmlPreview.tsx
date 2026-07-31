@@ -28,7 +28,7 @@ export function RightPanelHtmlPreview({
   fileRef: FileRef
   guardedRef?: GuardedFileRef
   source: string
-  onOpenFile: (ref: RightPanelFileTarget) => void
+  onOpenFile: (target: RightPanelFileTarget | FileRef) => void
   onMissing?: (ref: FileRef) => void
   onPreviewScopeChange?: (token: string | null) => void
 }) {

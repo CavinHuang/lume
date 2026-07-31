@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import {
   projectAssistantMessageFinalRuntimeEvent,
   projectRunItemToRuntimeEvents,
   projectRunStateToRuntimeEvents
 } from "./run-item-events";
 import type { LumeRunState } from "./run-state";
+import { getAgentFileContextArtifactsPath } from "../../infra/config-paths";
 
 function baseRun(overrides: Partial<LumeRunState> = {}): LumeRunState {
   return {
@@ -678,6 +680,95 @@ describe("projectRunStateToRuntimeEvents", () => {
         totalCostUSD: 0.01
       }
     }));
+  });
+
+  test("signs tool result artifacts with a renderer-safe session FileRef", () => {
+    const fileContextId = "runtime-result-ref";
+    const artifactPath = join(getAgentFileContextArtifactsPath(fileContextId), "jobs", "output.log");
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      fileReferenceBinding: { fileContextId },
+      generatedItems: [{
+        type: "tool_result",
+        id: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        output: "done",
+        execution: {
+          version: 2,
+          outcome: "succeeded",
+          durationMs: 10,
+          command: "echo done",
+          shell: "powershell",
+          resultRef: { kind: "file", path: artifactPath, size: 4, mimeType: "text/plain" },
+          terminationReason: "completed",
+        },
+        createdAt: "2026-04-30T00:00:02.000Z",
+      }],
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool.completed",
+      resultRef: expect.objectContaining({
+        path: artifactPath,
+        fileRef: {
+          source: "session",
+          scopeId: fileContextId,
+          relativePath: "artifacts/jobs/output.log",
+        },
+      }),
+    }));
+  });
+
+  test("does not sign result files outside the bound artifact directory", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      fileReferenceBinding: { fileContextId: "runtime-result-ref-outside" },
+      generatedItems: [{
+        type: "tool_result",
+        id: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        output: "done",
+        execution: {
+          version: 2,
+          outcome: "succeeded",
+          durationMs: 10,
+          command: "echo done",
+          shell: "powershell",
+          resultRef: { kind: "file", path: join(process.cwd(), "outside.log"), size: 4 },
+          terminationReason: "completed",
+        },
+        createdAt: "2026-04-30T00:00:02.000Z",
+      }],
+    }));
+    const completed = events.find((event) => event.type === "tool.completed");
+
+    expect(completed?.type === "tool.completed" ? completed.resultRef?.fileRef : undefined).toBeUndefined();
+  });
+
+  test("fails closed for malformed historical file bindings", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      fileReferenceBinding: { fileContextId: "../invalid" },
+      generatedItems: [{
+        type: "tool_result",
+        id: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        output: "done",
+        execution: {
+          version: 2,
+          outcome: "succeeded",
+          durationMs: 10,
+          command: "echo done",
+          shell: "powershell",
+          resultRef: { kind: "file", path: join(process.cwd(), "outside.log"), size: 4 },
+          terminationReason: "completed",
+        },
+        createdAt: "2026-04-30T00:00:02.000Z",
+      }],
+    }));
+    const completed = events.find((event) => event.type === "tool.completed");
+
+    expect(completed?.type === "tool.completed" ? completed.resultRef?.fileRef : undefined).toBeUndefined();
   });
 
   test("projects persisted Advisor reviews into product runtime events", () => {

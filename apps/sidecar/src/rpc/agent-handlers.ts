@@ -86,6 +86,9 @@ import {
   readAgentFileData,
   readAgentPath,
   readAuthorizedFileRef,
+  writeAuthorizedFileRef,
+  watchAuthorizedFileRef,
+  unwatchAuthorizedFileRef,
   readGuardedFileRef,
   statAuthorizedFileRef,
   readProjectFileData,
@@ -113,6 +116,7 @@ import {
   showWorkspacePathInFolder,
 } from "../services/agent/agent-files-service";
 import { promoteFileToWorkspace } from "../services/agent/agent-file-promotion-service";
+import { requestFileSelectionEdit } from "../services/agent/file-selection-edit-service";
 import {
   createAgentWorkspace,
   deleteWorkspaceSkill,
@@ -252,6 +256,9 @@ import {
   deleteSkillInputSchema,
   editableSkillInputSchema,
   fileRefInputSchema,
+  fileSelectionEditInputSchema,
+  fileRefWriteInputSchema,
+  fileRefUnwatchInputSchema,
   guardedFileRefInputSchema,
   fileRefMoveInputSchema,
   fileRefRenameInputSchema,
@@ -1748,6 +1755,30 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.READ_FILE_REF]: async (params) => {
       const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.READ_FILE_REF);
       return readAuthorizedFileRef(input.ref);
+    },
+    [AGENT_IPC_CHANNELS.WRITE_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefWriteInputSchema, params, AGENT_IPC_CHANNELS.WRITE_FILE_REF);
+      return writeAuthorizedFileRef(input);
+    },
+    [AGENT_IPC_CHANNELS.REQUEST_FILE_SELECTION_EDIT]: async (params) => {
+      const input = validateInput(
+        fileSelectionEditInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REQUEST_FILE_SELECTION_EDIT,
+      );
+      const authorized = readAuthorizedFileRef(input.ref);
+      if (authorized.kind !== "text" || !authorized.editable) {
+        throw new Error("当前文件不可编辑，无法请求模型修改");
+      }
+      return requestFileSelectionEdit(input);
+    },
+    [AGENT_IPC_CHANNELS.WATCH_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.WATCH_FILE_REF);
+      return watchAuthorizedFileRef(input.ref, context.writeNotification);
+    },
+    [AGENT_IPC_CHANNELS.UNWATCH_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefUnwatchInputSchema, params, AGENT_IPC_CHANNELS.UNWATCH_FILE_REF);
+      return unwatchAuthorizedFileRef(input.watchId);
     },
     [AGENT_IPC_CHANNELS.STAT_FILE_REF]: async (params) => {
       const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.STAT_FILE_REF);

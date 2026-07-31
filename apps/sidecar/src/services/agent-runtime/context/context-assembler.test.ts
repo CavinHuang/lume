@@ -284,15 +284,20 @@ describe("ContextAssembler", () => {
       commentAttachments: [{
         id: "comment-1",
         origin: "diff",
+        intent: "modify",
+        fileRef: { source: "project", scopeId: "demo", relativePath: "src/app.ts" },
         position: { path: "src/app.ts", side: "right", line: 12, startLine: 10 },
         body: "这里需要处理空值",
-        localDiffHunk: "@@ -10,3 +10,3 @@"
+        localDiffHunk: "@@ -10,3 +10,3 @@",
+        selectedContent: "const value = maybeValue;"
       }]
     });
 
     expect(result.userMessageForModel).toContain("<diff_comments trust=\"user\">");
     expect(result.userMessageForModel).toContain("src/app.ts");
     expect(result.userMessageForModel).toContain("这里需要处理空值");
+    expect(result.userMessageForModel).toContain("\"intent\":\"modify\"");
+    expect(result.userMessageForModel).toContain("const value = maybeValue;");
   });
 
   test("records context assembly and memory retrieval spans when trace context is provided", async () => {

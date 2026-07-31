@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding, FileReferenceProtocolVersion } from "./agent";
+import type { AgentBrowserAttachment, AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding, FileReferenceProtocolVersion } from "./agent";
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
@@ -81,6 +81,7 @@ export interface UserMessageSubmittedRuntimeEvent extends RuntimeEventBase {
   text: string;
   attachments?: AgentMessageAttachmentInput[];
   commentAttachments?: AgentDiffCommentAttachment[];
+  browserAttachments?: AgentBrowserAttachment[];
   messageId?: string;
   versionGroupId?: string;
   versionIndex?: number;
@@ -122,12 +123,7 @@ export interface ToolCompletedRuntimeEvent extends RuntimeEventBase {
   toolCallId: string;
   toolName?: string;
   resultPreview?: string;
-  resultRef?: {
-    kind: "file";
-    path: string;
-    size: number;
-    mimeType?: string;
-  };
+  resultRef?: FileResultRef;
   execution?: ToolExecutionMetadata;
 }
 
@@ -714,6 +710,8 @@ export interface CodingTurnRecord {
 export interface RunTurnLimitedRuntimeEvent extends RuntimeEventBase {
   type: "run.turn_limited";
   reason?: string;
+  verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
+  codingReport?: RuntimeCodingReport;
 }
 
 export interface RunFailedRuntimeEvent extends RuntimeEventBase {
@@ -855,6 +853,8 @@ export interface FileResultRef {
   path: string;
   size: number;
   mimeType?: string;
+  /** Renderer-safe identity when the result belongs to the current session artifact scope. */
+  fileRef?: FileRef;
 }
 
 export interface ToolExecutionMetadataV1 {

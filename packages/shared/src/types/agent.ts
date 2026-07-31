@@ -854,6 +854,8 @@ export interface AgentSendInput {
   messageAttachments?: AgentMessageAttachmentInput[]
   /** Diff 审阅中创建、随本轮消息发送的结构化行评论。 */
   commentAttachments?: AgentDiffCommentAttachment[]
+  /** 用户显式添加的浏览器标签、网页批注与 Design Tweaks。 */
+  browserAttachments?: AgentBrowserAttachment[]
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
   /** 重发目标消息 ID */
@@ -891,6 +893,7 @@ export interface AgentQueuedMessage {
   messageParts?: AgentUserMessagePart[]
   messageAttachments?: AgentMessageAttachmentInput[]
   commentAttachments?: AgentDiffCommentAttachment[]
+  browserAttachments?: AgentBrowserAttachment[]
   clientSubmissionId?: string
   modelRef?: string
   channelId?: string
@@ -907,6 +910,10 @@ export interface AgentQueuedMessage {
 export interface AgentDiffCommentAttachment {
   id: string
   origin: 'diff'
+  /** comment renders as review feedback; context/modify are Files-tab selection actions. */
+  intent?: 'comment' | 'context' | 'modify'
+  /** Renderer-safe file identity when the attachment originates in the Files tab. */
+  fileRef?: FileRef
   position: {
     path: string
     rootId?: string
@@ -918,7 +925,53 @@ export interface AgentDiffCommentAttachment {
   }
   body: string
   localDiffHunk?: string
+  /** Bounded selected source supplied to the model; never interpreted as an executable patch. */
+  selectedContent?: string
 }
+
+export interface AgentBrowserTabAttachment {
+  id: string
+  origin: 'browser-tab'
+  tabId: string
+  providerTabId: string
+  title: string
+  url: string
+  generation: number
+  ownerThreadId?: string
+}
+
+export interface AgentBrowserAnchor {
+  kind: 'element' | 'text' | 'region'
+  url: string
+  generation: number
+  framePath: string[]
+  domPath?: string
+  textQuote?: { exact: string; prefix?: string; suffix?: string }
+  rect: { x: number; y: number; width: number; height: number }
+}
+
+export interface AgentBrowserAnnotationAttachment {
+  id: string
+  origin: 'browser-annotation'
+  tab: AgentBrowserTabAttachment
+  anchor: AgentBrowserAnchor
+  body: string
+  screenshotRef?: string
+}
+
+export interface AgentBrowserDesignChangeAttachment {
+  id: string
+  origin: 'browser-design-change'
+  tab: AgentBrowserTabAttachment
+  anchor: AgentBrowserAnchor
+  originalStyles: Record<string, string>
+  proposedStyles: Record<string, string>
+}
+
+export type AgentBrowserAttachment =
+  | AgentBrowserTabAttachment
+  | AgentBrowserAnnotationAttachment
+  | AgentBrowserDesignChangeAttachment
 
 /** Main-agent-owned persistent Task claim used by task-linked Agent/Delegate dispatch. */
 export interface AgentTaskRef {
@@ -1008,6 +1061,7 @@ export interface AgentUpdateQueuedMessageInput {
   messageParts?: AgentUserMessagePart[]
   messageAttachments?: AgentMessageAttachmentInput[]
   commentAttachments?: AgentDiffCommentAttachment[]
+  browserAttachments?: AgentBrowserAttachment[]
 }
 
 export interface AgentMessageQueueOperationResult {
@@ -1494,6 +1548,65 @@ export interface FileRef {
   source: FileSource
   scopeId: string
   relativePath: string
+}
+
+export type FileRefTextEncoding = 'utf-8' | 'utf-16le'
+export type FileRefLineEnding = 'lf' | 'crlf' | 'mixed' | 'none'
+
+export type FileRefReadResult =
+  | {
+      kind: 'text'
+      content: string
+      size: number
+      mtimeMs: number
+      mimeType: string
+      encoding: FileRefTextEncoding
+      bom: boolean
+      lineEnding: FileRefLineEnding
+      editable: boolean
+      truncated: false
+    }
+  | {
+      kind: 'binary' | 'too-large'
+      size: number
+      mtimeMs: number
+      mimeType: string
+      editable: false
+      truncated: true
+    }
+
+export interface WriteFileRefInput {
+  ref: FileRef
+  content: string
+  expectedMtimeMs: number
+}
+
+export type WriteFileRefResult =
+  | { outcome: 'saved'; mtimeMs: number; size: number }
+  | { outcome: 'conflict'; mtimeMs: number; size: number }
+
+export interface FileSelectionEditInput {
+  threadId: string
+  ref: FileRef
+  content: string
+  startOffset: number
+  endOffset: number
+  instruction: string
+}
+
+export interface FileSelectionEditResult {
+  replacementText: string
+}
+
+export interface WatchFileRefResult {
+  watchId: string
+}
+
+export interface FileRefChangedEvent {
+  watchId: string
+  ref: FileRef
+  change: 'changed' | 'renamed' | 'deleted'
+  mtimeMs?: number
 }
 
 /** One immutable snapshot per logical Agent reply. It never contains local absolute paths. */
@@ -2065,6 +2178,11 @@ export const AGENT_IPC_CHANNELS = {
   LIST_FILE_REF_DIRECTORY: 'agent:list-file-ref-directory',
   STAT_FILE_REF: 'agent:stat-file-ref',
   READ_FILE_REF: 'agent:read-file-ref',
+  WRITE_FILE_REF: 'agent:write-file-ref',
+  REQUEST_FILE_SELECTION_EDIT: 'agent:request-file-selection-edit',
+  WATCH_FILE_REF: 'agent:watch-file-ref',
+  UNWATCH_FILE_REF: 'agent:unwatch-file-ref',
+  FILE_REF_CHANGED: 'agent:file-ref-changed',
   SEARCH_FILE_REFS: 'agent:search-file-refs',
   RESOLVE_FILE_REF: 'agent:resolve-file-ref',
   RENAME_FILE_REF: 'agent:rename-file-ref',

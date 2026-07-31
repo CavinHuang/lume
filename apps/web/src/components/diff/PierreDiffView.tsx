@@ -11,6 +11,7 @@ import {
   type SelectedLineRange,
 } from '@pierre/diffs'
 import { File, FileDiff, Virtualizer } from '@pierre/diffs/react'
+import type { Editor, EditorOptions } from '@pierre/diffs/edit'
 import { Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { LUME_DIFF_CSS, LUME_DIFF_THEMES } from './pierre-theme'
@@ -202,6 +203,7 @@ export function PierreFileView<TAnnotation = unknown>({
   enableGutterUtility = false,
   onLineSelected,
   onGutterUtilityClick,
+  onLineNumberClick,
   onPostRender,
   renderAnnotation,
   unsafeCSS,
@@ -214,6 +216,7 @@ export function PierreFileView<TAnnotation = unknown>({
   enableGutterUtility?: boolean
   onLineSelected?: (range: SelectedLineRange | null) => void
   onGutterUtilityClick?: (range: SelectedLineRange) => void
+  onLineNumberClick?: NonNullable<Parameters<typeof File>[0]['options']>['onLineNumberClick']
   onPostRender?: NonNullable<Parameters<typeof File>[0]['options']>['onPostRender']
   renderAnnotation?: (annotation: LineAnnotation<TAnnotation>) => ReactNode
   unsafeCSS?: string
@@ -235,6 +238,7 @@ export function PierreFileView<TAnnotation = unknown>({
             controlledSelection: enableLineSelection,
             enableGutterUtility,
             onLineSelected,
+            onLineNumberClick,
             onPostRender,
             unsafeCSS: `${LUME_DIFF_CSS}\n${unsafeCSS ?? ''}`,
           }}
@@ -253,6 +257,91 @@ export function PierreFileView<TAnnotation = unknown>({
                       start: hoveredLine.lineNumber,
                       end: hoveredLine.lineNumber,
                     })
+                  }}
+                >
+                  <Plus className="size-3.5" strokeWidth={2.25} />
+                </button>
+              )
+            : undefined}
+          className="min-h-full min-w-full"
+        />
+      </Virtualizer>
+    </PierreRenderErrorBoundary>
+  )
+}
+
+export function PierreEditableFileView<TAnnotation = unknown>({
+  content,
+  filePath,
+  cacheKey,
+  selectedLines,
+  lineAnnotations,
+  onLineSelected,
+  onContentChange,
+  onEditorAttach,
+  renderSelectionAction,
+  onPostRender,
+  renderAnnotation,
+  onGutterUtilityClick,
+  onLineNumberClick,
+  unsafeCSS,
+}: {
+  content: string
+  filePath: string
+  cacheKey: string
+  selectedLines?: SelectedLineRange | null
+  lineAnnotations?: LineAnnotation<TAnnotation>[]
+  onLineSelected?: (range: SelectedLineRange | null) => void
+  onContentChange: (content: string) => void
+  onEditorAttach?: (editor: Editor<TAnnotation>) => void
+  renderSelectionAction?: NonNullable<EditorOptions<TAnnotation>['renderSelectionAction']>
+  onPostRender?: NonNullable<Parameters<typeof File>[0]['options']>['onPostRender']
+  renderAnnotation?: (annotation: LineAnnotation<TAnnotation>) => ReactNode
+  onGutterUtilityClick?: (range: SelectedLineRange) => void
+  onLineNumberClick?: NonNullable<Parameters<typeof File>[0]['options']>['onLineNumberClick']
+  unsafeCSS?: string
+}) {
+  const theme = useCodeTheme()
+  const editorOptions = useMemo<EditorOptions<TAnnotation>>(() => ({
+    persistState: true,
+    enabledSelectionAction: Boolean(renderSelectionAction),
+    renderSelectionAction,
+    onAttach: (editor) => onEditorAttach?.(editor),
+    onChange: (file) => onContentChange(file.contents),
+  }), [onContentChange, onEditorAttach, renderSelectionAction])
+  return (
+    <PierreRenderErrorBoundary resetKey={`${theme.type}:${cacheKey}`}>
+      <Virtualizer className="min-h-full min-w-full overflow-auto" config={{ overscrollSize: 500 }}>
+        <File<TAnnotation>
+          file={{ name: filePath, contents: content, cacheKey }}
+          edit
+          editorOptions={editorOptions}
+          selectedLines={selectedLines}
+          lineAnnotations={lineAnnotations}
+          options={{
+            theme: LUME_DIFF_THEMES,
+            themeType: theme.type,
+            overflow: 'scroll',
+            disableFileHeader: true,
+            enableLineSelection: true,
+            controlledSelection: true,
+            onLineSelected,
+            onLineNumberClick,
+            onPostRender,
+            unsafeCSS: `${LUME_DIFF_CSS}\n${unsafeCSS ?? ''}`,
+          }}
+          renderAnnotation={renderAnnotation}
+          renderGutterUtility={onGutterUtilityClick
+            ? (getHoveredLine) => (
+                <button
+                  type="button"
+                  className="flex size-5 items-center justify-center rounded text-[var(--lume-text-muted)] hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)]"
+                  title="请求更改"
+                  aria-label="为当前行请求更改"
+                  onClick={() => {
+                    const hoveredLine = getHoveredLine()
+                    if (!hoveredLine) return
+                    onGutterUtilityClick({ start: hoveredLine.lineNumber, end: hoveredLine.lineNumber })
                   }}
                 >
                   <Plus className="size-3.5" strokeWidth={2.25} />

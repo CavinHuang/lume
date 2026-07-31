@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronRight, ChevronsUp, Folder, MoreHorizontal, RefreshCw, Search, X } from 'lucide-react'
-import { AGENT_IPC_CHANNELS, type FileEntry, type FileIndexEntry, type FileRef, type FileSource } from '@lume/shared'
+import { Braces, Check, ChevronRight, ChevronsUp, Folder, MoreHorizontal, RefreshCw, Search, X } from 'lucide-react'
+import { AGENT_IPC_CHANNELS, type FileEntry, type FileIndexEntry, type FileRef, type FileSource, type McpResourceSummary } from '@lume/shared'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -29,11 +29,14 @@ import {
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import {
+  createRightPanelFileTarget,
   fileRefKey,
   getFileTreeRevealDirectories,
   removeFileRef,
   rewriteFileRefPrefix,
+  rightPanelFileTargetKey,
   settleFileTreeReveal,
+  type RightPanelFileTarget,
   type ThreadFileWorkspace,
 } from './right-panel-files-state'
 import {
@@ -72,7 +75,7 @@ export function UnifiedFileTree({
   fileContextId?: string
   openFunctions: RightPanelFunction[]
   onWorkspaceChange: (workspace: ThreadFileWorkspace) => void
-  onOpenFile: (ref: FileRef) => void
+  onOpenFile: (target: RightPanelFileTarget | FileRef) => void
 }) {
   const treeCacheIdentity = getUnifiedFileTreeCacheIdentity(workspaceSlug, fileContextId, workspaceProjectPath)
   const [cache, setCache] = useState<Record<string, FileEntry[]>>(() => workspace.directoryCache as Record<string, FileEntry[]>)
@@ -85,6 +88,7 @@ export function UnifiedFileTree({
   const [deleting, setDeleting] = useState<FileEntry | null>(null)
   const [moving, setMoving] = useState<FileEntry | null>(null)
   const [moveTarget, setMoveTarget] = useState('')
+  const [mcpResources, setMcpResources] = useState<McpResourceSummary[]>([])
   const mutationQueue = useRef(new SourceMutationQueue()).current
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -96,6 +100,18 @@ export function UnifiedFileTree({
   const previousSourceStatusRef = useRef(workspace.sourceStatus)
   const searchSnapshotRef = useRef<Pick<ThreadFileWorkspace, 'expandedKeys' | 'selectedRef' | 'scrollAnchor'> | null>(null)
   const roots = useMemo(() => buildSourceRoots(workspaceSlug, fileContextId), [treeCacheIdentity])
+
+  useEffect(() => {
+    if (!workspaceSlug) {
+      setMcpResources([])
+      return
+    }
+    let disposed = false
+    void sidecarCall<{ resources: McpResourceSummary[] }>(AGENT_IPC_CHANNELS.LIST_MCP_RESOURCES, { workspaceSlug })
+      .then((result) => { if (!disposed) setMcpResources(result.resources) })
+      .catch(() => { if (!disposed) setMcpResources([]) })
+    return () => { disposed = true }
+  }, [workspaceSlug])
 
   workspaceRef.current = workspace
 
@@ -328,7 +344,9 @@ export function UnifiedFileTree({
     commitWorkspace({
       ...workspaceRef.current,
       selectedRef: ref,
-      temporaryPreviewRef: entry?.isDirectory ? workspaceRef.current.temporaryPreviewRef : ref,
+      temporaryPreviewTarget: entry?.isDirectory
+        ? workspaceRef.current.temporaryPreviewTarget
+        : createRightPanelFileTarget(ref),
     })
   }
   const toggle = async (ref: FileRef) => {
@@ -480,7 +498,7 @@ export function UnifiedFileTree({
       onCommitRename={mutateRename}
       onSelect={select}
       onToggle={toggle}
-      onOpen={onOpenFile}
+      onOpen={(ref) => onOpenFile(createRightPanelFileTarget(ref))}
       onEdit={(next) => { setEditing(next.ref ?? null); setRenameValue(next.name) }}
       onMove={(next) => { setMoving(next); setMoveTarget(parentPath(next.ref?.relativePath ?? '')) }}
       onDelete={setDeleting}
@@ -523,7 +541,7 @@ export function UnifiedFileTree({
         const anchor = row?.dataset.fileRefKey ?? null
         if (anchor !== workspaceRef.current.scrollAnchor) commitWorkspace({ ...workspaceRef.current, scrollAnchor: anchor })
       }} onKeyDown={(event) => handleTreeKeyDown(event, {
-        onOpen: onOpenFile,
+        onOpen: (ref) => onOpenFile(createRightPanelFileTarget(ref)),
         onSelect: select,
         onToggle: toggle,
         onEdit: (ref) => {
@@ -581,6 +599,41 @@ export function UnifiedFileTree({
             </div>
           )
         })}
+        {workspaceSlug && mcpResources.length > 0 && (
+          <div>
+            <div className="flex h-[30px] items-center gap-1.5 px-2 text-[12px] font-medium">
+              <ChevronRight size={13} className="rotate-90" />
+              MCP 资源
+              <span className="text-foreground/38">{mcpResources.length}</span>
+            </div>
+            {mcpResources
+              .filter((resource) => !query.trim()
+                || `${resource.name ?? ''} ${resource.uri} ${resource.serverName}`.toLowerCase().includes(query.trim().toLowerCase()))
+              .map((resource) => {
+                const target = { kind: 'mcp-resource' as const, workspaceSlug, resource }
+                const selected = workspace.temporaryPreviewTarget
+                  ? rightPanelFileTargetKey(workspace.temporaryPreviewTarget) === rightPanelFileTargetKey(target)
+                  : false
+                return (
+                  <Button
+                  key={`${resource.serverId}:${resource.uri}`}
+                  variant="ghost"
+                  className={cn('h-7 w-full justify-start gap-1.5 rounded-none px-5 text-[12px]', selected && 'bg-primary/10 text-primary')}
+                  title={`${resource.serverName} · ${resource.uri}`}
+                  onClick={() => commitWorkspace({
+                    ...workspaceRef.current,
+                    selectedRef: null,
+                    temporaryPreviewTarget: target,
+                  })}
+                  onDoubleClick={() => onOpenFile(target)}
+                >
+                  <Braces size={13} className="shrink-0 text-foreground/45" />
+                  <span className="min-w-0 truncate">{resource.name || resource.uri}</span>
+                  </Button>
+                )
+              })}
+          </div>
+        )}
       </div>
       <ConfirmDialog
         open={Boolean(deleting)}

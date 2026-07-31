@@ -249,7 +249,9 @@ export class LumeRunner {
         threadId: this.observer.getThreadId(),
         runId: this.observer.getRunId(),
         createdAt: new Date().toISOString(),
-        reason: resultWithCoding.errorMessage
+        reason: resultWithCoding.errorMessage,
+        ...(resultWithCoding.verificationStatus ? { verificationStatus: resultWithCoding.verificationStatus } : {}),
+        ...(resultWithCoding.codingReport ? { codingReport: resultWithCoding.codingReport } : {})
       });
       return this.finalizeResult(resultWithCoding);
     }
@@ -425,6 +427,7 @@ export class LumeRunner {
       permissionMode: input.permissionMode,
       messageAttachments: input.messageAttachments,
       commentAttachments: input.commentAttachments,
+      browserAttachments: input.browserAttachments,
       messageMetadata: input.messageMetadata,
       emitSdkMessage: this.emit.onSdkMessage,
       emitRuntimeEvent: this.emit.onRuntimeEvent,

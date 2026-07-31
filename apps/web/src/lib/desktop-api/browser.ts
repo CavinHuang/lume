@@ -7,14 +7,18 @@ import type {
 } from '@lume/shared'
 
 export type BrowserRuntimeMethod =
-  | 'handshake' | 'list' | 'ensure' | 'close' | 'bounds' | 'visible' | 'focus'
-  | 'navigate' | 'back' | 'forward' | 'reload' | 'snapshot' | 'screenshot' | 'screenshot:save'
+  | 'handshake' | 'list' | 'ensure' | 'close' | 'bounds' | 'visible' | 'focus' | 'move-owner'
+  | 'navigate' | 'back' | 'forward' | 'reload' | 'stop' | 'hardReload' | 'snapshot' | 'content' | 'screenshot' | 'screenshot:save' | 'screenshot:clipboard'
+  | 'wait:load' | 'scroll:get' | 'scroll:set'
   | 'click' | 'doubleClick' | 'fill' | 'type' | 'press' | 'scroll' | 'drag' | 'share' | 'unshare' | 'claim'
   | 'url' | 'title' | 'cdp' | 'openExternal' | 'settings:get' | 'settings:update'
   | 'openPopup' | 'vault:summary' | 'vault:list-passwords' | 'vault:delete-password'
   | 'contacts:list' | 'contacts:upsert' | 'contacts:delete' | 'browserAuth:list' | 'browserAuth' | 'contactFill'
   | 'downloads:list' | 'downloads:clear' | 'clear-data'
-  | 'find' | 'find:stop' | 'zoom:get' | 'zoom:set' | 'emulate'
+  | 'history:list' | 'history:delete' | 'history:clear'
+  | 'extensions:list' | 'extensions:install' | 'extensions:remove' | 'extensions:set-enabled'
+  | 'find' | 'find:stop' | 'zoom:get' | 'zoom:set' | 'emulate' | 'viewport:set' | 'viewport:reset'
+  | 'print' | 'devtools' | 'view-source' | 'site-info' | 'annotation:start' | 'annotation:stop' | 'overlay:compose' | 'tweaks:start' | 'tweaks:apply' | 'tweaks:reset'
   | 'dialog:handle'
   | 'upload'
 

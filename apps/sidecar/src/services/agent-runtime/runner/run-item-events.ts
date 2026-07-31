@@ -1,5 +1,7 @@
 import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
-import type { LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
+import type { FileReferenceBinding, LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import { getAgentFileContextRootPath } from "../../infra/config-paths";
 import type { LumeRunItem } from "./run-items";
 import type { LumeRunState } from "./run-state";
 import { inferToolMetadata } from "../tools/tool-metadata";
@@ -31,6 +33,11 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
       : Array.isArray(metadata?.commentAttachments)
         ? metadata.commentAttachments
         : undefined;
+    const browserAttachments = Array.isArray(run.input.browserAttachments)
+      ? run.input.browserAttachments
+      : Array.isArray(metadata?.browserAttachments)
+        ? metadata.browserAttachments
+        : undefined;
     events.push({
       id: `${run.runId}:message.user.submitted`,
       type: "message.user.submitted",
@@ -40,6 +47,7 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
       text: userMessage,
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
       ...(commentAttachments?.length ? { commentAttachments } : {}),
+      ...(browserAttachments?.length ? { browserAttachments } : {}),
       ...(typeof metadata?.messageId === "string" ? { messageId: metadata.messageId } : {}),
       ...(typeof metadata?.versionGroupId === "string" ? { versionGroupId: metadata.versionGroupId } : {}),
       ...(typeof metadata?.versionIndex === "number" ? { versionIndex: metadata.versionIndex } : {}),
@@ -210,7 +218,7 @@ export function projectRunItemToRuntimeEvents(
 
   if (item.type === "tool_result") {
     const isError = item.isError === true;
-    const execution = normalizeToolExecutionMetadata(item.execution);
+    const execution = normalizeToolExecutionMetadata(item.execution, run.fileReferenceBinding);
     const resultRef = execution?.resultRef;
     if (isError) {
       return [{
@@ -281,16 +289,18 @@ export function projectRunItemToRuntimeEvents(
   return [];
 }
 
-function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").ToolExecutionMetadata | undefined {
+function normalizeToolExecutionMetadata(
+  value: unknown,
+  binding?: FileReferenceBinding,
+): import("@lume/shared").ToolExecutionMetadata | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   const terminationReason = record.terminationReason;
   if ((record.version !== 1 && record.version !== 2) || typeof record.command !== "string" || typeof record.durationMs !== "number") return undefined;
   if (terminationReason !== "completed" && terminationReason !== "nonzero" && terminationReason !== "timeout" && terminationReason !== "aborted" && terminationReason !== "output_limit" && terminationReason !== "spawn_error" && terminationReason !== "running" && terminationReason !== "interrupted") return undefined;
-  const ref = record.resultRef;
-  const resultRef = ref && typeof ref === "object" && !Array.isArray(ref) ? ref as Record<string, unknown> : undefined;
-  const stdoutRef = normalizeFileResultRef(record.stdoutRef);
-  const stderrRef = normalizeFileResultRef(record.stderrRef);
+  const resultRef = normalizeFileResultRef(record.resultRef, binding);
+  const stdoutRef = normalizeFileResultRef(record.stdoutRef, binding);
+  const stderrRef = normalizeFileResultRef(record.stderrRef, binding);
   if (record.version === 2) {
     const outcome = record.outcome;
     if (outcome !== "running" && outcome !== "succeeded" && outcome !== "failed" && outcome !== "timed_out" && outcome !== "cancelled" && outcome !== "interrupted") return undefined;
@@ -313,9 +323,7 @@ function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").
         ? { semanticOutcome: record.semanticOutcome } : {}),
       ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),
       ...(typeof record.workspaceChanged === "boolean" ? { workspaceChanged: record.workspaceChanged } : {}),
-      ...(resultRef?.kind === "file" && typeof resultRef.path === "string" && typeof resultRef.size === "number"
-        ? { resultRef: resultRef as unknown as import("@lume/shared").FileResultRef }
-        : {}),
+      ...(resultRef ? { resultRef } : {}),
       terminationReason,
     };
   }
@@ -335,18 +343,44 @@ function normalizeToolExecutionMetadata(value: unknown): import("@lume/shared").
       ? { semanticOutcome: record.semanticOutcome } : {}),
     ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),
     ...(typeof record.workspaceChanged === "boolean" ? { workspaceChanged: record.workspaceChanged } : {}),
-    ...(resultRef?.kind === "file" && typeof resultRef.path === "string" && typeof resultRef.size === "number"
-      ? { resultRef: resultRef as unknown as import("@lume/shared").ToolExecutionMetadata["resultRef"] }
-      : {}),
+    ...(resultRef ? { resultRef } : {}),
     terminationReason,
   };
 }
 
-function normalizeFileResultRef(value: unknown): import("@lume/shared").FileResultRef | undefined {
+function normalizeFileResultRef(
+  value: unknown,
+  binding?: FileReferenceBinding,
+): import("@lume/shared").FileResultRef | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   if (record.kind !== "file" || typeof record.path !== "string" || typeof record.size !== "number") return undefined;
-  return record as unknown as import("@lume/shared").FileResultRef;
+  const fileRef = binding ? sessionArtifactFileRef(record.path, binding) : undefined;
+  return {
+    kind: "file",
+    path: record.path,
+    size: record.size,
+    ...(typeof record.mimeType === "string" ? { mimeType: record.mimeType } : {}),
+    ...(fileRef ? { fileRef } : {}),
+  };
+}
+
+function sessionArtifactFileRef(path: string, binding: FileReferenceBinding): import("@lume/shared").FileRef | undefined {
+  if (!isAbsolute(path)) return undefined;
+  try {
+    const root = resolve(getAgentFileContextRootPath(binding.fileContextId));
+    const relativePath = relative(root, resolve(path));
+    if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return undefined;
+    const normalized = relativePath.split(sep).join("/");
+    if (!normalized.startsWith("artifacts/")) return undefined;
+    return {
+      source: "session",
+      scopeId: binding.fileContextId,
+      relativePath: normalized,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function subagentRuntimeFields(item: LumeRunItem): Pick<LumeRuntimeEvent, "subagentRunId" | "parentToolUseId"> {

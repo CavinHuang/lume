@@ -1,12 +1,19 @@
 export type BrowserActionPolicyDecision = {
   decision: "allow" | "confirm" | "deny"
-  category?: "submit" | "send" | "delete" | "purchase" | "authorize" | "file" | "clipboard" | "credential" | "payment" | "captcha"
+  category?: "submit" | "send" | "delete" | "purchase" | "authorize" | "file" | "clipboard" | "credential" | "history" | "payment" | "captcha"
   preview?: string
 }
 
 const EXPLICIT_CONFIRM = new Map<string, BrowserActionPolicyDecision["category"]>([
   ["submitForm", "submit"], ["send", "send"], ["delete", "delete"], ["authorize", "authorize"],
   ["upload", "file"], ["download", "file"], ["clipboardRead", "clipboard"], ["clipboardWrite", "clipboard"], ["browserAuth", "credential"], ["contactFill", "credential"],
+  ["browser_user_history", "history"],
+  ["tab_clipboard_read", "clipboard"], ["tab_clipboard_read_text", "clipboard"], ["tab_clipboard_write", "clipboard"], ["tab_clipboard_write_text", "clipboard"],
+  ["playwright_file_chooser_set_files", "file"],
+  ["playwright_locator_download_media", "file"], ["dom_cua_download_media", "file"], ["cua_download_media", "file"],
+  ["tab_page_assets_bundle", "file"],
+  ["webmcp_invoke_tool", "authorize"],
+  ["tab_cdp_call", "authorize"], ["tab_cdp_send", "authorize"],
 ])
 
 export function classifyBrowserAction(method: string, params: Record<string, unknown> = {}): BrowserActionPolicyDecision {

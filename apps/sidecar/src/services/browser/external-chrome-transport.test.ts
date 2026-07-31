@@ -85,6 +85,27 @@ test("external Chrome mapping preserves locator input and existing-tab operation
   assert.deepEqual(mapExternalChromeRequest({ ...base, method: "fill", params: { tabId: "tab-1", locator: { version: 1, steps: [] }, value: "hello" } }).params.text, "hello");
   assert.deepEqual(mapExternalChromeRequest({ ...base, method: "select", params: { tabId: "tab-1", locator: { version: 1, steps: [] }, values: ["one"] } }).params.value, ["one"]);
   assert.deepEqual(mapExternalChromeRequest({ ...base, method: "ensure", params: { url: "https://example.test" } }).params.options, { url: "https://example.test", active: true });
+  assert.equal(mapExternalChromeRequest({ ...base, method: "elementInfo", params: { tabId: "tab-1", x: 10, y: 20 } }).method, "playwright_element_info");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "evaluate:readonly", params: { tabId: "tab-1", script: "(arg) => arg.title" } }).method, "playwright_evaluate");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "wait:filechooser", params: { tabId: "tab-1" } }).method, "playwright_wait_for_file_chooser");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "filechooser:setFiles", params: { tabId: "tab-1", fileChooserId: "chooser-1", __authorizedFiles: ["C:\\task\\file.txt"] } }).method, "playwright_file_chooser_set_files");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "pageAssets:list", params: { tabId: "tab-1" } }).method, "tab_page_assets_list");
+  assert.deepEqual(
+    mapExternalChromeRequest({ ...base, method: "webmcp:invoke", params: { tabId: "tab-1", toolName: "search", input: { query: "Lume" } } }),
+    {
+      method: "webmcp_invoke_tool",
+      params: {
+        context: base.context,
+        tabId: "tab-1",
+        toolName: "search",
+        input: { query: "Lume" },
+        tool_name: "search",
+        timeout_ms: undefined,
+      },
+    },
+  );
+  assert.equal(mapExternalChromeRequest({ ...base, method: "locator:evaluate", params: { tabId: "tab-1", locator: { version: 1, steps: [] }, expression: "(element) => element.textContent" } }).method, "playwright_locator_evaluate");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "cdp", params: { tabId: "tab-1", method: "DOM.getDocument" } }).method, "tab_cdp_call");
 });
 
 function authenticate(peer: any, sent: any[]): { key: Buffer } {

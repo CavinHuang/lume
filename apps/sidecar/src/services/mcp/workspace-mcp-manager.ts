@@ -436,7 +436,7 @@ export class WorkspaceMcpManager {
       return {
         serverId: input.serverId,
         uri: input.uri,
-        contents: result.contents
+        contents: enforceMcpResourcePreviewLimit(result.contents)
       };
     } catch (error) {
       const publicError = mapPublicError(error, entry);
@@ -622,4 +622,27 @@ export class WorkspaceMcpManager {
     this.workspaces.set(workspaceSlug, next);
     return next;
   }
+}
+
+const MCP_RESOURCE_PREVIEW_LIMIT_BYTES = 10 * 1024 * 1024;
+
+function enforceMcpResourcePreviewLimit(contents: unknown[]): unknown[] {
+  for (const content of contents) {
+    const record = content && typeof content === "object" ? content as Record<string, unknown> : null;
+    if (typeof record?.text === "string"
+      && Buffer.byteLength(record.text, "utf8") > MCP_RESOURCE_PREVIEW_LIMIT_BYTES) {
+      throw new PublicMcpError("resource_too_large", "MCP 资源文本超过 10 MB 预览上限");
+    }
+    if (typeof record?.blob === "string"
+      && record.blob.length > Math.ceil(MCP_RESOURCE_PREVIEW_LIMIT_BYTES * 4 / 3) + 4) {
+      throw new PublicMcpError("resource_too_large", "MCP 资源二进制内容超过 10 MB 预览上限");
+    }
+    if (!record || (typeof record.text !== "string" && typeof record.blob !== "string")) {
+      const serialized = JSON.stringify(content);
+      if (serialized && Buffer.byteLength(serialized, "utf8") > MCP_RESOURCE_PREVIEW_LIMIT_BYTES) {
+        throw new PublicMcpError("resource_too_large", "MCP 资源内容超过 10 MB 预览上限");
+      }
+    }
+  }
+  return contents;
 }

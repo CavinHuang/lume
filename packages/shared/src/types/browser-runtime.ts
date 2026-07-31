@@ -1,7 +1,7 @@
 /** Versioned browser-runtime contract. Boundary values are serialisable and redacted. */
-export const BROWSER_PROTOCOL_VERSION = 5 as const;
+export const BROWSER_PROTOCOL_VERSION = 6 as const;
 export const BROWSER_PROTOCOL_MIN_SUPPORTED = 5 as const;
-export const BROWSER_PROTOCOL_MAX_SUPPORTED = 5 as const;
+export const BROWSER_PROTOCOL_MAX_SUPPORTED = 6 as const;
 
 export type BrowserBackendType = "iab" | "extension";
 export type BrowserActor = "user" | "agent";
@@ -26,6 +26,7 @@ export interface BrowserRuntimeDescriptor extends BrowserProtocolHandshake {
   backend: BrowserBackendType;
   generation: number;
   capabilities: BrowserCapabilityDescriptor[];
+  apiSupportOverrides?: Record<string, boolean>;
 }
 
 export interface BrowserBackendDescriptor extends BrowserProtocolHandshake {
@@ -43,14 +44,79 @@ export interface BrowserBackendDescriptor extends BrowserProtocolHandshake {
 
 export interface BrowserTabDescriptor {
   tabId: string;
+  providerTabId?: string;
+  ownerThreadId?: string;
+  openerTabId?: string;
+  profileKind?: "user" | "agent" | "advanced-cdp";
   backend: BrowserBackendType;
   generation: number;
   url: string;
   title: string;
+  faviconUrl?: string;
+  isLoading?: boolean;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  navigationEntries?: string[];
+  navigationIndex?: number;
+  scrollPosition?: { x: number; y: number };
+  lastOpenedAt?: string;
+  securityState?: "secure" | "insecure" | "local" | "unknown";
+  mediaState?: {
+    audible: boolean;
+    camera: boolean;
+    microphone: boolean;
+  };
+  lifecycle?: "active" | "background" | "suspended" | "crashed";
+  viewport?: BrowserViewportState;
+  zoomFactor?: number;
   visible: boolean;
   surface: "main" | "right-panel" | null;
   shareable?: boolean;
   agentClaimed?: boolean;
+  handoffStatus?: "handoff" | "deliverable";
+}
+
+export interface BrowserViewportState {
+  enabled: boolean;
+  width: number;
+  height: number;
+  deviceScaleFactor: number;
+  mobile: boolean;
+  touch: boolean;
+}
+
+export interface BrowserHistoryEntry {
+  id: string;
+  url: string;
+  title: string;
+  visitedAt: string;
+}
+
+export interface BrowserExtensionDescriptor {
+  id: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+  permissions: string[];
+}
+
+export type BrowserSitePermission =
+  | "browse"
+  | "download"
+  | "upload"
+  | "cdp"
+  | "camera"
+  | "microphone";
+
+export type BrowserPermissionDecision = "ask" | "allow" | "deny";
+
+export interface BrowserSitePermissionOverride {
+  browse?: BrowserPermissionDecision;
+  download?: BrowserPermissionDecision;
+  upload?: BrowserPermissionDecision;
+  cdp?: BrowserPermissionDecision;
+  camera?: BrowserPermissionDecision;
+  microphone?: BrowserPermissionDecision;
 }
 
 export interface BrowserRequestContext {
@@ -78,6 +144,7 @@ export type BrowserLocatorStep =
   | { kind: "placeholder"; text: BrowserTextMatcher; exact?: boolean }
   | { kind: "testId"; testId: string }
   | { kind: "css" | "locator"; selector: string }
+  | { kind: "frame"; selector: string }
   | { kind: "nth"; index: number }
   | { kind: "first" }
   | { kind: "last" }
@@ -113,7 +180,9 @@ export interface BrowserAuditEvent {
 }
 
 export interface BrowserSettings {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
+  browserEnabled?: boolean;
+  browserUseEnabled?: boolean;
   agentCursorVisible: boolean;
   linkOpenTarget: "lume" | "system";
   localUrlTarget: "lume" | "system";
@@ -125,10 +194,13 @@ export interface BrowserSettings {
   downloadHistoryEnabled: boolean;
   sitePermissionDefault: "ask" | "deny";
   siteOverrides: Record<string, "ask" | "allow" | "deny">;
+  sitePermissionOverrides?: Record<string, BrowserSitePermissionOverride>;
 }
 
 export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  browserEnabled: true,
+  browserUseEnabled: true,
   agentCursorVisible: true,
   linkOpenTarget: "lume",
   localUrlTarget: "lume",
@@ -140,6 +212,7 @@ export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
   downloadHistoryEnabled: true,
   sitePermissionDefault: "ask",
   siteOverrides: {},
+  sitePermissionOverrides: {},
 };
 
 export const BROWSER_IPC_CHANNELS = {

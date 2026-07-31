@@ -232,17 +232,25 @@ test("preview subframes may stay on the entry URL or its fragment only", () => {
   assert.equal(isAllowedPreviewFrameNavigation(registry, "https://example.com", 9), false);
 });
 
-test("media scopes authorize one image file and validate single byte ranges", () => {
+test("media scopes authorize one image, PDF, or video file and validate single byte ranges", () => {
   const root = mkdtempSync(join(tmpdir(), "lume-preview-media-"));
   const image = join(root, "image.png");
   const other = join(root, "other.png");
+  const pdf = join(root, "manual.pdf");
+  const video = join(root, "movie.mp4");
   writeFileSync(image, Buffer.alloc(20));
   writeFileSync(other, Buffer.alloc(20));
+  writeFileSync(pdf, Buffer.alloc(20));
+  writeFileSync(video, Buffer.alloc(20));
   const registry = createPreviewScopeRegistry();
   const scope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: image });
 
   assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/image.png`, "HEAD").kind, "ok");
   assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/other.png`, "GET").kind, "forbidden");
+  const pdfScope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: pdf });
+  const videoScope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: video });
+  assert.equal(resolvePreviewProtocolRequest(registry, previewScopeUrl(pdfScope), "GET").mimeType, "application/pdf");
+  assert.equal(resolvePreviewProtocolRequest(registry, previewScopeUrl(videoScope), "GET").mimeType, "video/mp4");
   assert.deepEqual(parseSingleRange("bytes=3-8", 20), { start: 3, end: 8 });
   assert.deepEqual(parseSingleRange("bytes=-5", 20), { start: 15, end: 19 });
   assert.equal(parseSingleRange("bytes=1-2,4-5", 20), null);
@@ -460,6 +468,15 @@ test("preload bridge is compatible with Electron sandbox require limits", () => 
   const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "preload.ts"), "utf8");
   assert.match(preloadSource, /from ['"]electron['"]/);
   assert.equal(preloadSource.includes("node:"), false);
+});
+
+test("browser review overlay exposes only its typed message channel", () => {
+  const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-overlay-preload.ts"), "utf8");
+  assert.match(preloadSource, /from ['"]electron['"]/);
+  assert.match(preloadSource, /ipcRenderer\.send\(['"]lume:browser-overlay['"], message\)/);
+  assert.equal(preloadSource.includes("ipcRenderer.invoke"), false);
+  assert.equal(preloadSource.includes("node:"), false);
+  assert.equal(preloadSource.includes("navigator.clipboard"), false);
 });
 
 test("app protocol resolves only lume app URLs within the web root", () => {

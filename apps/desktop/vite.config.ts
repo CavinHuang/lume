@@ -34,9 +34,12 @@ export const preloadConfig = defineConfig({
     emptyOutDir: true,
     minify: false,
     lib: {
-      entry: resolve(desktopRoot, 'src', 'preload.ts'),
+      entry: {
+        preload: resolve(desktopRoot, 'src', 'preload.ts'),
+        'browser-overlay-preload': resolve(desktopRoot, 'src', 'browser-overlay-preload.ts'),
+      },
       formats: ['cjs'],
-      fileName: () => 'preload.cjs',
+      fileName: (_format, entryName) => `${entryName}.cjs`,
     },
     rollupOptions: {
       external,

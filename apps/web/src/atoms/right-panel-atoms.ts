@@ -1,13 +1,15 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
+import type { AgentBrowserAnchor, CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import {
   closeFileTab,
   createThreadFileWorkspace,
   openFileTab,
   type ThreadFileWorkspace,
+  type RightPanelFileTab,
 } from '@/components/right-panel/right-panel-files-state'
+import type { ThreadBrowserWorkspace } from '@/components/right-panel/right-panel-browser-state'
 import {
   closeRightPanelTab,
   getOpenRightPanelFunctions,
@@ -37,6 +39,44 @@ export const rightPanelLayoutAtom = atomWithStorage<RightPanelLayoutState>(
 export const rightPanelBlameEnabledAtom = atomWithStorage<boolean>(
   'right-panel-blame-enabled',
   false,
+)
+
+export interface RightPanelFileEditorState {
+  sourceMode?: boolean
+  updatedAt: number
+}
+
+export interface RightPanelPersistedFileWorkspace {
+  tabs: RightPanelFileTab[]
+  activeTabId?: string
+}
+
+export const rightPanelFileEditorStatesAtom = atomWithStorage<Record<string, RightPanelFileEditorState>>(
+  'right-panel-file-editor-states',
+  {},
+)
+
+export const rightPanelFileTabsAtom = atomWithStorage<Record<string, RightPanelPersistedFileWorkspace>>(
+  'right-panel-file-tabs',
+  {},
+)
+
+export const rightPanelBrowserWorkspacesAtom = atomWithStorage<Record<string, ThreadBrowserWorkspace>>(
+  'right-panel-browser-workspaces',
+  {},
+)
+
+export interface BrowserPageDraft {
+  purpose: 'annotation' | 'tweaks'
+  anchor: AgentBrowserAnchor
+  originalStyles: Record<string, string>
+  body?: string
+  proposedStyles?: Record<string, string>
+}
+
+export const browserPageDraftsAtom = atomWithStorage<Record<string, BrowserPageDraft>>(
+  'browser-page-drafts',
+  {},
 )
 
 export interface CodingReviewPreferences {

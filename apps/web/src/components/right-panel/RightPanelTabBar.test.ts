@@ -1,5 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { buildRightPanelTabItems, closeAllTabsMenuItem, getRightPanelCloseFallback, shouldCloseRightPanelFunctionMenuForTarget, shouldCloseTabForMouseButton } from './RightPanelTabBar'
+import { createThreadFileWorkspace, openFileTab } from './right-panel-files-state'
+import { createBrowserTab } from './right-panel-browser-state'
+
+const fileTab = (id: string, relativePath: string) => ({
+  ...openFileTab(
+    createThreadFileWorkspace({}),
+    { source: 'session' as const, scopeId: 'one', relativePath },
+  ).openTabs[0]!,
+  id,
+})
 
 describe('RightPanelTabBar', () => {
   test('keeps the function menu open for inside pointer targets only', () => {
@@ -13,14 +23,17 @@ describe('RightPanelTabBar', () => {
     expect(shouldCloseRightPanelFunctionMenuForTarget(menu, 'outside-target' as unknown as Node)).toBe(true)
   })
 
-  test('places file tabs immediately after Files while preserving file order', () => {
+  test('places browser tabs before Files while preserving file order', () => {
+    const browser = createBrowserTab({ title: 'Example', url: 'https://example.com' })
     expect(buildRightPanelTabItems(
       { tabs: { browser: { type: 'browser', url: '', addressInput: '', zoom: 1, deviceToolbarVisible: false }, files: { type: 'files' } } },
       [
-        { id: 'file-a', ref: { source: 'session', scopeId: 'one', relativePath: 'src/a.ts' } },
-        { id: 'file-b', ref: { source: 'session', scopeId: 'one', relativePath: 'test/a.ts' } },
+        fileTab('file-a', 'src/a.ts'),
+        fileTab('file-b', 'test/a.ts'),
       ],
-    ).map((item) => item.id)).toEqual(['function:browser', 'function:files', 'file-a', 'file-b'])
+      false,
+      [browser],
+    ).map((item) => item.id)).toEqual([browser.id, 'function:files', 'file-a', 'file-b'])
   })
 
   test('places the runtime review tab before persisted functions', () => {
@@ -48,6 +61,7 @@ describe('RightPanelTabBar', () => {
   })
 
   test('chooses the tab on the right after closing, then falls back to the left', () => {
+    const browser = createBrowserTab({ title: 'Example', url: 'https://example.com' })
     const items = buildRightPanelTabItems(
       {
         tabs: {
@@ -56,13 +70,14 @@ describe('RightPanelTabBar', () => {
         },
       },
       [
-        { id: 'file-a', ref: { source: 'session', scopeId: 'one', relativePath: 'src/a.ts' }, navigationRevision: 1 },
-        { id: 'file-b', ref: { source: 'session', scopeId: 'one', relativePath: 'src/b.ts' }, navigationRevision: 1 },
+        fileTab('file-a', 'src/a.ts'),
+        fileTab('file-b', 'src/b.ts'),
       ],
       true,
+      [browser],
     )
 
-    expect(getRightPanelCloseFallback(items, 'review')?.id).toBe('function:browser')
+    expect(getRightPanelCloseFallback(items, 'review')?.id).toBe(browser.id)
     expect(getRightPanelCloseFallback(items, 'function:files')?.id).toBe('file-a')
     expect(getRightPanelCloseFallback(items, 'file-a')?.id).toBe('file-b')
     expect(getRightPanelCloseFallback(items, 'file-b')?.id).toBe('file-a')

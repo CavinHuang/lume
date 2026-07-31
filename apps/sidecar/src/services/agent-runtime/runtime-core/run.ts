@@ -116,7 +116,11 @@ import {
   clearRuntimeToolDescriptors,
 } from "../tools/tool-descriptor-session";
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
-import { createCodingRunTracker, type CodingVerificationStatus } from "./coding-run-tracker";
+import {
+  createCodingRunTracker,
+  type CodingVerificationReport,
+  type CodingVerificationStatus,
+} from "./coding-run-tracker";
 import { runAdvisor } from "../advisor/advisor-service";
 import { getNodeReplRuntimeRegistry } from "../tools/node-repl/node-repl-runtime-registry";
 import { getComputerUseSessionRegistry } from "../tools/computer-use/computer-use-session";
@@ -192,6 +196,7 @@ export interface CreateRuntimeCoreSessionInput {
   permissionMode?: AgentSendInput["permissionMode"];
   messageAttachments?: AgentSendInput["messageAttachments"];
   commentAttachments?: AgentSendInput["commentAttachments"];
+  browserAttachments?: AgentSendInput["browserAttachments"];
   messageMetadata?: Record<string, unknown>;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -1654,13 +1659,21 @@ export async function createRuntimeCoreSession(
   });
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
-  const publishCodingReport = (): void => {
-    const codingReport: RuntimeCodingReport = {
+  const getCodingReport = (): CodingVerificationReport & RuntimeCodingReport => {
+    const report: CodingVerificationReport & RuntimeCodingReport = {
       ...codingRunTracker.getVerificationReport(),
       runId,
       approvalRequestCount,
     };
-    if (!codingReport.workspaceChanged && !codingReport.pendingBackground && (codingReport.gitActions?.length ?? 0) === 0) return;
+    return report;
+  };
+  const publishCodingReport = (): void => {
+    const codingReport = getCodingReport();
+    if (
+      !codingReport.workspaceChanged
+      && !codingReport.pendingBackground
+      && (codingReport.gitActions?.length ?? 0) === 0
+    ) return;
     input.persistCodingReport?.(codingReport);
     try {
       input.emitRuntimeEvent?.({
@@ -2040,6 +2053,7 @@ export async function createRuntimeCoreSession(
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
     commentAttachments: input.commentAttachments,
+    browserAttachments: input.browserAttachments,
     availableTools: toolset.availableToolNames,
     enabledPlugins,
     tokenBudget: contextTokenBudget,
@@ -2254,10 +2268,7 @@ export async function createRuntimeCoreSession(
     getWorkspaceRoots: () => [resolve(input.cwd), ...additionalDirectories],
     refreshCodingChangeSet: codingRunTracker.refreshChangeSet,
     getLatestFileCheckpoint: () => agent.getLatestFileCheckpoint(),
-    getVerificationReport: () => ({
-      ...codingRunTracker.getVerificationReport(),
-      approvalRequestCount
-    })
+    getVerificationReport: getCodingReport
   };
 }
 

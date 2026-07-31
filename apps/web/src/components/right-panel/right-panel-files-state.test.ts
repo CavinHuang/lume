@@ -9,6 +9,7 @@ import {
   getEffectiveThreadFileBindings,
   getFileTreeRevealDirectories,
   openFileTab,
+  normalizePersistedRightPanelFileTabs,
   normalizeLineSelection,
   reconcileThreadFileWorkspaces,
     removeFileRef,
@@ -118,11 +119,24 @@ describe('right-panel-files-state', () => {
     expect(state.previewScopes).toEqual({})
   })
 
+  test('opens session artifact FileRefs as artifact tabs', () => {
+    const state = openFileTab(
+      createThreadFileWorkspace({ fileContextId: 'scope-1' }),
+      ref('artifacts/report.pdf', 'session', 'scope-1'),
+    )
+
+    expect(state.openTabs[0]?.target).toMatchObject({
+      kind: 'artifact',
+      viewer: 'pdf',
+      ref: { relativePath: 'artifacts/report.pdf' },
+    })
+  })
+
   test('uses the shortest distinguishing parent path for duplicate basenames', () => {
     const labels = disambiguateFileTabLabels([
-      { id: 'a', ref: ref('src/client/index.ts') },
-      { id: 'b', ref: ref('test/client/index.ts') },
-      { id: 'c', ref: ref('README.md') },
+      { ...openFileTab(createThreadFileWorkspace({}), ref('src/client/index.ts')).openTabs[0]!, id: 'a' },
+      { ...openFileTab(createThreadFileWorkspace({}), ref('test/client/index.ts')).openTabs[0]!, id: 'b' },
+      { ...openFileTab(createThreadFileWorkspace({}), ref('README.md')).openTabs[0]!, id: 'c' },
     ])
 
     expect(labels).toEqual({
@@ -139,10 +153,10 @@ describe('right-panel-files-state', () => {
     state = openFileTab(state, ref('other.ts'))
     state = rewriteFileRefPrefix(state, ref('src'), ref('lib'))
 
-    expect(state.openTabs.map((tab) => tab.ref.relativePath)).toEqual(['lib/a.ts', 'lib/nested/b.ts', 'other.ts'])
+    expect(state.openTabs.map((tab) => tab.ref?.relativePath)).toEqual(['lib/a.ts', 'lib/nested/b.ts', 'other.ts'])
 
     state = removeFileRef(state, ref('lib'), true, ['files'])
-    expect(state.openTabs.map((tab) => tab.ref.relativePath)).toEqual(['other.ts'])
+    expect(state.openTabs.map((tab) => tab.ref?.relativePath)).toEqual(['other.ts'])
   })
 
   test('thread removal revokes scopes and rebinding preserves only the authorized session scope', () => {
@@ -158,7 +172,7 @@ describe('right-panel-files-state', () => {
     )
 
     expect(result.workspaces.removed).toBeUndefined()
-    expect(result.workspaces.keep!.openTabs.map((tab) => tab.ref.source)).toEqual(['session'])
+    expect(result.workspaces.keep!.openTabs.map((tab) => tab.ref?.source)).toEqual(['session'])
     expect(result.workspaces.keep!.activeItem).toEqual({ kind: 'function', type: 'browser' })
     expect(result.workspaces.keep!.directoryCache).toEqual({})
     expect(result.revokedScopeTokens).toEqual(['token-1', 'token-2'])
@@ -171,7 +185,7 @@ describe('right-panel-files-state', () => {
     state = {
       ...state,
       selectedRef: projectRef,
-      temporaryPreviewRef: projectRef,
+      temporaryPreviewTarget: { kind: 'file', ref: projectRef },
       directoryCache: { project: [] },
       previewScopes: { [state.openTabs[0]!.id]: 'scope-token' },
     }
@@ -179,7 +193,7 @@ describe('right-panel-files-state', () => {
       id: 'thread', workspaceId: 'workspace-1', fileContextId: 'context-1', projectBindingKey: 'new-root', openFunctions: ['files'],
     }])
     expect(result.workspaces.thread).toMatchObject({
-      openTabs: [], selectedRef: null, temporaryPreviewRef: null, directoryCache: {}, previewScopes: {},
+      openTabs: [], selectedRef: null, temporaryPreviewTarget: null, directoryCache: {}, previewScopes: {},
     })
     expect(result.revokedScopeTokens).toEqual(['scope-token'])
   })
@@ -197,10 +211,32 @@ describe('right-panel-files-state', () => {
   test('a fresh process starts with no runtime file state', () => {
     expect(createThreadFileWorkspace({ fileContextId: 'scope-1' })).toMatchObject({
       selectedRef: null,
-      temporaryPreviewRef: null,
+      temporaryPreviewTarget: null,
       openTabs: [],
       expandedKeys: [],
       search: { query: '' },
+    })
+  })
+
+  test('persists MCP resources as reusable tabs and migrates legacy file tabs', () => {
+    const target = {
+      kind: 'mcp-resource' as const,
+      workspaceSlug: 'demo',
+      resource: { serverId: 'docs', serverName: 'Docs', uri: 'docs://guide', name: 'Guide' },
+    }
+    let state = openFileTab(createThreadFileWorkspace({}), target)
+    state = openFileTab(state, target)
+    expect(state.openTabs).toHaveLength(1)
+    expect(state.openTabs[0]?.target).toEqual(target)
+
+    const restored = normalizePersistedRightPanelFileTabs([{
+      id: 'legacy',
+      ref: ref('artifacts/report.md'),
+      navigationRevision: 2,
+    }])
+    expect(restored[0]).toMatchObject({
+      id: 'legacy',
+      target: { kind: 'artifact', ref: { relativePath: 'artifacts/report.md' }, viewer: 'markdown' },
     })
   })
 })

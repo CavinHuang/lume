@@ -1,6 +1,16 @@
 import { createHash, randomUUID } from "node:crypto"
-import type { BrowserActionRequest, BrowserBackendDescriptor, BrowserRequestContext, BrowserRuntimeDescriptor } from "@lume/shared"
+import {
+  BROWSER_PROTOCOL_MAX_SUPPORTED,
+  BROWSER_PROTOCOL_MIN_SUPPORTED,
+  BROWSER_PROTOCOL_VERSION,
+  type BrowserActionRequest,
+  type BrowserBackendDescriptor,
+  type BrowserLocator,
+  type BrowserRequestContext,
+  type BrowserRuntimeDescriptor,
+} from "@lume/shared"
 import { classifyBrowserAction } from "./browser-action-policy"
+import { resolveAuthorizedBrowserUploadPaths } from "../agent/agent-files-service"
 
 export interface BrowserMainTransport { request(request: BrowserActionRequest): Promise<unknown>; isAvailable?: () => boolean }
 
@@ -12,6 +22,7 @@ export class BrowserBroker {
   private chromePluginEnabled = false
   private extensionBackendEnabled = false
   private extensionConnected = false
+  private extensionRuntime?: ExtensionRuntimeDescriptor
   constructor(private readonly main: BrowserMainTransport, private readonly extension?: BrowserMainTransport, private readonly onStateChange?: (state: { browserEnabled: boolean; chromeEnabled: boolean; extensionBackendEnabled: boolean; hostConnected: boolean; generation: number }) => void) {
     this.extensionConnected = extension?.isAvailable?.() === true
   }
@@ -19,21 +30,38 @@ export class BrowserBroker {
     if (backend === "extension" && (!this.extension || !this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected)) throw new Error("browser_unavailable")
     const id = backend === "iab" ? "lume-iab" : "lume-extension"
     const browserCapabilities = backend === "iab"
-      ? [{ id: "tabs", description: "In-app tab lifecycle" }, { id: "navigation", description: "Policy-checked navigation" }, { id: "locator-actions", description: "Constrained snapshot and locator actions" }, { id: "screenshot", description: "Screenshot evidence" }, { id: "guardedUpload", description: "Confirmed task-bound file-ref upload" }, { id: "agentDownload", description: "Confirmed quota-bound Agent downloads" }]
+      ? (runtime?.capabilities ?? [{ id: "tabs", description: "In-app tab lifecycle" }, { id: "navigation", description: "Policy-checked navigation" }, { id: "locator-actions", description: "Constrained snapshot and locator actions" }, { id: "screenshot", description: "Screenshot evidence" }, { id: "guardedUpload", description: "Confirmed task-bound file-ref upload" }, { id: "agentDownload", description: "Confirmed quota-bound Agent downloads" }])
+        .filter((capability) => !["advancedCdp", "browserAuth", "pageAssets", "webmcp"].includes(capability.id))
       : [{ id: "tabs", description: "Explicit external Chrome tab lifecycle" }, { id: "navigation", description: "Explicit external Chrome navigation" }, { id: "input", description: "Explicit external Chrome click and input control" }, { id: "locator", description: "Strict locator resolution and actionability" }, { id: "screenshot", description: "External Chrome screenshot evidence" }, { id: "visibility", description: "Show or hide the external Chrome window" }, { id: "viewport", description: "Set or reset the external Chrome viewport" }]
-    const tabCapabilities = backend === "iab" && Array.isArray(runtime?.capabilities) && runtime.capabilities.some((capability) => capability.id === "advancedCdp")
-      ? [{ id: "cdp", description: "Method-allowlisted CDP for isolated advanced sessions" }]
+    const tabCapabilities = backend === "iab" && Array.isArray(runtime?.capabilities)
+      ? [
+          ...(runtime.capabilities.some((capability) => capability.id === "advancedCdp") ? [{ id: "cdp", description: "Full CDP for isolated sessions with origin and per-action approval" }] : []),
+          ...(runtime.capabilities.some((capability) => capability.id === "browserAuth") ? [{ id: "browserAuth", description: "Fill saved credentials without exposing their values" }] : []),
+          ...(runtime.capabilities.some((capability) => capability.id === "pageAssets") ? [{ id: "pageAssets", description: "Inventory and export bounded assets observed in the current page state" }] : []),
+          ...(runtime.capabilities.some((capability) => capability.id === "webmcp") ? [{ id: "webmcp", description: "Invoke page-defined WebMCP tools announced by browser notifications" }] : []),
+        ]
       : backend === "extension"
-        ? [{ id: "botDetection", description: "Report bot-detection blockers without page secrets" }]
+        ? this.extensionRuntime?.tabCapabilities ?? []
         : []
+    const protocol = backend === "extension" ? this.extensionRuntime : runtime
+    const apiSupportOverrides = backend === "extension"
+      ? this.extensionRuntime?.apiSupportOverrides ?? EXTENSION_API_SUPPORT_FALLBACK
+      : runtime?.apiSupportOverrides ?? IAB_API_SUPPORT_FALLBACK
     return {
       id, browserId: id, backend, type: backend, clientType: backend, name: backend === "iab" ? "Lume 内置浏览器" : "Lume Chrome",
-      protocolVersion: 5, minSupported: 5, maxSupported: 5,
-      capabilityHash: capabilityHash([...browserCapabilities, ...tabCapabilities].map((capability) => capability.id)),
+      protocolVersion: protocol?.protocolVersion ?? BROWSER_PROTOCOL_VERSION,
+      minSupported: protocol?.minSupported ?? BROWSER_PROTOCOL_MIN_SUPPORTED,
+      maxSupported: protocol?.maxSupported ?? BROWSER_PROTOCOL_MAX_SUPPORTED,
+      capabilityHash: capabilityHash([
+        ...[...browserCapabilities, ...tabCapabilities].map((capability) => capability.id),
+        ...Object.entries(apiSupportOverrides).flatMap(([api, supported]) => supported ? [api] : []),
+      ]),
       generation: this.generation,
-      metadata: backend === "iab" ? { networkBoundary: "task-partition-proxy" } : { networkBoundary: "external-chrome-best-effort", credentials: "unavailable", agentDownloads: "unavailable" },
+      metadata: backend === "iab"
+        ? { networkBoundary: "task-partition-proxy" }
+        : { networkBoundary: "external-chrome-best-effort", credentials: "unavailable", agentDownloads: apiSupportOverrides["PlaywrightLocator.downloadMedia"] ? "limited" : "unavailable" },
       capabilities: { browser: browserCapabilities, tab: tabCapabilities },
-      apiSupportOverrides: backend === "extension" ? EXTENSION_API_SUPPORT : IAB_API_SUPPORT,
+      apiSupportOverrides,
     }
   }
   setPluginEnabled(enabled: boolean): void { this.setPluginState({ browserEnabled: enabled }) }
@@ -49,6 +77,7 @@ export class BrowserBroker {
     this.chromePluginEnabled = next.chromeEnabled
     this.extensionBackendEnabled = next.extensionBackendEnabled
     this.extensionConnected = next.hostConnected
+    this.extensionRuntime = undefined
     this.generation += 1
     this.queues.clear()
     this.onStateChange?.({ ...next, generation: this.generation })
@@ -60,7 +89,11 @@ export class BrowserBroker {
     if (input.method.startsWith("policy:")) throw new Error("action_denied")
     if (input.method === "runtime_list_browsers") return this.listBackendsForContext(input)
     const backend = inferBackend(input.backend, input.params)
-    if (input.method === "runtime_ping") return backend === "iab" ? this.descriptor("iab", await this.runtimeDescriptor(input)) : this.descriptor(backend)
+    if (input.method === "runtime_ping") {
+      if (backend === "iab") return this.descriptor("iab", await this.runtimeDescriptor(input))
+      await this.refreshExtensionRuntime(input)
+      return this.descriptor("extension")
+    }
     if (input.method === "runtime_diagnostics") return { generation: this.generation, backends: this.listBackends() }
     const normalized = normalizeBrowserCommand(input.method, input.params ?? {})
     const tabId = input.tabId ?? (typeof normalized.params.tabId === "string" ? normalized.params.tabId : undefined)
@@ -69,7 +102,7 @@ export class BrowserBroker {
     const context: BrowserRequestContext = { ...(input.threadId ? { threadId: input.threadId } : {}), browserSessionId: input.browserSessionId, browserTurnId: input.browserTurnId, ...(tabId ? { tabId } : {}), actor: "agent", capability: `browser-broker-v1:${this.generation}` }
     const queueKey = `${backend}:${tabId ?? "browser"}`
     const previous = this.queues.get(queueKey) ?? Promise.resolve()
-    const current = previous.then(async () => {
+    const execute = async () => {
       const policy = classifyBrowserAction(input.method, input.params)
       if (policy.decision === "deny") throw new Error("action_denied")
       let confirmationToken: string | undefined
@@ -87,11 +120,20 @@ export class BrowserBroker {
           await this.main.request({ requestId: randomUUID(), context: internalContext, method: "policy:consume", params: { token: confirmationToken, bindingHash } })
         }
       }
-      const params = { ...normalized.params, ...(confirmationToken ? { __policyRequired: true, __policyConfirmation: confirmationToken, __policyBindingHash: bindingHash } : {}) }
+      const authorizedUploadFiles = input.method === "playwright_file_chooser_set_files"
+        ? authorizeBrowserUploadFiles(input.threadId, normalized.params.files)
+        : undefined
+      const params = {
+        ...normalized.params,
+        ...(authorizedUploadFiles ? { files: authorizedUploadFiles.browserDownloadRefs, __authorizedFiles: authorizedUploadFiles.authorizedPaths } : {}),
+        ...(confirmationToken ? { __policyRequired: true, __policyConfirmation: confirmationToken, __policyBindingHash: bindingHash } : {}),
+      }
       const method = new Set(["submitForm", "send", "delete", "purchase", "authorize"]).has(input.method) ? "click" : normalized.method
       const request: BrowserActionRequest = { requestId: randomUUID(), context, method, params, ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}) }
       return adaptBrowserResult(input.method, await transport.request(request))
-    })
+    }
+    if (WAIT_COMMANDS.has(input.method)) return execute().catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
+    const current = previous.then(execute)
     this.queues.set(queueKey, current.catch(() => undefined))
     return current.catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
   }
@@ -99,6 +141,7 @@ export class BrowserBroker {
   private async listBackendsForContext(input: { threadId?: string; browserSessionId: string; browserTurnId: string }): Promise<BrowserBackendDescriptor[]> {
     if (!this.browserPluginEnabled) return []
     const runtime = await this.runtimeDescriptor(input)
+    if (this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected) await this.refreshExtensionRuntime(input)
     return [this.descriptor("iab", runtime), ...(this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected ? [this.descriptor("extension")] : [])]
   }
   private async runtimeDescriptor(input: { threadId?: string; browserSessionId: string; browserTurnId: string }): Promise<BrowserRuntimeDescriptor | undefined> {
@@ -109,6 +152,21 @@ export class BrowserBroker {
         method: "handshake",
       }) as BrowserRuntimeDescriptor
     } catch { return undefined }
+  }
+  private async refreshExtensionRuntime(input: { threadId?: string; browserSessionId: string; browserTurnId: string }): Promise<void> {
+    if (!this.extension || !this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected) {
+      this.extensionRuntime = undefined
+      return
+    }
+    try {
+      this.extensionRuntime = sanitizeExtensionRuntimeDescriptor(await this.extension.request({
+        requestId: randomUUID(),
+        context: { ...(input.threadId ? { threadId: input.threadId } : {}), browserSessionId: input.browserSessionId, browserTurnId: input.browserTurnId, actor: "agent", capability: `browser-broker-v1:${this.generation}` },
+        method: "handshake",
+      }))
+    } catch {
+      this.extensionRuntime = undefined
+    }
   }
 }
 
@@ -134,10 +192,18 @@ function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<
 function normalizeBrowserCommand(method: string, input: Record<string, unknown>): { method: string; params: Record<string, unknown> } {
   const params = { ...input }
   delete params.browserId
+  const locator = browserClientSelectorToLocator(input.selector)
+  if (locator) params.locator = locator
   const options = input.options && typeof input.options === "object" && !Array.isArray(input.options) ? input.options as Record<string, unknown> : {}
   switch (method) {
+    case "name_session": case "browser_name_session": return { method: "nameSession", params }
     case "browser_user_open_tabs": return { method: "openTabs", params }
     case "browser_user_claim_tab": return { method: "claim", params }
+    case "browser_user_history": return { method: "history:list", params }
+    case "browser_visibility_get": return { method: "browser:visibility:get", params }
+    case "browser_visibility_set": return { method: "browser:visibility:set", params }
+    case "browser_viewport_set": return { method: "browser:viewport:set", params: { ...params, ...options, width: input.width ?? options.width, height: input.height ?? options.height } }
+    case "browser_viewport_reset": return { method: "browser:viewport:reset", params }
     case "create_tab": return { method: "ensure", params: { ...params, ...options, url: options.url } }
     case "get_tab": return { method: "get", params }
     case "selected_tab": return { method: "selected", params }
@@ -153,20 +219,58 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "navigate_tab_reload": return { method: "reload", params }
     case "tab_url": return { method: "url", params }
     case "tab_title": return { method: "title", params }
-    case "tab_screenshot": return { method: "screenshot", params: { ...params, fullPage: options.fullPage === true } }
+    case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true } }
+    case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
+    case "tabs_content": return { method: "tabs:content", params: { ...params, contentType: input.content_type, timeoutMs: input.timeout_ms } }
+    case "tab_clipboard_read": return { method: "clipboard:read", params }
+    case "tab_clipboard_read_text": return { method: "clipboard:readText", params }
+    case "tab_clipboard_write": return { method: "clipboard:write", params }
+    case "tab_clipboard_write_text": return { method: "clipboard:writeText", params }
     case "playwright_dom_snapshot": return { method: "snapshot", params }
+    case "playwright_element_info": return { method: "elementInfo", params: { ...params, ...options } }
+    case "playwright_element_screenshot": return { method: "elementScreenshot", params: { ...params, ...options } }
+    case "playwright_evaluate": return { method: "evaluate:readonly", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }
+    case "playwright_wait_for_download": return { method: "wait:download", params: { ...params, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
+    case "playwright_download_path": return { method: "download:path", params: { ...params, downloadId: input.download_id, timeoutMs: input.timeout_ms } }
+    case "playwright_wait_for_file_chooser": return { method: "wait:filechooser", params: { ...params, timeoutMs: input.timeout_ms ?? options.timeoutMs } }
+    case "playwright_file_chooser_set_files": return {
+      method: "filechooser:setFiles",
+      params: {
+        ...params,
+        fileChooserId: input.file_chooser_id ?? input.chooserId,
+        files: Array.isArray(input.files) ? input.files : typeof input.files === "string" ? [input.files] : [],
+      },
+    }
+    case "tab_page_assets_list": return { method: "pageAssets:list", params }
+    case "tab_page_assets_bundle": return {
+      method: "pageAssets:bundle",
+      params: { ...params, inventoryId: input.inventory_id, assetIds: input.asset_ids },
+    }
+    case "webmcp_list_tools": return { method: "webmcp:list", params }
+    case "webmcp_invoke_tool": return {
+      method: "webmcp:invoke",
+      params: { ...params, toolName: input.tool_name ?? input.toolName, timeoutMs: input.timeout_ms ?? input.timeoutMs },
+    }
+    case "tab_dev_logs": return { method: "dev:logs", params }
+    case "dom_cua_get_visible_dom": return { method: "dom:visible", params }
+    case "dom_cua_click": return { method: "dom:click", params: { ...params, nodeId: input.node_id } }
+    case "dom_cua_double_click": return { method: "dom:doubleClick", params: { ...params, nodeId: input.node_id } }
+    case "dom_cua_scroll": return { method: "dom:scroll", params: { ...params, nodeId: input.node_id, scrollX: input.scroll_x, scrollY: input.scroll_y } }
+    case "dom_cua_type": return { method: "dom:type", params }
+    case "dom_cua_keypress": return { method: "dom:keypress", params }
+    case "dom_cua_download_media": return { method: "downloadMedia", params: { ...params, nodeId: input.node_id } }
     case "playwright_locator_click": return { method: "click", params }
     case "playwright_locator_dblclick": return { method: "doubleClick", params }
     case "playwright_locator_hover": return { method: "hover", params }
     case "playwright_locator_fill": return { method: "fill", params: { ...params, text: input.text ?? input.value } }
-    case "playwright_locator_type": return { method: "type", params }
-    case "playwright_locator_press": return { method: "press", params }
-    case "playwright_locator_select_option": return { method: "select", params: { ...params, value: input.value } }
+    case "playwright_locator_type": return { method: "type", params: { ...params, text: input.text ?? input.value } }
+    case "playwright_locator_press": return { method: "press", params: { ...params, key: input.key ?? input.value } }
+    case "playwright_locator_select_option": return { method: "select", params: { ...params, value: normalizeSelections(input.selections ?? input.value) } }
     case "playwright_locator_set_checked": return { method: input.checked === false ? "uncheck" : "check", params }
     case "playwright_locator_check": return { method: "check", params }
     case "playwright_locator_uncheck": return { method: "uncheck", params }
     case "playwright_locator_scroll": return { method: "scroll", params }
-    case "playwright_locator_get_attribute": return { method: "locator:getAttribute", params }
+    case "playwright_locator_get_attribute": return { method: "locator:getAttribute", params: { ...params, name: input.name ?? input.attribute_name } }
     case "playwright_locator_inner_text": return { method: "locator:innerText", params }
     case "playwright_locator_text_content": return { method: "locator:textContent", params }
     case "playwright_locator_input_value": return { method: "locator:inputValue", params }
@@ -177,6 +281,8 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "playwright_locator_all_text_contents": return { method: "locator:allTextContents", params }
     case "playwright_locator_read_all": return { method: "locator:readAll", params }
     case "playwright_locator_wait_for": return { method: "locator:waitFor", params }
+    case "playwright_locator_evaluate": return { method: "locator:evaluate", params: { ...params, timeoutMs: input.timeoutMs ?? input.timeout_ms ?? options.timeoutMs } }
+    case "playwright_locator_download_media": return { method: "downloadMedia", params }
     case "playwright_wait_for_url": return { method: "wait:url", params: { ...params, timeoutMs: options.timeoutMs } }
     case "playwright_wait_for_load_state": return { method: "wait:load", params }
     case "playwright_wait_for_timeout": return { method: "wait:timeout", params }
@@ -192,6 +298,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     }
     case "cua_type": return { method: "typeActive", params }
     case "cua_keypress": return { method: "pressActive", params }
+    case "cua_download_media": return { method: "downloadMedia", params }
     case "tab_js_dialog_get": return { method: "dialog:get", params }
     case "tab_js_dialog_handle": return { method: "dialog:handle", params }
     case "tab_cdp_call": case "tab_cdp_send": return { method: "cdp", params: { ...params, method: input.method, params: input.params } }
@@ -199,9 +306,91 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
   }
 }
 
-const IAB_API_SUPPORT = {
+function authorizeBrowserUploadFiles(threadId: string | undefined, value: unknown): { browserDownloadRefs: string[]; authorizedPaths: string[] } | undefined {
+  if (!Array.isArray(value)) return undefined
+  const files = value.filter((item): item is string => typeof item === "string").slice(0, 20)
+  const browserDownloadRefs = files.filter((item) => /^browser-download:[a-f0-9-]{36}$/i.test(item))
+  const unresolved = files.filter((item) => !browserDownloadRefs.includes(item))
+  if (!unresolved.length) return { browserDownloadRefs, authorizedPaths: [] }
+  if (!threadId) throw new Error("action_denied")
+  try {
+    return { browserDownloadRefs, authorizedPaths: resolveAuthorizedBrowserUploadPaths(threadId, unresolved) }
+  } catch {
+    throw new Error("action_denied")
+  }
+}
+
+const WAIT_COMMANDS = new Set(["playwright_wait_for_download", "playwright_wait_for_file_chooser"])
+
+function browserClientSelectorToLocator(value: unknown): BrowserLocator | undefined {
+  if (typeof value !== "string" || !value.trim() || value.length > 4096) return undefined
+  const frameParts = value.split(/\s*>>\s*internal:control=enter-frame\s*>>\s*/g)
+  const steps: BrowserLocator["steps"] = []
+  for (const frameSelector of frameParts.slice(0, -1)) {
+    if (!frameSelector.trim() || frameSelector.startsWith("internal:")) return undefined
+    steps.push({ kind: "frame", selector: frameSelector.trim() })
+  }
+  for (const rawPart of frameParts.at(-1)!.split(/\s*>>\s*/g)) {
+    const part = rawPart.trim()
+    if (!part) continue
+    const role = /^internal:role=([^\[]+)(?:\[name=("(?:[^"\\]|\\.)*")(s|i)\])?$/.exec(part)
+    if (role) {
+      const name = role[2] ? decodeSelectorString(role[2]) : undefined
+      steps.push({ kind: "role", role: role[1]!, ...(name !== undefined ? { name, exact: role[3] === "s" } : {}) })
+      continue
+    }
+    const text = /^internal:(text|label)=("(?:[^"\\]|\\.)*")(s|i)$/.exec(part)
+    if (text) {
+      const content = decodeSelectorString(text[2]!)
+      steps.push(text[1] === "label"
+        ? { kind: "label", text: content, exact: text[3] === "s" }
+        : { kind: "text", text: content, exact: text[3] === "s" })
+      continue
+    }
+    const attribute = /^internal:attr=\[placeholder=("(?:[^"\\]|\\.)*")(s|i)\]$/.exec(part)
+    if (attribute) {
+      steps.push({ kind: "placeholder", text: decodeSelectorString(attribute[1]!), exact: attribute[2] === "s" })
+      continue
+    }
+    const testId = /^internal:testid=\[data-testid=("(?:[^"\\]|\\.)*")s\]$/.exec(part)
+    if (testId) {
+      steps.push({ kind: "testId", testId: decodeSelectorString(testId[1]!) })
+      continue
+    }
+    const nth = /^nth=(-?\d+)$/.exec(part)
+    if (nth) {
+      const index = Number(nth[1])
+      if (index === -1) steps.push({ kind: "last" })
+      else if (index >= 0 && index <= 10_000) steps.push({ kind: "nth", index })
+      else return undefined
+      continue
+    }
+    if (part.startsWith("internal:")) return undefined
+    steps.push({ kind: "css", selector: part })
+  }
+  return steps.length ? { version: 1, steps } : undefined
+}
+
+function decodeSelectorString(value: string): string {
+  try { return String(JSON.parse(value)).slice(0, 4096) } catch { return "" }
+}
+
+function normalizeSelections(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value]
+  return values.flatMap((item) => {
+    if (typeof item === "string") return [item]
+    if (!item || typeof item !== "object") return []
+    const selection = item as { value?: unknown; label?: unknown; index?: unknown }
+    if (typeof selection.value === "string") return [selection.value]
+    if (typeof selection.label === "string") return [selection.label]
+    if (typeof selection.index === "number") return [String(selection.index)]
+    return []
+  }).slice(0, 100)
+}
+
+const IAB_API_SUPPORT_FALLBACK = {
   "Browser.nameSession": false,
-  "BrowserUser.history": false,
+  "BrowserUser.history": true,
   "Tabs.content": false,
   "Tabs.finalize": true,
   "Tab.content": false,
@@ -229,24 +418,115 @@ const IAB_API_SUPPORT = {
 } as const
 
 const EXTENSION_API_SUPPORT = {
-  "BrowserUser.history": false,
+  "BrowserUser.history": true,
   "Tabs.content": false,
-  "Tab.content": false,
+  "Tab.content": true,
   "Tab.clipboard": false,
   "TabClipboardAPI.read": false,
   "TabClipboardAPI.readText": false,
   "TabClipboardAPI.write": false,
   "TabClipboardAPI.writeText": false,
-  "CUAAPI.downloadMedia": false,
-  "DomCUAAPI.downloadMedia": false,
-  "PlaywrightAPI.evaluate": false,
-  "PlaywrightAPI.waitForEvent": false,
+  "CUAAPI.downloadMedia": true,
+  "DomCUAAPI.downloadMedia": true,
+  "PlaywrightAPI.evaluate": true,
+  "PlaywrightAPI.waitForEvent": true,
   "PlaywrightDownload.path": false,
-  "PlaywrightFileChooser.setFiles": false,
-  "PlaywrightLocator.downloadMedia": false,
+  "PlaywrightFileChooser.setFiles": true,
+  "PlaywrightLocator.evaluate": true,
+  "PlaywrightLocator.downloadMedia": true,
+} as const
+const EXTENSION_API_SUPPORT_FALLBACK = Object.fromEntries(Object.keys(EXTENSION_API_SUPPORT).map((api) => [api, false]))
+
+type ExtensionRuntimeDescriptor = {
+  protocolVersion: number
+  minSupported: number
+  maxSupported: number
+  tabCapabilities: BrowserBackendDescriptor["capabilities"]["tab"]
+  apiSupportOverrides: Record<string, boolean>
+}
+
+const EXTENSION_TAB_CAPABILITIES = {
+  pageAssets: { id: "pageAssets", description: "Inventory and export bounded assets from the current Chrome tab" },
+  cdp: { id: "cdp", description: "Read-only CDP with per-action approval and buffered events" },
+  botDetection: { id: "botDetection", description: "Report bot-detection blockers without page secrets" },
+  webmcp: { id: "webmcp", description: "Invoke page-defined WebMCP tools announced by browser notifications" },
 } as const
 
+function sanitizeExtensionRuntimeDescriptor(value: unknown): ExtensionRuntimeDescriptor | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const descriptor = value as Record<string, unknown>
+  const protocolVersion = safeProtocolVersion(descriptor.protocolVersion)
+  const minSupported = safeProtocolVersion(descriptor.minSupported)
+  const maxSupported = safeProtocolVersion(descriptor.maxSupported)
+  if (!protocolVersion || !minSupported || !maxSupported || maxSupported < BROWSER_PROTOCOL_MIN_SUPPORTED || minSupported > BROWSER_PROTOCOL_MAX_SUPPORTED) return undefined
+  const capabilities = descriptor.capabilities && typeof descriptor.capabilities === "object" ? descriptor.capabilities as Record<string, unknown> : {}
+  const declaredTabCapabilities = new Set(Array.isArray(capabilities.tab)
+    ? capabilities.tab.flatMap((capability) => capability && typeof capability === "object" && typeof (capability as { id?: unknown }).id === "string" ? [(capability as { id: string }).id] : [])
+    : [])
+  const declaredApiSupport = descriptor.apiSupportOverrides && typeof descriptor.apiSupportOverrides === "object"
+    ? descriptor.apiSupportOverrides as Record<string, unknown>
+    : {}
+  return {
+    protocolVersion,
+    minSupported,
+    maxSupported,
+    tabCapabilities: Object.values(EXTENSION_TAB_CAPABILITIES).filter((capability) => declaredTabCapabilities.has(capability.id)),
+    apiSupportOverrides: Object.fromEntries(Object.entries(EXTENSION_API_SUPPORT).map(([api, allowed]) => [api, allowed && declaredApiSupport[api] === true])),
+  }
+}
+
+function safeProtocolVersion(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : undefined
+}
+
 function adaptBrowserResult(originalMethod: string, result: unknown): unknown {
-  if (originalMethod === "tab_screenshot" && typeof result === "string") return { dataBase64: result }
+  if (originalMethod === "tab_screenshot" && typeof result === "string") return { data: result }
+  if (originalMethod === "playwright_element_screenshot" && result && typeof result === "object" && typeof (result as { data?: unknown }).data === "string") return { dataBase64: (result as { data: string }).data }
+  if (originalMethod === "playwright_dom_snapshot") return { dom_snapshot: typeof result === "string" ? result : JSON.stringify(result) }
+  if (originalMethod === "browser_user_open_tabs") return { tabs: Array.isArray(result) ? result : [] }
+  if (originalMethod === "browser_user_history") {
+    const entries = Array.isArray(result) ? result : []
+    return {
+      items: entries.flatMap((entry) => entry && typeof entry === "object" && typeof (entry as { url?: unknown }).url === "string"
+        ? [{
+            url: (entry as { url: string }).url,
+            ...(typeof (entry as { title?: unknown }).title === "string" ? { title: (entry as { title: string }).title } : {}),
+            dateVisited: String((entry as { visitedAt?: unknown }).visitedAt ?? ""),
+          }]
+        : []),
+    }
+  }
+  if (originalMethod === "create_tab") return { id: descriptorId(result) }
+  if (originalMethod === "get_tab" || originalMethod === "browser_user_claim_tab") return descriptorResult(result)
+  if (originalMethod === "selected_tab") return descriptorId(result) ? { id: descriptorId(result) } : {}
+  if (originalMethod === "list_tabs" || originalMethod === "get_session_tabs") return { tabs: (Array.isArray(result) ? result : []).map(descriptorResult) }
+  if (originalMethod === "tab_url") return { url: typeof result === "string" ? result : undefined }
+  if (originalMethod === "tab_title") return { title: typeof result === "string" ? result : undefined }
+  if (originalMethod === "playwright_locator_count") return { count: typeof result === "number" ? result : 0 }
+  if (originalMethod === "playwright_locator_all_text_contents") return { values: Array.isArray(result) ? result : [] }
+  if (originalMethod === "playwright_locator_read_all") return { values: Array.isArray(result) ? result : [] }
+  if (originalMethod === "playwright_locator_get_attribute"
+    || originalMethod === "playwright_locator_inner_text"
+    || originalMethod === "playwright_locator_text_content"
+    || originalMethod === "playwright_locator_input_value"
+    || originalMethod === "playwright_locator_is_visible"
+    || originalMethod === "playwright_locator_is_enabled"
+    || originalMethod === "playwright_locator_is_checked") return { value: result ?? null }
   return result
+}
+
+function descriptorId(value: unknown): string {
+  if (!value || typeof value !== "object") return ""
+  const descriptor = value as { id?: unknown; tabId?: unknown }
+  return typeof descriptor.id === "string" ? descriptor.id : typeof descriptor.tabId === "string" ? descriptor.tabId : ""
+}
+
+function descriptorResult(value: unknown): { id: string; title?: string; url?: string } {
+  if (!value || typeof value !== "object") return { id: "" }
+  const descriptor = value as { id?: unknown; tabId?: unknown; title?: unknown; url?: unknown }
+  return {
+    id: descriptorId(value),
+    ...(typeof descriptor.title === "string" && descriptor.title ? { title: descriptor.title } : {}),
+    ...(typeof descriptor.url === "string" && descriptor.url ? { url: descriptor.url } : {}),
+  }
 }

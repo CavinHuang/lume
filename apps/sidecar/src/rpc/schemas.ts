@@ -64,6 +64,12 @@ const agentUserMessagePartSchema = z.discriminatedUnion("type", [
 const agentDiffCommentAttachmentSchema = z.object({
   id: z.string().trim().min(1).max(128),
   origin: z.literal("diff"),
+  intent: z.enum(["comment", "context", "modify"]).optional(),
+  fileRef: z.object({
+    source: z.enum(["project", "session", "memory", "legacy"]),
+    scopeId: z.string().min(1).max(256),
+    relativePath: z.string().max(4096)
+  }).strict().optional(),
   position: z.object({
     path: z.string().trim().min(1).max(4096),
     rootId: z.string().trim().min(1).max(128).optional(),
@@ -74,8 +80,59 @@ const agentDiffCommentAttachmentSchema = z.object({
     startSide: z.enum(["left", "right"]).optional()
   }).strict(),
   body: z.string().trim().min(1).max(20_000),
-  localDiffHunk: z.string().max(100_000).optional()
+  localDiffHunk: z.string().max(100_000).optional(),
+  selectedContent: z.string().max(32 * 1024).optional()
 }).strict();
+
+const agentBrowserTabAttachmentSchema = z.object({
+  id: z.string().trim().min(1).max(256),
+  origin: z.literal("browser-tab"),
+  tabId: z.string().trim().min(1).max(256),
+  providerTabId: z.string().trim().min(1).max(256),
+  title: z.string().max(512),
+  url: z.string().url().max(8192),
+  generation: z.number().int().min(1),
+  ownerThreadId: z.string().trim().min(1).max(256).optional()
+}).strict();
+
+const agentBrowserAnchorSchema = z.object({
+  kind: z.enum(["element", "text", "region"]),
+  url: z.string().url().max(8192),
+  generation: z.number().int().min(1),
+  framePath: z.array(z.string().max(2048)).max(16),
+  domPath: z.string().max(8192).optional(),
+  textQuote: z.object({
+    exact: z.string().max(32_000),
+    prefix: z.string().max(1000).optional(),
+    suffix: z.string().max(1000).optional()
+  }).strict().optional(),
+  rect: z.object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().nonnegative(),
+    height: z.number().finite().nonnegative()
+  }).strict()
+}).strict();
+
+const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
+  agentBrowserTabAttachmentSchema,
+  z.object({
+    id: z.string().trim().min(1).max(256),
+    origin: z.literal("browser-annotation"),
+    tab: agentBrowserTabAttachmentSchema,
+    anchor: agentBrowserAnchorSchema,
+    body: z.string().trim().min(1).max(20_000),
+    screenshotRef: z.string().max(4096).optional()
+  }).strict(),
+  z.object({
+    id: z.string().trim().min(1).max(256),
+    origin: z.literal("browser-design-change"),
+    tab: agentBrowserTabAttachmentSchema,
+    anchor: agentBrowserAnchorSchema,
+    originalStyles: z.record(z.string().max(128), z.string().max(4096)),
+    proposedStyles: z.record(z.string().max(128), z.string().max(4096))
+  }).strict()
+]);
 
 export const agentSendInputSchema = z.object({
   threadId: z.string().min(1),
@@ -92,6 +149,7 @@ export const agentSendInputSchema = z.object({
   thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
   commentAttachments: z.array(agentDiffCommentAttachmentSchema).max(100).optional(),
+  browserAttachments: z.array(agentBrowserAttachmentSchema).max(100).optional(),
   messageMetadata: z.record(z.string(), z.unknown()).optional(),
   resendFromMessageId: z.string().optional(),
   editFromMessageId: z.string().optional(),
@@ -603,7 +661,8 @@ export const agentUpdateQueuedMessageInputSchema = z.object({
   userMessage: z.string().max(1_000_000),
   messageParts: z.array(agentUserMessagePartSchema).optional(),
   messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
-  commentAttachments: z.array(agentDiffCommentAttachmentSchema).max(100).optional()
+  commentAttachments: z.array(agentDiffCommentAttachmentSchema).max(100).optional(),
+  browserAttachments: z.array(agentBrowserAttachmentSchema).max(100).optional()
 });
 
 export const agentRecentThreadMessagesInputSchema = z.object({
@@ -1379,6 +1438,28 @@ export const codingRepositoryPublishActionInputSchema = z.discriminatedUnion("ac
 export const fileRefSchema = rendererFileRefSchema;
 
 export const fileRefInputSchema = z.object({ ref: fileRefSchema }).strict();
+export const fileRefWriteInputSchema = z.object({
+  ref: fileRefSchema,
+  content: z.string().max(20 * 1024 * 1024),
+  expectedMtimeMs: z.number().finite().nonnegative()
+}).strict();
+export const fileSelectionEditInputSchema = z.object({
+  threadId: idSchema,
+  ref: fileRefSchema,
+  content: z.string().max(10 * 1024 * 1024),
+  startOffset: z.number().int().nonnegative(),
+  endOffset: z.number().int().nonnegative(),
+  instruction: z.string().trim().min(1).max(4_000)
+}).strict().superRefine((input, ctx) => {
+  if (input.endOffset < input.startOffset || input.endOffset > input.content.length) {
+    ctx.addIssue({ code: "custom", path: ["endOffset"], message: "选区范围无效" });
+    return;
+  }
+  if (input.endOffset - input.startOffset > 32 * 1024) {
+    ctx.addIssue({ code: "custom", path: ["endOffset"], message: "选区不能超过 32 KB" });
+  }
+});
+export const fileRefUnwatchInputSchema = z.object({ watchId: z.string().uuid() }).strict();
 export const guardedFileRefSchema = z.union([guardedProjectFileRefSchema, guardedSessionFileRefSchema]);
 export const guardedFileRefInputSchema = z.object({ guardedRef: guardedFileRefSchema }).strict();
 export const fileRefSearchInputSchema = z.object({

@@ -1,19 +1,34 @@
-import type { FileRef, FileSource } from '@lume/shared'
+import type { FileRef, FileSource, McpResourceSummary } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import { RIGHT_PANEL_FUNCTION_ORDER, type RightPanelFunction } from './right-panel-state'
 
 export type RightPanelActiveItem =
   | { kind: 'function'; type: RightPanelFunction }
   | { kind: 'file'; tabId: string }
+  | { kind: 'browser'; tabId: string }
 
-export type RightPanelFileTab = {
+export type RightPanelArtifactViewer = 'markdown' | 'image' | 'pdf' | 'video' | 'text' | 'structured' | 'unknown'
+
+export type RightPanelFileTarget =
+  | { kind: 'file'; ref: FileRef }
+  | { kind: 'artifact'; ref: FileRef; artifactId: string; viewer: RightPanelArtifactViewer; title?: string }
+  | { kind: 'mcp-resource'; workspaceSlug: string; resource: McpResourceSummary }
+
+type RightPanelFileTabBase = {
   id: string
-  ref: FileRef
   lineSelection?: ThreadFileLineSelection
   navigationRevision: number
 }
 
-export type RightPanelFileTarget = FileRef
+export type RightPanelFileTab =
+  | (RightPanelFileTabBase & {
+      target: Extract<RightPanelFileTarget, { kind: 'file' | 'artifact' }>
+      ref: FileRef
+    })
+  | (RightPanelFileTabBase & {
+      target: Extract<RightPanelFileTarget, { kind: 'mcp-resource' }>
+      ref?: undefined
+    })
 
 export interface FileTreeRevealRequest {
   requestId: string
@@ -27,7 +42,7 @@ export interface ThreadFileWorkspace {
   binding: { workspaceId?: string; fileContextId?: string; projectBindingKey?: string }
   activeItem: RightPanelActiveItem | null
   selectedRef: FileRef | null
-  temporaryPreviewRef: FileRef | null
+  temporaryPreviewTarget: RightPanelFileTarget | null
   expandedKeys: string[]
   groupExpanded: Record<FileSource, boolean>
   directoryCache: Record<string, unknown>
@@ -69,7 +84,7 @@ export function createThreadFileWorkspace(
     binding,
     activeItem,
     selectedRef: null,
-    temporaryPreviewRef: null,
+    temporaryPreviewTarget: null,
     expandedKeys: [],
     groupExpanded: { project: true, session: true, memory: false, legacy: false },
     directoryCache: {},
@@ -85,13 +100,13 @@ export function createThreadFileWorkspace(
 
 export function openFileTab(
   state: ThreadFileWorkspace,
-  target: RightPanelFileTarget,
+  input: RightPanelFileTarget | FileRef,
   options: FileRefIdentityOptions & { lineSelection?: ThreadFileLineSelection; navigationRevision?: number } = {},
 ): ThreadFileWorkspace {
-  const ref = target
+  const target = normalizeRightPanelFileTarget(input)
   const lineSelection = normalizeLineSelection(options.lineSelection)
-  const key = fileRefKey(ref, options)
-  const existing = state.openTabs.find((tab) => fileRefKey(tab.ref, options) === key)
+  const key = rightPanelFileTargetKey(target, options)
+  const existing = state.openTabs.find((tab) => rightPanelFileTargetKey(tab.target, options) === key)
   if (existing) {
     const navigationRevision = options.navigationRevision ?? existing.navigationRevision + 1
     return {
@@ -105,18 +120,89 @@ export function openFileTab(
     }
   }
 
-  const normalized = normalizeFileRef(ref)
-  const tab: RightPanelFileTab = {
+  const normalized = normalizeRightPanelFileTarget(target)
+  const base = {
     id: `file:${encodeURIComponent(key)}`,
-    ref: normalized,
     lineSelection,
     navigationRevision: options.navigationRevision ?? 1,
   }
+  const tab: RightPanelFileTab = normalized.kind === 'mcp-resource'
+    ? { ...base, target: normalized }
+    : { ...base, target: normalized, ref: normalized.ref }
   return {
     ...state,
     openTabs: [...state.openTabs, tab],
     activeItem: { kind: 'file', tabId: tab.id },
   }
+}
+
+export function createRightPanelFileTarget(
+  ref: FileRef,
+): Extract<RightPanelFileTarget, { kind: 'file' | 'artifact' }> {
+  const normalized = normalizeFileRef(ref)
+  if (normalized.source !== 'session' || !normalized.relativePath.startsWith('artifacts/')) {
+    return { kind: 'file', ref: normalized }
+  }
+  return {
+    kind: 'artifact',
+    ref: normalized,
+    artifactId: fileRefKey(normalized),
+    viewer: inferArtifactViewer(normalized.relativePath),
+  }
+}
+
+export function normalizeRightPanelFileTarget(input: RightPanelFileTarget | FileRef): RightPanelFileTarget {
+  if ('source' in input) return createRightPanelFileTarget(input)
+  if (input.kind === 'mcp-resource') {
+    return {
+      kind: 'mcp-resource',
+      workspaceSlug: input.workspaceSlug,
+      resource: { ...input.resource },
+    }
+  }
+  return { ...input, ref: normalizeFileRef(input.ref) }
+}
+
+export function rightPanelFileTargetKey(
+  target: RightPanelFileTarget,
+  options: FileRefIdentityOptions = {},
+): string {
+  if (target.kind === 'mcp-resource') {
+    return `mcp:${target.workspaceSlug}:${target.resource.serverId}:${target.resource.uri}`
+  }
+  return `${target.kind}:${fileRefKey(target.ref, options)}`
+}
+
+export function rightPanelFileTargetRef(target: RightPanelFileTarget): FileRef | null {
+  return target.kind === 'mcp-resource' ? null : target.ref
+}
+
+export function rightPanelFileTargetName(target: RightPanelFileTarget): string {
+  if (target.kind === 'mcp-resource') return target.resource.name || target.resource.uri
+  return target.kind === 'artifact' && target.title ? target.title : basename(target.ref.relativePath)
+}
+
+export function normalizePersistedRightPanelFileTabs(value: unknown): RightPanelFileTab[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item): RightPanelFileTab[] => {
+    if (!item || typeof item !== 'object') return []
+    const record = item as Record<string, unknown>
+    const target = normalizePersistedTarget(record.target) ?? normalizePersistedFileRef(record.ref)
+    if (!target) return []
+    const id = typeof record.id === 'string' && record.id
+      ? record.id
+      : `file:${encodeURIComponent(rightPanelFileTargetKey(target))}`
+    const lineSelection = record.lineSelection && typeof record.lineSelection === 'object'
+      ? normalizeLineSelection(record.lineSelection as ThreadFileLineSelection)
+      : undefined
+    const navigationRevision = typeof record.navigationRevision === 'number'
+      ? Math.max(1, Math.trunc(record.navigationRevision))
+      : 1
+    const base = { id, lineSelection, navigationRevision }
+    return target.kind === 'mcp-resource'
+      ? [{ ...base, target }]
+      : [{ ...base, target, ref: target.ref }]
+  })
 }
 
 export function normalizeLineSelection(selection?: ThreadFileLineSelection): ThreadFileLineSelection | undefined {
@@ -192,10 +278,15 @@ export function rewriteFileRefPrefix(state: ThreadFileWorkspace, from: FileRef, 
   return {
     ...state,
     selectedRef: rewriteNullable(state.selectedRef),
-    temporaryPreviewRef: rewriteNullable(state.temporaryPreviewRef),
+    temporaryPreviewTarget: state.temporaryPreviewTarget?.kind === 'mcp-resource'
+      ? state.temporaryPreviewTarget
+      : state.temporaryPreviewTarget
+        ? { ...state.temporaryPreviewTarget, ref: rewriteRef(state.temporaryPreviewTarget.ref, from, to) }
+        : null,
     openTabs: state.openTabs.map((tab) => {
-      const nextRef = rewriteRef(tab.ref, from, to)
-      return nextRef === tab.ref ? tab : { ...tab, ref: nextRef }
+      if (tab.target.kind === 'mcp-resource') return tab
+      const nextRef = rewriteRef(tab.target.ref, from, to)
+      return nextRef === tab.target.ref ? tab : { ...tab, ref: nextRef, target: { ...tab.target, ref: nextRef } }
     }),
   }
 }
@@ -215,13 +306,17 @@ export function removeFileRef(
         : normalized.relativePath === normalizedTarget.relativePath)
   }
   let next = state
-  for (const tab of state.openTabs.filter((item) => matches(item.ref))) {
+  for (const tab of state.openTabs.filter((item) => item.ref && matches(item.ref))) {
     next = closeFileTab(next, tab.id, fallbackFunctions)
   }
   return {
     ...next,
     selectedRef: next.selectedRef && matches(next.selectedRef) ? null : next.selectedRef,
-    temporaryPreviewRef: next.temporaryPreviewRef && matches(next.temporaryPreviewRef) ? null : next.temporaryPreviewRef,
+    temporaryPreviewTarget: next.temporaryPreviewTarget
+      && next.temporaryPreviewTarget.kind !== 'mcp-resource'
+      && matches(next.temporaryPreviewTarget.ref)
+      ? null
+      : next.temporaryPreviewTarget,
   }
 }
 
@@ -229,7 +324,7 @@ export function disambiguateFileTabLabels(tabs: RightPanelFileTab[]): Record<str
   const result: Record<string, string> = {}
   const groups = new Map<string, RightPanelFileTab[]>()
   for (const tab of tabs) {
-    const name = basename(tab.ref.relativePath)
+    const name = rightPanelFileTargetName(tab.target)
     groups.set(name, [...(groups.get(name) ?? []), tab])
   }
   for (const [name, group] of groups) {
@@ -237,7 +332,9 @@ export function disambiguateFileTabLabels(tabs: RightPanelFileTab[]): Record<str
       result[group[0]!.id] = name
       continue
     }
-    const parents = group.map((tab) => parentSegments(tab.ref.relativePath))
+    const parents = group.map((tab) => tab.target.kind === 'mcp-resource'
+      ? [tab.target.resource.serverName]
+      : parentSegments(tab.target.ref.relativePath))
     for (let index = 0; index < group.length; index += 1) {
       const own = parents[index]!
       let depth = 1
@@ -247,7 +344,8 @@ export function disambiguateFileTabLabels(tabs: RightPanelFileTab[]): Record<str
         if (unique) break
         depth += 1
       }
-      const parent = own.slice(-depth).join('/') || group[index]!.ref.source
+      const target = group[index]!.target
+      const parent = own.slice(-depth).join('/') || (target.kind === 'mcp-resource' ? 'MCP' : target.ref.source)
       result[group[index]!.id] = `${name} — ${parent}`
     }
   }
@@ -277,7 +375,11 @@ export function reconcileThreadFileWorkspaces(
     }
     if (state.revealRequest) settleFileTreeReveal(state.revealRequest.requestId, { status: 'superseded' })
     revokedScopeTokens.push(...Object.values(state.previewScopes))
-    const openTabs = state.openTabs.filter((tab) => tab.ref.source === 'session' && tab.ref.scopeId === thread.fileContextId)
+    const openTabs = state.openTabs.filter((tab) => (
+      tab.target.kind !== 'mcp-resource'
+      && tab.target.ref.source === 'session'
+      && tab.target.ref.scopeId === thread.fileContextId
+    ))
     const activeFileTabId = state.activeItem?.kind === 'file' ? state.activeItem.tabId : null
     const fallbackFunction = RIGHT_PANEL_FUNCTION_ORDER.find((type) => thread.openFunctions?.includes(type))
     const activeItem = activeFileTabId && !openTabs.some((tab) => tab.id === activeFileTabId)
@@ -293,7 +395,7 @@ export function reconcileThreadFileWorkspaces(
       activeItem,
       openTabs,
       selectedRef: state.selectedRef?.source === 'session' && state.selectedRef.scopeId === thread.fileContextId ? state.selectedRef : null,
-      temporaryPreviewRef: null,
+      temporaryPreviewTarget: null,
       directoryCache: {},
       sourceStatus: Object.fromEntries(SOURCES.map((source) => [source, 'stale'])) as ThreadFileWorkspace['sourceStatus'],
       previewScopes: {},
@@ -307,12 +409,12 @@ type RevealSettlement = { status: 'opened' | 'superseded' | 'unavailable' }
 const revealSettlements = new Map<string, { resolve: (value: RevealSettlement) => void; timeout: ReturnType<typeof setTimeout> }>()
 
 export function createFileTreeRevealRequest(
-  target: RightPanelFileTarget,
+  target: FileRef,
   navigationRevision: number,
   timeoutMs = 10_000,
 ): { request: FileTreeRevealRequest; completion: Promise<RevealSettlement> } {
   const requestId = crypto.randomUUID()
-  const ref = target
+  const ref = normalizeFileRef(target)
   let resolveCompletion!: (value: RevealSettlement) => void
   const completion = new Promise<RevealSettlement>((resolve) => { resolveCompletion = resolve })
   const timeout = setTimeout(() => settleFileTreeReveal(requestId, { status: 'unavailable' }), timeoutMs)
@@ -354,4 +456,65 @@ function basename(path: string): string {
 
 function parentSegments(path: string): string[] {
   return path.split('/').filter(Boolean).slice(0, -1)
+}
+
+function inferArtifactViewer(path: string): RightPanelArtifactViewer {
+  const extension = path.split('.').at(-1)?.toLowerCase()
+  if (extension === 'md' || extension === 'markdown') return 'markdown'
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(extension ?? '')) return 'image'
+  if (extension === 'pdf') return 'pdf'
+  if (['mp4', 'webm', 'mov', 'm4v'].includes(extension ?? '')) return 'video'
+  if (extension === 'json' || extension === 'jsonl') return 'structured'
+  if (['txt', 'log', 'csv', 'tsv', 'xml', 'yaml', 'yml'].includes(extension ?? '')) return 'text'
+  return 'unknown'
+}
+
+function normalizePersistedTarget(value: unknown): RightPanelFileTarget | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (record.kind === 'mcp-resource'
+    && typeof record.workspaceSlug === 'string'
+    && record.resource
+    && typeof record.resource === 'object') {
+    const resource = record.resource as Record<string, unknown>
+    if (typeof resource.serverId !== 'string'
+      || typeof resource.serverName !== 'string'
+      || typeof resource.uri !== 'string') return null
+    return {
+      kind: 'mcp-resource',
+      workspaceSlug: record.workspaceSlug,
+      resource: resource as unknown as McpResourceSummary,
+    }
+  }
+  const ref = normalizePersistedFileRef(record.ref)
+  if (!ref) return null
+  if (record.kind === 'artifact') {
+    return {
+      kind: 'artifact',
+      ref: ref.ref,
+      artifactId: typeof record.artifactId === 'string' ? record.artifactId : fileRefKey(ref.ref),
+      viewer: isArtifactViewer(record.viewer) ? record.viewer : inferArtifactViewer(ref.ref.relativePath),
+      ...(typeof record.title === 'string' ? { title: record.title } : {}),
+    }
+  }
+  return ref
+}
+
+function normalizePersistedFileRef(
+  value: unknown,
+): Extract<RightPanelFileTarget, { kind: 'file' | 'artifact' }> | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (!['project', 'session', 'memory', 'legacy'].includes(String(record.source))
+    || typeof record.scopeId !== 'string'
+    || typeof record.relativePath !== 'string') return null
+  try {
+    return createRightPanelFileTarget(record as unknown as FileRef)
+  } catch {
+    return null
+  }
+}
+
+function isArtifactViewer(value: unknown): value is RightPanelArtifactViewer {
+  return ['markdown', 'image', 'pdf', 'video', 'text', 'structured', 'unknown'].includes(String(value))
 }

@@ -9,6 +9,11 @@ mock.module('@lume/ui', () => ({
   MermaidBlock: ({ code }: { code: string }) => <section data-mermaid-block="true">{code}</section>,
   highlightCode: async () => undefined,
   highlightToTokens: () => null,
+  CODEX_LIGHT_THEME_NAME: 'lume-codex-light',
+  CODEX_DARK_THEME_NAME: 'lume-codex-dark',
+  CODEX_LIGHT_THEME: { name: 'lume-codex-light', type: 'light', colors: {}, tokenColors: [] },
+  CODEX_DARK_THEME: { name: 'lume-codex-dark', type: 'dark', colors: {}, tokenColors: [] },
+  useCodeTheme: () => ({ name: 'lume-codex-light', type: 'light' }),
 }))
 
 mock.module('@ant-design/x-markdown', () => ({

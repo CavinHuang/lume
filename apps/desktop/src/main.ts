@@ -1285,7 +1285,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       {
         if (payload.advancedCdpEnabled === true && browserRuntime.getSettings().advancedCdpEnabled !== true) {
           if (!mainWindow || mainWindow.isDestroyed()) throw new Error('confirmation_unavailable')
-          const confirmation = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['启用隔离高级 CDP', '取消'], defaultId: 1, cancelId: 1, title: '高级 CDP 风险确认', message: '高级 CDP 只允许在新建的隔离空白浏览器会话中使用。', detail: '它不会接触保存的 Cookie、密码、外部 Chrome 或其他 target；未知和高风险方法仍会被拒绝。' })
+          const confirmation = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['启用隔离完整 CDP', '取消'], defaultId: 1, cancelId: 1, title: '完整 CDP 风险确认', message: '完整 CDP 只允许在新建的隔离空白浏览器会话中使用。', detail: '它不会接触保存的 Cookie、密码、外部 Chrome 或其他 target；每个来源和每次 CDP 动作仍需单独批准。' })
           if (confirmation.response !== 0) return browserRuntime.getSettings()
         }
         const settings = browserRuntime.updateSettings(payload as any)
@@ -2630,6 +2630,7 @@ app.whenReady().then(async () => {
       decrypt: (value) => safeStorage.decryptString(value),
     },
     credentialStorage: safeStorage,
+    overlayPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-overlay-preload.cjs'),
   })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()

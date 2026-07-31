@@ -1,6 +1,16 @@
-import { FileDiff, FolderOpen, Globe, List, Plus, X, type LucideIcon } from 'lucide-react'
+import { Braces, FileDiff, FolderOpen, Globe, List, Package, Plus, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,9 +22,11 @@ import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { cn } from '@/lib/utils'
 import {
   disambiguateFileTabLabels,
+  rightPanelFileTargetName,
   type RightPanelActiveItem,
   type RightPanelFileTab,
 } from './right-panel-files-state'
+import type { RightPanelBrowserTab } from './right-panel-browser-state'
 import {
   RIGHT_PANEL_FUNCTION_ORDER,
   getAvailableRightPanelFunctions,
@@ -25,6 +37,7 @@ import {
 export type RightPanelTabItem =
   | { kind: 'review'; id: string; label: string }
   | { kind: 'function'; id: string; type: RightPanelFunction; label: string }
+  | { kind: 'browser'; id: string; tab: RightPanelBrowserTab; label: string }
   | { kind: 'file'; id: string; tab: RightPanelFileTab; label: string }
 
 const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: LucideIcon; shortcut?: string }> = {
@@ -36,11 +49,14 @@ export function buildRightPanelTabItems(
   workspace: ThreadRightPanelWorkspace,
   fileTabs: RightPanelFileTab[],
   reviewOpen = false,
+  browserTabs: RightPanelBrowserTab[] = [],
 ): RightPanelTabItem[] {
   const labels = disambiguateFileTabLabels(fileTabs)
   const result: RightPanelTabItem[] = []
   if (reviewOpen) result.push({ kind: 'review', id: 'review', label: '审阅' })
+  result.push(...browserTabs.map((tab) => ({ kind: 'browser' as const, id: tab.id, tab, label: tab.title || '新标签页' })))
   for (const type of RIGHT_PANEL_FUNCTION_ORDER) {
+    if (type === 'browser') continue
     if (!workspace.tabs[type]) continue
     result.push({ kind: 'function', id: `function:${type}`, type, label: FUNCTION_META[type].label })
     if (type === 'files') {
@@ -56,13 +72,24 @@ export function buildRightPanelTabItems(
 interface RightPanelTabBarProps {
   workspace: ThreadRightPanelWorkspace
   fileTabs: RightPanelFileTab[]
+  browserTabs?: RightPanelBrowserTab[]
   activeItem: RightPanelActiveItem | null
   reviewOpen?: boolean
   reviewActive?: boolean
   onActivateFunction: (type: RightPanelFunction) => void
   onActivateFile: (tabId: string) => void
+  onActivateBrowser?: (tabId: string) => void
   onCloseFunction: (type: RightPanelFunction) => void
   onCloseFile: (tabId: string) => void
+  onCloseBrowser?: (tabId: string) => void
+  onDuplicateBrowser?: (tabId: string) => void
+  onCloseOtherBrowsers?: (tabId: string) => void
+  onMoveBrowserToMain?: (tabId: string) => void
+  onMoveBrowserToThread?: (tabId: string, threadId: string) => void
+  onBrowserMenuOpenChange?: (tabId: string, open: boolean) => void
+  browserThreadTargets?: Array<{ id: string; label: string }>
+  canRestoreBrowser?: boolean
+  onRestoreBrowser?: () => void
   onActivateReview?: () => void
   onCloseReview?: () => void
   onOpenFunction: (type: RightPanelFunction) => void
@@ -72,10 +99,13 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef<HTMLDivElement | null>(null)
   const items = useMemo(
-    () => buildRightPanelTabItems(props.workspace, props.fileTabs, props.reviewOpen),
-    [props.workspace, props.fileTabs, props.reviewOpen],
+    () => buildRightPanelTabItems(props.workspace, props.fileTabs, props.reviewOpen, props.browserTabs),
+    [props.workspace, props.fileTabs, props.reviewOpen, props.browserTabs],
   )
-  const availableFunctions = getAvailableRightPanelFunctions(props.workspace)
+  const availableFunctions = [
+    'browser' as const,
+    ...getAvailableRightPanelFunctions(props.workspace).filter((type) => type !== 'browser'),
+  ]
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
@@ -85,18 +115,23 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
     ? props.reviewActive === true
     : item.kind === 'function'
       ? !props.reviewActive && props.activeItem?.kind === 'function' && props.activeItem.type === item.type
+      : item.kind === 'browser'
+        ? !props.reviewActive && props.activeItem?.kind === 'browser' && props.activeItem.tabId === item.id
       : !props.reviewActive && props.activeItem?.kind === 'file' && props.activeItem.tabId === item.id
 
   const activate = (item: RightPanelTabItem) => item.kind === 'review'
     ? props.onActivateReview?.()
     : item.kind === 'function'
       ? props.onActivateFunction(item.type)
+      : item.kind === 'browser'
+        ? props.onActivateBrowser?.(item.id)
       : props.onActivateFile(item.id)
 
   const close = (item: RightPanelTabItem) => {
     const fallback = isActive(item) ? getRightPanelCloseFallback(items, item.id) : undefined
     if (item.kind === 'review') props.onCloseReview?.()
     else if (item.kind === 'function') props.onCloseFunction(item.type)
+    else if (item.kind === 'browser') props.onCloseBrowser?.(item.id)
     else props.onCloseFile(item.id)
     if (fallback) activate(fallback)
   }
@@ -113,11 +148,13 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
       >
         {items.map((item) => {
           const active = isActive(item)
-          const Icon = item.kind === 'review' ? FileDiff : item.kind === 'function' ? FUNCTION_META[item.type].Icon : null
+          const Icon = item.kind === 'review' ? FileDiff : item.kind === 'function' ? FUNCTION_META[item.type].Icon : item.kind === 'browser' ? Globe : null
           const title = item.kind === 'file'
-            ? `${item.tab.ref.source}: ${item.tab.ref.relativePath}`
-            : item.label
-          return (
+            ? item.tab.target.kind === 'mcp-resource'
+              ? `${item.tab.target.resource.serverName}: ${item.tab.target.resource.uri}`
+              : `${item.tab.target.kind}: ${item.tab.target.ref.source}:${item.tab.target.ref.relativePath}`
+            : item.kind === 'browser' ? item.tab.url || item.label : item.label
+          const tabNode = (
             <div
               key={item.id}
               ref={active ? activeRef : undefined}
@@ -135,7 +172,17 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
               title={title}
             >
               <Button variant="ghost" type="button" onClick={() => activate(item)} className="h-full gap-1.5 rounded-md px-2">
-                {Icon ? <Icon size={14} /> : item.kind === 'file' ? <FileTypeIcon filename={item.tab.ref.relativePath} size={14} /> : null}
+                {item.kind === 'browser' && item.tab.faviconUrl
+                  ? <img src={item.tab.faviconUrl} alt="" className="size-3.5 rounded-sm" />
+                  : Icon
+                  ? <Icon size={14} />
+                  : item.kind === 'file'
+                    ? item.tab.target.kind === 'mcp-resource'
+                      ? <Braces size={14} />
+                      : item.tab.target.kind === 'artifact'
+                        ? <Package size={14} />
+                        : <FileTypeIcon filename={rightPanelFileTargetName(item.tab.target)} size={14} />
+                    : null}
                 <span className="max-w-[132px] truncate">{item.label}</span>
               </Button>
               <Button
@@ -148,6 +195,27 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                 <X size={11} />
               </Button>
             </div>
+          )
+          if (item.kind !== 'browser') return tabNode
+          return (
+            <ContextMenu key={item.id} onOpenChange={(open) => props.onBrowserMenuOpenChange?.(item.id, open)}>
+              <ContextMenuTrigger render={tabNode} />
+              <ContextMenuContent className="min-w-52">
+                <ContextMenuItem onSelect={() => props.onDuplicateBrowser?.(item.id)}>复制标签页</ContextMenuItem>
+                <ContextMenuItem onSelect={() => props.onMoveBrowserToMain?.(item.id)}>移到主区域</ContextMenuItem>
+                {props.browserThreadTargets?.length ? (
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>移动到其他任务</ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {props.browserThreadTargets.map((thread) => <ContextMenuItem key={thread.id} onSelect={() => props.onMoveBrowserToThread?.(item.id, thread.id)}>{thread.label}</ContextMenuItem>)}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                ) : null}
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => props.onCloseOtherBrowsers?.(item.id)}>关闭其他浏览器标签</ContextMenuItem>
+                <ContextMenuItem destructive onSelect={() => close(item)}>关闭</ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           )
         })}
       </div>
@@ -184,6 +252,7 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
             </DropdownMenuItem>
           ))}
           {items.length > 0 && <DropdownMenuSeparator />}
+          {props.canRestoreBrowser && <DropdownMenuItem onSelect={props.onRestoreBrowser}>恢复最近关闭的浏览器标签</DropdownMenuItem>}
           {items.length === 0 && <DropdownMenuItem disabled>暂无 Tab</DropdownMenuItem>}
         </DropdownMenuContent>
       </DropdownMenu>

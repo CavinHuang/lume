@@ -11,7 +11,7 @@ export function isImageFile(filePath: string): boolean {
   return ext !== undefined && IMAGE_EXTENSIONS.has(ext)
 }
 
-export type FilePreviewKind = 'text' | 'markdown' | 'image' | 'html' | 'unsupported'
+export type FilePreviewKind = 'text' | 'markdown' | 'image' | 'html' | 'pdf' | 'video' | 'pdb' | 'unsupported'
 
 const TEXT_EXTENSIONS = new Set([
   'txt', 'log', 'json', 'jsonl', 'yaml', 'yml', 'toml', 'xml', 'csv',
@@ -57,6 +57,9 @@ export function getSourcePreviewLanguage(filePath: string): string {
 export function classifyFilePreview(filePath: string): FilePreviewKind {
   const extension = imageExt(filePath)
   if (extension && IMAGE_EXTENSIONS.has(extension)) return 'image'
+  if (extension === 'pdf') return 'pdf'
+  if (extension === 'mp4' || extension === 'webm' || extension === 'mov' || extension === 'm4v') return 'video'
+  if (extension === 'pdb') return 'pdb'
   if (extension === 'md' || extension === 'mdx' || extension === 'markdown') return 'markdown'
   if (extension === 'html' || extension === 'htm') return 'html'
   if (extension && TEXT_EXTENSIONS.has(extension)) return 'text'

@@ -10,9 +10,9 @@ let registered = false
 
 export function registerLumeDiffThemes(): void {
   if (registered) return
-  registered = true
   registerCustomTheme(CODEX_LIGHT_THEME_NAME, async () => CODEX_LIGHT_THEME as never)
   registerCustomTheme(CODEX_DARK_THEME_NAME, async () => CODEX_DARK_THEME as never)
+  registered = true
 }
 
 export const LUME_DIFF_THEMES = {
@@ -45,6 +45,26 @@ export const LUME_DIFF_CSS = `
   }
   [data-code] {
     scrollbar-gutter: auto;
+    scrollbar-color: color-mix(in srgb, var(--lume-text-muted) 42%, transparent) transparent;
+    scrollbar-width: thin;
+  }
+  [data-code]::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  [data-code]::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  [data-code]::-webkit-scrollbar-thumb {
+    min-height: 32px;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--lume-text-muted) 42%, transparent);
+    background-clip: padding-box;
+  }
+  [data-code]::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--lume-text-secondary) 58%, transparent);
+    background-clip: padding-box;
   }
   [data-line-type="change-addition"]:is([data-line], [data-no-newline]) {
     --diffs-computed-diff-line-bg: var(--diffs-bg-addition);

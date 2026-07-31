@@ -1,6 +1,6 @@
 import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import { cn } from '@/lib/utils'
-import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, X } from 'lucide-react'
+import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
@@ -19,7 +19,7 @@ import {
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { activeTabIdAtom, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { debounce } from 'throttle-debounce'
 import {
@@ -27,6 +27,8 @@ import {
   DESKTOP_CONTEXT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
   type AgentMessage,
+  type AgentBrowserAttachment,
+  type AgentBrowserTabAttachment,
   type AgentMessageAttachmentInput,
   type AgentDiffCommentAttachment,
   type AgentSavedFile,
@@ -37,6 +39,7 @@ import {
   type LumeConfigThinkingLevel,
   type LumeRuntimeEvent,
   type AgentQueuedMessage,
+  type BrowserTabDescriptor,
 } from '@lume/shared'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
@@ -255,6 +258,8 @@ export function AgentInput({
   const draft = useAtomValue(agentInputDraftFamily(threadId))
   const commentAttachments: AgentDiffCommentAttachment[] = useAtomValue(agentDiffCommentDraftsFamily(threadId)) ?? []
   const setCommentDrafts = useSetAtom(agentDiffCommentDraftsAtom)
+  const browserAttachments: AgentBrowserAttachment[] = useAtomValue(agentBrowserAttachmentsFamily(threadId)) ?? []
+  const setBrowserAttachments = useSetAtom(agentBrowserAttachmentsAtom)
   const setDraftState = useSetAtom(agentInputDraftAtom)
   const isNavigatingHistoryRef = useRef(false) // true = 当前编辑器内容由程序填充（恢复/回溯），不应存为草稿
   const historyIndexRef = useRef(-1) // -1 = 未回溯（显示草稿）；0..n = 回溯到 history[index]
@@ -266,6 +271,45 @@ export function AgentInput({
   const setHistoryState = useSetAtom(agentInputHistoryAtom)
   const historyRef = useRef(history)
   historyRef.current = history
+
+  useEffect(() => {
+    const addBrowserTab = (event: Event) => {
+      const descriptor = (event as CustomEvent<BrowserTabDescriptor>).detail
+      if (!descriptor?.tabId || !descriptor.providerTabId || !descriptor.url) return
+      if (descriptor.ownerThreadId && descriptor.ownerThreadId !== threadId) return
+      const attachment: AgentBrowserTabAttachment = {
+        id: `browser-tab:${descriptor.providerTabId}:${descriptor.generation}`,
+        origin: 'browser-tab',
+        tabId: descriptor.tabId,
+        providerTabId: descriptor.providerTabId,
+        title: descriptor.title || descriptor.url,
+        url: descriptor.url,
+        generation: descriptor.generation,
+        ...(descriptor.ownerThreadId ? { ownerThreadId: descriptor.ownerThreadId } : {}),
+      }
+      setBrowserAttachments((current) => {
+        const existing = current[threadId] ?? []
+        return {
+          ...current,
+          [threadId]: [...existing.filter((item) => item.id !== attachment.id && !(item.origin === 'browser-tab' && item.tabId === attachment.tabId)), attachment],
+        }
+      })
+    }
+    window.addEventListener('lume:add-browser-tab-to-chat', addBrowserTab)
+    const addBrowserAttachment = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string; attachment?: AgentBrowserAttachment }>).detail
+      if (!detail?.attachment || (detail.threadId && detail.threadId !== threadId)) return
+      setBrowserAttachments((current) => ({
+        ...current,
+        [threadId]: [...(current[threadId] ?? []).filter((item) => item.id !== detail.attachment!.id), detail.attachment!],
+      }))
+    }
+    window.addEventListener('lume:add-browser-attachment-to-chat', addBrowserAttachment)
+    return () => {
+      window.removeEventListener('lume:add-browser-tab-to-chat', addBrowserTab)
+      window.removeEventListener('lume:add-browser-attachment-to-chat', addBrowserAttachment)
+    }
+  }, [setBrowserAttachments, threadId])
   const [confirmState, setConfirmState] = useState<{
     open: boolean
     title: string
@@ -635,7 +679,10 @@ export function AgentInput({
     })
   }, [threadId, editor])
 
-  const hasComposerPayload = editorText.trim().length > 0 || pendingAttachments.length > 0 || commentAttachments.length > 0
+  const hasComposerPayload = editorText.trim().length > 0
+    || pendingAttachments.length > 0
+    || commentAttachments.length > 0
+    || browserAttachments.length > 0
   const submitState = deriveAgentInputSubmitState({
     hasText: hasComposerPayload,
     streaming,
@@ -676,18 +723,24 @@ export function AgentInput({
         delete next[threadId]
         return next
       })
+      setBrowserAttachments((prev) => {
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
       toast.success('已清空对话')
     } catch (error) {
       console.error('[AgentInput] 清空对话失败:', error)
       toast.error('清空失败')
     }
-  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues, setCommentDrafts])
+  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues, setCommentDrafts, setBrowserAttachments])
 
   const handleSlashCommandExecute = useCallback((id: string) => {
     if (!editor) return
     const actionHasConflictingPayload = editor.getText().trim() !== `/${id}`
       || pendingAttachments.length > 0
       || commentAttachments.length > 0
+      || browserAttachments.length > 0
       || Boolean(selectedDesktopContextTarget)
     if (actionHasConflictingPayload) {
       toast.error('请先清空正文、附件和当前应用上下文，再执行该动作')
@@ -767,7 +820,7 @@ export function AgentInput({
       })()
       return
     }
-  }, [editor, threadId, threads, doClear, pendingAttachments.length, commentAttachments.length, selectedDesktopContextTarget, streaming])
+  }, [editor, threadId, threads, doClear, pendingAttachments.length, commentAttachments.length, browserAttachments.length, selectedDesktopContextTarget, streaming])
 
   slashCommandExecuteRef.current = handleSlashCommandExecute
 
@@ -779,7 +832,7 @@ export function AgentInput({
     }
     const serialized = serializeAgentEditorMessage(editor.getJSON(), applyAgentRoleMentions)
     const rawText = serialized.userMessage
-    if (!rawText && pendingAttachments.length === 0 && commentAttachments.length === 0) return
+    if (!rawText && pendingAttachments.length === 0 && commentAttachments.length === 0 && browserAttachments.length === 0) return
 
     const queueEdit = editingQueuedMessageRef.current
     if (queueEdit) {
@@ -817,7 +870,11 @@ export function AgentInput({
     }
 
     setLocalSending(true)
-    const text = rawText || (commentAttachments.length > 0 ? '请处理这些代码审阅意见。' : '请解读这些附件。')
+    const text = rawText || (commentAttachments.length > 0
+      ? '请处理这些代码审阅意见。'
+      : browserAttachments.length > 0
+        ? '请处理这些浏览器标签与网页批注。'
+        : '请解读这些附件。')
     let sendMessageMetadata = effectiveMessageMetadata
     if (selectedDesktopContextTarget) {
       const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
@@ -844,6 +901,7 @@ export function AgentInput({
       messageParts: serialized.messageParts,
       attachments: pendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
       commentAttachments,
+      browserAttachments,
       thinkingLevel,
       permissionMode,
       workspaceId: workspaceIdRef.current,
@@ -908,6 +966,7 @@ export function AgentInput({
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
         ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
+        ...(browserAttachments.length > 0 ? { browserAttachments } : {}),
         ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
@@ -917,6 +976,12 @@ export function AgentInput({
       pushHistoryEntry(sentJson)
       clearDraftState()
       setCommentDrafts((prev) => {
+        if (!prev[threadId]) return prev
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
+      setBrowserAttachments((prev) => {
         if (!prev[threadId]) return prev
         const next = { ...prev }
         delete next[threadId]
@@ -938,6 +1003,7 @@ export function AgentInput({
           text,
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
           ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
+          ...(browserAttachments.length > 0 ? { browserAttachments } : {}),
           ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
             ? { messageParts: serialized.messageParts }
             : {}),
@@ -971,6 +1037,7 @@ export function AgentInput({
     onMessageMetadataConsumed,
     pendingAttachments,
     commentAttachments,
+    browserAttachments,
     effectiveMessageMetadata,
     messageMetadata,
     desktopContextTarget,
@@ -980,6 +1047,7 @@ export function AgentInput({
     setStreamingStates,
     setMessageQueues,
     setCommentDrafts,
+    setBrowserAttachments,
     streaming,
     thinkingLevel,
     threadId,
@@ -1326,7 +1394,8 @@ export function AgentInput({
             topContent={
               editingQueuedMessage?.item.messageAttachments?.length
               || editingQueuedMessage?.item.commentAttachments?.length
-              || (!editingQueuedMessage && (pendingAttachments.length > 0 || commentAttachments.length > 0))
+              || editingQueuedMessage?.item.browserAttachments?.length
+              || (!editingQueuedMessage && (pendingAttachments.length > 0 || commentAttachments.length > 0 || browserAttachments.length > 0))
                 ? (
                     <div className="space-y-2 px-3 pb-2 pt-3">
                       {editingQueuedMessage?.item.messageAttachments?.length ? (
@@ -1345,6 +1414,7 @@ export function AgentInput({
                         <div key={comment.id} className="flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2.5 py-1.5 text-xs">
                           <MessageSquareText size={13} className="shrink-0 text-[var(--lume-accent)]" />
                           <span className="min-w-0 flex-1 truncate">
+                            {comment.intent === 'modify' ? '修改请求 · ' : comment.intent === 'context' ? '代码上下文 · ' : ''}
                             {comment.position.path}:L{comment.position.startLine ?? comment.position.line}
                             {(comment.position.startLine ?? comment.position.line) !== comment.position.line ? `–L${comment.position.line}` : ''}
                             {' · '}{comment.body}
@@ -1365,6 +1435,32 @@ export function AgentInput({
                           )}
                         </div>
                       ))}
+                      {(editingQueuedMessage?.item.browserAttachments ?? browserAttachments).map((attachment) => {
+                        const tab = attachment.origin === 'browser-tab' ? attachment : attachment.tab
+                        return (
+                          <div key={attachment.id} className="flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2.5 py-1.5 text-xs">
+                            <Globe size={13} className="shrink-0 text-[var(--lume-accent)]" />
+                            <span className="min-w-0 flex-1 truncate">
+                              {attachment.origin === 'browser-annotation' ? '网页批注 · ' : attachment.origin === 'browser-design-change' ? 'Design Tweaks · ' : '浏览器标签 · '}
+                              {tab.title || tab.url}
+                            </span>
+                            {!editingQueuedMessage && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label="移除浏览器附件"
+                                onClick={() => setBrowserAttachments((prev) => ({
+                                  ...prev,
+                                  [threadId]: (prev[threadId] ?? []).filter((item) => item.id !== attachment.id),
+                                }))}
+                              >
+                                <X size={12} />
+                              </Button>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )
                 : undefined
