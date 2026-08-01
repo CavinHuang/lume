@@ -932,11 +932,16 @@ export interface AgentDiffCommentAttachment {
 export interface AgentBrowserTabAttachment {
   id: string
   origin: 'browser-tab'
+  backend?: 'iab' | 'extension'
+  browserId?: string
+  referenceGrantId?: string
+  access?: 'control'
   tabId: string
-  providerTabId: string
+  providerTabId?: string
   title: string
   url: string
-  generation: number
+  generation?: number
+  lastOpenedAt?: string
   ownerThreadId?: string
 }
 
@@ -966,6 +971,7 @@ export interface AgentBrowserDesignChangeAttachment {
   anchor: AgentBrowserAnchor
   originalStyles: Record<string, string>
   proposedStyles: Record<string, string>
+  screenshotRef?: string
 }
 
 export type AgentBrowserAttachment =
