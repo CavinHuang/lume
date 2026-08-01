@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
-import { FolderOpen } from 'lucide-react'
+import { FolderOpen, ListTodo } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily, agentStreamingStatesFamily, agentWorkspacesAtom } from '@/atoms'
+import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily, agentStreamingStatesFamily, agentWorkspacesAtom, activeTabIdAtom, tabsAtom } from '@/atoms'
 import { ThreadMoreActions } from './ThreadMoreActions'
 import { AGENT_IPC_CHANNELS, type AgentRuntimePhase, type AgentWorkspace, type AgentWorkspaceStatus } from '@lume/shared'
-import { openFolderDialog, sidecarCall } from '@/lib/desktop-api'
+import { getPlanningTodo, onPlanningTodoChange, openFolderDialog, sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 
 interface AgentHeaderProps {
@@ -27,6 +27,8 @@ const PHASE_STYLE: Record<AgentRuntimePhase, { label: string; dot: string; text:
 export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
   const threads = useAtomValue(agentThreadsAtom)
   const [workspaces, setWorkspaces] = useAtom(agentWorkspacesAtom)
+  const [tabs, setTabs] = useAtom(tabsAtom)
+  const [, setActiveTabId] = useAtom(activeTabIdAtom)
   const thread = threads.find((t) => t.id === threadId)
   const workspace = workspaces.find((item) => item.id === thread?.workspaceId)
   const runtimeStatus = useAtomValue(agentRuntimeStatusFamily(threadId))
@@ -34,6 +36,7 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
   const isStreamingFallback = useAtomValue(agentStreamingStatesFamily(threadId)) === 'streaming'
   const [workspaceStatus, setWorkspaceStatus] = useState<AgentWorkspaceStatus | null>(null)
   const [ordinaryPath, setOrdinaryPath] = useState<string | null>(null)
+  const [primaryTodo, setPrimaryTodo] = useState<{ id: string; title: string; status: string } | null>(null)
 
   const runtimePhase = runtimeStatus?.phase
   const phase: AgentRuntimePhase | undefined =
@@ -60,6 +63,24 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
       .then(setOrdinaryPath)
       .catch(() => setOrdinaryPath(null))
   }, [threadId, workspace])
+
+  useEffect(() => {
+    const todoId = thread?.planningTodoId
+    if (!todoId) { setPrimaryTodo(null); return }
+    let active = true
+    const refresh = () => { void getPlanningTodo(todoId).then((result) => { if (active && result.todo.status === 'open' && !result.todo.deletedAt) setPrimaryTodo({ id: result.todo.id, title: result.todo.title, status: result.todo.status }); else if (active) setPrimaryTodo(null) }).catch(() => { if (active) setPrimaryTodo(null) }) }
+    refresh()
+    let unsubscribe: (() => void) | undefined
+    void onPlanningTodoChange(() => refresh()).then((off) => { if (active) unsubscribe = off; else off() })
+    return () => { active = false; unsubscribe?.() }
+  }, [thread?.planningTodoId])
+
+  const openPrimaryTodo = () => {
+    if (!primaryTodo) return
+    const id = `todo:${primaryTodo.id}`
+    if (!tabs.some((tab) => tab.id === id)) setTabs((current) => [...current, { id, type: 'todo', title: primaryTodo.title, todoId: primaryTodo.id, workspaceId: workspace?.id }])
+    setActiveTabId(id)
+  }
 
   const handleWorkdirClick = async () => {
     if (!workspace) {
@@ -100,6 +121,7 @@ export function AgentHeader({ threadId, readOnly }: AgentHeaderProps) {
           {thread?.title ?? '新会话'}
         </span>
         <ThreadMoreActions threadId={threadId} readOnly={readOnly} />
+        {primaryTodo && <Button type="button" variant="secondary" onClick={openPrimaryTodo} className="h-7 max-w-[220px] justify-start gap-1.5 px-2 text-[11px]" title={primaryTodo.title}><ListTodo size={13} /><span className="truncate">{primaryTodo.title}</span></Button>}
         <Button
           type="button"
           variant="ghost"

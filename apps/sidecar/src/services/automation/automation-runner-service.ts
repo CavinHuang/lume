@@ -15,6 +15,8 @@ import { getEffectiveSystemConfig } from "../system/system-config-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getNextAutomationRunAt } from "./automation-schedule";
 import { writeLogRecord } from "../infra/logger";
+import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
+import { readRoutine } from "../routine/routine-store";
 import {
   consumeLatestAutomationTrigger,
   finishAutomationLease,
@@ -124,6 +126,15 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
 
   try {
     const { channelId, modelId, modelRef } = pickExecutionChannel(job);
+    const executionKind = resolveAutomationModelKind(job);
+    const provenance = job.provenance;
+    const privilegedRoutineTodoReview = executionKind === "routine" && provenance?.kind === "routine_todo_review";
+    if (privilegedRoutineTodoReview) {
+      const date = provenance.routineId.replace(/^routine-/u, "");
+      const routine = readRoutine(date);
+      const entry = routine?.entries.find((item) => item.id === provenance.activityId);
+      if (!routine || !entry || entry.activity !== "todo_review") throw new Error("routine provenance is no longer valid");
+    }
     const boundThreadId = job.threadId?.trim();
     if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
       threadId = boundThreadId;
@@ -143,6 +154,23 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
       throw new Error("自动化执行缺少可用线程");
     }
 
+    const executionSurface = executionKind === "routine" ? "routine" : "automation";
+    registerPlanningExecutionContext({
+      surface: executionSurface,
+      threadId,
+      clientSubmissionId: traceContext.submissionId,
+      ...(privilegedRoutineTodoReview ? { globalPlanningRead: true } : {}),
+      ...(job.workspaceId ? { workspaceId: job.workspaceId } : {})
+    });
+    issuePlanningScopeGrant({
+      clientSubmissionId: traceContext.submissionId,
+      surface: executionSurface,
+      scope: privilegedRoutineTodoReview ? "all" : job.workspaceId ? "current" : "unassigned",
+      ...(job.workspaceId ? { workspaceId: job.workspaceId } : {}),
+      allowedOperations: ["list", "get"],
+      mode: "turn"
+    });
+
     let runtimeError: string | null = null;
     let waitingForApproval = false;
     let waitingForUser = false;
@@ -151,6 +179,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         threadId,
         userMessage: job.prompt,
         workspaceId: job.workspaceId,
+        trustedPlanningClientSubmissionId: traceContext.submissionId,
         modelRef,
         channelId,
         modelId,

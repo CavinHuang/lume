@@ -40,6 +40,8 @@ import {
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentSubmissionStore } from "../services/agent/agent-submission-store";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
+import { addPlanningAuthorizedTodo, issuePlanningScopeGrant, registerPlanningExecutionContext } from "../services/planning/planning-execution-context";
+import { getPlanningTodoStore } from "../services/planning/planning-todo-store";
 import {
   appendAgentMessage,
   sendAgentMessage,
@@ -234,6 +236,7 @@ import {
   agentRecentThreadMessagesInputSchema,
   agentReorderMessageQueueInputSchema,
   agentSendInputSchema,
+  trustedAgentSendInputSchema,
   agentSubmissionReceiptInputSchema,
   agentThreadIdInputSchema,
   agentUpdateQueuedMessageInputSchema,
@@ -373,6 +376,12 @@ interface AgentHandlersContext {
   appendAgentMessage?: typeof appendAgentMessage;
   analyzeThreadWorkspaceSkillImprovements?: typeof analyzeThreadWorkspaceSkillImprovements;
 }
+
+// Only objects created by the private handler below may carry a trusted
+// renderer surface into the public send implementation. JSON-RPC callers can
+// reproduce the object shape, but cannot place their deserialized object in
+// this process-local identity set.
+const trustedPlanningSendEnvelopes = new WeakSet<object>();
 
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
   const appendAgentMessageForContext = context.appendAgentMessage ?? appendAgentMessage;
@@ -1959,6 +1968,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return { ok: true };
     },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
+      const trustedSurface = params && typeof params === "object" && trustedPlanningSendEnvelopes.has(params) && "trustedSurface" in params
+        ? (params as { trustedSurface?: { surface: "main" | "quick-input"; clientSubmissionId: string; threadId: string } }).trustedSurface
+        : undefined;
       const validated = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
       const input: AgentSendInput = {
         ...validated,
@@ -1972,6 +1984,31 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           ...(validated.traceContext?.linkedTraceId ? { linkedTraceId: validated.traceContext.linkedTraceId } : {})
         }
       };
+      const trustedThreadMeta = getAgentThreadMeta(input.threadId);
+      const trustedWorkspaceId = trustedThreadMeta?.workspaceId;
+      if (trustedThreadMeta) input.workspaceId = trustedWorkspaceId;
+      if (trustedSurface?.threadId === input.threadId && trustedSurface.clientSubmissionId === input.clientSubmissionId) {
+        const planningContext = registerPlanningExecutionContext({ surface: trustedSurface.surface, threadId: input.threadId, ...(trustedWorkspaceId ? { workspaceId: trustedWorkspaceId } : {}), clientSubmissionId: trustedSurface.clientSubmissionId });
+        for (const todo of getPlanningTodoStore().listPrimaryTodosForThread(input.threadId)) addPlanningAuthorizedTodo(planningContext, todo.id);
+        issuePlanningScopeGrant({
+          clientSubmissionId: trustedSurface.clientSubmissionId,
+          surface: trustedSurface.surface,
+          scope: trustedWorkspaceId ? "current" : "unassigned",
+          ...(trustedWorkspaceId ? { workspaceId: trustedWorkspaceId } : {}),
+          allowedOperations: ["list", "get"],
+          mode: "turn"
+        });
+        const referencedTodoIds = [...new Set((input.messageParts ?? []).filter((part) => part.type === "planning_todo_ref").map((part) => part.todoId))];
+        if (referencedTodoIds.length > 0) issuePlanningScopeGrant({
+          clientSubmissionId: trustedSurface.clientSubmissionId,
+          surface: trustedSurface.surface,
+          scope: "todo",
+          todoIds: referencedTodoIds,
+          allowedOperations: ["get", "update", "complete", "reopen", "delete", "restore"],
+          mode: "turn"
+        });
+        input.trustedPlanningClientSubmissionId = trustedSurface.clientSubmissionId;
+      }
       writeLogRecord({
         level: "info",
         kind: "trace",
@@ -2008,6 +2045,15 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         data: { mode: result.mode, queuedCount: result.queuedCount, queuedMessageId: result.queuedMessage?.id }
       });
       return result;
+    },
+    "agent:send-thread-message:trusted": async (params) => {
+      const envelope = validateInput(trustedAgentSendInputSchema, params, "agent:send-thread-message:trusted");
+      const trustedParams = {
+        ...envelope.input,
+        trustedSurface: envelope.trustedSurface
+      };
+      trustedPlanningSendEnvelopes.add(trustedParams);
+      return handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!(trustedParams);
     },
     [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentAppendInputSchema, params, AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE) as AgentSendInput;

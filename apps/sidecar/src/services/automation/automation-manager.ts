@@ -7,7 +7,8 @@ import type {
   DailyRoutine,
   AutomationJob,
   AutomationJobsIndex,
-  AutomationUpdateJobInput
+  AutomationUpdateJobInput,
+  AutomationJobProvenance
 } from "@lume/shared";
 import { getAutomationJobsPath, getConfigDir } from "../infra/config-paths";
 import { getNextAutomationRunAt, validateAutomationSchedule } from "./automation-schedule";
@@ -128,6 +129,18 @@ export function createAutomationJob(input: AutomationCreateJobInput): Automation
   index.jobs.push(job);
   writeIndex(index);
   return job;
+}
+
+/** Internal-only provenance write; public automation schemas never accept this field. */
+export function setAutomationJobProvenance(jobId: string, provenance: AutomationJobProvenance): AutomationJob {
+  const index = readIndex();
+  const target = index.jobs.find((job) => job.id === jobId);
+  if (!target) throw new Error(`自动化任务不存在: ${jobId}`);
+  if (target.provenance && JSON.stringify(target.provenance) !== JSON.stringify(provenance)) throw new Error("automation provenance is immutable");
+  const updated = { ...target, provenance, updatedAt: Date.now() };
+  index.jobs = index.jobs.map((job) => job.id === jobId ? updated : job);
+  writeIndex(index);
+  return updated;
 }
 
 export function updateAutomationJob(input: AutomationUpdateJobInput): AutomationJob {

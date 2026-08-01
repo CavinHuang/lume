@@ -16,6 +16,11 @@ export type AutomationJobSource = 'manual' | 'system'
 
 /** 系统自动化动作标识 */
 export type AutomationSystemAction = 'routine' | 'memory_distill_workspace'
+export interface AutomationJobProvenance {
+  kind: 'routine_todo_review'
+  routineId: string
+  activityId: string
+}
 
 /** 任务调度配置 */
 export interface AutomationSchedule {
@@ -53,6 +58,8 @@ export interface AutomationJob {
   source?: AutomationJobSource
   /** 系统自动创建任务的动作标识 */
   systemAction?: AutomationSystemAction
+  /** Sidecar-owned immutable provenance for privileged system jobs. */
+  provenance?: AutomationJobProvenance
   /** 简短说明 */
   description?: string
   /** 默认模型展示值 */

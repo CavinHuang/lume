@@ -2,7 +2,7 @@ import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import type { DesktopContextTarget } from '@lume/shared'
 
-export type TabType = 'agent' | 'settings' | 'welcome' | 'automation' | 'skills' | 'reading' | 'lume' | 'file' | 'browser'
+export type TabType = 'agent' | 'settings' | 'welcome' | 'automation' | 'skills' | 'reading' | 'lume' | 'todo' | 'file' | 'browser'
 export type SettingsTab = 'channel' | 'agent' | 'mcp' | 'about'
 export type FileTabSource = 'workspace' | 'thread' | 'local'
 
@@ -17,6 +17,8 @@ export interface Tab {
   filePath?: string
   fileSource?: FileTabSource
   workspaceSlug?: string
+  todoId?: string
+  todoPrefill?: string
   sourcePath?: string
   browserUrl?: string
   desktopContextTarget?: DesktopContextTarget

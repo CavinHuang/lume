@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import type {
   AgentThreadMeta,
   AgentWorkspace,
@@ -38,6 +39,8 @@ import { getWorkspaceMcpManager } from "../mcp/workspace-mcp-manager";
 import { getAgentFileContextRootPath } from "../infra/config-paths";
 import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
 import { getWikiService } from "../wiki/wiki-service";
+import { getPlanningTodoStore } from "../planning/planning-todo-store";
+import { agentLifecycleLocks } from "./agent-lifecycle-lock-manager";
 
 const DEFAULT_DRAIN_TIMEOUT_MS = 5_000;
 const PROJECT_DISABLED_REASON = "项目已移除，自动化任务已停用";
@@ -76,7 +79,9 @@ function impactFor(workspaceId: string, threads: AgentThreadMeta[]): AgentWorksp
     threads: threads.length,
     automations: listAutomationJobsReferencingProject({ workspaceId, threadIds }).length,
     imAccounts: listImAccountsForWorkspace(workspaceId).length,
-    imThreadBindings: listImThreadBindingsForThreadIds(threadIds).length
+    imThreadBindings: listImThreadBindingsForThreadIds(threadIds).length,
+    planningTodos: getPlanningTodoStore().count(workspaceId),
+    planningTodoAction: 'unassigned'
   };
 }
 
@@ -163,15 +168,35 @@ export async function removeProject(input: {
   workspaceId: string;
   mode: AgentWorkspaceRemoveMode;
 }): Promise<AgentWorkspaceRemoveResult> {
+  const threadsForLock = collectProjectThreads(input.workspaceId);
+  const release = await agentLifecycleLocks.acquire([
+    `workspace:${input.workspaceId}`,
+    ...threadsForLock.map((thread) => `thread:${thread.id}`),
+  ]);
+  try {
   const workspace = requireWorkspace(input.workspaceId);
   const threads = collectProjectThreads(input.workspaceId);
   const threadIds = new Set(threads.map((thread) => thread.id));
   const impact = impactFor(input.workspaceId, threads);
+  const planningStore = getPlanningTodoStore();
+  const planningSnapshot = planningStore.snapshotWorkspaceTodos(input.workspaceId);
+  const planningOperationId = randomUUID();
+  let planningOperation = planningStore.reserveOperation({
+    operationId: planningOperationId,
+    kind: input.mode === "keepHistory" ? "project_keep_history" : "project_delete_lume_data"
+  });
+  let planningCommitted = false;
+
+  try {
 
   await drainProjectRuntime(workspace, threads);
   materializeThreadFileContexts(threads);
   // Wiki 归档是 destructive sequence 的前置条件；失败时项目保持存在。
   getWikiService().archiveWorkspace(input.workspaceId);
+
+  const planningResult = planningStore.removeWorkspace(input.workspaceId, input.mode);
+  planningCommitted = true;
+  planningOperation = planningStore.advanceOperation(planningOperationId, { phase: "planning_committed", status: "running" });
 
   disableAutomationJobsReferencingProject({
     workspaceId: input.workspaceId,
@@ -190,14 +215,38 @@ export async function removeProject(input: {
   if (input.mode === "deleteLumeData") {
     trashAgentThreads(threadIds);
   }
+  planningOperation = planningStore.advanceOperation(planningOperationId, { phase: "threads_processed", status: "running" });
 
   deleteAgentWorkspaceInternalData(workspace.slug);
   deleteAgentWorkspace(input.workspaceId);
+  planningOperation = planningStore.advanceOperation(planningOperationId, { phase: "workspace_removed", status: "running" });
   broadcastAgentThreadListChanged();
-
+  planningOperation = planningStore.advanceOperation(planningOperationId, { phase: "finalized", status: "completed", recoverable: false });
 
   return {
     ...impact,
-    mode: input.mode
+    planningTodos: planningResult.count,
+    planningTodoAction: input.mode === "keepHistory" ? "unassigned" : "trash",
+    mode: input.mode,
+    planningOperation
   };
+  } catch (error) {
+    if (planningCommitted) {
+      try {
+        planningOperation = planningStore.advanceOperation(planningOperationId, { phase: "compensating", status: "running", compensation: "pending", recoverable: true, error: error instanceof Error ? error.message : String(error) });
+        planningStore.restoreWorkspaceSnapshot(planningSnapshot, planningOperationId);
+        planningOperation = planningStore.advanceOperation(planningOperationId, { phase: "finalized", status: "compensated", compensation: "completed", recoverable: false, error: error instanceof Error ? error.message : String(error) });
+      } catch (compensationError) {
+        planningOperation = planningStore.advanceOperation(planningOperationId, { phase: "compensating", status: "partial", compensation: "failed", recoverable: true, error: compensationError instanceof Error ? compensationError.message : String(compensationError) });
+      }
+    } else {
+      planningOperation = planningStore.advanceOperation(planningOperationId, { phase: "finalized", status: "failed", recoverable: false, error: error instanceof Error ? error.message : String(error) });
+    }
+    const failure = error instanceof Error ? error : new Error(String(error));
+    Object.assign(failure, { planningOperation });
+    throw failure;
+  }
+  } finally {
+    release();
+  }
 }

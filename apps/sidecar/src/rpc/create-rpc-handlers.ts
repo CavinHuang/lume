@@ -17,6 +17,7 @@ import { desktopContextRpcService } from "../services/desktop-context/desktop-co
 import type { NotificationWriter, RpcHandler } from "./types";
 import type { BrowserBroker } from "../services/browser/browser-broker";
 import { getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
+import { createPlanningTodoHandlers } from "./planning-todo-handlers";
 
 export interface CreateRpcHandlersContext {
   writeNotification: NotificationWriter;
@@ -77,7 +78,8 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       notifyBrowserPluginState,
       planModePhaseTracker,
       notifyPlanModePhaseChange
-    })
+    }),
+    createPlanningTodoHandlers({ writeNotification: context.writeNotification })
   );
   if (context.renderClient) {
     handlers["render:result"] = async (params: unknown) => {

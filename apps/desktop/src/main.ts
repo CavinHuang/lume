@@ -413,6 +413,7 @@ const sidecarHost = createSidecarHost({
       return
     }
     showDesktopProposalNotification(method, params)
+    showPlanningReminderNotification(method, params)
     showDesktopActionHud(method, params)
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
@@ -531,6 +532,24 @@ function showDesktopProposalNotification(method, params) {
     desktopNotification.show()
   } catch (error) {
     writeMainLog('error', 'desktop.notification', 'notification.show_failed', 'desktop proposal notification failed', { data: { error } })
+  }
+}
+
+function showPlanningReminderNotification(method, params) {
+  if (method !== 'planning-todo:reminder-due' || !Array.isArray(params) || !Notification.isSupported()) return
+  for (const reminder of params.slice(0, 5)) {
+    if (!reminder || typeof reminder.targetTitle !== 'string') continue
+    try {
+      const desktopNotification = new Notification({
+        title: reminder.targetType === 'calendar_event' ? '日程提醒' : 'Todo 提醒',
+        body: reminder.targetTitle,
+        silent: true,
+      })
+      desktopNotification.on('click', () => { void showMainWindow() })
+      desktopNotification.show()
+    } catch (error) {
+      writeMainLog('error', 'desktop.notification', 'planning_reminder.show_failed', 'planning reminder notification failed', { data: { error } })
+    }
   }
 }
 
@@ -1387,7 +1406,21 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         origin,
         data: createSafeMessageLogSummary(incoming.userMessage),
       })
-      const result = await sidecarHost.call(payload.method, { ...incoming, traceContext }, traceContext)
+      const clientSubmissionId = typeof incoming.clientSubmissionId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(incoming.clientSubmissionId)
+        ? incoming.clientSubmissionId
+        : submissionId
+      const result = await sidecarHost.call('agent:send-thread-message:trusted', {
+        input: {
+          ...incoming,
+          clientSubmissionId,
+          traceContext,
+        },
+        trustedSurface: {
+          surface: origin === 'quick_input' ? 'quick-input' : 'main',
+          clientSubmissionId,
+          threadId: incoming.threadId,
+        }
+      }, traceContext)
       return { ...(result && typeof result === 'object' ? result : {}), traceId, submissionId }
     }
     case 'desktop:save-plugin-package': {

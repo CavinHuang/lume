@@ -54,7 +54,8 @@ import type {
   SubagentTaskReport,
   SubagentTask,
   SubagentTaskFeedback,
-  AgentTaskRef
+  AgentTaskRef,
+  PlanningTodo
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -100,6 +101,8 @@ import { buildRuntimeUserMessageInput } from "./message-attachment-input";
 import { createMainTaskTools } from "../task/task-tools";
 import { FileBackedTaskStore } from "../task/task-store";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
+import { bindPlanningExecutionRun, resolvePlanningExecutionContext } from "../../planning/planning-execution-context";
+import { getPlanningTodoStore } from "../../planning/planning-todo-store";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
 import { assemblePluginRuntime, type PluginRuntimeAssembly } from "../plugins/runtime-bridge.js";
 import type { RegisteredPlugin } from "../plugins/plugin-registry.js";
@@ -175,6 +178,7 @@ export interface CreateRuntimeCoreSessionInput {
   fileReferenceBinding?: FileReferenceBinding;
   agentDir: string;
   userMessage?: string;
+  messageParts?: AgentSendInput["messageParts"];
   provider: string;
   channelProvider?: string;
   openaiApiMode?: OpenAiApiMode;
@@ -198,6 +202,7 @@ export interface CreateRuntimeCoreSessionInput {
   commentAttachments?: AgentSendInput["commentAttachments"];
   browserAttachments?: AgentSendInput["browserAttachments"];
   messageMetadata?: Record<string, unknown>;
+  planningClientSubmissionId?: string;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   persistCodingReport?: (report: RuntimeCodingReport) => void;
@@ -435,6 +440,7 @@ async function runSidecarSubagent(input: {
   workspaceId?: string;
   chatType?: AgentSendInput["chatType"];
   messageMetadata?: Record<string, unknown>;
+  planningClientSubmissionId?: string;
   fileReferenceBinding?: FileReferenceBinding;
   permissionMode?: AgentSendInput["permissionMode"];
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -843,6 +849,7 @@ function buildRuntimeCoreTools(input: {
   subagentDefinition?: AgentDefinition;
   boundSubagentReportTool?: ToolDefinition;
   messageMetadata?: Record<string, unknown>;
+  planningClientSubmissionId?: string;
   fileReferenceBinding?: FileReferenceBinding;
   originalUserInstruction?: string;
   emitSdkMessage?: (message: SDKMessage) => void;
@@ -892,6 +899,11 @@ function buildRuntimeCoreTools(input: {
     initialTodos: input.initialTodoState?.todos,
     onTodoUpdated: input.emitTodoUpdated,
   });
+  const planningClientSubmissionId = input.planningClientSubmissionId;
+  if (input.runId && planningClientSubmissionId && resolvePlanningExecutionContext({ clientSubmissionId: planningClientSubmissionId })) {
+    bindPlanningExecutionRun(planningClientSubmissionId, input.runId);
+  }
+  const planningExecutionContext = resolvePlanningExecutionContext({ runId: input.runId, clientSubmissionId: planningClientSubmissionId });
   const lumeTools = createLumeRuntimeTools({
     threadId: input.sessionId,
     cwd: input.cwd,
@@ -916,7 +928,8 @@ function buildRuntimeCoreTools(input: {
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {}),
-    wikiProposalEnabled: input.wikiProposalEnabled
+    wikiProposalEnabled: input.wikiProposalEnabled,
+    planningExecutionContext
   });
   const askWikiOnly = getAgentThreadMeta(input.sessionId)?.wikiProfile?.kind === "ask-wiki";
 
@@ -1378,6 +1391,31 @@ function isDirectRepositoryRuntimeRoute(
   return preferredRoute === "coding"
     || preferredRoute === "raw-tools"
     || hasCodingIntent(originalUserInstruction);
+}
+
+function resolvePlanningTodoContext(
+  input: Pick<CreateRuntimeCoreSessionInput, "lumeSessionId" | "messageParts" | "messageMetadata">,
+  executionContext: ReturnType<typeof resolvePlanningExecutionContext>
+): Array<Pick<PlanningTodo, "id" | "title" | "description" | "status" | "priority" | "workspaceId" | "dueDate" | "dueAt" | "dueTimezone" | "revision">> {
+  if (!executionContext) return [];
+  const parts = input.messageParts
+    ?? (Array.isArray(input.messageMetadata?.messageParts) ? input.messageMetadata.messageParts as AgentSendInput["messageParts"] : undefined)
+    ?? [];
+  const ids = new Set(executionContext.authorizedTodoIds);
+  if (executionContext.surface === "main" || executionContext.surface === "quick-input") {
+    for (const todo of getPlanningTodoStore().listPrimaryTodosForThread(input.lumeSessionId)) {
+      if (ids.has(todo.id)) parts.push({ type: "planning_todo_ref", schemaVersion: 1, uri: `lume://planning/todo/${todo.id}`, todoId: todo.id, relation: "primary", displayText: todo.title });
+    }
+  }
+  const snapshots = new Map<string, PlanningTodo>();
+  for (const part of parts) {
+    if (part?.type !== "planning_todo_ref" || !ids.has(part.todoId)) continue;
+    try {
+      const todo = getPlanningTodoStore().get(part.todoId);
+      if (todo.status === "open" && !todo.deletedAt) snapshots.set(todo.id, todo);
+    } catch { /* historical/deleted refs remain unavailable in the editor */ }
+  }
+  return [...snapshots.values()].map(({ id, title, description, status, priority, workspaceId, dueDate, dueAt, dueTimezone, revision }) => ({ id, title, ...(description ? { description } : {}), status, priority, ...(workspaceId ? { workspaceId } : {}), ...(dueDate ? { dueDate } : {}), ...(dueAt !== undefined ? { dueAt } : {}), ...(dueTimezone ? { dueTimezone } : {}), revision }));
 }
 
 function sortDiscoveredTools(tools: ToolDefinition[]): ToolDefinition[] {
@@ -1971,6 +2009,7 @@ export async function createRuntimeCoreSession(
     boundSubagentReportTool,
     fileReferenceBinding: input.fileReferenceBinding,
     messageMetadata: input.messageMetadata,
+    planningClientSubmissionId: input.planningClientSubmissionId,
     originalUserInstruction: input.userMessage,
     emitSdkMessage: input.emitSdkMessage,
     emitRuntimeEvent: input.emitRuntimeEvent,
@@ -2018,6 +2057,11 @@ export async function createRuntimeCoreSession(
     ? { appendContext: collectAppendContextEffects(beforeContextResult.effects) }
     : undefined;
   const desktopContext = await resolveDesktopContextProjection(input.messageMetadata);
+  const planningExecutionContext = resolvePlanningExecutionContext({
+    runId,
+    clientSubmissionId: input.planningClientSubmissionId
+  });
+  const planningTodoContext = resolvePlanningTodoContext(input, planningExecutionContext);
   const modelId = input.resolvedModel?.id ?? input.resolvedModelId;
   const promptCache = resolvePromptCachePolicy({
     channelProvider: input.channelProvider,
@@ -2063,6 +2107,7 @@ export async function createRuntimeCoreSession(
     workflowContext,
     desktopContext,
     todoState: initialTodoState,
+    planningTodoContext,
     trace: input.trace
   });
   const afterContextResult = await executeWorkflowHookSafely(input.workflowHooks, {

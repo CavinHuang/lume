@@ -99,7 +99,7 @@ const executors: RoutineActivityExecutor[] = [
     buildJobInput(entry, _ctx) {
       return {
         name: "待办提醒",
-        prompt: "检查用户对话中提取的待办事项。搜索记忆中的待办条目，按优先级排序，生成一份待办提醒列表。如果所有待办都已完成，简要确认即可。",
+        prompt: "使用 PlanningTodoList 和 PlanningTodoGet 检查持久化 Planning Todo，按优先级和截止时间生成一份待办提醒列表。如果所有待办都已完成，简要确认即可。不要读取 Memory 来代替 Planning Todo。",
         schedule: { type: "once", runAt: entry.scheduledAt },
         enabled: true,
       }

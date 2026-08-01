@@ -353,6 +353,12 @@ function readPersistedMessageParts(metadata: Record<string, unknown> | undefined
       || (part.type === 'capability_ref'
         && typeof part.occurrenceId === 'string'
         && typeof part.uri === 'string')
+      || (part.type === 'planning_todo_ref'
+        && part.schemaVersion === 1
+        && typeof part.uri === 'string'
+        && typeof part.todoId === 'string'
+        && (part.relation === 'mentioned' || part.relation === 'primary')
+        && typeof part.displayText === 'string')
   })
 }
 

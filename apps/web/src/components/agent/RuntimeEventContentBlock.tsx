@@ -16,7 +16,7 @@ import { AskUserQuestionBlock } from './AskUserQuestionBlock'
 import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
-import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
@@ -769,6 +769,11 @@ function CapabilityMessageText({
     >
       {parts.map((part, index) => {
         if (part.type === 'text') return part.text ? <span key={index}>{part.text}</span> : null
+        if (part.type === 'planning_todo_ref') {
+          let available = true
+          try { validatePlanningTodoRefPart(part) } catch { available = false }
+          return <span key={index} data-planning-todo-unavailable={!available || undefined} className={cn('mx-0.5 inline-flex rounded-md border px-1.5 py-0.5 align-baseline text-[13px]', available ? 'border-border' : 'border-destructive/50 text-muted-foreground')} title={available ? part.uri : '此 Planning Todo 引用已不可用'}>&amp;{available ? part.displayText : '待办不可用'}</span>
+        }
         const reference = referencesByUri.get(part.uri)
         const isPlugin = reference?.kind === 'plugin'
         return (

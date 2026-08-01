@@ -8,6 +8,7 @@ import { SettingsView } from '@/components/settings/SettingsView'
 import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 import { BrowserTabView } from './BrowserTabView'
+import { TodoView } from '@/components/todo/TodoView'
 
 export function TabContent() {
   const tabs = useAtomValue(tabsAtom)
@@ -66,6 +67,8 @@ export function TabContent() {
   if (activeTab.type === 'browser') {
     return <BrowserTabView tab={activeTab} />
   }
+
+  if (activeTab.type === 'todo') return <TodoView workspaceId={activeTab.workspaceId} todoId={activeTab.todoId} initialTitle={activeTab.todoPrefill} />
 
   return null
 }

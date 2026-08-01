@@ -25,6 +25,8 @@ import { hasCodingIntent } from "../../agent/capability-routing";
 import { createWikiProposalTool, createWikiReadTools } from "./wiki/create-wiki-tools";
 import { resolveTrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
+import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
+import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -52,6 +54,7 @@ export interface CreateLumeRuntimeToolsInput {
   includeCitations: boolean;
   automationExecution?: boolean;
   wikiProposalEnabled?: boolean;
+  planningExecutionContext?: ExecutionSurfaceContext;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
@@ -188,6 +191,11 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     proposalEnabled: input.wikiProposalEnabled,
     creatorThreadId: input.threadId,
   });
+  // Planning Todo is a trusted capability. A runtime without a sidecar-issued
+  // surface context must not even receive the tool definitions.
+  const planningTodoTools = input.planningExecutionContext && input.planningExecutionContext.surface !== "subagent"
+    ? createPlanningTodoTools({ workspaceId: input.workspaceId, executionContext: input.planningExecutionContext })
+    : [];
   const computerUseTools = computerUseSurface === "mcp" && shouldExposeComputerUseTools(input)
     ? allComputerUseTools
     : [];
@@ -204,6 +212,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...imageGenTools,
     ...nodeReplTools,
     ...ordinaryWikiTools,
+    ...planningTodoTools,
     ...computerUseTools,
   ];
   // Coding/raw-tools runs should start with the SDK's repository tools only.

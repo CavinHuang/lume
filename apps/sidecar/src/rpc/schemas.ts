@@ -50,15 +50,29 @@ const agentMessageAttachmentInputSchema = z.object({
 });
 
 const agentUserMessagePartSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("text"),
-    text: z.string()
-  }).strict(),
-  z.object({
-    type: z.literal("capability_ref"),
-    occurrenceId: z.string().trim().min(1).max(128),
-    uri: z.string().min(1).max(2048)
-  }).strict()
+  z
+    .object({
+      type: z.literal("text"),
+      text: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("capability_ref"),
+      occurrenceId: z.string().trim().min(1).max(128),
+      uri: z.string().min(1).max(2048),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("planning_todo_ref"),
+      schemaVersion: z.literal(1),
+      uri: z.string().regex(/^lume:\/\/planning\/todo\/[0-9a-f-]{36}$/i),
+      todoId: z.string().uuid(),
+      relation: z.enum(["mentioned", "primary"]),
+      displayText: z.string().trim().min(1).max(240),
+    })
+    .strict(),
 ]);
 
 const agentDiffCommentAttachmentSchema = z.object({
@@ -134,75 +148,304 @@ const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
   }).strict()
 ]);
 
-export const agentSendInputSchema = z.object({
-  threadId: z.string().min(1),
-  userMessage: z.string(),
-  messageParts: z.array(agentUserMessagePartSchema).optional(),
-  clientSubmissionId: z.string().uuid().optional(),
-  modelRef: z.string().optional(),
-  channelId: z.string().optional(),
-  modelId: z.string().optional(),
-  workspaceId: z.string().optional(),
-  chatType: z.enum(["direct", "group", "channel"]).optional(),
-  threadType: z.enum(["main", "subagent", "group", "channel"]).optional(),
-  permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]).optional(),
-  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
-  messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
-  commentAttachments: z.array(agentDiffCommentAttachmentSchema).max(100).optional(),
-  browserAttachments: z.array(agentBrowserAttachmentSchema).max(100).optional(),
-  messageMetadata: z.record(z.string(), z.unknown()).optional(),
-  resendFromMessageId: z.string().optional(),
-  editFromMessageId: z.string().optional(),
-  traceContext: z.object({
-    submissionId: z.string().uuid(),
-    clientEventId: z.string().uuid().optional(),
-    traceId: z.string().uuid().optional(),
-    origin: z.union([
-      z.enum(["main_window", "quick_input", "automation", "routine", "subagent", "resume", "task", "internal"]),
-      z.string().regex(/^im\.[a-z0-9_-]{1,64}$/)
-    ]).optional(),
-    parentTraceId: z.string().uuid().optional(),
-    parentSpanId: z.string().uuid().optional(),
-    linkedTraceId: z.string().uuid().optional()
-  }).strict().optional()
-}).superRefine((input, ctx) => {
-  if (!input.messageParts) return;
-  const visibleMessage = input.messageParts
-    .map((part) => part.type === "text" ? part.text : part.uri)
-    .join("");
-  if (visibleMessage !== input.userMessage) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["messageParts"],
-      message: "messageParts 必须逐字还原 userMessage"
-    });
-  }
-  const occurrenceIds = new Set<string>();
-  input.messageParts.forEach((part, index) => {
-    if (part.type !== "capability_ref") return;
-    if (occurrenceIds.has(part.occurrenceId)) {
+export const agentSendInputSchema = z
+  .object({
+    threadId: z.string().min(1),
+    userMessage: z.string(),
+    messageParts: z.array(agentUserMessagePartSchema).optional(),
+    clientSubmissionId: z.string().uuid().optional(),
+    modelRef: z.string().optional(),
+    channelId: z.string().optional(),
+    modelId: z.string().optional(),
+    workspaceId: z.string().optional(),
+    chatType: z.enum(["direct", "group", "channel"]).optional(),
+    threadType: z.enum(["main", "subagent", "group", "channel"]).optional(),
+    permissionMode: z
+      .enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"])
+      .optional(),
+    thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
+    messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
+    commentAttachments: z
+      .array(agentDiffCommentAttachmentSchema)
+      .max(100)
+      .optional(),
+    browserAttachments: z
+      .array(agentBrowserAttachmentSchema)
+      .max(100)
+      .optional(),
+    messageMetadata: z.record(z.string(), z.unknown()).optional(),
+    resendFromMessageId: z.string().optional(),
+    editFromMessageId: z.string().optional(),
+    traceContext: z
+      .object({
+        submissionId: z.string().uuid(),
+        clientEventId: z.string().uuid().optional(),
+        traceId: z.string().uuid().optional(),
+        origin: z
+          .union([
+            z.enum([
+              "main_window",
+              "quick_input",
+              "automation",
+              "routine",
+              "subagent",
+              "resume",
+              "task",
+              "internal",
+            ]),
+            z.string().regex(/^im\.[a-z0-9_-]{1,64}$/),
+          ])
+          .optional(),
+        parentTraceId: z.string().uuid().optional(),
+        parentSpanId: z.string().uuid().optional(),
+        linkedTraceId: z.string().uuid().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (!input.messageParts) return;
+    const visibleMessage = input.messageParts
+      .map((part) =>
+        part.type === "text"
+          ? part.text
+          : part.type === "planning_todo_ref"
+            ? `&${part.displayText}`
+            : part.uri,
+      )
+      .join("");
+    if (visibleMessage !== input.userMessage) {
       ctx.addIssue({
         code: "custom",
-        path: ["messageParts", index, "occurrenceId"],
-        message: "capability_ref occurrenceId 必须唯一"
+        path: ["messageParts"],
+        message: "messageParts 必须逐字还原 userMessage",
       });
     }
-    occurrenceIds.add(part.occurrenceId);
-    try {
-      if (!parseLumeCapabilityReference(part.uri)) {
-        throw new Error("not a Lume capability reference");
+    const occurrenceIds = new Set<string>();
+    input.messageParts.forEach((part, index) => {
+      if (part.type === "planning_todo_ref") {
+        if (part.uri !== `lume://planning/todo/${part.todoId}`) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["messageParts", index, "uri"],
+            message: "planning_todo_ref uri 必须与 todoId 一致",
+          });
+        }
+        return;
       }
-    } catch {
-      ctx.addIssue({
-        code: "custom",
-        path: ["messageParts", index, "uri"],
-        message: "capability_ref uri 必须是规范的 Lume 引用"
-      });
-    }
+      if (part.type !== "capability_ref") return;
+      if (occurrenceIds.has(part.occurrenceId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["messageParts", index, "occurrenceId"],
+          message: "capability_ref occurrenceId 必须唯一",
+        });
+      }
+      occurrenceIds.add(part.occurrenceId);
+      try {
+        if (!parseLumeCapabilityReference(part.uri)) {
+          throw new Error("not a Lume capability reference");
+        }
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          path: ["messageParts", index, "uri"],
+          message: "capability_ref uri 必须是规范的 Lume 引用",
+        });
+      }
+    });
   });
-});
 
 export const agentAppendInputSchema = agentSendInputSchema;
+
+export const trustedAgentSendInputSchema = z
+  .object({
+    input: agentSendInputSchema,
+    trustedSurface: z
+      .object({
+        surface: z.enum(["main", "quick-input"]),
+        clientSubmissionId: z.string().uuid(),
+        threadId: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+const planningTodoPrioritySchema = z.enum(["none", "low", "medium", "high"]);
+const planningTodoIdSchema = z.object({ todoId: z.string().uuid() }).strict();
+const planningTodoRevisionSchema = planningTodoIdSchema
+  .extend({ expectedRevision: z.number().int().nonnegative() })
+  .strict();
+const planningTodoDueSchema = z
+  .object({
+    dueDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    dueAt: z.number().int().nonnegative().optional(),
+    dueTimezone: z.string().min(1).max(128).optional(),
+  })
+  .strict();
+export const planningTodoListInputSchema = z
+  .object({
+    workspaceId: z.string().uuid().optional(),
+    scope: z.enum(["current", "all", "unassigned"]).optional(),
+    view: z
+      .enum(["open", "today", "upcoming", "completed", "trash", "all"])
+      .optional(),
+    search: z.string().max(200).optional(),
+    cursor: z.string().regex(/^\d+$/).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+export const planningTodoGetInputSchema = planningTodoIdSchema;
+export const planningTodoCreateInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(500),
+    description: z.string().max(20_000).optional(),
+    priority: planningTodoPrioritySchema.optional(),
+    workspaceId: z.string().uuid().optional(),
+    ...planningTodoDueSchema.shape,
+  })
+  .strict();
+export const planningTodoUpdateInputSchema = planningTodoIdSchema
+  .extend({
+    expectedRevision: z.number().int().nonnegative(),
+    patch: z
+      .object({
+        title: z.string().trim().min(1).max(500).optional(),
+        description: z.string().max(20_000).nullable().optional(),
+        priority: planningTodoPrioritySchema.optional(),
+        workspaceId: z.string().uuid().nullable().optional(),
+        dueDate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/u)
+          .nullable()
+          .optional(),
+        dueAt: z.number().int().nullable().optional(),
+        dueTimezone: z.string().min(1).nullable().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const planningTodoPurgeInputSchema = planningTodoIdSchema
+  .extend({
+    expectedRevision: z.number().int().nonnegative(),
+    confirmation: z.literal(true),
+  })
+  .strict();
+export const planningTodoRevisionInputSchema = planningTodoRevisionSchema;
+export const planningTodoStartInputSchema = planningTodoRevisionSchema
+  .extend({
+    workspaceId: z.string().uuid().optional(),
+    idempotencyKey: z.string().min(1).max(200),
+    newThread: z.boolean().optional(),
+  })
+  .strict();
+const planningCalendarScopeSchema = z.enum(["current", "all", "unassigned"]);
+const planningTimestampSchema = z.number().int().positive();
+export const planningCalendarEventListInputSchema = z
+  .object({
+    from: planningTimestampSchema.optional(),
+    to: planningTimestampSchema.optional(),
+    workspaceId: z.string().uuid().optional(),
+    scope: planningCalendarScopeSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+export const planningCalendarEventIdSchema = z
+  .object({ eventId: z.string().uuid() })
+  .strict();
+export const planningCalendarEventCreateInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(500),
+    notes: z.string().max(20_000).optional(),
+    startAt: planningTimestampSchema,
+    endAt: planningTimestampSchema.optional(),
+    allDay: z.boolean().optional(),
+    groupId: z.string().uuid().optional(),
+    tagIds: z.array(z.string().uuid()).max(50).optional(),
+    reminderTimes: z.array(planningTimestampSchema).max(20).optional(),
+    workspaceId: z.string().uuid().optional(),
+    todoId: z.string().uuid().optional(),
+  })
+  .strict();
+export const planningCalendarEventUpdateInputSchema =
+  planningCalendarEventIdSchema
+    .extend({
+      expectedRevision: z.number().int().positive(),
+      patch: z
+        .object({
+          title: z.string().trim().min(1).max(500).optional(),
+          notes: z.string().max(20_000).nullable().optional(),
+          startAt: planningTimestampSchema.optional(),
+          endAt: planningTimestampSchema.nullable().optional(),
+          allDay: z.boolean().optional(),
+          groupId: z.string().uuid().nullable().optional(),
+          tagIds: z.array(z.string().uuid()).max(50).optional(),
+          workspaceId: z.string().uuid().nullable().optional(),
+          todoId: z.string().uuid().nullable().optional(),
+        })
+        .strict(),
+    })
+    .strict();
+export const planningCalendarEventDeleteInputSchema =
+  planningCalendarEventIdSchema
+    .extend({ expectedRevision: z.number().int().positive() })
+    .strict();
+export const planningGroupListInputSchema = z
+  .object({ scope: z.enum(["todo", "calendar"]) })
+  .strict();
+export const planningGroupCreateInputSchema = z
+  .object({
+    scope: z.enum(["todo", "calendar"]),
+    name: z.string().trim().min(1).max(100),
+    color: z.string().max(64).optional(),
+    sortOrder: z.number().int().optional(),
+  })
+  .strict();
+export const planningGroupUpdateInputSchema = z
+  .object({
+    groupId: z.string().uuid(),
+    scope: z.enum(["todo", "calendar"]),
+    name: z.string().trim().min(1).max(100).optional(),
+    color: z.string().max(64).nullable().optional(),
+    sortOrder: z.number().int().optional(),
+  })
+  .strict();
+export const planningEntityDeleteInputSchema = z
+  .object({ id: z.string().uuid() })
+  .strict();
+export const planningTagCreateInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    color: z.string().max(64).optional(),
+  })
+  .strict();
+export const planningTagUpdateInputSchema = z
+  .object({
+    tagId: z.string().uuid(),
+    name: z.string().trim().min(1).max(100).optional(),
+    color: z.string().max(64).nullable().optional(),
+  })
+  .strict();
+export const planningReminderTargetInputSchema = z
+  .object({
+    targetType: z.enum(["todo", "calendar_event"]),
+    targetId: z.string().uuid(),
+  })
+  .strict();
+export const planningReminderCreateInputSchema =
+  planningReminderTargetInputSchema
+    .extend({ triggerAt: planningTimestampSchema })
+    .strict();
+export const planningReminderIdSchema = z
+  .object({ reminderId: z.string().uuid() })
+  .strict();
+export const planningReminderSnoozeInputSchema = planningReminderIdSchema
+  .extend({ minutes: z.number().int().min(1).max(10_080) })
+  .strict();
 
 export const imAccountCreateInputSchema = z.object({
   provider: z.literal("weixin"),

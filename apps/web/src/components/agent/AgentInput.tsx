@@ -523,6 +523,7 @@ export function AgentInput({
   }, [setMessageQueues, threadId])
 
   const getWorkspaceSlug = () => workspaceSlugRef.current
+  const getWorkspaceId = () => workspaceIdRef.current
   const setMentionSuggestionOpen = useCallback((open: boolean) => {
     mentionSuggestionOpenRef.current = open
   }, [])
@@ -543,6 +544,7 @@ export function AgentInput({
       placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent 或文件',
       agentSuggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen, handleLocalSuggestionEscape),
       capabilitySuggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable, handleLocalSuggestionEscape),
+      planningTodoSuggestion: createSuggestionRenderer('&', threadId, '&', getWorkspaceSlug, setMentionSuggestionOpen, undefined, handleLocalSuggestionEscape, getWorkspaceId),
     }),
     editorProps: {
       attributes: {
@@ -959,7 +961,7 @@ export function AgentInput({
         threadId,
         userMessage: text,
         clientSubmissionId,
-        ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
+        ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
           ? { messageParts: serialized.messageParts }
           : {}),
         thinkingLevel,
@@ -1004,7 +1006,7 @@ export function AgentInput({
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
           ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
           ...(browserAttachments.length > 0 ? { browserAttachments } : {}),
-          ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
+          ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
             ? { messageParts: serialized.messageParts }
             : {}),
         }))
@@ -1661,6 +1663,13 @@ function setEditorMessageParts(
             ? 'plugin'
             : part.uri.slice('lume-skill://'.length).includes(':') ? 'plugin-skill' : 'skill',
         },
+      })
+      continue
+    }
+    if (part.type === 'planning_todo_ref') {
+      activeContent().push({
+        type: 'planningTodoMention',
+        attrs: { schemaVersion: part.schemaVersion, uri: part.uri, todoId: part.todoId, relation: part.relation, displayText: part.displayText },
       })
       continue
     }

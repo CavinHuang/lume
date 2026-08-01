@@ -26,6 +26,14 @@ function serializeInline(node: JSONContent, parts: AgentUserMessagePart[]): void
     if (uri && occurrenceId) parts.push({ type: 'capability_ref', occurrenceId, uri })
     return
   }
+  if (node.type === 'planningTodoMention') {
+    const todoId = typeof node.attrs?.todoId === 'string' ? node.attrs.todoId : ''
+    const uri = typeof node.attrs?.uri === 'string' ? node.attrs.uri : ''
+    const displayText = typeof node.attrs?.displayText === 'string' ? node.attrs.displayText : ''
+    const relation = node.attrs?.relation === 'primary' ? 'primary' : 'mentioned'
+    if (todoId && uri && displayText) parts.push({ type: 'planning_todo_ref', schemaVersion: 1, uri, todoId, relation, displayText })
+    return
+  }
   if (node.type === 'mention') {
     const label = typeof node.attrs?.label === 'string' ? node.attrs.label : node.attrs?.id
     appendText(parts, `@${typeof label === 'string' ? label : ''}`)
@@ -59,7 +67,7 @@ export function serializeAgentEditorMessage(
     : part)
   const messageParts = trimBoundaryWhitespace(transformed)
   return {
-    userMessage: messageParts.map((part) => part.type === 'text' ? part.text : part.uri).join(''),
+    userMessage: messageParts.map((part) => part.type === 'text' ? part.text : part.type === 'planning_todo_ref' ? `&${part.displayText}` : part.uri).join(''),
     messageParts,
   }
 }

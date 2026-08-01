@@ -202,12 +202,23 @@ _Locked via grill — by Codex + user_
 
 ## Out of scope
 
-- Todo 分组、标签、重复规则、提醒、系统通知、日历同步和外部任务系统同步。
+- 重复规则、外部日历同步和外部任务系统同步。
 - 将 Todo 自动拆成 Task、自动生成 TodoWrite，或由 Task/TodoWrite 完成状态自动关闭 Planning Todo。
 - 由 Agent 永久清除 Todo；V1 永久清理由用户在回收站确认。
 - subagent 直接查询或写入 Planning Todo。
 - 为 inferred Todo 新建候选卡片协议；继续使用 `AskUserQuestion`。
 - 新建独立 Todo Electron 窗口或系统托盘捕获器；继续复用主内容区和 Quick Input。
 - 从 Memory、历史对话、Proma 数据库或其他应用自动迁移 Todo。
-- V1 的系统级到期通知、后台提醒调度和离线移动端体验。
+- 离线移动端体验。
+
+## Scope addendum — Calendar and reminders (2026-08-01)
+
+用户在实现审查阶段明确要求继续对齐 Proma 的日程能力，因此以下内容取代上面的原始 V1 排除项：
+
+- 在同一 `planning.sqlite` 中增加独立 Calendar Event、Planning Group、Tag 和 Reminder 表；Calendar Event 与 Todo 可选关联，但不把 Event 降格为 Todo 的一种状态。
+- Calendar Event 支持标题、备注、开始/结束时间、全天、项目、关联 Todo、日程分组、标签和 revision CAS；提供类型化 CRUD RPC 与资源级变更通知。
+- Todo 和 Calendar Event 均可持有提醒；Todo 的精确 `dueAt` 默认同步一条系统来源提醒，完成 Todo 时结束未处理提醒。提醒支持确认和 1–10080 分钟稍后提醒。
+- sidecar 每 30 秒以 SQLite claim 方式获取首次到期或 snooze 后再次到期的提醒；desktop main 负责原生系统通知，renderer 使用常驻提醒条恢复未确认提醒。
+- Todo 主页面增加 Todo/日程切换；日程提供月/周视图、创建、详情自动保存、删除、分组、标签、Todo 关联和 Automation 只读叠加。新增控件继续复用 Lume 全局 shadcn 原子组件。
+- 不迁移 Proma 数据；不实现重复日程、外部日历同步、邀请参与者、会议室或移动端离线提醒。
 - 通用 ORM、跨数据库事务框架或与本功能无关的 SQLite 基础设施重构。

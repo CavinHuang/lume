@@ -36,6 +36,10 @@ import { createBrowserBroker } from "./services/browser/browser-broker";
 import { setActiveBrowserBroker } from "./services/browser/browser-broker-holder";
 import { ExternalChromeTransport } from "./services/browser/external-chrome-transport";
 import { startBackgroundProcessRecovery } from "./services/agent/background-process-recovery";
+import { closePlanningTodoStore } from "./services/planning/planning-todo-store";
+import { reconcilePlanningStartOperations } from "./services/planning/planning-start-service";
+import { closePlanningCalendarStore } from "./services/planning/planning-calendar-store";
+import { startPlanningReminderScheduler, stopPlanningReminderScheduler } from "./services/planning/planning-reminder-scheduler";
 
 const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
@@ -388,6 +392,8 @@ async function boot(): Promise<void> {
   startWorkspaceWatcher((method, params) => writeNotification(method, params));
   // 启动时清理过期回收站条目
   try { cleanupExpiredTrash(); } catch { /* non-critical */ }
+  try { reconcilePlanningStartOperations(); } catch { /* retried on the next start or idempotent request */ }
+  startPlanningReminderScheduler(writeNotification);
   const unsubscribeSubagentAnnounce = subscribeSubagentAnnounceEvent((event) => {
     writeNotification(AGENT_IPC_CHANNELS.SUBAGENT_COMPLETED, event);
   });
@@ -415,6 +421,7 @@ async function boot(): Promise<void> {
     const { stopRoutineRunner } = require("./services/routine/routine-runner");
     stopRoutineRunner();
     imRuntimeManager.stopAll();
+    stopPlanningReminderScheduler();
     for (const pending of pendingSettingsMutations.values()) {
       clearTimeout(pending.timeout);
       pending.reject(new Error("sidecar is stopping"));
@@ -423,6 +430,8 @@ async function boot(): Promise<void> {
     for (const pending of pendingBrowserMainRequests.values()) { clearTimeout(pending.timeout); pending.reject(new Error("sidecar is stopping")); }
     pendingBrowserMainRequests.clear();
     setActiveBrowserBroker(null);
+    closePlanningCalendarStore();
+    closePlanningTodoStore();
     flushLogTransport();
     })();
     return stopping;

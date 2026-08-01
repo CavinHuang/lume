@@ -11,6 +11,7 @@ import type { LumeConfigThinkingLevel } from "./lume-config"
 import type { WikiSearchScope } from "./wiki"
 import type { McpTransportType } from "./mcp"
 import type { PluginMarketplaceAsset } from "./plugin-market"
+import type { PlanningOperationEnvelope, PlanningTodoRefPart } from "./planning-todo"
 export type { SDKMessage } from "@lume/agent-sdk"
 export type {
   CallMcpToolDiagnosticRequest,
@@ -100,10 +101,13 @@ export interface AgentWorkspaceRemovalImpact {
   automations: number
   imAccounts: number
   imThreadBindings: number
+  planningTodos: number
+  planningTodoAction: 'unassigned' | 'trash'
 }
 
 export interface AgentWorkspaceRemoveResult extends AgentWorkspaceRemovalImpact {
   mode: AgentWorkspaceRemoveMode
+  planningOperation: PlanningOperationEnvelope
 }
 
 export type AgentThreadFileContextMode = 'newRoot' | 'inherit' | 'fork'
@@ -182,6 +186,10 @@ export interface AgentThreadMeta {
   fileContextId?: string
   /** 外部来源，用于按 IM 渠道等入口分组展示 */
   source?: AgentThreadSource
+  /** Sidecar-owned Planning start operation that created this thread. */
+  createdByPlanningOperationId?: string
+  /** Durable hint for the primary Planning Todo chip; SQLite link remains authoritative. */
+  planningTodoId?: string
   /** 父线程 ID（子任务线程归属） */
   parentThreadId?: string
   /** 是否置顶 */
@@ -814,6 +822,7 @@ export type AgentUserMessagePart =
       occurrenceId: string
       uri: string
     }
+  | PlanningTodoRefPart
 
 export interface AgentCapabilityReferenceView {
   uri: string
@@ -864,6 +873,10 @@ export interface AgentSendInput {
   editFromMessageId?: string
   /** End-to-end observability context. Content is correlation metadata, not authorization. */
   traceContext?: AgentTraceContext
+  /** Sidecar-only start-operation identity; renderer schemas intentionally omit it. */
+  trustedPlanningOperationId?: string
+  /** Sidecar-only execution-context binding; renderer schemas intentionally omit it. */
+  trustedPlanningClientSubmissionId?: string
 }
 
 export interface AgentUpdateThreadModelSelectionInput {

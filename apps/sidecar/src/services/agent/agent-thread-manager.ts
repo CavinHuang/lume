@@ -32,6 +32,8 @@ import {
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentSubmissionStore } from "./agent-submission-store";
+import { getPlanningTodoStore } from "../planning/planning-todo-store";
+import { agentLifecycleLocks } from "./agent-lifecycle-lock-manager";
 import {
   getVisibleAgentMessages,
   syncVersionStoreFromMessages
@@ -61,6 +63,8 @@ interface CreateAgentThreadOptions {
   fileContextMode?: FileContextMode;
   fileContextId?: string;
   wikiProfile?: AgentThreadMeta["wikiProfile"];
+  planningOperationId?: string;
+  planningTodoId?: string;
 }
 
 function buildModelRef(channelId?: string, modelId?: string): string | undefined {
@@ -293,6 +297,8 @@ export function createAgentThreadWithModelRef(
       modelSelectionSource: explicitSelectionProvided ? "thread-override" : "inherited",
       workspaceId,
       wikiProfile: options?.wikiProfile,
+      ...(options?.planningOperationId ? { createdByPlanningOperationId: options.planningOperationId } : {}),
+      ...(options?.planningTodoId ? { planningTodoId: options.planningTodoId } : {}),
       fileContextId,
       parentThreadId,
       pinned: false,
@@ -559,7 +565,26 @@ export function moveAgentThreadToWorkspace(id: string, workspaceId: string): Age
 }
 
 export function deleteAgentThread(id: string): void {
-  const { removed, fileContextId, deleteFileContext } = withThreadIndexMutation((index) => {
+  const threadBeforeDelete = getAgentThreadMeta(id);
+  const workspaceLock = `workspace:${threadBeforeDelete?.workspaceId ?? "<unassigned>"}`;
+  const release = agentLifecycleLocks.tryAcquire([workspaceLock, `thread:${id}`]);
+  if (!release) throw new Error("Agent 线程正在执行项目生命周期操作，请稍后重试");
+  try { deleteAgentThreadLocked(id); } finally { release(); }
+}
+
+function deleteAgentThreadLocked(id: string): void {
+  const planningStore = getPlanningTodoStore();
+  const linkSnapshot = planningStore.snapshotThreadLinks(id);
+  const operationId = randomUUID();
+  planningStore.reserveOperation({ operationId, kind: "thread_delete", threadId: id });
+  // Planning links are tombstoned before the external thread index mutation.
+  planningStore.tombstoneThreadLinks(id);
+  planningStore.advanceOperation(operationId, { phase: "links_tombstoned", status: "running", threadId: id });
+  let removed: AgentThreadMeta;
+  let fileContextId: string;
+  let deleteFileContext: boolean;
+  try {
+    ({ removed, fileContextId, deleteFileContext } = withThreadIndexMutation((index) => {
     const idx = index.threads.findIndex((thread) => thread.id === id);
     if (idx === -1) {
       throw new Error(`Agent 线程不存在: ${id}`);
@@ -570,7 +595,20 @@ export function deleteAgentThread(id: string): void {
     const deleteFileContext = !index.threads.some((thread) => (thread.fileContextId ?? thread.id) === fileContextId);
     writeIndex(index);
     return { removed, fileContextId, deleteFileContext };
-  });
+    }));
+    planningStore.advanceOperation(operationId, { phase: "index_removed", status: "running", threadId: id });
+  } catch (error) {
+    try {
+      planningStore.restoreThreadLinkSnapshot(linkSnapshot);
+      planningStore.advanceOperation(operationId, { phase: "compensating", status: "running", compensation: "pending", threadId: id, error: error instanceof Error ? error.message : String(error) });
+      planningStore.advanceOperation(operationId, { phase: "finalized", status: "failed", recoverable: false, compensation: "completed", threadId: id, error: error instanceof Error ? error.message : String(error) });
+    } catch (compensationError) {
+      planningStore.advanceOperation(operationId, { phase: "compensating", status: "partial", recoverable: true, compensation: "failed", threadId: id, error: compensationError instanceof Error ? compensationError.message : String(compensationError) });
+    }
+    throw error;
+  }
+
+  let cleanupPending = false;
 
   try {
     const workspacesDir = getAgentWorkspacesDir();
@@ -583,6 +621,7 @@ export function deleteAgentThread(id: string): void {
       log.debug("removed thread working directory", { threadId: id, threadDir });
     }
   } catch (error) {
+    cleanupPending = true;
     log.warn("failed to remove thread working directory", { error, threadId: id });
   }
 
@@ -592,6 +631,7 @@ export function deleteAgentThread(id: string): void {
       rmSync(runtimeCoreSessionDir, { recursive: true, force: true });
       log.debug("removed runtime-core transcript", { threadId: id, runtimeCoreSessionDir });
     } catch (error) {
+      cleanupPending = true;
       log.warn("failed to remove runtime-core transcript", { error, threadId: id });
     }
   }
@@ -602,6 +642,7 @@ export function deleteAgentThread(id: string): void {
       rmSync(sessionDataDir, { recursive: true, force: true });
       log.debug("removed thread version data", { threadId: id, sessionDataDir });
     } catch (error) {
+      cleanupPending = true;
       log.warn("failed to remove thread version data", { error, threadId: id });
     }
   }
@@ -616,6 +657,7 @@ export function deleteAgentThread(id: string): void {
           rmSync(contextDir, { recursive: true, force: true });
           log.debug("removed file context directory", { threadId: id, fileContextId, contextDir });
         } catch (error) {
+          cleanupPending = true;
           log.warn("failed to remove file context directory", { error, threadId: id, fileContextId });
         }
       }
@@ -623,6 +665,12 @@ export function deleteAgentThread(id: string): void {
   }
 
   getAgentSubmissionStore().deleteThread(id);
+  if (cleanupPending) {
+    planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
+  } else {
+    planningStore.advanceOperation(operationId, { phase: "files_removed", status: "running", threadId: id });
+    planningStore.advanceOperation(operationId, { phase: "finalized", status: "completed", recoverable: false, threadId: id });
+  }
   log.info("deleted agent thread", { threadId: removed.id });
 }
 
@@ -674,6 +722,8 @@ export function clearWorkspaceFromAgentThreads(workspaceId: string): AgentThread
 }
 
 export function trashAgentThreads(threadIds: Set<string>): AgentThreadMeta[] {
+  const planningStore = getPlanningTodoStore();
+  for (const threadId of threadIds) planningStore.markThreadLinksTrashed(threadId);
   const trashed = withThreadIndexMutation((index) => {
     const now = Date.now();
     const changed: AgentThreadMeta[] = [];

@@ -23,6 +23,7 @@ import type {
   AgentWelcomeSuggestion,
   AgentWelcomeSuggestionInput,
   AgentWelcomeSuggestionsResult,
+  AgentUserMessagePart,
   LumeRuntimeEvent,
   RuntimeCodingReport
 } from "@lume/shared";
@@ -78,6 +79,8 @@ import type { LumeRunState } from "../agent-runtime/runner/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";
 import { normalizeAgentUserMessage } from "./agent-user-message-parts";
+import { getPlanningTodoStore } from "../planning/planning-todo-store";
+import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
 import { materializeCapabilityReferences } from "./invocable-capability-catalog";
 import { getAgentSubmissionStore } from "./agent-submission-store";
 import {
@@ -283,7 +286,8 @@ async function validateQueuedAgentDispatch(
   const normalized = normalizeAgentUserMessage({
     userMessage: dispatch.input.userMessage,
     messageParts: dispatch.input.messageParts,
-  });
+  }, { allowPrimaryPlanningTodo: Boolean(dispatch.input.trustedPlanningOperationId && dispatch.input.clientSubmissionId && getPlanningTodoStore().isTrustedPrimarySubmission({ operationId: dispatch.input.trustedPlanningOperationId, clientSubmissionId: dispatch.input.clientSubmissionId, threadId: dispatch.input.threadId })) });
+  registerPlanningTodoReferences(dispatch.input.trustedPlanningClientSubmissionId, normalized.parts);
   const projection = await materializeCapabilityReferences({
     workspaceSlug: workspace?.slug,
     cwd: workspace?.projectPath,
@@ -307,7 +311,8 @@ export async function prepareAgentDispatchInput(input: AgentSendInput): Promise<
   const normalized = normalizeAgentUserMessage({
     userMessage: input.userMessage,
     messageParts: input.messageParts,
-  });
+  }, { allowPrimaryPlanningTodo: Boolean(input.trustedPlanningOperationId && input.clientSubmissionId && getPlanningTodoStore().isTrustedPrimarySubmission({ operationId: input.trustedPlanningOperationId, clientSubmissionId: input.clientSubmissionId, threadId: input.threadId })) });
+  registerPlanningTodoReferences(input.trustedPlanningClientSubmissionId, normalized.parts);
   try {
     const projection = await materializeCapabilityReferences({
       workspaceSlug: workspace?.slug,
@@ -878,7 +883,8 @@ export async function sendAgentMessage(
   const normalizedUserMessage = normalizeAgentUserMessage({
     userMessage,
     messageParts: input.messageParts,
-  });
+  }, { allowPrimaryPlanningTodo: Boolean(input.trustedPlanningOperationId && input.clientSubmissionId && getPlanningTodoStore().isTrustedPrimarySubmission({ operationId: input.trustedPlanningOperationId, clientSubmissionId: input.clientSubmissionId, threadId: input.threadId })) });
+  registerPlanningTodoReferences(input.trustedPlanningClientSubmissionId, normalizedUserMessage.parts);
   const isManualCompactCommand = input.messageMetadata?.manualCommand === "compact";
   let modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, normalizedUserMessage.modelMessage);
   if (!isManualCompactCommand && normalizedUserMessage.modelMessage.trim() === "/compact") {
@@ -1070,6 +1076,15 @@ export async function sendAgentMessage(
       replaceAgentThreadTranscript(threadId, getLatestVisibleMessagesForThread(threadId));
     }
     appendAgentThreadSDKMessages(threadId, [userSdkMessage]);
+    const planningContext = resolvePlanningExecutionContext({ clientSubmissionId: input.clientSubmissionId ?? input.traceContext?.submissionId });
+    for (const part of normalizedUserMessage.parts) {
+      if (part.type !== "planning_todo_ref") continue;
+      const todo = getPlanningTodoStore().get(part.todoId, false);
+      authorizePlanningOperation(planningContext, { operation: "get", todo, todoId: todo.id, scope: "todo" });
+      if (part.relation === "mentioned") {
+        getPlanningTodoStore().link(todo.id, { threadId, messageId: createdUserVersion.message.id, relation: "mentioned", runId: input.clientSubmissionId ?? input.traceContext?.submissionId });
+      }
+    }
     emit.onMessageAppended?.({
       threadId,
       message: createdUserVersion.message,
@@ -1390,6 +1405,7 @@ export function appendAgentMessage(
   options?: {
     onExecutionStarted?: () => void;
     priority?: "user" | "background";
+    trustedPlanningOperationId?: string;
   }
 ): AgentThreadMessageDispatchResult {
   streamEmitters.set(input.threadId, emit);
@@ -1453,25 +1469,34 @@ export function appendAgentMessage(
         ...emit,
         onComplete: (payload) => {
           submissionStore!.transition(clientSubmissionId, "completed");
+          const context = resolvePlanningExecutionContext({ clientSubmissionId });
+          if (context?.runId) finishPlanningExecutionRun(context.runId);
           emit.onComplete(payload);
         },
         onError: (error) => {
           submissionStore!.transition(clientSubmissionId, "failed", "runtime_failed");
+          const context = resolvePlanningExecutionContext({ clientSubmissionId });
+          if (context?.runId) finishPlanningExecutionRun(context.runId);
           emit.onError(error);
         }
       }
     : emit;
   try {
-    const result = agentRuntimeKernel.dispatch({ ...input, traceContext }, trackedEmit, {
+    const dispatchInput: AgentSendInput = {
+      ...input,
+      traceContext,
+      ...(options?.trustedPlanningOperationId ? { trustedPlanningOperationId: options.trustedPlanningOperationId } : {})
+    };
+    const result = agentRuntimeKernel.dispatch(dispatchInput, trackedEmit, {
       priority: options?.priority,
       onExecutionStarted: () => {
         options?.onExecutionStarted?.();
         if (clientSubmissionId) {
-          queueMicrotask(() => submissionStore!.start(clientSubmissionId, { ...input, traceContext }));
+          queueMicrotask(() => submissionStore!.start(clientSubmissionId, dispatchInput));
         }
       }
     });
-    if (clientSubmissionId) submissionStore!.accept(clientSubmissionId, result, { ...input, traceContext });
+    if (clientSubmissionId) submissionStore!.accept(clientSubmissionId, result, dispatchInput);
     return result;
   } catch (error) {
     if (clientSubmissionId) submissionStore!.transition(clientSubmissionId, "rejected", "dispatch_rejected");
@@ -1860,6 +1885,15 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
       error: error instanceof Error ? error.message : String(error)
     });
     return null;
+  }
+}
+
+function registerPlanningTodoReferences(clientSubmissionId: string | undefined, parts: AgentUserMessagePart[]): void {
+  if (!clientSubmissionId) return;
+  const context = resolvePlanningExecutionContext({ clientSubmissionId });
+  if (!context) return;
+  for (const part of parts) {
+    if (part.type === "planning_todo_ref") addPlanningAuthorizedTodo(context, part.todoId);
   }
 }
 

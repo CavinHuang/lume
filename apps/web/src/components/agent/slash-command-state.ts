@@ -1,7 +1,7 @@
 import type { AgentInvocableCapabilityItem } from '@lume/shared'
 
-export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent' | 'plugin'
-export type MentionSection = 'capability' | 'skill' | 'agent' | 'file' | 'plugin'
+export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent' | 'plugin' | 'todo'
+export type MentionSection = 'capability' | 'skill' | 'agent' | 'file' | 'plugin' | 'todo'
 
 export interface MentionItem {
   id: string
@@ -18,6 +18,8 @@ export interface MentionItem {
   iconUrl?: string
   disabled?: boolean
   disabledReason?: string
+  todoId?: string
+  relation?: 'mentioned' | 'primary'
 }
 
 type CommonSlashCommand = Pick<MentionItem, 'id' | 'label' | 'type' | 'title' | 'subtitle' | 'section' | 'executeOnSelect'> & {

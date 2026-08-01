@@ -12,6 +12,7 @@ import {
   Trash2,
   BookOpen,
   Bot,
+  ListTodo,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type {
@@ -357,6 +358,8 @@ function renderIcon(icon: string, size: number) {
       return <Bot size={size} />
     case 'clock':
       return <Clock3 size={size} />
+    case 'list-todo':
+      return <ListTodo size={size} />
     case 'folder':
       return <Folder size={size} />
     case 'trash':

@@ -1,6 +1,6 @@
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
 
-export type LumeSidebarTopActionId = 'new-chat' | 'lume' | 'skills' | 'automations'
+export type LumeSidebarTopActionId = 'new-chat' | 'lume' | 'skills' | 'automations' | 'todos'
 export type LumeSidebarFooterActionId = 'recycle-bin' | 'settings'
 export const UNASSIGNED_THREADS_WORKSPACE_ID = '__unassigned__'
 const UNASSIGNED_THREADS_WORKSPACE_NAME = '普通会话'
@@ -12,6 +12,7 @@ export interface BuildLumeSidebarViewModelInput {
   activeTabId: string | null
   expandedWorkspaceIds: string[]
   pinnedWorkspaceIds: string[]
+  planningTodoCount?: number
 }
 
 export interface LumeSidebarAction<TId extends string> {
@@ -76,6 +77,7 @@ export function buildLumeSidebarViewModel({
   activeTabId,
   expandedWorkspaceIds,
   pinnedWorkspaceIds,
+  planningTodoCount = 0,
 }: BuildLumeSidebarViewModelInput): LumeSidebarViewModel {
   const selectedWorkspaceId = currentWorkspaceId
   const expandedSet = new Set(expandedWorkspaceIds)
@@ -94,6 +96,7 @@ export function buildLumeSidebarViewModel({
       disabled: false,
       active: activeTabId === '__automation__',
     },
+    { id: 'todos', label: '待办', icon: 'list-todo', kind: 'button', active: activeTabId === '__todos__', ...(planningTodoCount > 0 ? { badge: String(planningTodoCount) } : {}) },
   ]
 
   const footerActions: LumeSidebarFooterAction[] = [

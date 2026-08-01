@@ -4,11 +4,13 @@ import Mention, { type MentionOptions } from '@tiptap/extension-mention'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 import type { Extensions } from '@tiptap/core'
 import { CapabilityMentionNodeView } from './CapabilityMentionNodeView'
+import { PlanningTodoMentionNodeView } from './PlanningTodoMentionNodeView'
 
 interface PromptEditorExtensionOptions {
   placeholder: string
   capabilitySuggestion: MentionOptions['suggestion']
   agentSuggestion?: MentionOptions['suggestion']
+  planningTodoSuggestion?: MentionOptions['suggestion']
 }
 
 /** Shared editor schema for every Lume prompt surface. */
@@ -45,6 +47,27 @@ export function createPromptEditorExtensions(options: PromptEditorExtensionOptio
     HTMLAttributes: { class: 'capability-mention' },
     renderText: ({ node }) => node.attrs.uri ?? '',
     suggestion: options.capabilitySuggestion,
+  }))
+
+  extensions.push(Mention.extend({
+    name: 'planningTodoMention',
+    addAttributes() {
+      return {
+        ...this.parent?.(),
+        schemaVersion: { default: 1 },
+        uri: { default: null },
+        todoId: { default: null },
+        relation: { default: 'mentioned' },
+        displayText: { default: '' },
+      }
+    },
+    addNodeView() {
+      return ReactNodeViewRenderer(PlanningTodoMentionNodeView)
+    },
+  }).configure({
+    HTMLAttributes: { class: 'planning-todo-mention' },
+    renderText: ({ node }) => `&${node.attrs.displayText ?? ''}`,
+    suggestion: options.planningTodoSuggestion,
   }))
 
   return extensions

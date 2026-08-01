@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { Blocks, Bot, File, Hash, TerminalSquare, ArrowLeft, Loader2, Package, BookOpen } from 'lucide-react'
+import { Blocks, Bot, File, Hash, TerminalSquare, ArrowLeft, Loader2, Package, BookOpen, ListChecks } from 'lucide-react'
 import { type MentionItem } from './slash-command-state'
 import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
 import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 interface MentionListProps {
   items: MentionItem[]
   command: (item: MentionItem & { occurrenceId?: string }) => void
-  trigger?: '@' | '/' | '#'
+  trigger?: '@' | '/' | '#' | '&'
   getWorkspaceSlug?: () => string | null
   /** 选中即执行命令（executeOnSelect）时触发，替代插入 mention 文本 */
   onCommandExecute?: (id: string) => void
@@ -172,6 +172,8 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         ? '继续输入关键词搜索 Agent 或文件'
         : trigger === '#'
           ? '继续输入关键词搜索 MCP 服务'
+          : trigger === '&'
+            ? '继续输入关键词搜索 Planning Todo'
           : '继续输入关键词搜索动作、技能或插件'
       return (
         <div className="min-w-[280px] rounded-[1.25rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] p-3 shadow-[0_22px_52px_-32px_hsl(var(--shadow-panel)/0.45)]">
@@ -238,11 +240,13 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       )
     }
 
-    const panelTitle = trigger === '@' ? 'Agents & Files' : trigger === '#' ? 'MCP Servers' : 'Slash Commands'
+    const panelTitle = trigger === '@' ? 'Agents & Files' : trigger === '#' ? 'MCP Servers' : trigger === '&' ? 'Planning Todo' : 'Slash Commands'
     const panelDescription = trigger === '@'
       ? '选择专业 Agent 或引用当前工作区文件'
       : trigger === '#'
         ? '选择可用的 MCP 服务与工具入口'
+        : trigger === '&'
+          ? '当前项目未完成待办优先，也可搜索全部待办'
         : '动作、技能和插件都可以在这里选择'
     let previousSection: MentionItem['section'] | undefined
 
@@ -329,6 +333,7 @@ function getMentionSectionLabel(section: MentionItem['section']): string {
   if (section === 'agent') return 'Agents'
   if (section === 'file') return 'Files'
   if (section === 'plugin') return '插件'
+  if (section === 'todo') return 'Planning Todo'
   return '技能'
 }
 
@@ -342,6 +347,7 @@ function MentionItemIcon({ item }: { item: MentionItem }) {
   if (item.type === 'agent') return <Bot size={16} />
   if (item.type === 'file') return <File size={16} />
   if (item.type === 'mcp') return <Hash size={16} />
+  if (item.type === 'todo') return <ListChecks size={16} />
   return <TerminalSquare size={16} />
 }
 
