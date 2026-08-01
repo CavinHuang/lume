@@ -1,7 +1,7 @@
-import type { AgentInvocableCapabilityItem } from '@lume/shared'
+import type { AgentInvocableCapabilityItem, BrowserReferenceCandidate } from '@lume/shared'
 
-export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent' | 'plugin'
-export type MentionSection = 'capability' | 'skill' | 'agent' | 'file' | 'plugin'
+export type MentionItemType = 'file' | 'skill' | 'mcp' | 'command' | 'agent' | 'plugin' | 'browser'
+export type MentionSection = 'capability' | 'skill' | 'agent' | 'browser-tab' | 'chrome-page' | 'file' | 'project-file' | 'session-file' | 'plugin'
 
 export interface MentionItem {
   id: string
@@ -18,6 +18,7 @@ export interface MentionItem {
   iconUrl?: string
   disabled?: boolean
   disabledReason?: string
+  browserCandidate?: BrowserReferenceCandidate
 }
 
 type CommonSlashCommand = Pick<MentionItem, 'id' | 'label' | 'type' | 'title' | 'subtitle' | 'section' | 'executeOnSelect'> & {
