@@ -86,6 +86,7 @@ const SENSITIVE_KEYS = [
   'setcookie',
   'accesstoken',
   'refreshtoken',
+  'grant',
 ]
 const SENSITIVE_PAYLOAD_KEYS = new Set([
   'body', 'prompt', 'systemprompt', 'rawrequest', 'rawresponse', 'requestbody', 'responsebody',

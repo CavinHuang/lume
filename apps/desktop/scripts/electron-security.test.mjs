@@ -423,6 +423,24 @@ test("desktop windows use secure sandboxed web preferences", () => {
     sandbox: true,
     nodeIntegration: false,
   });
+  assert.deepEqual(createSecureWebPreferences({ preload: "preload.cjs", webviewTag: true }), {
+    contextIsolation: true,
+    sandbox: true,
+    nodeIntegration: false,
+    webviewTag: true,
+    preload: "preload.cjs",
+  });
+});
+
+test("browser webview guests are one-time authorized and receive no host bridge", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const guestPreloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-guest-preload.ts"), "utf8");
+  assert.match(mainSource, /will-attach-webview/);
+  assert.match(mainSource, /authorizeGuestMount/);
+  assert.match(mainSource, /did-attach-webview/);
+  assert.match(mainSource, /browser-guest-preload\.cjs/);
+  assert.equal(guestPreloadSource.includes("contextBridge"), false);
+  assert.equal(guestPreloadSource.includes("ipcRenderer"), false);
 });
 
 test("main process does not opt BrowserWindow renderers out of sandbox", () => {
@@ -470,10 +488,10 @@ test("preload bridge is compatible with Electron sandbox require limits", () => 
   assert.equal(preloadSource.includes("node:"), false);
 });
 
-test("browser review overlay exposes only its typed message channel", () => {
-  const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-overlay-preload.ts"), "utf8");
+test("browser auth preload sends secrets only through its dedicated main-process channel", () => {
+  const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-auth-preload.ts"), "utf8");
   assert.match(preloadSource, /from ['"]electron['"]/);
-  assert.match(preloadSource, /ipcRenderer\.send\(['"]lume:browser-overlay['"], message\)/);
+  assert.match(preloadSource, /ipcRenderer\.send\(['"]lume:browser-auth['"]/);
   assert.equal(preloadSource.includes("ipcRenderer.invoke"), false);
   assert.equal(preloadSource.includes("node:"), false);
   assert.equal(preloadSource.includes("navigator.clipboard"), false);

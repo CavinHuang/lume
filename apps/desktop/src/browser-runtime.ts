@@ -1,24 +1,30 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
-import { app, BrowserWindow, WebContentsView, clipboard, dialog, ipcMain, nativeImage, screen, session, shell, type IpcMainEvent } from "electron"
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, session, shell, type IpcMainEvent } from "electron"
 import {
   BROWSER_PROTOCOL_MAX_SUPPORTED,
   BROWSER_PROTOCOL_MIN_SUPPORTED,
   BROWSER_PROTOCOL_VERSION,
   DEFAULT_BROWSER_SETTINGS,
   type BrowserActionRequest,
+  type BrowserAuthFieldRequest,
+  type BrowserAuthRequest,
+  type BrowserAuthResult,
   type BrowserErrorCode,
   type BrowserExtensionDescriptor,
   type BrowserHistoryEntry,
+  type BrowserGuestMountDescriptor,
   type BrowserLocator,
   type BrowserRequestContext,
   type BrowserRuntimeDescriptor,
   type BrowserSettings,
   type BrowserSitePermissionOverride,
   type BrowserTabDescriptor,
+  type BrowserViewportPreset,
   type BrowserViewportState,
 } from "../../../packages/shared/src/types/browser-runtime"
+import { BROWSER_API_REGISTRY, browserApiSupportForBackend, browserMutatingRuntimeMethods } from "../../../packages/shared/src/browser-api-registry"
 import {
   selectBrowserPartition,
   shouldInstallAdvancedCdpPolicy,
@@ -31,6 +37,8 @@ import { BrowserNetworkGuard } from "./browser-network-guard"
 import { BrowserAuditLog } from "./browser-audit"
 import { AGENT_DOWNLOAD_LIMITS, AgentDownloadQuota, BrowserDownloadHistory, completeDownload, prepareDownload, removePartialDownload, safeDownloadFilename } from "./browser-downloads"
 import { BrowserCredentialVault } from "./browser-credentials"
+import { BrowserWorkspaceStore } from "./browser-workspace-store"
+import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -42,11 +50,11 @@ type BrowserRuntimeOptions = {
   persistSettings?: (settings: BrowserSettings) => void
   journalEncryption?: { available: boolean; encrypt: (value: string) => Buffer; decrypt?: (value: Buffer) => string }
   credentialStorage: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
-  overlayPreloadPath?: string
+  authPreloadPath?: string
 }
 
 type BrowserTab = BrowserTabDescriptor & {
-  view: WebContentsView
+  webContents: Electron.WebContents | null
   partition: string
   context?: BrowserRequestContext
   inputSequence: number
@@ -55,6 +63,7 @@ type BrowserTab = BrowserTabDescriptor & {
   dialogInfo?: { type: "alert" | "beforeunload" | "confirm" | "prompt"; message?: string; defaultValue?: string }
   recentAgentContext?: { browserSessionId: string; browserTurnId: string; expiresAt: number }
   agentLease?: { browserSessionId: string; browserTurnId: string; generation: number }
+  agentViewportOverride?: { browserSessionId: string; browserTurnId: string; previous: BrowserViewportState }
   handoff?: { browserSessionId: string; status: "handoff" | "deliverable"; reason?: string }
   approvedPrivateOrigins?: Set<string>
   findRequestId?: number
@@ -64,6 +73,21 @@ type BrowserTab = BrowserTabDescriptor & {
   pendingNavigationIndex?: number
   consoleLogs: Array<{ level: "debug" | "info" | "log" | "warn" | "error"; message: string; timestamp: string; url?: string }>
   domNodes?: Map<string, { generation: number; x: number; y: number }>
+  surfaceBounds?: Electron.Rectangle
+  pendingUrl?: string
+  mountToken?: string
+  mountWaiters: Array<{ resolve: (contents: Electron.WebContents) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>
+  viewportQueue: Promise<void>
+}
+
+type BrowserGuestMountGrant = {
+  token: string
+  tabId: string
+  generation: number
+  partition: string
+  ownerWebContentsId: number
+  expiresAt: number
+  state: "issued" | "attaching"
 }
 
 type JournalEntry = {
@@ -118,58 +142,33 @@ type BrowserPageAssetInventory = {
   assets: BrowserPageAsset[]
 }
 
-type BrowserReviewOverlayResult =
-  | { status: "submit"; body: string }
-  | { status: "submit"; styles: Record<string, string> }
-  | { status: "cancel" }
-
-type BrowserReviewOverlay = {
+type BrowserAuthSession = {
   window: BrowserWindow
   tabId: string
   generation: number
-  kind: "annotation" | "tweaks"
-  domPath?: string
-  body: string
-  styles: Record<string, string>
+  inputSequence: number
+  origin: string
+  request: BrowserAuthRequest
   settled: boolean
-  resolve: (result: BrowserReviewOverlayResult) => void
+  timer: ReturnType<typeof setTimeout>
+  resolve: (result: BrowserAuthResult) => void
 }
 
-const MUTATING_METHODS = new Set(["navigate", "back", "forward", "reload", "click", "doubleClick", "hover", "fill", "type", "typeActive", "press", "pressActive", "select", "check", "uncheck", "scroll", "drag", "browserAuth", "contactFill", "dialog:handle", "upload", "filechooser:setFiles", "downloadMedia", "pageAssets:bundle", "webmcp:invoke"])
-const BROWSER_API_SUPPORT = {
-  "Browser.nameSession": true,
-  "BrowserUser.history": true,
-  "Tabs.content": true,
-  "Tabs.finalize": true,
-  "Tab.content": true,
-  "Tab.markDeliverable": true,
-  "Tab.markHandoff": true,
-  "Tab.clipboard": true,
-  "TabClipboardAPI.read": true,
-  "TabClipboardAPI.readText": true,
-  "TabClipboardAPI.write": true,
-  "TabClipboardAPI.writeText": true,
-  "CUAAPI.downloadMedia": true,
-  "DomCUAAPI.click": true,
-  "DomCUAAPI.double_click": true,
-  "DomCUAAPI.downloadMedia": true,
-  "DomCUAAPI.get_visible_dom": true,
-  "DomCUAAPI.keypress": true,
-  "DomCUAAPI.scroll": true,
-  "DomCUAAPI.type": true,
-  "PlaywrightAPI.elementInfo": true,
-  "PlaywrightAPI.elementScreenshot": true,
-  "PlaywrightAPI.evaluate": true,
-  "PlaywrightAPI.frameLocator": true,
-  "PlaywrightAPI.waitForEvent": true,
-  "PlaywrightDownload.path": true,
-  "PlaywrightFileChooser.setFiles": true,
-  "PlaywrightLocator.downloadMedia": true,
-  "TabDevAPI.logs": true,
-} as const
+const MUTATING_METHODS = new Set([
+  ...browserMutatingRuntimeMethods(),
+  "navigate", "back", "forward", "reload", "click", "doubleClick", "hover", "fill", "type", "typeActive",
+  "press", "pressActive", "select", "check", "uncheck", "scroll", "drag", "contactFill", "dialog:handle",
+  "upload", "pageAssets:bundle", "webmcp:invoke",
+])
+const GUEST_OPTIONAL_METHODS = new Set([
+  "url", "title", "site-info", "dialog:get", "wait:download", "download:path",
+  "screenshot:attachment:delete", "clipboard:read", "clipboard:readText", "clipboard:write", "clipboard:writeText",
+])
+const REGISTERED_BROWSER_RUNTIME_METHODS = new Set(BROWSER_API_REGISTRY.map((entry) => entry.runtimeMethod))
 
 export class BrowserRuntime {
   private readonly tabs = new Map<string, BrowserTab>()
+  private readonly guestMounts = new Map<string, BrowserGuestMountGrant>()
   private readonly sessionPolicies = new WeakMap<Electron.Session, SessionPolicy>()
   private readonly ownedSessionPolicies = new Set<SessionPolicy>()
   private settings: BrowserSettings
@@ -181,6 +180,8 @@ export class BrowserRuntime {
   private readonly browsingHistory: BrowserHistoryStore
   private readonly extensions: BrowserExtensionStore
   private readonly credentials: BrowserCredentialVault
+  private readonly workspaces: BrowserWorkspaceStore
+  private readonly referenceGrants = new BrowserReferenceGrantStore()
   private agentPluginEnabled = false
   private cursorOverlay: BrowserWindow | null = null
   private cursorState: { x: number; y: number; pulse: boolean } | null = null
@@ -188,17 +189,17 @@ export class BrowserRuntime {
   private readonly policyTokens = new Map<string, { bindingHash: string; expiresAt: number }>()
   private readonly downloadRefs = new Map<string, { path: string; browserSessionId: string; browserTurnId: string }>()
   private readonly sessionNames = new Map<string, string>()
-  private readonly claimSnapshots = new Map<string, { providerTabId?: string; title: string; url: string; generation: number }>()
+  private readonly claimSnapshots = new Map<string, { tabId: string; providerTabId?: string; title: string; url: string; generation: number }>()
   private readonly downloadWaiters = new Map<string, BrowserDownloadWaiter[]>()
   private readonly downloadResults = new Map<string, { browserSessionId: string; browserTurnId: string; state: "pending" | "completed" | "failed"; fileRef?: string; waiters: Array<(value: string | null) => void> }>()
   private readonly fileChooserWaiters = new Map<string, BrowserFileChooserWaiter[]>()
   private readonly fileChoosers = new Map<string, { tabId: string; backendNodeId: number; isMultiple: boolean; browserSessionId: string; browserTurnId: string; generation: number }>()
   private readonly pageAssetInventories = new Map<string, BrowserPageAssetInventory>()
-  private readonly reviewOverlays = new Map<number, BrowserReviewOverlay>()
-  private readonly browserOverlayMessageHandler = (event: IpcMainEvent, payload: unknown): void => {
-    const overlay = this.reviewOverlays.get(event.sender.id)
-    if (!overlay || overlay.window.isDestroyed()) return
-    this.handleBrowserOverlayMessage(overlay, payload)
+  private readonly authSessions = new Map<number, BrowserAuthSession>()
+  private readonly browserAuthMessageHandler = (event: IpcMainEvent, payload: unknown): void => {
+    const auth = this.authSessions.get(event.sender.id)
+    if (!auth || auth.window.isDestroyed()) return
+    void this.handleBrowserAuthMessage(auth, payload)
   }
   private readonly loginHandler = (event: Electron.Event, webContents: Electron.WebContents, _details: Electron.AuthenticationResponseDetails, authInfo: Electron.AuthInfo, callback: (username?: string, password?: string) => void): void => {
     const tab = this.tabForContents(webContents)
@@ -231,17 +232,19 @@ export class BrowserRuntime {
 
   constructor(private readonly options: BrowserRuntimeOptions) {
     this.settings = { ...DEFAULT_BROWSER_SETTINGS, ...(options.initialSettings ?? {}) }
+    if (this.settings.annotationScreenshots === "ask") this.settings.annotationScreenshots = "necessary"
     this.journal = new BrowserOperationJournal(options.configDir, options.journalEncryption)
     this.audit = new BrowserAuditLog(options.configDir)
     this.downloadHistory = new BrowserDownloadHistory(options.configDir)
     this.browsingHistory = new BrowserHistoryStore(options.configDir)
     this.extensions = new BrowserExtensionStore(options.configDir)
     this.credentials = new BrowserCredentialVault(options.configDir, options.credentialStorage)
+    this.workspaces = new BrowserWorkspaceStore(options.configDir)
     void this.restoreBrowserExtensions()
     app.on("login", this.loginHandler)
     app.on("certificate-error", this.certificateErrorHandler)
     app.on("select-client-certificate", this.clientCertificateHandler)
-    ipcMain.on("lume:browser-overlay", this.browserOverlayMessageHandler)
+    ipcMain.on("lume:browser-auth", this.browserAuthMessageHandler)
   }
 
   descriptor(): BrowserRuntimeDescriptor {
@@ -263,36 +266,100 @@ export class BrowserRuntime {
       { id: "viewport", description: "Set or reset a responsive viewport for the current browser session." },
     ]
     if (this.settings.advancedCdpEnabled) capabilities.push({ id: "advancedCdp", description: "Use full CDP in an isolated session after per-origin and per-action approval." })
-    if (this.options.credentialStorage.isEncryptionAvailable()) capabilities.push({ id: "browserAuth", description: "Fill a saved credential in the current IAB origin without returning its value." })
+    if (this.options.authPreloadPath) capabilities.push({ id: "browserAuth", description: "Collect and submit requested credentials in an isolated authentication window." })
+    const registeredMethods = new Set(REGISTERED_BROWSER_RUNTIME_METHODS)
+    if (!this.options.authPreloadPath) registeredMethods.delete("browserAuth:request")
+    const apiSupportOverrides = browserApiSupportForBackend("iab", registeredMethods)
     return {
       id: "lume-iab",
       backend: "iab",
       protocolVersion: BROWSER_PROTOCOL_VERSION,
       minSupported: BROWSER_PROTOCOL_MIN_SUPPORTED,
       maxSupported: BROWSER_PROTOCOL_MAX_SUPPORTED,
-      capabilityHash: capabilityHash(capabilities.map((item) => item.id)),
+      capabilityHash: capabilityHash([
+        ...capabilities.map((item) => item.id),
+        ...Object.entries(apiSupportOverrides).flatMap(([api, supported]) => supported ? [api] : []),
+      ]),
       generation: this.backendGeneration,
       capabilities,
-      apiSupportOverrides: BROWSER_API_SUPPORT,
+      apiSupportOverrides,
     }
   }
 
   getSettings(): BrowserSettings { return { ...this.settings } }
+
+  authorizeGuestMount(ownerWebContentsId: number, bootstrapUrl: string, requestedPartition: string): { token: string; partition: string } | null {
+    const token = guestMountTokenFromUrl(bootstrapUrl)
+    const grant = token ? this.guestMounts.get(token) : undefined
+    if (!grant || grant.state !== "issued" || grant.expiresAt < Date.now()) return null
+    const tab = this.tabs.get(grant.tabId)
+    if (!tab || tab.generation !== grant.generation || grant.ownerWebContentsId !== ownerWebContentsId || requestedPartition !== grant.partition) return null
+    grant.state = "attaching"
+    return { token: grant.token, partition: grant.partition }
+  }
+
+  attachGuest(ownerWebContentsId: number, bootstrapUrl: string, contents: Electron.WebContents): boolean {
+    const token = guestMountTokenFromUrl(bootstrapUrl)
+    const grant = token ? this.guestMounts.get(token) : undefined
+    if (!grant || grant.state !== "attaching" || grant.expiresAt < Date.now() || grant.ownerWebContentsId !== ownerWebContentsId) return false
+    const tab = this.tabs.get(grant.tabId)
+    if (!tab || tab.generation !== grant.generation || contents.session !== session.fromPartition(grant.partition)) return false
+    this.guestMounts.delete(token!)
+    if (tab.mountToken === token) tab.mountToken = undefined
+    const previous = tab.webContents
+    if (previous && previous !== contents && !previous.isDestroyed()) previous.close()
+    tab.webContents = contents
+    tab.guestState = "attaching"
+    tab.lifecycle = tab.visible ? "active" : "background"
+    contents.setZoomFactor(tab.zoomFactor ?? 1)
+    this.installPolicies(tab, shouldInstallAgentSessionPolicy(tab.partition), shouldInstallAdvancedCdpPolicy(tab.partition))
+    contents.once("destroyed", () => {
+      if (tab.webContents !== contents) return
+      tab.webContents = null
+      tab.guestState = "gone"
+      tab.lifecycle = "crashed"
+      tab.generation += 1
+      tab.inputSequence += 1
+      this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "browser_internal_error", recoverable: true } })
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    })
+    contents.once("dom-ready", () => {
+      if (tab.webContents !== contents || contents.isDestroyed()) return
+      tab.guestState = "ready"
+      const waiters = tab.mountWaiters.splice(0)
+      for (const waiter of waiters) { clearTimeout(waiter.timer); waiter.resolve(contents) }
+      const targetUrl = tab.pendingUrl || tab.url
+      tab.pendingUrl = undefined
+      if (targetUrl) void contents.loadURL(targetUrl).catch(() => undefined)
+      if (tab.scrollPosition) {
+        contents.once("did-finish-load", () => {
+          const scroll = tab.scrollPosition
+          if (scroll) void contents.executeJavaScriptInIsolatedWorld(999, [{ code: `scrollTo(${scroll.x},${scroll.y})` }], true).catch(() => undefined)
+        })
+      }
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    })
+    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    return true
+  }
 
   updateSettings(input: Partial<BrowserSettings>): BrowserSettings {
     const previous = JSON.stringify(this.settings)
     const advancedCdpWasEnabled = this.settings.advancedCdpEnabled
     this.settings = {
       ...this.settings,
-      schemaVersion: 2,
+      schemaVersion: 3,
       ...(typeof input.browserEnabled === "boolean" ? { browserEnabled: input.browserEnabled } : {}),
       ...(typeof input.browserUseEnabled === "boolean" ? { browserUseEnabled: input.browserUseEnabled } : {}),
+      ...(input.browserApprovalMode === "alwaysAsk" || input.browserApprovalMode === "neverAsk" ? { browserApprovalMode: input.browserApprovalMode } : {}),
+      ...(input.iabHistoryApprovalMode === "alwaysAsk" || input.iabHistoryApprovalMode === "neverAsk" || input.iabHistoryApprovalMode === "disabled" ? { iabHistoryApprovalMode: input.iabHistoryApprovalMode } : {}),
+      ...(input.chromeHistoryApprovalMode === "alwaysAsk" || input.chromeHistoryApprovalMode === "neverAsk" || input.chromeHistoryApprovalMode === "disabled" ? { chromeHistoryApprovalMode: input.chromeHistoryApprovalMode } : {}),
       ...(typeof input.agentCursorVisible === "boolean" ? { agentCursorVisible: input.agentCursorVisible } : {}),
       ...(input.linkOpenTarget === "lume" || input.linkOpenTarget === "system" ? { linkOpenTarget: input.linkOpenTarget } : {}),
       ...(input.localUrlTarget === "lume" || input.localUrlTarget === "system" ? { localUrlTarget: input.localUrlTarget } : {}),
       ...(typeof input.advancedCdpEnabled === "boolean" ? { advancedCdpEnabled: input.advancedCdpEnabled } : {}),
       ...(typeof input.extensionBackendEnabled === "boolean" ? { extensionBackendEnabled: input.extensionBackendEnabled } : {}),
-      ...(input.annotationScreenshots === "off" || input.annotationScreenshots === "ask" || input.annotationScreenshots === "always" ? { annotationScreenshots: input.annotationScreenshots } : {}),
+      ...(input.annotationScreenshots === "off" || input.annotationScreenshots === "necessary" || input.annotationScreenshots === "always" ? { annotationScreenshots: input.annotationScreenshots } : {}),
       ...(typeof input.downloadDirectory === "string" ? { downloadDirectory: input.downloadDirectory.slice(0, 1024) } : {}),
       ...(typeof input.downloadAskBeforeSave === "boolean" ? { downloadAskBeforeSave: input.downloadAskBeforeSave } : {}),
       ...(typeof input.downloadHistoryEnabled === "boolean" ? { downloadHistoryEnabled: input.downloadHistoryEnabled } : {}),
@@ -307,9 +374,9 @@ export class BrowserRuntime {
       const win = this.options.getWindow()
       for (const [tabId, tab] of this.tabs) {
         if (!shouldInstallAdvancedCdpPolicy(tab.partition)) continue
-        const browserSession = tab.view.webContents.session
-        if (win && !win.isDestroyed()) win.contentView.removeChildView(tab.view)
-        if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
+        const contents = tab.webContents
+        const browserSession = contents?.session ?? session.fromPartition(tab.partition)
+        if (contents && !contents.isDestroyed()) contents.close()
         this.tabs.delete(tabId)
         this.disposeOwnedSessionIfUnused(tab.partition, browserSession)
       }
@@ -334,6 +401,7 @@ export class BrowserRuntime {
     this.hideAgentCursor()
     for (const tab of this.tabs.values()) {
       if (tab.context?.actor !== "agent" && !tab.agentLease && !tab.handoff) continue
+      if (tab.agentViewportOverride) this.restoreAgentViewportOverride(tab, tab.agentViewportOverride)
       if (tab.context?.actor === "agent") tab.context = undefined
       tab.agentLease = undefined
       tab.handoff = undefined
@@ -391,19 +459,25 @@ export class BrowserRuntime {
       return { ok: true }
     }
     if (method === "list") return [...this.tabs.values()].map(publicTab)
+    if (method === "referenceGrant:create") return this.createReferenceGrant(context, params)
+    if (method === "referenceGrant:revoke") return this.revokeReferenceGrant(context, params)
     if (method === "openTabs") {
       const tabs = [...this.tabs.values()]
-        .filter((tab) => tab.partition === "persist:lume-browser")
+        .filter((tab) => tab.partition === "persist:lume-browser" && (context.actor !== "agent" || tab.ownerThreadId === context.threadId))
         .sort((left, right) => String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")))
       if (context.actor === "agent") {
-        for (const tab of tabs) {
-          this.claimSnapshots.set(claimSnapshotKey(context, tab.tabId), {
+        this.clearClaimSnapshots(context)
+        return tabs.map((tab) => {
+          const claimHandle = randomUUID()
+          this.claimSnapshots.set(claimSnapshotKey(context, claimHandle), {
+            tabId: tab.tabId,
             providerTabId: tab.providerTabId,
             title: tab.title,
             url: tab.url,
             generation: tab.generation,
           })
-        }
+          return { id: claimHandle, providerTabId: tab.providerTabId, url: tab.url, title: tab.title, generation: tab.generation, lastOpened: tab.lastOpenedAt }
+        })
       }
       return tabs.map((tab) => ({ id: tab.tabId, tabId: tab.tabId, providerTabId: tab.providerTabId, url: tab.url, title: tab.title, lastOpened: tab.lastOpenedAt }))
     }
@@ -429,7 +503,10 @@ export class BrowserRuntime {
       this.browsingHistory.clear()
       return { ok: true }
     }
+    if (method.startsWith("workspace:")) return this.dispatchWorkspace(method, params, context)
     if (method === "ensure") return this.ensureTab(String(params.tabId ?? randomUUID()), context, params)
+    if (method === "mount:prepare") return this.prepareGuestMount(String(params.tabId ?? context.tabId ?? ""), context)
+    if (method === "mount:release") return this.releaseGuestMount(String(params.tabId ?? context.tabId ?? ""), context, String(params.mountToken ?? ""))
     if (method === "get") return publicTab(this.requireTab(String(params.tabId ?? context.tabId ?? ""), context))
     if (method === "selected") {
       const selected = [...this.tabs.values()].find((tab) => tab.visible && canContextUseTab(tab, context))
@@ -441,14 +518,21 @@ export class BrowserRuntime {
     if (method === "finalize") return this.finalizeTabs(context, params)
     if (method === "share") return this.shareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "unshare") return this.unshareTab(String(params.tabId ?? context.tabId ?? ""), context)
-    if (method === "claim") return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context)
+    if (method === "claim") return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context, params)
     if (method === "close") return this.closeTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "bounds") return this.updateBounds(String(params.tabId ?? context.tabId ?? ""), params)
     if (method === "visible") return this.setVisible(String(params.tabId ?? context.tabId ?? ""), params.visible === true)
     if (method === "move-owner") {
       if (context.actor !== "user") throw browserError("action_denied")
       const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
-      tab.ownerThreadId = typeof params.ownerThreadId === "string" ? params.ownerThreadId.slice(0, 200) : undefined
+      const ownerThreadId = typeof params.ownerThreadId === "string" ? params.ownerThreadId.slice(0, 200) : undefined
+      if (!ownerThreadId) throw browserError("invalid_browser_request")
+      const previousOwnerThreadId = tab.ownerThreadId
+      this.referenceGrants.invalidateTab(tab.tabId)
+      this.workspaces.move(publicTab(tab), ownerThreadId, { partition: tab.partition, handoffBrowserSessionId: tab.handoff?.browserSessionId })
+      tab.ownerThreadId = ownerThreadId
+      if (previousOwnerThreadId) this.emitWorkspace(this.workspaces.get(previousOwnerThreadId))
+      this.emitWorkspace(this.workspaces.get(ownerThreadId))
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       return publicTab(tab)
     }
@@ -501,13 +585,15 @@ export class BrowserRuntime {
         if (!canContextUseTab(tab, context)) continue
         tab.visible = params.visible === true
         tab.lifecycle = tab.visible ? "active" : "background"
-        tab.view.setVisible(tab.visible)
+        if (tab.webContents && !tab.webContents.isDestroyed()) tab.webContents.setBackgroundThrottling(!tab.visible)
       }
       return {}
     }
     if (method === "browser:viewport:set" || method === "browser:viewport:reset") {
       for (const tab of this.tabs.values()) {
         if (!canContextUseTab(tab, context)) continue
+        if (context.actor === "agent") this.captureAgentViewportOverride(tab, context)
+        else tab.agentViewportOverride = undefined
         if (method === "browser:viewport:set") await this.setViewport(tab, params)
         else await this.resetViewport(tab)
       }
@@ -516,7 +602,7 @@ export class BrowserRuntime {
 
     const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (tab.dialogOpen && method !== "dialog:handle" && method !== "dialog:get") throw browserError("dialog_blocking")
-    if ((method === "browserAuth" || method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "pageAssets:bundle" || method === "cdp" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
+    if ((method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "pageAssets:bundle" || method === "cdp" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
     if (params.__policyRequired === true) this.consumePolicyToken(String(params.__policyConfirmation ?? ""), String(params.__policyBindingHash ?? ""))
     if (MUTATING_METHODS.has(method)) {
       const operationId = request.idempotencyKey || request.requestId || randomUUID()
@@ -552,6 +638,7 @@ export class BrowserRuntime {
         throw error
       }
     }
+    if (!GUEST_OPTIONAL_METHODS.has(method)) await this.waitForGuest(tab)
     if (method === "snapshot") return this.snapshot(tab)
     if (method === "wait:download") return this.waitForDownload(tab, context, boundedNumber(params.timeoutMs ?? params.timeout_ms, 1, 30_000) || 10_000)
     if (method === "download:path") return this.downloadPath(context, String(params.downloadId ?? params.download_id ?? ""), boundedNumber(params.timeoutMs ?? params.timeout_ms, 1, 30_000) || 10_000)
@@ -561,13 +648,17 @@ export class BrowserRuntime {
     if (method === "webmcp:invoke") return invokeWebMcpTool(tab, params)
     if (method === "content") return this.pageContent(tab, params)
     if (method === "scroll:get") {
-      const position = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `({ x: scrollX, y: scrollY })` }], true) as { x?: unknown; y?: unknown }
-      return { x: Math.max(0, finiteNumber(position.x)), y: Math.max(0, finiteNumber(position.y)) }
+      const position = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `({ x: scrollX, y: scrollY })` }], true) as { x?: unknown; y?: unknown }
+      tab.scrollPosition = { x: Math.max(0, finiteNumber(position.x)), y: Math.max(0, finiteNumber(position.y)) }
+      this.rememberTab(tab)
+      return tab.scrollPosition
     }
     if (method === "scroll:set") {
       const x = boundedNumber(params.x, 0, 10_000_000)
       const y = boundedNumber(params.y, 0, 10_000_000)
-      await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `scrollTo(${JSON.stringify(x)}, ${JSON.stringify(y)}); ({ x: scrollX, y: scrollY })` }], true)
+      await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `scrollTo(${JSON.stringify(x)}, ${JSON.stringify(y)}); ({ x: scrollX, y: scrollY })` }], true)
+      tab.scrollPosition = { x, y }
+      this.rememberTab(tab)
       return { x, y }
     }
     if (method === "clipboard:readText") return { text: clipboard.readText().slice(0, 1_000_000) }
@@ -591,9 +682,9 @@ export class BrowserRuntime {
     if (method === "elementScreenshot") return { data: await this.elementScreenshot(tab, params) }
     if (method === "evaluate:readonly") return this.evaluateReadonly(tab, params)
     if (method === "dev:logs") return this.readConsoleLogs(tab, params)
-    if (method === "stop") { tab.view.webContents.stop(); return publicTab(tab) }
+    if (method === "stop") { browserContents(tab).stop(); return publicTab(tab) }
     if (method === "hardReload") {
-      tab.view.webContents.reloadIgnoringCache()
+      browserContents(tab).reloadIgnoringCache()
       return publicTab(tab)
     }
     if (method === "dialog:get") return tab.dialogInfo
@@ -601,29 +692,35 @@ export class BrowserRuntime {
     if (method === "wait:url") return this.waitForUrl(tab, String(params.url ?? ""), boundedNumber(params.timeoutMs ?? (params.options as Record<string, unknown> | undefined)?.timeoutMs, 0, 30_000) || 10_000)
     if (method === "wait:load") return this.waitForLoad(tab, boundedNumber(params.timeoutMs, 0, 30_000) || 10_000)
     if (method === "wait:timeout") { await delay(boundedNumber(params.timeoutMs, 0, 30_000)); return undefined }
-    if (method === "browserAuth:list") return this.credentials.listPasswords().filter((entry) => entry.origin === safeOrigin(tab.url))
     if (method === "screenshot") return this.screenshot(tab, params)
     if (method === "screenshot:save") return this.saveScreenshot(tab, params)
+    if (method === "screenshot:attachment") return this.saveReviewScreenshot(tab, params, context)
+    if (method === "screenshot:attachment:delete") return this.deleteReviewScreenshot(tab, params, context)
     if (method === "find") {
-      tab.findRequestId = tab.view.webContents.findInPage(String(params.text ?? "").slice(0, 500), { forward: params.forward !== false, findNext: params.findNext === true })
+      tab.findRequestId = browserContents(tab).findInPage(String(params.text ?? "").slice(0, 500), { forward: params.forward !== false, findNext: params.findNext === true })
       return { requestId: tab.findRequestId, ...(tab.findMatches ?? { activeMatchOrdinal: 0, matches: 0 }) }
     }
     if (method === "find:stop") {
-      tab.view.webContents.stopFindInPage(params.action === "activate" ? "activateSelection" : "clearSelection")
+      browserContents(tab).stopFindInPage(params.action === "activate" ? "activateSelection" : "clearSelection")
       tab.findRequestId = undefined
       tab.findMatches = undefined
       return { ok: true }
     }
-    if (method === "zoom:get") return { factor: tab.view.webContents.getZoomFactor() }
-    if (method === "zoom:set") { const factor = Math.max(0.25, Math.min(5, Number(params.factor) || 1)); tab.view.webContents.setZoomFactor(factor); return { factor } }
-    if (method === "emulate") return this.emulateDevice(tab, String(params.preset ?? "desktop"), params)
-    if (method === "viewport:set") return this.setViewport(tab, params)
-    if (method === "viewport:reset") return this.resetViewport(tab)
+    if (method === "zoom:get") return { factor: browserContents(tab).getZoomFactor() }
+    if (method === "zoom:set") { const factor = Math.max(0.25, Math.min(5, Number(params.factor) || 1)); browserContents(tab).setZoomFactor(factor); tab.zoomFactor = factor; this.rememberTab(tab); return { factor } }
+    if (method === "viewport:commit") return this.commitViewport(tab, params, context)
+    if (method === "emulate" || method === "viewport:set" || method === "viewport:reset") {
+      if (context.actor === "agent") this.captureAgentViewportOverride(tab, context)
+      else tab.agentViewportOverride = undefined
+      if (method === "emulate") return this.emulateDevice(tab, String(params.preset ?? "desktop"), params)
+      if (method === "viewport:set") return this.setViewport(tab, params)
+      return this.resetViewport(tab)
+    }
     if (method === "screenshot:clipboard") return this.copyScreenshot(tab, params)
     if (method === "print") return this.printPage(tab)
     if (method === "devtools") {
       if (context.actor !== "user") throw browserError("action_denied")
-      tab.view.webContents.openDevTools({ mode: "detach", activate: true })
+      browserContents(tab).openDevTools({ mode: "detach", activate: true })
       return { ok: true }
     }
     if (method === "view-source") {
@@ -639,18 +736,71 @@ export class BrowserRuntime {
       if (context.actor !== "user") throw browserError("action_denied")
       return this.selectPageAnchor(tab, method === "tweaks:start" ? "element" : String(params.mode ?? "element"))
     }
-    if (method === "overlay:compose") return this.composeReviewOverlay(tab, params, context)
     if (method === "annotation:stop") {
       if (context.actor !== "user") throw browserError("action_denied")
-      await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: "globalThis.__lumeCancelPageSelection?.()" }], true)
+      await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: "globalThis.__lumeCancelPageSelection?.()" }], true)
       return { ok: true }
     }
+    if (method === "annotation:highlight") return this.highlightPageAnchor(tab, params.anchor)
     if (method === "tweaks:apply") return this.applyPageTweaks(tab, params, context)
     if (method === "tweaks:reset") return this.resetPageTweaks(tab, params, context)
     if (method === "cdp") return this.cdp(tab, params)
     if (method === "url") return tab.url
     if (method === "title") return tab.title
     throw browserError("unsupported")
+  }
+
+  private dispatchWorkspace(method: string, params: Record<string, unknown>, context: BrowserRequestContext): unknown {
+    if (context.actor !== "user") throw browserError("action_denied")
+    if (method === "workspace:list") return this.workspaces.list()
+    const ownerThreadId = String(params.ownerThreadId ?? context.threadId ?? "").trim().slice(0, 200)
+    if (!ownerThreadId) throw browserError("invalid_browser_request")
+    if (method === "workspace:get") {
+      this.restoreWorkspaceTabs(ownerThreadId, context)
+      return this.workspaces.get(ownerThreadId)
+    }
+    if (method === "workspace:activate") {
+      const descriptor = this.workspaces.activate(ownerThreadId, String(params.tabId ?? ""))
+      this.emitWorkspace(descriptor)
+      return descriptor
+    }
+    if (method === "workspace:reorder") {
+      const orderedTabIds = Array.isArray(params.orderedTabIds)
+        ? params.orderedTabIds.filter((value): value is string => typeof value === "string").slice(0, 100)
+        : []
+      const descriptor = this.workspaces.reorder(ownerThreadId, orderedTabIds)
+      this.emitWorkspace(descriptor)
+      return descriptor
+    }
+    if (method === "workspace:restore-closed") {
+      const restored = this.workspaces.restoreClosed(ownerThreadId)
+      const tab = restored ? this.ensureTab(restored.tabId, context, { ...restored, ownerThreadId }) : null
+      this.emitWorkspace(this.workspaces.get(ownerThreadId))
+      return tab
+    }
+    if (method === "workspace:import-legacy") {
+      const descriptor = this.workspaces.importLegacy(ownerThreadId, params.tabs, params.activeTabId)
+      this.restoreWorkspaceTabs(ownerThreadId, context)
+      this.emitWorkspace(descriptor)
+      return descriptor
+    }
+    throw browserError("unsupported")
+  }
+
+  private restoreWorkspaceTabs(ownerThreadId: string, context: BrowserRequestContext): void {
+    for (const tab of this.workspaces.persistedTabs(ownerThreadId)) {
+      if (this.tabs.has(tab.tabId)) continue
+      this.ensureTab(tab.tabId, context, { ...tab, ownerThreadId }, tab.partition)
+    }
+  }
+
+  private rememberTab(tab: BrowserTab): void {
+    this.workspaces.rememberTab(publicTab(tab), { partition: tab.partition, handoffBrowserSessionId: tab.handoff?.browserSessionId })
+    if (tab.ownerThreadId && (tab.profileKind === "user" || Boolean(tab.handoff))) this.emitWorkspace(this.workspaces.get(tab.ownerThreadId))
+  }
+
+  private emitWorkspace(descriptor: import("../../../packages/shared/src/types/browser-runtime").BrowserWorkspaceDescriptor): void {
+    this.options.emit({ method: "browser:workspace-changed", params: descriptor as unknown as Record<string, unknown> })
   }
 
   destroy(): void {
@@ -660,17 +810,18 @@ export class BrowserRuntime {
     app.off("login", this.loginHandler)
     app.off("certificate-error", this.certificateErrorHandler)
     app.off("select-client-certificate", this.clientCertificateHandler)
-    ipcMain.off("lume:browser-overlay", this.browserOverlayMessageHandler)
-    for (const overlay of this.reviewOverlays.values()) {
-      if (!overlay.window.isDestroyed()) overlay.window.close()
-      if (!overlay.settled) overlay.resolve({ status: "cancel" })
-    }
-    this.reviewOverlays.clear()
+    ipcMain.off("lume:browser-auth", this.browserAuthMessageHandler)
+    for (const auth of this.authSessions.values()) if (!auth.window.isDestroyed()) auth.window.close()
+    this.authSessions.clear()
+    this.workspaces.flush()
+    this.referenceGrants.clear()
     for (const tab of this.tabs.values()) {
       this.clearTabWaiters(tab.tabId)
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
+      for (const waiter of tab.mountWaiters.splice(0)) { clearTimeout(waiter.timer); waiter.reject(browserError("browser_unavailable")) }
+      if (tab.webContents && !tab.webContents.isDestroyed()) tab.webContents.close()
     }
     this.tabs.clear()
+    this.guestMounts.clear()
     this.downloadRefs.clear()
     this.pageAssetInventories.clear()
     for (const policy of this.ownedSessionPolicies) {
@@ -683,7 +834,7 @@ export class BrowserRuntime {
     this.backendGeneration += 1
   }
 
-  private ensureTab(tabId: string, context: BrowserRequestContext, params: Record<string, unknown>): BrowserTabDescriptor {
+  private ensureTab(tabId: string, context: BrowserRequestContext, params: Record<string, unknown>, restoredPartition?: string): BrowserTabDescriptor {
     const existing = this.tabs.get(tabId)
     if (existing) {
       if (context.actor === "agent") {
@@ -692,24 +843,21 @@ export class BrowserRuntime {
         }
         if (!existing.agentLease || existing.agentLease.browserSessionId !== context.browserSessionId || existing.agentLease.browserTurnId !== context.browserTurnId) throw browserError("action_denied")
       }
+      if (!existing.url && typeof params.url === "string" && params.url.trim()) void this.navigate(existing, params.url, context).catch(() => undefined)
+      this.rememberTab(existing)
       return publicTab(existing)
     }
-    const win = this.options.getWindow()
-    if (!win || win.isDestroyed()) throw browserError("browser_unavailable")
-    const partition = selectBrowserPartition(context, params)
+    const partition = restoredPartition ?? selectBrowserPartition(context, params)
     const isAgent = shouldInstallAgentSessionPolicy(partition)
     const advancedCdp = shouldInstallAdvancedCdpPolicy(partition)
     const agentOwned = context.actor === "agent"
     if (advancedCdp && !this.settings.advancedCdpEnabled) throw browserError("action_denied")
-    const view = new WebContentsView({
-      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition },
-    })
     const tab: BrowserTab = {
       tabId,
       providerTabId: randomUUID(),
       ...(typeof params.ownerThreadId === "string" ? { ownerThreadId: params.ownerThreadId.slice(0, 200) } : {}),
       ...(typeof params.openerTabId === "string" ? { openerTabId: params.openerTabId.slice(0, 200) } : {}),
-      profileKind: advancedCdp ? "advanced-cdp" : agentOwned ? "agent" : "user",
+      profileKind: advancedCdp ? "advanced-cdp" : isAgent ? "agent" : "user",
       backend: "iab",
       generation: 1,
       url: "",
@@ -724,7 +872,9 @@ export class BrowserRuntime {
       zoomFactor: 1,
       visible: false,
       surface: null,
-      view,
+      guestState: "unmounted",
+      viewportRevision: 0,
+      webContents: null,
       partition,
       ...(agentOwned ? { context, agentLease: { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: 1 } } : {}),
       inputSequence: 0,
@@ -733,19 +883,38 @@ export class BrowserRuntime {
         : [],
       navigationIndex: Number.isInteger(params.navigationIndex) ? boundedNumber(params.navigationIndex, 0, 199) : -1,
       consoleLogs: [],
+      mountWaiters: [],
+      viewportQueue: Promise.resolve(),
     }
+    if (isAgent && (params.handoffStatus === "handoff" || params.handoffStatus === "deliverable") && typeof params.handoffBrowserSessionId === "string") {
+      tab.handoff = { browserSessionId: params.handoffBrowserSessionId.slice(0, 200), status: params.handoffStatus }
+    }
+    const initialZoomFactor = Math.max(.25, Math.min(5, Number(params.zoomFactor) || 1))
+    tab.zoomFactor = initialZoomFactor
     this.tabs.set(tabId, tab)
-    this.installPolicies(tab, isAgent || advancedCdp, advancedCdp)
-    win.contentView.addChildView(view)
-    view.setVisible(false)
+    this.ensureSessionPolicy(session.fromPartition(partition), partition, isAgent || advancedCdp)
     const initialUrl = typeof params.url === "string" && params.url.trim() ? params.url : undefined
-    if (initialUrl) void this.navigate(tab, initialUrl, context)
+    if (initialUrl) {
+      const normalized = normalizeNavigableUrl(initialUrl)
+      tab.url = normalized
+      tab.pendingUrl = normalized
+      tab.securityState = securityStateForUrl(normalized)
+    }
+    if (params.viewport && typeof params.viewport === "object") {
+      const viewport = params.viewport as Record<string, unknown>
+      tab.viewport = viewport.enabled === false ? desktopViewportState() : sanitizeViewportState(viewport)
+    }
+    const initialScroll = params.scrollPosition && typeof params.scrollPosition === "object" ? params.scrollPosition as Record<string, unknown> : undefined
+    if (initialScroll) {
+      tab.scrollPosition = { x: boundedNumber(initialScroll.x, 0, 10_000_000), y: boundedNumber(initialScroll.y, 0, 10_000_000) }
+    }
+    this.rememberTab(tab)
     this.enforceBackgroundLimit()
     return publicTab(tab)
   }
 
   private installPolicies(tab: BrowserTab, agent: boolean, advancedCdp: boolean): void {
-    const wc = tab.view.webContents
+    const wc = browserContents(tab)
     this.ensureSessionPolicy(wc.session, tab.partition, agent || advancedCdp)
     wc.setWindowOpenHandler(({ url }) => {
       const agentInitiated = agent || Boolean(tab.recentAgentContext && tab.recentAgentContext.expiresAt >= Date.now())
@@ -763,8 +932,10 @@ export class BrowserRuntime {
       if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
     })
     wc.on("did-navigate", (_event, url) => {
+      if (guestMountTokenFromUrl(url)) return
+      this.referenceGrants.invalidateTab(tab.tabId)
       this.hideAgentCursor()
-      this.closeReviewOverlaysForTab(tab.tabId)
+      this.closeAuthSessionsForTab(tab.tabId, safeOrigin(url) === safeOrigin(tab.url) ? "page_changed" : "origin_changed")
       tab.url = stripUrl(url)
       tab.securityState = securityStateForUrl(tab.url)
       tab.isLoading = wc.isLoading()
@@ -784,15 +955,22 @@ export class BrowserRuntime {
       tab.inputSequence += 1
       tab.domNodes = undefined
       if (tab.context?.actor === "agent") tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
-      else tab.agentLease = undefined
+      else {
+        if (tab.agentViewportOverride) this.restoreAgentViewportOverride(tab, tab.agentViewportOverride)
+        tab.agentLease = undefined
+      }
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      this.rememberTab(tab)
     })
     wc.on("did-navigate-in-page", (_event, url) => {
-      this.closeReviewOverlaysForTab(tab.tabId)
+      if (guestMountTokenFromUrl(url)) return
+      this.referenceGrants.invalidateTab(tab.tabId)
+      this.closeAuthSessionsForTab(tab.tabId, "page_changed")
       tab.url = stripUrl(url)
       tab.securityState = securityStateForUrl(tab.url)
       tab.lastOpenedAt = new Date().toISOString()
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      this.rememberTab(tab)
     })
     wc.on("did-start-loading", () => {
       tab.isLoading = true
@@ -813,6 +991,7 @@ export class BrowserRuntime {
       const faviconUrl = favicons.find((value) => /^https?:|^data:image\//i.test(value))
       tab.faviconUrl = faviconUrl?.slice(0, 4096)
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      this.rememberTab(tab)
     })
     wc.on("found-in-page", (_event, result) => {
       if (tab.findRequestId !== result.requestId) return
@@ -829,8 +1008,20 @@ export class BrowserRuntime {
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       this.enforceBackgroundLimit()
     })
-    wc.on("before-input-event", () => {
+    wc.on("before-input-event", (event, input) => {
       if (!tab.agentDispatching) tab.inputSequence += 1
+      const key = input.key.toLowerCase()
+      const modifier = input.control || input.meta
+      const action = modifier && key === "l"
+        ? "focus-address"
+        : modifier && key === "f"
+          ? "find"
+          : (modifier && key === "r") || key === "f5"
+            ? input.shift ? "hard-reload" : "reload"
+            : undefined
+      if (!action) return
+      event.preventDefault()
+      this.options.emit({ method: "browser:shortcut", params: { tabId: tab.tabId, action } })
     })
     wc.on("before-mouse-event", () => {
       if (!tab.agentDispatching) tab.inputSequence += 1
@@ -839,6 +1030,7 @@ export class BrowserRuntime {
       tab.title = title.slice(0, 256)
       if (tab.url) this.browsingHistory.updateTitle(tab.url, tab.title)
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      this.rememberTab(tab)
     })
     wc.on("console-message", (_event, details) => {
       const detail = details as unknown as { level?: unknown; message?: unknown; sourceId?: unknown }
@@ -852,7 +1044,7 @@ export class BrowserRuntime {
         ...(typeof detail.sourceId === "string" && /^https?:/i.test(detail.sourceId) ? { url: stripUrl(detail.sourceId) } : {}),
       }].slice(-500)
     })
-    wc.on("render-process-gone", () => {
+    wc.on("render-process-gone", (_event, details) => {
       tab.lifecycle = "crashed"
       tab.isLoading = false
       tab.generation += 1
@@ -860,11 +1052,14 @@ export class BrowserRuntime {
       if (tab.context?.actor === "agent") {
         tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
       }
-      this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "browser_internal_error", recoverable: true } })
+      this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "browser_internal_error", recoverable: true, reason: details.reason, exitCode: details.exitCode } })
     })
     try {
       if (!wc.debugger.isAttached()) wc.debugger.attach("1.3")
-      void wc.debugger.sendCommand("Page.enable")
+      void wc.debugger.sendCommand("Page.enable").catch(() => undefined)
+      wc.debugger.on("detach", (_event, reason) => {
+        this.options.emit({ method: "browser:debugger-detached", params: { tabId: tab.tabId, generation: tab.generation, reason } })
+      })
       wc.debugger.on("message", (_event, method, params) => {
         if (method === "Page.javascriptDialogOpening") {
           tab.dialogOpen = true
@@ -962,19 +1157,19 @@ export class BrowserRuntime {
     })
     const downloadHandler = (_event: Electron.Event, item: Electron.DownloadItem, webContents: Electron.WebContents): void => {
       if (policy.disposed) { item.cancel(); return }
-      const tab = [...this.tabs.values()].find((candidate) => candidate.view.webContents === webContents)
+      const tab = [...this.tabs.values()].find((candidate) => candidate.webContents === webContents)
       item.pause()
       void this.handleDownload(policy, tab, item).catch(() => item.cancel())
     }
     policy.downloadHandler = downloadHandler
     browserSession.on("will-download", downloadHandler)
     browserSession.webRequest.onBeforeRequest({ urls: ["*://*/*", "ws://*/*", "wss://*/*"] }, (details, callback) => {
-      const claimedGlobalTab = [...this.tabs.values()].find((tab) => tab.view.webContents.id === details.webContentsId && Boolean(tab.agentLease))
+      const claimedGlobalTab = [...this.tabs.values()].find((tab) => tab.webContents?.id === details.webContentsId && Boolean(tab.agentLease))
       const guarded = policy.agent || Boolean(claimedGlobalTab)
       callback({ cancel: policy.disposed || (guarded && !isAllowedNavigation(details.url, true, this.settings, claimedGlobalTab?.approvedPrivateOrigins)) })
     })
     if (!agent) return
-    const guard = new BrowserNetworkGuard({ allowPrivateOrigin: (origin) => this.settings.siteOverrides[origin] === "allow" || [...this.tabs.values()].some((tab) => tab.view.webContents.session === browserSession && tab.approvedPrivateOrigins?.has(origin)) })
+    const guard = new BrowserNetworkGuard({ allowPrivateOrigin: (origin) => this.settings.siteOverrides[origin] === "allow" || [...this.tabs.values()].some((tab) => tab.webContents?.session === browserSession && tab.approvedPrivateOrigins?.has(origin)) })
     policy.networkGuard = guard
     policy.networkReady = guard.start().then(() => browserSession.setProxy({ proxyRules: guard.proxyRules(), proxyBypassRules: "<-loopback>" })).catch((error) => {
       policy.disposed = true
@@ -1023,11 +1218,40 @@ export class BrowserRuntime {
     }
     let quotaExceeded = false
     const timeout = agent ? setTimeout(() => { quotaExceeded = true; item.cancel() }, AGENT_DOWNLOAD_LIMITS.maxDurationMs) : undefined
+    let lastProgressEventAt = 0
+    this.options.emit({
+      method: "browser:download",
+      params: {
+        tabId: tab?.tabId,
+        id: prepared.id,
+        state: "progressing",
+        started: true,
+        filename: prepared.filename,
+        actor,
+        receivedBytes: item.getReceivedBytes(),
+        totalBytes: Math.max(0, item.getTotalBytes()),
+      },
+    })
     item.on("updated", () => {
       if (agent && quotaId && !this.downloadQuota.update(sessionId, quotaId, item.getReceivedBytes())) {
         quotaExceeded = true
         item.cancel()
       }
+      const now = Date.now()
+      if (now - lastProgressEventAt < 250) return
+      lastProgressEventAt = now
+      this.options.emit({
+        method: "browser:download",
+        params: {
+          tabId: tab?.tabId,
+          id: prepared.id,
+          state: "progressing",
+          filename: prepared.filename,
+          actor,
+          receivedBytes: item.getReceivedBytes(),
+          totalBytes: Math.max(0, item.getTotalBytes()),
+        },
+      })
     })
     item.once("done", (_event, electronState) => {
       if (timeout) clearTimeout(timeout)
@@ -1048,7 +1272,19 @@ export class BrowserRuntime {
         downloadResult.fileRef = completed ? `browser-download:${prepared.id}` : undefined
         for (const resolveWaiter of downloadResult.waiters.splice(0)) resolveWaiter(downloadResult.fileRef ?? null)
       }
-      this.options.emit({ method: "browser:download", params: { tabId: tab?.tabId, state, filename: prepared.filename, ...(agent && completed ? { fileRef: `browser-download:${prepared.id}` } : {}) } })
+      this.options.emit({
+        method: "browser:download",
+        params: {
+          tabId: tab?.tabId,
+          id: prepared.id,
+          state,
+          filename: prepared.filename,
+          actor,
+          receivedBytes: item.getReceivedBytes(),
+          totalBytes: Math.max(0, item.getTotalBytes()),
+          ...(agent && completed ? { fileRef: `browser-download:${prepared.id}` } : {}),
+        },
+      })
     })
     item.resume()
   }
@@ -1063,34 +1299,57 @@ export class BrowserRuntime {
     return tab
   }
 
+  private waitForGuest(tab: BrowserTab, timeoutMs = 10_000): Promise<Electron.WebContents> {
+    const contents = tab.webContents
+    if (contents && !contents.isDestroyed()) return Promise.resolve(contents)
+    this.options.emit({ method: "browser:guest-mount-required", params: { tabId: tab.tabId, generation: tab.generation } })
+    return new Promise((resolveGuest, rejectGuest) => {
+      const waiter = {
+        resolve: resolveGuest,
+        reject: rejectGuest,
+        timer: setTimeout(() => {
+          tab.mountWaiters = tab.mountWaiters.filter((candidate) => candidate !== waiter)
+          rejectGuest(browserError("browser_unavailable"))
+        }, timeoutMs),
+      }
+      tab.mountWaiters.push(waiter)
+    })
+  }
+
   private tabForContents(contents: Electron.WebContents): BrowserTab | undefined {
-    return [...this.tabs.values()].find((tab) => tab.view.webContents === contents)
+    return [...this.tabs.values()].find((tab) => tab.webContents === contents)
   }
 
   private async dispatchAction(tab: BrowserTab, method: string, params: Record<string, unknown>, context: BrowserRequestContext): Promise<unknown> {
+    if (method === "browserAuth:request") {
+      await this.waitForGuest(tab)
+      return this.requestBrowserAuth(tab, params, context)
+    }
     if (tab.lifecycle === "suspended") void this.setTabSuspended(tab, false)
     if (context.actor === "agent") tab.recentAgentContext = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, expiresAt: Date.now() + 30_000 }
     if (method === "navigate") return this.navigate(tab, String(params.url ?? ""), context, params.__policyRequired === true)
+    await this.waitForGuest(tab)
     if (method === "back") {
       if (tab.navigationIndex <= 0) return undefined
       tab.pendingNavigationIndex = tab.navigationIndex - 1
-      if (tab.view.webContents.canGoBack()) return tab.view.webContents.goBack()
-      return tab.view.webContents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!)
+      const contents = browserContents(tab)
+      if (contents.canGoBack()) return contents.goBack()
+      return contents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!)
     }
     if (method === "forward") {
       if (tab.navigationIndex < 0 || tab.navigationIndex >= tab.navigationStack.length - 1) return undefined
       tab.pendingNavigationIndex = tab.navigationIndex + 1
-      if (tab.view.webContents.canGoForward()) return tab.view.webContents.goForward()
-      return tab.view.webContents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!)
+      const contents = browserContents(tab)
+      if (contents.canGoForward()) return contents.goForward()
+      return contents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!)
     }
-    if (method === "reload") return tab.view.webContents.reload()
+    if (method === "reload") return browserContents(tab).reload()
     if (method === "dialog:handle") {
-      await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Page.handleJavaScriptDialog", { accept: params.accept === true, ...(typeof params.promptText === "string" ? { promptText: params.promptText.slice(0, 10_000) } : {}) }))
+      await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.handleJavaScriptDialog", { accept: params.accept === true, ...(typeof params.promptText === "string" ? { promptText: params.promptText.slice(0, 10_000) } : {}) }))
       tab.dialogOpen = false
       tab.dialogInfo = undefined
       return { ok: true }
     }
-    if (method === "browserAuth") return this.fillSavedPassword(tab, params)
     if (method === "contactFill") return this.fillSavedContact(tab, params)
     if (method === "upload") return this.uploadFileRefs(tab, params, context)
     if (method === "filechooser:setFiles") return this.setFileChooserFiles(tab, params, context)
@@ -1163,21 +1422,158 @@ export class BrowserRuntime {
       if (origin) (tab.approvedPrivateOrigins ??= new Set()).add(origin)
     }
     if (!isAllowedNavigation(url, context.actor === "agent", this.settings, tab.approvedPrivateOrigins)) throw browserError(isPrivateUrl(url) ? "private_origin_confirmation_required" : "invalid_url")
-    const policy = this.sessionPolicies.get(tab.view.webContents.session)
+    const contents = tab.webContents
+    const policy = this.sessionPolicies.get(contents?.session ?? session.fromPartition(tab.partition))
     if (policy?.networkReady) {
       try { await policy.networkReady } catch { throw browserError("browser_unavailable") }
     }
-    await tab.view.webContents.loadURL(new URL(url).toString())
+    if (!contents || contents.isDestroyed()) {
+      tab.url = normalizeNavigableUrl(url)
+      tab.pendingUrl = tab.url
+      tab.securityState = securityStateForUrl(tab.url)
+      tab.lastOpenedAt = new Date().toISOString()
+      this.rememberTab(tab)
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      return publicTab(tab)
+    }
+    await contents.loadURL(normalizeNavigableUrl(url))
     return publicTab(tab)
   }
 
-  private async fillSavedPassword(tab: BrowserTab, params: Record<string, unknown>): Promise<{ status: "submitted" }> {
+  private async requestBrowserAuth(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<BrowserAuthResult> {
+    if (context.actor !== "agent" || !this.options.authPreloadPath) throw browserError("action_denied")
+    const request = sanitizeBrowserAuthRequest(params)
     const origin = safeOrigin(tab.url)
-    if (!origin) throw browserError("action_denied")
-    const secret = this.credentials.passwordForOrigin(String(params.credentialId ?? ""), origin)
-    if (!secret) throw browserError("action_denied")
-    await this.fillSecret(tab, params, secret)
-    return { status: "submitted" }
+    const expiresAt = Date.parse(request.expiresAt)
+    if (!origin || request.tabId !== tab.tabId || request.generation !== tab.generation) return { status: "page_changed" }
+    if (request.origin !== origin) return { status: "origin_changed" }
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return { status: "expired" }
+    if (expiresAt > Date.now() + 5 * 60_000) throw browserError("invalid_browser_request")
+    try {
+      for (const field of request.fields) await this.validateBrowserAuthField(tab, field)
+      if (request.submit?.kind === "click") await this.resolveTarget(tab, { locator: combineAuthLocators(request.submit.frameLocator, request.submit.locator) })
+    } catch { return { status: "locator_invalid" } }
+    const parent = this.options.getWindow()
+    if (!parent || parent.isDestroyed()) throw browserError("browser_unavailable")
+    this.closeAuthSessionsForTab(tab.tabId, "cancelled")
+    const authWindow = new BrowserWindow({
+      parent,
+      modal: true,
+      frame: false,
+      show: false,
+      width: 440,
+      height: Math.min(680, 250 + request.fields.length * 74),
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      backgroundColor: "#151517",
+      webPreferences: { preload: this.options.authPreloadPath, contextIsolation: true, sandbox: true, nodeIntegration: false, devTools: false },
+    })
+    authWindow.setMenuBarVisibility(false)
+    authWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
+    return new Promise((resolveAuth) => {
+      const auth: BrowserAuthSession = {
+        window: authWindow,
+        tabId: tab.tabId,
+        generation: tab.generation,
+        inputSequence: tab.inputSequence,
+        origin,
+        request,
+        settled: false,
+        timer: setTimeout(() => this.settleBrowserAuth(auth, { status: "expired" }), Math.max(1, expiresAt - Date.now())),
+        resolve: resolveAuth,
+      }
+      this.authSessions.set(authWindow.webContents.id, auth)
+      const id = authWindow.webContents.id
+      authWindow.once("closed", () => {
+        clearTimeout(auth.timer)
+        this.authSessions.delete(id)
+        if (!auth.settled) { auth.settled = true; auth.resolve({ status: "cancelled" }) }
+      })
+      authWindow.once("ready-to-show", () => { authWindow.show(); authWindow.focus() })
+      void authWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(browserAuthHtml(request))}`).catch(() => this.settleBrowserAuth(auth, { status: "cancelled" }))
+    })
+  }
+
+  private async validateBrowserAuthField(tab: BrowserTab, field: BrowserAuthFieldRequest): Promise<ResolvedBrowserTarget> {
+    const locator = combineAuthLocators(field.frameLocator, field.locator)
+    const target = await this.resolveTarget(tab, { locator })
+    if (!target.editable) throw browserError("stale_target")
+    const actualTypeValue = await this.queryLocator(tab, "getAttribute", { locator, name: "type" })
+    const actualAutocompleteValue = await this.queryLocator(tab, "getAttribute", { locator, name: "autocomplete" })
+    const actualRequiredValue = await this.queryLocator(tab, "getAttribute", { locator, name: "required" })
+    const actualType = String(actualTypeValue ?? "text").toLowerCase()
+    const requestedType = field.inputType === "otp" ? "text" : field.inputType
+    if (actualType !== requestedType && !(requestedType === "text" && actualType === "")) throw browserError("stale_target")
+    if (field.autocomplete !== undefined && String(actualAutocompleteValue ?? "") !== field.autocomplete) throw browserError("stale_target")
+    if (field.required !== (actualRequiredValue !== null && actualRequiredValue !== undefined)) throw browserError("stale_target")
+    return target
+  }
+
+  private async handleBrowserAuthMessage(auth: BrowserAuthSession, payload: unknown): Promise<void> {
+    if (!isRecord(payload) || auth.settled) return
+    if (payload.cancel === true) { this.settleBrowserAuth(auth, { status: "cancelled" }); return }
+    if (!isRecord(payload.values)) return
+    const tab = this.tabs.get(auth.tabId)
+    if (!tab || tab.generation !== auth.generation || tab.inputSequence !== auth.inputSequence) { this.settleBrowserAuth(auth, { status: "page_changed" }); return }
+    if (safeOrigin(tab.url) !== auth.origin) { this.settleBrowserAuth(auth, { status: "origin_changed" }); return }
+    const selectedOption = typeof payload.selectedOption === "string" ? payload.selectedOption : undefined
+    const option = auth.request.options?.find((item) => item.id === selectedOption)
+    if (auth.request.options?.length && !option) return
+    const enabledFieldIds = new Set(option?.fields ?? auth.request.fields.map((field) => field.id))
+    const values = new Map<string, string>()
+    for (const field of auth.request.fields) {
+      if (!enabledFieldIds.has(field.id)) continue
+      const value = payload.values[field.id]
+      if (typeof value !== "string" || value.length > 100_000 || (field.required && !value)) return
+      values.set(field.id, value)
+    }
+    try {
+      const targets = new Map<string, ResolvedBrowserTarget>()
+      for (const field of auth.request.fields) if (values.has(field.id)) targets.set(field.id, await this.validateBrowserAuthField(tab, field))
+      if (tab.generation !== auth.generation || tab.inputSequence !== auth.inputSequence) { this.settleBrowserAuth(auth, { status: "page_changed" }); return }
+      tab.agentDispatching = true
+      try {
+        for (const field of auth.request.fields) {
+          const value = values.get(field.id)
+          const target = targets.get(field.id)
+          if (value === undefined || !target) continue
+          await this.dispatchMouse(tab, "click", target)
+          await this.applyText(tab, target, value, true)
+        }
+        const submit = auth.request.submit
+        if (submit?.kind === "click") {
+          const target = await this.resolveTarget(tab, { locator: combineAuthLocators(submit.frameLocator, submit.locator) })
+          await this.dispatchMouse(tab, "click", target)
+        } else if (submit?.kind === "press_enter") {
+          const targetField = auth.request.fields.find((field) => field.id === submit.fieldId) ?? [...auth.request.fields].reverse().find((field) => values.has(field.id))
+          const target = targetField ? targets.get(targetField.id) : undefined
+          if (!target) throw browserError("stale_target")
+          await this.pressTarget(tab, target, "Enter")
+        }
+      } finally {
+        tab.agentDispatching = false
+        tab.inputSequence += 1
+        values.clear()
+      }
+      this.settleBrowserAuth(auth, { status: "submitted", ...(selectedOption ? { selected_option: selectedOption } : {}) })
+    } catch {
+      values.clear()
+      this.settleBrowserAuth(auth, { status: "submission_failed" })
+    }
+  }
+
+  private settleBrowserAuth(auth: BrowserAuthSession, result: BrowserAuthResult): void {
+    if (auth.settled) return
+    auth.settled = true
+    clearTimeout(auth.timer)
+    auth.resolve(result)
+    if (!auth.window.isDestroyed()) auth.window.close()
+  }
+
+  private closeAuthSessionsForTab(tabId: string, status: BrowserAuthResult["status"]): void {
+    for (const auth of this.authSessions.values()) if (auth.tabId === tabId) this.settleBrowserAuth(auth, { status })
   }
 
   private async fillSavedContact(tab: BrowserTab, params: Record<string, unknown>): Promise<{ status: "submitted" }> {
@@ -1219,7 +1615,7 @@ export class BrowserRuntime {
     const inputSequence = tab.inputSequence
     const target = await this.resolveTarget(tab, params)
     if (target.tagName.toLowerCase() !== "input" || tab.generation !== generation || tab.inputSequence !== inputSequence) throw browserError("stale_target")
-    await withDebugger(tab.view.webContents, async (debuggerRef) => {
+    await withDebugger(browserContents(tab), async (debuggerRef) => {
       const located = await debuggerRef.sendCommand("DOM.getNodeForLocation", { x: Math.round(target.x), y: Math.round(target.y) }) as { backendNodeId?: number }
       if (!located.backendNodeId || tab.generation !== generation) throw browserError("stale_target")
       await debuggerRef.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: located.backendNodeId })
@@ -1269,7 +1665,7 @@ export class BrowserRuntime {
 
   private async waitForFileChooser(tab: BrowserTab, context: BrowserRequestContext, timeoutMs: number): Promise<{ file_chooser_id: string; is_multiple: boolean }> {
     if (context.actor !== "agent") throw browserError("action_denied")
-    await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }))
+    await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }))
     return new Promise((resolve, reject) => {
       const waiter: BrowserFileChooserWaiter = {
         browserSessionId: context.browserSessionId,
@@ -1279,7 +1675,7 @@ export class BrowserRuntime {
         timer: setTimeout(() => {
           const current = this.fileChooserWaiters.get(tab.tabId) ?? []
           this.fileChooserWaiters.set(tab.tabId, current.filter((item) => item !== waiter))
-          void withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false })).catch(() => undefined)
+          void withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false })).catch(() => undefined)
           reject(browserError("actionability_failed"))
         }, timeoutMs),
       }
@@ -1315,11 +1711,11 @@ export class BrowserRuntime {
       return path
     })].slice(0, chooser.isMultiple ? 20 : 1)
     try {
-      await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId }))
+      await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId }))
       return {}
     } finally {
       this.fileChoosers.delete(chooserId)
-      await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false })).catch(() => undefined)
+      await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false })).catch(() => undefined)
     }
   }
 
@@ -1332,7 +1728,7 @@ export class BrowserRuntime {
       ? { x: node.x, y: node.y }
       : await this.resolveTarget(tab, params)
     const generation = tab.generation
-    const mediaUrl = await withDebugger(tab.view.webContents, async (debuggerRef) => {
+    const mediaUrl = await withDebugger(browserContents(tab), async (debuggerRef) => {
       const located = await debuggerRef.sendCommand("DOM.getNodeForLocation", {
         x: Math.round(target.x),
         y: Math.round(target.y),
@@ -1364,14 +1760,14 @@ export class BrowserRuntime {
     if (!mediaUrl || !isAllowedNavigation(mediaUrl, true, this.settings, tab.approvedPrivateOrigins)) throw browserError("actionability_failed")
     const protocol = new URL(mediaUrl).protocol
     if (protocol !== "http:" && protocol !== "https:") throw browserError("action_denied")
-    tab.view.webContents.downloadURL(mediaUrl)
+    browserContents(tab).downloadURL(mediaUrl)
     return {}
   }
 
   private async listPageAssets(tab: BrowserTab, context: BrowserRequestContext): Promise<Record<string, unknown>> {
     if (context.actor !== "agent") throw browserError("action_denied")
     const generation = tab.generation
-    const observed = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    const observed = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(() => {
         const absoluteUrl = value => {
           try {
@@ -1491,7 +1887,7 @@ export class BrowserRuntime {
       const timer = setTimeout(() => controller.abort(), 30_000)
       try {
         if (!isAllowedNavigation(asset.url, true, this.settings, tab.approvedPrivateOrigins)) throw new Error("blocked")
-        const response = await tab.view.webContents.session.fetch(asset.url, { redirect: "follow", signal: controller.signal })
+        const response = await browserContents(tab).session.fetch(asset.url, { redirect: "follow", signal: controller.signal })
         const finalUrl = response.url || asset.url
         if (!response.ok || !isAllowedNavigation(finalUrl, true, this.settings, tab.approvedPrivateOrigins)) throw new Error(`http_${response.status}`)
         const declaredSize = Number(response.headers.get("content-length") ?? 0)
@@ -1544,7 +1940,7 @@ export class BrowserRuntime {
     const y = boundedNumber(params.y, 0, 100_000)
     this.showAgentCursor(tab, x, y, method === "click" || method === "doubleClick")
     if (method === "click" || method === "doubleClick") {
-      const clicked = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+      const clicked = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
         code: `(() => {
           let frameDocument = document;
           let x = ${JSON.stringify(x)};
@@ -1574,14 +1970,14 @@ export class BrowserRuntime {
       if (!clicked) throw browserError("stale_target")
       return
     }
-    await withDebugger(tab.view.webContents, async (debuggerRef) => {
+    await withDebugger(browserContents(tab), async (debuggerRef) => {
       await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y })
       if (method === "hover") return
     })
   }
 
   private async dispatchKey(tab: BrowserTab, key: string, modifiers: string[] = []): Promise<void> {
-    await withDebugger(tab.view.webContents, async (debuggerRef) => {
+    await withDebugger(browserContents(tab), async (debuggerRef) => {
       const modifier = modifiers.includes("CTRL") ? 2 : modifiers.includes("META") ? 4 : 0
       await debuggerRef.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key, modifiers: modifier })
       await debuggerRef.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key, modifiers: modifier })
@@ -1589,7 +1985,7 @@ export class BrowserRuntime {
   }
 
   private async applyText(tab: BrowserTab, target: ResolvedBrowserTarget, text: string, replace: boolean): Promise<void> {
-    const applied = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    const applied = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(() => {
         let frameDocument = document;
         let x = ${JSON.stringify(target.x)};
@@ -1632,7 +2028,7 @@ export class BrowserRuntime {
 
   private async applyTextToActive(tab: BrowserTab, text: string): Promise<void> {
     if (text.length > 100_000) throw browserError("invalid_browser_request")
-    const applied = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
+    const applied = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
       const element = document.activeElement;
       if (!(element instanceof HTMLElement)) return false;
       if (element instanceof HTMLInputElement) {
@@ -1653,7 +2049,7 @@ export class BrowserRuntime {
 
   private async pressTarget(tab: BrowserTab, target: ResolvedBrowserTarget, keySpec: string): Promise<void> {
     if (!keySpec || keySpec.length > 128) throw browserError("invalid_browser_request")
-    const pressed = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
+    const pressed = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
       const element = document.elementFromPoint(${JSON.stringify(target.x)}, ${JSON.stringify(target.y)});
       if (!(element instanceof HTMLElement)) return false;
       element.focus({ preventScroll: true });
@@ -1704,7 +2100,7 @@ export class BrowserRuntime {
     const argument = JSON.stringify({ script, arg: params.arg ?? null, timeoutMs })
     if (splitFrameLocator(locator)) return this.executeFrameLocatorQuery(tab, locator, "evaluate", argument)
     const generation = tab.generation
-    const result = await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Runtime.evaluate", {
+    const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Runtime.evaluate", {
       expression: locatorReadonlyExpression(locator, script, params.arg),
       awaitPromise: true,
       returnByValue: true,
@@ -1721,7 +2117,7 @@ export class BrowserRuntime {
     try {
       validateBrowserLocator(params.locator)
       if (splitFrameLocator(params.locator)) return await this.executeFrameLocatorQuery(tab, params.locator, operation, argument)
-      return await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})` }], true)
+      return await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)},${JSON.stringify(operation)},${JSON.stringify(argument)})` }], true)
     } catch (error) {
       const message = error instanceof Error ? error.message : ""
       const code = ["stale_target", "strict_locator_violation", "action_denied"].find((value) => message.includes(value)) ?? "stale_target"
@@ -1734,7 +2130,7 @@ export class BrowserRuntime {
     if (!parts) throw browserError("invalid_browser_request")
     const evaluation = operation === "evaluate" ? parseLocatorEvaluation(argument) : undefined
     const generation = tab.generation
-    return withDebugger(tab.view.webContents, async (debuggerRef) => {
+    return withDebugger(browserContents(tab), async (debuggerRef) => {
       const frameTree = await debuggerRef.sendCommand("Page.getFrameTree") as { frameTree?: { frame?: { id?: string } } }
       let frameId = frameTree.frameTree?.frame?.id
       if (!frameId) throw browserError("stale_target")
@@ -1824,7 +2220,7 @@ export class BrowserRuntime {
 
   private async waitForLoad(tab: BrowserTab, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs
-    while (tab.view.webContents.isLoading()) {
+    while (browserContents(tab).isLoading()) {
       if (Date.now() >= deadline) throw browserError("actionability_failed")
       await delay(50)
     }
@@ -1836,7 +2232,7 @@ export class BrowserRuntime {
     try {
       validateBrowserLocator(params.locator)
       if (splitFrameLocator(params.locator)) return await this.executeFrameLocatorQuery(tab, params.locator, "target") as ResolvedBrowserTarget
-      return await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)})` }], true) as ResolvedBrowserTarget
+      return await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(${browserLocatorScript()})(${JSON.stringify(params.locator)})` }], true) as ResolvedBrowserTarget
     } catch (error) {
       const message = error instanceof Error ? error.message : ""
       const code = ["stale_target", "strict_locator_violation", "action_denied"].find((value) => message.includes(value)) ?? "stale_target"
@@ -1846,7 +2242,7 @@ export class BrowserRuntime {
 
   private async dispatchScroll(tab: BrowserTab, target: ResolvedBrowserTarget, params: Record<string, unknown>): Promise<void> {
     await this.dispatchMouse(tab, "hover", target)
-    await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Input.dispatchMouseEvent", {
+    await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Input.dispatchMouseEvent", {
       type: "mouseWheel", x: target.x, y: target.y, deltaX: boundedNumber(params.deltaX, -10000, 10000), deltaY: boundedNumber(params.deltaY ?? params.y, -10000, 10000),
     }))
   }
@@ -1855,7 +2251,7 @@ export class BrowserRuntime {
     const endX = boundedNumber(params.toX ?? params.x2, 0, 100_000)
     const endY = boundedNumber(params.toY ?? params.y2, 0, 100_000)
     await this.showAgentCursor(tab, target.x, target.y, false)
-    await withDebugger(tab.view.webContents, async (debuggerRef) => {
+    await withDebugger(browserContents(tab), async (debuggerRef) => {
       await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: target.x, y: target.y })
       await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: target.x, y: target.y, button: "left", clickCount: 1 })
       await debuggerRef.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: endX, y: endY, button: "left" })
@@ -1877,7 +2273,7 @@ export class BrowserRuntime {
     }
     this.cursorOverlay.setBounds(parent.getContentBounds())
     this.cursorOverlay.showInactive()
-    const viewBounds = tab.view.getBounds()
+    const viewBounds = tab.surfaceBounds ?? { x: 0, y: 0, width: 1, height: 1 }
     this.cursorState = { x: x + viewBounds.x, y: y + viewBounds.y, pulse }
     this.updateCursorOverlay(this.cursorState.x, this.cursorState.y, pulse)
   }
@@ -1896,28 +2292,35 @@ export class BrowserRuntime {
 
   private async applySelect(tab: BrowserTab, params: Record<string, unknown>): Promise<void> {
     const values = Array.isArray(params.value) ? params.value.filter((value): value is string => typeof value === "string") : [String(params.value ?? "")]
-    await tab.view.webContents.executeJavaScript(`(values => { const select = document.activeElement; if (!(select instanceof HTMLSelectElement)) throw new Error("action_denied"); for (const option of Array.from(select.options)) option.selected = values.includes(option.value); select.dispatchEvent(new Event("input", { bubbles: true })); select.dispatchEvent(new Event("change", { bubbles: true })); })(${JSON.stringify(values)})`, true)
+    await browserContents(tab).executeJavaScript(`(values => { const select = document.activeElement; if (!(select instanceof HTMLSelectElement)) throw new Error("action_denied"); for (const option of Array.from(select.options)) option.selected = values.includes(option.value); select.dispatchEvent(new Event("input", { bubbles: true })); select.dispatchEvent(new Event("change", { bubbles: true })); })(${JSON.stringify(values)})`, true)
   }
 
   private async applyChecked(tab: BrowserTab, params: Record<string, unknown>, checked: boolean): Promise<void> {
     if (!params.locator) return
-    await tab.view.webContents.executeJavaScript(`(locator => { const el = document.activeElement; if (!(el instanceof HTMLInputElement) || !["checkbox", "radio"].includes(el.type)) throw new Error("action_denied"); if (el.checked !== ${checked}) el.click(); })(${JSON.stringify(params.locator)})`, true)
+    await browserContents(tab).executeJavaScript(`(locator => { const el = document.activeElement; if (!(el instanceof HTMLInputElement) || !["checkbox", "radio"].includes(el.type)) throw new Error("action_denied"); if (el.checked !== ${checked}) el.click(); })(${JSON.stringify(params.locator)})`, true)
   }
 
   private async snapshot(tab: BrowserTab): Promise<unknown> {
-    return withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("DOMSnapshot.captureSnapshot", { computedStyles: [] }))
+    return withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("DOMSnapshot.captureSnapshot", { computedStyles: [] }))
   }
 
   private async screenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<string> {
     if (params.fullPage === true) {
-      const result = await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: true })) as { data?: string }
+      const result = await browserPromiseTimeout(withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: true })), 8_000) as { data?: string }
       if (typeof result.data === "string") return result.data
     }
     try {
-      const image = await tab.view.webContents.capturePage()
+      const image = await browserPromiseTimeout(browserContents(tab).capturePage(), 5_000)
       return image.toPNG().toString("base64")
     } catch {
-      const result = await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: false })) as { data?: string }
+      const parent = this.options.getWindow()
+      if (tab.visible && tab.surfaceBounds && parent && !parent.isDestroyed()) {
+        try {
+          const image = await browserPromiseTimeout(parent.webContents.capturePage(tab.surfaceBounds), 5_000)
+          if (!image.isEmpty()) return image.toPNG().toString("base64")
+        } catch { /* CDP remains the final guest-only fallback. */ }
+      }
+      const result = await browserPromiseTimeout(withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: false })), 8_000) as { data?: string }
       if (typeof result.data === "string") return result.data
       throw browserError("browser_internal_error")
     }
@@ -1933,6 +2336,51 @@ export class BrowserRuntime {
     return { saved: true }
   }
 
+  private async saveReviewScreenshot(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<{ screenshotRef: string }> {
+    if (context.actor !== "user") throw browserError("action_denied")
+    const ownerThreadId = String(params.ownerThreadId ?? "")
+    if (!/^[a-zA-Z0-9._-]{1,200}$/.test(ownerThreadId) || tab.ownerThreadId !== ownerThreadId) throw browserError("action_denied")
+    const id = randomUUID()
+    const directory = join(this.options.configDir(), "browser", "review-resources", ownerThreadId)
+    mkdirSync(directory, { recursive: true })
+    const data = Buffer.from(await this.screenshot(tab, { fullPage: false }), "base64")
+    if (!data.length || data.length > 20 * 1024 * 1024) throw browserError("browser_internal_error")
+    writeFileSync(join(directory, `${id}.png`), data, { mode: 0o600 })
+    return { screenshotRef: `browser-review-screenshot:${ownerThreadId}:${id}` }
+  }
+
+  private deleteReviewScreenshot(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): { deleted: boolean } {
+    if (context.actor !== "user") throw browserError("action_denied")
+    const match = /^browser-review-screenshot:([a-zA-Z0-9._-]{1,200}):([a-f0-9-]{36})$/i.exec(String(params.screenshotRef ?? ""))
+    if (!match || tab.ownerThreadId !== match[1]) throw browserError("action_denied")
+    const path = join(this.options.configDir(), "browser", "review-resources", match[1]!, `${match[2]}.png`)
+    if (!existsSync(path)) return { deleted: false }
+    unlinkSync(path)
+    return { deleted: true }
+  }
+
+  private async highlightPageAnchor(tab: BrowserTab, value: unknown): Promise<{ ok: true }> {
+    const rect = value && typeof value === "object" && (value as Record<string, unknown>).rect && typeof (value as Record<string, unknown>).rect === "object"
+      ? (value as { rect: Record<string, unknown> }).rect
+      : undefined
+    const safeRect = rect ? {
+      x: boundedNumber(rect.x, -100_000, 100_000),
+      y: boundedNumber(rect.y, -100_000, 100_000),
+      width: boundedNumber(rect.width, 0, 100_000),
+      height: boundedNumber(rect.height, 0, 100_000),
+    } : null
+    await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
+      document.getElementById("__lume_review_highlight")?.remove();
+      const rect = ${JSON.stringify(safeRect)};
+      if (!rect) return;
+      const marker = document.createElement("div");
+      marker.id = "__lume_review_highlight";
+      Object.assign(marker.style, { position:"fixed", pointerEvents:"none", zIndex:"2147483647", left:rect.x+"px", top:rect.y+"px", width:rect.width+"px", height:rect.height+"px", border:"2px solid #8b5cf6", borderRadius:"4px", background:"rgba(139,92,246,.12)", boxSizing:"border-box" });
+      document.documentElement.appendChild(marker);
+    })()` }], true)
+    return { ok: true }
+  }
+
   private async copyScreenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<{ copied: true }> {
     const data = await this.screenshot(tab, params)
     clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(data, "base64")))
@@ -1942,13 +2390,13 @@ export class BrowserRuntime {
   private async printPage(tab: BrowserTab): Promise<{ printed: boolean }> {
     if (tab.context?.actor === "agent") throw browserError("action_denied")
     return { printed: await new Promise<boolean>((resolve) => {
-      tab.view.webContents.print({}, (success) => resolve(success))
+      browserContents(tab).print({}, (success) => resolve(success))
     }) }
   }
 
   private async pageContent(tab: BrowserTab, params: Record<string, unknown>): Promise<{ url: string; title: string; text: string; html?: string }> {
     const includeHtml = params.format === "html"
-    const result = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    const result = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(() => {
         const text = String(document.body?.innerText ?? "").slice(0, 200000);
         return { text, html: ${includeHtml} ? String(document.documentElement?.outerHTML ?? "").slice(0, 1000000) : undefined };
@@ -2029,7 +2477,7 @@ export class BrowserRuntime {
 
   private async visibleDom(tab: BrowserTab): Promise<{ nodes: Array<Record<string, unknown>> }> {
     const generation = tab.generation
-    const nodes = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    const nodes = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(() => Array.from(document.querySelectorAll("a,button,input,textarea,select,[role],[contenteditable=true]")).slice(0, 2000).flatMap((element) => {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
@@ -2079,7 +2527,7 @@ export class BrowserRuntime {
   private async elementInfo(tab: BrowserTab, params: Record<string, unknown>): Promise<Array<Record<string, unknown>>> {
     const x = boundedNumber(params.x, 0, 100_000)
     const y = boundedNumber(params.y, 0, 100_000)
-    return tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    return browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(() => {
         const elements = document.elementsFromPoint(${JSON.stringify(x)}, ${JSON.stringify(y)}).slice(0, 20);
         return elements.map((element) => {
@@ -2105,7 +2553,7 @@ export class BrowserRuntime {
   private async elementScreenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<string> {
     const x = boundedNumber(params.x, 0, 100_000)
     const y = boundedNumber(params.y, 0, 100_000)
-    await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(() => {
         document.getElementById("__lume_element_probe")?.remove();
         const overlay = document.createElement("div");
@@ -2127,7 +2575,7 @@ export class BrowserRuntime {
     try {
       return await this.screenshot(tab, {})
     } finally {
-      await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `document.getElementById("__lume_element_probe")?.remove()` }], true).catch(() => undefined)
+      await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `document.getElementById("__lume_element_probe")?.remove()` }], true).catch(() => undefined)
     }
   }
 
@@ -2135,7 +2583,7 @@ export class BrowserRuntime {
     const script = String(params.script ?? params.expression ?? "")
     if (!script || script.length > 100_000) throw browserError("invalid_browser_request")
     const expression = `(${script})(${JSON.stringify(params.arg ?? null)})`
-    const result = await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Runtime.evaluate", {
+    const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Runtime.evaluate", {
       expression,
       awaitPromise: true,
       returnByValue: true,
@@ -2171,7 +2619,7 @@ export class BrowserRuntime {
   }> {
     const mode = requestedMode === "text" || requestedMode === "region" ? requestedMode : "element"
     const generation = tab.generation
-    const selected = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    const selected = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(${pageSelectionScript()})(${JSON.stringify(mode)})`,
     }], true) as {
       kind?: unknown
@@ -2219,7 +2667,7 @@ export class BrowserRuntime {
       .filter(([key, value]) => TWEAK_STYLE_KEYS.has(key) && typeof value === "string")
       .map(([key, value]) => [key, String(value).slice(0, 4096)]))
     if (!domPath || Object.keys(styles).length === 0) throw browserError("invalid_browser_request")
-    const applied = await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    const applied = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(${applyPageTweaksScript()})(${JSON.stringify(domPath)}, ${JSON.stringify(styles)})`,
     }], true) as unknown
     if (!isRecord(applied)) throw browserError("stale_target")
@@ -2230,170 +2678,101 @@ export class BrowserRuntime {
     if (context.actor !== "user") throw browserError("action_denied")
     const domPath = String(params.domPath ?? "").slice(0, 8192)
     if (!domPath) throw browserError("invalid_browser_request")
-    await tab.view.webContents.executeJavaScriptInIsolatedWorld(999, [{
+    await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(${resetPageTweaksScript()})(${JSON.stringify(domPath)})`,
     }], true)
     return { ok: true }
   }
 
-  private composeReviewOverlay(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<BrowserReviewOverlayResult> {
-    if (context.actor !== "user" || !this.options.overlayPreloadPath) throw browserError("unsupported")
-    const kind = params.kind === "tweaks" ? "tweaks" : "annotation"
-    const anchor = isRecord(params.anchor) ? params.anchor : undefined
-    const rectValue = anchor && isRecord(anchor.rect) ? anchor.rect : undefined
-    if (!anchor
-      || anchor.url !== tab.url
-      || anchor.generation !== tab.generation
-      || !rectValue) throw browserError("stale_target")
-    const parent = this.options.getWindow()
-    if (!parent || parent.isDestroyed()) throw browserError("browser_unavailable")
-    for (const overlay of this.reviewOverlays.values()) {
-      if (overlay.tabId === tab.tabId && !overlay.window.isDestroyed()) overlay.window.close()
-    }
-    const initialBody = typeof params.body === "string" ? params.body.slice(0, 32_000) : ""
-    const initialStyles = sanitizeTweakStyles(params.styles)
-    const width = kind === "annotation" ? 390 : 520
-    const height = kind === "annotation" ? 230 : 570
-    const parentBounds = parent.getContentBounds()
-    const viewBounds = tab.view.getBounds()
-    const zoomFactor = tab.view.webContents.getZoomFactor()
-    const desiredX = parentBounds.x + viewBounds.x + Math.round(finiteNumber(rectValue.x) * zoomFactor)
-    const desiredY = parentBounds.y + viewBounds.y + Math.round((finiteNumber(rectValue.y) + finiteNumber(rectValue.height)) * zoomFactor) + 8
-    const display = screen.getDisplayNearestPoint({ x: desiredX, y: desiredY })
-    const x = Math.max(display.workArea.x, Math.min(desiredX, display.workArea.x + display.workArea.width - width))
-    const y = Math.max(display.workArea.y, Math.min(desiredY, display.workArea.y + display.workArea.height - height))
-    const overlayWindow = new BrowserWindow({
-      parent,
-      frame: false,
-      show: false,
-      skipTaskbar: true,
-      resizable: true,
-      minimizable: false,
-      maximizable: false,
-      fullscreenable: false,
-      width,
-      height,
-      x,
-      y,
-      backgroundColor: "#111113",
-      webPreferences: {
-        preload: this.options.overlayPreloadPath,
-        contextIsolation: true,
-        sandbox: true,
-        nodeIntegration: false,
-        devTools: false,
-      },
-    })
-    overlayWindow.setMenuBarVisibility(false)
-    overlayWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }))
-    return new Promise((resolveOverlay) => {
-      const overlay: BrowserReviewOverlay = {
-        window: overlayWindow,
-        tabId: tab.tabId,
-        generation: tab.generation,
-        kind,
-        ...(typeof anchor.domPath === "string" ? { domPath: anchor.domPath.slice(0, 8192) } : {}),
-        body: initialBody,
-        styles: initialStyles,
-        settled: false,
-        resolve: resolveOverlay,
-      }
-      this.reviewOverlays.set(overlayWindow.webContents.id, overlay)
-      const overlayWebContentsId = overlayWindow.webContents.id
-      overlayWindow.once("closed", () => {
-        this.reviewOverlays.delete(overlayWebContentsId)
-        if (!overlay.settled) {
-          overlay.settled = true
-          overlay.resolve({ status: "cancel" })
-        }
-      })
-      overlayWindow.once("ready-to-show", () => overlayWindow.show())
-      void overlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(browserReviewOverlayHtml(kind, initialBody, initialStyles))}`)
-        .catch(() => overlayWindow.close())
-    })
-  }
-
-  private closeReviewOverlaysForTab(tabId: string): void {
-    for (const overlay of this.reviewOverlays.values()) {
-      if (overlay.tabId === tabId && !overlay.window.isDestroyed()) overlay.window.close()
-    }
-  }
-
-  private handleBrowserOverlayMessage(overlay: BrowserReviewOverlay, payload: unknown): void {
-    if (!isRecord(payload) || overlay.settled) return
-    const tab = this.tabs.get(overlay.tabId)
-    if (!tab || tab.generation !== overlay.generation) {
-      overlay.window.close()
-      return
-    }
-    if (payload.type === "draft" && overlay.kind === "annotation" && typeof payload.body === "string") {
-      overlay.body = payload.body.slice(0, 32_000)
-      return
-    }
-    if ((payload.type === "preview" || payload.type === "submit") && overlay.kind === "tweaks") {
-      overlay.styles = sanitizeTweakStyles(payload.styles)
-      if (payload.type === "preview" && overlay.domPath && Object.keys(overlay.styles).length) {
-        void this.applyPageTweaks(tab, { domPath: overlay.domPath, styles: overlay.styles }, userContext()).catch(() => undefined)
-        return
-      }
-    }
-    if (payload.type === "reset" && overlay.kind === "tweaks" && overlay.domPath) {
-      overlay.styles = {}
-      void this.resetPageTweaks(tab, { domPath: overlay.domPath }, userContext()).catch(() => undefined)
-      return
-    }
-    if (payload.type === "cancel") {
-      overlay.window.close()
-      return
-    }
-    if (payload.type !== "submit") return
-    if (overlay.kind === "annotation") {
-      const body = typeof payload.body === "string" ? payload.body.trim().slice(0, 32_000) : overlay.body.trim()
-      if (!body) return
-      overlay.settled = true
-      overlay.resolve({ status: "submit", body })
-    } else {
-      if (!Object.keys(overlay.styles).length) return
-      overlay.settled = true
-      overlay.resolve({ status: "submit", styles: overlay.styles })
-    }
-    overlay.window.close()
-  }
-
   private async emulateDevice(tab: BrowserTab, preset: string, params: Record<string, unknown> = {}): Promise<{ preset: string; viewport: BrowserViewportState }> {
     const devices: Record<string, { width: number; height: number; deviceScaleFactor: number; mobile: boolean; touch: boolean }> = {
       desktop: { width: 0, height: 0, deviceScaleFactor: 1, mobile: false, touch: false },
+      responsive: { width: 390, height: 844, deviceScaleFactor: 1, mobile: false, touch: false },
+      "4k": { width: 2560, height: 1440, deviceScaleFactor: 1, mobile: false, touch: false },
+      "laptop-l": { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false, touch: false },
+      laptop: { width: 1024, height: 768, deviceScaleFactor: 1, mobile: false, touch: false },
+      "surface-pro-7": { width: 912, height: 1368, deviceScaleFactor: 2, mobile: true, touch: true },
+      "ipad-air": { width: 820, height: 1180, deviceScaleFactor: 2, mobile: true, touch: true },
+      "ipad-mini": { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true, touch: true },
+      "surface-duo": { width: 540, height: 720, deviceScaleFactor: 2.5, mobile: true, touch: true },
+      "iphone-15-pro-max": { width: 430, height: 932, deviceScaleFactor: 3, mobile: true, touch: true },
+      "pixel-8": { width: 412, height: 915, deviceScaleFactor: 2.625, mobile: true, touch: true },
+      "iphone-15-pro": { width: 393, height: 852, deviceScaleFactor: 3, mobile: true, touch: true },
+      "samsung-galaxy-s24-ultra": { width: 384, height: 824, deviceScaleFactor: 3, mobile: true, touch: true },
+      "iphone-se": { width: 375, height: 667, deviceScaleFactor: 2, mobile: true, touch: true },
       phone: { width: 390, height: 844, deviceScaleFactor: 3, mobile: true, touch: true },
       tablet: { width: 820, height: 1180, deviceScaleFactor: 2, mobile: true, touch: true },
       "phone-landscape": { width: 844, height: 390, deviceScaleFactor: 3, mobile: true, touch: true },
       "tablet-landscape": { width: 1180, height: 820, deviceScaleFactor: 2, mobile: true, touch: true },
     }
+    const normalizedPreset = sanitizeViewportPreset(preset) ?? preset
     const device = preset === "custom"
       ? {
-          width: boundedNumber(params.width, 200, 4000),
-          height: boundedNumber(params.height, 200, 4000),
+          width: boundedNumber(params.width, 240, 4096),
+          height: boundedNumber(params.height, 160, 4096),
           deviceScaleFactor: Math.max(0.5, Math.min(4, Number(params.deviceScaleFactor) || 1)),
           mobile: params.mobile === true,
           touch: params.touch === true,
         }
-      : devices[preset]
+      : devices[normalizedPreset]
     if (!device) throw browserError("invalid_browser_request")
+    const viewportPreset = preset === "custom"
+      ? sanitizeViewportPreset(params.presetId ?? params.preset) ?? "responsive"
+      : sanitizeViewportPreset(normalizedPreset) ?? "responsive"
     const viewport: BrowserViewportState = {
-      enabled: preset !== "desktop",
+      enabled: normalizedPreset !== "desktop",
       width: device.width,
       height: device.height,
       deviceScaleFactor: device.deviceScaleFactor,
       mobile: device.mobile,
       touch: device.touch,
+      preset: viewportPreset,
+      displayScale: sanitizeViewportDisplayScale(params.displayScale ?? tab.viewport?.displayScale),
     }
-    await withDebugger(tab.view.webContents, async (debuggerRef) => {
-      if (preset === "desktop") await debuggerRef.sendCommand("Emulation.clearDeviceMetricsOverride")
-      else await debuggerRef.sendCommand("Emulation.setDeviceMetricsOverride", { ...device, screenWidth: device.width, screenHeight: device.height })
+    await withDebugger(browserContents(tab), async (debuggerRef) => {
+      if (normalizedPreset === "desktop") await debuggerRef.sendCommand("Emulation.clearDeviceMetricsOverride")
+      else await debuggerRef.sendCommand("Emulation.setDeviceMetricsOverride", {
+        ...device,
+        screenWidth: device.width,
+        screenHeight: device.height,
+        screenOrientation: device.width > device.height
+          ? { type: "landscapePrimary", angle: 90 }
+          : { type: "portraitPrimary", angle: 0 },
+      })
       await debuggerRef.sendCommand("Emulation.setTouchEmulationEnabled", { enabled: device.touch, maxTouchPoints: device.touch ? 5 : 1 })
     })
     tab.viewport = viewport
-    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
-    return { preset, viewport }
+    if (params.__deferDescriptor !== true) {
+      this.rememberTab(tab)
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    }
+    return { preset: normalizedPreset, viewport }
+  }
+
+  private async commitViewport(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<{ viewport: BrowserViewportState; revision: number }> {
+    if (context.actor !== "user") throw browserError("action_denied")
+    const requestedGeneration = Number(params.expectedGeneration ?? params.generation)
+    const expectedGeneration = Number.isInteger(requestedGeneration) ? requestedGeneration : tab.generation
+    if (expectedGeneration !== tab.generation) throw browserError("tab_generation_changed")
+    const revision = boundedNumber(params.revision, 1, Number.MAX_SAFE_INTEGER)
+    if (revision <= (tab.viewportRevision ?? 0)) throw browserError("stale_target")
+    const state = sanitizeViewportState(params.state && typeof params.state === "object" ? params.state as Record<string, unknown> : params)
+    const commit = tab.viewportQueue.then(async () => {
+      if (tab.generation !== expectedGeneration || revision <= (tab.viewportRevision ?? 0)) throw browserError("tab_generation_changed")
+      await this.waitForGuest(tab)
+      if (state.enabled) {
+        await this.emulateDevice(tab, "custom", { ...state, presetId: state.preset, __deferDescriptor: true })
+      } else {
+        await this.emulateDevice(tab, "desktop", { __deferDescriptor: true })
+      }
+      if (tab.generation !== expectedGeneration) throw browserError("tab_generation_changed")
+      tab.viewportRevision = revision
+      this.rememberTab(tab)
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      return { viewport: tab.viewport ?? desktopViewportState(), revision }
+    })
+    tab.viewportQueue = commit.then(() => undefined, () => undefined)
+    return commit
   }
 
   private setViewport(tab: BrowserTab, params: Record<string, unknown>): Promise<{ viewport: BrowserViewportState }> {
@@ -2402,6 +2781,26 @@ export class BrowserRuntime {
 
   private resetViewport(tab: BrowserTab): Promise<{ viewport: BrowserViewportState }> {
     return this.emulateDevice(tab, "desktop").then(({ viewport }) => ({ viewport }))
+  }
+
+  private captureAgentViewportOverride(tab: BrowserTab, context: BrowserRequestContext): void {
+    const current = tab.agentViewportOverride
+    if (current?.browserSessionId === context.browserSessionId && current.browserTurnId === context.browserTurnId) return
+    tab.agentViewportOverride = {
+      browserSessionId: context.browserSessionId,
+      browserTurnId: context.browserTurnId,
+      previous: tab.viewport ? { ...tab.viewport } : desktopViewportState(),
+    }
+  }
+
+  private restoreAgentViewportOverride(tab: BrowserTab, context: Pick<BrowserRequestContext, "browserSessionId" | "browserTurnId">): void {
+    const override = tab.agentViewportOverride
+    if (!override || override.browserSessionId !== context.browserSessionId || override.browserTurnId !== context.browserTurnId) return
+    tab.agentViewportOverride = undefined
+    const restore = override.previous.enabled
+      ? this.setViewport(tab, { ...override.previous, presetId: override.previous.preset })
+      : this.resetViewport(tab)
+    void restore.catch(() => undefined)
   }
 
   private async cdp(tab: BrowserTab, params: Record<string, unknown>): Promise<unknown> {
@@ -2416,7 +2815,7 @@ export class BrowserRuntime {
       const url = String((commandParams as Record<string, unknown>).url ?? "")
       return this.navigate(tab, url, tab.context ?? userContext())
     }
-    const result = await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand(method, commandParams))
+    const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand(method, commandParams))
     if (Buffer.byteLength(JSON.stringify(result ?? null)) > 2 * 1024 * 1024) throw browserError("browser_internal_error")
     return result
   }
@@ -2434,12 +2833,12 @@ export class BrowserRuntime {
       width: boundedNumber(params.width, 1, Math.max(1, contentBounds.width - x)),
       height: boundedNumber(params.height, 1, Math.max(1, contentBounds.height - y)),
     }
-    tab.view.setBounds(bounds)
+    tab.surfaceBounds = bounds
     tab.surface = params.surface === "main" || params.surface === "right-panel" ? params.surface : null
     tab.visible = params.visible !== false
     tab.lifecycle = tab.visible ? "active" : "background"
     if (tab.visible) tab.lastOpenedAt = new Date().toISOString()
-    tab.view.setVisible(tab.visible)
+    tab.webContents?.setBackgroundThrottling(!tab.visible)
     if (tab.visible) void this.setTabSuspended(tab, false)
     this.enforceBackgroundLimit()
     return publicTab(tab)
@@ -2450,11 +2849,56 @@ export class BrowserRuntime {
     tab.visible = visible
     tab.lifecycle = visible ? "active" : tab.lifecycle === "crashed" ? "crashed" : "background"
     if (visible) tab.lastOpenedAt = new Date().toISOString()
-    tab.view.setVisible(visible)
+    tab.webContents?.setBackgroundThrottling(!visible)
     if (visible) void this.setTabSuspended(tab, false)
     if (!visible) this.hideAgentCursor()
     this.enforceBackgroundLimit()
     return publicTab(tab)
+  }
+
+  private prepareGuestMount(tabId: string, context: BrowserRequestContext): BrowserGuestMountDescriptor {
+    if (context.actor !== "user") throw browserError("action_denied")
+    const tab = this.requireTab(tabId, context)
+    const win = this.options.getWindow()
+    if (!win || win.isDestroyed()) throw browserError("browser_unavailable")
+    if (tab.webContents && !tab.webContents.isDestroyed()) throw browserError("action_denied")
+    if (tab.mountToken) this.guestMounts.delete(tab.mountToken)
+    const token = randomBytes(24).toString("hex")
+    const expiresAt = Date.now() + 30_000
+    this.guestMounts.set(token, {
+      token,
+      tabId: tab.tabId,
+      generation: tab.generation,
+      partition: tab.partition,
+      ownerWebContentsId: win.webContents.id,
+      expiresAt,
+      state: "issued",
+    })
+    tab.mountToken = token
+    tab.guestState = "attaching"
+    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    return {
+      mountToken: token,
+      tabId: tab.tabId,
+      generation: tab.generation,
+      partition: tab.partition,
+      bootstrapUrl: `about:blank#lume-browser-mount=${token}`,
+      expiresAt: new Date(expiresAt).toISOString(),
+    }
+  }
+
+  private releaseGuestMount(tabId: string, context: BrowserRequestContext, mountToken: string): { released: boolean } {
+    if (context.actor !== "user") throw browserError("action_denied")
+    const tab = this.requireTab(tabId, context)
+    if (mountToken && tab.mountToken && mountToken !== tab.mountToken) throw browserError("stale_target")
+    if (tab.mountToken) this.guestMounts.delete(tab.mountToken)
+    tab.mountToken = undefined
+    const contents = tab.webContents
+    tab.webContents = null
+    tab.guestState = "unmounted"
+    if (contents && !contents.isDestroyed()) contents.close()
+    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    return { released: Boolean(contents) }
   }
 
   private enforceBackgroundLimit(): void {
@@ -2471,13 +2915,14 @@ export class BrowserRuntime {
   }
 
   private async setTabSuspended(tab: BrowserTab, suspended: boolean): Promise<void> {
-    if (tab.view.webContents.isDestroyed() || tab.lifecycle === "crashed") return
+    const contents = tab.webContents
+    if (!contents || contents.isDestroyed() || tab.lifecycle === "crashed") return
     if (suspended && tab.lifecycle === "suspended") return
     if (!suspended && tab.lifecycle !== "suspended") return
     tab.lifecycle = suspended ? "suspended" : tab.visible ? "active" : "background"
-    tab.view.webContents.setBackgroundThrottling(suspended || !tab.visible)
+    contents.setBackgroundThrottling(suspended || !tab.visible)
     try {
-      await withDebugger(tab.view.webContents, (debuggerRef) => debuggerRef.sendCommand("Page.setWebLifecycleState", { state: suspended ? "frozen" : "active" }))
+      await withDebugger(contents, (debuggerRef) => debuggerRef.sendCommand("Page.setWebLifecycleState", { state: suspended ? "frozen" : "active" }))
     } catch { /* Chromium may reject lifecycle control for a tab that is still loading. */ }
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
   }
@@ -2487,7 +2932,7 @@ export class BrowserRuntime {
     tab.lastOpenedAt = new Date().toISOString()
     tab.lifecycle = "active"
     void this.setTabSuspended(tab, false)
-    tab.view.webContents.focus()
+    tab.webContents?.focus()
     return publicTab(tab)
   }
 
@@ -2505,10 +2950,44 @@ export class BrowserRuntime {
     return publicTab(tab)
   }
 
+  private createReferenceGrant(context: BrowserRequestContext, params: Record<string, unknown>): { referenceGrantId: string; expiresAt: string } {
+    if (context.actor !== "user") throw browserError("action_denied")
+    const threadId = String(params.threadId ?? context.threadId ?? "").trim().slice(0, 200)
+    const tabId = String(params.tabId ?? "").trim()
+    if (!threadId || !tabId || params.access !== "control") throw browserError("invalid_browser_request")
+    const tab = this.requireTab(tabId, context)
+    if (tab.ownerThreadId !== threadId || tab.backend !== "iab") throw browserError("action_denied")
+    const providerTabId = typeof params.providerTabId === "string" ? params.providerTabId : undefined
+    const generation = Number.isInteger(params.generation) ? Number(params.generation) : undefined
+    const title = typeof params.title === "string" ? params.title : ""
+    const url = typeof params.url === "string" ? params.url : ""
+    if (!title || !url || providerTabId !== tab.providerTabId || generation !== tab.generation || title !== tab.title || url !== tab.url) throw browserError("tab_generation_changed")
+    return this.referenceGrants.create({
+      backend: "iab",
+      threadId,
+      tabId,
+      providerTabId: tab.providerTabId,
+      generation: tab.generation,
+      title: tab.title,
+      url: tab.url,
+      access: "control",
+    })
+  }
+
+  private revokeReferenceGrant(context: BrowserRequestContext, params: Record<string, unknown>): { ok: true; revoked: boolean } {
+    if (context.actor !== "user") throw browserError("action_denied")
+    const referenceGrantId = String(params.referenceGrantId ?? "").trim()
+    const threadId = String(params.threadId ?? context.threadId ?? "").trim().slice(0, 200)
+    if (!referenceGrantId || !threadId) throw browserError("invalid_browser_request")
+    return { ok: true, revoked: this.referenceGrants.revoke(referenceGrantId, threadId) }
+  }
+
   private unshareTab(tabId: string, context: BrowserRequestContext): BrowserTabDescriptor {
     if (context.actor !== "user") throw browserError("action_denied")
     const tab = this.requireTab(tabId, context)
+    this.referenceGrants.invalidateTab(tabId)
     tab.shareable = false
+    if (tab.agentViewportOverride) this.restoreAgentViewportOverride(tab, tab.agentViewportOverride)
     revokeSharedLease(tab)
     tab.generation += 1
     tab.inputSequence += 1
@@ -2517,11 +2996,11 @@ export class BrowserRuntime {
     return publicTab(tab)
   }
 
-  private claimTab(tabId: string, context: BrowserRequestContext): BrowserTabDescriptor {
+  private claimTab(claimHandle: string, context: BrowserRequestContext, params: Record<string, unknown>): BrowserTabDescriptor {
     if (context.actor !== "agent") throw browserError("action_denied")
-    const tab = this.tabs.get(tabId)
-    const snapshotKey = claimSnapshotKey(context, tabId)
+    const snapshotKey = claimSnapshotKey(context, claimHandle)
     const snapshot = this.claimSnapshots.get(snapshotKey)
+    const tab = snapshot ? this.tabs.get(snapshot.tabId) : undefined
     if (!tab || !snapshot
       || snapshot.providerTabId !== tab.providerTabId
       || snapshot.title !== tab.title
@@ -2530,7 +3009,30 @@ export class BrowserRuntime {
       this.claimSnapshots.delete(snapshotKey)
       throw browserError("tab_generation_changed")
     }
-    if (!tab || !canAgentClaim(tab, context.browserSessionId, context.browserTurnId)) throw browserError("action_denied")
+    const referenceGrantId = typeof params.referenceGrantId === "string" ? params.referenceGrantId : ""
+    if (referenceGrantId) {
+      if (!context.threadId || !tab || tab.ownerThreadId !== context.threadId) {
+        if (tab) this.referenceGrants.invalidateTab(tab.tabId)
+        throw browserError("action_denied")
+      }
+      const grant = this.referenceGrants.consume(referenceGrantId, {
+        backend: "iab",
+        threadId: context.threadId,
+        tabId: tab.tabId,
+        providerTabId: tab.providerTabId,
+        generation: tab.generation,
+        title: tab.title,
+        url: tab.url,
+        access: "control",
+      })
+      if (grant.ok === false) {
+        if (grant.reason === "expired") throw browserError("reference_grant_expired")
+        if (grant.reason === "stale") throw browserError("tab_generation_changed")
+        throw browserError("action_denied")
+      }
+    } else if (!tab || !canAgentClaim(tab, context.browserSessionId, context.browserTurnId)) {
+      throw browserError("action_denied")
+    }
     this.claimSnapshots.delete(snapshotKey)
     tab.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: tab.generation }
     void this.setTabSuspended(tab, false)
@@ -2538,18 +3040,28 @@ export class BrowserRuntime {
     return publicTab(tab)
   }
 
+  private clearClaimSnapshots(context: BrowserRequestContext): void {
+    const prefix = `${context.browserSessionId}\u0000${context.browserTurnId}\u0000`
+    for (const key of this.claimSnapshots.keys()) if (key.startsWith(prefix)) this.claimSnapshots.delete(key)
+  }
+
   private closeTab(tabId: string, context: BrowserRequestContext): { ok: true } {
     const tab = this.requireTab(tabId, context)
-    this.closeReviewOverlaysForTab(tabId)
+    if (tab.mountToken) this.guestMounts.delete(tab.mountToken)
+    for (const waiter of tab.mountWaiters.splice(0)) { clearTimeout(waiter.timer); waiter.reject(browserError("tab_not_found")) }
+    this.referenceGrants.invalidateTab(tabId)
+    this.workspaces.close(publicTab(tab), { partition: tab.partition, handoffBrowserSessionId: tab.handoff?.browserSessionId })
+    if (tab.ownerThreadId) this.emitWorkspace(this.workspaces.get(tab.ownerThreadId))
+    this.closeAuthSessionsForTab(tabId, "cancelled")
     this.clearTabWaiters(tabId)
     for (const [inventoryId, inventory] of this.pageAssetInventories) {
       if (inventory.tabId === tabId) this.pageAssetInventories.delete(inventoryId)
     }
-    const win = this.options.getWindow()
-    if (win && !win.isDestroyed()) win.contentView.removeChildView(tab.view)
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close()
+    const contents = tab.webContents
+    if (contents && !contents.isDestroyed()) contents.close()
     this.tabs.delete(tabId)
-    this.disposeOwnedSessionIfUnused(tab.partition, tab.view.webContents.session)
+    this.disposeOwnedSessionIfUnused(tab.partition, contents?.session ?? session.fromPartition(tab.partition))
+    this.options.emit({ method: "browser:tab-closed", params: { tabId } })
     this.enforceBackgroundLimit()
     return { ok: true }
   }
@@ -2558,6 +3070,7 @@ export class BrowserRuntime {
     const tabIds = Array.isArray(params.tabIds) ? params.tabIds.filter((value): value is string => typeof value === "string") : []
     for (const tabId of tabIds) {
       const tab = this.requireTab(tabId, context)
+      this.restoreAgentViewportOverride(tab, context)
       tab.context = undefined
       tab.agentLease = undefined
       tab.generation += 1
@@ -2588,6 +3101,7 @@ export class BrowserRuntime {
       const tab = this.requireTab(tabId, context)
       tab.handoff = { browserSessionId: context.browserSessionId, status: "handoff" }
       this.releaseTabs(context, { tabIds: [tabId] })
+      this.rememberTab(tab)
     }
     return { ok: true }
   }
@@ -2618,6 +3132,11 @@ export class BrowserRuntime {
       const retained = keep.get(tab.tabId)
       if (!retained) { this.closeTab(tab.tabId, context); continue }
       tab.handoff = { browserSessionId: context.browserSessionId, ...retained }
+      this.releaseTabs(context, { tabIds: [tab.tabId] })
+      this.rememberTab(tab)
+    }
+    for (const tab of [...this.tabs.values()]) {
+      if (tab.context?.actor === "agent" || tab.agentLease?.browserSessionId !== context.browserSessionId || tab.agentLease.browserTurnId !== context.browserTurnId) continue
       this.releaseTabs(context, { tabIds: [tab.tabId] })
     }
     return { ok: true }
@@ -2659,12 +3178,22 @@ export class BrowserRuntime {
     if (!context.capability?.startsWith("browser-broker-policy-v1:")) throw browserError("action_denied")
     const bindingHash = String(params.bindingHash ?? "")
     if (!/^[A-Za-z0-9_-]{32,128}$/.test(bindingHash)) throw browserError("invalid_browser_request")
-    const win = this.options.getWindow()
-    if (!win || win.isDestroyed()) throw browserError("confirmation_unavailable")
     const category = String(params.category ?? "action").replace(/[^a-zA-Z_-]/g, "").slice(0, 32)
     const preview = String(params.preview ?? "执行受保护的浏览器动作").replace(/[\r\n\t]+/g, " ").slice(0, 300)
+    const backend = params.backend === "extension" ? "extension" : "iab"
+    const approvalMode = category === "history"
+      ? backend === "extension" ? this.settings.chromeHistoryApprovalMode : this.settings.iabHistoryApprovalMode
+      : category === "browse" ? this.settings.browserApprovalMode : "alwaysAsk"
+    if (approvalMode === "disabled") throw browserError("action_denied")
+    if (approvalMode === "neverAsk") return this.issuePolicyToken(bindingHash)
+    const win = this.options.getWindow()
+    if (!win || win.isDestroyed()) throw browserError("confirmation_unavailable")
     const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["允许一次", "取消"], defaultId: 1, cancelId: 1, title: "确认浏览器操作", message: preview, detail: `类别：${category}。批准仅对当前标签页的这一次操作有效。` })
     if (result.response !== 0) return { approved: false }
+    return this.issuePolicyToken(bindingHash)
+  }
+
+  private issuePolicyToken(bindingHash: string): { approved: true; token: string } {
     const token = randomBytes(32).toString("base64url")
     this.policyTokens.set(token, { bindingHash, expiresAt: Date.now() + 30_000 })
     return { approved: true, token }
@@ -2765,7 +3294,7 @@ export class BrowserRuntime {
       if (result.response !== 0) throw browserError("action_denied")
       this.credentials.clearPasswords()
     }
-    const browserSession = this.tabs.values().next().value?.view.webContents.session ?? session.fromPartition("persist:lume-browser")
+    const browserSession = this.tabs.values().next().value?.webContents?.session ?? session.fromPartition("persist:lume-browser")
     const dataTypes: Electron.ClearDataOptions["dataTypes"] = []
     if (selected.has("siteData")) dataTypes.push("cookies", "fileSystems", "indexedDB", "localStorage", "serviceWorkers", "webSQL")
     if (selected.has("cache")) dataTypes.push("cache")
@@ -2789,11 +3318,12 @@ export function createBrowserRuntime(options: BrowserRuntimeOptions): BrowserRun
 
 function publicTab(tab: BrowserTab): BrowserTabDescriptor {
   const {
-    view: _view,
+    webContents: _webContents,
     partition: _partition,
     context: _context,
     inputSequence: _inputSequence,
     agentLease,
+    agentViewportOverride: _agentViewportOverride,
     handoff,
     approvedPrivateOrigins: _approvedPrivateOrigins,
     findRequestId: _findRequestId,
@@ -2807,6 +3337,11 @@ function publicTab(tab: BrowserTab): BrowserTabDescriptor {
     agentDispatching: _agentDispatching,
     dialogOpen: _dialogOpen,
     dialogInfo: _dialogInfo,
+    surfaceBounds: _surfaceBounds,
+    pendingUrl: _pendingUrl,
+    mountToken: _mountToken,
+    mountWaiters: _mountWaiters,
+    viewportQueue: _viewportQueue,
     ...result
   } = tab
   return {
@@ -2816,6 +3351,21 @@ function publicTab(tab: BrowserTab): BrowserTabDescriptor {
     agentClaimed: Boolean(agentLease),
     ...(handoff ? { handoffStatus: handoff.status } : {}),
   }
+}
+
+function browserContents(tab: BrowserTab): Electron.WebContents {
+  const contents = tab.webContents
+  if (!contents || contents.isDestroyed()) throw browserError("browser_unavailable")
+  return contents
+}
+
+function guestMountTokenFromUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== "about:" || url.pathname !== "blank") return undefined
+    const match = /^#lume-browser-mount=([a-f0-9]{48})$/i.exec(url.hash)
+    return match?.[1]
+  } catch { return undefined }
 }
 
 function validateContext(value: BrowserRequestContext): BrowserRequestContext {
@@ -2847,7 +3397,7 @@ function stableBrowserErrorCode(error: unknown): BrowserErrorCode {
 }
 
 const BROWSER_ERROR_CODES = new Set<BrowserErrorCode>([
-  "incompatible_protocol", "browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "action_denied", "unsupported", "executed_unknown", "browser_internal_error",
+  "incompatible_protocol", "browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "unsupported", "executed_unknown", "browser_internal_error",
   "strict_locator_violation", "actionability_failed", "dialog_blocking",
 ])
 
@@ -2861,7 +3411,7 @@ function normalizeBrowserMethod(method: string): string {
 
 async function listWebMcpTools(tab: BrowserTab): Promise<{ tools: Array<Record<string, unknown>> }> {
   const generation = tab.generation
-  const value = await tab.view.webContents.executeJavaScript(`(async () => {
+  const value = await browserContents(tab).executeJavaScript(`(async () => {
     const modelContext = document.modelContext ?? navigator.modelContext;
     if (!modelContext || typeof modelContext.getTools !== "function") return [];
     return (await Promise.resolve(modelContext.getTools())).map((tool) => ({
@@ -2907,7 +3457,7 @@ async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, unknown>
         try { return JSON.parse(result); } catch { return result; }
       });
   })()`
-  const value = await browserPromiseTimeout(tab.view.webContents.executeJavaScript(script, true), timeoutMs)
+  const value = await browserPromiseTimeout(browserContents(tab).executeJavaScript(script, true), timeoutMs)
   if (generation !== tab.generation) throw browserError("stale_target")
   const encodedResult = JSON.stringify(value)
   if (encodedResult && encodedResult.length > 1_000_000) throw browserError("browser_internal_error")
@@ -2944,9 +3494,10 @@ function browserJsonValue(value: unknown): unknown {
 }
 
 function browserCapabilityDocumentation(id: string): string {
+  const registered = BROWSER_API_REGISTRY.filter((entry) => entry.capability === id)
+  if (registered.length) return registered.map((entry) => entry.description).join("\n")
   const documentation: Record<string, string> = {
     advancedCdp: "Use CDP only for approved inspection in an isolated browser session.",
-    browserAuth: "Request saved credentials without returning sensitive values to the Agent.",
     pageAssets: "List observed page assets and bundle only explicitly selected items.",
     webmcp: "Prefer page-defined WebMCP tools over DOM or coordinate interaction. Call listTools only to refresh, then invokeTool with the selected tool name and input.",
     visibility: "Show or hide tabs owned by the current browser session.",
@@ -3022,6 +3573,12 @@ function stripUrl(value: string): string {
   } catch { return "" }
 }
 
+function normalizeNavigableUrl(value: string): string {
+  const normalized = stripUrl(value.trim())
+  if (!normalized || !isAllowedNavigation(normalized, false)) throw browserError("invalid_url")
+  return normalized
+}
+
 function isAllowedNavigation(value: string, agent: boolean, settings?: BrowserSettings, approvedPrivateOrigins?: Set<string>): boolean {
   try {
     if (!agent && value.startsWith("view-source:")) return isAllowedNavigation(value.slice("view-source:".length), false, settings, approvedPrivateOrigins)
@@ -3063,6 +3620,68 @@ function normalizePageAssetSource(value: unknown): BrowserPageAsset["sources"][n
     kind: source.kind,
     ...(Number.isInteger(source.nodeId) && Number(source.nodeId) > 0 ? { nodeId: Number(source.nodeId) } : {}),
     ...(typeof source.property === "string" && source.property ? { property: source.property.slice(0, 128) } : {}),
+  }
+}
+
+const BROWSER_VIEWPORT_PRESETS = new Set<BrowserViewportPreset>([
+  "desktop",
+  "responsive",
+  "4k",
+  "laptop-l",
+  "laptop",
+  "surface-pro-7",
+  "ipad-air",
+  "ipad-mini",
+  "surface-duo",
+  "iphone-15-pro-max",
+  "pixel-8",
+  "iphone-15-pro",
+  "samsung-galaxy-s24-ultra",
+  "iphone-se",
+  "phone",
+  "tablet",
+  "phone-landscape",
+  "tablet-landscape",
+])
+
+function sanitizeViewportPreset(value: unknown): BrowserViewportPreset | undefined {
+  if (value === "laptop-large") return "laptop-l"
+  if (value === "galaxy-s24-ultra") return "samsung-galaxy-s24-ultra"
+  return typeof value === "string" && BROWSER_VIEWPORT_PRESETS.has(value as BrowserViewportPreset)
+    ? value as BrowserViewportPreset
+    : undefined
+}
+
+function sanitizeViewportDisplayScale(value: unknown): BrowserViewportState["displayScale"] {
+  if (value === "fit" || value === undefined) return "fit"
+  if (typeof value !== "number" || !Number.isFinite(value)) return "fit"
+  return Math.max(0.5, Math.min(2, value))
+}
+
+function sanitizeViewportState(value: Record<string, unknown>): BrowserViewportState {
+  if (value.enabled === false) return desktopViewportState()
+  return {
+    enabled: true,
+    width: boundedNumber(value.width, 240, 4096),
+    height: boundedNumber(value.height, 160, 4096),
+    deviceScaleFactor: Math.max(0.5, Math.min(4, Number(value.deviceScaleFactor) || 1)),
+    mobile: value.mobile === true,
+    touch: value.touch === true,
+    preset: sanitizeViewportPreset(value.preset ?? value.presetId) ?? "responsive",
+    displayScale: sanitizeViewportDisplayScale(value.displayScale),
+  }
+}
+
+function desktopViewportState(): BrowserViewportState {
+  return {
+    enabled: false,
+    width: 0,
+    height: 0,
+    deviceScaleFactor: 1,
+    mobile: false,
+    touch: false,
+    preset: "desktop",
+    displayScale: "fit",
   }
 }
 
@@ -3204,74 +3823,71 @@ const TWEAK_STYLE_KEYS = new Set([
   "margin",
 ])
 
-function sanitizeTweakStyles(value: unknown): Record<string, string> {
-  if (!isRecord(value)) return {}
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key, item]) => TWEAK_STYLE_KEYS.has(key) && typeof item === "string")
-    .map(([key, item]) => [key, String(item).slice(0, 4096)]))
+function sanitizeBrowserAuthRequest(value: Record<string, unknown>): BrowserAuthRequest {
+  const tabId = typeof value.tabId === "string" ? value.tabId.slice(0, 200) : ""
+  const generation = Number(value.generation)
+  const origin = safeOrigin(String(value.origin ?? ""))
+  const expiresAt = typeof value.expiresAt === "string" ? value.expiresAt : typeof value.expires_at === "string" ? value.expires_at : ""
+  const ids = new Set<string>()
+  const fields = (Array.isArray(value.fields) ? value.fields.slice(0, 20) : []).flatMap((raw, index): BrowserAuthFieldRequest[] => {
+    if (!isRecord(raw) || !isBrowserLocator(raw.locator)) return []
+    validateBrowserLocator(raw.locator)
+    const id = typeof raw.id === "string" && /^[a-zA-Z0-9._-]{1,100}$/.test(raw.id) ? raw.id : `field-${index + 1}`
+    if (ids.has(id)) throw browserError("invalid_browser_request")
+    ids.add(id)
+    const inputType = String(raw.inputType ?? raw.type ?? "text").toLowerCase()
+    const safeInputType: BrowserAuthFieldRequest["inputType"] = (["text", "email", "password", "tel", "number", "url", "search", "otp"] as string[]).includes(inputType) ? inputType as BrowserAuthFieldRequest["inputType"] : "text"
+    const frameLocator = isBrowserLocator(raw.frameLocator) ? raw.frameLocator : undefined
+    if (frameLocator) validateBrowserLocator(frameLocator)
+    return [{
+      id,
+      label: typeof raw.label === "string" ? raw.label.slice(0, 200) : `Field ${index + 1}`,
+      locator: raw.locator,
+      inputType: safeInputType,
+      ...(typeof raw.autocomplete === "string" ? { autocomplete: raw.autocomplete.slice(0, 200) } : {}),
+      required: raw.required === true,
+      ...(frameLocator ? { frameLocator } : {}),
+    }]
+  })
+  if (!tabId || !Number.isSafeInteger(generation) || generation < 1 || !origin || !expiresAt || !fields.length) throw browserError("invalid_browser_request")
+  const options = (Array.isArray(value.options) ? value.options.slice(0, 10) : []).flatMap((raw) => {
+    if (!isRecord(raw) || typeof raw.id !== "string" || typeof raw.label !== "string" || !Array.isArray(raw.fields)) return []
+    const optionFields = raw.fields.filter((id): id is string => typeof id === "string" && ids.has(id))
+    if (!optionFields.length) return []
+    return [{ id: raw.id.slice(0, 100), label: raw.label.slice(0, 200), fields: [...new Set(optionFields)] }]
+  })
+  let submit: BrowserAuthRequest["submit"]
+  if (isRecord(value.submit) && value.submit.kind === "click" && isBrowserLocator(value.submit.locator)) {
+    validateBrowserLocator(value.submit.locator)
+    const frameLocator = isBrowserLocator(value.submit.frameLocator) ? value.submit.frameLocator : undefined
+    if (frameLocator) validateBrowserLocator(frameLocator)
+    submit = { kind: "click", locator: value.submit.locator, ...(frameLocator ? { frameLocator } : {}) }
+  } else if (isRecord(value.submit) && value.submit.kind === "press_enter") {
+    submit = { kind: "press_enter", ...(typeof value.submit.fieldId === "string" && ids.has(value.submit.fieldId) ? { fieldId: value.submit.fieldId } : {}) }
+  } else submit = { kind: "none" }
+  return { tabId, generation, origin, expiresAt, fields, ...(options.length ? { options } : {}), submit }
 }
 
-function browserReviewOverlayHtml(kind: "annotation" | "tweaks", initialBody: string, initialStyles: Record<string, string>): string {
-  const tweakFields = [
-    ["textContent", "文本"], ["color", "前景色"], ["backgroundColor", "背景色"], ["borderColor", "边框色"],
-    ["fontFamily", "字体"], ["fontSize", "字号"], ["fontWeight", "字重"], ["borderRadius", "圆角"],
-    ["borderWidth", "边框宽度"], ["borderStyle", "边框样式"], ["width", "宽度"], ["height", "高度"],
-    ["display", "Display"], ["flexDirection", "Flex 方向"], ["justifyContent", "主轴分布"], ["alignItems", "交叉轴"],
-    ["gap", "Gap"], ["padding", "Padding"], ["margin", "Margin"],
-  ]
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<style>
-  :root{color-scheme:light dark;font:12px system-ui,-apple-system,"Segoe UI",sans-serif}
-  *{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:#151517;color:#f4f4f5}
-  body{display:flex;flex-direction:column;border:1px solid #3f3f46;border-radius:10px}
-  header{height:38px;display:flex;align-items:center;padding:0 12px;border-bottom:1px solid #343438;font-weight:600;-webkit-app-region:drag}
-  main{min-height:0;flex:1;padding:10px;overflow:auto}
-  textarea,input{width:100%;border:1px solid #3f3f46;border-radius:6px;background:#202024;color:#fafafa;padding:7px;outline:none}
-  textarea{height:112px;resize:none;line-height:1.45}textarea:focus,input:focus{border-color:#5b8cff}
-  footer{display:flex;justify-content:flex-end;gap:7px;padding:9px 10px;border-top:1px solid #343438}
-  button{border:1px solid #45454b;border-radius:6px;background:#252529;color:#fafafa;padding:6px 11px;cursor:pointer;-webkit-app-region:no-drag}
-  button.primary{background:#2563eb;border-color:#2563eb}button:hover{filter:brightness(1.1)}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.field{display:grid;gap:3px;color:#a1a1aa;font-size:10px}
-  @media(prefers-color-scheme:light){html,body{background:#fff;color:#18181b}body{border-color:#d4d4d8}header,footer{border-color:#e4e4e7}textarea,input{background:#fafafa;color:#18181b;border-color:#d4d4d8}button{background:#f4f4f5;color:#18181b;border-color:#d4d4d8}}
-</style></head><body>
-<header>${kind === "annotation" ? "添加网页批注" : "Design Tweaks"}</header>
-<main>${kind === "annotation"
-    ? '<textarea id="body" maxlength="32000" placeholder="写下要让 Agent 处理的网页审阅意见…"></textarea>'
-    : '<div id="fields" class="grid"></div>'}</main>
-<footer>${kind === "tweaks" ? '<button id="reset">全部重置</button>' : ""}<button id="cancel">取消</button><button id="submit" class="primary">${kind === "annotation" ? "添加到聊天" : "添加到聊天"}</button></footer>
-<script>
-  const bridge = globalThis.lumeBrowserOverlay;
-  const kind = ${JSON.stringify(kind)};
-  const initialBody = ${JSON.stringify(initialBody)};
-  const initialStyles = ${JSON.stringify(initialStyles)};
-  const fields = ${JSON.stringify(tweakFields)};
-  const readStyles = () => Object.fromEntries(Array.from(document.querySelectorAll("[data-style-key]")).flatMap(input => input.value ? [[input.dataset.styleKey, input.value]] : []));
-  if (kind === "annotation") {
-    const body = document.getElementById("body");
-    body.value = initialBody;
-    body.focus();
-    body.addEventListener("input", () => bridge.emit({ type: "draft", body: body.value }));
-  } else {
-    const root = document.getElementById("fields");
-    for (const [key, label] of fields) {
-      const wrapper = document.createElement("label"); wrapper.className = "field"; wrapper.textContent = label;
-      const input = document.createElement("input"); input.dataset.styleKey = key; input.value = initialStyles[key] || "";
-      input.addEventListener("input", () => bridge.emit({ type: "preview", styles: readStyles() }));
-      wrapper.append(input); root.append(wrapper);
-    }
-    root.querySelector("input")?.focus();
-    document.getElementById("reset").addEventListener("click", () => {
-      for (const input of root.querySelectorAll("input")) input.value = "";
-      bridge.emit({ type: "reset" });
-    });
-  }
-  document.getElementById("cancel").addEventListener("click", () => bridge.emit({ type: "cancel" }));
-  document.getElementById("submit").addEventListener("click", () => bridge.emit(kind === "annotation"
-    ? { type: "submit", body: document.getElementById("body").value }
-    : { type: "submit", styles: readStyles() }));
-  addEventListener("keydown", event => { if (event.key === "Escape") bridge.emit({ type: "cancel" }); if ((event.ctrlKey || event.metaKey) && event.key === "Enter") document.getElementById("submit").click(); });
-</script></body></html>`
+function combineAuthLocators(frameLocator: BrowserLocator | undefined, locator: BrowserLocator): BrowserLocator {
+  if (!frameLocator) return locator
+  const frameSteps: BrowserLocator["steps"] = frameLocator.steps.map((step) => {
+    if (step.kind === "frame") return step
+    if (step.kind === "css" || step.kind === "locator") return { kind: "frame", selector: step.selector }
+    throw browserError("invalid_browser_request")
+  })
+  const combined = { version: 1 as const, steps: [...frameSteps, ...locator.steps] }
+  validateBrowserLocator(combined)
+  return combined
+}
+
+function browserAuthHtml(request: BrowserAuthRequest): string {
+  const safe = JSON.stringify({
+    origin: request.origin,
+    fields: request.fields.map(({ id, label, inputType, autocomplete, required }) => ({ id, label, inputType, autocomplete, required })),
+    options: request.options ?? [],
+  }).replaceAll("<", "\\u003c")
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>*{box-sizing:border-box}body{margin:0;background:#151517;color:#f4f4f5;font:13px system-ui,-apple-system,sans-serif}.wrap{padding:22px}.eyebrow{color:#a78bfa;font-size:11px;font-weight:600}.title{font-size:18px;font-weight:650;margin-top:5px}.origin{color:#a1a1aa;font-size:11px;margin:5px 0 18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.field{display:block;margin:11px 0}.label{display:flex;gap:4px;margin-bottom:5px;color:#d4d4d8;font-size:11px}.required{color:#fb7185}input,select{width:100%;height:36px;border:1px solid #3f3f46;border-radius:8px;background:#202024;color:#fafafa;padding:0 10px;outline:none}input:focus,select:focus{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.2)}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}button{height:34px;border:0;border-radius:8px;padding:0 14px;font:inherit;cursor:pointer}.cancel{background:#29292e;color:#e4e4e7}.submit{background:#7c3aed;color:white;font-weight:600}.note{margin-top:12px;color:#71717a;font-size:10px;line-height:1.5}</style></head><body><form class="wrap" id="form"><div class="eyebrow">Lume Browser Auth</div><div class="title">在当前页面安全填写</div><div class="origin" id="origin"></div><div id="option"></div><div id="fields"></div><div class="note">凭证只会发送到主进程并直接填写到此标签页，不会进入聊天、Sidecar、日志或审计详情。</div><div class="actions"><button type="button" class="cancel" id="cancel">取消</button><button class="submit">填写并继续</button></div></form><script>const state=${safe};document.getElementById('origin').textContent=state.origin;const fields=document.getElementById('fields');const controls=new Map();for(const field of state.fields){const row=document.createElement('label');row.className='field';row.dataset.fieldId=field.id;const label=document.createElement('span');label.className='label';label.textContent=field.label;if(field.required){const mark=document.createElement('span');mark.className='required';mark.textContent='*';label.append(mark)}const input=document.createElement('input');input.type=field.inputType==='otp'?'text':field.inputType;input.autocomplete=field.autocomplete||'off';input.required=field.required;if(field.inputType==='otp')input.inputMode='numeric';row.append(label,input);fields.append(row);controls.set(field.id,{row,input})}let selectedOption;if(state.options.length){const select=document.createElement('select');for(const option of state.options){const item=document.createElement('option');item.value=option.id;item.textContent=option.label;select.append(item)}document.getElementById('option').append(select);const update=()=>{selectedOption=select.value;const enabled=new Set(state.options.find(item=>item.id===selectedOption)?.fields||[]);for(const [id,control] of controls){control.row.hidden=!enabled.has(id);control.input.disabled=!enabled.has(id)}};select.addEventListener('change',update);update()}document.getElementById('cancel').addEventListener('click',()=>window.lumeBrowserAuth.cancel());document.getElementById('form').addEventListener('submit',event=>{event.preventDefault();const values={};for(const [id,control] of controls)if(!control.input.disabled)values[id]=control.input.value;window.lumeBrowserAuth.submit({selectedOption,values});for(const control of controls.values())control.input.value=''})</script></body></html>`
 }
 
 function pageSelectionScript(): string {
