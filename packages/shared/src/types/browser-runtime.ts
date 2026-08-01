@@ -1,14 +1,14 @@
 /** Versioned browser-runtime contract. Boundary values are serialisable and redacted. */
-export const BROWSER_PROTOCOL_VERSION = 6 as const;
+export const BROWSER_PROTOCOL_VERSION = 8 as const;
 export const BROWSER_PROTOCOL_MIN_SUPPORTED = 5 as const;
-export const BROWSER_PROTOCOL_MAX_SUPPORTED = 6 as const;
+export const BROWSER_PROTOCOL_MAX_SUPPORTED = 8 as const;
 
 export type BrowserBackendType = "iab" | "extension";
 export type BrowserActor = "user" | "agent";
 export type BrowserErrorCode =
   | "incompatible_protocol" | "browser_unavailable" | "invalid_browser_request"
   | "invalid_url" | "private_origin_confirmation_required" | "stale_target"
-  | "tab_not_found" | "tab_generation_changed" | "confirmation_unavailable"
+  | "tab_not_found" | "tab_generation_changed" | "confirmation_unavailable" | "reference_grant_expired"
   | "action_denied" | "strict_locator_violation" | "actionability_failed" | "dialog_blocking"
   | "unsupported" | "executed_unknown" | "browser_internal_error";
 
@@ -74,6 +74,99 @@ export interface BrowserTabDescriptor {
   shareable?: boolean;
   agentClaimed?: boolean;
   handoffStatus?: "handoff" | "deliverable";
+  guestState?: "unmounted" | "attaching" | "ready" | "gone";
+  viewportRevision?: number;
+}
+
+/** One-time renderer mount grant. Never expose this value to the Sidecar or model. */
+export interface BrowserGuestMountDescriptor {
+  mountToken: string;
+  tabId: string;
+  generation: number;
+  partition: string;
+  bootstrapUrl: string;
+  expiresAt: string;
+}
+
+export interface BrowserReferenceCandidate {
+  backend: BrowserBackendType;
+  browserId: "lume-iab" | "lume-extension";
+  tabId: string;
+  providerTabId?: string;
+  title: string;
+  url: string;
+  generation?: number;
+  lastOpenedAt?: string;
+  ownerThreadId?: string;
+}
+
+export interface BrowserReferenceGrantInput extends BrowserReferenceCandidate {
+  threadId: string;
+  access: "control";
+}
+
+export interface BrowserReferenceGrantResult {
+  referenceGrantId: string;
+  expiresAt: string;
+}
+
+/** Main-process-owned layout for one task browser workspace. */
+export interface BrowserWorkspaceDescriptor {
+  ownerThreadId: string;
+  orderedTabIds: string[];
+  activeTabId?: string;
+  recentlyClosed: Array<{
+    tabId: string;
+    closedAt: string;
+    title: string;
+    url: string;
+    profileKind: NonNullable<BrowserTabDescriptor["profileKind"]>;
+    handoffStatus?: BrowserTabDescriptor["handoffStatus"];
+  }>;
+  revision: number;
+}
+
+export type BrowserAuthInputType =
+  | "text" | "email" | "password" | "tel" | "number" | "url"
+  | "search" | "otp";
+
+export interface BrowserAuthFieldRequest {
+  id: string;
+  label: string;
+  locator: BrowserLocator;
+  inputType: BrowserAuthInputType;
+  autocomplete?: string;
+  required: boolean;
+  frameLocator?: BrowserLocator;
+}
+
+export interface BrowserAuthOption {
+  id: string;
+  label: string;
+  fields: string[];
+}
+
+export interface BrowserAuthRequest {
+  tabId: string;
+  generation: number;
+  origin: string;
+  expiresAt: string;
+  title?: string;
+  fields: BrowserAuthFieldRequest[];
+  options?: BrowserAuthOption[];
+  submit?:
+    | { kind: "click"; locator: BrowserLocator; frameLocator?: BrowserLocator }
+    | { kind: "press_enter"; fieldId?: string }
+    | { kind: "none" };
+}
+
+export type BrowserAuthStatus =
+  | "submitted" | "cancelled" | "expired" | "page_changed" | "origin_changed"
+  | "locator_invalid" | "submission_failed";
+
+export interface BrowserAuthResult {
+  status: BrowserAuthStatus;
+  selected_option?: string;
 }
 
 export interface BrowserViewportState {
@@ -83,7 +176,29 @@ export interface BrowserViewportState {
   deviceScaleFactor: number;
   mobile: boolean;
   touch: boolean;
+  preset?: BrowserViewportPreset;
+  displayScale?: "fit" | number;
 }
+
+export type BrowserViewportPreset =
+  | "desktop"
+  | "responsive"
+  | "4k"
+  | "laptop-l"
+  | "laptop"
+  | "surface-pro-7"
+  | "ipad-air"
+  | "ipad-mini"
+  | "surface-duo"
+  | "iphone-15-pro-max"
+  | "pixel-8"
+  | "iphone-15-pro"
+  | "samsung-galaxy-s24-ultra"
+  | "iphone-se"
+  | "phone"
+  | "tablet"
+  | "phone-landscape"
+  | "tablet-landscape";
 
 export interface BrowserHistoryEntry {
   id: string;
@@ -180,15 +295,18 @@ export interface BrowserAuditEvent {
 }
 
 export interface BrowserSettings {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   browserEnabled?: boolean;
   browserUseEnabled?: boolean;
+  browserApprovalMode: "alwaysAsk" | "neverAsk";
+  iabHistoryApprovalMode: "alwaysAsk" | "neverAsk" | "disabled";
+  chromeHistoryApprovalMode: "alwaysAsk" | "neverAsk" | "disabled";
   agentCursorVisible: boolean;
   linkOpenTarget: "lume" | "system";
   localUrlTarget: "lume" | "system";
   advancedCdpEnabled: boolean;
   extensionBackendEnabled: boolean;
-  annotationScreenshots: "off" | "ask" | "always";
+  annotationScreenshots: "off" | "ask" | "necessary" | "always";
   downloadDirectory: string;
   downloadAskBeforeSave: boolean;
   downloadHistoryEnabled: boolean;
@@ -198,15 +316,18 @@ export interface BrowserSettings {
 }
 
 export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   browserEnabled: true,
   browserUseEnabled: true,
+  browserApprovalMode: "alwaysAsk",
+  iabHistoryApprovalMode: "alwaysAsk",
+  chromeHistoryApprovalMode: "alwaysAsk",
   agentCursorVisible: true,
   linkOpenTarget: "lume",
   localUrlTarget: "lume",
   advancedCdpEnabled: false,
   extensionBackendEnabled: false,
-  annotationScreenshots: "ask",
+  annotationScreenshots: "necessary",
   downloadDirectory: "",
   downloadAskBeforeSave: true,
   downloadHistoryEnabled: true,

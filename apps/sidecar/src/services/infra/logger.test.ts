@@ -17,6 +17,7 @@ describe("logger diagnostic helpers", () => {
       token: "secret-token",
       nested: {
         apiKey: "abc",
+        referenceGrantId: "grant-capability",
         value: "visible"
       },
       items: [{
@@ -26,6 +27,7 @@ describe("logger diagnostic helpers", () => {
       token: "[redacted]",
       nested: {
         apiKey: "[redacted]",
+        referenceGrantId: "[redacted]",
         value: "visible"
       },
       items: [{

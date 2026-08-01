@@ -1090,6 +1090,43 @@ async function ensureMainWindowVisible() {
   return { win, generation: mainWindowLifecycle.getGeneration() }
 }
 
+function attachBrowserGuestSecurity(win: BrowserWindow) {
+  const authorizedBootstrapUrls = new Set<string>()
+  win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const bootstrapUrl = typeof params.src === 'string' ? params.src : ''
+    const requestedPartition = typeof params.partition === 'string' ? params.partition : ''
+    const grant = browserRuntime?.authorizeGuestMount(win.webContents.id, bootstrapUrl, requestedPartition)
+    if (!grant) {
+      event.preventDefault()
+      writeMainLog('warn', 'browser.guest', 'guest.attach_rejected', 'rejected unauthorized browser guest mount')
+      return
+    }
+    webPreferences.preload = resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-guest-preload.cjs')
+    webPreferences.sandbox = true
+    webPreferences.contextIsolation = true
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
+    webPreferences.additionalArguments = [`--lume-browser-mount=${grant.token}`]
+    params.partition = grant.partition
+    delete params.allowpopups
+    delete params.preload
+    authorizedBootstrapUrls.add(bootstrapUrl)
+  })
+  win.webContents.on('did-attach-webview', (_event, guestContents) => {
+    const token = guestContents.getLastWebPreferences().additionalArguments
+      ?.find((value) => value.startsWith('--lume-browser-mount='))
+      ?.slice('--lume-browser-mount='.length)
+    const bootstrapUrl = token ? `about:blank#lume-browser-mount=${token}` : ''
+    const authorized = authorizedBootstrapUrls.delete(bootstrapUrl)
+    if (!authorized || !browserRuntime?.attachGuest(win.webContents.id, bootstrapUrl, guestContents)) {
+      writeMainLog('warn', 'browser.guest', 'guest.attach_invalid', 'destroyed browser guest after failed mount validation')
+      if (!guestContents.isDestroyed()) guestContents.close()
+    }
+  })
+}
+
 async function createMainWindowForGeneration(generation) {
   const win = new BrowserWindow({
     title: 'Lume',
@@ -1105,9 +1142,11 @@ async function createMainWindowForGeneration(generation) {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     webPreferences: createSecureWebPreferences({
       preload: resolve(DESKTOP_ROOT, 'dist', 'preload', 'preload.cjs'),
+      webviewTag: true,
     }),
   })
   mainWindow = win
+  attachBrowserGuestSecurity(win)
 
   win.on('closed', () => {
     const closedCurrentGeneration = mainWindowLifecycle.closeGeneration(generation)
@@ -2645,6 +2684,12 @@ ipcMain.handle('lume:update:install', async (event) => {
 // 否则任务栏会回退到承载进程 exe 的图标——dev 下即 electron.exe 的默认图标。
 app.setAppUserModelId(DESKTOP_APP_ID)
 
+app.on('child-process-gone', (_event, details) => {
+  writeMainLog('error', 'browser.guest', 'child_process.gone', 'Electron child process exited', {
+    data: { type: details.type, reason: details.reason, exitCode: details.exitCode, serviceName: details.serviceName },
+  })
+})
+
 app.whenReady().then(async () => {
   logDesktopStartup('app ready', 'app.ready')
   registerAppProtocol()
@@ -2663,7 +2708,7 @@ app.whenReady().then(async () => {
       decrypt: (value) => safeStorage.decryptString(value),
     },
     credentialStorage: safeStorage,
-    overlayPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-overlay-preload.cjs'),
+    authPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-auth-preload.cjs'),
   })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()

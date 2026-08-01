@@ -14,7 +14,6 @@ import { AgentMessages } from './AgentMessages'
 import { AgentInput, type PendingMessageAttachment } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
-import { BrowserAuthBanner } from './BrowserAuthBanner'
 import { DesktopActionBanner } from './DesktopActionBanner'
 import { ErrorBanner } from './ErrorBanner'
 import { ThreadFileEnvProvider } from './thread-file-env'
@@ -62,19 +61,17 @@ export function AgentView({
   const streamingState = useAtomValue(agentStreamingStatesFamily(threadId)) ?? 'idle'
   const pendingInteractive = useAtomValue(agentPendingInteractiveFamily(threadId))
   const pendingToolPermissions = pendingInteractive?.toolPermissions ?? []
-  const pendingBrowserAuthRequests = pendingInteractive?.browserAuthRequests ?? []
   const pendingDesktopActionRequests = pendingInteractive?.desktopActionRequests ?? []
   const pendingAskUserQuestions = pendingInteractive?.askUserQuestions ?? []
   const activeToolPermission = pendingToolPermissions[0]
-  const activeBrowserAuthRequest = activeToolPermission ? undefined : pendingBrowserAuthRequests[0]
-  const activeDesktopActionRequest = activeToolPermission || activeBrowserAuthRequest
+  const activeDesktopActionRequest = activeToolPermission
     ? undefined
     : pendingDesktopActionRequests[0]
-  const activeAskUserQuestion = activeToolPermission || activeBrowserAuthRequest || activeDesktopActionRequest
+  const activeAskUserQuestion = activeToolPermission || activeDesktopActionRequest
     ? undefined
     : pendingAskUserQuestions[0]
   const hasComposerOverlay = Boolean(
-    activeToolPermission || activeBrowserAuthRequest || activeDesktopActionRequest || activeAskUserQuestion
+    activeToolPermission || activeDesktopActionRequest || activeAskUserQuestion
   )
 
   const threads = useAtomValue(agentThreadsAtom)
@@ -317,11 +314,6 @@ export function AgentView({
               {activeToolPermission && (
                 <div className="absolute inset-x-0 bottom-0 z-30">
                   <PermissionBanner threadId={threadId} request={activeToolPermission} />
-                </div>
-              )}
-              {activeBrowserAuthRequest && (
-                <div className="absolute inset-x-0 bottom-0 z-30">
-                  <BrowserAuthBanner threadId={threadId} request={activeBrowserAuthRequest} />
                 </div>
               )}
               {activeDesktopActionRequest && (

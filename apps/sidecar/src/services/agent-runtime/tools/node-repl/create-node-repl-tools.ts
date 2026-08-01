@@ -1,6 +1,6 @@
 import { basename, isAbsolute, win32 } from "node:path";
 import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
-import type { AgentBrowserAuthRequest, McpServerStatus, McpToolDetail } from "@lume/shared";
+import type { AgentBrowserAuthRequest, BrowserAuthRequest, BrowserAuthResult, McpServerStatus, McpToolDetail } from "@lume/shared";
 import { getNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
 import {
   NODE_REPL_MCP_INSTRUCTIONS,
@@ -11,7 +11,6 @@ import {
   type NodeReplComputerUseResult,
   type NodeReplRuntimeRegistry
 } from "./node-repl-types";
-import { waitForBrowserAuthResponse } from "../../interruption/browser-auth-session";
 import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder";
 
 export const NODE_REPL_MCP_SERVER_ID = "node_repl";
@@ -72,28 +71,20 @@ export function createNodeReplTools(input: {
         const result = await registry.exec(threadId, execInput, {
           cwd: context.cwd || input.cwd,
           sandbox: context.sandbox,
-          emitBrowserAuthRequest: input.emitBrowserAuthRequest
-            ? (request, signal) => resolveBrowserAuthRequest({
-              request,
-              signal,
-              threadId,
-              toolUseId: context.toolUseId,
-              emit: input.emitBrowserAuthRequest!,
-            })
-            : undefined,
+          emitBrowserAuthRequest: (request, signal) => resolveBrowserAuthRequest({ request, signal, threadId, toolUseId: context.toolUseId }),
           emitComputerUseRequest: input.emitComputerUseRequest,
           browserRequest: async (request, signal) => {
             if (signal.aborted) throw new Error("browser request cancelled");
             const broker = getActiveBrowserBroker();
             if (!broker) throw new Error("Browser Broker is unavailable");
             const params = { ...request.params };
-            const requestedBackend = String(params.__browserBackend ?? params.browserId ?? params.clientType ?? "").toLowerCase();
+            const requestedBackend = String(params.__browserBackend ?? params.browserId ?? params.browser_id ?? params.clientType ?? "").toLowerCase();
             const backend = requestedBackend === "extension" || requestedBackend === "chrome-extension" || requestedBackend === "lume-extension" ? "extension" as const : "iab" as const;
             delete params.__browserBackend;
             return broker.dispatch({
               method: request.method,
               params,
-              ...(typeof params.tabId === "string" ? { tabId: params.tabId } : {}),
+              ...(typeof params.tabId === "string" ? { tabId: params.tabId } : typeof params.tab_id === "string" ? { tabId: params.tab_id } : {}),
               browserSessionId: threadId,
               browserTurnId: context.toolUseId ?? `node-repl:${threadId}`,
               threadId,
@@ -253,51 +244,64 @@ function withRuntimeRequestMeta(input: JsExecInput, runtime: { threadId: string;
   };
 }
 
-let browserAuthRequestSeq = 1;
-
 async function resolveBrowserAuthRequest(input: {
   request: NodeReplBrowserAuthRequest;
   signal: AbortSignal;
   threadId: string;
   toolUseId?: string;
-  emit: (request: AgentBrowserAuthRequest) => void;
 }): Promise<NodeReplBrowserAuthResult> {
-  const normalized = normalizeBrowserAuthRequest(input.request, input.threadId, input.toolUseId);
+  if (input.signal.aborted) return { status: "cancelled" };
+  const normalized = normalizeBrowserAuthRequest(input.request);
   if (!normalized) return { status: "unavailable" };
-  const result = await waitForBrowserAuthResponse(normalized, input.signal, input.emit);
-  if (result.status === "submitted") {
-    return { status: "approved" };
-  }
-  return { status: result.status };
+  const broker = getActiveBrowserBroker();
+  if (!broker) return { status: "unavailable" };
+  try {
+    const result = await broker.dispatch({
+      method: "tab_browser_auth_request",
+      params: normalized as unknown as Record<string, unknown>,
+      tabId: normalized.tabId,
+      browserSessionId: input.request.context?.browserSessionId ?? input.threadId,
+      browserTurnId: input.request.context?.browserTurnId ?? input.toolUseId ?? `node-repl:${input.threadId}`,
+      threadId: input.request.context?.threadId ?? input.threadId,
+      backend: "iab",
+    }) as BrowserAuthResult;
+    return { status: result.status, ...(result.selected_option ? { selected_option: result.selected_option } : {}) };
+  } catch { return { status: "unavailable" }; }
 }
 
-function normalizeBrowserAuthRequest(
-  request: NodeReplBrowserAuthRequest,
-  fallbackThreadId: string,
-  toolUseId?: string,
-): AgentBrowserAuthRequest | null {
+function normalizeBrowserAuthRequest(request: NodeReplBrowserAuthRequest): BrowserAuthRequest | null {
   const origin = typeof request.origin === "string" ? request.origin.trim() : "";
-  if (!origin) return null;
+  const tabId = typeof request.tabId === "string" ? request.tabId.trim() : "";
+  const generation = Number(request.generation);
+  if (!origin || !tabId || !Number.isSafeInteger(generation) || generation < 1) return null;
   const fields = Array.isArray(request.fields) ? request.fields : [];
+  if (!fields.length || fields.length > 20 || fields.some((field) => !field.locator)) return null;
   return {
-    threadId: request.context?.threadId || fallbackThreadId,
-    requestId: `browser_auth:${toolUseId ?? "node_repl"}:${browserAuthRequestSeq++}`,
+    tabId,
+    generation,
     origin,
-    ...(typeof request.reason === "string" && request.reason.trim() ? { reason: request.reason.trim() } : {}),
     expiresAt: typeof request.expires_at === "string" && request.expires_at.trim()
       ? request.expires_at
       : new Date(Date.now() + 5 * 60 * 1000).toISOString(),
     fields: fields.map((field, index) => ({
       id: typeof field.id === "string" && field.id.trim() ? field.id : `field-${index + 1}`,
       label: typeof field.label === "string" && field.label.trim() ? field.label : `Field ${index + 1}`,
-      type: typeof field.type === "string" && field.type.trim() ? field.type : "text",
+      inputType: normalizeAuthInputType(field.type),
+      locator: field.locator!,
       ...(typeof field.autocomplete === "string" && field.autocomplete.trim() ? { autocomplete: field.autocomplete } : {}),
-      ...(field.required !== undefined ? { required: field.required === true } : {})
+      required: field.required === true,
+      ...(field.frameLocator ? { frameLocator: field.frameLocator } : {}),
     })),
-    ...(request.context?.browserSessionId ? { browserSessionId: request.context.browserSessionId } : {}),
-    ...(request.context?.browserTurnId ? { browserTurnId: request.context.browserTurnId } : {}),
-    ...(typeof request.tabId === "string" && request.tabId.trim() ? { tabId: request.tabId } : {})
+    ...(Array.isArray(request.options) ? { options: request.options.slice(0, 10) } : {}),
+    ...(request.submit ? { submit: request.submit } : {}),
   };
+}
+
+function normalizeAuthInputType(value: unknown): BrowserAuthRequest["fields"][number]["inputType"] {
+  const type = String(value ?? "text").toLowerCase();
+  return new Set(["text", "email", "password", "tel", "number", "url", "search", "otp"]).has(type)
+    ? type as BrowserAuthRequest["fields"][number]["inputType"]
+    : "text";
 }
 
 function readPath(rawArgs: unknown): string | null {

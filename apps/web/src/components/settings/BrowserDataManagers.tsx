@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { forwardRef, useImperativeHandle, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -13,9 +13,11 @@ type Password = { id: string; origin: string; username: string }
 type Contact = { id: string; label: string; fields: string[] }
 type Download = { id: string; filename: string; actor: 'user' | 'agent'; state: string; receivedBytes: number; createdAt: string }
 type HistoryEntry = { id: string; url: string; title: string; visitedAt: string }
+export type BrowserDataManagerKind = 'passwords' | 'contacts' | 'downloads' | 'history' | 'extensions' | 'clear'
+export interface BrowserDataManagersHandle { open: (kind: BrowserDataManagerKind) => void }
 
-export function BrowserDataManagers({ onImport }: { onImport: () => void }) {
-  const [dialog, setDialog] = useState<'passwords' | 'contacts' | 'downloads' | 'history' | 'extensions' | 'clear' | null>(null)
+export const BrowserDataManagers = forwardRef<BrowserDataManagersHandle, { onImport: () => void; showLauncher?: boolean }>(function BrowserDataManagers({ onImport, showLauncher = true }, ref) {
+  const [dialog, setDialog] = useState<BrowserDataManagerKind | null>(null)
   const [passwords, setPasswords] = useState<Password[]>([])
   const [contacts, setContacts] = useState<Contact[]>([])
   const [downloads, setDownloads] = useState<Download[]>([])
@@ -26,7 +28,7 @@ export function BrowserDataManagers({ onImport }: { onImport: () => void }) {
   const [clearCategories, setClearCategories] = useState({ siteData: true, cache: true, history: true, downloads: true, permissions: false, passwords: false })
   const [timeRange, setTimeRange] = useState<'hour' | 'day' | 'all'>('all')
 
-  const open = (kind: typeof dialog) => {
+  const open = (kind: BrowserDataManagerKind) => {
     setDialog(kind)
     if (kind === 'passwords') void browserRuntime<Password[]>({ method: 'vault:list-passwords' }).then(setPasswords)
     if (kind === 'contacts') void browserRuntime<Contact[]>({ method: 'contacts:list' }).then(setContacts)
@@ -35,6 +37,7 @@ export function BrowserDataManagers({ onImport }: { onImport: () => void }) {
     if (kind === 'extensions') void browserRuntime<BrowserExtensionDescriptor[]>({ method: 'extensions:list' }).then(setExtensions)
   }
   const loadHistory = (query: string) => browserRuntime<HistoryEntry[]>({ method: 'history:list', params: { query, limit: 500 } }).then(setHistory).catch(() => toast.error('历史记录读取失败'))
+  useImperativeHandle(ref, () => ({ open }))
   const saveContact = () => void browserRuntime<Contact>({ method: 'contacts:upsert', params: contact }).then((saved) => { setContacts((items) => [...items.filter((item) => item.id !== saved.id), saved]); setContact({ label: '', name: '', email: '', phone: '', address: '' }); toast.success('联系信息已加密保存') }).catch(() => toast.error('联系信息保存失败'))
   const clear = () => {
     const categories = Object.entries(clearCategories).filter(([, checked]) => checked).map(([key]) => key)
@@ -42,7 +45,7 @@ export function BrowserDataManagers({ onImport }: { onImport: () => void }) {
   }
 
   return <>
-    <div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => open('passwords')}>密码管理</Button><Button variant="outline" size="sm" onClick={() => open('contacts')}>联系人管理</Button><Button variant="outline" size="sm" onClick={() => open('history')}>浏览历史</Button><Button variant="outline" size="sm" onClick={() => open('downloads')}>下载历史</Button><Button variant="outline" size="sm" onClick={() => open('extensions')}>本地扩展</Button><Button variant="outline" size="sm" onClick={() => open('clear')}>清除浏览数据</Button><Button variant="outline" size="sm" onClick={onImport}>导入 Cookie 和密码…</Button></div>
+    {showLauncher && <div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => open('passwords')}>密码管理</Button><Button variant="outline" size="sm" onClick={() => open('contacts')}>联系人管理</Button><Button variant="outline" size="sm" onClick={() => open('history')}>浏览历史</Button><Button variant="outline" size="sm" onClick={() => open('downloads')}>下载历史</Button><Button variant="outline" size="sm" onClick={() => open('extensions')}>本地扩展</Button><Button variant="outline" size="sm" onClick={() => open('clear')}>清除浏览数据</Button><Button variant="outline" size="sm" onClick={onImport}>导入 Cookie 和密码…</Button></div>}
 
     <Dialog open={dialog === 'passwords'} onOpenChange={(value) => !value && setDialog(null)}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>密码管理器</DialogTitle><DialogDescription>仅显示来源和用户名；Lume 不在设置页展示或复制密码明文。</DialogDescription></DialogHeader><div className="max-h-72 space-y-2 overflow-auto">{passwords.length ? passwords.map((entry) => <div key={entry.id} className="flex items-center justify-between gap-3 rounded-lg border p-3"><div className="min-w-0"><div className="truncate text-sm font-medium">{entry.username}</div><div className="truncate text-xs text-muted-foreground">{entry.origin}</div></div><Button variant="destructive" size="sm" onClick={() => void browserRuntime({ method: 'vault:delete-password', params: { id: entry.id } }).then(() => setPasswords((items) => items.filter((item) => item.id !== entry.id)))}>删除</Button></div>) : <div className="py-8 text-center text-sm text-muted-foreground">尚无保存的密码</div>}</div></DialogContent></Dialog>
 
@@ -56,4 +59,4 @@ export function BrowserDataManagers({ onImport }: { onImport: () => void }) {
 
     <Dialog open={dialog === 'clear'} onOpenChange={(value) => !value && setDialog(null)}><DialogContent><DialogHeader><DialogTitle>清除浏览数据</DialogTitle><DialogDescription>只影响 Lume。保存密码默认不选中，删除时还会出现系统级二次确认。</DialogDescription></DialogHeader><Select value={timeRange} onValueChange={(value) => setTimeRange(value as typeof timeRange)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="hour">过去一小时（仅下载记录）</SelectItem><SelectItem value="day">过去一天（仅下载记录）</SelectItem><SelectItem value="all">全部时间</SelectItem></SelectContent></Select>{Object.entries({ siteData: 'Cookie 和站点数据', cache: '缓存', history: '浏览历史', downloads: '下载记录', permissions: '站点权限', passwords: '保存的密码' }).map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-lg border p-3 text-sm"><Checkbox checked={clearCategories[key as keyof typeof clearCategories]} disabled={timeRange !== 'all' && key !== 'downloads'} onCheckedChange={(checked) => setClearCategories((current) => ({ ...current, [key]: checked === true }))} />{label}</label>)}<DialogFooter><Button variant="outline" onClick={() => setDialog(null)}>取消</Button><Button variant="destructive" onClick={clear}>清除</Button></DialogFooter></DialogContent></Dialog>
   </>
-}
+})

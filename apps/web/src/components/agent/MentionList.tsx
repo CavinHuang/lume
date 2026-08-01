@@ -1,6 +1,6 @@
-import { forwardRef, useEffect, useImperativeHandle, useState, useCallback } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useState, useCallback, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { Blocks, Bot, File, Hash, TerminalSquare, ArrowLeft, Loader2, Package, BookOpen, ListChecks } from 'lucide-react'
+import { Blocks, Bot, File, Globe2, Hash, TerminalSquare, ArrowLeft, Loader2, Package, BookOpen, ListChecks } from 'lucide-react'
 import { type MentionItem } from './slash-command-state'
 import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
 import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
@@ -13,6 +13,7 @@ interface MentionListProps {
   getWorkspaceSlug?: () => string | null
   /** 选中即执行命令（executeOnSelect）时触发，替代插入 mention 文本 */
   onCommandExecute?: (id: string) => void
+  onBrowserReferenceSelect?: (item: MentionItem) => void
 }
 
 export interface MentionListRef {
@@ -20,7 +21,7 @@ export interface MentionListRef {
 }
 
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
-  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute }, ref) {
+  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute, onBrowserReferenceSelect }, ref) {
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [panelMode, setPanelMode] = useState<'commands' | 'mcp-status'>('commands')
     const [mcpRows, setMcpRows] = useState<McpServerRow[]>([])
@@ -52,6 +53,10 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       const item = displayItems[index]
       if (!item) return
       if (item.disabled) return
+      if (item.type === 'browser' && item.browserCandidate && onBrowserReferenceSelect) {
+        onBrowserReferenceSelect(item)
+        return
+      }
       if (item.id === 'mcp' && item.type === 'command') {
         setPanelMode('mcp-status')
         setMcpSelectedIndex(0)
@@ -66,7 +71,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         ...item,
         ...(item.uri ? { occurrenceId: crypto.randomUUID() } : {}),
       })
-    }, [displayItems, command, fetchMcpData, onCommandExecute])
+    }, [displayItems, command, fetchMcpData, onBrowserReferenceSelect, onCommandExecute])
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
@@ -134,7 +139,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
               暂无 MCP 服务配置
             </div>
           ) : (
-            <div className="max-h-[280px] overflow-y-auto p-2">
+            <div className="mention-list-scrollbar max-h-[280px] overflow-y-auto p-2">
               {mcpRows.map((row, index) => (
                 <div
                   key={row.name}
@@ -188,7 +193,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 
       return (
         <div className="w-full overflow-hidden rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_98%,transparent)] shadow-[0_18px_46px_-34px_hsl(var(--shadow-panel)/0.42)]">
-          <div className="flex max-h-[420px] flex-col gap-0.5 overflow-y-auto p-2">
+          <div className="mention-list-scrollbar flex max-h-[420px] flex-col gap-0.5 overflow-y-auto p-2">
             {displayItems.map((item, index) => {
               const showSectionHeader = item.section && item.section !== previousSection
               previousSection = item.section
@@ -240,9 +245,9 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       )
     }
 
-    const panelTitle = trigger === '@' ? 'Agents & Files' : trigger === '#' ? 'MCP Servers' : trigger === '&' ? 'Planning Todo' : 'Slash Commands'
+    const panelTitle = trigger === '@' ? 'Agents & Context' : trigger === '#' ? 'MCP Servers' : trigger === '&' ? 'Planning Todo' : 'Slash Commands'
     const panelDescription = trigger === '@'
-      ? '选择专业 Agent 或引用当前工作区文件'
+      ? '选择 Agent，或引用浏览器与当前工作区文件'
       : trigger === '#'
         ? '选择可用的 MCP 服务与工具入口'
         : trigger === '&'
@@ -251,62 +256,79 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     let previousSection: MentionItem['section'] | undefined
 
     return (
-      <div className="min-w-[320px] max-w-[380px] overflow-hidden rounded-[1.35rem] border border-[color:color-mix(in_oklab,var(--border-strong)_58%,transparent)] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--surface-1)_98%,transparent),color-mix(in_oklab,var(--surface-2)_94%,transparent))] shadow-[0_26px_64px_-34px_hsl(var(--shadow-panel)/0.52)]">
-        <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-3">
-          <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.24em] text-[var(--text-3)]">
-            <Blocks size={12} />
-            {panelTitle}
+      <div className="min-w-[320px] max-w-[380px] overflow-hidden rounded-[14px] border border-[color:color-mix(in_oklab,var(--border-strong)_62%,transparent)] bg-[var(--surface-1)] shadow-[0_24px_60px_-30px_hsl(var(--shadow-panel)/0.62)]">
+        <div className="flex items-start gap-3 border-b border-[color:color-mix(in_oklab,var(--border-strong)_46%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_46%,transparent)] px-3.5 py-3">
+          <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]">
+            <Blocks size={14} />
+          </span>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-[var(--text-1)]">
+                {panelTitle}
+              </h3>
+              <span className="rounded-md border border-[color:color-mix(in_oklab,var(--border-strong)_54%,transparent)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-3)]">
+                {trigger}
+              </span>
+            </div>
+            <p className="mt-0.5 truncate text-[11px] leading-4 text-[var(--text-3)]">{panelDescription}</p>
           </div>
-          <p className="mt-1 text-[11px] text-[var(--text-3)]">{panelDescription}</p>
         </div>
 
-        <div className="max-h-[320px] overflow-y-auto px-2 py-2">
+        <div className="mention-list-scrollbar max-h-[min(380px,calc(100vh-160px))] overflow-y-auto px-2 py-2">
           {displayItems.map((item, index) => {
             const showSectionHeader = item.section && item.section !== previousSection
             previousSection = item.section
 
             return (
-              <div key={`${item.type}:${item.id}`} className="mb-1 last:mb-0">
+              <div key={`${item.type}:${item.id}`} className="mb-0.5 last:mb-0">
                 {showSectionHeader ? (
-                  <div className="px-2 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-3)]">
-                    {getMentionSectionLabel(item.section)}
+                  <div className="flex items-center gap-2 px-2 pb-1.5 pt-2.5 first:pt-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-3)]">
+                      {getMentionSectionLabel(item.section)}
+                    </span>
+                    <span className="h-px flex-1 bg-[color:color-mix(in_oklab,var(--border-strong)_32%,transparent)]" />
                   </div>
                 ) : null}
                 <Button
-                variant="ghost"
+                  variant="ghost"
                   disabled={item.disabled}
                   title={item.disabledReason}
                   className={cn(
-                    'group w-full justify-start rounded-[1rem] border px-3 py-2.5 text-left transition-all',
+                    'group relative h-auto w-full justify-start rounded-[10px] border px-2.5 py-2 text-left transition-colors',
                     index === selectedIndex
-                      ? 'border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border-strong))] bg-[linear-gradient(135deg,color-mix(in_oklab,var(--brand)_9%,var(--surface-2)),color-mix(in_oklab,var(--surface-1)_96%,transparent))] shadow-[0_18px_36px_-32px_color-mix(in_oklab,var(--brand)_62%,transparent)]'
-                      : 'border-transparent text-foreground/80 hover:border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-3)_74%,transparent)]'
+                      ? 'border-[color:color-mix(in_oklab,var(--brand)_34%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-2))]'
+                      : 'border-transparent text-foreground/80 hover:border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] hover:bg-[color:color-mix(in_oklab,var(--surface-3)_58%,transparent)]'
                   )}
                   onClick={() => selectItem(index)}
                   onMouseEnter={() => setSelectedIndex(index)}
                 >
                   <div className="flex items-start gap-3">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--surface-3)_74%,transparent)]">
+                    <div className={cn(
+                      'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border text-[var(--text-2)] transition-colors',
+                      index === selectedIndex
+                        ? 'border-[color:color-mix(in_oklab,var(--brand)_24%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_12%,var(--surface-1))] text-[var(--brand)]'
+                        : 'border-[color:color-mix(in_oklab,var(--border-strong)_38%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-3)_52%,transparent)]'
+                    )}>
                       <MentionItemIcon item={item} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-[12.5px] font-medium text-[var(--text-1)]">
+                      <div className="flex min-h-5 items-center gap-2">
+                        <span className="truncate text-[12.5px] font-semibold leading-5 text-[var(--text-1)]">
                           {item.title ?? item.label}
                         </span>
                         {item.type === 'command' ? (
-                          <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-emerald-600">
-                            Quick
+                          <span className="shrink-0 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-600">
+                            快捷
                           </span>
                         ) : null}
-                        {item.type === 'agent' && item.meta ? (
-                          <span className="rounded-full bg-[color:color-mix(in_oklab,var(--brand)_10%,transparent)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--brand)]">
+                        {(item.type === 'agent' || item.type === 'browser') && item.meta ? (
+                          <span className="shrink-0 rounded-md border border-[color:color-mix(in_oklab,var(--brand)_20%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--brand)]">
                             {item.meta}
                           </span>
                         ) : null}
                       </div>
                       {item.subtitle ? (
-                        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[var(--text-3)]">
+                        <p className="mt-0.5 line-clamp-2 text-[11px] leading-[1.35] text-[var(--text-3)]">
                           {item.subtitle}
                         </p>
                       ) : null}
@@ -318,10 +340,10 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
           })}
         </div>
 
-        <div className="flex items-center justify-between border-t border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-2 text-[10px] text-[var(--text-3)]">
-          <span>↑↓ 选择</span>
-          <span>Enter 插入</span>
-          <span>Esc 关闭</span>
+        <div className="flex items-center justify-between border-t border-[color:color-mix(in_oklab,var(--border-strong)_46%,transparent)] px-3.5 py-2 text-[10px] text-[var(--text-3)]">
+          <span className="flex items-center gap-1.5"><KeyHint>↑↓</KeyHint>选择</span>
+          <span className="flex items-center gap-1.5"><KeyHint>Enter</KeyHint>插入</span>
+          <span className="flex items-center gap-1.5"><KeyHint>Esc</KeyHint>关闭</span>
         </div>
       </div>
     )
@@ -331,6 +353,10 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 function getMentionSectionLabel(section: MentionItem['section']): string {
   if (section === 'capability') return '动作'
   if (section === 'agent') return 'Agents'
+  if (section === 'browser-tab') return '内置浏览器'
+  if (section === 'chrome-page') return 'Chrome 最近标签'
+  if (section === 'project-file') return '项目文件'
+  if (section === 'session-file') return '会话文件'
   if (section === 'file') return 'Files'
   if (section === 'plugin') return '插件'
   if (section === 'todo') return 'Planning Todo'
@@ -345,10 +371,19 @@ function MentionItemIcon({ item }: { item: MentionItem }) {
   if (item.type === 'plugin') return <Package size={16} />
   if (item.type === 'skill') return <BookOpen size={16} />
   if (item.type === 'agent') return <Bot size={16} />
+  if (item.type === 'browser') return <Globe2 size={16} />
   if (item.type === 'file') return <File size={16} />
   if (item.type === 'mcp') return <Hash size={16} />
   if (item.type === 'todo') return <ListChecks size={16} />
   return <TerminalSquare size={16} />
+}
+
+function KeyHint({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="rounded border border-[color:color-mix(in_oklab,var(--border-strong)_52%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-3)_54%,transparent)] px-1 py-0.5 font-mono text-[9px] leading-none text-[var(--text-2)]">
+      {children}
+    </kbd>
+  )
 }
 
 function getMcpStatusDotClass(status: McpUiStatus): string {

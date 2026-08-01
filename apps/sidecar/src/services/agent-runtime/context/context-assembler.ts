@@ -286,7 +286,15 @@ export class ContextAssembler {
       ? `<diff_comments trust="user">\n${JSON.stringify(input.commentAttachments).replaceAll("<", "\\u003c")}\n</diff_comments>`
       : "";
     const browserBrief = input.browserAttachments?.length
-      ? `<browser_attachments trust="mixed">\n${JSON.stringify(input.browserAttachments).replaceAll("<", "\\u003c")}\n</browser_attachments>`
+      ? `<browser_attachments trust="mixed">\n${JSON.stringify(input.browserAttachments.map(promptBrowserAttachment)).replaceAll("<", "\\u003c")}\n</browser_attachments>`
+      : "";
+    const browserInstructions = input.browserAttachments?.some((attachment) => {
+      const tab = attachment.origin === "browser-tab" ? attachment : attachment.tab;
+      return Boolean(tab.referenceGrantId && tab.browserId);
+    })
+      ? `<browser_attachment_instructions trust="trusted">
+Browser references were explicitly authorized by the user for this task. Resolve the exact browserId from the attachment and never substitute another backend. In one node_repl invocation, call user.openTabs() to obtain a fresh claim snapshot, then find the exact returned object whose providerTabId, title, and url equal the attachment snapshot (and whose generation also matches when returned). The returned object's id is an opaque claim handle, not the attachment tabId. Pass that exact object to user.claimTab(tab) before reading or controlling it; the task-bound reference grant is attached by the trusted broker. If the browser disconnected, the exact object is absent, or any identity field changed, report that the reference is stale and ask the user to reference it again. Never fall back to a similar title, URL, tab, or browser.
+</browser_attachment_instructions>`
       : "";
     const desktopContextForPrompt = promptDesktopContext(input.desktopContext);
     const desktopContextBrief = desktopContextForPrompt
@@ -298,6 +306,7 @@ export class ContextAssembler {
       desktopContextBrief,
       attachmentBrief,
       commentBrief,
+      browserInstructions,
       browserBrief,
     ]
       .filter((part) => typeof part === "string" && part.trim().length > 0)
@@ -341,6 +350,15 @@ function promptDesktopContext(value: unknown): unknown {
   if (!Object.keys(record).length) return value;
   const { imageBlocks: _imageBlocks, ...promptValue } = record;
   return promptValue;
+}
+
+function promptBrowserAttachment(attachment: AgentBrowserAttachment): unknown {
+  if (attachment.origin === "browser-tab") {
+    const { referenceGrantId: _referenceGrantId, ...promptAttachment } = attachment;
+    return promptAttachment;
+  }
+  const { referenceGrantId: _referenceGrantId, ...promptTab } = attachment.tab;
+  return { ...attachment, tab: promptTab };
 }
 
 function asRecord(value: unknown): Record<string, any> {

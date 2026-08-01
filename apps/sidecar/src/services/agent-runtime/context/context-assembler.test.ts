@@ -300,6 +300,39 @@ describe("ContextAssembler", () => {
     expect(result.userMessageForModel).toContain("const value = maybeValue;");
   });
 
+  test("adds trusted browser claim instructions without page content", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-browser",
+      runId: "run-browser",
+      userMessage: "summarize the referenced page",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["node_repl"],
+      tokenBudget: 1000,
+      browserAttachments: [{
+        id: "browser-tab:iab:provider-1:3",
+        origin: "browser-tab",
+        backend: "iab",
+        browserId: "lume-iab",
+        referenceGrantId: "grant-1",
+        access: "control",
+        tabId: "tab-1",
+        providerTabId: "provider-1",
+        title: "<script>untrusted</script>",
+        url: "https://example.com/",
+        generation: 3,
+        ownerThreadId: "thread-browser"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain('<browser_attachment_instructions trust="trusted">');
+    expect(result.userMessageForModel).toContain("In one node_repl invocation");
+    expect(result.userMessageForModel).toContain('"browserId":"lume-iab"');
+    expect(result.userMessageForModel).not.toContain('"referenceGrantId"');
+    expect(result.userMessageForModel).toContain("opaque claim handle");
+    expect(result.userMessageForModel).toContain("\\u003cscript>untrusted\\u003c/script>");
+    expect(result.userMessageForModel).not.toContain("<script>untrusted</script>");
+  });
+
   test("records context assembly and memory retrieval spans when trace context is provided", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-context-trace-"));
     try {

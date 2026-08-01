@@ -6,9 +6,13 @@ import {
   type BrowserActionRequest,
   type BrowserBackendDescriptor,
   type BrowserLocator,
+  type BrowserReferenceCandidate,
+  type BrowserReferenceGrantInput,
+  type BrowserReferenceGrantResult,
   type BrowserRequestContext,
   type BrowserRuntimeDescriptor,
 } from "@lume/shared"
+import { BROWSER_API_REGISTRY, browserApiSupportForBackend } from "@lume/shared"
 import { classifyBrowserAction } from "./browser-action-policy"
 import { resolveAuthorizedBrowserUploadPaths } from "../agent/agent-files-service"
 
@@ -17,6 +21,8 @@ export interface BrowserMainTransport { request(request: BrowserActionRequest): 
 /** Long-lived sidecar ingress. Identity is derived here; callers cannot set actor. */
 export class BrowserBroker {
   private readonly queues = new Map<string, Promise<unknown>>()
+  private readonly pendingReferenceGrants = new Map<string, BrowserReferenceGrantInput & { expiresAt: number }>()
+  private readonly claimSnapshots = new Map<string, { backend: "iab" | "extension"; threadId?: string; tabId?: string; providerTabId?: string; title?: string; url?: string; generation?: number }>()
   private generation = 1
   private browserPluginEnabled = false
   private chromePluginEnabled = false
@@ -36,7 +42,7 @@ export class BrowserBroker {
     const tabCapabilities = backend === "iab" && Array.isArray(runtime?.capabilities)
       ? [
           ...(runtime.capabilities.some((capability) => capability.id === "advancedCdp") ? [{ id: "cdp", description: "Full CDP for isolated sessions with origin and per-action approval" }] : []),
-          ...(runtime.capabilities.some((capability) => capability.id === "browserAuth") ? [{ id: "browserAuth", description: "Fill saved credentials without exposing their values" }] : []),
+          ...(runtime.capabilities.some((capability) => capability.id === "browserAuth") ? [{ id: "browserAuth", description: "Collect and submit credentials through an isolated backend-owned window" }] : []),
           ...(runtime.capabilities.some((capability) => capability.id === "pageAssets") ? [{ id: "pageAssets", description: "Inventory and export bounded assets observed in the current page state" }] : []),
           ...(runtime.capabilities.some((capability) => capability.id === "webmcp") ? [{ id: "webmcp", description: "Invoke page-defined WebMCP tools announced by browser notifications" }] : []),
         ]
@@ -45,8 +51,8 @@ export class BrowserBroker {
         : []
     const protocol = backend === "extension" ? this.extensionRuntime : runtime
     const apiSupportOverrides = backend === "extension"
-      ? this.extensionRuntime?.apiSupportOverrides ?? EXTENSION_API_SUPPORT_FALLBACK
-      : runtime?.apiSupportOverrides ?? IAB_API_SUPPORT_FALLBACK
+      ? this.extensionRuntime?.apiSupportOverrides ?? browserApiSupportForBackend("extension", new Set())
+      : runtime?.apiSupportOverrides ?? browserApiSupportForBackend("iab", new Set())
     return {
       id, browserId: id, backend, type: backend, clientType: backend, name: backend === "iab" ? "Lume 内置浏览器" : "Lume Chrome",
       protocolVersion: protocol?.protocolVersion ?? BROWSER_PROTOCOL_VERSION,
@@ -73,6 +79,7 @@ export class BrowserBroker {
       hostConnected: state.hostConnected ?? this.extensionConnected,
     }
     if (next.browserEnabled === this.browserPluginEnabled && next.chromeEnabled === this.chromePluginEnabled && next.extensionBackendEnabled === this.extensionBackendEnabled && next.hostConnected === this.extensionConnected) return
+    const extensionConnectionChanged = next.hostConnected !== this.extensionConnected
     this.browserPluginEnabled = next.browserEnabled
     this.chromePluginEnabled = next.chromeEnabled
     this.extensionBackendEnabled = next.extensionBackendEnabled
@@ -80,10 +87,77 @@ export class BrowserBroker {
     this.extensionRuntime = undefined
     this.generation += 1
     this.queues.clear()
+    this.claimSnapshots.clear()
+    if (!next.browserEnabled) this.pendingReferenceGrants.clear()
+    else if (extensionConnectionChanged) {
+      for (const [id, grant] of this.pendingReferenceGrants) if (grant.backend === "extension") this.pendingReferenceGrants.delete(id)
+    }
     this.onStateChange?.({ ...next, generation: this.generation })
   }
   setExternalState(state: { chromeEnabled?: boolean; extensionBackendEnabled?: boolean; hostConnected?: boolean }): void { this.setPluginState(state) }
   revoke(): void { this.setPluginEnabled(false) }
+  async listReferenceCandidates(threadId: string): Promise<BrowserReferenceCandidate[]> {
+    const normalizedThreadId = threadId.trim().slice(0, 200)
+    if (!normalizedThreadId || !this.browserPluginEnabled) return []
+    const context: BrowserRequestContext = {
+      threadId: normalizedThreadId,
+      browserSessionId: "renderer-reference-picker",
+      browserTurnId: randomUUID(),
+      actor: "user",
+    }
+    const [iabResult, extensionResult] = await Promise.all([
+      this.main.request({ requestId: randomUUID(), context, method: "list" }).catch(() => []),
+      this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected
+        ? this.extension.request({ requestId: randomUUID(), context, method: "openTabs" }).catch(() => [])
+        : Promise.resolve([]),
+    ])
+    const iab = referenceCandidateArray(iabResult, "iab", normalizedThreadId)
+      .filter((candidate) => candidate.ownerThreadId === normalizedThreadId)
+      .sort(compareReferenceCandidates)
+    const extension = referenceCandidateArray(extensionResult, "extension")
+      .filter((candidate) => Boolean(candidate.lastOpenedAt))
+      .sort(compareReferenceCandidates)
+      .slice(0, 3)
+    return [...iab, ...extension]
+  }
+  async createReferenceGrant(input: BrowserReferenceGrantInput): Promise<BrowserReferenceGrantResult> {
+    if (!input || (input.backend !== "iab" && input.backend !== "extension") || input.access !== "control"
+      || typeof input.threadId !== "string" || !input.threadId.trim()
+      || typeof input.tabId !== "string" || !input.tabId.trim()
+      || typeof input.title !== "string" || !input.title.trim()
+      || typeof input.url !== "string" || !isReferenceableUrl(input.url, input.backend)
+      || input.browserId !== (input.backend === "iab" ? "lume-iab" : "lume-extension")) throw new Error("invalid_browser_request")
+    if (!this.browserPluginEnabled) throw new Error("browser_unavailable")
+    const transport = input.backend === "extension" ? this.extension : this.main
+    if (!transport || (input.backend === "extension" && (!this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected))) throw new Error("browser_unavailable")
+    const result = await transport.request({
+      requestId: randomUUID(),
+      context: { threadId: input.threadId, browserSessionId: "renderer-reference-picker", browserTurnId: randomUUID(), actor: "user" },
+      method: "referenceGrant:create",
+      params: { ...input },
+    }) as BrowserReferenceGrantResult
+    const expiresAt = Date.parse(result.expiresAt)
+    if (!result.referenceGrantId || !Number.isFinite(expiresAt)) throw new Error("browser_internal_error")
+    for (const [referenceGrantId, pending] of this.pendingReferenceGrants) {
+      if (pending.backend === input.backend && pending.threadId === input.threadId && pending.tabId === input.tabId) {
+        this.pendingReferenceGrants.delete(referenceGrantId)
+      }
+    }
+    this.pendingReferenceGrants.set(result.referenceGrantId, { ...input, expiresAt })
+    return result
+  }
+  async revokeReferenceGrant(input: { backend: "iab" | "extension"; threadId: string; referenceGrantId: string }): Promise<{ ok: true; revoked?: boolean }> {
+    const pending = this.pendingReferenceGrants.get(input.referenceGrantId)
+    if (pending?.threadId === input.threadId && pending.backend === input.backend) this.pendingReferenceGrants.delete(input.referenceGrantId)
+    const transport = input.backend === "extension" ? this.extension : this.main
+    if (!transport || (input.backend === "extension" && (!this.extensionBackendEnabled || !this.chromePluginEnabled || !this.extensionConnected))) return { ok: true, revoked: false }
+    return await transport.request({
+      requestId: randomUUID(),
+      context: { threadId: input.threadId, browserSessionId: "renderer-reference-picker", browserTurnId: randomUUID(), actor: "user" },
+      method: "referenceGrant:revoke",
+      params: { threadId: input.threadId, referenceGrantId: input.referenceGrantId },
+    }) as { ok: true; revoked?: boolean }
+  }
   async dispatch(input: { method: string; params?: Record<string, unknown>; threadId?: string; browserSessionId: string; browserTurnId: string; tabId?: string; backend?: "iab" | "extension"; idempotencyKey?: string }): Promise<unknown> {
     if (!this.browserPluginEnabled) throw new Error("browser_unavailable")
     if (input.method.startsWith("policy:")) throw new Error("action_denied")
@@ -103,7 +177,7 @@ export class BrowserBroker {
     const queueKey = `${backend}:${tabId ?? "browser"}`
     const previous = this.queues.get(queueKey) ?? Promise.resolve()
     const execute = async () => {
-      const policy = classifyBrowserAction(input.method, input.params)
+      const policy = classifyBrowserAction(input.method, input.params, normalized.method)
       if (policy.decision === "deny") throw new Error("action_denied")
       let confirmationToken: string | undefined
       let bindingHash: string | undefined
@@ -125,12 +199,18 @@ export class BrowserBroker {
         : undefined
       const params = {
         ...normalized.params,
+        ...(normalized.method === "claim" ? this.referenceGrantForClaim(backend, context, tabId, normalized.params) : {}),
         ...(authorizedUploadFiles ? { files: authorizedUploadFiles.browserDownloadRefs, __authorizedFiles: authorizedUploadFiles.authorizedPaths } : {}),
         ...(confirmationToken ? { __policyRequired: true, __policyConfirmation: confirmationToken, __policyBindingHash: bindingHash } : {}),
       }
-      const method = new Set(["submitForm", "send", "delete", "purchase", "authorize"]).has(input.method) ? "click" : normalized.method
+      const method = backend === "extension" && input.method === "tab_browser_auth_request"
+        ? input.method
+        : new Set(["submitForm", "send", "delete", "purchase", "authorize"]).has(input.method) ? "click" : normalized.method
       const request: BrowserActionRequest = { requestId: randomUUID(), context, method, params, ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}) }
-      return adaptBrowserResult(input.method, await transport.request(request))
+      const result = await transport.request(request)
+      if (normalized.method === "openTabs") this.rememberClaimSnapshots(backend, context, result)
+      if (normalized.method === "claim" && typeof params.referenceGrantId === "string") this.pendingReferenceGrants.delete(params.referenceGrantId)
+      return adaptBrowserResult(input.method, result)
     }
     if (WAIT_COMMANDS.has(input.method)) return execute().catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
     const current = previous.then(execute)
@@ -168,9 +248,111 @@ export class BrowserBroker {
       this.extensionRuntime = undefined
     }
   }
+
+  private rememberClaimSnapshots(backend: "iab" | "extension", context: BrowserRequestContext, value: unknown): void {
+    const prefix = claimSnapshotPrefix(backend, context)
+    for (const key of this.claimSnapshots.keys()) if (key.startsWith(prefix)) this.claimSnapshots.delete(key)
+    for (const item of browserUserTabArray(value)) {
+      if (!item || typeof item !== "object") continue
+      const descriptor = item as Record<string, unknown>
+      const claimHandle = typeof descriptor.id === "string" ? descriptor.id : ""
+      if (!claimHandle) continue
+      this.claimSnapshots.set(`${prefix}${claimHandle}`, {
+        backend,
+        ...(context.threadId ? { threadId: context.threadId } : {}),
+        ...(typeof descriptor.tabId === "string" ? { tabId: descriptor.tabId } : {}),
+        ...(typeof descriptor.providerTabId === "string" ? { providerTabId: descriptor.providerTabId } : {}),
+        ...(typeof descriptor.title === "string" ? { title: descriptor.title } : {}),
+        ...(typeof descriptor.url === "string" ? { url: descriptor.url } : {}),
+        ...(Number.isInteger(descriptor.generation) ? { generation: Number(descriptor.generation) } : {}),
+      })
+    }
+  }
+
+  private referenceGrantForClaim(backend: "iab" | "extension", context: BrowserRequestContext, claimHandle: string | undefined, params: Record<string, unknown>): { referenceGrantId?: string } {
+    if (typeof params.referenceGrantId === "string" && params.referenceGrantId) return { referenceGrantId: params.referenceGrantId }
+    if (!context.threadId || !claimHandle) return {}
+    const snapshot = this.claimSnapshots.get(`${claimSnapshotPrefix(backend, context)}${claimHandle}`)
+    if (!snapshot) return {}
+    const now = Date.now()
+    for (const [referenceGrantId, grant] of this.pendingReferenceGrants) {
+      if (grant.expiresAt <= now) {
+        this.pendingReferenceGrants.delete(referenceGrantId)
+        continue
+      }
+      const providerMatches = grant.providerTabId
+        ? snapshot.providerTabId === grant.providerTabId
+        : snapshot.providerTabId === grant.tabId || snapshot.tabId === grant.tabId
+      if (grant.backend === backend
+        && grant.threadId === context.threadId
+        && providerMatches
+        && snapshot.title === grant.title
+        && snapshot.url === grant.url
+        && (grant.generation === undefined || snapshot.generation === undefined || snapshot.generation === grant.generation)) {
+        return { referenceGrantId }
+      }
+    }
+    return {}
+  }
 }
 
 export function createBrowserBroker(main: BrowserMainTransport, extension?: BrowserMainTransport, onStateChange?: ConstructorParameters<typeof BrowserBroker>[2]): BrowserBroker { return new BrowserBroker(main, extension, onStateChange) }
+
+function referenceCandidateArray(value: unknown, backend: "iab" | "extension", threadId?: string): BrowserReferenceCandidate[] {
+  const values = browserUserTabArray(value)
+  return values.flatMap((item) => {
+    if (!item || typeof item !== "object") return []
+    const descriptor = item as Record<string, unknown>
+    if (backend === "iab" && descriptor.profileKind !== "user") return []
+    const tabId = typeof descriptor.tabId === "string" ? descriptor.tabId : typeof descriptor.id === "string" ? descriptor.id : ""
+    const url = typeof descriptor.url === "string" ? descriptor.url.trim() : ""
+    if (!tabId || !isReferenceableUrl(url, backend)) return []
+    const lastOpenedAt = referenceTimestamp(descriptor.lastOpenedAt ?? descriptor.lastOpened ?? descriptor.lastAccessed)
+    const ownerThreadId = typeof descriptor.ownerThreadId === "string" ? descriptor.ownerThreadId : undefined
+    if (backend === "iab" && threadId && ownerThreadId !== threadId) return []
+    let fallbackTitle = url
+    try { fallbackTitle = new URL(url).hostname || url } catch { /* validated above */ }
+    return [{
+      backend,
+      browserId: backend === "iab" ? "lume-iab" : "lume-extension",
+      tabId,
+      ...(typeof descriptor.providerTabId === "string" ? { providerTabId: descriptor.providerTabId } : {}),
+      title: typeof descriptor.title === "string" && descriptor.title.trim() ? descriptor.title.trim().slice(0, 512) : fallbackTitle,
+      url,
+      ...(Number.isInteger(descriptor.generation) && Number(descriptor.generation) > 0 ? { generation: Number(descriptor.generation) } : {}),
+      ...(lastOpenedAt ? { lastOpenedAt } : {}),
+      ...(ownerThreadId ? { ownerThreadId } : {}),
+    } satisfies BrowserReferenceCandidate]
+  })
+}
+
+function browserUserTabArray(value: unknown): unknown[] {
+  return Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { tabs?: unknown }).tabs)
+      ? (value as { tabs: unknown[] }).tabs
+      : []
+}
+
+function claimSnapshotPrefix(backend: "iab" | "extension", context: BrowserRequestContext): string {
+  return `${backend}\u0000${context.browserSessionId}\u0000${context.browserTurnId}\u0000`
+}
+
+function isReferenceableUrl(value: string, backend: "iab" | "extension"): boolean {
+  try {
+    const protocol = new URL(value).protocol.toLowerCase()
+    return backend === "extension" ? protocol === "http:" || protocol === "https:" : protocol === "http:" || protocol === "https:" || protocol === "file:"
+  } catch { return false }
+}
+
+function referenceTimestamp(value: unknown): string | undefined {
+  const date = typeof value === "number" ? new Date(value) : typeof value === "string" && value.trim() ? new Date(value) : undefined
+  return date && Number.isFinite(date.getTime()) ? date.toISOString() : undefined
+}
+
+function compareReferenceCandidates(left: BrowserReferenceCandidate, right: BrowserReferenceCandidate): number {
+  return String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")) || left.title.localeCompare(right.title)
+}
 
 function capabilityHash(ids: string[]): string { return createHash("sha256").update(ids.join("\n")).digest("hex") }
 function stableJson(value: unknown): string {
@@ -180,18 +362,21 @@ function stableJson(value: unknown): string {
 }
 function stableBrowserErrorCode(error: unknown): string {
   const value = error instanceof Error ? error.message : ""
-  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "action_denied", "strict_locator_violation", "actionability_failed", "dialog_blocking", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
+  return new Set(["browser_unavailable", "invalid_browser_request", "invalid_url", "private_origin_confirmation_required", "stale_target", "tab_not_found", "tab_generation_changed", "confirmation_unavailable", "reference_grant_expired", "action_denied", "strict_locator_violation", "actionability_failed", "dialog_blocking", "unsupported", "executed_unknown"]).has(value) ? value : "browser_internal_error"
 }
 
 function inferBackend(explicit: "iab" | "extension" | undefined, params: Record<string, unknown> | undefined): "iab" | "extension" {
   if (explicit === "extension") return "extension"
-  const requested = String(params?.browserId ?? params?.clientType ?? "").toLowerCase()
+  const requested = String(params?.browserId ?? params?.browser_id ?? params?.clientType ?? "").toLowerCase()
   return requested === "extension" || requested === "chrome-extension" || requested === "lume-extension" ? "extension" : "iab"
 }
 
 function normalizeBrowserCommand(method: string, input: Record<string, unknown>): { method: string; params: Record<string, unknown> } {
   const params = { ...input }
+  if (typeof params.tabId !== "string" && typeof input.tab_id === "string") params.tabId = input.tab_id
+  if (typeof params.referenceGrantId !== "string" && typeof input.reference_grant_id === "string") params.referenceGrantId = input.reference_grant_id
   delete params.browserId
+  delete params.browser_id
   const locator = browserClientSelectorToLocator(input.selector)
   if (locator) params.locator = locator
   const options = input.options && typeof input.options === "object" && !Array.isArray(input.options) ? input.options as Record<string, unknown> : {}
@@ -221,6 +406,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "tab_title": return { method: "title", params }
     case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true } }
     case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
+    case "tab_browser_auth_request": return { method: "browserAuth:request", params }
     case "tabs_content": return { method: "tabs:content", params: { ...params, contentType: input.content_type, timeoutMs: input.timeout_ms } }
     case "tab_clipboard_read": return { method: "clipboard:read", params }
     case "tab_clipboard_read_text": return { method: "clipboard:readText", params }
@@ -388,55 +574,6 @@ function normalizeSelections(value: unknown): string[] {
   }).slice(0, 100)
 }
 
-const IAB_API_SUPPORT_FALLBACK = {
-  "Browser.nameSession": false,
-  "BrowserUser.history": true,
-  "Tabs.content": false,
-  "Tabs.finalize": true,
-  "Tab.content": false,
-  "Tab.markDeliverable": true,
-  "Tab.markHandoff": true,
-  "Tab.clipboard": false,
-  "TabClipboardAPI.read": false,
-  "TabClipboardAPI.readText": false,
-  "TabClipboardAPI.write": false,
-  "TabClipboardAPI.writeText": false,
-  "DomCUAAPI.click": false,
-  "DomCUAAPI.double_click": false,
-  "DomCUAAPI.downloadMedia": false,
-  "DomCUAAPI.get_visible_dom": false,
-  "DomCUAAPI.keypress": false,
-  "DomCUAAPI.scroll": false,
-  "DomCUAAPI.type": false,
-  "PlaywrightAPI.elementInfo": false,
-  "PlaywrightAPI.elementScreenshot": false,
-  "PlaywrightAPI.evaluate": false,
-  "PlaywrightAPI.frameLocator": false,
-  "PlaywrightAPI.waitForEvent": false,
-  "PlaywrightLocator.downloadMedia": false,
-  "TabDevAPI.logs": false,
-} as const
-
-const EXTENSION_API_SUPPORT = {
-  "BrowserUser.history": true,
-  "Tabs.content": false,
-  "Tab.content": true,
-  "Tab.clipboard": false,
-  "TabClipboardAPI.read": false,
-  "TabClipboardAPI.readText": false,
-  "TabClipboardAPI.write": false,
-  "TabClipboardAPI.writeText": false,
-  "CUAAPI.downloadMedia": true,
-  "DomCUAAPI.downloadMedia": true,
-  "PlaywrightAPI.evaluate": true,
-  "PlaywrightAPI.waitForEvent": true,
-  "PlaywrightDownload.path": false,
-  "PlaywrightFileChooser.setFiles": true,
-  "PlaywrightLocator.evaluate": true,
-  "PlaywrightLocator.downloadMedia": true,
-} as const
-const EXTENSION_API_SUPPORT_FALLBACK = Object.fromEntries(Object.keys(EXTENSION_API_SUPPORT).map((api) => [api, false]))
-
 type ExtensionRuntimeDescriptor = {
   protocolVersion: number
   minSupported: number
@@ -471,7 +608,11 @@ function sanitizeExtensionRuntimeDescriptor(value: unknown): ExtensionRuntimeDes
     minSupported,
     maxSupported,
     tabCapabilities: Object.values(EXTENSION_TAB_CAPABILITIES).filter((capability) => declaredTabCapabilities.has(capability.id)),
-    apiSupportOverrides: Object.fromEntries(Object.entries(EXTENSION_API_SUPPORT).map(([api, allowed]) => [api, allowed && declaredApiSupport[api] === true])),
+    apiSupportOverrides: browserApiSupportForBackend(
+      "extension",
+      new Set(BROWSER_API_REGISTRY.filter((entry) => entry.backends.includes("extension")).map((entry) => entry.runtimeMethod)),
+      declaredApiSupport,
+    ),
   }
 }
 
@@ -483,7 +624,7 @@ function adaptBrowserResult(originalMethod: string, result: unknown): unknown {
   if (originalMethod === "tab_screenshot" && typeof result === "string") return { data: result }
   if (originalMethod === "playwright_element_screenshot" && result && typeof result === "object" && typeof (result as { data?: unknown }).data === "string") return { dataBase64: (result as { data: string }).data }
   if (originalMethod === "playwright_dom_snapshot") return { dom_snapshot: typeof result === "string" ? result : JSON.stringify(result) }
-  if (originalMethod === "browser_user_open_tabs") return { tabs: Array.isArray(result) ? result : [] }
+  if (originalMethod === "browser_user_open_tabs") return { tabs: browserUserTabArray(result) }
   if (originalMethod === "browser_user_history") {
     const entries = Array.isArray(result) ? result : []
     return {

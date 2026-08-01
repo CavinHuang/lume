@@ -28,6 +28,7 @@ import {
   writeClipboardText,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
+import { canDragFileRef, FILE_REF_DRAG_MIME, serializeFileRefDragData } from '@/components/agent/file-ref-drag'
 import {
   createRightPanelFileTarget,
   fileRefKey,
@@ -695,8 +696,15 @@ function TreeEntryRow(props: {
         tabIndex={getRovingTreeTabIndex(key, props.treeTabStopKey)}
         role="treeitem"
         aria-expanded={entry.isDirectory ? open : undefined}
-        className={cn('group flex h-7 items-center gap-1 pr-1 text-[12px] outline-none hover:bg-foreground/[0.05] focus-visible:ring-1 focus-visible:ring-inset', selected && 'bg-primary/10 text-primary')}
+        draggable={!entry.isDirectory && canDragFileRef(entry.ref)}
+        className={cn('group flex h-7 items-center gap-1 pr-1 text-[12px] outline-none hover:bg-foreground/[0.05] focus-visible:ring-1 focus-visible:ring-inset', !entry.isDirectory && canDragFileRef(entry.ref) && 'cursor-grab active:cursor-grabbing', selected && 'bg-primary/10 text-primary')}
         style={{ paddingLeft: 6 + props.depth * 12 }}
+        onDragStart={(event) => {
+          if (entry.isDirectory || !canDragFileRef(entry.ref!)) return
+          event.dataTransfer.effectAllowed = 'copy'
+          event.dataTransfer.setData(FILE_REF_DRAG_MIME, serializeFileRefDragData(entry.ref!))
+          event.dataTransfer.setData('text/plain', `${entry.ref!.source}/${entry.ref!.relativePath}`)
+        }}
         onClick={(event) => {
           event.currentTarget.focus()
           props.onSelect(entry.ref!)

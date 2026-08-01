@@ -293,11 +293,12 @@ export function createWindowOpenAction(url) {
   }
 }
 
-export function createSecureWebPreferences(options: { preload?: string } = {}) {
+export function createSecureWebPreferences(options: { preload?: string; webviewTag?: boolean } = {}) {
   return {
     contextIsolation: true,
     sandbox: true,
     nodeIntegration: false,
+    ...(options.webviewTag === true ? { webviewTag: true } : {}),
     ...(options.preload ? { preload: options.preload } : {}),
   }
 }

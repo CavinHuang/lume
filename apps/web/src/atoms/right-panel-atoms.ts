@@ -1,6 +1,6 @@
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { AgentBrowserAnchor, CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
+import type { AgentBrowserAnchor, AgentBrowserAnnotationAttachment, AgentBrowserDesignChangeAttachment, CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import {
   closeFileTab,
@@ -64,6 +64,22 @@ export const rightPanelFileTabsAtom = atomWithStorage<Record<string, RightPanelP
 export const rightPanelBrowserWorkspacesAtom = atomWithStorage<Record<string, ThreadBrowserWorkspace>>(
   'right-panel-browser-workspaces',
   {},
+  {
+    getItem(key, initialValue) {
+      if (typeof localStorage === 'undefined') return initialValue
+      try { return JSON.parse(localStorage.getItem(key) ?? '') as Record<string, ThreadBrowserWorkspace> } catch { return initialValue }
+    },
+    setItem(key, value) {
+      if (typeof localStorage === 'undefined') return
+      const layoutOnly = Object.fromEntries(Object.entries(value).map(([threadId, workspace]) => [threadId, {
+        tabs: workspace.tabs.map((tab) => ({ id: tab.id })),
+        ...(workspace.activeTabId ? { activeTabId: workspace.activeTabId } : {}),
+        recentlyClosed: workspace.recentlyClosed.map((tab) => ({ id: tab.id })),
+      }]))
+      localStorage.setItem(key, JSON.stringify(layoutOnly))
+    },
+    removeItem(key) { if (typeof localStorage !== 'undefined') localStorage.removeItem(key) },
+  },
 )
 
 export interface BrowserPageDraft {
@@ -77,6 +93,31 @@ export interface BrowserPageDraft {
 export const browserPageDraftsAtom = atomWithStorage<Record<string, BrowserPageDraft>>(
   'browser-page-drafts',
   {},
+)
+
+export interface BrowserReviewSession {
+  ownerThreadId: string
+  tabId: string
+  url: string
+  generation: number
+  screenshotRef?: string
+  items: Array<{
+    id: string
+    status: 'valid' | 'stale'
+    attachment: AgentBrowserAnnotationAttachment | AgentBrowserDesignChangeAttachment
+    createdAt: string
+  }>
+  updatedAt: string
+}
+
+export const browserReviewSessionsAtom = atomWithStorage<Record<string, BrowserReviewSession>>(
+  'browser-review-sessions-v1',
+  {},
+)
+
+export const browserReviewCoachmarkSeenAtom = atomWithStorage<boolean>(
+  'browser-review-coachmark-seen-v1',
+  false,
 )
 
 export interface CodingReviewPreferences {

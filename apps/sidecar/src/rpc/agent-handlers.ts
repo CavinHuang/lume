@@ -209,10 +209,6 @@ import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run
 import { getSubagentCoordinator } from "../services/agent/subagents/subagent-coordinator";
 import { listPendingAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
 import {
-  listPendingBrowserAuthRequests,
-  submitBrowserAuthResponse
-} from "../services/agent-runtime/interruption/browser-auth-session";
-import {
   listPendingDesktopActionRequests,
   submitDesktopActionDecision
 } from "../services/agent-runtime/interruption/desktop-action-session";
@@ -309,7 +305,6 @@ import {
   threadRunEventsInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
-  submitBrowserAuthInputSchema,
   submitDesktopActionInputSchema,
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
@@ -475,9 +470,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         onAskUserQuestion: (request) => {
           context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
         },
-        onBrowserAuthRequest: (request) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
-        },
         onDesktopActionRequest: (request) => {
           context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
         },
@@ -622,9 +614,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         }),
       onAskUserQuestion: (request: unknown) => {
         context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
-      },
-      onBrowserAuthRequest: (request: unknown) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
       },
       onDesktopActionRequest: (request: unknown) => {
         context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
@@ -837,12 +826,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE
       );
       const askRequests = listPendingAskUserQuestionRequests();
-      const browserAuthRequests = listPendingBrowserAuthRequests();
       const desktopActionRequests = listPendingDesktopActionRequests();
       const toolRequests = listPendingToolPermissionRequests();
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
-      for (const request of browserAuthRequests) threadIds.add(request.threadId);
       for (const request of desktopActionRequests) threadIds.add(request.threadId);
       for (const request of toolRequests) threadIds.add(request.threadId);
 
@@ -850,13 +837,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       for (const threadId of threadIds) {
         if (input.threadId && input.threadId !== threadId) continue;
         const askUserQuestions = askRequests.filter((request) => request.threadId === threadId);
-        const browserAuthForThread = browserAuthRequests.filter((request) => request.threadId === threadId);
         const desktopActionsForThread = desktopActionRequests.filter((request) => request.threadId === threadId);
         const toolPermissions = toolRequests.filter((request) => request.threadId === threadId);
         result.push({
           threadId,
           ...(askUserQuestions.length > 0 ? { askUserQuestions } : {}),
-          ...(browserAuthForThread.length > 0 ? { browserAuthRequests: browserAuthForThread } : {}),
           ...(desktopActionsForThread.length > 0 ? { desktopActionRequests: desktopActionsForThread } : {}),
           ...(toolPermissions.length > 0 ? { toolPermissions } : {})
         });
@@ -1925,15 +1910,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         }
       }
       return result;
-    },
-    [AGENT_IPC_CHANNELS.SUBMIT_BROWSER_AUTH]: async (params) => {
-      const input = validateInput(
-        submitBrowserAuthInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.SUBMIT_BROWSER_AUTH
-      );
-      const handled = await submitBrowserAuthResponse(input);
-      return { handled };
     },
     [AGENT_IPC_CHANNELS.SUBMIT_DESKTOP_ACTION]: async (params) => {
       const input = validateInput(

@@ -25,7 +25,7 @@ test("browser policy hands payment and CAPTCHA back to the user", () => {
   assert.equal(classifyBrowserAction("purchase").decision, "deny")
   assert.equal(classifyBrowserAction("contactFill").decision, "confirm")
   assert.equal(classifyBrowserAction("navigate_tab_url", { url: "http://127.0.0.1:3000" }).decision, "confirm")
-  assert.equal(classifyBrowserAction("navigate_tab_url", { url: "https://example.com" }).decision, "allow")
+  assert.deepEqual(classifyBrowserAction("navigate_tab_url", { url: "https://example.com" }), { decision: "confirm", category: "browse", preview: "打开网站：https://example.com" })
   assert.equal(classifyBrowserAction("click", { semanticIntent: "Pay now" }).decision, "deny")
   assert.equal(classifyBrowserAction("click", { description: "完成 CAPTCHA" }).decision, "deny")
 })
