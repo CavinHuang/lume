@@ -1,4 +1,4 @@
-import { Braces, FileDiff, FolderOpen, Globe, List, Package, Plus, X, type LucideIcon } from 'lucide-react'
+import { Braces, Camera, CircleAlert, FileDiff, FolderOpen, Globe, List, LoaderCircle, Mic, Package, Plus, Volume2, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import {
@@ -137,7 +137,7 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
   }
 
   return (
-    <div className="flex h-9 shrink-0 items-center gap-1 border-b border-[var(--lume-border-subtle)] px-1.5">
+    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--lume-border-subtle)] px-2">
       <div
         ref={scrollerRef}
         className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -153,7 +153,9 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
             ? item.tab.target.kind === 'mcp-resource'
               ? `${item.tab.target.resource.serverName}: ${item.tab.target.resource.uri}`
               : `${item.tab.target.kind}: ${item.tab.target.ref.source}:${item.tab.target.ref.relativePath}`
-            : item.kind === 'browser' ? item.tab.url || item.label : item.label
+            : item.kind === 'browser'
+              ? `${item.tab.url || item.label}${item.tab.lifecycle === 'crashed' ? ' · 页面已崩溃' : item.tab.lifecycle === 'suspended' ? ' · 后台已挂起' : ''}`
+              : item.label
           const tabNode = (
             <div
               key={item.id}
@@ -164,15 +166,19 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                 close(item)
               }}
               className={cn(
-                'group flex h-7 shrink-0 items-center rounded-md border border-transparent text-[12px] transition-colors',
+                'group flex h-8 shrink-0 items-center rounded-lg border border-transparent text-[12px] transition-colors',
                 active
-                  ? 'border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--brand)_9%,var(--surface-1))] text-[var(--brand)]'
+                  ? 'border-[var(--border)] bg-[var(--surface-2)] text-[var(--lume-text-primary)] shadow-xs'
                   : 'text-[var(--lume-text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--lume-text-secondary)]',
               )}
               title={title}
             >
               <Button variant="ghost" type="button" onClick={() => activate(item)} className="h-full gap-1.5 rounded-md px-2">
-                {item.kind === 'browser' && item.tab.faviconUrl
+                {item.kind === 'browser' && item.tab.isLoading
+                  ? <LoaderCircle size={14} className="animate-spin" />
+                  : item.kind === 'browser' && item.tab.lifecycle === 'crashed'
+                    ? <CircleAlert size={14} className="text-destructive" />
+                  : item.kind === 'browser' && item.tab.faviconUrl
                   ? <img src={item.tab.faviconUrl} alt="" className="size-3.5 rounded-sm" />
                   : Icon
                   ? <Icon size={14} />
@@ -184,6 +190,9 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                         : <FileTypeIcon filename={rightPanelFileTargetName(item.tab.target)} size={14} />
                     : null}
                 <span className="max-w-[132px] truncate">{item.label}</span>
+                {item.kind === 'browser' && item.tab.mediaState?.camera && <Camera size={11} className="text-red-500" aria-label="摄像头使用中" />}
+                {item.kind === 'browser' && item.tab.mediaState?.microphone && <Mic size={11} className="text-red-500" aria-label="麦克风使用中" />}
+                {item.kind === 'browser' && item.tab.mediaState?.audible && <Volume2 size={11} className="text-muted-foreground" aria-label="正在播放声音" />}
               </Button>
               <Button
                 variant="ghost"

@@ -15,8 +15,7 @@ export function BrowserTabView({ tab }: BrowserTabViewProps) {
       ownerThreadId={tab.threadId}
       surface="main"
       className="bg-[#171717] text-white"
-      onUrlChange={(url) => setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, browserUrl: url } : item))}
-      onDescriptorChange={(descriptor) => setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, browserUrl: descriptor.url, title: descriptor.title || '浏览器' } : item))}
+      onDescriptorChange={(descriptor) => setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, browserUrl: undefined, title: descriptor.title || '浏览器' } : item))}
     />
   )
 }

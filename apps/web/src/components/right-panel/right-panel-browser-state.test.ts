@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   activateBrowserTab,
+  applyBrowserDescriptor,
   closeBrowserTab,
   duplicateBrowserTab,
   openBrowserTab,
@@ -50,11 +51,67 @@ describe('right panel browser workspace', () => {
           createdAt: '2026-01-01T00:00:00.000Z',
           lastOpenedAt: '2026-01-01T00:00:00.000Z',
           zoomFactor: 1,
+          viewport: {
+            enabled: true,
+            width: 393,
+            height: 852,
+            deviceScaleFactor: 3,
+            mobile: true,
+            touch: true,
+            preset: 'iphone-15-pro',
+            displayScale: 0.75,
+          },
         },
       ],
       recentlyClosed: [],
     })
     expect(restored.tabs.map((tab) => tab.id)).toEqual(['browser:valid'])
     expect(restored.activeTabId).toBe('browser:valid')
+    expect(restored.tabs[0]?.viewport).toMatchObject({ preset: 'iphone-15-pro', displayScale: 0.75 })
+  })
+
+  test('reflects runtime loading and media state in the tab strip', () => {
+    const workspace = openBrowserTab({ tabs: [], recentlyClosed: [] })
+    const tabId = workspace.tabs[0]!.id
+    const updated = applyBrowserDescriptor(workspace, {
+      tabId,
+      backend: 'iab',
+      generation: 2,
+      url: 'https://example.com',
+      title: 'Example',
+      visible: true,
+      surface: 'right-panel',
+      isLoading: true,
+      mediaState: { audible: true, camera: false, microphone: true },
+      lifecycle: 'active',
+    })
+
+    expect(updated.tabs[0]).toMatchObject({
+      isLoading: true,
+      mediaState: { audible: true, camera: false, microphone: true },
+      lifecycle: 'active',
+    })
+  })
+
+  test('normalizes legacy Codex device preset ids while restoring tabs', () => {
+    const restored = sanitizeThreadBrowserWorkspace({
+      tabs: [{
+        id: 'browser:legacy-device',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        lastOpenedAt: '2026-01-01T00:00:00.000Z',
+        viewport: {
+          enabled: true,
+          width: 1440,
+          height: 900,
+          deviceScaleFactor: 1,
+          mobile: false,
+          touch: false,
+          preset: 'laptop-large',
+        },
+      }],
+      recentlyClosed: [],
+    })
+
+    expect(restored.tabs[0]?.viewport?.preset).toBe('laptop-l')
   })
 })
