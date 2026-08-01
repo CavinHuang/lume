@@ -87,11 +87,16 @@ const agentDiffCommentAttachmentSchema = z.object({
 const agentBrowserTabAttachmentSchema = z.object({
   id: z.string().trim().min(1).max(256),
   origin: z.literal("browser-tab"),
+  backend: z.enum(["iab", "extension"]).optional(),
+  browserId: z.string().trim().min(1).max(128).optional(),
+  referenceGrantId: z.string().trim().min(1).max(256).optional(),
+  access: z.literal("control").optional(),
   tabId: z.string().trim().min(1).max(256),
-  providerTabId: z.string().trim().min(1).max(256),
+  providerTabId: z.string().trim().min(1).max(256).optional(),
   title: z.string().max(512),
   url: z.string().url().max(8192),
-  generation: z.number().int().min(1),
+  generation: z.number().int().min(1).optional(),
+  lastOpenedAt: z.string().datetime().optional(),
   ownerThreadId: z.string().trim().min(1).max(256).optional()
 }).strict();
 
@@ -130,7 +135,8 @@ const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
     tab: agentBrowserTabAttachmentSchema,
     anchor: agentBrowserAnchorSchema,
     originalStyles: z.record(z.string().max(128), z.string().max(4096)),
-    proposedStyles: z.record(z.string().max(128), z.string().max(4096))
+    proposedStyles: z.record(z.string().max(128), z.string().max(4096)),
+    screenshotRef: z.string().max(4096).optional()
   }).strict()
 ]);
 
@@ -1562,23 +1568,6 @@ export const submitAskUserQuestionInputSchema = z.object({
   toolUseId: idSchema,
   canceled: z.boolean().optional(),
   answers: z.record(z.string(), z.string()).optional()
-});
-
-export const submitBrowserAuthInputSchema = z.object({
-  threadId: idSchema,
-  requestId: idSchema,
-  status: z.enum([
-    "submitted",
-    "declined",
-    "cancelled",
-    "unavailable",
-    "expired",
-    "origin_changed",
-    "page_changed",
-    "locator_invalid",
-    "submission_failed"
-  ]),
-  values: z.record(z.string(), z.string()).optional()
 });
 
 export const submitDesktopActionInputSchema = z.object({

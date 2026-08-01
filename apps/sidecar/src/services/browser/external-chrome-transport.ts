@@ -261,11 +261,13 @@ function verifyFrame(key: Buffer, sequence: number, payload: Buffer, encoded: st
   return verifyMac(key, Buffer.concat([counter, payload]), encoded);
 }
 function isRecord(value: unknown): value is Record<string, any> { return Boolean(value && typeof value === "object" && !Array.isArray(value)); }
-function stableExternalErrorCode(value: unknown): string {
+export function stableExternalErrorCode(value: unknown): string {
+  if (value === "reference_grant_expired" || value === "action_denied" || value === "tab_generation_changed") return value;
   if (value === "E_UNSUPPORTED" || value === "E_NOT_IMPLEMENTED") return "unsupported";
   if (value === "E_BROWSER_UNAVAILABLE") return "browser_unavailable";
   if (value === "E_STALE_TARGET") return "stale_target";
-  if (value === "E_ACTION_DENIED") return "action_denied";
+  if (value === "E_ACTION_DENIED" || value === "E_PERMISSION_DENIED") return "action_denied";
+  if (value === "E_TAB_NOT_FOUND" || value === "E_TAB_NOT_CLAIMED") return "tab_not_found";
   return "browser_internal_error";
 }
 
@@ -332,6 +334,8 @@ export function mapExternalChromeRequest(request: BrowserActionRequest): { metho
     case "list": return { method: "list_tabs", params };
     case "openTabs": return { method: "browser_user_open_tabs", params };
     case "claim": return { method: "browser_user_claim_tab", params: { ...params, tabId } };
+    case "referenceGrant:create": return { method: "browser_user_create_reference_grant", params };
+    case "referenceGrant:revoke": return { method: "browser_user_revoke_reference_grant", params };
     case "ensure": return { method: "create_tab", params: { ...params, options: { url: request.params?.url, active: request.params?.active !== false } } };
     case "get": return { method: "get_tab", params: { ...params, tabId } };
     case "selected": return { method: "selected_tab", params };

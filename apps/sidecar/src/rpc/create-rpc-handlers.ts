@@ -1,4 +1,4 @@
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, type BrowserReferenceGrantInput } from "@lume/shared";
 import { setAgentNotificationWriter } from "../services/agent/agent-notification-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
@@ -94,6 +94,23 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     };
     handlers["browser:broker"] = async () => { throw new Error("browser broker requires the authenticated Node REPL ingress"); };
     handlers["browser:backends"] = async () => context.browserBroker!.listBackends();
+    handlers["browser:reference-candidates"] = async (params) => {
+      const threadId = params && typeof params === "object" && typeof (params as { threadId?: unknown }).threadId === "string"
+        ? (params as { threadId: string }).threadId.trim()
+        : "";
+      if (!threadId) throw new Error("invalid_browser_request");
+      return context.browserBroker!.listReferenceCandidates(threadId);
+    };
+    handlers["browser:create-reference-grant"] = async (params) => {
+      if (!params || typeof params !== "object") throw new Error("invalid_browser_request");
+      return context.browserBroker!.createReferenceGrant(params as BrowserReferenceGrantInput);
+    };
+    handlers["browser:revoke-reference-grant"] = async (params) => {
+      if (!params || typeof params !== "object") throw new Error("invalid_browser_request");
+      const input = params as { backend?: unknown; threadId?: unknown; referenceGrantId?: unknown };
+      if ((input.backend !== "iab" && input.backend !== "extension") || typeof input.threadId !== "string" || typeof input.referenceGrantId !== "string") throw new Error("invalid_browser_request");
+      return context.browserBroker!.revokeReferenceGrant({ backend: input.backend, threadId: input.threadId, referenceGrantId: input.referenceGrantId });
+    };
   }
   return handlers;
 }

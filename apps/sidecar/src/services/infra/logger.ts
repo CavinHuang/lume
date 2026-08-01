@@ -35,7 +35,7 @@ const MAX_ARRAY_ITEMS = 100;
 const MAX_STRING_CHARS = 8_192;
 const SENSITIVE_KEYS = [
   "token", "secret", "password", "apikey", "authorization", "cookie", "setcookie",
-  "accesstoken", "refreshtoken",
+  "accesstoken", "refreshtoken", "grant",
 ];
 const SENSITIVE_PAYLOAD_KEYS = new Set([
   "body", "prompt", "systemprompt", "rawrequest", "rawresponse", "requestbody", "responsebody",

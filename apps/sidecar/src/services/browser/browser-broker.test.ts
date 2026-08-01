@@ -56,7 +56,7 @@ test("canonical BrowserClient commands select and normalize the requested backen
   broker.setPluginState({ browserEnabled: true, chromeEnabled: true, extensionBackendEnabled: true, hostConnected: true })
 
   const descriptors = await broker.dispatch({ method: "runtime_list_browsers", browserSessionId: "s", browserTurnId: "t" }) as any[]
-  assert.deepEqual(descriptors.map((descriptor) => [descriptor.type, descriptor.protocolVersion]), [["iab", 6], ["extension", 5]])
+  assert.deepEqual(descriptors.map((descriptor) => [descriptor.type, descriptor.protocolVersion]), [["iab", 7], ["extension", 5]])
   assert.deepEqual(descriptors[0].capabilities.tab.map((capability: { id: string }) => capability.id), ["cdp"])
   assert.deepEqual(descriptors[1].capabilities.tab.map((capability: { id: string }) => capability.id), ["pageAssets", "cdp", "webmcp"])
   assert.equal(descriptors[1].apiSupportOverrides["BrowserUser.history"], true)
@@ -96,6 +96,81 @@ test("canonical BrowserClient commands select and normalize the requested backen
 
   const elementScreenshot = await broker.dispatch({ method: "playwright_element_screenshot", params: { browserId: "lume-iab", tabId: "tab-1", options: { x: 10, y: 20 } }, browserSessionId: "s", browserTurnId: "t" })
   assert.deepEqual(elementScreenshot, { dataBase64: "ZWxlbWVudA==" })
+});
+
+test("reference candidates stay in the current IAB task and include only the three latest Chrome tabs", async () => {
+  const broker = new BrowserBroker(
+    { request: async (request) => request.method === "list" ? [
+      { tabId: "iab-current", providerTabId: "provider-current", ownerThreadId: "thread-1", profileKind: "user", backend: "iab", generation: 2, title: "Current", url: "http://localhost:3000/", lastOpenedAt: "2026-08-01T10:00:00.000Z" },
+      { tabId: "iab-other", providerTabId: "provider-other", ownerThreadId: "thread-2", profileKind: "user", backend: "iab", generation: 1, title: "Other", url: "http://localhost:4000/", lastOpenedAt: "2026-08-01T11:00:00.000Z" },
+      { tabId: "iab-agent", ownerThreadId: "thread-1", profileKind: "agent", backend: "iab", generation: 1, title: "Agent", url: "http://localhost:5000/" },
+    ] : {} },
+    { isAvailable: () => true, request: async (request) => request.method === "openTabs" ? [
+      { id: "chrome-1", title: "One", url: "https://one.example/", lastAccessed: Date.parse("2026-08-01T10:00:00.000Z") },
+      { id: "chrome-2", title: "Two", url: "https://two.example/", lastAccessed: Date.parse("2026-08-01T12:00:00.000Z") },
+      { id: "chrome-3", title: "Three", url: "https://three.example/", lastAccessed: Date.parse("2026-08-01T11:00:00.000Z") },
+      { id: "chrome-4", title: "Four", url: "https://four.example/", lastAccessed: Date.parse("2026-08-01T09:00:00.000Z") },
+      { id: "chrome-internal", title: "Extensions", url: "chrome://extensions/", lastAccessed: Date.parse("2026-08-01T13:00:00.000Z") },
+    ] : {} },
+  )
+  broker.setPluginState({ browserEnabled: true, chromeEnabled: true, extensionBackendEnabled: true, hostConnected: true })
+
+  const candidates = await broker.listReferenceCandidates("thread-1")
+  assert.deepEqual(candidates.map((candidate) => candidate.tabId), ["iab-current", "chrome-2", "chrome-3", "chrome-1"])
+  assert.equal(candidates[0]?.browserId, "lume-iab")
+  assert.equal(candidates[1]?.browserId, "lume-extension")
+});
+
+test("reference grant RPCs use user context and the selected backend", async () => {
+  const mainCalls: any[] = []
+  const extensionCalls: any[] = []
+  const broker = new BrowserBroker(
+    { request: async (request) => { mainCalls.push(request); return { referenceGrantId: "iab-grant", expiresAt: "2026-08-01T01:00:00.000Z" } } },
+    { isAvailable: () => true, request: async (request) => { extensionCalls.push(request); return request.method === "referenceGrant:revoke" ? { ok: true, revoked: true } : { referenceGrantId: "chrome-grant", expiresAt: "2026-08-01T01:00:00.000Z" } } },
+  )
+  broker.setPluginState({ browserEnabled: true, chromeEnabled: true, extensionBackendEnabled: true, hostConnected: true })
+
+  const grant = await broker.createReferenceGrant({ backend: "extension", browserId: "lume-extension", threadId: "thread-1", tabId: "chrome-1", title: "Chrome", url: "https://example.com/", access: "control" })
+  assert.equal(grant.referenceGrantId, "chrome-grant")
+  assert.equal(extensionCalls[0].method, "referenceGrant:create")
+  assert.equal(extensionCalls[0].context.actor, "user")
+  await broker.revokeReferenceGrant({ backend: "extension", threadId: "thread-1", referenceGrantId: "chrome-grant" })
+  assert.equal(extensionCalls[1].method, "referenceGrant:revoke")
+  assert.equal(mainCalls.length, 0)
+});
+
+test("claiming uses a fresh openTabs handle and injects only an exact task-bound reference grant", async () => {
+  const calls: any[] = []
+  let currentTitle = "Changed"
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request)
+    if (request.method === "referenceGrant:create") return { referenceGrantId: "grant-1", expiresAt: "2099-01-01T00:00:00.000Z" }
+    if (request.method === "openTabs") return [{ id: "claim-handle", providerTabId: "provider-1", title: currentTitle, url: "https://example.com/", generation: 3 }]
+    if (request.method === "claim") return { tabId: "controlled-tab", title: currentTitle, url: "https://example.com/" }
+    return {}
+  } })
+  broker.setPluginState({ browserEnabled: true })
+  await broker.createReferenceGrant({
+    backend: "iab",
+    browserId: "lume-iab",
+    threadId: "thread-1",
+    tabId: "persistent-tab",
+    providerTabId: "provider-1",
+    generation: 3,
+    title: "Example",
+    url: "https://example.com/",
+    access: "control",
+  })
+
+  await broker.dispatch({ method: "browser_user_open_tabs", params: { browser_id: "lume-iab" }, threadId: "thread-1", browserSessionId: "session-1", browserTurnId: "turn-1" })
+  await broker.dispatch({ method: "browser_user_claim_tab", params: { browser_id: "lume-iab", tab_id: "claim-handle" }, threadId: "thread-1", browserSessionId: "session-1", browserTurnId: "turn-1" })
+  assert.equal(calls.at(-1).params.referenceGrantId, undefined)
+
+  currentTitle = "Example"
+  await broker.dispatch({ method: "browser_user_open_tabs", params: { browser_id: "lume-iab" }, threadId: "thread-1", browserSessionId: "session-1", browserTurnId: "turn-1" })
+  await broker.dispatch({ method: "browser_user_claim_tab", params: { browser_id: "lume-iab", tab_id: "claim-handle" }, threadId: "thread-1", browserSessionId: "session-1", browserTurnId: "turn-1" })
+  assert.equal(calls.at(-1).params.tabId, "claim-handle")
+  assert.equal(calls.at(-1).params.referenceGrantId, "grant-1")
 });
 
 test("broker exposes runtime-declared APIs and normalizes protected browser-use commands", async () => {

@@ -23,6 +23,8 @@ export interface NodeReplExecutionResult {
   _meta?: Record<string, unknown>;
 }
 
+import type { BrowserAuthOption, BrowserLocator } from "@lume/shared";
+
 export interface NodeReplBrowserAuthRequest {
   context?: {
     threadId?: string;
@@ -30,6 +32,7 @@ export interface NodeReplBrowserAuthRequest {
     browserTurnId?: string;
   };
   tabId?: string;
+  generation?: number;
   origin?: string;
   reason?: string;
   expires_at?: string;
@@ -39,11 +42,19 @@ export interface NodeReplBrowserAuthRequest {
     type?: string;
     autocomplete?: string;
     required?: boolean;
+    locator?: BrowserLocator;
+    frameLocator?: BrowserLocator;
   }>;
+  options?: BrowserAuthOption[];
+  submit?:
+    | { kind: "click"; locator: BrowserLocator; frameLocator?: BrowserLocator }
+    | { kind: "press_enter"; fieldId?: string }
+    | { kind: "none" };
 }
 
 export interface NodeReplBrowserAuthResult {
-  status: "approved" | "declined" | "cancelled" | "unavailable" | "expired" | "origin_changed" | "page_changed" | "locator_invalid" | "submission_failed";
+  status: "submitted" | "declined" | "cancelled" | "unavailable" | "expired" | "origin_changed" | "page_changed" | "locator_invalid" | "submission_failed";
+  selected_option?: string;
 }
 
 export interface NodeReplComputerUseRequest {

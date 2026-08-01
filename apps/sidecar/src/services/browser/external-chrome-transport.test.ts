@@ -4,13 +4,19 @@ import { createHmac, hkdfSync, randomUUID } from "node:crypto";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ExternalChromeTransport, mapExternalChromeRequest } from "./external-chrome-transport";
+import { ExternalChromeTransport, mapExternalChromeRequest, stableExternalErrorCode } from "./external-chrome-transport";
 
 const token = Buffer.from("round2-bridge-token").toString("base64url");
 const pairingId = "pairing-test-01";
 const pairingGeneration = 7;
 const request = { requestId: "req-1", context: { actor: "agent" as const, browserSessionId: "s", browserTurnId: "t" }, method: "list" };
 const endpoint = () => process.platform === "win32" ? `\\\\.\\pipe\\lume-browser-${randomUUID()}` : join(tmpdir(), `lume-browser-${randomUUID()}.sock`);
+
+test("external Chrome keeps stable reference grant errors", () => {
+  assert.equal(stableExternalErrorCode("reference_grant_expired"), "reference_grant_expired");
+  assert.equal(stableExternalErrorCode("tab_generation_changed"), "tab_generation_changed");
+  assert.equal(stableExternalErrorCode("action_denied"), "action_denied");
+});
 
 test("external bridge authenticates a connected native host and correlates requests", async () => {
   const bridge = new ExternalChromeTransport({ endpoint: endpoint(), token, pairingId, generation: pairingGeneration, requestTimeoutMs: 500 });
@@ -82,6 +88,8 @@ test("external Chrome mapping preserves locator input and existing-tab operation
   const base = { requestId: "req-map", context: { actor: "agent" as const, browserSessionId: "s", browserTurnId: "t" } };
   assert.equal(mapExternalChromeRequest({ ...base, method: "openTabs" }).method, "browser_user_open_tabs");
   assert.equal(mapExternalChromeRequest({ ...base, method: "claim", params: { tabId: "chrome-tab:7" } }).method, "browser_user_claim_tab");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "referenceGrant:create", params: { tabId: "chrome-tab:7" } }).method, "browser_user_create_reference_grant");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "referenceGrant:revoke", params: { referenceGrantId: "grant-1" } }).method, "browser_user_revoke_reference_grant");
   assert.deepEqual(mapExternalChromeRequest({ ...base, method: "fill", params: { tabId: "tab-1", locator: { version: 1, steps: [] }, value: "hello" } }).params.text, "hello");
   assert.deepEqual(mapExternalChromeRequest({ ...base, method: "select", params: { tabId: "tab-1", locator: { version: 1, steps: [] }, values: ["one"] } }).params.value, ["one"]);
   assert.deepEqual(mapExternalChromeRequest({ ...base, method: "ensure", params: { url: "https://example.test" } }).params.options, { url: "https://example.test", active: true });
