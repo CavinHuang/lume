@@ -10,6 +10,11 @@ import {
 import generatedJson from './model-meta.generated.json'
 
 describe('findModelMeta', () => {
+  test('resolves metadata from connection-scoped nested model refs', () => {
+    expect(findModelMeta('connection:openrouter/anthropic/claude-sonnet-4-20250514')?.id)
+      .toBe('claude-sonnet-4-20250514')
+  })
+
   test('matches by exact model id', () => {
     const meta = findModelMeta('claude-sonnet-4-20250514')
     expect(meta).toBeDefined()

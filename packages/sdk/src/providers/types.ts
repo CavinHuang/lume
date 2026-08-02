@@ -14,7 +14,13 @@ import type { ToolResultContentBlock } from '../types.js'
 // API Type
 // --------------------------------------------------------------------------
 
-export type ApiType = 'anthropic-messages' | 'openai-completions' | 'deepseek-chat-completions' | 'openai-responses'
+export type ApiType =
+  | 'anthropic-messages'
+  | 'openai-completions'
+  | 'deepseek-chat-completions'
+  | 'openai-responses'
+  | 'openai-codex-responses'
+  | 'google-generative-ai'
 
 export interface PromptCachePolicy {
   strategy: 'implicit' | 'anthropic-ephemeral' | 'openrouter-sticky'
@@ -98,6 +104,14 @@ export type CreateMessageStreamEvent =
   | {
       type: 'thinking_delta'
       thinking: string
+    }
+  | {
+      type: 'retry_state'
+      phase: 'waiting' | 'retrying' | 'cleared'
+      attempt: number
+      maxRetries: number
+      retryDelayMs: number
+      errorStatus: number | null
     }
 
 // --------------------------------------------------------------------------

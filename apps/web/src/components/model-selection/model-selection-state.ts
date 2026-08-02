@@ -1,5 +1,5 @@
 import type { AgentThreadMeta, Channel, ChannelModel, LumeConfigAgentDefaultStrategy, ModelCapabilities, ModelMeta } from '@lume/shared'
-import { findModelMeta, inferCapabilities } from '@lume/shared'
+import { buildConnectionModelRef, findModelMeta, inferCapabilities, isChannelViewReady } from '@lume/shared'
 
 export interface ModelSelectionOption {
   channelId: string
@@ -32,27 +32,13 @@ function normalizeOptional(value?: string | null): string | undefined {
   return normalized ? normalized : undefined
 }
 
-function isCanonicalModelRef(modelId: string): boolean {
-  const trimmed = modelId.trim()
-  if (!trimmed) {
-    return false
-  }
-
-  const slashIndex = trimmed.indexOf('/')
-  return slashIndex > 0 && slashIndex < trimmed.length - 1
-}
-
-function buildModelRef(channel: Pick<Channel, 'provider' | 'providerId'>, modelId: string): string {
-  if (isCanonicalModelRef(modelId)) return modelId
-  const effectiveProvider = channel.providerId || channel.provider
-  return `${effectiveProvider}/${modelId}`
-}
-
 function getModelRefVariants(channel: Pick<Channel, 'id' | 'provider' | 'providerId'>, model: Pick<ChannelModel, 'id'>): string[] {
-  const providerModelRef = buildModelRef(channel, model.id)
+  const effectiveProvider = channel.providerId || channel.provider
+  const providerModelRef = `${effectiveProvider}/${model.id}`
   const channelScopedModelRef = `${channel.id}/${model.id}`
 
   return [
+    buildConnectionModelRef(channel.id, model.id),
     model.id,
     providerModelRef,
     ...(channelScopedModelRef ? [channelScopedModelRef] : []),
@@ -110,20 +96,20 @@ export function buildModelSelectionGroups(input: {
   activeModelRef?: string
 }): ModelOptionGroup[] {
   return input.channels
-    .filter((channel) => channel.enabled)
+    .filter(isChannelViewReady)
     .map((channel) => ({
       id: channel.id,
       label: channel.name,
       provider: channel.provider,
       options: channel.models
-        .filter((model) => model.enabled)
+        .filter((model) => model.enabled && model.capabilities?.chat !== false)
         .map((model) => {
           const meta = findModelMeta(model.id) ?? findModelMeta(model.name)
           const inferredCapabilities = !meta ? inferCapabilities(model.id, model.name) : undefined
           return {
             channelId: channel.id,
             modelId: model.id,
-            modelRef: buildModelRef(channel, model.id),
+            modelRef: buildConnectionModelRef(channel.id, model.id),
             label: model.name,
             active: matchesSelection({
               channel,
@@ -163,7 +149,7 @@ export function getThreadSelectionSummary(input: {
       label: match.model.name,
       hasLoadedChannels,
       isOverride: input.thread?.modelSelectionSource === 'thread-override',
-      isUnavailable: !match.channel.enabled || !match.model.enabled,
+      isUnavailable: !isChannelViewReady(match.channel) || !match.model.enabled,
       meta,
     }
   }

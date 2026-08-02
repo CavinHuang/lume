@@ -333,6 +333,36 @@ describe("ContextAssembler", () => {
     expect(result.userMessageForModel).not.toContain("<script>untrusted</script>");
   });
 
+  test("includes selected browser annotation context with mixed-trust guidance", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-browser-annotation",
+      runId: "run-browser-annotation",
+      userMessage: "fix this page",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["node_repl"],
+      tokenBudget: 1000,
+      browserAttachments: [{
+        id: "browser-annotation:1",
+        origin: "browser-annotation",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 2 },
+        anchor: {
+          kind: "element",
+          url: "https://example.com/",
+          generation: 2,
+          framePath: [],
+          domPath: "html > body > main",
+          selectedContent: "Primary heading",
+          rect: { x: 10, y: 20, width: 200, height: 100 }
+        },
+        body: "Use a stronger visual hierarchy"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain("<browser_annotation_instructions trust=\"mixed\">");
+    expect(result.userMessageForModel).toContain("Primary heading");
+    expect(result.userMessageForModel).toContain("Use a stronger visual hierarchy");
+  });
+
   test("records context assembly and memory retrieval spans when trace context is provided", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-context-trace-"));
     try {

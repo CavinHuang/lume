@@ -179,7 +179,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
     })
     .join('|')
   const showIdleStatus = useDelayedAssistantIdleStatus(
-    streaming === true && message.status === 'streaming' && !latestTaskProgressBlock,
+    streaming === true && message.status === 'streaming' && !latestTaskProgressBlock && !message.retry,
     activitySignature,
   )
   const expressionActions = useMemo(
@@ -225,6 +225,9 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
         )}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
+        )}
+        {message.retry && (
+          <ShimmerStatusLine text={`正在重新连接 ${message.retry.attempt}/${message.retry.maxRetries}`} />
         )}
         {showIdleStatus && <ShimmerStatusLine text="正在思考" />}
         {message.error && (

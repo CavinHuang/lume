@@ -6,12 +6,19 @@ import {
   deleteChannel,
   fetchModels,
   listChannels,
+  syncChannelModels,
   testChannel,
   testChannelDirect,
   updateChannel
 } from "../services/channel/channel-manager";
 import type { RpcHandler } from "./types";
 import { asObject, asString } from "./validation";
+import {
+  answerConnectionOAuthPrompt,
+  cancelConnectionOAuthLogin,
+  getConnectionOAuthSession,
+  startConnectionOAuthLogin,
+} from "../services/channel/connection-oauth-service";
 
 export function createChannelHandlers(): Record<string, RpcHandler> {
   return {
@@ -51,6 +58,35 @@ export function createChannelHandlers(): Record<string, RpcHandler> {
       return testChannel(channelId);
     },
     [CHANNEL_IPC_CHANNELS.TEST_DIRECT]: async (params) => testChannelDirect(params as FetchModelsInput),
-    [CHANNEL_IPC_CHANNELS.FETCH_MODELS]: async (params) => fetchModels(params as FetchModelsInput)
+    [CHANNEL_IPC_CHANNELS.FETCH_MODELS]: async (params) => fetchModels(params as FetchModelsInput),
+    [CHANNEL_IPC_CHANNELS.SYNC_MODELS]: async (params) => {
+      const payload = asObject(params);
+      const channelId = asString(payload.channelId);
+      if (!channelId) throw new Error("缺少 channelId");
+      return syncChannelModels(channelId);
+    },
+    [CHANNEL_IPC_CHANNELS.OAUTH_START]: async (params) => {
+      const connectionId = asString(asObject(params).connectionId);
+      if (!connectionId) throw new Error("缺少 connectionId");
+      return startConnectionOAuthLogin(connectionId);
+    },
+    [CHANNEL_IPC_CHANNELS.OAUTH_STATUS]: async (params) => {
+      const sessionId = asString(asObject(params).sessionId);
+      if (!sessionId) throw new Error("缺少 sessionId");
+      return getConnectionOAuthSession(sessionId);
+    },
+    [CHANNEL_IPC_CHANNELS.OAUTH_ANSWER]: async (params) => {
+      const payload = asObject(params);
+      const sessionId = asString(payload.sessionId);
+      const promptId = asString(payload.promptId);
+      const value = asString(payload.value);
+      if (!sessionId || !promptId) throw new Error("缺少 OAuth prompt 参数");
+      return answerConnectionOAuthPrompt(sessionId, promptId, value ?? "");
+    },
+    [CHANNEL_IPC_CHANNELS.OAUTH_CANCEL]: async (params) => {
+      const sessionId = asString(asObject(params).sessionId);
+      if (sessionId) cancelConnectionOAuthLogin(sessionId);
+      return { ok: true };
+    },
   };
 }

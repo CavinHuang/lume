@@ -56,7 +56,7 @@ test("canonical BrowserClient commands select and normalize the requested backen
   broker.setPluginState({ browserEnabled: true, chromeEnabled: true, extensionBackendEnabled: true, hostConnected: true })
 
   const descriptors = await broker.dispatch({ method: "runtime_list_browsers", browserSessionId: "s", browserTurnId: "t" }) as any[]
-  assert.deepEqual(descriptors.map((descriptor) => [descriptor.type, descriptor.protocolVersion]), [["iab", 7], ["extension", 5]])
+  assert.deepEqual(descriptors.map((descriptor) => [descriptor.type, descriptor.protocolVersion]), [["iab", 8], ["extension", 5]])
   assert.deepEqual(descriptors[0].capabilities.tab.map((capability: { id: string }) => capability.id), ["cdp"])
   assert.deepEqual(descriptors[1].capabilities.tab.map((capability: { id: string }) => capability.id), ["pageAssets", "cdp", "webmcp"])
   assert.equal(descriptors[1].apiSupportOverrides["BrowserUser.history"], true)
@@ -96,6 +96,32 @@ test("canonical BrowserClient commands select and normalize the requested backen
 
   const elementScreenshot = await broker.dispatch({ method: "playwright_element_screenshot", params: { browserId: "lume-iab", tabId: "tab-1", options: { x: 10, y: 20 } }, browserSessionId: "s", browserTurnId: "t" })
   assert.deepEqual(elementScreenshot, { dataBase64: "ZWxlbWVudA==" })
+
+  await broker.dispatch({ method: "mark_tab", params: { browserId: "lume-iab", tab_id: "tab-1", status: "handoff" }, browserSessionId: "s", browserTurnId: "t" })
+  assert.equal(mainCalls.at(-1).method, "mark")
+  assert.equal(mainCalls.at(-1).params.status, "handoff")
+
+  await broker.dispatch({ method: "finalize_tabs", params: { browserId: "lume-iab", keep: [{ tab_id: "tab-1", status: "deliverable" }] }, browserSessionId: "s", browserTurnId: "t" })
+  assert.deepEqual(mainCalls.at(-1).params.keep, [{ tabId: "tab-1", status: "deliverable" }])
+
+  mainCalls.length = 0
+  const dialogBroker = new BrowserBroker({ request: async (request) => {
+    mainCalls.push(request)
+    if (request.method === "policy:confirm") return { approved: true, token: "content-export-token" }
+    return request.method === "dialog:get" ? { id: "dialog-1", type: "prompt" } : {}
+  } })
+  dialogBroker.setPluginState({ browserEnabled: true })
+  assert.deepEqual(
+    await dialogBroker.dispatch({ method: "tab_get_js_dialog", params: { browserId: "lume-iab", tab_id: "tab-1" }, browserSessionId: "s", browserTurnId: "t" }),
+    { dialog: { id: "dialog-1", type: "prompt" } },
+  )
+  await dialogBroker.dispatch({ method: "tab_handle_js_dialog", params: { browserId: "lume-iab", tab_id: "tab-1", dialog_id: "dialog-1", action: "accept", prompt_text: "Lume" }, browserSessionId: "s", browserTurnId: "t" })
+  assert.equal(mainCalls.at(-1).method, "dialog:handle")
+  assert.deepEqual({ accept: mainCalls.at(-1).params.accept, dialogId: mainCalls.at(-1).params.dialogId, promptText: mainCalls.at(-1).params.promptText }, { accept: true, dialogId: "dialog-1", promptText: "Lume" })
+
+  await dialogBroker.dispatch({ method: "tab_content_export", params: { browserId: "lume-iab", tab_id: "tab-1" }, browserSessionId: "s", browserTurnId: "t" })
+  assert.equal(mainCalls.at(-2).method, "policy:confirm")
+  assert.equal(mainCalls.at(-1).method, "content:export")
 });
 
 test("reference candidates stay in the current IAB task and include only the three latest Chrome tabs", async () => {

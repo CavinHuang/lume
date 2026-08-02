@@ -1,5 +1,5 @@
 import { useAtomValue } from 'jotai'
-import { ChevronLeft, ChevronRight, Clock3, Plus, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Clock3, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
@@ -55,7 +55,11 @@ type CalendarItem = {
   event?: PlanningCalendarEvent
 }
 
-export function PlanningCalendarView() {
+export function PlanningCalendarView({
+  createRequest = 0,
+}: {
+  createRequest?: number
+}) {
   const workspaceId = useAtomValue(currentWorkspaceIdAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const [mode, setMode] = useState<CalendarMode>('month')
@@ -68,6 +72,13 @@ export function PlanningCalendarView() {
   const [editing, setEditing] = useState<
     PlanningCalendarEvent | null | undefined
   >(undefined)
+  const [expandedDay, setExpandedDay] = useState<number>()
+  const handledCreateRequest = useRef(createRequest)
+  useEffect(() => {
+    if (handledCreateRequest.current === createRequest) return
+    handledCreateRequest.current = createRequest
+    setEditing(null)
+  }, [createRequest])
   const range = useMemo(() => visibleRange(anchor, mode), [anchor, mode])
   const load = useCallback(async () => {
     try {
@@ -83,7 +94,7 @@ export function PlanningCalendarView() {
             scope: workspaceId ? 'current' : 'unassigned',
             workspaceId: workspaceId ?? undefined,
             view: 'all',
-            limit: 500,
+            limit: 100,
           }),
           listAutomationJobs(),
           listPlanningGroups('calendar'),
@@ -144,31 +155,8 @@ export function PlanningCalendarView() {
         : value + delta * 7 * DAY,
     )
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border/40 px-5 py-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => move(-1)}
-          aria-label="上一周期"
-        >
-          <ChevronLeft />
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => setAnchor(startOfDay(Date.now()))}
-        >
-          今天
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => move(1)}
-          aria-label="下一周期"
-        >
-          <ChevronRight />
-        </Button>
-        <div className="mr-auto text-sm font-medium">{range.label}</div>
+    <section className="flex w-full flex-col overflow-hidden rounded-xl border border-border/60 bg-[var(--surface-1)] shadow-sm">
+      <div className="relative flex flex-wrap items-center gap-3 border-b border-border/60 px-5 py-4">
         <Tabs
           value={mode}
           onValueChange={(value) => setMode(value as CalendarMode)}
@@ -178,13 +166,49 @@ export function PlanningCalendarView() {
             <TabsTrigger value="week">周</TabsTrigger>
           </TabsList>
         </Tabs>
-        <Button onClick={() => setEditing(null)}>
-          <Plus />
-          新建日程
+        <div className="flex items-center gap-1 sm:absolute sm:left-1/2 sm:-translate-x-1/2">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => move(-1)}
+            aria-label="上一周期"
+          >
+            <ChevronLeft />
+          </Button>
+          <div className="min-w-32 text-center text-sm font-semibold">
+            {range.label}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => move(1)}
+            aria-label="下一周期"
+          >
+            <ChevronRight />
+          </Button>
+        </div>
+        <Button
+          variant="outline"
+          className="ml-auto"
+          onClick={() => setAnchor(startOfDay(Date.now()))}
+        >
+          今天
         </Button>
       </div>
+      <div className="grid shrink-0 grid-cols-7 border-b border-border/60 bg-muted/15">
+        {['周一', '周二', '周三', '周四', '周五', '周六', '周日'].map(
+          (label) => (
+            <div
+              key={label}
+              className="border-r border-border/40 px-3 py-2 text-center text-[11px] font-medium text-muted-foreground last:border-r-0"
+            >
+              {label}
+            </div>
+          ),
+        )}
+      </div>
       <div
-        className={`grid min-h-0 flex-1 overflow-auto ${mode === 'month' ? 'grid-cols-7 auto-rows-[minmax(120px,1fr)]' : 'grid-cols-1 md:grid-cols-7'}`}
+        className={`grid grid-cols-7 ${mode === 'month' ? 'auto-rows-[minmax(128px,auto)]' : 'auto-rows-[minmax(480px,auto)]'}`}
       >
         {days.map((day) => (
           <CalendarDay
@@ -195,9 +219,26 @@ export function PlanningCalendarView() {
             }
             items={items.filter((item) => sameDay(item.at, day))}
             onOpen={(event) => setEditing(event)}
+            maxVisibleItems={mode === 'month' ? 4 : undefined}
+            onOpenAll={() => setExpandedDay(day)}
           />
         ))}
       </div>
+      <DayItemsDialog
+        day={expandedDay}
+        items={
+          expandedDay === undefined
+            ? []
+            : items.filter((item) => sameDay(item.at, expandedDay))
+        }
+        onOpenChange={(open) => {
+          if (!open) setExpandedDay(undefined)
+        }}
+        onOpenEvent={(event) => {
+          setExpandedDay(undefined)
+          setEditing(event)
+        }}
+      />
       <CalendarEventDialog
         open={editing !== undefined}
         event={editing ?? undefined}
@@ -219,7 +260,7 @@ export function PlanningCalendarView() {
         onGroups={setGroups}
         onTags={setTags}
       />
-    </div>
+    </section>
   )
 }
 
@@ -228,22 +269,29 @@ function CalendarDay({
   currentMonth,
   items,
   onOpen,
+  maxVisibleItems,
+  onOpenAll,
 }: {
   day: number
   currentMonth: boolean
   items: CalendarItem[]
   onOpen: (event: PlanningCalendarEvent) => void
+  maxVisibleItems?: number
+  onOpenAll: () => void
 }) {
   const today = sameDay(day, Date.now())
+  const visibleItems =
+    maxVisibleItems === undefined ? items : items.slice(0, maxVisibleItems)
+  const hiddenItemCount = items.length - visibleItems.length
   return (
-    <section className="min-h-28 border-b border-r border-border/40 p-2">
+    <section className="min-h-28 border-b border-r border-border/40 bg-background/20 p-2 transition-colors hover:bg-muted/15">
       <div
         className={`mb-2 inline-flex size-7 items-center justify-center rounded-full text-xs ${today ? 'bg-primary text-primary-foreground' : currentMonth ? '' : 'text-muted-foreground/50'}`}
       >
         {new Date(day).getDate()}
       </div>
       <div className="space-y-1">
-        {items.slice(0, 6).map((item) =>
+        {visibleItems.map((item) =>
           item.kind === 'event' ? (
             <Button
               key={`${item.kind}:${item.id}`}
@@ -269,13 +317,80 @@ function CalendarDay({
             </div>
           ),
         )}
-        {items.length > 6 && (
-          <div className="px-1 text-[10px] text-muted-foreground">
-            另有 {items.length - 6} 项
-          </div>
+        {hiddenItemCount > 0 && (
+          <Button
+            variant="ghost"
+            size="xs"
+            className="w-full justify-start text-muted-foreground"
+            onClick={onOpenAll}
+          >
+            还有 {hiddenItemCount} 项
+          </Button>
         )}
       </div>
     </section>
+  )
+}
+
+function DayItemsDialog({
+  day,
+  items,
+  onOpenChange,
+  onOpenEvent,
+}: {
+  day?: number
+  items: CalendarItem[]
+  onOpenChange: (open: boolean) => void
+  onOpenEvent: (event: PlanningCalendarEvent) => void
+}) {
+  return (
+    <Dialog open={day !== undefined} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[80vh] overflow-auto sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {day === undefined
+              ? '当天安排'
+              : new Intl.DateTimeFormat('zh-CN', {
+                  month: 'long',
+                  day: 'numeric',
+                  weekday: 'long',
+                }).format(day)}
+          </DialogTitle>
+          <DialogDescription>当天共 {items.length} 项安排</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          {items.map((item) =>
+            item.kind === 'event' ? (
+              <Button
+                key={`${item.kind}:${item.id}`}
+                variant="outline"
+                className="h-auto w-full justify-start px-3 py-2.5 text-left"
+                onClick={() => onOpenEvent(item.event!)}
+              >
+                <span className="size-2 rounded-full bg-primary" />
+                <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                <time className="text-xs text-muted-foreground">
+                  {formatTime(item.at, item.event?.allDay)}
+                </time>
+              </Button>
+            ) : (
+              <div
+                key={`${item.kind}:${item.id}`}
+                className="flex items-center gap-2 rounded-lg border border-border/60 px-3 py-2.5 text-sm"
+              >
+                <span
+                  className={`size-2 rounded-full ${item.kind === 'todo' ? 'bg-amber-500' : 'bg-violet-500'}`}
+                />
+                <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                <span className="text-xs text-muted-foreground">
+                  {item.kind === 'todo' ? 'Todo' : '自动化'}
+                </span>
+              </div>
+            ),
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -530,7 +645,15 @@ function CalendarEventDialog({
               }}
             >
               <SelectTrigger>
-                <SelectValue placeholder="项目" />
+                <SelectValue placeholder="项目">
+                  {(value) =>
+                    value === 'unassigned'
+                      ? '未分配'
+                      : (workspaces.find(
+                          (workspace) => workspace.id === value,
+                        )?.name ?? '其他项目')
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="unassigned">未分配</SelectItem>
@@ -550,7 +673,14 @@ function CalendarEventDialog({
               }}
             >
               <SelectTrigger>
-                <SelectValue placeholder="分组" />
+                <SelectValue placeholder="分组">
+                  {(value) =>
+                    value === 'none'
+                      ? '未分组'
+                      : (groups.find((group) => group.id === value)?.name ??
+                        '其他分组')
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">未分组</SelectItem>
@@ -570,7 +700,14 @@ function CalendarEventDialog({
               }}
             >
               <SelectTrigger>
-                <SelectValue placeholder="关联 Todo" />
+                <SelectValue placeholder="关联 Todo">
+                  {(value) =>
+                    value === 'none'
+                      ? '不关联'
+                      : (todos.find((todo) => todo.id === value)?.title ??
+                        '关联 Todo')
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">不关联</SelectItem>

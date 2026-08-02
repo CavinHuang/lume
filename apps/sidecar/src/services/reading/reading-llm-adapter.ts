@@ -1,5 +1,4 @@
 import {
-  createProvider,
   type ApiType,
   type LLMProvider,
   type NormalizedContentBlock,
@@ -8,6 +7,7 @@ import {
 } from "@lume/agent-sdk";
 import type { ReadingModelUsage, ReadingNoteDepth, ReadingSettings } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
+import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getReadingSettings } from "./reading-store";
 import type {
@@ -75,15 +75,13 @@ export function createReadingNoteGeneratorLlm(
   const binding = (input.resolveBinding ?? defaultResolveBinding)(modelRef);
   if (!binding) return undefined;
 
-  const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
-    apiKey: options.apiKey,
-    baseURL: options.baseURL
-  }));
-  const provider = providerFactory({
-    apiType: resolveReadingApiType(binding),
-    apiKey: (input.decryptApiKey ?? decryptApiKey)(binding.channel.id),
-    baseURL: binding.channel.baseUrl
-  });
+  const provider = input.createProvider
+    ? input.createProvider({
+      apiType: resolveReadingApiType(binding),
+      apiKey: (input.decryptApiKey ?? decryptApiKey)(binding.channel.id),
+      baseURL: binding.channel.baseUrl
+    })
+    : createLazyConnectionLlmProvider({ connectionId: binding.channel.id, modelId: binding.modelId });
 
   return {
     modelRef,

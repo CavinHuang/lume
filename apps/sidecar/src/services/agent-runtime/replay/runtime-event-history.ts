@@ -3,6 +3,15 @@ import { projectBackgroundTaskNotificationRuntimeEvent, projectRunStateToRuntime
 import { createFileBackedLumeRunStateStore } from "../runner/run-state-store";
 import { createFileBackedTaskStore } from "../task/task-store";
 import { getAgentThreadSDKMessages } from "../../agent/agent-thread-manager";
+import type { LumeRunState } from "../runner/run-state";
+
+export function projectRunStateToReplayEvents(run: LumeRunState): LumeRuntimeEvent[] {
+  const events = projectRunStateToRuntimeEvents(run);
+  if (run.status !== "failed") return events;
+  // Failed model output and its transient error remain live-only. On reopen,
+  // keep the user's submitted message but do not resurrect a failed answer.
+  return events.filter((event) => event.type === "run.started" || event.type === "message.user.submitted");
+}
 
 export async function listThreadRuntimeEvents(input: {
   sessionDir: string;
@@ -25,7 +34,7 @@ export async function listThreadRuntimeEvents(input: {
   return {
     threadId: input.threadId,
     events: assignRunSequences(sortRuntimeEvents([
-      ...runs.flatMap((run) => projectRunStateToRuntimeEvents(run)),
+      ...runs.flatMap(projectRunStateToReplayEvents),
       ...backgroundTaskEvents,
       ...taskEvents.map((event) => ({
         id: `task.progress:${event.taskListId}:${event.sequence}`,

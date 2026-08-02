@@ -1,12 +1,14 @@
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
-import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
+import { decryptApiKey, isChannelConnectionUsable, listChannels, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { resolveAgentThreadWorkdir, type ResolvedAgentWorkdir } from "../../agent/agent-workdir-resolver";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult } from "../runner/types";
 import { resolveRuntimeCoreChannelModel } from "./model";
 import { getRuntimeCoreAgentDir } from "./session-store";
 import type { OpenAiApiMode } from "@lume/shared";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
+import type { ApiType } from "@lume/agent-sdk";
+import { resolveConfiguredConnectionApiType } from "../../model-runtime/connection-provider";
 
 export interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -21,6 +23,7 @@ export interface PreparedRuntimeCoreAttempt {
   workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   openaiApiMode?: OpenAiApiMode;
+  apiType: ApiType;
   channelProvider: string;
   apiKey: string;
 }
@@ -29,15 +32,22 @@ export async function prepareRuntimeCoreAttempt(
   params: AgentRuntimeRunParams
 ): Promise<PreparedRuntimeCoreAttempt | AgentRuntimeRunResult> {
   const { runtime } = params;
-  const boundModel = resolveChannelModelBinding(runtime.modelRef ?? "", "chat");
-  const channel = boundModel?.channel ?? listChannels().find((item) => item.id === runtime.channelId);
+  const boundModel = resolveChannelModelBinding(runtime.modelRef ?? "", "chat", runtime.channelId);
+  const channel = boundModel?.channel ?? listChannels().find((item) => (
+    item.id === runtime.channelId && isChannelConnectionUsable(item)
+  ));
   if (!channel) {
     return { status: "errored", errorMessage: "runtime-core 未找到可用渠道。" };
+  }
+  if (channel.models.length > 0 && !channel.models.some((model) => (
+    model.enabled && model.capabilities?.chat !== false
+  ))) {
+    return { status: "errored", errorMessage: "runtime-core 当前连接没有已启用的对话模型。" };
   }
 
   let apiKey = "";
   try {
-    apiKey = decryptApiKey(runtime.channelId);
+    apiKey = decryptApiKey(channel.id);
   } catch {
     return { status: "errored", errorMessage: "runtime-core 解密 API Key 失败。" };
   }
@@ -57,7 +67,7 @@ export async function prepareRuntimeCoreAttempt(
   const modelResolution = resolveRuntimeCoreChannelModel({
     channel,
     channelProvider: channel.provider,
-    requestedModelRefOrId: runtime.modelRef ?? boundModel?.modelId ?? runtime.resolvedModelId,
+    requestedModelRefOrId: boundModel?.modelId ?? runtime.resolvedModelId,
     baseUrl: channel.baseUrl,
     contextWindowOverrides
   });
@@ -98,6 +108,7 @@ export async function prepareRuntimeCoreAttempt(
     workspaceSlug,
     modelResolution,
     openaiApiMode: channel.openaiApiMode,
+    apiType: resolveConfiguredConnectionApiType(channel, boundModel?.modelId ?? runtime.resolvedModelId),
     channelProvider: channel.provider,
     apiKey
   };

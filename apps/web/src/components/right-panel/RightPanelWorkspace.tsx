@@ -302,12 +302,16 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const updateBrowserWorkspace = (next: ThreadBrowserWorkspace) => {
     setPersistedBrowserWorkspaces((current) => ({ ...current, [threadId]: next }))
   }
-  const openBrowser = (url = '') => {
+  const openBrowser = (url = '', insertAfterTabId?: string) => {
     const tab = createBrowserTab({ url })
     void browserRuntime<BrowserTabDescriptor>({ method: 'ensure', params: { tabId: tab.id, ownerThreadId: threadId, url } })
       .then((descriptor) => browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId: tab.id } }).then(() => descriptor))
       .then((descriptor) => {
-        updateBrowserWorkspace({ ...browserWorkspace, tabs: [...browserWorkspace.tabs, browserTabFromDescriptor(descriptor)], activeTabId: tab.id })
+        const tabs = [...browserWorkspace.tabs]
+        const insertIndex = insertAfterTabId ? tabs.findIndex((item) => item.id === insertAfterTabId) + 1 : tabs.length
+        tabs.splice(insertIndex > 0 ? insertIndex : tabs.length, 0, browserTabFromDescriptor(descriptor))
+        updateBrowserWorkspace({ ...browserWorkspace, tabs, activeTabId: tab.id })
+        void browserRuntime({ method: 'workspace:reorder', params: { ownerThreadId: threadId, orderedTabIds: tabs.map((item) => item.id) } }).catch(() => undefined)
         closeCodingReview({ type: 'deactivate', threadId })
         updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: tab.id } }))
       })
@@ -348,8 +352,12 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
         const tabs = [...browserWorkspace.tabs]
         tabs.splice(index + 1, 0, browserTabFromDescriptor(descriptor))
         updateBrowserWorkspace({ ...browserWorkspace, tabs, activeTabId: duplicate.id })
+        void browserRuntime({ method: 'workspace:reorder', params: { ownerThreadId: threadId, orderedTabIds: tabs.map((item) => item.id) } }).catch(() => undefined)
         updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: duplicate.id } }))
       }).catch(() => undefined)
+  }
+  const reloadBrowser = (tabId: string) => {
+    void browserRuntime({ method: 'reload', params: { tabId } }).catch(() => undefined)
   }
   const closeOtherBrowsers = (tabId: string) => {
     const closing = browserWorkspace.tabs.filter((tab) => tab.id !== tabId)
@@ -359,6 +367,20 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
         const selected = browserWorkspace.tabs.find((tab) => tab.id === tabId)
         updateBrowserWorkspace({ tabs: selected ? [selected] : [], activeTabId: selected?.id, recentlyClosed: closing.slice().reverse() })
         updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId } }))
+      }).catch(() => undefined)
+  }
+  const closeBrowsersToRight = (tabId: string) => {
+    const index = browserWorkspace.tabs.findIndex((tab) => tab.id === tabId)
+    if (index < 0) return
+    const closing = browserWorkspace.tabs.slice(index + 1)
+    if (!closing.length) return
+    const tabs = browserWorkspace.tabs.slice(0, index + 1)
+    const activeWasClosed = closing.some((tab) => tab.id === browserWorkspace.activeTabId)
+    void Promise.all(closing.map((tab) => browserRuntime({ method: 'close', params: { tabId: tab.id } })))
+      .then(() => activeWasClosed ? browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId } }) : undefined)
+      .then(() => {
+        updateBrowserWorkspace({ ...browserWorkspace, tabs, activeTabId: activeWasClosed ? tabId : browserWorkspace.activeTabId, recentlyClosed: closing.slice().reverse() })
+        if (activeWasClosed) updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId } }))
       }).catch(() => undefined)
   }
   const restoreBrowser = () => {
@@ -459,8 +481,11 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
               onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
               onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
               onCloseBrowser={closeBrowser}
+              onNewBrowserToRight={(tabId) => openBrowser('', tabId)}
+              onReloadBrowser={reloadBrowser}
               onDuplicateBrowser={duplicateBrowser}
               onCloseOtherBrowsers={closeOtherBrowsers}
+              onCloseBrowsersToRight={closeBrowsersToRight}
               onMoveBrowserToMain={moveBrowserToMain}
               onMoveBrowserToThread={moveBrowserToThread}
               browserThreadTargets={threads.filter((item) => item.id !== threadId).map((item) => ({ id: item.id, label: item.title || '未命名任务' }))}

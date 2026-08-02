@@ -396,7 +396,21 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "release_tabs": return { method: "release", params }
     case "handoff_tabs": return { method: "handoff", params }
     case "resume_handoff_tabs": return { method: "resumeHandoff", params }
-    case "finalize_tabs": return { method: "finalize", params }
+    case "finalize_tabs": return {
+      method: "finalize",
+      params: {
+        ...params,
+        keep: Array.isArray(input.keep)
+          ? input.keep.flatMap((value) => {
+              if (!value || typeof value !== "object") return []
+              const item = value as Record<string, unknown>
+              const tabId = typeof item.tab_id === "string" ? item.tab_id : typeof item.tabId === "string" ? item.tabId : ""
+              return tabId && (item.status === "handoff" || item.status === "deliverable") ? [{ tabId, status: item.status }] : []
+            })
+          : undefined,
+      },
+    }
+    case "mark_tab": return { method: "mark", params: { ...params, status: input.status } }
     case "close_tab": return { method: "close", params }
     case "navigate_tab_url": return { method: "navigate", params }
     case "navigate_tab_back": return { method: "back", params }
@@ -406,6 +420,8 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "tab_title": return { method: "title", params }
     case "tab_screenshot": return { method: "screenshot", params: { ...params, ...options, fullPage: options.fullPage === true } }
     case "tab_content": return { method: "content", params: { ...params, format: input.content_type === "html" ? "html" : "text" } }
+    case "tab_content_export": return { method: "content:export", params }
+    case "tab_content_export_gsuite": return { method: "content:exportGsuite", params: { ...params, format: input.format } }
     case "tab_browser_auth_request": return { method: "browserAuth:request", params }
     case "tabs_content": return { method: "tabs:content", params: { ...params, contentType: input.content_type, timeoutMs: input.timeout_ms } }
     case "tab_clipboard_read": return { method: "clipboard:read", params }
@@ -485,8 +501,16 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "cua_type": return { method: "typeActive", params }
     case "cua_keypress": return { method: "pressActive", params }
     case "cua_download_media": return { method: "downloadMedia", params }
-    case "tab_js_dialog_get": return { method: "dialog:get", params }
-    case "tab_js_dialog_handle": return { method: "dialog:handle", params }
+    case "tab_get_js_dialog": case "tab_js_dialog_get": return { method: "dialog:get", params }
+    case "tab_handle_js_dialog": case "tab_js_dialog_handle": return {
+      method: "dialog:handle",
+      params: {
+        ...params,
+        accept: input.action === "accept",
+        dialogId: input.dialog_id ?? input.dialogId,
+        promptText: input.prompt_text ?? input.promptText,
+      },
+    }
     case "tab_cdp_call": case "tab_cdp_send": return { method: "cdp", params: { ...params, method: input.method, params: input.params } }
     default: return { method, params }
   }
@@ -635,6 +659,14 @@ function adaptBrowserResult(originalMethod: string, result: unknown): unknown {
             dateVisited: String((entry as { visitedAt?: unknown }).visitedAt ?? ""),
           }]
         : []),
+    }
+  }
+  if (originalMethod === "tab_get_js_dialog" || originalMethod === "tab_js_dialog_get") {
+    const dialog = result && typeof result === "object" ? result as Record<string, unknown> : undefined
+    return {
+      dialog: dialog && typeof dialog.id === "string" && typeof dialog.type === "string"
+        ? { id: dialog.id, type: dialog.type }
+        : null,
     }
   }
   if (originalMethod === "create_tab") return { id: descriptorId(result) }

@@ -30,6 +30,7 @@ import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/rende
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
 import type { LumeLogDigestPolicy } from "@lume/shared";
+import { installConnectionVaultKey } from "./services/channel/connection-credential-store";
 import { installWikiPrivilegedCredential } from "./services/wiki/privileged-auth";
 import { markWikiProposalSecurityGateAvailable } from "./services/wiki/wiki-capabilities";
 import { createBrowserBroker } from "./services/browser/browser-broker";
@@ -219,6 +220,12 @@ async function handleRpcLine(line: string): Promise<void> {
   if (method === "system.wiki-privileged-credential") {
     installWikiPrivilegedCredential((payload.params as { credential?: unknown } | null)?.credential);
     markWikiProposalSecurityGateAvailable();
+    return;
+  }
+
+  if (method === "system.connection-vault-key") {
+    installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
+    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
     return;
   }
 

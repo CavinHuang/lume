@@ -1,6 +1,7 @@
-import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
 import type { LumeEffectiveConfig } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
+import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
 import { extractAssistantPreferredNameCandidate, extractPreferredNameCandidate } from "./profile";
@@ -291,11 +292,13 @@ function createMemoryExtractionProvider(input: {
   binding: ReturnType<typeof resolveChannelModelBinding>;
   createProvider?: MemoryExtractionProviderFactory;
 }): LLMProvider {
-  const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
-    apiKey: options.apiKey,
-    baseURL: options.baseURL
-  }));
-  return providerFactory({
+  if (!input.createProvider && input.binding) {
+    return createLazyConnectionLlmProvider({
+      connectionId: input.binding.channel.id,
+      modelId: input.binding.modelId,
+    });
+  }
+  return input.createProvider!({
     apiType: input.binding ? resolveExtractionApiType(input.binding.channel.provider) : "openai-completions",
     apiKey: input.binding ? decryptApiKey(input.binding.channel.id) : "",
     baseURL: input.binding?.channel.baseUrl

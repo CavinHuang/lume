@@ -226,6 +226,50 @@ export class LumeRunObserver {
     message: SDKMessage,
     emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
   ): void {
+    if (message.type === "system" && message.subtype === "api_retry") {
+      this.enqueue(async () => {
+        if (message.phase === "waiting") {
+          const latest = await this.stateStore.get(this.state.runId);
+          if (latest) {
+            let keepThrough = latest.generatedItems.length;
+            while (keepThrough > 0 && latest.generatedItems[keepThrough - 1]?.type === "model_stream") {
+              keepThrough -= 1;
+            }
+            if (keepThrough < latest.generatedItems.length) {
+              await this.stateStore.update(this.state.runId, {
+                generatedItems: latest.generatedItems.slice(0, keepThrough),
+              });
+            }
+          }
+          this.emittedModelStreamText = false;
+          this.emittedModelStreamThinking = false;
+        }
+        const createdAt = new Date().toISOString();
+        if (message.phase === "cleared") {
+          this.emitRuntimeEvent(emitRuntimeEvent, {
+            id: `${this.state.runId}:model.retry_cleared:${createdAt}`,
+            type: "model.retry_cleared",
+            threadId: this.state.threadId,
+            runId: this.state.runId,
+            createdAt,
+          });
+          return;
+        }
+        this.emitRuntimeEvent(emitRuntimeEvent, {
+          id: `${this.state.runId}:model.retry:${message.attempt}:${message.phase ?? "waiting"}:${randomUUID()}`,
+          type: "model.retry",
+          threadId: this.state.threadId,
+          runId: this.state.runId,
+          createdAt,
+          phase: message.phase === "retrying" ? "retrying" : "waiting",
+          attempt: message.attempt,
+          maxRetries: message.max_retries,
+          retryDelayMs: message.retry_delay_ms,
+          errorStatus: message.error_status,
+        });
+      });
+      return;
+    }
     this.enqueue(async () => {
       this.rememberSubagentParentToolCall(message as SDKMessage & Record<string, unknown>);
       const items = mapSdkMessageToRunItems(message, {

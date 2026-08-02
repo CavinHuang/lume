@@ -18,7 +18,6 @@ const PROVIDER_ALIAS: Record<string, string> = {
   "z.ai": "zai",
   "z-ai": "zai",
   zhipu: "zai",
-  qwen: "qwen-portal",
   "kimi-code": "kimi-coding"
 };
 
@@ -80,6 +79,9 @@ function coerceKnownProvider(provider: string): ProviderType {
     "anthropic",
     "anthropic-compatible",
     "openai",
+    "openai-codex",
+    "github-copilot",
+    "xai",
     "jina",
     "siliconflow",
     "openrouter",
@@ -214,7 +216,7 @@ export function resolveAgentDefaultStrategy(input: {
 export function resolveChannelDefaultModelId(channel: Pick<Channel, "models">): string | null {
   const channelWithDefault = channel as Pick<Channel, "models" | "defaultModelId">;
   const configuredDefault = channelWithDefault.defaultModelId?.trim();
-  if (configuredDefault && channel.models.some((model) => model.id === configuredDefault)) {
+  if (configuredDefault && channel.models.some((model) => model.id === configuredDefault && model.enabled)) {
     return configuredDefault;
   }
   const enabled = channel.models.find((model) => model.enabled && model.id.trim().length > 0);
@@ -234,8 +236,9 @@ export function resolveRequestedModelIdForChannel(
     return resolveChannelDefaultModelId(channel);
   }
 
-  if (channel.models.some((model) => model.id === requested)) {
-    return requested;
+  const exactMatch = channel.models.find((model) => model.id === requested);
+  if (exactMatch) {
+    return exactMatch.enabled ? requested : resolveChannelDefaultModelId(channel);
   }
 
   const requestedKey = normalizeLookupKey(requested);
@@ -248,7 +251,7 @@ export function resolveRequestedModelIdForChannel(
       );
     });
     if (aliasMatch) {
-      return aliasMatch.id;
+      return aliasMatch.enabled ? aliasMatch.id : resolveChannelDefaultModelId(channel);
     }
   }
 

@@ -191,6 +191,32 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'model.retry') {
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
+    if (event.phase === 'waiting') {
+      const segmentStart = Math.min(
+        state.currentAssistant.currentContentSegmentStart,
+        state.currentAssistant.blocks.length,
+      )
+      state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block, index) => (
+        index < segmentStart || (block.type !== 'text' && block.type !== 'thinking')
+      ))
+      recomputeAssistantContent(state.currentAssistant)
+    }
+    state.currentAssistant.retry = {
+      phase: event.phase,
+      attempt: event.attempt,
+      maxRetries: event.maxRetries,
+      retryDelayMs: event.retryDelayMs,
+    }
+    return
+  }
+
+  if (event.type === 'model.retry_cleared') {
+    if (state.currentAssistant) state.currentAssistant.retry = undefined
+    return
+  }
+
   const subagentOwner = getSubagentOwner(event)
   if (subagentOwner) {
     if (state.currentAssistant) {
@@ -339,6 +365,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       }
     }
     state.currentAssistant.status = 'completed'
+    state.currentAssistant.retry = undefined
     flushAssistant(state.messages, state.currentAssistant)
     state.currentAssistant = null
     state.terminalClosed = true
@@ -348,6 +375,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   if (event.type === 'run.failed' || event.type === 'run.cancelled') {
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.status = 'failed'
+    state.currentAssistant.retry = undefined
     state.currentAssistant.error = event.type === 'run.failed' ? event.error.message : (event.reason ?? 'Run cancelled')
     flushAssistant(state.messages, state.currentAssistant)
     state.currentAssistant = null
@@ -509,6 +537,7 @@ interface MutableAssistantMessage {
   completedAt?: string
   status: RuntimeAssistantMessageView['status']
   error?: string
+  retry?: RuntimeAssistantMessageView['retry']
   providerTokenCount?: number
   providerTokenUsage?: RuntimeAssistantTokenUsageView
   codingReport?: RuntimeCodingReport
@@ -649,6 +678,7 @@ function snapshotAssistant(assistant: MutableAssistantMessage | null): RuntimeMe
     blocks: assistant.blocks,
     status: assistant.status,
     ...(assistant.error ? { error: assistant.error } : {}),
+    ...(assistant.retry ? { retry: assistant.retry } : {}),
     ...(assistant.imDelivery ? { imDelivery: assistant.imDelivery } : {}),
     tokenCount: assistant.providerTokenCount ?? estimateAssistantTokenCount(assistant),
     ...(assistant.providerTokenCount !== undefined ? { tokenCountSource: 'provider' as const } : {}),

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -25,6 +25,7 @@ import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../../agent/subagents/subagent-coordinator";
 import { resetSubagentWorkStoreForTest } from "../../agent/subagents/subagent-work-store";
 import { createChannel } from "../../channel/channel-manager";
+import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
 import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
 import { evaluatePluginSensitiveGate } from "../plugins/sensitive-gate.js";
@@ -47,6 +48,10 @@ function availableToolNames(result: Awaited<ReturnType<typeof createRuntimeCoreS
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
   const prevAliceConfigDir = process.env.ALICE_CONFIG_DIR;
+
+  beforeEach(() => {
+    installConnectionVaultKey(Buffer.alloc(32, 23).toString("base64"));
+  });
 
   function createHookRuntimeSessionInput(
     overrides: Partial<CreateRuntimeCoreSessionInput> = {}

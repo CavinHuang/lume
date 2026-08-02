@@ -72,10 +72,12 @@ import {
   getWorkspaceSkillsDir
 } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
+import { createRoutingPiAiProvider, type PiAiProviderRoute } from "../../model-runtime/pi-ai-provider";
+import { createConnectionPiAiRoute, resolveConfiguredConnectionApiType } from "../../model-runtime/connection-provider";
 import { getWorkspaceMcpManager, WorkspaceMcpManager } from "../../mcp/workspace-mcp-manager";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-v2/policy";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
-import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
+import { getChannelById, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../../system/lume-config-service";
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
@@ -163,6 +165,7 @@ interface RuntimeCoreResolvedModel {
   contextWindow?: number;
   maxTokens?: number;
   input?: string[];
+  reasoning?: boolean;
 }
 
 export interface CreateRuntimeCoreSessionInput {
@@ -182,6 +185,7 @@ export interface CreateRuntimeCoreSessionInput {
   provider: string;
   channelProvider?: string;
   openaiApiMode?: OpenAiApiMode;
+  apiType?: ApiType;
   modelRef?: string;
   resolvedModelId: string;
   resolvedModel?: RuntimeCoreResolvedModel;
@@ -293,8 +297,6 @@ interface ResolvedSubagentModelOverride {
   channelId?: string;
   resolvedModelId?: string;
   apiType?: ApiType;
-  baseUrl?: string;
-  apiKey?: string;
 }
 
 function normalizeSubagentModelValue(value: unknown): string | undefined {
@@ -338,13 +340,7 @@ export function resolveSubagentModelOverride(input: {
     modelRef: candidate,
     channelId: binding.channel.id,
     resolvedModelId: binding.modelId,
-    apiType: binding.family === "anthropic"
-      ? "anthropic-messages"
-      : binding.channel.openaiApiMode === "responses"
-        ? "openai-responses"
-        : "openai-completions",
-    baseUrl: binding.channel.baseUrl,
-    apiKey: decryptApiKey(binding.channel.id)
+    apiType: resolveConfiguredConnectionApiType(binding.channel, binding.modelId),
   };
 }
 
@@ -1424,6 +1420,9 @@ function sortDiscoveredTools(tools: ToolDefinition[]): ToolDefinition[] {
 
 function resolveSdkApiType(provider: string, openaiApiMode?: OpenAiApiMode): ApiType {
   const normalized = provider.trim().toLowerCase();
+  if (normalized === "google") {
+    return "google-generative-ai";
+  }
   if (normalized === "anthropic" || normalized === "anthropic-compatible") {
     return "anthropic-messages";
   }
@@ -2171,8 +2170,48 @@ export async function createRuntimeCoreSession(
     ...(Object.keys(lspConfig).length > 0 ? { lsp: lspConfig } : {}),
   };
 
+  const apiType = input.apiType ?? resolveSdkApiType(input.provider, input.openaiApiMode);
+  const primaryChannel = input.channelId ? getChannelById(input.channelId) : undefined;
+  const providerRoutes: PiAiProviderRoute[] = [primaryChannel
+    ? await createConnectionPiAiRoute({
+      channel: primaryChannel,
+      modelId: input.resolvedModel?.id ?? input.resolvedModelId,
+      sessionId: input.lumeSessionId,
+    })
+    : {
+      modelId: input.resolvedModel?.id ?? input.resolvedModelId,
+      apiType,
+      providerId: input.channelProvider ?? input.provider,
+      baseUrl: input.resolvedModel?.baseUrl ?? "",
+      apiKey: input.apiKey,
+      contextWindow: input.resolvedModel?.contextWindow,
+      maxTokens: input.resolvedModel?.maxTokens,
+      supportsImages: input.resolvedModel?.input?.includes("image"),
+      supportsReasoning: input.resolvedModel?.reasoning,
+      sessionId: input.lumeSessionId,
+    }];
+  const configuredFallbackRefs = getEffectiveLumeConfig(input.workspaceSlug).models?.agent?.fallbackModelRefs ?? [];
+  for (const fallbackRef of configuredFallbackRefs) {
+    const binding = resolveChannelModelBinding(fallbackRef, "chat");
+    if (!binding) continue;
+    if (binding.channel.id === input.channelId && binding.modelId === providerRoutes[0]?.modelId) continue;
+    try {
+      providerRoutes.push(await createConnectionPiAiRoute({
+        channel: binding.channel,
+        modelId: binding.modelId,
+        sessionId: input.lumeSessionId,
+      }));
+    } catch (error) {
+      log.warn("skipping unavailable fallback model route", {
+        connectionId: binding.channel.id,
+        modelId: binding.modelId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   const agentOptions: AgentOptions = {
-    apiType: resolveSdkApiType(input.provider, input.openaiApiMode),
+    apiType,
+    provider: createRoutingPiAiProvider(providerRoutes),
     apiKey: input.apiKey,
     ...(input.resolvedModel?.baseUrl ? { baseURL: input.resolvedModel.baseUrl } : {}),
     model: input.resolvedModel?.id ?? input.resolvedModelId,

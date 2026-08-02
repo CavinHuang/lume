@@ -13,6 +13,9 @@ export type ProviderType =
   | 'anthropic'
   | 'anthropic-compatible'
   | 'openai'
+  | 'openai-codex'
+  | 'github-copilot'
+  | 'xai'
   | 'jina'
   | 'siliconflow'
   | 'openrouter'
@@ -44,6 +47,33 @@ export type ProviderApiFamily = 'anthropic' | 'openai' | 'google'
 /** OpenAI API 模式（仅 provider 为 'openai' 时使用） */
 export type OpenAiApiMode = 'chat-completions' | 'responses'
 
+/** Connection 使用的具体文本生成协议。 */
+export type ConnectionProtocol =
+  | 'openai-completions'
+  | 'openai-responses'
+  | 'openai-codex-responses'
+  | 'anthropic-messages'
+  | 'google-generative-ai'
+
+export type ConnectionAuthType = 'api-key' | 'oauth' | 'none'
+export type ConnectionHealthStatus = 'unknown' | 'available' | 'unavailable'
+export type ConnectionSyncStatus = 'idle' | 'syncing' | 'success' | 'error'
+
+export function buildConnectionModelRef(connectionId: string, modelId: string): string {
+  return `connection:${connectionId.trim()}/${modelId.trim()}`
+}
+
+export function parseConnectionModelRef(value: string): { connectionId: string; modelId: string } | null {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('connection:')) return null
+  const separator = trimmed.indexOf('/', 'connection:'.length)
+  const connectionId = separator > 'connection:'.length
+    ? trimmed.slice('connection:'.length, separator).trim()
+    : ''
+  const modelId = separator > 0 ? trimmed.slice(separator + 1).trim() : ''
+  return connectionId && modelId ? { connectionId, modelId } : null
+}
+
 /** 供应商分组 */
 export type ProviderGroup = 'all' | 'coding-plan' | 'domestic' | 'overseas' | 'transit' | 'local' | 'custom'
 
@@ -55,9 +85,9 @@ export interface ProviderGroupInfo {
 
 export const PROVIDER_GROUPS: ProviderGroupInfo[] = [
   { key: 'all', label: '全部', providers: [] },
-  { key: 'coding-plan', label: '编程套餐', providers: ['kimi-coding', 'zai-coding-plan', 'aliyun-coding-plan', 'volcengine-coding-plan', 'minimax-token-plan', 'xiaomi-token-plan', 'stepfun-coding-plan'] },
+  { key: 'coding-plan', label: '编程套餐', providers: ['openai-codex', 'github-copilot', 'kimi-coding', 'zai-coding-plan', 'aliyun-coding-plan', 'volcengine-coding-plan', 'minimax-token-plan', 'xiaomi-token-plan', 'stepfun-coding-plan'] },
   { key: 'domestic', label: '国内平台', providers: ['deepseek', 'moonshot', 'minimax', 'minimax-cn', 'doubao', 'qwen', 'qwen-portal', 'zai', 'stepfun'] },
-  { key: 'overseas', label: '海外平台', providers: ['anthropic', 'anthropic-compatible', 'openai', 'google', 'jina'] },
+  { key: 'overseas', label: '海外平台', providers: ['anthropic', 'anthropic-compatible', 'openai', 'xai', 'google', 'jina'] },
   { key: 'transit', label: '中转/聚合', providers: ['openrouter', 'siliconflow', 'opencode'] },
   { key: 'local', label: '本地/其他', providers: ['ollama', 'lmstudio'] },
   { key: 'custom', label: '自定义', providers: ['custom'] },
@@ -67,6 +97,10 @@ export interface ChannelModelCapabilities {
   chat?: boolean
   embedding?: boolean
   vision?: boolean
+  tool?: boolean
+  reasoning?: boolean
+  rerank?: boolean
+  image?: boolean
 }
 
 /**
@@ -76,6 +110,9 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   anthropic: 'https://api.anthropic.com',
   'anthropic-compatible': 'https://api.anthropic.com',
   openai: 'https://api.openai.com/v1',
+  'openai-codex': 'https://chatgpt.com/backend-api',
+  'github-copilot': 'https://api.individual.githubcopilot.com',
+  xai: 'https://api.x.ai/v1',
   jina: 'https://api.jina.ai/v1',
   siliconflow: 'https://api.siliconflow.cn/v1',
   openrouter: 'https://openrouter.ai/api/v1',
@@ -92,7 +129,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   'kimi-coding': 'https://api.kimi.com/coding/v1',
   ollama: 'http://127.0.0.1:11434/v1',
   lmstudio: 'http://127.0.0.1:1234/v1',
-  opencode: '',
+  opencode: 'https://opencode.ai/zen',
   custom: '',
   'aliyun-coding-plan': 'https://coding.dashscope.aliyuncs.com/v1',
   'volcengine-coding-plan': 'https://ark.cn-beijing.volces.com/api/coding/v3',
@@ -109,6 +146,9 @@ export const PROVIDER_LABELS: Record<ProviderType, string> = {
   anthropic: 'Anthropic',
   'anthropic-compatible': 'Anthropic 兼容模式',
   openai: 'OpenAI',
+  'openai-codex': 'OpenAI Codex',
+  'github-copilot': 'GitHub Copilot',
+  xai: 'xAI',
   jina: 'Jina AI',
   siliconflow: '硅基流动',
   openrouter: 'OpenRouter',
@@ -140,6 +180,9 @@ export const PROVIDER_API_FAMILIES: Record<ProviderType, ProviderApiFamily> = {
   anthropic: 'anthropic',
   'anthropic-compatible': 'anthropic',
   openai: 'openai',
+  'openai-codex': 'openai',
+  'github-copilot': 'openai',
+  xai: 'openai',
   jina: 'openai',
   siliconflow: 'openai',
   openrouter: 'openai',
@@ -177,6 +220,7 @@ export const PROVIDER_API_FAMILY_LABELS: Record<ProviderApiFamily, string> = {
 export const CUSTOM_API_FAMILIES: Array<{ value: ProviderApiFamily; label: string }> = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'anthropic', label: 'Anthropic' },
+  { value: 'google', label: 'Google Gen AI' },
 ]
 
 /**
@@ -191,6 +235,12 @@ export interface ChannelModel {
   alias?: string
   /** 模型能力标签 */
   capabilities?: ChannelModelCapabilities
+  /** 覆盖连接级协议；用于同一账号下包含多种协议的模型目录。 */
+  protocol?: ConnectionProtocol
+  /** 模型来自供应商同步还是用户手工添加。旧数据默认按 manual 保留。 */
+  source?: 'discovered' | 'manual'
+  contextWindow?: number
+  maxOutputTokens?: number
   /** 是否启用 */
   enabled: boolean
 }
@@ -253,6 +303,10 @@ export function normalizeChannelModel(input: ChannelModel & {
     name: trimmedName,
     ...(hasAlias ? { alias: trimmedAlias } : { alias: undefined }),
     capabilities,
+    ...(input.protocol ? { protocol: input.protocol } : {}),
+    ...(input.source ? { source: input.source } : {}),
+    ...(input.contextWindow ? { contextWindow: input.contextWindow } : {}),
+    ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
     enabled: input.enabled,
   }
 }
@@ -294,10 +348,18 @@ export interface Channel {
   name: string
   /** AI 供应商类型 */
   provider: ProviderType
+  /** 请求协议；缺省时由旧 apiFamily/openaiApiMode 推导。 */
+  protocol?: ConnectionProtocol
+  authType?: ConnectionAuthType
+  accountLabel?: string
   /** API Base URL */
   baseUrl: string
   /** 加密后的 API Key（base64 编码） */
   apiKey: string
+  /** 脱敏视图中表示连接是否已保存 API Key。 */
+  hasApiKey?: boolean
+  /** 脱敏视图中表示连接是否已保存 OAuth 凭据。 */
+  hasOAuthCredential?: boolean
   /** 可用模型列表 */
   models: ChannelModel[]
   /** 默认模型 ID（可选，未配置时使用第一个 enabled 模型） */
@@ -316,6 +378,21 @@ export interface Channel {
   openaiApiMode?: OpenAiApiMode
   /** 自定义渠道唯一标识（仅 provider='custom' 时使用，用于 modelRef 生成） */
   providerId?: string
+  healthStatus?: ConnectionHealthStatus
+  healthMessage?: string
+  lastTestedAt?: number
+  syncStatus?: ConnectionSyncStatus
+  syncMessage?: string
+  lastSyncedAt?: number
+}
+
+/** Renderer-safe readiness check based only on the redacted connection view. */
+export function isChannelViewReady(channel: Channel): boolean {
+  if (!channel.enabled) return false
+  if (channel.authType === 'oauth') return channel.hasOAuthCredential === true
+  if (channel.authType === 'api-key') return channel.hasApiKey === true || Boolean(channel.apiKey)
+  if (!channel.authType && (channel.hasApiKey === true || Boolean(channel.apiKey))) return true
+  return channel.provider === 'ollama' || channel.provider === 'lmstudio'
 }
 
 /**
@@ -324,6 +401,9 @@ export interface Channel {
 export interface ChannelCreateInput {
   name: string
   provider: ProviderType
+  protocol?: ConnectionProtocol
+  authType?: ConnectionAuthType
+  accountLabel?: string
   baseUrl: string
   /** 明文 API Key，主进程会加密后存储 */
   apiKey: string
@@ -345,6 +425,9 @@ export interface ChannelCreateInput {
 export interface ChannelUpdateInput {
   name?: string
   provider?: ProviderType
+  protocol?: ConnectionProtocol
+  authType?: ConnectionAuthType
+  accountLabel?: string
   baseUrl?: string
   /** 明文 API Key，为空字符串表示不更新 */
   apiKey?: string
@@ -358,6 +441,13 @@ export interface ChannelUpdateInput {
   /** 自定义渠道唯一标识（仅 provider='custom' 时使用） */
   providerId?: string
   enabled?: boolean
+  /** 由 sidecar 模型同步与连接测试流程维护。 */
+  healthStatus?: ConnectionHealthStatus
+  healthMessage?: string
+  lastTestedAt?: number
+  syncStatus?: ConnectionSyncStatus
+  syncMessage?: string
+  lastSyncedAt?: number
 }
 
 /**
@@ -378,6 +468,7 @@ export interface ChannelTestResult {
   success: boolean
   /** 结果消息 */
   message: string
+  testedAt?: number
 }
 
 /**
@@ -406,6 +497,42 @@ export interface FetchModelsResult {
   models: ChannelModel[]
 }
 
+export interface SyncChannelModelsResult extends FetchModelsResult {
+  channel: Channel
+  added: number
+  removed: number
+  preservedManual: number
+}
+
+/** 稳定模型身份；不同 Connection 下同名模型不会互相覆盖。 */
+export interface ModelBinding {
+  connectionId: string
+  modelId: string
+}
+
+export type ConnectionOAuthEvent =
+  | { type: 'info'; message: string; links?: readonly { url: string; label?: string }[] }
+  | { type: 'auth_url'; url: string; instructions?: string }
+  | { type: 'device_code'; userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }
+  | { type: 'progress'; message: string }
+
+export interface ConnectionOAuthSessionStatus {
+  sessionId: string
+  connectionId: string
+  providerId: string
+  status: 'running' | 'waiting_for_user' | 'completed' | 'failed' | 'cancelled'
+  events: ConnectionOAuthEvent[]
+  prompt?: {
+    id: string
+    type: 'text' | 'secret' | 'select' | 'manual_code'
+    message: string
+    placeholder?: string
+    options?: readonly { id: string; label: string; description?: string }[]
+  }
+  error?: string
+  updatedAt: number
+}
+
 /**
  * 渠道相关 IPC 通道常量
  */
@@ -419,11 +546,17 @@ export const CHANNEL_IPC_CHANNELS = {
   /** 删除渠道 */
   DELETE: 'channel:delete',
   /** 解密获取明文 API Key */
-  DECRYPT_KEY: 'channel:decrypt-key',
+  DECRYPT_KEY: 'channel:privileged-decrypt-key',
   /** 测试渠道连接 */
   TEST: 'channel:test',
   /** 从供应商拉取可用模型列表 */
   FETCH_MODELS: 'channel:fetch-models',
+  /** 使用已保存凭据同步一个 Connection 的模型目录。 */
+  SYNC_MODELS: 'channel:sync-models',
+  OAUTH_START: 'channel:oauth-start',
+  OAUTH_STATUS: 'channel:oauth-status',
+  OAUTH_ANSWER: 'channel:oauth-answer',
+  OAUTH_CANCEL: 'channel:oauth-cancel',
   /** 直接测试连接（无需已保存渠道，传入明文凭证） */
   TEST_DIRECT: 'channel:test-direct',
 } as const

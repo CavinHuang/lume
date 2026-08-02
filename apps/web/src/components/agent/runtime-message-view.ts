@@ -64,6 +64,12 @@ export interface RuntimeAssistantMessageView {
   blocks: RuntimeAssistantBlock[]
   status: 'streaming' | 'completed' | 'failed'
   error?: string
+  retry?: {
+    phase: 'waiting' | 'retrying'
+    attempt: number
+    maxRetries: number
+    retryDelayMs: number
+  }
   tokenCount?: number
   tokenCountSource?: 'provider'
   tokenUsage?: RuntimeAssistantTokenUsageView

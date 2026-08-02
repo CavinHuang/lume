@@ -1,4 +1,4 @@
-import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
+import { clearQuestionHandler, setQuestionHandler, type ApiType, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
 import type { LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
@@ -63,6 +63,7 @@ interface PreparedRuntimeCoreAttempt {
   workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   openaiApiMode?: OpenAiApiMode;
+  apiType?: ApiType;
   channelProvider: string;
   apiKey: string;
 }
@@ -403,6 +404,7 @@ export class LumeRunner {
       provider: prepared.modelResolution.provider,
       channelProvider: prepared.channelProvider,
       openaiApiMode: prepared.openaiApiMode,
+      apiType: prepared.apiType,
       modelRef: runtime.modelRef,
       resolvedModelId: prepared.modelResolution.resolvedModelId,
       resolvedModel: {
@@ -411,7 +413,8 @@ export class LumeRunner {
         baseUrl: prepared.modelResolution.model.baseUrl,
         contextWindow: prepared.modelResolution.model.contextWindow,
         maxTokens: prepared.modelResolution.model.maxTokens,
-        input: prepared.modelResolution.model.input
+        input: prepared.modelResolution.model.input,
+        reasoning: prepared.modelResolution.model.reasoning
       },
       apiKey: prepared.apiKey,
       workspaceId: runtime.workspaceId,

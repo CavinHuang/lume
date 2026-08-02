@@ -325,6 +325,7 @@ import {
 import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, asString, validateInput } from "./validation";
 import { trimSdkMessagesForTransport } from "./message-payload-trim";
+import { createAgentNotificationEmitter } from "../services/agent/agent-notification-service";
 
 const log = createLogger("agent-handlers");
 const activeFileSearches = new Map<string, AbortController>();
@@ -535,94 +536,21 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
   const createAgentStreamEmitter = (
     threadId: string,
     options?: { workspaceSlug?: string }
-  ) => {
-    return {
-      onRuntimeEvent: (event: unknown) => {
-        const eventThreadId = event && typeof event === "object" && typeof (event as { threadId?: unknown }).threadId === "string"
-          ? (event as { threadId: string }).threadId
-          : threadId;
-        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-          threadId: eventThreadId,
-          event
-        });
-      },
-      onMessageAppended: (event: unknown) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
-        const appended = event as {
-          threadId?: string;
-          message?: {
-            id?: string;
-            role?: string;
-            content?: string;
-            createdAt?: number;
-            versionGroupId?: string;
-            versionIndex?: number;
-            versionCount?: number;
-            metadata?: Record<string, unknown>;
-          };
-        };
-        if (appended.message?.role === "user" && typeof appended.message.content === "string") {
-          const createdAt = new Date(appended.message.createdAt ?? Date.now()).toISOString();
-          context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-            threadId,
-            event: {
-              id: `${threadId}:${appended.message.id ?? createdAt}:message.user.submitted`,
-              type: "message.user.submitted",
-              runId: `message:${appended.message.id ?? createdAt}`,
-              threadId,
-              text: appended.message.content,
-              createdAt,
-              messageId: appended.message.id,
-              versionGroupId: appended.message.versionGroupId,
-              versionIndex: appended.message.versionIndex,
-              versionCount: appended.message.versionCount,
-              messageParts: appended.message.metadata?.messageParts,
-              capabilityReferences: appended.message.metadata?.capabilityReferenceViews
-            }
-          });
-        }
-      },
-      onComplete: () => {
-        scheduleSkillImprovementSuggestionScan(threadId, options?.workspaceSlug);
-        if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
-          context.notifyPlanModePhaseChange(threadId, "completed");
-        }
-      },
-      onError: (error: string) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-          threadId,
-          event: {
-            id: `${threadId}:${Date.now()}:run.failed`,
-            type: "run.failed",
-            threadId,
-            runId: `runtime-error:${threadId}`,
-            createdAt: new Date().toISOString(),
-            error: {
-              code: "runtime_error",
-              message: error
-            }
-          }
-        });
-        if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
-          context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
-        }
-      },
-      onTitleUpdated: (title: string) =>
-        context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
-          threadId,
-          title
-        }),
-      onAskUserQuestion: (request: unknown) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
-      },
-      onDesktopActionRequest: (request: unknown) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
-      },
-      onToolPermissionRequest: (request: unknown) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
+  ) => createAgentNotificationEmitter({
+    threadId,
+    writeNotification: context.writeNotification,
+    onComplete: () => {
+      scheduleSkillImprovementSuggestionScan(threadId, options?.workspaceSlug);
+      if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
+        context.notifyPlanModePhaseChange(threadId, "completed");
       }
-    };
-  };
+    },
+    onError: () => {
+      if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
+        context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
+      }
+    }
+  });
 
   const handlers: Record<string, RpcHandler> = {
     [AGENT_IPC_CHANNELS.LIST_THREADS]: async () => listAgentThreads(),

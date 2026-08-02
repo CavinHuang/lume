@@ -82,8 +82,11 @@ interface RightPanelTabBarProps {
   onCloseFunction: (type: RightPanelFunction) => void
   onCloseFile: (tabId: string) => void
   onCloseBrowser?: (tabId: string) => void
+  onNewBrowserToRight?: (tabId: string) => void
+  onReloadBrowser?: (tabId: string) => void
   onDuplicateBrowser?: (tabId: string) => void
   onCloseOtherBrowsers?: (tabId: string) => void
+  onCloseBrowsersToRight?: (tabId: string) => void
   onMoveBrowserToMain?: (tabId: string) => void
   onMoveBrowserToThread?: (tabId: string, threadId: string) => void
   onBrowserMenuOpenChange?: (tabId: string, open: boolean) => void
@@ -137,7 +140,7 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
   }
 
   return (
-    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--lume-border-subtle)] px-2">
+    <div className="flex h-10 shrink-0 select-none items-center gap-1 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2">
       <div
         ref={scrollerRef}
         className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
@@ -166,14 +169,23 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                 close(item)
               }}
               className={cn(
-                'group flex h-8 shrink-0 items-center rounded-lg border border-transparent text-[12px] transition-colors',
+                'group relative flex h-7 min-w-[90px] max-w-[160px] shrink-0 items-center overflow-hidden rounded-lg bg-[var(--lume-bg-panel)] text-sm transition-colors',
                 active
-                  ? 'border-[var(--border)] bg-[var(--surface-2)] text-[var(--lume-text-primary)] shadow-xs'
-                  : 'text-[var(--lume-text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--lume-text-secondary)]',
+                  ? 'bg-[color-mix(in_srgb,var(--lume-text-primary)_5%,var(--lume-bg-panel))] text-[var(--lume-text-primary)]'
+                  : 'text-[var(--lume-text-muted)] hover:bg-[color-mix(in_srgb,var(--lume-text-primary)_5%,var(--lume-bg-panel))] hover:text-[var(--lume-text-secondary)]',
               )}
               title={title}
             >
-              <Button variant="ghost" type="button" onClick={() => activate(item)} className="h-full gap-1.5 rounded-md px-2">
+              <Button
+                variant="ghost"
+                type="button"
+                onClick={() => activate(item)}
+                className={cn(
+                  'h-full min-w-0 flex-1 justify-start gap-2 rounded-lg px-2 font-normal hover:bg-transparent',
+                  'group-hover:pr-7 group-focus-within:pr-7',
+                  active && 'pr-7',
+                )}
+              >
                 {item.kind === 'browser' && item.tab.isLoading
                   ? <LoaderCircle size={14} className="animate-spin" />
                   : item.kind === 'browser' && item.tab.lifecycle === 'crashed'
@@ -189,27 +201,37 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                         ? <Package size={14} />
                         : <FileTypeIcon filename={rightPanelFileTargetName(item.tab.target)} size={14} />
                     : null}
-                <span className="max-w-[132px] truncate">{item.label}</span>
+                <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
                 {item.kind === 'browser' && item.tab.mediaState?.camera && <Camera size={11} className="text-red-500" aria-label="摄像头使用中" />}
                 {item.kind === 'browser' && item.tab.mediaState?.microphone && <Mic size={11} className="text-red-500" aria-label="麦克风使用中" />}
                 {item.kind === 'browser' && item.tab.mediaState?.audible && <Volume2 size={11} className="text-muted-foreground" aria-label="正在播放声音" />}
               </Button>
               <Button
                 variant="ghost"
+                size="icon-xs"
                 type="button"
                 onClick={() => close(item)}
-                className={cn('mr-0.5 size-5 p-0 opacity-0 group-hover:opacity-100', active && 'opacity-100')}
+                className={cn(
+                  'pointer-events-none absolute right-0.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100',
+                  active && 'pointer-events-auto opacity-100',
+                )}
                 title={`关闭${item.label}`}
               >
-                <X size={11} />
+                <X size={12} />
               </Button>
             </div>
           )
           if (item.kind !== 'browser') return tabNode
+          const browserIndex = props.browserTabs?.findIndex((tab) => tab.id === item.id) ?? -1
+          const hasOtherBrowsers = (props.browserTabs?.length ?? 0) > 1
+          const hasBrowsersToRight = browserIndex >= 0 && browserIndex < (props.browserTabs?.length ?? 0) - 1
           return (
             <ContextMenu key={item.id} onOpenChange={(open) => props.onBrowserMenuOpenChange?.(item.id, open)}>
               <ContextMenuTrigger render={tabNode} />
               <ContextMenuContent className="min-w-52">
+                <ContextMenuItem onSelect={() => props.onNewBrowserToRight?.(item.id)}>在右侧新建标签页</ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => props.onReloadBrowser?.(item.id)}>重新加载</ContextMenuItem>
                 <ContextMenuItem onSelect={() => props.onDuplicateBrowser?.(item.id)}>复制标签页</ContextMenuItem>
                 <ContextMenuItem onSelect={() => props.onMoveBrowserToMain?.(item.id)}>移到主区域</ContextMenuItem>
                 {props.browserThreadTargets?.length ? (
@@ -221,7 +243,8 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                   </ContextMenuSub>
                 ) : null}
                 <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => props.onCloseOtherBrowsers?.(item.id)}>关闭其他浏览器标签</ContextMenuItem>
+                <ContextMenuItem disabled={!hasOtherBrowsers} onSelect={() => props.onCloseOtherBrowsers?.(item.id)}>关闭其他标签页</ContextMenuItem>
+                <ContextMenuItem disabled={!hasBrowsersToRight} onSelect={() => props.onCloseBrowsersToRight?.(item.id)}>关闭右侧标签页</ContextMenuItem>
                 <ContextMenuItem destructive onSelect={() => close(item)}>关闭</ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>

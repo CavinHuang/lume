@@ -111,6 +111,13 @@ import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
 import { loadOrCreateDesktopContextKey } from './desktop-context-key'
+import {
+  autoUnlockConnectionVault,
+  getConnectionVaultStatus,
+  setupConnectionVault,
+  unlockConnectionVaultWithPassword,
+  verifyConnectionVaultPassword,
+} from './connection-vault'
 import { LoggingService } from './logging/logging-service'
 import { DiagnosticContentStore } from './logging/diagnostic-content-store'
 import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecure } from './logging/log-digest-policy'
@@ -151,6 +158,7 @@ const QUIET_SIDECAR_RPC_METHODS = new Set([
   'agent:list-subagent-runs',
   'agent:get-pending-interactive',
   'agent:list-workspaces',
+  'channel:oauth-status',
   'model-meta:get',
 ])
 const SLOW_RPC_MS = 2_000
@@ -180,6 +188,11 @@ const DESKTOP_ACTION_HUD_STALE_MS = 30_000
 
 let mainWindow = null
 let browserRuntime: BrowserRuntime | null = null
+const pendingBrowserGuestAttachments = new Map<number, {
+  ownerWebContentsId: number
+  contents: Electron.WebContents
+  timer: ReturnType<typeof setTimeout>
+}>()
 let agentBrowserPluginEnabled = false
 const browserRpcSecret = randomBytes(32)
 let browserRpcInboundSequence = 0
@@ -226,6 +239,7 @@ let loggingService: LoggingService | null = null
 let settingsBroker: SettingsBroker | null = null
 let diagnosticContentStore: DiagnosticContentStore | null = null
 let sidecarLogDigestPolicy: LumeLogDigestPolicy | null = null
+let connectionVaultKey: Buffer | null = null
 const pendingRendererDeliveries = new Map()
 const rendererLogSubscriptions = new Map()
 
@@ -1091,14 +1105,15 @@ async function ensureMainWindowVisible() {
 }
 
 function attachBrowserGuestSecurity(win: BrowserWindow) {
-  const authorizedBootstrapUrls = new Set<string>()
   win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     const bootstrapUrl = typeof params.src === 'string' ? params.src : ''
     const requestedPartition = typeof params.partition === 'string' ? params.partition : ''
     const grant = browserRuntime?.authorizeGuestMount(win.webContents.id, bootstrapUrl, requestedPartition)
     if (!grant) {
       event.preventDefault()
-      writeMainLog('warn', 'browser.guest', 'guest.attach_rejected', 'rejected unauthorized browser guest mount')
+      writeMainLog('warn', 'browser.guest', 'guest.attach_rejected', 'rejected unauthorized browser guest mount', {
+        data: browserRuntime?.guestMountRejectionDetails(win.webContents.id, bootstrapUrl, requestedPartition),
+      })
       return
     }
     webPreferences.preload = resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-guest-preload.cjs')
@@ -1108,23 +1123,32 @@ function attachBrowserGuestSecurity(win: BrowserWindow) {
     webPreferences.nodeIntegrationInSubFrames = false
     webPreferences.webSecurity = true
     webPreferences.allowRunningInsecureContent = false
-    webPreferences.additionalArguments = [`--lume-browser-mount=${grant.token}`]
     params.partition = grant.partition
     delete params.allowpopups
     delete params.preload
-    authorizedBootstrapUrls.add(bootstrapUrl)
   })
   win.webContents.on('did-attach-webview', (_event, guestContents) => {
-    const token = guestContents.getLastWebPreferences().additionalArguments
-      ?.find((value) => value.startsWith('--lume-browser-mount='))
-      ?.slice('--lume-browser-mount='.length)
-    const bootstrapUrl = token ? `about:blank#lume-browser-mount=${token}` : ''
-    const authorized = authorizedBootstrapUrls.delete(bootstrapUrl)
-    if (!authorized || !browserRuntime?.attachGuest(win.webContents.id, bootstrapUrl, guestContents)) {
-      writeMainLog('warn', 'browser.guest', 'guest.attach_invalid', 'destroyed browser guest after failed mount validation')
+    const existing = pendingBrowserGuestAttachments.get(guestContents.id)
+    if (existing) clearTimeout(existing.timer)
+    const timer = setTimeout(() => {
+      const pending = pendingBrowserGuestAttachments.get(guestContents.id)
+      if (!pending || pending.contents !== guestContents) return
+      pendingBrowserGuestAttachments.delete(guestContents.id)
+      writeMainLog('warn', 'browser.guest', 'guest.attach_timeout', 'browser guest did not report its mount token')
       if (!guestContents.isDestroyed()) guestContents.close()
-    }
+    }, 10_000)
+    pendingBrowserGuestAttachments.set(guestContents.id, { ownerWebContentsId: win.webContents.id, contents: guestContents, timer })
+    guestContents.once('destroyed', () => {
+      const pending = pendingBrowserGuestAttachments.get(guestContents.id)
+      if (!pending || pending.contents !== guestContents) return
+      clearTimeout(pending.timer)
+      pendingBrowserGuestAttachments.delete(guestContents.id)
+    })
   })
+}
+
+function stripBrowserGuestMountToken(url: string): string {
+  return url.startsWith('about:blank#lume-browser-mount=') ? 'about:blank#lume-browser-mount=[redacted]' : url
 }
 
 async function createMainWindowForGeneration(generation) {
@@ -1315,6 +1339,58 @@ function resolveStagedAttachmentParams(params: unknown, ownerWebContentsId?: num
 
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
+    case 'connection_vault_status': {
+      requireMainWindowSender(context, 'connection_vault_status')
+      const status = getConnectionVaultStatus({ path: getConnectionVaultKeyPath(), safeStorage })
+      if (status.configured && status.secureStorageAvailable && !connectionVaultKey) {
+        await unlockConnectionVaultStore()
+      }
+      return {
+        ...status,
+        unlocked: connectionVaultKey !== null,
+      }
+    }
+    case 'connection_vault_setup': {
+      requireMainWindowSender(context, 'connection_vault_setup')
+      const password = typeof payload.password === 'string' ? payload.password : ''
+      const key = setupConnectionVault({ path: getConnectionVaultKeyPath(), password, safeStorage })
+      try {
+        await installConnectionVaultKeyInSidecar(key)
+        connectionVaultKey?.fill(0)
+        connectionVaultKey = Buffer.from(key)
+      } finally {
+        key.fill(0)
+      }
+      return { configured: true, secureStorageAvailable: true, unlocked: true }
+    }
+    case 'connection_vault_unlock': {
+      requireMainWindowSender(context, 'connection_vault_unlock')
+      const password = typeof payload.password === 'string' ? payload.password : ''
+      const key = unlockConnectionVaultWithPassword({ path: getConnectionVaultKeyPath(), password })
+      try {
+        await installConnectionVaultKeyInSidecar(key)
+        connectionVaultKey?.fill(0)
+        connectionVaultKey = Buffer.from(key)
+      } finally {
+        key.fill(0)
+      }
+      const status = getConnectionVaultStatus({ path: getConnectionVaultKeyPath(), safeStorage })
+      return { ...status, unlocked: true }
+    }
+    case 'connection_vault_verify': {
+      requireMainWindowSender(context, 'connection_vault_verify')
+      const password = typeof payload.password === 'string' ? payload.password : ''
+      return { valid: verifyConnectionVaultPassword({ path: getConnectionVaultKeyPath(), password }) }
+    }
+    case 'connection_vault_reveal_key': {
+      requireMainWindowSender(context, 'connection_vault_reveal_key')
+      const password = typeof payload.password === 'string' ? payload.password : ''
+      const channelId = typeof payload.channelId === 'string' ? payload.channelId : ''
+      if (!channelId || !verifyConnectionVaultPassword({ path: getConnectionVaultKeyPath(), password })) {
+        throw new Error('connection_vault_password_invalid')
+      }
+      return { apiKey: await sidecarHost.call('channel:privileged-decrypt-key', { channelId }) }
+    }
     case 'browser_runtime': {
       if (!browserRuntime) throw new Error('browser runtime unavailable')
       const browserContext = payload.context && typeof payload.context === 'object'
@@ -1610,8 +1686,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const validated = validateTrayStatePayload(payload, mainWindowLifecycle.getGeneration())
       if (validated.ok === false) {
         writeRateLimitedTrayWarning('tray.sync_rejected', 'invalid tray state rejected', context.ownerWebContentsId, { reason: validated.reason })
-        if (validated.reason === 'stale_generation') return null
-        throw new Error('invalid tray state')
+        return null
       }
       recentTrayThreads = validated.value.threads
       currentTrayThreadId = validated.value.currentThreadId
@@ -2231,6 +2306,18 @@ function createSidecarHost({ onNotification }) {
               data: { error },
             })
           }
+          if (connectionVaultKey) {
+            try {
+              runningChild.postMessage(JSON.stringify({
+                method: 'system.connection-vault-key',
+                params: { key: connectionVaultKey.toString('base64') },
+              }))
+            } catch (error) {
+              writeMainLog('error', 'desktop.connection-vault', 'key.delivery_failed', 'failed to unlock connection vault in sidecar', {
+                data: { error },
+              })
+            }
+          }
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
           return
@@ -2536,6 +2623,20 @@ function prependPath(env: NodeJS.ProcessEnv, directory: string): void {
   }
 }
 
+ipcMain.on('lume:browser-guest-mounted', (event, bootstrapUrl) => {
+  const pending = pendingBrowserGuestAttachments.get(event.sender.id)
+  if (!pending || pending.contents !== event.sender) return
+  clearTimeout(pending.timer)
+  pendingBrowserGuestAttachments.delete(event.sender.id)
+  const validUrl = typeof bootstrapUrl === 'string' ? bootstrapUrl : ''
+  if (!validUrl || !browserRuntime?.attachGuest(pending.ownerWebContentsId, validUrl, pending.contents)) {
+    writeMainLog('warn', 'browser.guest', 'guest.attach_invalid', 'destroyed browser guest after failed mount validation', {
+      data: { bootstrapUrl: stripBrowserGuestMountToken(validUrl) },
+    })
+    if (!pending.contents.isDestroyed()) pending.contents.close()
+  }
+})
+
 ipcMain.handle('lume:invoke', async (event, command, payload) => {
   validateIpcSender(event, getTrustedWindows())
   const ownerWebContentsId = event.sender.id
@@ -2709,6 +2810,11 @@ app.whenReady().then(async () => {
     },
     credentialStorage: safeStorage,
     authPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-auth-preload.cjs'),
+    onInternalError: ({ method, actor, tabId, message }) => {
+      writeMainLog('error', 'browser.runtime', 'runtime.dispatch_failed', 'browser runtime action failed', {
+        data: { method, actor, ...(tabId ? { tabId } : {}), message },
+      })
+    },
   })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()
@@ -2719,6 +2825,7 @@ app.whenReady().then(async () => {
   }
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
+  await unlockConnectionVaultStore()
   await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
@@ -2761,6 +2868,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', async () => {
+  for (const pending of pendingBrowserGuestAttachments.values()) clearTimeout(pending.timer)
+  pendingBrowserGuestAttachments.clear()
   browserRuntime?.destroy()
   browserRuntime = null
   desktopHostSupervisor?.stop()
@@ -2769,6 +2878,8 @@ app.on('will-quit', async () => {
   await loggingService?.close()
   settingsBroker?.close()
   globalShortcut.unregisterAll()
+  connectionVaultKey?.fill(0)
+  connectionVaultKey = null
 })
 
 async function startDesktopHost(): Promise<DesktopHostState> {
@@ -2812,6 +2923,30 @@ async function unlockDesktopContextStore() {
     logDesktopStartup('desktop context store unlocked')
   } catch (error) {
     logDesktopStartup(`desktop context store unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    key?.fill(0)
+  }
+}
+
+function getConnectionVaultKeyPath(): string {
+  return join(resolveConfigDir(), 'connection-vault-key.json')
+}
+
+async function installConnectionVaultKeyInSidecar(key: Buffer): Promise<void> {
+  await sidecarHost.call('system.connection-vault-key', { key: key.toString('base64') })
+}
+
+async function unlockConnectionVaultStore(): Promise<void> {
+  let key: Buffer | undefined
+  try {
+    key = autoUnlockConnectionVault({ path: getConnectionVaultKeyPath(), safeStorage })
+    if (!key) return
+    await installConnectionVaultKeyInSidecar(key)
+    connectionVaultKey?.fill(0)
+    connectionVaultKey = Buffer.from(key)
+    logDesktopStartup('connection vault unlocked')
+  } catch (error) {
+    logDesktopStartup(`connection vault unavailable: ${error instanceof Error ? error.message : String(error)}`)
   } finally {
     key?.fill(0)
   }

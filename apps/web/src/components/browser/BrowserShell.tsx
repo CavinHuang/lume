@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useAtom, useSetAtom } from 'jotai'
 import {
   ArrowLeft,
@@ -8,13 +9,13 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
-  Download as DownloadIcon,
   Eye,
   ExternalLink,
   Globe,
   Highlighter,
-  LockKeyhole,
   MoreHorizontal,
+  MessageCirclePlus,
+  Mic,
   Minus,
   Plus,
   RotateCw,
@@ -38,7 +39,9 @@ import type {
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import {
   DropdownMenu,
@@ -50,7 +53,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { browserRuntime, getBrowserSettings, onBrowserEvent } from '@/lib/desktop-api'
+import { browserRuntime, createBrowserReferenceGrant, getBrowserSettings, listBrowserReferenceCandidates, onBrowserEvent } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import { normalizeUrl } from './browser-url'
 import { BrowserImportModal } from './BrowserImportModal'
@@ -60,11 +63,15 @@ import { BrowserDataManagers, type BrowserDataManagersHandle } from '@/component
 
 type AuxiliaryPanel = 'find' | 'annotation' | 'tweaks' | null
 type PageSelection = { anchor: AgentBrowserAnchor; originalStyles: Record<string, string> }
-type BrowserDownloadItem = { id: string; filename: string; actor: 'user' | 'agent'; state: 'completed' | 'cancelled' | 'interrupted'; receivedBytes: number; createdAt: string }
-type BrowserActiveDownload = Omit<BrowserDownloadItem, 'state' | 'createdAt'> & { state: 'progressing'; totalBytes: number }
+type BrowserActiveDownload = { id: string; filename: string; actor: 'user' | 'agent'; state: 'progressing'; receivedBytes: number; totalBytes: number }
+type BrowserPageDialog = {
+  id: string
+  type: 'alert' | 'beforeunload' | 'confirm' | 'prompt'
+  message: string
+  promptText: string
+}
 type DevicePresetId = typeof DEVICE_PRESETS[number]['id']
 type ViewportResizeAxis = 'west' | 'east' | 'south' | 'south-west' | 'south-east'
-type ViewportDisplayScale = NonNullable<BrowserViewportState['displayScale']>
 export function BrowserShell({
   tabId,
   ownerThreadId,
@@ -85,7 +92,7 @@ export function BrowserShell({
   const [pageDrafts, setPageDrafts] = useAtom(browserPageDraftsAtom)
   const [reviewSessions, setReviewSessions] = useAtom(browserReviewSessionsAtom)
   const [reviewCoachmarkSeen, setReviewCoachmarkSeen] = useAtom(browserReviewCoachmarkSeenAtom)
-  const setPendingBrowserAttachments = useSetAtom(agentBrowserAttachmentsAtom)
+  const [pendingBrowserAttachments, setPendingBrowserAttachments] = useAtom(agentBrowserAttachmentsAtom)
   const setTabs = useSetAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
@@ -93,6 +100,8 @@ export function BrowserShell({
   const initialDraft = pageDrafts[draftKey]
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const deviceCanvasRef = useRef<HTMLDivElement | null>(null)
+  const responsiveViewportSizeRef = useRef<{ width: number; height: number } | null>(null)
+  const annotationModeRef = useRef(false)
   const addressInputRef = useRef<HTMLInputElement | null>(null)
   const dataManagersRef = useRef<BrowserDataManagersHandle | null>(null)
   const currentUrlRef = useRef(initialUrl)
@@ -115,22 +124,32 @@ export function BrowserShell({
   const [viewportHeight, setViewportHeight] = useState(844)
   const [deviceScaleFactor, setDeviceScaleFactor] = useState(3)
   const [devicePreset, setDevicePreset] = useState<DevicePresetId>('responsive')
-  const [viewportDisplayScale, setViewportDisplayScaleState] = useState<ViewportDisplayScale>('fit')
   const [deviceCanvasSize, setDeviceCanvasSize] = useState({ width: 0, height: 0 })
-  const [resizingViewport, setResizingViewport] = useState(false)
+  const [viewportRotationKey, setViewportRotationKey] = useState(0)
   const [pageSelection, setPageSelection] = useState<PageSelection | null>(initialDraft ? { anchor: initialDraft.anchor, originalStyles: initialDraft.originalStyles } : null)
   const [annotationBody, setAnnotationBody] = useState(initialDraft?.body ?? '')
+  const [annotationSubmitting, setAnnotationSubmitting] = useState(false)
   const [tweakDraft, setTweakDraft] = useState<Record<string, string>>(initialDraft?.proposedStyles ?? {})
   const [selecting, setSelecting] = useState(false)
   const [annotationMode, setAnnotationMode] = useState(false)
+  const [editingReviewItemId, setEditingReviewItemId] = useState<string | null>(null)
   const [discardReviewOpen, setDiscardReviewOpen] = useState(false)
   const [showingOriginal, setShowingOriginal] = useState(false)
-  const [downloads, setDownloads] = useState<BrowserDownloadItem[]>([])
   const [activeDownloads, setActiveDownloads] = useState<BrowserActiveDownload[]>([])
   const [downloadNoticeCount, setDownloadNoticeCount] = useState(0)
+  const [pageDialog, setPageDialog] = useState<BrowserPageDialog | null>(null)
+  const [pageDialogBusy, setPageDialogBusy] = useState(false)
   const showSuggestions = addressFocused && suggestions.length > 0
   const reviewSession = reviewSessions[draftKey]
   const reviewItems = reviewSession?.items ?? []
+  const pendingThreadAttachments = ownerThreadId ? pendingBrowserAttachments[ownerThreadId] : undefined
+  const pendingPageAnnotations = (pendingThreadAttachments ?? []).filter((attachment): attachment is AgentBrowserAnnotationAttachment => (
+    attachment.origin === 'browser-annotation'
+      && attachment.tab.tabId === tabId
+      && attachment.tab.url === descriptor.url
+      && attachment.tab.generation === descriptor.generation
+  ))
+  const hasPendingReview = reviewItems.length > 0 || pendingPageAnnotations.length > 0 || Boolean(reviewSession?.screenshotRef)
   const staleReviewCount = reviewItems.filter((item) => item.status === 'stale').length
 
   useEffect(() => {
@@ -146,7 +165,9 @@ export function BrowserShell({
         purpose: auxiliaryPanel,
         anchor: pageSelection.anchor,
         originalStyles: pageSelection.originalStyles,
-        ...(auxiliaryPanel === 'annotation' ? { body: annotationBody } : { proposedStyles: tweakDraft }),
+        ...(auxiliaryPanel === 'annotation'
+          ? { body: annotationBody }
+          : { proposedStyles: tweakDraft, ...(annotationBody.trim() ? { body: annotationBody } : {}) }),
       },
     }))
   }, [annotationBody, auxiliaryPanel, draftKey, pageSelection, setPageDrafts, tweakDraft])
@@ -168,15 +189,20 @@ export function BrowserShell({
   useEffect(() => {
     const session = reviewSessions[draftKey]
     if (!session || !descriptor.url) return
+    const screenshotStale = Boolean(session.screenshotRef) && (session.url !== descriptor.url || session.generation !== descriptor.generation)
     const items = session.items.map((item) => ({
       ...item,
       status: item.attachment.tab.url === descriptor.url && item.attachment.tab.generation === descriptor.generation ? 'valid' as const : 'stale' as const,
     }))
-    if (session.items.every((item, index) => item.status === items[index]?.status)) return
+    if (!screenshotStale && session.items.every((item, index) => item.status === items[index]?.status)) return
+    if (screenshotStale && session.screenshotRef) {
+      void browserRuntime({ method: 'screenshot:attachment:delete', params: { tabId, screenshotRef: session.screenshotRef } }).catch(() => undefined)
+    }
     setReviewSessions((current) => ({
       ...current,
       [draftKey]: {
         ...session,
+        ...(screenshotStale ? { screenshotRef: undefined } : {}),
         items,
         updatedAt: new Date().toISOString(),
       },
@@ -202,8 +228,9 @@ export function BrowserShell({
       setViewportWidth(next.viewport.width)
       setViewportHeight(next.viewport.height)
       setDeviceScaleFactor(next.viewport.deviceScaleFactor)
-      setDevicePreset(resolveDevicePreset(next.viewport))
-      setViewportDisplayScaleState(next.viewport.displayScale ?? 'fit')
+      const preset = resolveDevicePreset(next.viewport)
+      setDevicePreset(preset)
+      if (preset === 'responsive') responsiveViewportSizeRef.current = { width: next.viewport.width, height: next.viewport.height }
     }
   }, [])
 
@@ -267,7 +294,6 @@ export function BrowserShell({
         }
         if (id) setActiveDownloads((current) => current.filter((download) => download.id !== id))
         setDownloadNoticeCount((count) => Math.min(9, count + 1))
-        void browserRuntime<BrowserDownloadItem[]>({ method: 'downloads:list' }).then(setDownloads).catch(() => undefined)
         if (event.params.state === 'completed') toast.success(`下载完成：${filename}`)
         else toast.error(`下载未完成：${filename}`)
       }
@@ -284,11 +310,19 @@ export function BrowserShell({
         })
       }
       if (event.method === 'browser:dialog') {
-        toast('网页对话框正在等待处理', {
-          description: String(event.params.type ?? 'dialog'),
-          action: { label: '确定', onClick: () => void browserRuntime({ method: 'dialog:handle', params: { tabId, accept: true } }) },
-          cancel: { label: '取消', onClick: () => void browserRuntime({ method: 'dialog:handle', params: { tabId, accept: false } }) },
+        const dialogId = typeof event.params.dialogId === 'string' ? event.params.dialogId : ''
+        const type = event.params.type === 'prompt' || event.params.type === 'confirm' || event.params.type === 'beforeunload'
+          ? event.params.type
+          : 'alert'
+        if (dialogId) setPageDialog({
+          id: dialogId,
+          type,
+          message: typeof event.params.message === 'string' ? event.params.message : '',
+          promptText: typeof event.params.defaultValue === 'string' ? event.params.defaultValue : '',
         })
+      }
+      if (event.method === 'browser:dialog-closed') {
+        setPageDialog((current) => !current || current.id === event.params.dialogId ? null : current)
       }
     }).then((dispose) => {
       if (disposed) dispose()
@@ -390,6 +424,24 @@ export function BrowserShell({
       .catch(() => toast.error('浏览器操作失败'))
   }
 
+  const handlePageDialog = (accept: boolean) => {
+    const current = pageDialog
+    if (!current || pageDialogBusy) return
+    setPageDialogBusy(true)
+    void browserRuntime({
+      method: 'dialog:handle',
+      params: {
+        tabId,
+        dialogId: current.id,
+        accept,
+        ...(current.type === 'prompt' && accept ? { promptText: current.promptText } : {}),
+      },
+    }).catch(() => toast.error('网页对话框已失效')).finally(() => {
+      setPageDialog((value) => value?.id === current.id ? null : value)
+      setPageDialogBusy(false)
+    })
+  }
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const modifier = event.ctrlKey || event.metaKey
@@ -423,7 +475,7 @@ export function BrowserShell({
   const setZoomFactor = (factor: number) => {
     const next = Math.max(0.25, Math.min(5, factor))
     void browserRuntime<{ factor: number }>({ method: 'zoom:set', params: { tabId, factor: next } })
-      .then((result) => acceptDescriptor({ ...descriptor, zoomFactor: result.factor }))
+      .then((result) => acceptDescriptor({ ...descriptorRef.current, zoomFactor: result.factor }))
       .catch(() => toast.error('缩放失败'))
   }
 
@@ -452,7 +504,7 @@ export function BrowserShell({
           state: viewport,
         },
       }).then((result) => {
-        if (descriptorRef.current.generation !== previous.generation) return
+        if (descriptorRef.current.generation !== previous.generation || descriptorRef.current.viewportRevision !== revision) return
         acceptDescriptor({ ...descriptorRef.current, viewport: result.viewport, viewportRevision: result.revision })
       }).catch(() => {
         if (descriptorRef.current.generation === previous.generation && descriptorRef.current.viewportRevision === revision) acceptDescriptor(previous)
@@ -467,21 +519,24 @@ export function BrowserShell({
   ) => {
     const nextWidth = patch.width ?? viewportWidth
     const nextHeight = patch.height ?? viewportHeight
-    const nextScale = patch.deviceScaleFactor ?? deviceScaleFactor
     const nextPreset = options?.preservePreset ? devicePreset : 'responsive'
+    const nextScale = patch.deviceScaleFactor ?? (nextPreset === 'responsive' ? 1 : deviceScaleFactor)
+    const nextMobile = patch.mobile ?? (nextPreset === 'responsive' ? false : descriptorRef.current.viewport?.mobile ?? false)
+    const nextTouch = patch.touch ?? (nextPreset === 'responsive' ? false : descriptorRef.current.viewport?.touch ?? false)
     setViewportWidth(nextWidth)
     setViewportHeight(nextHeight)
     setDeviceScaleFactor(nextScale)
     setDevicePreset(nextPreset)
+    if (nextPreset === 'responsive') responsiveViewportSizeRef.current = { width: nextWidth, height: nextHeight }
     commitViewport({
       enabled: true,
       width: nextWidth,
       height: nextHeight,
       deviceScaleFactor: nextScale,
-      mobile: patch.mobile ?? descriptorRef.current.viewport?.mobile ?? false,
-      touch: patch.touch ?? descriptorRef.current.viewport?.touch ?? false,
+      mobile: nextMobile,
+      touch: nextTouch,
       preset: nextPreset,
-      displayScale: viewportDisplayScale,
+      displayScale: descriptorRef.current.viewport?.displayScale ?? 'fit',
     }, '设备视口设置失败')
   }
 
@@ -489,6 +544,21 @@ export function BrowserShell({
     const preset = DEVICE_PRESETS.find((candidate) => candidate.id === presetId)
     if (!preset) return
     setDevicePreset(presetId)
+    if (presetId === 'responsive') {
+      setDeviceScaleFactor(1)
+      responsiveViewportSizeRef.current = { width: viewportWidth, height: viewportHeight }
+      commitViewport({
+        enabled: true,
+        width: viewportWidth,
+        height: viewportHeight,
+        deviceScaleFactor: 1,
+        mobile: false,
+        touch: false,
+        preset: presetId,
+        displayScale: descriptorRef.current.viewport?.displayScale ?? 'fit',
+      }, '设备视口设置失败')
+      return
+    }
     setViewportWidth(preset.width)
     setViewportHeight(preset.height)
     setDeviceScaleFactor(preset.deviceScaleFactor)
@@ -501,25 +571,37 @@ export function BrowserShell({
       mobile,
       touch: mobile,
       preset: preset.id,
-      displayScale: viewportDisplayScale,
+      displayScale: descriptorRef.current.viewport?.displayScale ?? 'fit',
     }, '设备视口设置失败')
+  }
+
+  const setDeviceDisplayScale = (displayScale: BrowserViewportState['displayScale']) => {
+    const viewport = descriptorRef.current.viewport
+    if (!viewport?.enabled) return
+    commitViewport({ ...viewport, displayScale }, '设备显示缩放设置失败')
   }
 
   const toggleDeviceMode = () => {
     if (descriptor.viewport?.enabled) {
+      if (devicePreset === 'responsive') responsiveViewportSizeRef.current = { width: viewportWidth, height: viewportHeight }
       commitViewport({ enabled: false, width: 0, height: 0, deviceScaleFactor: 1, mobile: false, touch: false, preset: 'desktop', displayScale: 'fit' }, '无法关闭设备模式')
       return
     }
-    const availableWidth = Math.max(240, Math.min(1280, Math.floor(deviceCanvasSize.width - 40)))
-    const availableHeight = Math.max(160, Math.min(1200, Math.floor(deviceCanvasSize.height - 40)))
+    const responsiveViewport = responsiveViewportSizeRef.current ?? (deviceCanvasSize.width > 0 && deviceCanvasSize.height > 0
+      ? {
+          width: clampViewportWidth(deviceCanvasSize.width - 40),
+          height: clampViewportHeight(deviceCanvasSize.height - 20),
+        }
+      : { width: RESPONSIVE_DEVICE_PRESET.width, height: RESPONSIVE_DEVICE_PRESET.height })
     setDevicePreset('responsive')
-    setViewportWidth(availableWidth)
-    setViewportHeight(availableHeight)
+    setViewportWidth(responsiveViewport.width)
+    setViewportHeight(responsiveViewport.height)
     setDeviceScaleFactor(1)
+    responsiveViewportSizeRef.current = responsiveViewport
     commitViewport({
       enabled: true,
-      width: availableWidth,
-      height: availableHeight,
+      width: responsiveViewport.width,
+      height: responsiveViewport.height,
       deviceScaleFactor: 1,
       mobile: false,
       touch: false,
@@ -528,10 +610,9 @@ export function BrowserShell({
     }, '无法打开设备模式')
   }
 
-  const setViewportDisplayScale = (displayScale: ViewportDisplayScale) => {
-    setViewportDisplayScaleState(displayScale)
-    const viewport = descriptorRef.current.viewport
-    if (viewport?.enabled) commitViewport({ ...viewport, displayScale }, '设备显示缩放设置失败')
+  const rotateViewport = () => {
+    setViewportRotationKey((current) => current + 1)
+    setViewport({ width: viewportHeight, height: viewportWidth }, { preservePreset: true })
   }
 
   const openBrowserSettings = () => {
@@ -549,21 +630,22 @@ export function BrowserShell({
     const startWidth = viewportWidth
     const startHeight = viewportHeight
     const startScale = Math.max(0.2, deviceFrame.scale)
+    const maximumDragWidth = Math.max(240, (deviceCanvasSize.width - 40) / startScale)
+    const maximumDragHeight = Math.max(160, (deviceCanvasSize.height - 20) / startScale)
     let nextWidth = startWidth
     let nextHeight = startHeight
     const previousCursor = document.body.style.cursor
     const previousUserSelect = document.body.style.userSelect
     document.body.style.cursor = axis === 'west' || axis === 'east' ? 'ew-resize' : axis === 'south' ? 'ns-resize' : axis === 'south-west' ? 'nesw-resize' : 'nwse-resize'
     document.body.style.userSelect = 'none'
-    setResizingViewport(true)
     setDevicePreset('responsive')
 
     const onMove = (moveEvent: PointerEvent) => {
       const horizontalDelta = Math.round(((moveEvent.clientX - startX) * 2) / startScale)
       const verticalDelta = Math.round((moveEvent.clientY - startY) / startScale)
-      if (axis === 'west' || axis === 'south-west') nextWidth = clampViewportWidth(startWidth - horizontalDelta)
-      if (axis === 'east' || axis === 'south-east') nextWidth = clampViewportWidth(startWidth + horizontalDelta)
-      if (axis === 'south' || axis === 'south-west' || axis === 'south-east') nextHeight = clampViewportHeight(startHeight + verticalDelta)
+      if (axis === 'west' || axis === 'south-west') nextWidth = clampViewportWidth(Math.min(maximumDragWidth, startWidth - horizontalDelta))
+      if (axis === 'east' || axis === 'south-east') nextWidth = clampViewportWidth(Math.min(maximumDragWidth, startWidth + horizontalDelta))
+      if (axis === 'south' || axis === 'south-west' || axis === 'south-east') nextHeight = clampViewportHeight(Math.min(maximumDragHeight, startHeight + verticalDelta))
       setViewportWidth(nextWidth)
       setViewportHeight(nextHeight)
     }
@@ -573,7 +655,6 @@ export function BrowserShell({
       window.removeEventListener('pointercancel', finish)
       document.body.style.cursor = previousCursor
       document.body.style.userSelect = previousUserSelect
-      setResizingViewport(false)
       setViewport({ width: nextWidth, height: nextHeight })
     }
     window.addEventListener('pointermove', onMove)
@@ -581,9 +662,10 @@ export function BrowserShell({
     window.addEventListener('pointercancel', finish, { once: true })
   }
 
-  const selectPage = async (purpose: 'annotation' | 'tweaks', mode: 'element' | 'text' | 'region' = 'element') => {
+  const selectPage = async (purpose: 'annotation' | 'tweaks', mode: 'auto' | 'element' | 'text' | 'region' = purpose === 'annotation' ? 'auto' : 'element') => {
     setSelecting(true)
     setAuxiliaryPanel(null)
+    setEditingReviewItemId(null)
     try {
       const selection = await browserRuntime<PageSelection>({
         method: purpose === 'annotation' ? 'annotation:start' : 'tweaks:start',
@@ -594,27 +676,42 @@ export function BrowserShell({
       setAnnotationBody('')
       setAuxiliaryPanel(purpose)
     } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('selection_cancelled')) toast.error('网页选择失败')
+      if (error instanceof Error && error.message.includes('selection_cancelled')) {
+        annotationModeRef.current = false
+        setAnnotationMode(false)
+      } else toast.error('网页选择失败')
     } finally {
       setSelecting(false)
     }
   }
 
-  const startAnnotationSelection = (mode: 'element' | 'text' | 'region' = 'element') => {
+  const startAnnotationSelection = (mode: 'auto' | 'element' | 'text' | 'region' = 'auto') => {
+    annotationModeRef.current = true
     setAnnotationMode(true)
-    if (!reviewCoachmarkSeen) {
-      toast('网页审阅', { description: '连续选择元素、文本或区域，完成后点 Send 将整批审阅加入聊天编辑器。' })
-      setReviewCoachmarkSeen(true)
-    }
+    if (!reviewCoachmarkSeen) setReviewCoachmarkSeen(true)
     void selectPage('annotation', mode)
   }
 
   const exitAnnotationMode = () => {
+    annotationModeRef.current = false
     setAnnotationMode(false)
     setSelecting(false)
     setAuxiliaryPanel((current) => current === 'annotation' ? null : current)
     void browserRuntime({ method: 'annotation:stop', params: { tabId } }).catch(() => undefined)
   }
+
+  useEffect(() => {
+    const handleAnnotationShortcut = (event: globalThis.KeyboardEvent) => {
+      if (!descriptorRef.current.url || event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.key !== '.') return
+      const target = event.target as HTMLElement | null
+      if (target?.matches('input, textarea, [contenteditable="true"]')) return
+      event.preventDefault()
+      if (annotationModeRef.current) exitAnnotationMode()
+      else startAnnotationSelection()
+    }
+    window.addEventListener('keydown', handleAnnotationShortcut)
+    return () => window.removeEventListener('keydown', handleAnnotationShortcut)
+  }, [descriptor.url])
 
   const clearReviewSession = () => {
     const screenshotRef = reviewSessions[draftKey]?.screenshotRef
@@ -625,9 +722,11 @@ export function BrowserShell({
       delete next[draftKey]
       return next
     })
+    annotationModeRef.current = false
     setAnnotationMode(false)
     setAuxiliaryPanel(null)
     setPageSelection(null)
+    setEditingReviewItemId(null)
     clearPageDraft()
     void setOriginalPreview(true).finally(() => setShowingOriginal(false))
   }
@@ -637,12 +736,43 @@ export function BrowserShell({
     return {
       id: `browser-tab:${descriptor.providerTabId}:${descriptor.generation}`,
       origin: 'browser-tab',
+      backend: 'iab',
+      browserId: 'lume-iab',
       tabId: descriptor.tabId,
       providerTabId: descriptor.providerTabId,
       title: descriptor.title || descriptor.url,
       url: descriptor.url,
       generation: descriptor.generation,
       ...(descriptor.ownerThreadId ? { ownerThreadId: descriptor.ownerThreadId } : {}),
+    }
+  }
+
+  const authorizeTabAttachment = async (tab: AgentBrowserTabAttachment): Promise<AgentBrowserTabAttachment> => {
+    if (!ownerThreadId || tab.referenceGrantId || !tab.providerTabId || tab.generation === undefined) return tab
+    const candidate = (await listBrowserReferenceCandidates(ownerThreadId)).find((item) => (
+      item.backend === 'iab'
+      && item.tabId === tab.tabId
+      && item.providerTabId === tab.providerTabId
+      && item.generation === tab.generation
+      && item.title === tab.title
+      && item.url === tab.url
+    ))
+    if (!candidate) return tab
+    const grant = await createBrowserReferenceGrant({
+      ...candidate,
+      threadId: ownerThreadId,
+      access: 'control',
+    })
+    return { ...tab, referenceGrantId: grant.referenceGrantId, access: 'control' }
+  }
+
+  const addCurrentTabToChat = async () => {
+    const tab = tabAttachment()
+    if (!tab) return
+    try {
+      enqueueBrowserAttachment(await authorizeTabAttachment(tab))
+    } catch {
+      toast.error('网页引用授权失败，页面可能已变化')
     }
   }
 
@@ -701,32 +831,52 @@ export function BrowserShell({
         if (!screenshotRef) return
       }
     }
-    for (const item of session.items) {
-      const attachment = screenshotRef
-        ? { ...item.attachment, screenshotRef }
-        : item.attachment
-      enqueueBrowserAttachment(attachment)
+    try {
+      const authorizedTabs = new Map<string, AgentBrowserTabAttachment>()
+      const attachments: AgentBrowserAttachment[] = []
+      for (const item of session.items) {
+        const originalTab = item.attachment.tab
+        const tab = authorizedTabs.get(originalTab.tabId)
+          ?? await authorizeTabAttachment(originalTab)
+        authorizedTabs.set(originalTab.tabId, tab)
+        attachments.push({
+          ...item.attachment,
+          tab,
+          ...(screenshotRef ? { screenshotRef } : {}),
+        })
+      }
+      attachments.forEach(enqueueBrowserAttachment)
+    } catch {
+      toast.error('网页批注授权失败，批注仍保留在审阅队列')
+      return
     }
     setReviewSessions((current) => {
       const next = { ...current }
       delete next[draftKey]
       return next
     })
+    annotationModeRef.current = false
     setAnnotationMode(false)
     toast.success(`${session.items.length} 项网页审阅已添加到当前消息`)
   }
 
-  const removeReviewItem = (id: string) => setReviewSessions((current) => {
-    const session = current[draftKey]
-    if (!session) return current
-    const items = session.items.filter((item) => item.id !== id)
-    if (!items.length) {
-      const next = { ...current }
-      delete next[draftKey]
-      return next
-    }
-    return { ...current, [draftKey]: { ...session, items, updatedAt: new Date().toISOString() } }
-  })
+  const removeReviewItem = (id: string) => {
+    const removed = reviewItems.find((item) => item.id === id)
+    const domPath = removed?.attachment.origin === 'browser-design-change' ? removed.attachment.anchor.domPath : undefined
+    if (domPath) void browserRuntime({ method: 'tweaks:reset', params: { tabId, domPath } }).catch(() => undefined)
+    setReviewSessions((current) => {
+      const session = current[draftKey]
+      if (!session) return current
+      const items = session.items.filter((item) => item.id !== id)
+      if (!items.length) {
+        const next = { ...current }
+        delete next[draftKey]
+        return next
+      }
+      return { ...current, [draftKey]: { ...session, items, updatedAt: new Date().toISOString() } }
+    })
+    if (editingReviewItemId === id) closeReviewEditor()
+  }
 
   const setOriginalPreview = async (original: boolean) => {
     setShowingOriginal(original)
@@ -744,15 +894,28 @@ export function BrowserShell({
   }
 
   const captureReviewScreenshot = async (quiet = false): Promise<string | undefined> => {
-    if (!ownerThreadId || !reviewItems.length) {
-      if (!quiet) toast.error('请先添加至少一项网页审阅')
+    if (!ownerThreadId) {
+      if (!quiet) toast.error('当前页面未关联任务，无法附加截图')
       return undefined
     }
     try {
       const result = await browserRuntime<{ screenshotRef: string }>({ method: 'screenshot:attachment', params: { tabId, ownerThreadId } })
       setReviewSessions((current) => {
         const session = current[draftKey]
-        return session ? { ...current, [draftKey]: { ...session, screenshotRef: result.screenshotRef, updatedAt: new Date().toISOString() } } : current
+        return {
+          ...current,
+          [draftKey]: session
+            ? { ...session, screenshotRef: result.screenshotRef, updatedAt: new Date().toISOString() }
+            : {
+                ownerThreadId,
+                tabId,
+                url: descriptor.url,
+                generation: descriptor.generation,
+                screenshotRef: result.screenshotRef,
+                items: [],
+                updatedAt: new Date().toISOString(),
+              },
+        }
       })
       if (!quiet) toast.success('截图已附加到当前审阅')
       return result.screenshotRef
@@ -762,34 +925,131 @@ export function BrowserShell({
     }
   }
 
-  const highlightReviewItem = (item: typeof reviewItems[number] | null) => {
+  const validReviewItems = reviewItems.filter((item) => item.status === 'valid')
+  const reviewItemIds = new Set(validReviewItems.map((item) => item.id))
+  const browserMarkerItems: Array<{
+    id: string
+    attachment: AgentBrowserAnnotationAttachment | AgentBrowserDesignChangeAttachment
+    editable: boolean
+  }> = [
+    ...validReviewItems.map((item) => ({ id: item.id, attachment: item.attachment, editable: true })),
+    ...pendingPageAnnotations
+      .filter((attachment) => !reviewItemIds.has(attachment.id))
+      .map((attachment) => ({ id: attachment.id, attachment, editable: false })),
+  ]
+
+  useEffect(() => {
+    if (!ready) return
     void browserRuntime({
       method: 'annotation:highlight',
-      params: { tabId, anchor: item?.attachment.anchor ?? null },
+      params: { tabId, anchors: browserMarkerItems.map((item) => item.attachment.anchor) },
+    }).catch(() => undefined)
+  }, [pendingThreadAttachments, ready, reviewSession?.updatedAt, tabId])
+
+  const highlightReviewItem = (itemId: string | null) => {
+    const activeIndex = itemId ? browserMarkerItems.findIndex((candidate) => candidate.id === itemId) : -1
+    void browserRuntime({
+      method: 'annotation:highlight',
+      params: {
+        tabId,
+        anchors: browserMarkerItems.map((candidate) => candidate.attachment.anchor),
+        activeIndex,
+      },
     }).catch(() => undefined)
   }
 
-  const addAnnotationToChat = () => {
-    if (!pageSelection) return
-    addAnnotationSelectionToChat(pageSelection, annotationBody)
+  const closeReviewEditor = () => {
+    setAuxiliaryPanel(null)
+    setPageSelection(null)
+    setAnnotationBody('')
+    setTweakDraft({})
+    setEditingReviewItemId(null)
+    clearPageDraft()
   }
 
-  const addAnnotationSelectionToChat = (selection: PageSelection, body: string) => {
+  const editReviewItem = (item: typeof reviewItems[number]) => {
+    setAnnotationMode(true)
+    annotationModeRef.current = true
+    setEditingReviewItemId(item.id)
+    if (item.attachment.origin === 'browser-annotation') {
+      setPageSelection({ anchor: item.attachment.anchor, originalStyles: {} })
+      setAnnotationBody(item.attachment.body)
+      setTweakDraft({})
+      setAuxiliaryPanel('annotation')
+      return
+    }
+    setPageSelection({ anchor: item.attachment.anchor, originalStyles: item.attachment.originalStyles })
+    setAnnotationBody(item.attachment.body ?? '')
+    setTweakDraft(item.attachment.proposedStyles)
+    setAuxiliaryPanel('tweaks')
+  }
+
+  const addAnnotationToChat = (action: 'add' | 'send' = 'add') => {
+    if (!pageSelection || annotationSubmitting) return
+    void addAnnotationSelectionToChat(pageSelection, annotationBody, action)
+  }
+
+  const addAnnotationSelectionToChat = async (selection: PageSelection, body: string, action: 'add' | 'send') => {
     const tab = tabAttachment()
     if (!tab || !body.trim()) return
+    const existing = editingReviewItemId ? reviewItems.find((item) => item.id === editingReviewItemId && item.attachment.origin === 'browser-annotation') : undefined
     const attachment: AgentBrowserAnnotationAttachment = {
-      id: `browser-annotation:${crypto.randomUUID()}`,
+      id: existing?.id ?? `browser-annotation:${crypto.randomUUID()}`,
       origin: 'browser-annotation',
       tab,
       anchor: selection.anchor,
       body: body.trim(),
     }
+    if (surface === 'right-panel') {
+      setAnnotationSubmitting(true)
+      try {
+        const authorizedTab = await authorizeTabAttachment(tab)
+        enqueueBrowserAttachment({ ...attachment, tab: authorizedTab })
+        closeReviewEditor()
+        if (action === 'send') {
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent('lume:submit-agent-input', { detail: { threadId: ownerThreadId } })), 0)
+        } else {
+          toast.success('批注已添加到输入框')
+        }
+      } catch {
+        toast.error('批注添加失败，页面可能已变化')
+      } finally {
+        setAnnotationSubmitting(false)
+      }
+      return
+    }
     enqueueReviewAttachment(attachment)
+    closeReviewEditor()
+  }
+
+  const discardCurrentPageAnnotations = () => {
+    const annotationIds = new Set(pendingPageAnnotations.map((attachment) => attachment.id))
+    if (ownerThreadId && annotationIds.size > 0) {
+      setPendingBrowserAttachments((current) => ({
+        ...current,
+        [ownerThreadId]: (current[ownerThreadId] ?? []).filter((attachment) => !annotationIds.has(attachment.id)),
+      }))
+    }
+    const screenshotRef = reviewSessions[draftKey]?.screenshotRef
+    if (screenshotRef) void browserRuntime({ method: 'screenshot:attachment:delete', params: { tabId, screenshotRef } }).catch(() => undefined)
+    setReviewSessions((current) => {
+      if (!current[draftKey]) return current
+      const next = { ...current }
+      delete next[draftKey]
+      return next
+    })
     setAuxiliaryPanel(null)
     setPageSelection(null)
     setAnnotationBody('')
+    setEditingReviewItemId(null)
     clearPageDraft()
-    toast.success('网页批注已加入审阅队列')
+    void browserRuntime({ method: 'annotation:highlight', params: { tabId, anchors: [] } }).catch(() => undefined)
+  }
+
+  const sendCurrentPageAnnotations = () => {
+    if (!pendingPageAnnotations.length) return
+    exitAnnotationMode()
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent('lume:submit-agent-input', { detail: { threadId: ownerThreadId } })), 0)
   }
 
   const applyTweaks = () => {
@@ -818,18 +1078,18 @@ export function BrowserShell({
   const addTweakSelectionToChat = (selection: PageSelection, styles: Record<string, string>) => {
     const tab = tabAttachment()
     if (!tab || Object.keys(styles).length === 0) return
+    const existing = editingReviewItemId ? reviewItems.find((item) => item.id === editingReviewItemId && item.attachment.origin === 'browser-design-change') : undefined
     const attachment: AgentBrowserDesignChangeAttachment = {
-      id: `browser-design-change:${crypto.randomUUID()}`,
+      id: existing?.id ?? `browser-design-change:${crypto.randomUUID()}`,
       origin: 'browser-design-change',
       tab,
       anchor: selection.anchor,
       originalStyles: selection.originalStyles,
       proposedStyles: styles,
+      ...(annotationBody.trim() ? { body: annotationBody.trim() } : {}),
     }
     enqueueReviewAttachment(attachment)
-    setAuxiliaryPanel(null)
-    clearPageDraft()
-    toast.success('Design Tweaks 已加入审阅队列')
+    closeReviewEditor()
   }
 
   const securityLabel = descriptor.securityState === 'secure'
@@ -841,47 +1101,112 @@ export function BrowserShell({
         : '站点信息'
 
   const viewportEnabled = descriptor.viewport?.enabled === true
+  const deviceDisplayScale = descriptor.viewport?.displayScale ?? 'fit'
   const deviceFrame = getDeviceFrameSize(
     viewportWidth,
     viewportHeight,
     deviceCanvasSize.width,
     deviceCanvasSize.height,
-    viewportDisplayScale,
+    deviceDisplayScale,
   )
-
+  const reviewSurfaceWidth = viewportEnabled ? deviceFrame.width : deviceCanvasSize.width
+  const reviewSurfaceHeight = viewportEnabled ? deviceFrame.height : deviceCanvasSize.height
+  const reviewScale = viewportEnabled ? deviceFrame.scale : 1
+  const reviewEditorPosition = pageSelection && reviewSurfaceWidth > 0 && reviewSurfaceHeight > 0 && (auxiliaryPanel === 'annotation' || auxiliaryPanel === 'tweaks')
+    ? getBrowserReviewOverlayPosition(
+        pageSelection.anchor.rect,
+        reviewScale,
+        reviewSurfaceWidth,
+        reviewSurfaceHeight,
+        auxiliaryPanel === 'tweaks' ? 344 : surface === 'right-panel' ? 368 : 294,
+        auxiliaryPanel === 'tweaks' ? 420 : 150,
+      )
+    : null
+  const viewportRect = viewportRef.current?.getBoundingClientRect()
+  const portalReviewEditorPosition = surface === 'right-panel' && reviewEditorPosition && viewportRect
+    ? {
+        ...reviewEditorPosition,
+        left: viewportRect.left + reviewEditorPosition.left,
+        top: viewportRect.top + reviewEditorPosition.top,
+      }
+    : null
+  const currentZoomPercent = Math.round((descriptor.zoomFactor ?? 1) * 100)
+  const pageActionsDisabled = !descriptor.url
+  const hasQueuedTweaks = reviewItems.some((item) => item.attachment.origin === 'browser-design-change')
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col bg-background text-foreground', className)}>
-      <div className="relative flex h-10 shrink-0 items-center gap-1 border-b border-border px-2 text-muted-foreground">
+      <div className={cn(
+        'relative z-10 flex h-[50px] shrink-0 items-center gap-2 border-b border-border/70 px-3 text-muted-foreground',
+        surface === 'right-panel' && 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] text-muted-foreground',
+        annotationMode && 'bg-primary/10 px-3 text-foreground',
+        annotationMode && surface === 'right-panel' && 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] text-foreground',
+      )}>
         {annotationMode ? (
-          <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(120px,auto)_minmax(0,1fr)] items-center gap-2 text-[11px]">
-            <div className="flex min-w-0 items-center gap-1">
-              <ToolbarButton title="退出批注" onClick={exitAnnotationMode}><X size={14} /></ToolbarButton>
-              {reviewItems.length > 0 && (
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px] text-muted-foreground" onClick={() => setDiscardReviewOpen(true)}>
-                  <Trash2 size={12} />丢弃全部
+          <div className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 text-sm">
+            <div className="flex min-w-0 items-center gap-1.5">
+              {surface === 'right-panel' && <>
+                <ToolbarButton title="退出批注" onClick={exitAnnotationMode}><X size={15} /></ToolbarButton>
+                <ToolbarButton title="删除本页批注" disabled={!hasPendingReview} onClick={discardCurrentPageAnnotations}><Trash2 size={15} /></ToolbarButton>
+              </>}
+              {surface !== 'right-panel' && <>
+                <ToolbarButton title="退出批注" onClick={exitAnnotationMode}><X size={14} /></ToolbarButton>
+                <ToolbarButton title="丢弃全部" disabled={!hasPendingReview} onClick={() => setDiscardReviewOpen(true)}><Trash2 size={14} /></ToolbarButton>
+              </>}
+            </div>
+            <div className="min-w-0 truncate text-center text-sm leading-[18px]">
+              <span>{surface === 'right-panel' ? `正在批注 · ${browserToolbarTitle(descriptor.url)}` : `${showingOriginal ? '原始页面' : '批注中'} · ${descriptor.url || '网页审阅'}`}</span>
+            </div>
+            <div className="flex min-w-0 items-center justify-end gap-3">
+              {surface !== 'right-panel' && <ToolbarButton
+                title="退出注释"
+                active
+                onClick={exitAnnotationMode}
+              >
+                <MessageCirclePlus size={15} />
+              </ToolbarButton>}
+              {surface === 'right-panel' && <>
+                <ToolbarButton title="继续选择批注区域" disabled={selecting} onClick={() => startAnnotationSelection()}><Highlighter size={15} /></ToolbarButton>
+                <ToolbarButton title="显示全部批注" disabled={!browserMarkerItems.length} onClick={() => highlightReviewItem(null)}><Eye size={15} /></ToolbarButton>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 rounded-xl px-3 text-xs font-semibold"
+                  disabled={!pendingPageAnnotations.length}
+                  onClick={sendCurrentPageAnnotations}
+                >
+                  发送
+                  {pendingPageAnnotations.length > 0 && <span className="inline-flex size-5 items-center justify-center rounded-full bg-black/15 text-[11px] tabular-nums">{pendingPageAnnotations.length}</span>}
                 </Button>
-              )}
-            </div>
-            <div className="min-w-0 truncate text-center text-muted-foreground">
-              <span className="font-medium text-foreground">{showingOriginal ? 'Original' : 'Annotating'}</span>
-              <span> · {safeHost(descriptor.url) || '网页审阅'}</span>
-            </div>
-            <div className="flex min-w-0 justify-end gap-1">
-              <ToolbarButton title="为当前审阅附加截图" onClick={() => void captureReviewScreenshot()}><Camera size={14} /></ToolbarButton>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-[11px]"
+              </>}
+              {surface !== 'right-panel' && <ToolbarButton title="为当前审阅附加截图" onClick={() => void captureReviewScreenshot()}><Camera size={14} /></ToolbarButton>}
+              {surface !== 'right-panel' && <ToolbarButton
+                title="按住查看原始页面"
+                active={showingOriginal}
+                disabled={!hasQueuedTweaks}
                 onPointerDown={() => void setOriginalPreview(true)}
                 onPointerUp={() => void setOriginalPreview(false)}
+                onPointerCancel={() => showingOriginal && void setOriginalPreview(false)}
                 onPointerLeave={() => showingOriginal && void setOriginalPreview(false)}
+                onBlur={() => showingOriginal && void setOriginalPreview(false)}
+                onKeyDown={(event) => {
+                  if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) {
+                    event.preventDefault()
+                    void setOriginalPreview(true)
+                  }
+                }}
+                onKeyUp={(event) => {
+                  if (event.key === ' ' || event.key === 'Enter') {
+                    event.preventDefault()
+                    void setOriginalPreview(false)
+                  }
+                }}
               >
-                <Eye size={13} />按住查看原始页面
-              </Button>
-              <Button size="sm" className="relative h-7 px-2.5 text-[11px]" disabled={!reviewItems.length || staleReviewCount > 0} onClick={() => void promoteReviewQueue()}>
-                Send
-                {reviewItems.length > 0 && <span className="ml-1 rounded-full bg-primary-foreground/20 px-1.5 text-[9px]">{reviewItems.length}</span>}
-              </Button>
+                <span className={cn('inline-flex items-center justify-center transition-transform', showingOriginal && 'scale-[0.8]')}><Eye size={14} /></span>
+              </ToolbarButton>}
+              {surface !== 'right-panel' && <Button size="sm" className="relative h-7 border-transparent bg-primary px-2.5 text-xs text-primary-foreground hover:bg-primary/90" disabled={!reviewItems.length || staleReviewCount > 0} onClick={() => void promoteReviewQueue()}>
+                附加到聊天
+                {reviewItems.length > 0 && <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-black/25 px-1 text-[10px] leading-4 font-semibold">{reviewItems.length}</span>}
+              </Button>}
             </div>
           </div>
         ) : (
@@ -890,26 +1215,40 @@ export function BrowserShell({
           <ToolbarButton title="后退" disabled={!descriptor.canGoBack} onClick={() => run('back')}><ArrowLeft size={15} /></ToolbarButton>
           <ToolbarButton title="前进" disabled={!descriptor.canGoForward} onClick={() => run('forward')}><ArrowRight size={15} /></ToolbarButton>
         </div>
-        <ToolbarButton title="重新加载页面" disabled={descriptor.isLoading} onClick={() => run('reload')}><RotateCcw size={15} /></ToolbarButton>
-        <form className="group/address relative mx-auto flex min-w-0 max-w-[770px] flex-1 items-center px-1" onSubmit={(event) => { event.preventDefault(); navigate() }}>
+        <ToolbarButton
+          title={descriptor.isLoading ? '停止加载' : '重新加载页面'}
+          disabled={pageActionsDisabled}
+          onClick={() => run(descriptor.isLoading ? 'stop' : 'reload')}
+        >
+          {descriptor.isLoading ? <X size={15} /> : <RotateCcw size={15} />}
+        </ToolbarButton>
+        <form
+          className={cn(
+            'group/address relative flex h-8 min-w-0 max-w-[770px] flex-1 items-center rounded-xl border bg-background/70 shadow-sm transition-[border-color,background-color,box-shadow]',
+            surface === 'right-panel' && 'max-w-none rounded-lg border-transparent bg-transparent text-foreground shadow-none',
+            addressFocused
+              ? surface === 'right-panel' ? 'bg-foreground/10' : 'border-border bg-background ring-1 ring-ring/25'
+              : surface === 'right-panel' ? 'hover:bg-foreground/10' : 'border-border/70 hover:border-border hover:bg-muted/20 focus-within:border-border focus-within:bg-background focus-within:ring-1 focus-within:ring-ring/25',
+          )}
+          onSubmit={(event) => { event.preventDefault(); navigate() }}
+        >
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button
               variant="ghost"
               size="icon"
               type="button"
               className={cn(
-                'absolute left-1 z-10 size-7 rounded-l-[10px] rounded-r-none text-muted-foreground transition-opacity hover:bg-foreground/5 hover:text-foreground',
+                'absolute left-0 z-10 h-7 w-7 rounded-l-xl rounded-r-none text-muted-foreground transition-all hover:bg-foreground/5 hover:text-foreground',
                 !descriptor.url && 'invisible',
                 descriptor.url && !addressFocused && 'opacity-0 group-hover/address:opacity-100 group-focus-within/address:opacity-100',
+                descriptor.securityState === 'insecure' && 'w-[104px] justify-start gap-1.5 px-2 text-xs opacity-100',
               )}
               title={securityLabel}
               aria-label={securityLabel}
             />}>
-              {descriptor.securityState === 'secure'
-                ? <LockKeyhole size={13} />
-                : descriptor.securityState === 'insecure'
-                  ? <ShieldAlert size={14} className="text-amber-500" />
-                  : <Globe size={14} />}
+              {descriptor.securityState === 'insecure'
+                ? <><ShieldAlert size={14} className="shrink-0 text-amber-500" /><span className="truncate">不安全</span></>
+                : <SlidersHorizontal size={14} />}
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-72">
               <div className="px-3 py-2">
@@ -918,20 +1257,22 @@ export function BrowserShell({
               </div>
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={openBrowserSettings}>站点设置<span className="ml-auto text-[10px] text-muted-foreground">权限</span></DropdownMenuItem>
-              <DropdownMenuItem destructive onSelect={() => void browserRuntime({ method: 'clear-data', params: { categories: ['siteData'], timeRange: 'all' } }).then(() => toast.success('站点数据已清除'))}>清除站点数据</DropdownMenuItem>
+              <DropdownMenuItem disabled={!descriptor.shareable} onSelect={() => void addCurrentTabToChat()}>添加标签页到聊天</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <Input
             ref={addressInputRef}
-            value={address}
+            value={surface === 'right-panel' && !addressFocused ? browserToolbarTitle(address) : address}
             onChange={(event) => setAddress(event.target.value)}
             onFocus={() => setAddressFocused(true)}
             onBlur={() => window.setTimeout(() => setAddressFocused(false), 120)}
             placeholder="输入 URL"
             className={cn(
-              'h-7 min-w-0 flex-1 rounded-[10px] border-transparent bg-transparent px-9 text-sm shadow-none transition-colors',
-              'hover:bg-muted/60 focus-visible:border-border focus-visible:bg-transparent focus-visible:ring-1 focus-visible:ring-border',
-              !addressFocused && 'text-center',
+              'h-full min-w-0 flex-1 rounded-xl border-0 bg-transparent px-3 py-0 text-sm leading-[18px] shadow-none outline-none transition-none',
+              'hover:bg-transparent focus-visible:border-0 focus-visible:bg-transparent focus-visible:ring-0',
+              surface === 'right-panel' && 'text-center text-foreground placeholder:text-muted-foreground',
+              surface !== 'right-panel' && descriptor.url && 'pl-8',
+              surface !== 'right-panel' && descriptor.securityState === 'insecure' && 'pl-[108px]',
             )}
             onKeyDown={(event) => {
               if (!showSuggestions) return
@@ -950,7 +1291,7 @@ export function BrowserShell({
               }
             }}
           />
-          <Button
+          {surface !== 'right-panel' && <Button
             variant="ghost"
             size="icon"
             type="button"
@@ -958,15 +1299,12 @@ export function BrowserShell({
             aria-label="在默认浏览器中打开"
             disabled={!descriptor.url}
             onClick={() => descriptor.url && void browserRuntime({ method: 'openExternal', params: { url: descriptor.url } })}
-            className={cn(
-              'absolute right-1 z-10 size-7 rounded-l-none rounded-r-[10px] text-muted-foreground transition-all hover:bg-foreground/5 hover:text-foreground disabled:hidden',
-              addressFocused ? 'opacity-100' : 'opacity-0 group-hover/address:opacity-100',
-            )}
+            className="absolute right-0 z-10 size-7 rounded-l-none rounded-r-xl text-muted-foreground hover:bg-foreground/5 hover:text-foreground disabled:opacity-45"
           >
             <ExternalLink size={13} />
-          </Button>
+          </Button>}
           {showSuggestions && (
-            <div className="absolute top-[calc(100%+6px)] right-1 left-1 z-[9998] max-h-80 overflow-auto rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-xl">
+            <div className="absolute top-full right-0 left-0 z-[9998] max-h-80 overflow-auto rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-xl">
               {suggestions.map((entry, index) => (
                 <Button
                   key={entry.id}
@@ -985,69 +1323,44 @@ export function BrowserShell({
             </div>
           )}
         </form>
-        <div className="flex shrink-0 items-center justify-end gap-1.5">
+        <div className="relative flex shrink-0 items-center justify-end gap-1">
         <ToolbarButton
-          title={!descriptor.url ? '打开页面后可添加批注' : selecting ? '正在选择…' : annotationMode ? '退出批注模式' : reviewItems.length ? `${reviewItems.length} 项待加入聊天` : '页面批注'}
-          active={annotationMode || reviewItems.length > 0 || selecting}
-          disabled={selecting || !descriptor.url}
-          expanded={annotationMode || reviewItems.length > 0}
-          onClick={annotationMode ? exitAnnotationMode : () => startAnnotationSelection()}
+          title={annotationMode ? '退出注释' : '注释  Ctrl+.'}
+          active={annotationMode}
+          expanded={surface === 'right-panel' && annotationMode}
+          disabled={pageActionsDisabled || selecting}
+          className={cn(surface === 'right-panel' && annotationMode && 'rounded-xl bg-primary/15 px-3 text-primary hover:bg-primary/25 hover:text-primary')}
+          onClick={() => annotationMode ? exitAnnotationMode() : startAnnotationSelection()}
         >
-          <Highlighter size={15} />
-          {(annotationMode || reviewItems.length > 0) && (
-            <span>{annotationMode ? '批注中' : '批注'}{reviewItems.length ? ` · ${reviewItems.length}` : ''}</span>
-          )}
+          <MessageCirclePlus size={15} />
+          {surface === 'right-panel' && annotationMode && <span className="text-xs font-medium">正在注释</span>}
         </ToolbarButton>
-        <DropdownMenu onOpenChange={(open) => {
-          if (!open) return
-          setDownloadNoticeCount(0)
-          void browserRuntime<BrowserDownloadItem[]>({ method: 'downloads:list' }).then(setDownloads).catch(() => undefined)
-        }}>
-          <DropdownMenuTrigger render={<Button
-            variant="ghost"
-            size="icon"
-            className="relative size-7 shrink-0"
-            title={activeDownloads.length ? `${activeDownloads.length} 个下载进行中` : '下载'}
-            aria-label="下载"
-          />}>
-              <DownloadIcon size={15} className={activeDownloads.length ? 'text-primary' : undefined} />
-              {activeDownloads.length > 0 && <span className="absolute right-0.5 bottom-0.5 size-1.5 animate-pulse rounded-full bg-primary" />}
-              {downloadNoticeCount > 0 && <span className="absolute -top-0.5 -right-0.5 flex min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[8px] leading-3.5 font-semibold text-primary-foreground">{downloadNoticeCount}</span>}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-[340px]">
-            <div className="px-3 py-2 text-xs font-medium">下载</div>
-            {[...activeDownloads, ...downloads.slice(0, 10)].length === 0 && <DropdownMenuItem disabled>尚无下载记录</DropdownMenuItem>}
-            {activeDownloads.map((download) => (
-              <DropdownMenuItem key={download.id} disabled className="items-start">
-                <span className="min-w-0"><span className="block truncate">{download.filename}</span><span className="block text-[10px] text-muted-foreground">{formatDownloadBytes(download.receivedBytes)} · 下载中</span></span>
-              </DropdownMenuItem>
-            ))}
-            {downloads.slice(0, 10).map((download) => (
-              <DropdownMenuItem key={download.id} disabled className="items-start">
-                <span className="min-w-0"><span className="block truncate">{download.filename}</span><span className="block text-[10px] text-muted-foreground">{downloadStateLabel(download.state)} · {formatDownloadBytes(download.receivedBytes)}</span></span>
-              </DropdownMenuItem>
-            ))}
-            {downloads.length > 0 && <><DropdownMenuSeparator /><DropdownMenuItem destructive onSelect={() => void browserRuntime({ method: 'downloads:clear' }).then(() => { setDownloads([]); toast.success('下载历史已清除') })}>清除下载历史</DropdownMenuItem></>}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
-          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-7 shrink-0" title="更多" aria-label="更多" />}>
-            <MoreHorizontal size={16} />
+        <DropdownMenu onOpenChange={(open) => { if (open) setDownloadNoticeCount(0) }}>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="relative size-7 shrink-0" title="更多" aria-label="更多" />}>
+            <MoreHorizontal size={16} className="rotate-90" />
+            {activeDownloads.length > 0 && <span className="absolute right-0.5 bottom-0.5 size-1.5 animate-pulse rounded-full bg-primary" />}
+            {downloadNoticeCount > 0 && <span className="absolute -top-0.5 -right-0.5 flex min-w-3.5 items-center justify-center rounded-full bg-primary px-1 text-[8px] leading-3.5 font-semibold text-primary-foreground">{downloadNoticeCount}</span>}
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={6} className="w-[240px] p-1.5">
             <DropdownMenuItem disabled={!descriptor.url} onSelect={() => setAuxiliaryPanel('find')}>在页面中查找</DropdownMenuItem>
             <DropdownMenuItem disabled={!descriptor.url} onSelect={() => void browserRuntime({ method: 'print', params: { tabId } })}>打印</DropdownMenuItem>
+            <DropdownMenuItem disabled={!descriptor.url || selecting} onSelect={() => startAnnotationSelection()}>
+              <span className="min-w-0 flex-1">页面批注</span>
+              {reviewItems.length > 0 && <span className="text-[10px] text-muted-foreground">{reviewItems.length}</span>}
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <div className="flex h-9 items-center gap-1 rounded-lg px-3 text-[12px] text-[var(--text-2)]">
+            <div className="flex h-9 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground">
               <span className="min-w-0 flex-1">缩放</span>
-              <Button variant="ghost" size="icon-xs" aria-label="缩小" onClick={() => setZoomFactor((descriptor.zoomFactor ?? 1) - .1)}><Minus size={12} /></Button>
-              <Button variant="ghost" size="sm" className="h-6 min-w-12 px-1 text-[11px] tabular-nums" disabled={(descriptor.zoomFactor ?? 1) === 1} onClick={() => setZoomFactor(1)}>{Math.round((descriptor.zoomFactor ?? 1) * 100)}%</Button>
-              <Button variant="ghost" size="icon-xs" aria-label="放大" onClick={() => setZoomFactor((descriptor.zoomFactor ?? 1) + .1)}><Plus size={12} /></Button>
+              <div className="flex overflow-hidden rounded-md border border-border bg-foreground/5 text-xs text-foreground">
+                <Button variant="ghost" size="icon" className="size-6 rounded-none" aria-label="缩小" disabled={pageActionsDisabled} onClick={() => setZoomFactor((descriptor.zoomFactor ?? 1) - .1)}><Minus size={12} /></Button>
+                <div className="w-11 border-x border-border py-0.5 text-center text-[11px] tabular-nums">{currentZoomPercent}%</div>
+                <Button variant="ghost" size="icon" className="size-6 rounded-none" aria-label="放大" disabled={pageActionsDisabled} onClick={() => setZoomFactor((descriptor.zoomFactor ?? 1) + .1)}><Plus size={12} /></Button>
+              </div>
+              <Button variant="ghost" size="icon" className="size-6" aria-label="重置缩放" disabled={pageActionsDisabled || currentZoomPercent === 100} onClick={() => setZoomFactor(1)}><RotateCcw size={12} /></Button>
             </div>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={toggleDeviceMode}>
+            <DropdownMenuItem disabled={pageActionsDisabled} onSelect={toggleDeviceMode}>
               <span className="min-w-0 flex-1">{viewportEnabled ? '隐藏设备工具栏' : '显示设备工具栏'}</span>
-              {viewportEnabled && <Check size={13} />}
             </DropdownMenuItem>
             <DropdownMenuItem disabled={!descriptor.url} onSelect={() => void browserRuntime({ method: 'screenshot:clipboard', params: { tabId } }).then(() => toast.success('屏幕截图已保存到剪贴板')).catch(() => toast.error('无法捕获屏幕截图'))}>捕获屏幕截图</DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -1072,41 +1385,23 @@ export function BrowserShell({
             <DropdownMenuItem onSelect={openBrowserSettings}>浏览器设置</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        {!reviewCoachmarkSeen && descriptor.url && !annotationMode && (
+          <div className="absolute top-full right-0 z-[9998] mt-2 w-64 rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-xl">
+            <span aria-hidden="true" className="absolute -top-1.5 right-2.5 size-3 rotate-45 border-t border-l border-border bg-popover" />
+            <div className="text-sm font-medium">页面批注已移入更多菜单</div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">可连续选择元素、文本或页面区域，并将评论加入聊天。</p>
+            <div className="mt-2 flex justify-end"><Button type="button" variant="ghost" size="sm" className="h-7" onClick={() => setReviewCoachmarkSeen(true)}>知道了</Button></div>
+          </div>
+        )}
         </div>
-        {descriptor.isLoading && <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-primary/15"><div className="h-full w-1/2 animate-pulse bg-primary" /></div>}
+        {descriptor.isLoading && <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-primary/15"><div className="h-full w-full animate-pulse bg-primary" /></div>}
           </>
         )}
       </div>
 
-      {annotationMode && (
-        <div className="relative flex min-h-9 shrink-0 items-center gap-1.5 border-b border-border/60 bg-muted/20 px-2">
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={selecting} onClick={() => startAnnotationSelection('element')}>元素</Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={selecting} onClick={() => startAnnotationSelection('text')}>文本</Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={selecting} onClick={() => startAnnotationSelection('region')}>区域</Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" disabled={selecting} onClick={() => void selectPage('tweaks')}>Design Tweaks</Button>
-          <div className="file-tree-scrollbar flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1">
-            {selecting && <span className="px-2 text-[11px] text-muted-foreground">在页面中选择…</span>}
-            {reviewItems.map((item, index) => (
-              <div
-                key={item.id}
-                className={cn('flex h-6 shrink-0 items-center gap-1 rounded-full border bg-background px-2 text-[10px]', item.status === 'stale' && 'border-destructive/50 text-destructive')}
-                onMouseEnter={() => highlightReviewItem(item)}
-                onMouseLeave={() => highlightReviewItem(null)}
-              >
-                <span className="max-w-40 truncate">
-                  {index + 1}. {item.attachment.origin === 'browser-design-change' ? 'Design' : item.attachment.anchor.kind === 'text' ? '文本' : item.attachment.anchor.kind === 'region' ? '区域' : '元素'}
-                  {item.status === 'stale' ? ' · 已失效' : ''}
-                </span>
-                <Button type="button" variant="ghost" size="icon-xs" className="size-4 rounded-full" aria-label="移除审阅项" onClick={() => removeReviewItem(item.id)}><X size={10} /></Button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {auxiliaryPanel === 'find' && (
-        <form className="flex h-10 shrink-0 items-center gap-1.5 border-b border-border/60 px-2" onSubmit={(event) => { event.preventDefault(); runFind(true) }}>
-          <Search size={14} className="text-muted-foreground" />
+        <form className="flex h-11 shrink-0 items-center gap-2 border-b border-border/60 ps-4 pe-2" onSubmit={(event) => { event.preventDefault(); runFind(true) }}>
+          <Search size={16} className="shrink-0 text-foreground" />
           <Input
             autoFocus
             value={findText}
@@ -1114,8 +1409,9 @@ export function BrowserShell({
               setFindText(event.target.value)
               void browserRuntime({ method: 'find', params: { tabId, text: event.target.value, findNext: false } })
             }}
-            placeholder="在页面中查找"
-            className="h-7 min-w-0 flex-1"
+            aria-label="在页面中查找"
+            placeholder="在页面中查找…"
+            className="h-6 min-w-0 flex-1 border-0 bg-transparent px-0 text-base leading-6 shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault()
@@ -1129,9 +1425,9 @@ export function BrowserShell({
               }
             }}
           />
-          <span className="min-w-12 text-center text-[11px] tabular-nums text-muted-foreground">{findResult.matches ? `${findResult.activeMatchOrdinal}/${findResult.matches}` : '0/0'}</span>
-          <ToolbarButton title="上一个" onClick={() => runFind(false)}><ChevronUp size={14} /></ToolbarButton>
-          <ToolbarButton title="下一个" onClick={() => runFind(true)}><ChevronDown size={14} /></ToolbarButton>
+          <span className="min-w-12 text-center text-xs tabular-nums text-muted-foreground">{findResult.matches ? `${findResult.activeMatchOrdinal}/${findResult.matches}` : '0/0'}</span>
+          <ToolbarButton title="上一个" disabled={!findResult.matches} onClick={() => runFind(false)}><ChevronUp size={14} /></ToolbarButton>
+          <ToolbarButton title="下一个" disabled={!findResult.matches} onClick={() => runFind(true)}><ChevronDown size={14} /></ToolbarButton>
           <ToolbarButton title="关闭" onClick={() => {
             setAuxiliaryPanel(null)
             setFindText('')
@@ -1141,92 +1437,42 @@ export function BrowserShell({
       )}
 
       {viewportEnabled && (
-        <div className="flex h-[34px] shrink-0 items-center gap-2 border-b border-border bg-muted/35 px-2.5 text-sm">
-          <span className={cn('max-w-28 shrink-0 truncate font-medium', deviceCanvasSize.width < 460 && 'sr-only')}>尺寸：</span>
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="sm" className={cn('h-7 min-w-[100px] max-w-44 justify-between font-medium text-muted-foreground', deviceCanvasSize.width < 600 && 'w-[100px] max-w-[100px]')} />}>
-              <span className="truncate">{DEVICE_PRESETS.find((preset) => preset.id === devicePreset)?.label ?? '响应式'}</span><ChevronDown size={12} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-[240px]">
-              {DEVICE_PRESETS.map((preset) => <DropdownMenuItem key={preset.id} onSelect={() => applyDevicePreset(preset.id)}><span className="flex-1">{preset.label}</span>{preset.id === devicePreset && <Check size={13} />}</DropdownMenuItem>)}
-            </DropdownMenuContent>
-          </DropdownMenu>
+        <div className="flex h-[34px] shrink-0 items-center gap-2 border-b border-border bg-[var(--lume-bg-rail)] px-2.5 text-sm text-foreground">
+          <label className={cn('max-w-28 min-w-0 shrink truncate font-medium', deviceCanvasSize.width < 460 && 'sr-only')} htmlFor={`browser-device-preset-${tabId}`}>尺寸：</label>
+          <Select value={devicePreset} onValueChange={(value) => value && applyDevicePreset(value as DevicePresetId)}>
+            <SelectTrigger
+              id={`browser-device-preset-${tabId}`}
+              size="sm"
+              className={cn(
+                'h-7 min-w-[100px] max-w-44 border-transparent bg-transparent px-1 font-medium shadow-none hover:bg-accent focus-visible:border-transparent focus-visible:ring-0',
+                deviceCanvasSize.width < 600 && 'w-[100px] max-w-[100px]',
+              )}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start" className="min-w-[180px]">
+              {DEVICE_PRESETS.map((preset) => <SelectItem key={preset.id} value={preset.id}>{preset.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
           <NumberField label="视口宽度" value={viewportWidth} min={240} max={4096} onCommit={(value) => setViewport({ width: value })} />
-          <span className="text-muted-foreground">×</span>
+          <span className="text-sm text-muted-foreground">×</span>
           <NumberField label="视口高度" value={viewportHeight} min={160} max={4096} onCommit={(value) => setViewport({ height: value })} />
-          <ToolbarButton title="旋转设备" onClick={() => setViewport({ width: viewportHeight, height: viewportWidth }, { preservePreset: true })}><RotateCw size={13} /></ToolbarButton>
+          <ToolbarButton title="旋转视口" onClick={rotateViewport}>
+            <RotateCw className="size-4 transition-transform duration-300 ease-out motion-reduce:transition-none" style={{ transform: `rotate(${viewportRotationKey * 180}deg)` }} />
+          </ToolbarButton>
           {deviceCanvasSize.width >= 600 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="sm" aria-label="设备显示缩放" className="h-7 w-[74px] font-medium text-muted-foreground" />}>
-                {viewportDisplayScale === 'fit' ? 'Fit' : `${Math.round(viewportDisplayScale * 100)}%`}<ChevronDown size={11} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-[180px]">
-                {(['fit', .5, .75, 1, 1.25, 1.5, 2] as const).map((scale) => <DropdownMenuItem key={scale} onSelect={() => setViewportDisplayScale(scale)}><span className="flex-1">{scale === 'fit' ? 'Fit' : `${Math.round(scale * 100)}%`}</span>{scale === viewportDisplayScale && <Check size={13} />}</DropdownMenuItem>)}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Select value={String(deviceDisplayScale)} onValueChange={(value) => value && setDeviceDisplayScale(value === 'fit' ? 'fit' : Number(value))}>
+              <SelectTrigger size="sm" aria-label="设备显示缩放" className="h-7 shrink-0 border-transparent bg-transparent px-1 font-medium text-muted-foreground shadow-none hover:bg-accent focus-visible:border-transparent focus-visible:ring-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="fit">适合</SelectItem>
+                {DEVICE_DISPLAY_SCALES.map((scale) => <SelectItem key={scale} value={String(scale)}>{Math.round(scale * 100)}%</SelectItem>)}
+              </SelectContent>
+            </Select>
           )}
-          <ToolbarButton title="退出设备工具栏模式" onClick={toggleDeviceMode}><X size={14} /></ToolbarButton>
-        </div>
-      )}
-
-      {auxiliaryPanel === 'annotation' && pageSelection && (
-        <div className="shrink-0 space-y-2 border-b border-border/60 bg-muted/20 px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-            <Highlighter size={13} />
-            <span className="min-w-0 flex-1 truncate">
-              已选择{pageSelection.anchor.kind === 'text' ? '文本' : pageSelection.anchor.kind === 'region' ? '区域' : '元素'}
-              {pageSelection.anchor.textQuote?.exact ? ` · ${pageSelection.anchor.textQuote.exact}` : ''}
-            </span>
-            <Button variant="ghost" size="sm" className="h-7" onClick={() => startAnnotationSelection('element')}>元素</Button>
-            <Button variant="ghost" size="sm" className="h-7" onClick={() => startAnnotationSelection('text')}>文本</Button>
-            <Button variant="ghost" size="sm" className="h-7" onClick={() => startAnnotationSelection('region')}>区域</Button>
-          </div>
-          <div className="flex items-end gap-2">
-            <Textarea
-              value={annotationBody}
-              onChange={(event) => setAnnotationBody(event.target.value)}
-              placeholder="写下要让 Agent 处理的网页审阅意见…"
-              className="min-h-16 flex-1 resize-y text-[12px]"
-            />
-            <div className="flex shrink-0 flex-col gap-1">
-              <Button size="sm" disabled={!annotationBody.trim()} onClick={addAnnotationToChat}>添加到聊天</Button>
-              <Button variant="ghost" size="sm" onClick={() => { setAuxiliaryPanel(null); setPageSelection(null); clearPageDraft() }}>取消</Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {auxiliaryPanel === 'tweaks' && pageSelection && (
-        <div className="shrink-0 space-y-2 border-b border-border/60 bg-muted/20 px-3 py-2">
-          <div className="flex items-center gap-2 text-[11px]">
-            <SlidersHorizontal size={13} className="text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate text-muted-foreground">{pageSelection.anchor.domPath || '所选区域'}</span>
-            <Button variant="ghost" size="sm" className="h-7" onClick={() => void selectPage('tweaks')}>重新选择</Button>
-            <Button variant="outline" size="sm" className="h-7" onClick={resetTweaks}>恢复原始</Button>
-            <Button variant="outline" size="sm" className="h-7" disabled={Object.keys(tweakDraft).length === 0} onClick={applyTweaks}>应用预览</Button>
-            <Button size="sm" className="h-7" disabled={Object.keys(tweakDraft).length === 0} onClick={addTweaksToChat}>添加到聊天</Button>
-          </div>
-          <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
-            {TWEAK_FIELDS.map((field) => (
-              <label key={field.key} className="min-w-0 text-[10px] text-muted-foreground">
-                {field.label}
-                <Input
-                  type={field.type ?? 'text'}
-                  value={tweakDraft[field.key] ?? ''}
-                  placeholder={pageSelection.originalStyles[field.key] ?? ''}
-                  className="mt-0.5 h-7 px-1.5 text-[11px]"
-                  onChange={(event) => setTweakDraft((current) => {
-                    const value = event.target.value
-                    if (!value) {
-                      const next = { ...current }
-                      delete next[field.key]
-                      return next
-                    }
-                    return { ...current, [field.key]: value }
-                  })}
-                />
-              </label>
-            ))}
+          <div className="ml-auto">
+            <ToolbarButton title="退出设备工具栏模式" onClick={toggleDeviceMode}><X size={14} /></ToolbarButton>
           </div>
         </div>
       )}
@@ -1242,34 +1488,236 @@ export function BrowserShell({
         destructive
         onConfirm={clearReviewSession}
       />
+      <Dialog open={Boolean(pageDialog)} onOpenChange={(open) => { if (!open) handlePageDialog(false) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{pageDialogTitle(pageDialog?.type)}</DialogTitle>
+            <DialogDescription className="max-h-48 whitespace-pre-wrap break-words overflow-y-auto">
+              {pageDialog?.message || safeHost(descriptor.url) || '此网页需要你的确认。'}
+            </DialogDescription>
+          </DialogHeader>
+          {pageDialog?.type === 'prompt' && (
+            <Input
+              autoFocus
+              value={pageDialog.promptText}
+              disabled={pageDialogBusy}
+              aria-label="网页输入"
+              onChange={(event) => setPageDialog((current) => current ? { ...current, promptText: event.target.value.slice(0, 10_000) } : current)}
+              onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); handlePageDialog(true) } }}
+            />
+          )}
+          <DialogFooter>
+            {pageDialog?.type !== 'alert' && <Button variant="outline" disabled={pageDialogBusy} onClick={() => handlePageDialog(false)}>{pageDialog?.type === 'beforeunload' ? '留在此页' : '取消'}</Button>}
+            <Button disabled={pageDialogBusy} onClick={() => handlePageDialog(true)}>{pageDialog?.type === 'beforeunload' ? '离开' : '确定'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <div
         ref={deviceCanvasRef}
         className={cn(
           'relative min-h-0 flex-1',
-          viewportEnabled ? 'file-tree-scrollbar flex overflow-auto bg-muted/35 p-5' : 'overflow-hidden bg-white',
+          viewportEnabled
+            ? cn('flex items-start bg-[#303030] px-5 pb-5', deviceDisplayScale === 'fit' ? 'justify-center overflow-hidden' : 'justify-start overflow-auto')
+            : 'overflow-hidden bg-white',
         )}
       >
         <div
           className={cn(
             'relative',
-            viewportEnabled ? 'm-auto shrink-0' : 'size-full',
+            viewportEnabled ? 'mx-auto mb-auto shrink-0' : 'size-full',
           )}
           style={viewportEnabled ? { width: deviceFrame.width, height: deviceFrame.height } : undefined}
         >
           <div
             ref={viewportRef}
-            className={cn(
-              'relative size-full overflow-hidden bg-white',
-              viewportEnabled && 'rounded-md shadow-[0_14px_36px_-18px_rgba(0,0,0,0.55)] ring-1 ring-black/15',
-            )}
+            className="relative size-full overflow-hidden bg-white"
           >
-            {ready && (
+            {ready && descriptor.url && !loadError && descriptor.lifecycle !== 'crashed' && (
               <BrowserGuestSurface
                 tabId={tabId}
                 generation={descriptor.generation}
                 guestState={descriptor.guestState}
                 className="absolute inset-0"
               />
+            )}
+            {annotationMode && staleReviewCount > 0 && (
+              <div className="absolute top-2 left-1/2 z-[75] flex max-w-[calc(100%-16px)] -translate-x-1/2 items-center gap-2 rounded-xl border border-amber-500/30 bg-popover px-3 py-2 text-xs shadow-lg">
+                <ShieldAlert className="size-4 shrink-0 text-amber-500" />
+                <span className="min-w-0 flex-1 truncate">{staleReviewCount} 项批注已因页面变化失效</span>
+                <div className="file-tree-scrollbar flex min-w-0 gap-1 overflow-x-auto">
+                  {reviewItems.filter((item) => item.status === 'stale').map((item, index) => (
+                    <Button key={item.id} type="button" variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs" onClick={() => removeReviewItem(item.id)}>
+                      移除 {index + 1}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {ready && descriptor.url && !loadError && browserMarkerItems.map((item, index) => {
+              const marker = getBrowserReviewMarkerPosition(item.attachment.anchor.rect, reviewScale, reviewSurfaceWidth, reviewSurfaceHeight)
+              const portalMarker = surface === 'right-panel' && Boolean(viewportRect)
+              const comment = browserReviewMarkerComment(item.attachment)
+              return (
+                <BrowserAnnotationPortal key={item.id} enabled={portalMarker}>
+                  <div
+                    className={cn('group/browser-marker absolute z-[75]', portalMarker && 'fixed')}
+                    style={{
+                      left: marker.left + (portalMarker ? viewportRect?.left ?? 0 : 0),
+                      top: marker.top + (portalMarker ? viewportRect?.top ?? 0 : 0),
+                    }}
+                  >
+                    <div role="tooltip" className="pointer-events-none invisible absolute top-1/2 right-full mr-2 max-w-72 min-w-20 -translate-y-1/2 rounded-xl border border-[var(--lume-border-subtle)] bg-popover px-3 py-2 text-xs leading-5 whitespace-pre-wrap text-popover-foreground opacity-0 shadow-xl transition-[opacity,visibility] group-hover/browser-marker:visible group-hover/browser-marker:opacity-100 group-focus-within/browser-marker:visible group-focus-within/browser-marker:opacity-100">
+                      {comment}
+                    </div>
+                    <Button
+                      type="button"
+                      size="icon"
+                      className="relative size-6 overflow-visible rounded-full border-2 border-background bg-primary p-0 text-[10px] font-semibold text-primary-foreground shadow-lg hover:bg-primary/90"
+                      title={item.attachment.origin === 'browser-design-change' ? `调整 ${index + 1}` : `批注 ${index + 1}`}
+                      aria-label={`${item.editable ? '编辑' : '查看'}${item.attachment.origin === 'browser-design-change' ? '调整' : '批注'} ${index + 1}`}
+                      onMouseEnter={() => highlightReviewItem(item.id)}
+                      onMouseLeave={() => highlightReviewItem(null)}
+                      onFocus={() => highlightReviewItem(item.id)}
+                      onBlur={() => highlightReviewItem(null)}
+                      onClick={() => {
+                        const reviewItem = item.editable ? reviewItems.find((candidate) => candidate.id === item.id) : undefined
+                        if (reviewItem) editReviewItem(reviewItem)
+                        else highlightReviewItem(item.id)
+                      }}
+                    >
+                      {index + 1}
+                      <span aria-hidden="true" className="absolute -bottom-0.5 left-1 size-2 rotate-45 rounded-[2px] bg-primary" />
+                    </Button>
+                  </div>
+                </BrowserAnnotationPortal>
+              )
+            })}
+            {reviewEditorPosition && pageSelection && auxiliaryPanel === 'annotation' && (
+              <BrowserAnnotationPortal enabled={Boolean(portalReviewEditorPosition)}>
+              <div
+                data-browser-comment-editor
+                  className={cn(
+                  'absolute z-[80] flex flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl',
+                  surface === 'right-panel' && 'flex-row items-center overflow-visible rounded-full border-[var(--border-strong)] bg-[var(--lume-bg-elevated)] px-3 py-1.5 text-foreground shadow-2xl',
+                )}
+                style={portalReviewEditorPosition
+                  ? { position: 'fixed', left: portalReviewEditorPosition.left, top: portalReviewEditorPosition.top, width: portalReviewEditorPosition.width }
+                  : { left: reviewEditorPosition.left, top: reviewEditorPosition.top, width: reviewEditorPosition.width }}
+              >
+                {surface === 'right-panel' && <SlidersHorizontal className="mr-2 size-3.5 shrink-0 text-muted-foreground" />}
+                <div className={cn('flex min-h-9 items-center gap-2 border-b border-border/60 px-3 text-xs text-muted-foreground', surface === 'right-panel' && 'hidden')}>
+                  <Highlighter className="size-3.5 shrink-0 text-primary" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {pageSelection.anchor.kind === 'text'
+                      ? pageSelection.anchor.textQuote?.exact || '所选文本'
+                      : pageSelection.anchor.kind === 'region'
+                        ? '所选区域'
+                        : pageSelection.anchor.domPath || '所选元素'}
+                  </span>
+                  <Button type="button" variant="ghost" size="icon-xs" aria-label="移除所选项" onClick={() => closeReviewEditor()}><X size={12} /></Button>
+                </div>
+                <Textarea
+                  autoFocus
+                  value={annotationBody}
+                  onChange={(event) => setAnnotationBody(event.target.value)}
+                  placeholder="添加评论…"
+                  className={cn(
+                    'min-h-16 resize-none rounded-none border-0 bg-transparent px-3 py-2 text-sm shadow-none focus-visible:ring-0',
+                    surface === 'right-panel' && 'h-8 min-h-8 flex-1 resize-none px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground',
+                  )}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      closeReviewEditor()
+                    } else if (event.key === 'Enter') {
+                      event.preventDefault()
+                      addAnnotationToChat(event.metaKey || event.ctrlKey ? 'send' : 'add')
+                    }
+                  }}
+                />
+                <div className={cn('flex h-11 items-center justify-between border-t border-border/60 px-2', surface === 'right-panel' && 'h-8 border-0 px-0')}>
+                  <div className={cn('flex items-center gap-1', surface === 'right-panel' && 'hidden')}>
+                    {pageSelection.anchor.kind === 'element' && Object.keys(pageSelection.originalStyles).length > 0 && (
+                      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setTweakDraft({}); setAuxiliaryPanel('tweaks') }}>
+                        <SlidersHorizontal size={13} />调整
+                      </Button>
+                    )}
+                    {editingReviewItemId && <Button type="button" variant="ghost" size="icon-xs" aria-label="删除批注" onClick={() => removeReviewItem(editingReviewItemId)}><Trash2 size={13} /></Button>}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {editingReviewItemId && surface !== 'right-panel' && <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => closeReviewEditor()}>取消</Button>}
+                    <div className="group/annotation-action relative flex items-center">
+                      {surface === 'right-panel' && annotationBody.trim() && (
+                        <div className="invisible absolute right-0 bottom-full z-50 min-w-36 pb-1.5 opacity-0 transition-[opacity,visibility] group-hover/annotation-action:visible group-hover/annotation-action:opacity-100 group-focus-within/annotation-action:visible group-focus-within/annotation-action:opacity-100">
+                          <div className="rounded-lg border border-border bg-popover p-1 text-[12px] text-popover-foreground shadow-xl">
+                            <Button type="button" variant="ghost" size="sm" className="h-7 w-full justify-between gap-4 px-2 text-xs" onClick={() => addAnnotationToChat('add')}>
+                              <span>添加</span><kbd className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">Enter</kbd>
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm" className="h-7 w-full justify-between gap-4 px-2 text-xs" onClick={() => addAnnotationToChat('send')}>
+                              <span>发送</span><kbd className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">Ctrl+Enter</kbd>
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      <Button type="button" size="icon" variant="ghost" className={cn('size-7 rounded-full bg-primary text-primary-foreground hover:bg-primary/90', surface === 'right-panel' && !annotationBody.trim() && 'bg-transparent text-muted-foreground hover:bg-foreground/10')} disabled={!annotationBody.trim() || annotationSubmitting} aria-label={editingReviewItemId ? '保存批注' : '添加批注'} onClick={() => addAnnotationToChat('add')}>
+                        {annotationBody.trim() ? <Check size={15} /> : <Mic size={14} />}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              </BrowserAnnotationPortal>
+            )}
+            {reviewEditorPosition && pageSelection && auxiliaryPanel === 'tweaks' && (
+              <div
+                data-browser-design-editor
+                className="absolute z-[80] flex flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl"
+                style={{ left: reviewEditorPosition.left, top: reviewEditorPosition.top, width: reviewEditorPosition.width, maxHeight: reviewEditorPosition.maxHeight }}
+              >
+                <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3">
+                  <SlidersHorizontal className="size-3.5 text-primary" />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">调整元素</span>
+                  <Button type="button" variant="ghost" size="icon-xs" aria-label="恢复原始样式" onClick={resetTweaks}><RotateCcw size={12} /></Button>
+                  <Button type="button" variant="ghost" size="icon-xs" aria-label="关闭调整" onClick={() => closeReviewEditor()}><X size={12} /></Button>
+                </div>
+                <Textarea
+                  value={annotationBody}
+                  onChange={(event) => setAnnotationBody(event.target.value)}
+                  placeholder="描述这些更改…"
+                  className="min-h-14 shrink-0 resize-none rounded-none border-x-0 border-t-0 bg-transparent px-3 py-2 text-sm shadow-none focus-visible:ring-0"
+                />
+                <div className="file-tree-scrollbar grid min-h-0 flex-1 grid-cols-2 gap-x-2 gap-y-2 overflow-y-auto p-3">
+                  {TWEAK_FIELDS.map((field) => (
+                    <label key={field.key} className="min-w-0 text-[11px] text-muted-foreground">
+                      {field.label}
+                      <Input
+                        type={field.type ?? 'text'}
+                        value={tweakDraft[field.key] ?? ''}
+                        placeholder={pageSelection.originalStyles[field.key] ?? ''}
+                        className="mt-1 h-7 px-2 text-xs"
+                        onChange={(event) => setTweakDraft((current) => {
+                          const value = event.target.value
+                          if (!value) {
+                            const next = { ...current }
+                            delete next[field.key]
+                            return next
+                          }
+                          return { ...current, [field.key]: value }
+                        })}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div className="flex h-11 shrink-0 items-center justify-between border-t border-border/60 px-2">
+                  <div className="flex items-center gap-1">
+                    {editingReviewItemId && <Button type="button" variant="ghost" size="icon-xs" aria-label="删除调整" onClick={() => removeReviewItem(editingReviewItemId)}><Trash2 size={13} /></Button>}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Button type="button" variant="outline" size="sm" className="h-7" onClick={applyTweaks} disabled={!Object.keys(tweakDraft).length}>预览</Button>
+                    <Button type="button" size="sm" className="h-7 bg-primary text-primary-foreground hover:bg-primary/90" onClick={addTweaksToChat} disabled={!Object.keys(tweakDraft).length}>添加</Button>
+                  </div>
+                </div>
+              </div>
             )}
             {!ready && <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">内置浏览器准备中…</div>}
             {ready && !descriptor.url && !loadError && (
@@ -1311,25 +1759,70 @@ export function BrowserShell({
               </div>
             )}
           </div>
-          {viewportEnabled && devicePreset === 'responsive' && <ViewportResizeHandles active={resizingViewport} onResizeStart={beginViewportResize} />}
+          {viewportEnabled && devicePreset === 'responsive' && <ViewportResizeHandles onResizeStart={beginViewportResize} />}
         </div>
-        {viewportEnabled && (
-          <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-2 py-0.5 text-[10px] tabular-nums text-muted-foreground shadow-sm backdrop-blur">
-            {viewportWidth} × {viewportHeight} · {Math.round(deviceFrame.scale * 100)}%
-          </div>
-        )}
       </div>
     </div>
   )
 }
 
-function ToolbarButton({ children, title, active, expanded, disabled, onClick }: {
+function getBrowserReviewOverlayPosition(
+  rect: AgentBrowserAnchor['rect'],
+  scale: number,
+  surfaceWidth: number,
+  surfaceHeight: number,
+  preferredWidth: number,
+  preferredHeight: number,
+) {
+  const margin = 8
+  const gap = 8
+  const width = Math.max(180, Math.min(preferredWidth, Math.max(180, surfaceWidth - margin * 2)))
+  const maxHeight = Math.max(120, surfaceHeight - margin * 2)
+  const estimatedHeight = Math.min(preferredHeight, maxHeight)
+  const anchorLeft = rect.x * scale
+  const anchorTop = rect.y * scale
+  const anchorBottom = (rect.y + rect.height) * scale
+  const left = Math.max(margin, Math.min(surfaceWidth - width - margin, anchorLeft))
+  const preferredTop = anchorBottom + gap
+  const top = preferredTop + estimatedHeight <= surfaceHeight - margin
+    ? preferredTop
+    : Math.max(margin, anchorTop - estimatedHeight - gap)
+  return { left, top, width, maxHeight }
+}
+
+function getBrowserReviewMarkerPosition(
+  rect: AgentBrowserAnchor['rect'],
+  scale: number,
+  surfaceWidth: number,
+  surfaceHeight: number,
+) {
+  const size = 20
+  return {
+    left: Math.max(0, Math.min(surfaceWidth - size, (rect.x + rect.width) * scale - size / 2)),
+    top: Math.max(0, Math.min(surfaceHeight - size, rect.y * scale - size / 2)),
+  }
+}
+
+function browserReviewMarkerComment(attachment: AgentBrowserAnnotationAttachment | AgentBrowserDesignChangeAttachment): string {
+  if (attachment.origin === 'browser-annotation') return attachment.body
+  return attachment.body?.trim() || '样式调整'
+}
+
+function ToolbarButton({ children, title, active, expanded, disabled, className, onClick, onPointerDown, onPointerUp, onPointerCancel, onPointerLeave, onBlur, onKeyDown, onKeyUp }: {
   children: ReactNode
   title: string
   active?: boolean
   expanded?: boolean
   disabled?: boolean
-  onClick: () => void
+  className?: string
+  onClick?: () => void
+  onPointerDown?: () => void
+  onPointerUp?: () => void
+  onPointerCancel?: () => void
+  onPointerLeave?: () => void
+  onBlur?: () => void
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLButtonElement>) => void
+  onKeyUp?: (event: ReactKeyboardEvent<HTMLButtonElement>) => void
 }) {
   return (
     <Button
@@ -1340,31 +1833,39 @@ function ToolbarButton({ children, title, active, expanded, disabled, onClick }:
       aria-label={title}
       disabled={disabled}
       onClick={onClick}
-      className={cn('h-7 shrink-0 gap-1 px-1.5', expanded ? 'w-auto' : 'w-7')}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onPointerLeave={onPointerLeave}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
+      onKeyUp={onKeyUp}
+      className={cn('h-7 shrink-0 gap-1 px-1.5', expanded ? 'w-auto max-w-40' : 'w-7 max-w-7', className)}
     >
       {children}
     </Button>
   )
 }
 
-function ViewportResizeHandles({ active, onResizeStart }: {
-  active: boolean
+function BrowserAnnotationPortal({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+  if (!enabled || typeof document === 'undefined') return <>{children}</>
+  return createPortal(children, document.body)
+}
+
+function ViewportResizeHandles({ onResizeStart }: {
   onResizeStart: (axis: ViewportResizeAxis, event: ReactPointerEvent<HTMLElement>) => void
 }) {
-  const handleClass = cn(
-    'absolute z-20 flex touch-none items-center justify-center rounded-none bg-muted-foreground/45 p-0 text-background outline-none hover:bg-muted-foreground/60 focus-visible:ring-1 focus-visible:ring-ring',
-    active && 'bg-primary/60 hover:bg-primary/70',
-  )
+  const handleClass = 'absolute z-20 flex touch-none items-center justify-center rounded-none bg-[#414141] p-0 text-[#afafaf] outline-none hover:bg-[#4f4f4f] focus-visible:ring-1 focus-visible:ring-ring'
   return (
     <>
       <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-label="从左侧调整设备视口" className={cn(handleClass, '-left-5 top-0 bottom-0 w-5 cursor-ew-resize')} onPointerDown={(event) => onResizeStart('west', event)}>
-        <span className="flex h-9 w-5 items-center justify-center gap-0.5"><span className="h-8 w-0.5 rounded-full bg-background/75" /><span className="h-8 w-0.5 rounded-full bg-background/75" /></span>
+        <span className="flex h-9 w-5 items-center justify-center gap-0.5"><span className="h-8 w-0.5 rounded-full bg-[#afafaf]" /><span className="h-8 w-0.5 rounded-full bg-[#afafaf]" /></span>
       </Button>
       <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-label="从右侧调整设备视口" className={cn(handleClass, '-right-5 top-0 bottom-0 w-5 cursor-ew-resize')} onPointerDown={(event) => onResizeStart('east', event)}>
-        <span className="flex h-9 w-5 items-center justify-center gap-0.5"><span className="h-8 w-0.5 rounded-full bg-background/75" /><span className="h-8 w-0.5 rounded-full bg-background/75" /></span>
+        <span className="flex h-9 w-5 items-center justify-center gap-0.5"><span className="h-8 w-0.5 rounded-full bg-[#afafaf]" /><span className="h-8 w-0.5 rounded-full bg-[#afafaf]" /></span>
       </Button>
       <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-label="从底部调整设备视口" className={cn(handleClass, 'top-full -right-5 -left-5 h-5 w-auto cursor-ns-resize')} onPointerDown={(event) => onResizeStart('south', event)}>
-        <span className="flex h-5 w-9 flex-col items-center justify-center gap-0.5"><span className="h-0.5 w-8 rounded-full bg-background/75" /><span className="h-0.5 w-8 rounded-full bg-background/75" /></span>
+        <span className="flex h-5 w-9 flex-col items-center justify-center gap-0.5"><span className="h-0.5 w-8 rounded-full bg-[#afafaf]" /><span className="h-0.5 w-8 rounded-full bg-[#afafaf]" /></span>
       </Button>
       <Button type="button" variant="ghost" size="icon" tabIndex={-1} aria-label="从左下角调整设备视口" className={cn(handleClass, 'top-full -left-5 size-5 cursor-nesw-resize')} onPointerDown={(event) => onResizeStart('south-west', event)}>
         <ResizeCornerIcon flip />
@@ -1401,9 +1902,9 @@ function NumberField({ label, value, min, max, step = 1, onCommit }: {
       setDraft(String(value))
       return
     }
-    const next = Math.max(min, Math.min(max, parsed))
+    const next = Math.round(Math.max(min, Math.min(max, parsed)))
     setDraft(String(next))
-    onCommit(next)
+    if (next !== value) onCommit(next)
   }
   return (
     <label>
@@ -1416,9 +1917,14 @@ function NumberField({ label, value, min, max, step = 1, onCommit }: {
         max={max}
         step={step}
         className="h-6 w-[72px] rounded-lg border-transparent bg-foreground/5 px-2 text-center text-sm font-semibold tabular-nums hover:bg-accent focus-visible:bg-background"
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => {
+          setDraft(event.target.value)
+          const parsed = event.currentTarget.valueAsNumber
+          if (!Number.isNaN(parsed) && parsed >= min && parsed <= max && Math.round(parsed) !== value) onCommit(Math.round(parsed))
+        }}
+        onFocus={() => setDraft(String(value))}
         onBlur={commit}
-        onKeyDown={(event) => { if (event.key === 'Enter') commit() }}
+        onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }}
       />
     </label>
   )
@@ -1447,27 +1953,34 @@ function safeOrigin(value: string): string {
   try { return new URL(value).origin } catch { return '' }
 }
 
+function pageDialogTitle(type: BrowserPageDialog['type'] | undefined): string {
+  if (type === 'prompt') return '此网页要求输入内容'
+  if (type === 'beforeunload') return '要离开此网页吗？'
+  if (type === 'confirm') return '此网页要求确认'
+  return '此网页显示'
+}
+
 function safeHost(value: string): string {
   try { return new URL(value).host } catch { return '' }
 }
 
-function downloadStateLabel(state: BrowserDownloadItem['state']): string {
-  if (state === 'completed') return '已完成'
-  if (state === 'cancelled') return '已取消'
-  return '已中断'
+function browserToolbarTitle(value: string): string {
+  return safeHost(value) || value || '新标签页'
 }
 
-function formatDownloadBytes(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0 B'
-  if (value < 1024) return `${Math.round(value)} B`
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`
-  return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`
-}
-
-function getDeviceFrameSize(width: number, height: number, canvasWidth: number, canvasHeight: number, displayScale: ViewportDisplayScale) {
-  if (displayScale !== 'fit') return { width: Math.round(width * displayScale), height: Math.round(height * displayScale), scale: displayScale }
+function getDeviceFrameSize(
+  width: number,
+  height: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  displayScale: BrowserViewportState['displayScale'],
+) {
   if (!canvasWidth || !canvasHeight) return { width, height, scale: 1 }
-  const scale = Math.min(1, Math.max(0.2, (canvasWidth - 40) / width), Math.max(0.2, (canvasHeight - 40) / height))
+  const fitWidth = Math.max(0, canvasWidth - 40)
+  const fitHeight = Math.max(0, canvasHeight - 20)
+  const scale = displayScale === 'fit' || displayScale === undefined
+    ? Math.min(1, fitWidth / width, fitHeight / height)
+    : Math.max(0.5, Math.min(2, displayScale))
   return {
     width: Math.max(1, Math.round(width * scale)),
     height: Math.max(1, Math.round(height * scale)),
@@ -1476,11 +1989,11 @@ function getDeviceFrameSize(width: number, height: number, canvasWidth: number, 
 }
 
 function clampViewportWidth(value: number): number {
-  return Math.max(240, Math.min(4096, value))
+  return Math.max(240, Math.min(4096, Math.round(value)))
 }
 
 function clampViewportHeight(value: number): number {
-  return Math.max(160, Math.min(4096, value))
+  return Math.max(160, Math.min(4096, Math.round(value)))
 }
 
 function resolveDevicePreset(viewport: BrowserViewportState): DevicePresetId {
@@ -1491,12 +2004,17 @@ function resolveDevicePreset(viewport: BrowserViewportState): DevicePresetId {
       ? 'samsung-galaxy-s24-ultra'
       : rawPreset
   if (persistedPreset && DEVICE_PRESETS.some((preset) => preset.id === persistedPreset)) return persistedPreset as DevicePresetId
-  const exact = DEVICE_PRESETS.find((preset) => preset.width === viewport.width && preset.height === viewport.height && preset.deviceScaleFactor === viewport.deviceScaleFactor)
+  const exact = DEVICE_PRESETS.find((preset) => (
+    (preset.width === viewport.width && preset.height === viewport.height)
+    || (preset.width === viewport.height && preset.height === viewport.width)
+  ) && preset.deviceScaleFactor === viewport.deviceScaleFactor)
   return exact?.id ?? 'responsive'
 }
 
+const RESPONSIVE_DEVICE_PRESET = { id: 'responsive', label: '响应式', width: 390, height: 844, deviceScaleFactor: 1 } as const
+
 const DEVICE_PRESETS = [
-  { id: 'responsive', label: '响应式', width: 390, height: 844, deviceScaleFactor: 1 },
+  RESPONSIVE_DEVICE_PRESET,
   { id: '4k', label: '4K', width: 2560, height: 1440, deviceScaleFactor: 1 },
   { id: 'laptop-l', label: 'Laptop L', width: 1440, height: 900, deviceScaleFactor: 1 },
   { id: 'laptop', label: 'Laptop', width: 1024, height: 768, deviceScaleFactor: 1 },
@@ -1510,6 +2028,8 @@ const DEVICE_PRESETS = [
   { id: 'samsung-galaxy-s24-ultra', label: 'Samsung Galaxy S24 Ultra', width: 384, height: 824, deviceScaleFactor: 3 },
   { id: 'iphone-se', label: 'iPhone SE', width: 375, height: 667, deviceScaleFactor: 2 },
 ] as const
+
+const DEVICE_DISPLAY_SCALES = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
 const TWEAK_FIELDS: Array<{ key: string; label: string; type?: 'text' | 'color' }> = [
   { key: 'textContent', label: '文本' },
@@ -1529,6 +2049,8 @@ const TWEAK_FIELDS: Array<{ key: string; label: string; type?: 'text' | 'color' 
   { key: 'justifyContent', label: '主轴分布' },
   { key: 'alignItems', label: '交叉轴对齐' },
   { key: 'gap', label: 'Gap' },
+  { key: 'rowGap', label: '垂直间距' },
+  { key: 'columnGap', label: '水平间距' },
   { key: 'padding', label: 'Padding' },
   { key: 'margin', label: 'Margin' },
 ]

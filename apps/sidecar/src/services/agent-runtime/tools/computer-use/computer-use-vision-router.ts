@@ -1,6 +1,7 @@
-import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { type LLMProvider } from "@lume/agent-sdk";
 import { readFile } from "node:fs/promises";
-import { decryptApiKey, resolveChannelModelBinding } from "../../../channel/channel-manager";
+import { resolveChannelModelBinding } from "../../../channel/channel-manager";
+import { createLazyConnectionLlmProvider } from "../../../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../../../system/lume-config-service";
 import { createLogger } from "../../../infra/logger";
 
@@ -97,9 +98,9 @@ export function createComputerUseVisionRouter(input: {
     seen.add(modelRef);
     const binding = resolveChannelModelBinding(modelRef, "chat");
     if (!binding) return [];
-    const provider = createProvider(resolveApiType(binding.channel.provider), {
-      apiKey: decryptApiKey(binding.channel.id),
-      baseURL: binding.channel.baseUrl,
+    const provider = createLazyConnectionLlmProvider({
+      connectionId: binding.channel.id,
+      modelId: binding.modelId,
     });
     const key = `${binding.channel.id}:${binding.modelId}:${binding.channel.updatedAt}`;
     return [{
@@ -187,13 +188,6 @@ function parseObservation(text: string): ComputerUseVisionObservation | undefine
 
 function responseText(response: Awaited<ReturnType<LLMProvider["createMessage"]>>): string {
   return response.content.map((block) => block.type === "text" ? block.text : "").join("\n");
-}
-
-function resolveApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -95,6 +95,7 @@ export type {
   PromptCachePolicy,
   CreateMessageParams,
   CreateMessageResponse,
+  CreateMessageStreamEvent,
   NormalizedMessageParam,
   NormalizedContentBlock,
   NormalizedTool,

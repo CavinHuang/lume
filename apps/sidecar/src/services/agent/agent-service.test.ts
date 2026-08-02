@@ -284,6 +284,22 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
       }, 5);
       return { status: "completed" as const };
     }
+    if (userMessage === "failed-run") {
+      emit.onSdkMessage({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "temporary failed output" }],
+        },
+      } as SDKMessage);
+      emit.onSdkMessage({
+        type: "result",
+        subtype: "error",
+        error: "network failed",
+      } as SDKMessage);
+      emit.onError("network failed");
+      return { status: "errored" as const, errorMessage: "network failed" };
+    }
     if (userMessage === "subagent-announce-during-run") {
       const { announceSubagentCompletion } = await import("./subagents/subagent-announce-service");
       await announceSubagentCompletion({
@@ -325,24 +341,29 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
   isAgentRuntimeSessionActive: () => false
 }));
 
-// 标题 LLM 调用经由 providers.fetchTitle；用 spy 观测是否被触发
-const fetchTitleSpy = mock(async () => null);
+const createConnectionLlmProviderSpy = mock(async () => ({
+  apiType: "openai-completions" as const,
+  createMessage: async () => ({
+    content: [{ type: "text" as const, text: "模型供应商配置" }],
+    stopReason: "end_turn" as const,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  }),
+}));
 
-mock.module("../../providers", () => ({
-  fetchTitle: fetchTitleSpy,
-  getAdapter: () => ({
-    buildTitleRequest: () => ({})
-  })
+mock.module("../model-runtime/connection-provider", () => ({
+  createConnectionLlmProvider: createConnectionLlmProviderSpy,
 }));
 
 describe("agent-service", () => {
   let previousConfigDir: string | undefined;
   let tempConfigDir = "";
 
-  beforeEach(() => {
+  beforeEach(async () => {
     previousConfigDir = process.env.LUME_CONFIG_DIR;
     tempConfigDir = mkdtempSync(join(tmpdir(), "lume-agent-service-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
+    const { installConnectionVaultKey } = await import("../channel/connection-credential-store");
+    installConnectionVaultKey(Buffer.alloc(32, 7).toString("base64"));
   });
 
   afterEach(async () => {
@@ -356,7 +377,7 @@ describe("agent-service", () => {
     resetServiceRuntimeForTest();
     heldRunResolvers.clear();
     runAgentRuntimeCalls.length = 0;
-    fetchTitleSpy.mockClear();
+    createConnectionLlmProviderSpy.mockClear();
     if (previousConfigDir === undefined) {
       delete process.env.LUME_CONFIG_DIR;
     } else {
@@ -626,7 +647,7 @@ describe("agent-service", () => {
     const { sendAgentMessage } = await import("./agent-service");
     const { drainServiceRuntimeForTest } = await import("../agent-runtime/service-runtime/service-runtime");
 
-    // 真实渠道：让 generateAgentTitle 能解析到渠道并走到 providers.fetchTitle
+    // 真实渠道：让 generateAgentTitle 能解析到渠道并走统一 Connection provider。
     const channel = createChannel({
       name: "title-test",
       provider: "openai",
@@ -635,7 +656,7 @@ describe("agent-service", () => {
       enabled: true,
       models: [{ id: "model-test", name: "Model Test", enabled: true, capabilities: { chat: true } }]
     });
-    fetchTitleSpy.mockClear();
+    createConnectionLlmProviderSpy.mockClear();
     // 默认标题，确保走 shouldTryAutoTitle 分支
     const thread = createAgentThread("新 Agent 线程", channel.id);
 
@@ -656,8 +677,8 @@ describe("agent-service", () => {
     });
     await drainServiceRuntimeForTest();
 
-    // 默认配置未设置 models.title.defaultModelRef，仍应回退到会话渠道调用 LLM（fetchTitle）
-    expect(fetchTitleSpy).toHaveBeenCalled();
+    // 默认配置未设置 models.title.defaultModelRef，仍应回退到会话渠道调用统一 provider。
+    expect(createConnectionLlmProviderSpy).toHaveBeenCalled();
   });
 
   test("sendAgentMessage 应把本轮附件引用持久化到用户消息 metadata", async () => {
@@ -858,6 +879,31 @@ describe("agent-service", () => {
       .toContain("用户发送的继续指令：继续");
     expect((runAgentRuntimeCalls.at(-1) as { runtime?: { visibleUserMessage?: string } })?.runtime?.visibleUserMessage)
       .toBe("继续");
+  });
+
+  test("失败运行不应把临时 assistant 结果写回会话上下文", async () => {
+    const { createAgentThread, getAgentThreadMessages, getAgentThreadSDKMessages } = await import("./agent-thread-manager");
+    const { sendAgentMessage } = await import("./agent-service");
+    const thread = createAgentThread("failed transcript", "channel-test");
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "failed-run",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+    }, {
+      onMessageAppended: () => undefined,
+      onRuntimeEvent: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined,
+    });
+
+    expect(getAgentThreadMessages(thread.id).map((message) => message.role)).toEqual(["user"]);
+    expect(getAgentThreadSDKMessages(thread.id).map((message) => message.type)).toEqual(["user"]);
   });
 
   test("手写 /compact 未携带结构化动作标记时按普通文本发送", async () => {

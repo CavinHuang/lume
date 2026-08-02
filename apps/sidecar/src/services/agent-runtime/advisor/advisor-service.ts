@@ -3,9 +3,9 @@ import {
   FileReadTool,
   GlobTool,
   GrepTool,
-  type ApiType,
 } from "@lume/agent-sdk";
-import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
+import { resolveChannelModelBinding } from "../../channel/channel-manager";
+import { createLazyConnectionLlmProvider } from "../../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 
 export interface AdvisorRunInput {
@@ -34,10 +34,10 @@ export async function runAdvisor(input: AdvisorRunInput): Promise<AdvisorReview 
   if (!binding) return undefined;
 
   const startedAt = performance.now();
+  const provider = createLazyConnectionLlmProvider({ connectionId: binding.channel.id, modelId: binding.modelId });
   const agent = createAgent({
-    apiType: resolveApiType(binding.family, binding.channel.openaiApiMode),
-    apiKey: decryptApiKey(binding.channel.id),
-    ...(binding.channel.baseUrl ? { baseURL: binding.channel.baseUrl } : {}),
+    apiType: provider.apiType,
+    provider,
     model: binding.modelId,
     cwd: input.cwd,
     systemPrompt: [
@@ -113,11 +113,4 @@ function parseReview(text: string, modelRef: string): Omit<AdvisorReview, "durat
 
 function clip(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`;
-}
-
-function resolveApiType(family: string, openaiApiMode?: string): ApiType {
-  if (family === "anthropic") return "anthropic-messages";
-  if (family === "deepseek") return "deepseek-chat-completions";
-  if (openaiApiMode === "responses") return "openai-responses";
-  return "openai-completions";
 }

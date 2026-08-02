@@ -136,6 +136,15 @@ describe('LeftSidebar tray conversations', () => {
     ])
   })
 
+  test('bounds passive tray metadata before sending it to the main process', () => {
+    expect(deriveRecentTrayThreads?.([
+      { id: 'valid', title: 'x'.repeat(400), createdAt: 1, updatedAt: Number.NaN },
+      { id: 'y'.repeat(129), title: 'invalid id', createdAt: 1, updatedAt: 2 },
+    ])).toEqual([
+      { id: 'valid', title: 'x'.repeat(256), updatedAt: 0 },
+    ])
+  })
+
   test('authoritatively confirms a tray thread and immediately syncs the selected snapshot', async () => {
     const threads = [
       { id: 'target', title: '目标', createdAt: 1, updatedAt: 3 },

@@ -56,6 +56,28 @@ function usageEvent(outputTokens: number, scope: 'main' | 'subagent' | 'backgrou
 }
 
 describe('runtime-event-message-projection', () => {
+  test('retracts a failed partial model attempt and keeps retry state temporary', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: 'hello' }),
+      event({ type: 'assistant.delta', delta: 'failed partial' }),
+      event({
+        type: 'model.retry',
+        phase: 'waiting',
+        attempt: 1,
+        maxRetries: 5,
+        retryDelayMs: 1_000,
+        errorStatus: 503,
+      }),
+      event({ type: 'model.retry_cleared' }),
+      event({ type: 'assistant.delta', delta: 'successful response' }),
+    ])
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant).toMatchObject({
+      type: 'assistant',
+      text: 'successful response',
+    })
+    if (assistant?.type === 'assistant') expect(assistant.retry).toBeUndefined()
+  })
   test('projects RuntimeEvents into user, assistant, thinking, and tool blocks', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'run.started' }),

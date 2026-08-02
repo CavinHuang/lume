@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'healthcheck',
@@ -69,6 +69,11 @@ const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'browser_import:discover',
   'browser_import:start',
   'browser_import:cancel',
+  'connection_vault_status',
+  'connection_vault_setup',
+  'connection_vault_unlock',
+  'connection_vault_verify',
+  'connection_vault_reveal_key',
 ])
 
 const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -93,6 +98,40 @@ function validateRendererEventChannel(channel) {
     throw new Error(`unsupported desktop event channel: ${String(channel)}`)
   }
   return channel
+}
+
+type RendererEventListener = (payload: unknown) => void
+type RendererEventSubscription = {
+  handler: (event: IpcRendererEvent, payload: unknown) => void
+  listeners: Set<RendererEventListener>
+}
+
+const rendererEventSubscriptions = new Map<string, RendererEventSubscription>()
+
+function subscribeRendererEvent(eventName: string, listener: RendererEventListener) {
+  let subscription = rendererEventSubscriptions.get(eventName)
+  if (!subscription) {
+    const listeners = new Set<RendererEventListener>()
+    const handler = (_event: IpcRendererEvent, payload: unknown) => {
+      for (const current of [...listeners]) current(payload)
+    }
+    subscription = { handler, listeners }
+    rendererEventSubscriptions.set(eventName, subscription)
+    ipcRenderer.on(eventName, handler)
+  }
+
+  subscription.listeners.add(listener)
+  let active = true
+  return () => {
+    if (!active) return
+    active = false
+    subscription.listeners.delete(listener)
+    if (subscription.listeners.size > 0) return
+    ipcRenderer.removeListener(eventName, subscription.handler)
+    if (rendererEventSubscriptions.get(eventName) === subscription) {
+      rendererEventSubscriptions.delete(eventName)
+    }
+  }
 }
 
 function filePathToFileUrl(path) {
@@ -177,11 +216,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listen(channel, listener) {
     const safeChannel = validateRendererEventChannel(channel)
     const eventName = `lume:event:${safeChannel}`
-    const handler = (_event, payload) => listener(payload)
-    ipcRenderer.on(eventName, handler)
-    return () => {
-      ipcRenderer.removeListener(eventName, handler)
-    }
+    return subscribeRendererEvent(eventName, listener)
   },
   convertFileSrc(path) {
     return filePathToFileUrl(path)

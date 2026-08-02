@@ -49,26 +49,28 @@ export function createPromptEditorExtensions(options: PromptEditorExtensionOptio
     suggestion: options.capabilitySuggestion,
   }))
 
-  extensions.push(Mention.extend({
-    name: 'planningTodoMention',
-    addAttributes() {
-      return {
-        ...this.parent?.(),
-        schemaVersion: { default: 1 },
-        uri: { default: null },
-        todoId: { default: null },
-        relation: { default: 'mentioned' },
-        displayText: { default: '' },
-      }
-    },
-    addNodeView() {
-      return ReactNodeViewRenderer(PlanningTodoMentionNodeView)
-    },
-  }).configure({
-    HTMLAttributes: { class: 'planning-todo-mention' },
-    renderText: ({ node }) => `&${node.attrs.displayText ?? ''}`,
-    suggestion: options.planningTodoSuggestion,
-  }))
+  if (options.planningTodoSuggestion) {
+    extensions.push(Mention.extend({
+      name: 'planningTodoMention',
+      addAttributes() {
+        return {
+          ...this.parent?.(),
+          schemaVersion: { default: 1 },
+          uri: { default: null },
+          todoId: { default: null },
+          relation: { default: 'mentioned' },
+          displayText: { default: '' },
+        }
+      },
+      addNodeView() {
+        return ReactNodeViewRenderer(PlanningTodoMentionNodeView)
+      },
+    }).configure({
+      HTMLAttributes: { class: 'planning-todo-mention' },
+      renderText: ({ node }) => `&${node.attrs.displayText ?? ''}`,
+      suggestion: options.planningTodoSuggestion,
+    }))
+  }
 
   return extensions
 }

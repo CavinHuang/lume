@@ -1,6 +1,6 @@
-import { createProvider, type ApiType } from "@lume/agent-sdk";
 import type { FileSelectionEditInput, FileSelectionEditResult } from "@lume/shared";
-import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
+import { listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
+import { createConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { resolveAgentDefaultStrategy, resolveChannelDefaultModelId } from "../channel/model-selection";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getAgentThreadMeta } from "./agent-thread-manager";
@@ -28,13 +28,7 @@ export async function requestFileSelectionEdit(
     ?? thread.modelId
     ?? (channel ? resolveChannelDefaultModelId(channel) : null);
   if (!channel || !modelId) throw new Error("当前任务的模型渠道不可用");
-  const provider = createProvider(resolveApiType(
-    channel.provider,
-    channel.openaiApiMode,
-  ), {
-    apiKey: decryptApiKey(channel.id),
-    baseURL: channel.baseUrl,
-  });
+  const provider = await createConnectionLlmProvider({ channel, modelId, sessionId: input.threadId });
   const selectedText = input.content.slice(input.startOffset, input.endOffset);
   const response = await provider.createMessage({
     model: modelId,
@@ -81,17 +75,6 @@ export function buildSelectionEditPrompt(
     input.instruction,
     "</user_instruction>",
   ].join("\n");
-}
-
-function resolveApiType(
-  provider: string,
-  openaiApiMode?: "chat-completions" | "responses",
-): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  if (normalized === "openai" && openaiApiMode === "responses") return "openai-responses";
-  return "openai-completions";
 }
 
 const FILE_SELECTION_EDIT_SYSTEM_PROMPT = `Rewrite only the selected text according to the user's instruction.

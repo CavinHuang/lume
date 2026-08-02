@@ -1,10 +1,19 @@
 
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getChannelsPath } from "../infra/config-paths";
 import { fetchWithProxy } from "../infra/proxy-fetch";
-import { decryptSecret, encryptSecret } from "../infra/secret-crypto";
-import { getSuggestedProviderModels, normalizeChannelModel, PROVIDER_API_FAMILIES } from "@lume/shared";
+import { decryptSecret } from "../infra/secret-crypto";
+import {
+  deleteConnectionCredentials,
+  deleteConnectionOAuthCredential,
+  getConnectionApiKey,
+  hasConnectionApiKey,
+  hasConnectionOAuthCredential,
+  isConnectionVaultUnlocked,
+  setConnectionApiKey,
+} from "./connection-credential-store";
+import { getSuggestedProviderModels, normalizeChannelModel, parseConnectionModelRef, PROVIDER_API_FAMILIES } from "@lume/shared";
 import { parseModelRef } from "./model-selection";
 import { createLogger } from "../infra/logger";
 import type {
@@ -16,11 +25,21 @@ import type {
   ChannelUpdateInput,
   FetchModelsInput,
   FetchModelsResult,
-  ProviderApiFamily
+  ProviderApiFamily,
+  ConnectionProtocol,
+  SyncChannelModelsResult
 } from "@lume/shared";
 
-const CONFIG_VERSION = 3;
+const CONFIG_VERSION = 4;
+const CONNECTION_REQUEST_TIMEOUT_MS = 20_000;
 const log = createLogger("channel-manager");
+
+function fetchConnection(input: string, init: RequestInit = {}): Promise<Response> {
+  return fetchWithProxy(input, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(CONNECTION_REQUEST_TIMEOUT_MS),
+  });
+}
 
 function readConfig(): ChannelsConfig {
   const configPath = getChannelsPath();
@@ -41,13 +60,13 @@ function readConfig(): ChannelsConfig {
 
 function writeConfig(config: ChannelsConfig): void {
   const configPath = getChannelsPath();
-  writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  const temporary = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temporary, JSON.stringify(config, null, 2), { encoding: "utf-8", flag: "wx" });
+  renameSync(temporary, configPath);
 }
 
 function normalizeProviderForStorage(provider: string): Channel["provider"] {
   if (provider === "zhipu") return "zai";
-  if (provider === "qwen") return "qwen-portal";
-  if (provider === "moonshot") return "kimi-coding";
   return provider as Channel["provider"];
 }
 
@@ -59,6 +78,7 @@ function normalizeChannelsConfig(config: ChannelsConfig): { config: ChannelsConf
     const normalizedModels = channel.models.map((model) => {
       const normalizedModel = normalizeChannelModel({
         ...model,
+        source: model.source ?? "manual",
         provider: normalizedProvider
       });
       if (
@@ -83,11 +103,33 @@ function normalizeChannelsConfig(config: ChannelsConfig): { config: ChannelsConf
     ) {
       changed = true;
     }
+    let legacyApiKey = channel.apiKey;
+    if (legacyApiKey && isConnectionVaultUnlocked() && !hasConnectionApiKey(channel.id)) {
+      try {
+        const plain = decryptSecret(legacyApiKey);
+        setConnectionApiKey(channel.id, plain);
+        legacyApiKey = "";
+        changed = true;
+      } catch (error) {
+        log.warn("failed to migrate legacy connection credential", {
+          channelId: channel.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     return {
       ...channel,
       provider: normalizedProvider,
+      protocol: channel.protocol ?? resolveConnectionProtocol(
+        normalizedProvider,
+        normalizedBaseUrl,
+        channel.apiFamily,
+        channel.openaiApiMode
+      ),
+      authType: channel.authType ?? (legacyApiKey || hasConnectionApiKey(channel.id) ? "api-key" : "none"),
       baseUrl: normalizedBaseUrl,
       models: normalizedModels,
+      apiKey: legacyApiKey,
       defaultModelId: normalizedDefaultModelId,
       fallbackModelIds: normalizedFallbackModelIds
     };
@@ -108,11 +150,20 @@ function normalizeChannelsConfig(config: ChannelsConfig): { config: ChannelsConf
 }
 
 export function listChannels(): Channel[] {
-  return readConfig().channels;
+  return readConfig().channels.map(toChannelView);
 }
 
 export function getChannelById(id: string): Channel | undefined {
   return readConfig().channels.find((c) => c.id === id);
+}
+
+export function isChannelConnectionUsable(channel: Channel): boolean {
+  if (!channel.enabled) return false;
+  if (channel.authType === "oauth") return hasConnectionOAuthCredential(channel.id);
+  if (channel.authType === "api-key") {
+    return hasConnectionApiKey(channel.id) || Boolean(channel.apiKey);
+  }
+  return channel.provider === "ollama" || channel.provider === "lmstudio";
 }
 
 export function createChannel(input: ChannelCreateInput): Channel {
@@ -123,13 +174,27 @@ export function createChannel(input: ChannelCreateInput): Channel {
   const normalizedFallbackModelIds = (input.fallbackModelIds ?? [])
     .map((id) => id.trim())
     .filter((id) => id.length > 0);
+  const id = randomUUID();
+  if (input.apiKey.trim()) setConnectionApiKey(id, input.apiKey);
   const channel: Channel = {
-    id: randomUUID(),
+    id,
     name: input.name,
     provider: normalizedProvider,
+    protocol: input.protocol ?? resolveConnectionProtocol(
+      normalizedProvider,
+      input.baseUrl,
+      input.apiFamily,
+      input.openaiApiMode,
+    ),
+    authType: input.apiKey.trim() ? "api-key" : (input.authType ?? "none"),
+    ...(input.accountLabel?.trim() ? { accountLabel: input.accountLabel.trim() } : {}),
     baseUrl: input.baseUrl.trim().replace(/\/+$/, ""),
-    apiKey: encryptSecret(input.apiKey),
-    models: input.models.map((model) => normalizeChannelModel({ ...model, provider: normalizedProvider })),
+    apiKey: "",
+    models: input.models.map((model) => normalizeChannelModel({
+      ...model,
+      source: model.source ?? "manual",
+      provider: normalizedProvider
+    })),
     defaultModelId: normalizedDefaultModelId,
     fallbackModelIds: normalizedFallbackModelIds,
     enabled: input.enabled,
@@ -141,7 +206,7 @@ export function createChannel(input: ChannelCreateInput): Channel {
   };
   config.channels.push(channel);
   writeConfig(config);
-  return channel;
+  return toChannelView(channel);
 }
 
 export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
@@ -149,16 +214,55 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
   const idx = config.channels.findIndex((c) => c.id === id);
   if (idx === -1) throw new Error(`渠道不存在: ${id}`);
   const existing = config.channels[idx] as Channel;
+  const provider = input.provider ? normalizeProviderForStorage(input.provider) : existing.provider;
+  const oauthProviderChanged = provider !== existing.provider && existing.authType === "oauth";
+  const connectionChanged = input.provider !== undefined
+    || input.baseUrl !== undefined
+    || input.apiKey !== undefined
+    || input.authType !== undefined
+    || input.apiFamily !== undefined
+    || input.openaiApiMode !== undefined
+    || input.providerId !== undefined;
+  if (input.apiKey?.trim()) {
+    setConnectionApiKey(id, input.apiKey);
+    deleteConnectionOAuthCredential(id);
+  } else if (input.authType === "none" || oauthProviderChanged) {
+    deleteConnectionCredentials(id);
+  }
+  const protocol = input.protocol ?? (
+    input.provider !== undefined
+      || input.baseUrl !== undefined
+      || input.apiFamily !== undefined
+      || input.openaiApiMode !== undefined
+      ? resolveConnectionProtocol(
+        provider,
+        input.baseUrl ?? existing.baseUrl,
+        input.apiFamily ?? existing.apiFamily,
+        input.openaiApiMode ?? existing.openaiApiMode,
+      )
+      : existing.protocol
+  );
   const updated: Channel = {
     ...existing,
     ...input,
-    ...(input.provider ? { provider: normalizeProviderForStorage(input.provider) } : {}),
+    provider,
+    protocol,
+    ...(input.accountLabel !== undefined ? { accountLabel: input.accountLabel.trim() || undefined } : {}),
+    ...(input.apiKey?.trim() ? { authType: "api-key" as const, accountLabel: undefined } : {}),
+    ...(input.authType === "none" ? { accountLabel: undefined } : {}),
+    ...(oauthProviderChanged && !input.apiKey?.trim()
+      ? { authType: "none" as const, accountLabel: undefined }
+      : {}),
+    ...(connectionChanged
+      ? { healthStatus: "unknown" as const, healthMessage: undefined, lastTestedAt: undefined }
+      : {}),
     baseUrl: input.baseUrl ? input.baseUrl.trim().replace(/\/+$/, "") : existing.baseUrl,
-    apiKey: input.apiKey ? encryptSecret(input.apiKey) : existing.apiKey,
+    apiKey: input.apiKey?.trim() ? "" : existing.apiKey,
     ...(input.models
       ? {
           models: input.models.map((model) => normalizeChannelModel({
             ...model,
+            source: model.source ?? "manual",
             provider: input.provider ? normalizeProviderForStorage(input.provider) : existing.provider
           }))
         }
@@ -178,7 +282,7 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
   };
   config.channels[idx] = updated;
   writeConfig(config);
-  return updated;
+  return toChannelView(updated);
 }
 
 export function deleteChannel(id: string): void {
@@ -187,12 +291,23 @@ export function deleteChannel(id: string): void {
   if (idx === -1) throw new Error(`渠道不存在: ${id}`);
   config.channels.splice(idx, 1);
   writeConfig(config);
+  deleteConnectionCredentials(id);
 }
 
 export function decryptApiKey(channelId: string): string {
   const channel = getChannelById(channelId);
   if (!channel) throw new Error(`渠道不存在: ${channelId}`);
-  return decryptSecret(channel.apiKey);
+  if (hasConnectionApiKey(channelId)) return getConnectionApiKey(channelId);
+  return channel.apiKey ? decryptSecret(channel.apiKey) : "";
+}
+
+function toChannelView(channel: Channel): Channel {
+  return {
+    ...channel,
+    apiKey: "",
+    hasApiKey: hasConnectionApiKey(channel.id) || Boolean(channel.apiKey),
+    hasOAuthCredential: hasConnectionOAuthCredential(channel.id),
+  };
 }
 
 export function resolveChannelEmbeddingBinding(modelRef: string): {
@@ -201,51 +316,70 @@ export function resolveChannelEmbeddingBinding(modelRef: string): {
   apiKey: string;
   family: ProviderApiFamily;
 } | null {
-  const parsed = parseModelRef(modelRef, "");
-  if (!parsed) {
-    return null;
-  }
-
-  const channel = listChannels().find((item) => {
-    const effectiveProvider = item.providerId ?? item.provider;
-    if (!item.enabled || effectiveProvider !== parsed.provider) {
-      return false;
-    }
-    return item.models.some((model) =>
-      model.id === parsed.model &&
-      model.enabled &&
-      model.capabilities?.embedding === true
-    );
-  });
-
-  if (!channel) {
-    return null;
-  }
+  const binding = resolveChannelModelBinding(modelRef, "embedding");
+  if (!binding) return null;
 
   return {
-    channel,
-    modelId: parsed.model,
-    apiKey: decryptSecret(channel.apiKey),
-    family: resolveProviderApiFamily(channel.provider, channel.baseUrl)
+    channel: binding.channel,
+    modelId: binding.modelId,
+    apiKey: decryptApiKey(binding.channel.id),
+    family: binding.family,
   };
 }
 
 export function resolveChannelModelBinding(
   modelRef: string,
-  capability?: "chat" | "embedding"
+  capability?: "chat" | "embedding",
+  preferredConnectionId?: string,
 ): {
   channel: Channel;
   modelId: string;
   family: ProviderApiFamily;
 } | null {
+  const scoped = parseConnectionModelRef(modelRef);
+  if (scoped) {
+    const channel = listChannels().find((item) => (
+      item.id === scoped.connectionId && isChannelConnectionUsable(item)
+    ));
+    const model = channel?.models.find((item) => item.id === scoped.modelId && item.enabled);
+    if (!channel || !model || (capability && model.capabilities?.[capability] !== true)) return null;
+    return {
+      channel,
+      modelId: scoped.modelId,
+      family: resolveProviderApiFamily(channel.provider, channel.baseUrl, channel.apiFamily),
+    };
+  }
+  const normalizedRef = modelRef.trim();
+  if (preferredConnectionId && normalizedRef) {
+    const channel = listChannels().find((item) => (
+      item.id === preferredConnectionId && isChannelConnectionUsable(item)
+    ));
+    const effectiveProvider = channel?.providerId ?? channel?.provider;
+    const model = channel?.models.find((item) => (
+      item.enabled
+      && (!capability || item.capabilities?.[capability] === true)
+      && (
+        item.id === normalizedRef
+        || `${effectiveProvider}/${item.id}` === normalizedRef
+        || `${channel.id}/${item.id}` === normalizedRef
+      )
+    ));
+    if (channel && model) {
+      return {
+        channel,
+        modelId: model.id,
+        family: resolveProviderApiFamily(channel.provider, channel.baseUrl, channel.apiFamily),
+      };
+    }
+  }
   const parsed = parseModelRef(modelRef, "");
   if (!parsed) {
     return null;
   }
 
-  const channel = listChannels().find((item) => {
+  const matchingChannels = listChannels().filter((item) => {
     const effectiveProvider = item.providerId ?? item.provider;
-    if (!item.enabled || effectiveProvider !== parsed.provider) {
+    if (!isChannelConnectionUsable(item) || effectiveProvider !== parsed.provider) {
       return false;
     }
     return item.models.some((model) => {
@@ -259,14 +393,15 @@ export function resolveChannelModelBinding(
     });
   });
 
-  if (!channel) {
+  if (matchingChannels.length !== 1) {
     return null;
   }
+  const channel = matchingChannels[0]!;
 
   return {
     channel,
     modelId: parsed.model,
-    family: resolveProviderApiFamily(channel.provider, channel.baseUrl)
+    family: resolveProviderApiFamily(channel.provider, channel.baseUrl, channel.apiFamily)
   };
 }
 
@@ -302,21 +437,27 @@ function resolveProviderApiFamily(
   return byProvider;
 }
 
+function resolveConnectionProtocol(
+  provider: Channel["provider"],
+  baseUrl: string,
+  apiFamily?: ProviderApiFamily,
+  openaiApiMode?: Channel["openaiApiMode"]
+): ConnectionProtocol {
+  const family = resolveProviderApiFamily(provider, baseUrl, apiFamily);
+  if (family === "anthropic") return "anthropic-messages";
+  if (family === "google") return "google-generative-ai";
+  return openaiApiMode === "responses" ? "openai-responses" : "openai-completions";
+}
+
 async function testAnthropic(baseUrl: string, apiKey: string): Promise<ChannelTestResult> {
   const url = normalizeAnthropicBaseUrl(baseUrl);
-  const response = await fetchWithProxy(`${url}/messages`, {
-    method: "POST",
+  const response = await fetchConnection(`${url}/models?limit=1`, {
+    method: "GET",
     headers: {
       "x-api-key": apiKey,
       Authorization: `Bearer ${apiKey}`,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-5-20250929",
-      max_tokens: 1,
-      messages: [{ role: "user", content: "hi" }]
-    })
+      "anthropic-version": "2023-06-01"
+    }
   });
   if (response.ok) return { success: true, message: "连接成功" };
   if (response.status === 401) return { success: false, message: "API Key 无效" };
@@ -325,7 +466,7 @@ async function testAnthropic(baseUrl: string, apiKey: string): Promise<ChannelTe
 
 async function testOpenAICompatible(baseUrl: string, apiKey: string): Promise<ChannelTestResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetchWithProxy(`${url}/models`, {
+  const response = await fetchConnection(`${url}/models`, {
     method: "GET",
     headers: authorizationHeaders(apiKey)
   });
@@ -347,7 +488,7 @@ async function testJina(baseUrl: string, apiKey: string): Promise<ChannelTestRes
   let lastDetail = "";
 
   for (const model of candidateModels) {
-    const response = await fetchWithProxy(`${url}/embeddings`, {
+    const response = await fetchConnection(`${url}/embeddings`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -384,7 +525,10 @@ async function testJina(baseUrl: string, apiKey: string): Promise<ChannelTestRes
 
 async function testGoogle(baseUrl: string, apiKey: string): Promise<ChannelTestResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetchWithProxy(`${url}/v1beta/models?key=${apiKey}`, { method: "GET" });
+  const response = await fetchConnection(`${url}/v1beta/models`, {
+    method: "GET",
+    headers: { "x-goog-api-key": apiKey },
+  });
   if (response.ok) return { success: true, message: "连接成功" };
   if (response.status === 400 || response.status === 403) return { success: false, message: "API Key 无效" };
   return { success: false, message: `请求失败 (${response.status})` };
@@ -393,20 +537,51 @@ async function testGoogle(baseUrl: string, apiKey: string): Promise<ChannelTestR
 export async function testChannel(channelId: string): Promise<ChannelTestResult> {
   const channel = getChannelById(channelId);
   if (!channel) return { success: false, message: "渠道不存在" };
-  const apiKey = decryptSecret(channel.apiKey);
-  if (channel.provider === "jina") return testJina(channel.baseUrl, apiKey);
-  const family = resolveProviderApiFamily(channel.provider, channel.baseUrl, channel.apiFamily);
-  if (family === "anthropic") return testAnthropic(channel.baseUrl, apiKey);
-  if (family === "google") return testGoogle(channel.baseUrl, apiKey);
-  return testOpenAICompatible(channel.baseUrl, apiKey);
+  const testedAt = Date.now();
+  let result: ChannelTestResult;
+  try {
+    if (channel.authType === "oauth") {
+      const { resolveConnectionOAuthAuth, getConnectionOAuthModels } = await import("./connection-oauth-service");
+      const auth = await resolveConnectionOAuthAuth(channel.id);
+      const models = await getConnectionOAuthModels(channel.id);
+      result = auth && models.length > 0
+        ? { success: true, message: `账号连接成功，可用模型 ${models.length} 个` }
+        : { success: false, message: "订阅账号凭据不可用，请重新登录" };
+    } else {
+    const apiKey = decryptApiKey(channel.id);
+    if (channel.provider === "jina") result = await testJina(channel.baseUrl, apiKey);
+    else {
+      const family = resolveProviderApiFamily(channel.provider, channel.baseUrl, channel.apiFamily);
+      if (family === "anthropic") result = await testAnthropic(channel.baseUrl, apiKey);
+      else if (family === "google") result = await testGoogle(channel.baseUrl, apiKey);
+      else result = await testOpenAICompatible(channel.baseUrl, apiKey);
+    }
+    }
+  } catch (error) {
+    result = {
+      success: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+  updateChannel(channel.id, {
+    healthStatus: result.success ? "available" : "unavailable",
+    healthMessage: result.message,
+    lastTestedAt: testedAt,
+  });
+  return { ...result, testedAt };
 }
 
 export async function testChannelDirect(input: FetchModelsInput): Promise<ChannelTestResult> {
-  if (input.provider === "jina") return testJina(input.baseUrl, input.apiKey);
+  const testedAt = Date.now();
+  let result: ChannelTestResult;
+  if (input.provider === "jina") result = await testJina(input.baseUrl, input.apiKey);
+  else {
   const family = resolveProviderApiFamily(input.provider, input.baseUrl, input.apiFamily);
-  if (family === "anthropic") return testAnthropic(input.baseUrl, input.apiKey);
-  if (family === "google") return testGoogle(input.baseUrl, input.apiKey);
-  return testOpenAICompatible(input.baseUrl, input.apiKey);
+    if (family === "anthropic") result = await testAnthropic(input.baseUrl, input.apiKey);
+    else if (family === "google") result = await testGoogle(input.baseUrl, input.apiKey);
+    else result = await testOpenAICompatible(input.baseUrl, input.apiKey);
+  }
+  return { ...result, testedAt };
 }
 
 interface OpenAIModelItem {
@@ -430,7 +605,7 @@ async function fetchOpenAICompatibleModels(
   apiKey: string
 ): Promise<FetchModelsResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetchWithProxy(`${url}/models`, { headers: authorizationHeaders(apiKey) });
+  const response = await fetchConnection(`${url}/models`, { headers: authorizationHeaders(apiKey) });
   if (!response.ok) {
     const suggested = getSuggestedProviderModels(provider);
     if (provider === "jina" && suggested.length > 0) {
@@ -464,7 +639,7 @@ async function fetchOpenAICompatibleModels(
 
 async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult> {
   const url = normalizeAnthropicBaseUrl(baseUrl);
-  const response = await fetchWithProxy(`${url}/models`, {
+  const response = await fetchConnection(`${url}/models`, {
     headers: {
       "x-api-key": apiKey,
       Authorization: `Bearer ${apiKey}`,
@@ -486,7 +661,9 @@ async function fetchAnthropicModels(baseUrl: string, apiKey: string): Promise<Fe
 
 async function fetchGoogleModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult> {
   const url = normalizeBaseUrl(baseUrl);
-  const response = await fetchWithProxy(`${url}/v1beta/models?key=${apiKey}`);
+  const response = await fetchConnection(`${url}/v1beta/models`, {
+    headers: { "x-goog-api-key": apiKey },
+  });
   if (!response.ok) return { success: false, message: `请求失败 (${response.status})`, models: [] };
   const data = (await response.json()) as { models?: GoogleModelItem[] };
   const models: ChannelModel[] = (data.models ?? [])
@@ -508,4 +685,108 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
   if (family === "anthropic") return fetchAnthropicModels(input.baseUrl, input.apiKey);
   if (family === "google") return fetchGoogleModels(input.baseUrl, input.apiKey);
   return fetchOpenAICompatibleModels(input.provider, input.baseUrl, input.apiKey);
+}
+
+export function mergeSyncedModels(
+  existing: ChannelModel[],
+  discovered: ChannelModel[],
+  provider: Channel["provider"]
+): { models: ChannelModel[]; added: number; removed: number; preservedManual: number } {
+  const discoveredById = new Map(discovered.map((model) => [model.id, model]));
+  const previousDiscovered = existing.filter((model) => model.source === "discovered");
+  const manual = existing.filter((model) => model.source !== "discovered");
+  const manualIds = new Set(manual.map((model) => model.id));
+  const previousById = new Map(previousDiscovered.map((model) => [model.id, model]));
+  const synced = discovered
+    .filter((model) => !manualIds.has(model.id))
+    .map((model) => {
+      const previous = previousById.get(model.id);
+      return normalizeChannelModel({
+        ...model,
+        source: "discovered",
+        enabled: previous?.enabled ?? true,
+        provider,
+      });
+    });
+
+  return {
+    models: [...manual, ...synced],
+    added: synced.filter((model) => !previousById.has(model.id)).length,
+    removed: previousDiscovered.filter((model) => !discoveredById.has(model.id)).length,
+    preservedManual: manual.length,
+  };
+}
+
+export async function syncChannelModels(channelId: string): Promise<SyncChannelModelsResult> {
+  const channel = getChannelById(channelId);
+  if (!channel) throw new Error(`渠道不存在: ${channelId}`);
+  let result: FetchModelsResult;
+  try {
+    result = channel.authType === "oauth"
+      ? await fetchOAuthModels(channel)
+      : await fetchModels({
+        provider: channel.provider,
+        baseUrl: channel.baseUrl,
+        apiKey: decryptApiKey(channel.id),
+        apiFamily: channel.apiFamily,
+        openaiApiMode: channel.openaiApiMode,
+      });
+  } catch (error) {
+    result = { success: false, message: error instanceof Error ? error.message : String(error), models: [] };
+  }
+  const now = Date.now();
+  if (!result.success) {
+    const updated = updateChannel(channel.id, {
+      syncStatus: "error",
+      syncMessage: result.message,
+    });
+    return {
+      ...result,
+      channel: updated,
+      added: 0,
+      removed: 0,
+      preservedManual: channel.models.filter((model) => model.source !== "discovered").length,
+    };
+  }
+
+  const merged = mergeSyncedModels(channel.models, result.models, channel.provider);
+  const updated = updateChannel(channel.id, {
+    models: merged.models,
+    syncStatus: "success",
+    syncMessage: result.message,
+    lastSyncedAt: now,
+    healthStatus: "available",
+    healthMessage: result.message,
+  });
+  return { ...result, ...merged, channel: updated };
+}
+
+async function fetchOAuthModels(channel: Channel): Promise<FetchModelsResult> {
+  const { getConnectionOAuthModels } = await import("./connection-oauth-service");
+  const catalog = await getConnectionOAuthModels(channel.id);
+  const models = catalog.map((model) => normalizeChannelModel({
+    id: model.id,
+    name: model.name || model.id,
+    enabled: true,
+    source: "discovered",
+    provider: channel.provider,
+    protocol: toConnectionProtocol(model.api),
+    contextWindow: model.contextWindow,
+    maxOutputTokens: model.maxTokens,
+    capabilities: {
+      chat: true,
+      vision: model.input.includes("image"),
+      reasoning: Boolean(model.reasoning),
+      tool: true,
+    },
+  }));
+  return { success: true, message: `成功获取 ${models.length} 个模型`, models };
+}
+
+function toConnectionProtocol(api: string): ConnectionProtocol {
+  if (api === "anthropic-messages"
+    || api === "openai-responses"
+    || api === "openai-codex-responses"
+    || api === "google-generative-ai") return api;
+  return "openai-completions";
 }

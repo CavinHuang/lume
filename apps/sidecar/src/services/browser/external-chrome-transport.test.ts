@@ -88,6 +88,7 @@ test("external Chrome mapping preserves locator input and existing-tab operation
   const base = { requestId: "req-map", context: { actor: "agent" as const, browserSessionId: "s", browserTurnId: "t" } };
   assert.equal(mapExternalChromeRequest({ ...base, method: "openTabs" }).method, "browser_user_open_tabs");
   assert.equal(mapExternalChromeRequest({ ...base, method: "claim", params: { tabId: "chrome-tab:7" } }).method, "browser_user_claim_tab");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "mark", params: { tabId: "chrome-tab:7", status: "handoff" } }).method, "mark_tab");
   assert.equal(mapExternalChromeRequest({ ...base, method: "referenceGrant:create", params: { tabId: "chrome-tab:7" } }).method, "browser_user_create_reference_grant");
   assert.equal(mapExternalChromeRequest({ ...base, method: "referenceGrant:revoke", params: { referenceGrantId: "grant-1" } }).method, "browser_user_revoke_reference_grant");
   assert.deepEqual(mapExternalChromeRequest({ ...base, method: "fill", params: { tabId: "tab-1", locator: { version: 1, steps: [] }, value: "hello" } }).params.text, "hello");
@@ -95,6 +96,25 @@ test("external Chrome mapping preserves locator input and existing-tab operation
   assert.deepEqual(mapExternalChromeRequest({ ...base, method: "ensure", params: { url: "https://example.test" } }).params.options, { url: "https://example.test", active: true });
   assert.equal(mapExternalChromeRequest({ ...base, method: "elementInfo", params: { tabId: "tab-1", x: 10, y: 20 } }).method, "playwright_element_info");
   assert.equal(mapExternalChromeRequest({ ...base, method: "evaluate:readonly", params: { tabId: "tab-1", script: "(arg) => arg.title" } }).method, "playwright_evaluate");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "clipboard:readText", params: { tabId: "tab-1" } }).method, "tab_clipboard_read_text");
+  assert.equal(mapExternalChromeRequest({ ...base, method: "content:export", params: { tabId: "tab-1" } }).method, "tab_content_export");
+  assert.deepEqual(
+    mapExternalChromeRequest({ ...base, method: "dialog:handle", params: { tabId: "tab-1", dialogId: "dialog-1", accept: true, promptText: "Lume" } }),
+    {
+      method: "tab_handle_js_dialog",
+      params: {
+        context: base.context,
+        tabId: "tab-1",
+        dialogId: "dialog-1",
+        accept: true,
+        promptText: "Lume",
+        tab_id: "tab-1",
+        action: "accept",
+        dialog_id: "dialog-1",
+        prompt_text: "Lume",
+      },
+    },
+  );
   assert.equal(mapExternalChromeRequest({ ...base, method: "wait:filechooser", params: { tabId: "tab-1" } }).method, "playwright_wait_for_file_chooser");
   assert.equal(mapExternalChromeRequest({ ...base, method: "filechooser:setFiles", params: { tabId: "tab-1", fileChooserId: "chooser-1", __authorizedFiles: ["C:\\task\\file.txt"] } }).method, "playwright_file_chooser_set_files");
   assert.equal(mapExternalChromeRequest({ ...base, method: "pageAssets:list", params: { tabId: "tab-1" } }).method, "tab_page_assets_list");

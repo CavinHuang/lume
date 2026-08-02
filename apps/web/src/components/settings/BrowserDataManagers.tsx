@@ -1,10 +1,10 @@
 import { forwardRef, useImperativeHandle, useState } from 'react'
+import { Database, Download, History, Image as ImageIcon, KeyRound, SlidersHorizontal, type LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { browserRuntime } from '@/lib/desktop-api'
 import type { BrowserExtensionDescriptor } from '@lume/shared'
@@ -15,6 +15,20 @@ type Download = { id: string; filename: string; actor: 'user' | 'agent'; state: 
 type HistoryEntry = { id: string; url: string; title: string; visitedAt: string }
 export type BrowserDataManagerKind = 'passwords' | 'contacts' | 'downloads' | 'history' | 'extensions' | 'clear'
 export interface BrowserDataManagersHandle { open: (kind: BrowserDataManagerKind) => void }
+
+const CLEAR_DATA_CATEGORIES: Array<{
+  key: 'siteData' | 'cache' | 'history' | 'downloads' | 'permissions' | 'passwords'
+  label: string
+  description: string
+  Icon: LucideIcon
+}> = [
+  { key: 'history', label: '浏览历史', description: '访问过的网站和页面', Icon: History },
+  { key: 'siteData', label: 'Cookie 和站点数据', description: '网站保存的登录和偏好数据', Icon: Database },
+  { key: 'cache', label: '缓存的图片和文件', description: '下次访问时可能需要重新下载', Icon: ImageIcon },
+  { key: 'downloads', label: '下载历史', description: '不会删除已经下载的文件', Icon: Download },
+  { key: 'permissions', label: '站点设置', description: '网站权限和偏好设置', Icon: SlidersHorizontal },
+  { key: 'passwords', label: '保存的密码', description: '删除前还会再次确认', Icon: KeyRound },
+]
 
 export const BrowserDataManagers = forwardRef<BrowserDataManagersHandle, { onImport: () => void; showLauncher?: boolean }>(function BrowserDataManagers({ onImport, showLauncher = true }, ref) {
   const [dialog, setDialog] = useState<BrowserDataManagerKind | null>(null)
@@ -27,6 +41,9 @@ export const BrowserDataManagers = forwardRef<BrowserDataManagersHandle, { onImp
   const [contact, setContact] = useState({ label: '', name: '', email: '', phone: '', address: '' })
   const [clearCategories, setClearCategories] = useState({ siteData: true, cache: true, history: true, downloads: true, permissions: false, passwords: false })
   const [timeRange, setTimeRange] = useState<'hour' | 'day' | 'all'>('all')
+  const selectedClearCategories = CLEAR_DATA_CATEGORIES
+    .filter(({ key }) => clearCategories[key] && (timeRange === 'all' || key === 'downloads'))
+    .map(({ key }) => key)
 
   const open = (kind: BrowserDataManagerKind) => {
     setDialog(kind)
@@ -40,8 +57,7 @@ export const BrowserDataManagers = forwardRef<BrowserDataManagersHandle, { onImp
   useImperativeHandle(ref, () => ({ open }))
   const saveContact = () => void browserRuntime<Contact>({ method: 'contacts:upsert', params: contact }).then((saved) => { setContacts((items) => [...items.filter((item) => item.id !== saved.id), saved]); setContact({ label: '', name: '', email: '', phone: '', address: '' }); toast.success('联系信息已加密保存') }).catch(() => toast.error('联系信息保存失败'))
   const clear = () => {
-    const categories = Object.entries(clearCategories).filter(([, checked]) => checked).map(([key]) => key)
-    void browserRuntime({ method: 'clear-data', params: { categories, timeRange } }).then(() => { toast.success('所选 Lume 浏览数据已清除'); setDialog(null) }).catch(() => toast.error(timeRange === 'all' ? '清理失败' : 'Cookie、站点数据和缓存目前只支持“全部时间”；下载记录支持时间范围'))
+    void browserRuntime({ method: 'clear-data', params: { categories: selectedClearCategories, timeRange } }).then(() => { toast.success('所选 Lume 浏览数据已清除'); setDialog(null) }).catch(() => toast.error('清理失败'))
   }
 
   return <>
@@ -57,6 +73,54 @@ export const BrowserDataManagers = forwardRef<BrowserDataManagersHandle, { onImp
 
     <Dialog open={dialog === 'extensions'} onOpenChange={(value) => !value && setDialog(null)}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>本地浏览器扩展</DialogTitle><DialogDescription>只支持你选择并确认的 unpacked 扩展，仅加载到用户 Profile，不会进入 Agent 隔离 Profile。</DialogDescription></DialogHeader><div className="max-h-80 space-y-2 overflow-auto">{extensions.length ? extensions.map((extension) => <div key={extension.id} className="rounded-lg border p-3"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><div className="truncate text-sm font-medium">{extension.name} <span className="font-normal text-muted-foreground">{extension.version}</span></div><div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{extension.permissions.length ? extension.permissions.join('、') : '未声明额外权限'}</div></div><div className="flex items-center gap-2"><Switch checked={extension.enabled} onCheckedChange={(enabled) => void browserRuntime<BrowserExtensionDescriptor>({ method: 'extensions:set-enabled', params: { id: extension.id, enabled } }).then((updated) => setExtensions((items) => [...items.filter((item) => item.id !== extension.id), updated])).catch(() => toast.error('扩展状态更新失败'))} /><Button variant="ghost" size="sm" onClick={() => void browserRuntime<{ removed: boolean }>({ method: 'extensions:remove', params: { id: extension.id } }).then(() => setExtensions((items) => items.filter((item) => item.id !== extension.id)))}>移除</Button></div></div></div>) : <div className="py-8 text-center text-sm text-muted-foreground">尚未安装本地扩展</div>}</div><DialogFooter><Button onClick={() => void browserRuntime<BrowserExtensionDescriptor | { canceled: true }>({ method: 'extensions:install' }).then((result) => { if ('canceled' in result) return; setExtensions((items) => [...items.filter((item) => item.id !== result.id), result]) }).catch(() => toast.error('本地扩展安装失败'))}>选择 unpacked 扩展…</Button></DialogFooter></DialogContent></Dialog>
 
-    <Dialog open={dialog === 'clear'} onOpenChange={(value) => !value && setDialog(null)}><DialogContent><DialogHeader><DialogTitle>清除浏览数据</DialogTitle><DialogDescription>只影响 Lume。保存密码默认不选中，删除时还会出现系统级二次确认。</DialogDescription></DialogHeader><Select value={timeRange} onValueChange={(value) => setTimeRange(value as typeof timeRange)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="hour">过去一小时（仅下载记录）</SelectItem><SelectItem value="day">过去一天（仅下载记录）</SelectItem><SelectItem value="all">全部时间</SelectItem></SelectContent></Select>{Object.entries({ siteData: 'Cookie 和站点数据', cache: '缓存', history: '浏览历史', downloads: '下载记录', permissions: '站点权限', passwords: '保存的密码' }).map(([key, label]) => <label key={key} className="flex items-center gap-3 rounded-lg border p-3 text-sm"><Checkbox checked={clearCategories[key as keyof typeof clearCategories]} disabled={timeRange !== 'all' && key !== 'downloads'} onCheckedChange={(checked) => setClearCategories((current) => ({ ...current, [key]: checked === true }))} />{label}</label>)}<DialogFooter><Button variant="outline" onClick={() => setDialog(null)}>取消</Button><Button variant="destructive" onClick={clear}>清除</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={dialog === 'clear'} onOpenChange={(value) => !value && setDialog(null)}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>清除浏览数据</DialogTitle>
+          <DialogDescription>选择要从 Lume 浏览器中删除的数据。</DialogDescription>
+        </DialogHeader>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {([
+            ['hour', '过去一小时'],
+            ['day', '过去 24 小时'],
+            ['all', '全部时间'],
+          ] as const).map(([value, label]) => (
+            <Button
+              key={value}
+              type="button"
+              variant={timeRange === value ? 'default' : 'outline'}
+              size="sm"
+              aria-pressed={timeRange === value}
+              onClick={() => setTimeRange(value)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
+        <div className="divide-y divide-border overflow-hidden rounded-xl border border-border">
+          {CLEAR_DATA_CATEGORIES.map(({ key, label, description, Icon }) => {
+            const disabled = timeRange !== 'all' && key !== 'downloads'
+            return (
+              <label key={key} className="flex min-h-14 items-center gap-3 px-3 py-2.5 text-sm">
+                <Checkbox
+                  checked={clearCategories[key]}
+                  disabled={disabled}
+                  onCheckedChange={(checked) => setClearCategories((current) => ({ ...current, [key]: checked === true }))}
+                />
+                <Icon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-foreground">{label}</span>
+                  <span className="block text-xs text-muted-foreground">{disabled ? '此时间范围暂不支持' : description}</span>
+                </span>
+              </label>
+            )
+          })}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setDialog(null)}>取消</Button>
+          <Button variant="destructive" disabled={!selectedClearCategories.length} onClick={clear}>删除数据</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </>
 })

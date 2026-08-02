@@ -16,7 +16,7 @@ const channels: Channel[] = [
       { id: 'gpt-5', name: 'GPT-5', enabled: true },
       { id: 'gpt-5-mini', name: 'GPT-5 mini', enabled: true },
       { id: 'openai/gpt-4.1-mini', name: 'GPT-4.1 mini', enabled: true },
-      { id: 'text-embedding-3-small', name: 'Embeddings', enabled: false },
+      { id: 'text-embedding-3-small', name: 'Embeddings', enabled: true, capabilities: { chat: false, embedding: true } },
     ],
     defaultModelId: 'gpt-5',
     enabled: true,
@@ -54,7 +54,7 @@ describe('buildModelSelectionGroups', () => {
         {
           channelId: 'channel-openai',
           modelId: 'gpt-5',
-          modelRef: 'openai/gpt-5',
+          modelRef: 'connection:channel-openai/gpt-5',
           label: 'GPT-5',
           active: true,
           meta: expect.objectContaining({
@@ -66,7 +66,7 @@ describe('buildModelSelectionGroups', () => {
         {
           channelId: 'channel-openai',
           modelId: 'gpt-5-mini',
-          modelRef: 'openai/gpt-5-mini',
+          modelRef: 'connection:channel-openai/gpt-5-mini',
           label: 'GPT-5 mini',
           active: false,
           meta: expect.objectContaining({
@@ -78,7 +78,7 @@ describe('buildModelSelectionGroups', () => {
         {
           channelId: 'channel-openai',
           modelId: 'openai/gpt-4.1-mini',
-          modelRef: 'openai/gpt-4.1-mini',
+          modelRef: 'connection:channel-openai/openai/gpt-4.1-mini',
           label: 'GPT-4.1 mini',
           active: false,
           meta: expect.objectContaining({
@@ -92,7 +92,7 @@ describe('buildModelSelectionGroups', () => {
     })
   })
 
-  test('preserves provider-prefixed and router-style canonical model refs', () => {
+  test('keeps provider-prefixed IDs opaque inside connection-scoped refs', () => {
     const result = buildModelSelectionGroups({
       channels,
       activeChannelId: 'channel-openrouter',
@@ -102,7 +102,7 @@ describe('buildModelSelectionGroups', () => {
     expect(result[0]?.options[2]).toEqual({
       channelId: 'channel-openai',
       modelId: 'openai/gpt-4.1-mini',
-      modelRef: 'openai/gpt-4.1-mini',
+      modelRef: 'connection:channel-openai/openai/gpt-4.1-mini',
       label: 'GPT-4.1 mini',
       active: false,
       meta: expect.objectContaining({
@@ -115,7 +115,7 @@ describe('buildModelSelectionGroups', () => {
     expect(result[1]?.options[0]).toEqual({
       channelId: 'channel-openrouter',
       modelId: 'anthropic/claude-sonnet-4-5',
-      modelRef: 'anthropic/claude-sonnet-4-5',
+      modelRef: 'connection:channel-openrouter/anthropic/claude-sonnet-4-5',
       label: 'Claude Sonnet 4.5',
       active: true,
       meta: expect.objectContaining({
@@ -271,5 +271,32 @@ describe('buildModelSelectionGroups with metadata', () => {
 
     expect(result[0].provider).toBe('openai')
     expect(result[1].provider).toBe('openrouter')
+  })
+})
+
+describe('model selection connection readiness', () => {
+  test('hides models and marks the selection unavailable when OAuth credentials are missing', () => {
+    const missingCredential: Channel = {
+      ...channels[0],
+      apiKey: '',
+      authType: 'oauth',
+      hasApiKey: false,
+      hasOAuthCredential: false,
+    }
+
+    expect(buildModelSelectionGroups({ channels: [missingCredential] })).toEqual([])
+    expect(getThreadSelectionSummary({
+      channels: [missingCredential],
+      channelsLoaded: true,
+      thread: {
+        id: 'thread-missing-oauth',
+        title: 'Thread',
+        channelId: missingCredential.id,
+        modelRef: `connection:${missingCredential.id}/gpt-5`,
+        modelSelectionSource: 'thread-override',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    })).toMatchObject({ isUnavailable: true })
   })
 })

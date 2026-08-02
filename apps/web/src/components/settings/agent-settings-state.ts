@@ -98,17 +98,20 @@ const PROVIDER_TONE = 'bg-[color-mix(in_oklab,var(--brand)_9%,var(--surface-1))]
 const CUSTOM_PROVIDER_TONE = 'bg-[var(--surface-2)] text-[var(--text-2)]'
 
 export function buildModelProviderRows(channels: Channel[]): ModelProviderRow[] {
-  // 内置 Provider
-  const builtInRows = (Object.entries(PROVIDER_LABELS) as [ProviderType, string][])
+  const builtInProviders = (Object.entries(PROVIDER_LABELS) as [ProviderType, string][])
     .filter(([provider]) => provider !== 'custom')
-    .map(([provider, label], index) => ({
-      provider,
-      label,
-      channel: channels.find((channel) => channel.provider === provider) ?? null,
-      tone: provider === 'custom' ? CUSTOM_PROVIDER_TONE : PROVIDER_TONE,
-      channelId: undefined as string | undefined,
-      index,
-    }))
+  const builtInRows = builtInProviders.flatMap(([provider, label], providerIndex) => {
+    return channels
+      .filter((channel) => channel.provider === provider)
+      .map((channel, channelIndex) => ({
+        provider,
+        label: channel.name || label,
+        channel,
+        tone: PROVIDER_TONE,
+        channelId: channel.id as string | undefined,
+        index: providerIndex * 100 + channelIndex,
+      }))
+  })
 
   // 自定义 Channel（每个生成独立行）
   const customRows = channels
@@ -139,11 +142,11 @@ export function getModelProviderFormInitialValue(
   apiKey: string,
   channelId?: string,
 ): ChannelCreateInput {
-  // 自定义 Channel：通过 channelId 查找（activeProvider 可能是 UUID）
+  // 已配置 Connection：统一通过 channelId 查找，不再假设每个 Provider 只有一个实例。
   const resolvedChannelId = channelId ?? (provider !== 'custom' && provider.includes('-') ? provider : undefined)
   if (resolvedChannelId) {
     const existing = channels.find((c) => c.id === resolvedChannelId)
-    if (existing && existing.provider === 'custom') {
+    if (existing) {
       return {
         name: existing.name,
         provider: existing.provider,
@@ -152,6 +155,9 @@ export function getModelProviderFormInitialValue(
         apiFamily: existing.apiFamily,
         openaiApiMode: existing.openaiApiMode,
         providerId: existing.providerId,
+        protocol: existing.protocol,
+        authType: existing.authType,
+        accountLabel: existing.accountLabel,
         models: existing.models,
         defaultModelId: existing.defaultModelId,
         fallbackModelIds: existing.fallbackModelIds,

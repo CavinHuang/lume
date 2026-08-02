@@ -1,4 +1,4 @@
-import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import {
   MEMORY_CLAIM_IDENTITY,
@@ -11,6 +11,7 @@ import {
   type MemoryV2QueryPlan
 } from "./claim";
 import { resolveMemoryRerankModelRefs } from "./rerank";
+import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 
 export type MemoryV2PlanQuery = (query: string) => Promise<MemoryV2QueryPlan | undefined>;
 
@@ -53,16 +54,14 @@ function createQueryPlannerAttempt(
 ): { provider: LLMProvider; model: string } | undefined {
   const binding = resolveChannelModelBinding(modelRef, "chat");
   if (!binding && !createProviderInput) return undefined;
-  const providerFactory = createProviderInput ?? ((options) => createProvider(options.apiType, {
-    apiKey: options.apiKey,
-    baseURL: options.baseURL
-  }));
   return {
-    provider: providerFactory({
-      apiType: binding ? resolveQueryPlannerApiType(binding.channel.provider) : "openai-completions",
-      apiKey: binding ? decryptApiKey(binding.channel.id) : "",
-      baseURL: binding?.channel.baseUrl
-    }),
+    provider: createProviderInput
+      ? createProviderInput({
+        apiType: binding ? resolveQueryPlannerApiType(binding.channel.provider) : "openai-completions",
+        apiKey: binding ? decryptApiKey(binding.channel.id) : "",
+        baseURL: binding?.channel.baseUrl
+      })
+      : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId }),
     model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef
   };
 }

@@ -595,6 +595,7 @@ export interface SDKApiRetryMessage {
   retry_delay_ms: number
   error_status: number | null
   error: SDKAssistantMessageError
+  phase?: 'waiting' | 'retrying' | 'cleared'
   uuid?: string
   session_id: string
 }
@@ -1369,6 +1370,8 @@ export interface AgentOptions {
    * Falls back to CODEANY_API_TYPE env var. Default: 'anthropic-messages'.
    */
   apiType?: import('./providers/types.js').ApiType
+  /** Host-owned provider implementation. When set, protocol and credentials are not resolved by the SDK. */
+  provider?: import('./providers/types.js').LLMProvider
   /** API key. Falls back to CODEANY_API_KEY env var. */
   apiKey?: string
   /** API base URL override */

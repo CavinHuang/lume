@@ -78,6 +78,11 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'browser_import:discover',
   'browser_import:start',
   'browser_import:cancel',
+  'connection_vault_status',
+  'connection_vault_setup',
+  'connection_vault_unlock',
+  'connection_vault_verify',
+  'connection_vault_reveal_key',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([

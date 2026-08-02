@@ -4,7 +4,6 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   analyzeSkillImprovement,
   applySkillImprovement,
-  createProvider,
   listSkillVersions,
   restoreSkillVersion,
   type ApiType,
@@ -19,6 +18,7 @@ import type { AgentMessage, SkillStorageScope } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAliceUserSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { isMarketManagedWorkspaceSkill } from "./workspace-skill-editor-service";
 
 export interface WorkspaceSkillInput {
@@ -280,15 +280,13 @@ export function createWorkspaceSkillImprovementModelCall(
   const binding = (input.resolveBinding ?? defaultResolveBinding)(modelRef);
   if (!binding && !input.createProvider) return undefined;
 
-  const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
-    apiKey: options.apiKey,
-    baseURL: options.baseURL
-  }));
-  const provider = providerFactory({
-    apiType: binding ? resolveSkillApiType(binding) : "openai-completions",
-    apiKey: binding ? (input.decryptApiKey ?? decryptApiKey)(binding.channel.id) : "",
-    baseURL: binding?.channel.baseUrl
-  });
+  const provider = input.createProvider
+    ? input.createProvider({
+      apiType: binding ? resolveSkillApiType(binding) : "openai-completions",
+      apiKey: binding ? (input.decryptApiKey ?? decryptApiKey)(binding.channel.id) : "",
+      baseURL: binding?.channel.baseUrl
+    })
+    : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId });
   const model = binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef;
 
   return {

@@ -51,6 +51,7 @@ type BrowserRuntimeOptions = {
   journalEncryption?: { available: boolean; encrypt: (value: string) => Buffer; decrypt?: (value: Buffer) => string }
   credentialStorage: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
   authPreloadPath?: string
+  onInternalError?: (details: { method: string; actor: BrowserRequestContext["actor"]; tabId?: string; message: string }) => void
 }
 
 type BrowserTab = BrowserTabDescriptor & {
@@ -60,7 +61,7 @@ type BrowserTab = BrowserTabDescriptor & {
   inputSequence: number
   agentDispatching?: boolean
   dialogOpen?: boolean
-  dialogInfo?: { type: "alert" | "beforeunload" | "confirm" | "prompt"; message?: string; defaultValue?: string }
+  dialogInfo?: { id: string; type: "alert" | "beforeunload" | "confirm" | "prompt"; message?: string; defaultValue?: string }
   recentAgentContext?: { browserSessionId: string; browserTurnId: string; expiresAt: number }
   agentLease?: { browserSessionId: string; browserTurnId: string; generation: number }
   agentViewportOverride?: { browserSessionId: string; browserTurnId: string; previous: BrowserViewportState }
@@ -298,6 +299,40 @@ export class BrowserRuntime {
     return { token: grant.token, partition: grant.partition }
   }
 
+  guestMountRejectionDetails(ownerWebContentsId: number, bootstrapUrl: string, requestedPartition: string): Record<string, unknown> {
+    const token = guestMountTokenFromUrl(bootstrapUrl)
+    const grant = token ? this.guestMounts.get(token) : undefined
+    const tab = grant ? this.tabs.get(grant.tabId) : undefined
+    return {
+      reason: !token
+        ? "invalid_bootstrap_url"
+        : !grant
+          ? "unknown_or_replayed_token"
+          : grant.state !== "issued"
+            ? "token_already_attaching"
+            : grant.expiresAt < Date.now()
+              ? "token_expired"
+              : !tab
+                ? "tab_not_found"
+                : tab.generation !== grant.generation
+                  ? "generation_changed"
+                  : grant.ownerWebContentsId !== ownerWebContentsId
+                    ? "owner_mismatch"
+                    : requestedPartition !== grant.partition
+                      ? "partition_mismatch"
+                      : "unknown",
+      hasToken: Boolean(token),
+      hasGrant: Boolean(grant),
+      grantState: grant?.state,
+      requestedPartition,
+      expectedPartition: grant?.partition,
+      requestedOwnerWebContentsId: ownerWebContentsId,
+      expectedOwnerWebContentsId: grant?.ownerWebContentsId,
+      requestedGeneration: tab?.generation,
+      expectedGeneration: grant?.generation,
+    }
+  }
+
   attachGuest(ownerWebContentsId: number, bootstrapUrl: string, contents: Electron.WebContents): boolean {
     const token = guestMountTokenFromUrl(bootstrapUrl)
     const grant = token ? this.guestMounts.get(token) : undefined
@@ -307,22 +342,13 @@ export class BrowserRuntime {
     this.guestMounts.delete(token!)
     if (tab.mountToken === token) tab.mountToken = undefined
     const previous = tab.webContents
-    if (previous && previous !== contents && !previous.isDestroyed()) previous.close()
+    if (previous && previous !== contents) closeWebContentsAfterRenderer(previous)
     tab.webContents = contents
     tab.guestState = "attaching"
     tab.lifecycle = tab.visible ? "active" : "background"
     contents.setZoomFactor(tab.zoomFactor ?? 1)
     this.installPolicies(tab, shouldInstallAgentSessionPolicy(tab.partition), shouldInstallAdvancedCdpPolicy(tab.partition))
-    contents.once("destroyed", () => {
-      if (tab.webContents !== contents) return
-      tab.webContents = null
-      tab.guestState = "gone"
-      tab.lifecycle = "crashed"
-      tab.generation += 1
-      tab.inputSequence += 1
-      this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "browser_internal_error", recoverable: true } })
-      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
-    })
+    contents.once("destroyed", () => this.markGuestGone(tab, contents))
     contents.once("dom-ready", () => {
       if (tab.webContents !== contents || contents.isDestroyed()) return
       tab.guestState = "ready"
@@ -341,6 +367,34 @@ export class BrowserRuntime {
     })
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     return true
+  }
+
+  private markGuestGone(tab: BrowserTab, contents: Electron.WebContents, details: { reason?: string; exitCode?: number } = {}): void {
+    if (tab.webContents !== contents) return
+    tab.webContents = null
+    tab.guestState = "gone"
+    tab.lifecycle = "crashed"
+    tab.isLoading = false
+    tab.generation += 1
+    tab.inputSequence += 1
+    if (tab.context?.actor === "agent") {
+      tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
+    }
+    this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "browser_internal_error", recoverable: true, ...details } })
+    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+  }
+
+  private recoverGuest(tab: BrowserTab): BrowserTabDescriptor {
+    if (tab.mountToken) this.guestMounts.delete(tab.mountToken)
+    tab.mountToken = undefined
+    tab.webContents = null
+    tab.guestState = "unmounted"
+    tab.lifecycle = tab.visible ? "active" : "background"
+    tab.isLoading = false
+    const descriptor = publicTab(tab)
+    this.options.emit({ method: "browser:tab-changed", params: descriptor as unknown as Record<string, unknown> })
+    this.options.emit({ method: "browser:guest-mount-required", params: { tabId: tab.tabId, generation: tab.generation } })
+    return descriptor
   }
 
   updateSettings(input: Partial<BrowserSettings>): BrowserSettings {
@@ -376,9 +430,10 @@ export class BrowserRuntime {
         if (!shouldInstallAdvancedCdpPolicy(tab.partition)) continue
         const contents = tab.webContents
         const browserSession = contents?.session ?? session.fromPartition(tab.partition)
-        if (contents && !contents.isDestroyed()) contents.close()
+        if (contents) closeWebContentsAfterRenderer(contents)
         this.tabs.delete(tabId)
         this.disposeOwnedSessionIfUnused(tab.partition, browserSession)
+        this.options.emit({ method: "browser:tab-closed", params: { tabId } })
       }
     }
     if (JSON.stringify(this.settings) !== previous) {
@@ -437,6 +492,14 @@ export class BrowserRuntime {
     } catch (error) {
       const code = stableBrowserErrorCode(error)
       this.audit.record({ ...auditBase, decision: "error", status: "failed", errorCode: code, durationMs: Date.now() - startedAt })
+      if (code === "browser_internal_error") {
+        this.options.onInternalError?.({
+          method,
+          actor: context.actor,
+          ...(auditBase.tabId ? { tabId: auditBase.tabId } : {}),
+          message: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+        })
+      }
       if ((error as { code?: unknown })?.code === code) throw error
       throw browserError(code)
     }
@@ -602,7 +665,10 @@ export class BrowserRuntime {
 
     const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (tab.dialogOpen && method !== "dialog:handle" && method !== "dialog:get") throw browserError("dialog_blocking")
-    if ((method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "pageAssets:bundle" || method === "cdp" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
+    if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
+      return this.recoverGuest(tab)
+    }
+    if ((method === "contactFill" || method === "upload" || method === "filechooser:setFiles" || method === "content:export" || method === "pageAssets:bundle" || method === "cdp" || method === "clipboard:read" || method === "clipboard:readText" || method === "clipboard:write" || method === "clipboard:writeText") && params.__policyRequired !== true) throw browserError("confirmation_unavailable")
     if (params.__policyRequired === true) this.consumePolicyToken(String(params.__policyConfirmation ?? ""), String(params.__policyBindingHash ?? ""))
     if (MUTATING_METHODS.has(method)) {
       const operationId = request.idempotencyKey || request.requestId || randomUUID()
@@ -734,14 +800,14 @@ export class BrowserRuntime {
     }
     if (method === "annotation:start" || method === "tweaks:start") {
       if (context.actor !== "user") throw browserError("action_denied")
-      return this.selectPageAnchor(tab, method === "tweaks:start" ? "element" : String(params.mode ?? "element"))
+      return this.selectPageAnchor(tab, method === "tweaks:start" ? "element" : String(params.mode ?? "auto"))
     }
     if (method === "annotation:stop") {
       if (context.actor !== "user") throw browserError("action_denied")
       await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: "globalThis.__lumeCancelPageSelection?.()" }], true)
       return { ok: true }
     }
-    if (method === "annotation:highlight") return this.highlightPageAnchor(tab, params.anchor)
+    if (method === "annotation:highlight") return this.highlightPageAnchors(tab, params)
     if (method === "tweaks:apply") return this.applyPageTweaks(tab, params, context)
     if (method === "tweaks:reset") return this.resetPageTweaks(tab, params, context)
     if (method === "cdp") return this.cdp(tab, params)
@@ -818,7 +884,7 @@ export class BrowserRuntime {
     for (const tab of this.tabs.values()) {
       this.clearTabWaiters(tab.tabId)
       for (const waiter of tab.mountWaiters.splice(0)) { clearTimeout(waiter.timer); waiter.reject(browserError("browser_unavailable")) }
-      if (tab.webContents && !tab.webContents.isDestroyed()) tab.webContents.close()
+      if (tab.webContents) closeWebContentsSafely(tab.webContents)
     }
     this.tabs.clear()
     this.guestMounts.clear()
@@ -1032,27 +1098,23 @@ export class BrowserRuntime {
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       this.rememberTab(tab)
     })
-    wc.on("console-message", (_event, details) => {
-      const detail = details as unknown as { level?: unknown; message?: unknown; sourceId?: unknown }
-      const level: BrowserTab["consoleLogs"][number]["level"] = detail.level === "debug" || detail.level === "info" || detail.level === "warn" || detail.level === "error"
-        ? detail.level
-        : "log"
+    wc.on("console-message", (details) => {
+      const level: BrowserTab["consoleLogs"][number]["level"] = details.level === "error"
+        ? "error"
+        : details.level === "warning"
+          ? "warn"
+          : details.level === "debug"
+            ? "debug"
+            : "info"
       tab.consoleLogs = [...tab.consoleLogs, {
         level,
-        message: String(detail.message ?? "").slice(0, 20_000),
+        message: details.message.slice(0, 20_000),
         timestamp: new Date().toISOString(),
-        ...(typeof detail.sourceId === "string" && /^https?:/i.test(detail.sourceId) ? { url: stripUrl(detail.sourceId) } : {}),
+        ...(/^https?:/i.test(details.sourceId) ? { url: stripUrl(details.sourceId) } : {}),
       }].slice(-500)
     })
     wc.on("render-process-gone", (_event, details) => {
-      tab.lifecycle = "crashed"
-      tab.isLoading = false
-      tab.generation += 1
-      tab.inputSequence += 1
-      if (tab.context?.actor === "agent") {
-        tab.agentLease = { browserSessionId: tab.context.browserSessionId, browserTurnId: tab.context.browserTurnId, generation: tab.generation }
-      }
-      this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "browser_internal_error", recoverable: true, reason: details.reason, exitCode: details.exitCode } })
+      this.markGuestGone(tab, wc, { reason: details.reason, exitCode: details.exitCode })
     })
     try {
       if (!wc.debugger.isAttached()) wc.debugger.attach("1.3")
@@ -1066,13 +1128,29 @@ export class BrowserRuntime {
           const detail = params as Record<string, unknown>
           const type = String(detail.type ?? "alert")
           tab.dialogInfo = {
+            id: randomUUID(),
             type: (["alert", "beforeunload", "confirm", "prompt"].includes(type) ? type : "alert") as NonNullable<BrowserTab["dialogInfo"]>["type"],
             ...(typeof detail.message === "string" ? { message: detail.message.slice(0, 10_000) } : {}),
             ...(typeof detail.defaultPrompt === "string" ? { defaultValue: detail.defaultPrompt.slice(0, 10_000) } : {}),
           }
-          this.options.emit({ method: "browser:dialog", params: { tabId: tab.tabId, generation: tab.generation, type: String((params as Record<string, unknown>).type ?? "alert") } })
+          this.options.emit({
+            method: "browser:dialog",
+            params: {
+              tabId: tab.tabId,
+              generation: tab.generation,
+              dialogId: tab.dialogInfo.id,
+              type: tab.dialogInfo.type,
+              ...(tab.dialogInfo.message ? { message: tab.dialogInfo.message } : {}),
+              ...(tab.dialogInfo.defaultValue ? { defaultValue: tab.dialogInfo.defaultValue } : {}),
+            },
+          })
         }
-        if (method === "Page.javascriptDialogClosed") { tab.dialogOpen = false; tab.dialogInfo = undefined }
+        if (method === "Page.javascriptDialogClosed") {
+          const dialogId = tab.dialogInfo?.id
+          tab.dialogOpen = false
+          tab.dialogInfo = undefined
+          if (dialogId) this.options.emit({ method: "browser:dialog-closed", params: { tabId: tab.tabId, generation: tab.generation, dialogId } })
+        }
         if (method === "Page.fileChooserOpened") {
           const detail = params as Record<string, unknown>
           const backendNodeId = Number(detail.backendNodeId)
@@ -1327,6 +1405,13 @@ export class BrowserRuntime {
     }
     if (tab.lifecycle === "suspended") void this.setTabSuspended(tab, false)
     if (context.actor === "agent") tab.recentAgentContext = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, expiresAt: Date.now() + 30_000 }
+    if (method === "mark") {
+      if (context.actor !== "agent" || (params.status !== "handoff" && params.status !== "deliverable")) throw browserError("invalid_browser_request")
+      tab.handoff = { browserSessionId: context.browserSessionId, status: params.status }
+      this.rememberTab(tab)
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      return {}
+    }
     if (method === "navigate") return this.navigate(tab, String(params.url ?? ""), context, params.__policyRequired === true)
     await this.waitForGuest(tab)
     if (method === "back") {
@@ -1345,6 +1430,7 @@ export class BrowserRuntime {
     }
     if (method === "reload") return browserContents(tab).reload()
     if (method === "dialog:handle") {
+      if (!tab.dialogInfo || params.dialogId !== tab.dialogInfo.id) throw browserError("stale_target")
       await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.handleJavaScriptDialog", { accept: params.accept === true, ...(typeof params.promptText === "string" ? { promptText: params.promptText.slice(0, 10_000) } : {}) }))
       tab.dialogOpen = false
       tab.dialogInfo = undefined
@@ -1354,6 +1440,7 @@ export class BrowserRuntime {
     if (method === "upload") return this.uploadFileRefs(tab, params, context)
     if (method === "filechooser:setFiles") return this.setFileChooserFiles(tab, params, context)
     if (method === "downloadMedia") return this.downloadMedia(tab, params, context)
+    if (method === "content:export") return this.exportPageContent(tab, context)
     if (method === "pageAssets:bundle") return this.bundlePageAssets(tab, params, context)
     if (method === "webmcp:invoke") return invokeWebMcpTool(tab, params)
     if (method === "typeActive") { await this.applyTextToActive(tab, String(params.text ?? "")); return { ok: true } }
@@ -2359,24 +2446,33 @@ export class BrowserRuntime {
     return { deleted: true }
   }
 
-  private async highlightPageAnchor(tab: BrowserTab, value: unknown): Promise<{ ok: true }> {
-    const rect = value && typeof value === "object" && (value as Record<string, unknown>).rect && typeof (value as Record<string, unknown>).rect === "object"
-      ? (value as { rect: Record<string, unknown> }).rect
-      : undefined
-    const safeRect = rect ? {
-      x: boundedNumber(rect.x, -100_000, 100_000),
-      y: boundedNumber(rect.y, -100_000, 100_000),
-      width: boundedNumber(rect.width, 0, 100_000),
-      height: boundedNumber(rect.height, 0, 100_000),
-    } : null
+  private async highlightPageAnchors(tab: BrowserTab, params: Record<string, unknown>): Promise<{ ok: true }> {
+    const values = Array.isArray(params.anchors) ? params.anchors.slice(0, 100) : params.anchor ? [params.anchor] : []
+    const safeRects = values.flatMap((value) => {
+      const rect = isRecord(value) && isRecord(value.rect) ? value.rect : undefined
+      return rect ? [{
+        x: boundedNumber(rect.x, -100_000, 100_000),
+        y: boundedNumber(rect.y, -100_000, 100_000),
+        width: boundedNumber(rect.width, 0, 100_000),
+        height: boundedNumber(rect.height, 0, 100_000),
+      }] : []
+    })
+    const activeIndex = boundedNumber(params.activeIndex, -1, safeRects.length - 1)
     await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
-      document.getElementById("__lume_review_highlight")?.remove();
-      const rect = ${JSON.stringify(safeRect)};
-      if (!rect) return;
-      const marker = document.createElement("div");
-      marker.id = "__lume_review_highlight";
-      Object.assign(marker.style, { position:"fixed", pointerEvents:"none", zIndex:"2147483647", left:rect.x+"px", top:rect.y+"px", width:rect.width+"px", height:rect.height+"px", border:"2px solid #8b5cf6", borderRadius:"4px", background:"rgba(139,92,246,.12)", boxSizing:"border-box" });
-      document.documentElement.appendChild(marker);
+      document.getElementById("__lume_review_highlights")?.remove();
+      const rects = ${JSON.stringify(safeRects)};
+      const activeIndex = ${JSON.stringify(activeIndex)};
+      if (!rects.length) return;
+      const layer = document.createElement("div");
+      layer.id = "__lume_review_highlights";
+      Object.assign(layer.style, { position:"fixed", inset:"0", pointerEvents:"none", zIndex:"2147483646" });
+      rects.forEach((rect, index) => {
+        const marker = document.createElement("div");
+        const active = index === activeIndex;
+        Object.assign(marker.style, { position:"fixed", pointerEvents:"none", left:rect.x+"px", top:rect.y+"px", width:rect.width+"px", height:rect.height+"px", border:(active?"2px":"1.5px")+" solid "+(active?"#0285ff":"#8b5cf6"), borderRadius:"4px", background:active?"rgba(2,133,255,.16)":"rgba(139,92,246,.10)", boxSizing:"border-box", boxShadow:active?"0 0 0 2px rgba(2,133,255,.18)":"none" });
+        layer.appendChild(marker);
+      });
+      document.documentElement.appendChild(layer);
     })()` }], true)
     return { ok: true }
   }
@@ -2408,6 +2504,23 @@ export class BrowserRuntime {
       text: typeof result.text === "string" ? result.text : "",
       ...(includeHtml && typeof result.html === "string" ? { html: result.html } : {}),
     }
+  }
+
+  private async exportPageContent(tab: BrowserTab, context: BrowserRequestContext): Promise<{ path: string }> {
+    if (context.actor !== "agent") throw browserError("action_denied")
+    const content = await this.pageContent(tab, { format: "html" })
+    const directory = join(
+      this.options.configDir(),
+      "browser",
+      "content-exports",
+      safePartition(context.browserSessionId),
+      safePartition(context.browserTurnId),
+    )
+    const title = safeDownloadFilename(`${tab.title.trim() || "page"}.html`)
+    const prepared = prepareDownload(directory, title)
+    writeFileSync(prepared.partialPath, content.html ?? content.text, { encoding: "utf8", mode: 0o600 })
+    completeDownload(prepared)
+    return { path: prepared.finalPath }
   }
 
   private async loadBackgroundContent(context: BrowserRequestContext, params: Record<string, unknown>): Promise<{ results: Array<{ url: string; title: string | null; content: string | null }> }> {
@@ -2613,11 +2726,12 @@ export class BrowserRuntime {
       framePath: string[]
       domPath?: string
       textQuote?: { exact: string; prefix?: string; suffix?: string }
+      selectedContent?: string
       rect: { x: number; y: number; width: number; height: number }
     }
     originalStyles: Record<string, string>
   }> {
-    const mode = requestedMode === "text" || requestedMode === "region" ? requestedMode : "element"
+    const mode = requestedMode === "text" || requestedMode === "region" || requestedMode === "auto" ? requestedMode : "element"
     const generation = tab.generation
     const selected = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
       code: `(${pageSelectionScript()})(${JSON.stringify(mode)})`,
@@ -2625,6 +2739,7 @@ export class BrowserRuntime {
       kind?: unknown
       domPath?: unknown
       textQuote?: unknown
+      selectedContent?: unknown
       rect?: unknown
       originalStyles?: unknown
     }
@@ -2642,6 +2757,9 @@ export class BrowserRuntime {
           ...(typeof selected.textQuote.suffix === "string" ? { suffix: selected.textQuote.suffix.slice(0, 1000) } : {}),
         }
       : undefined
+    const selectedContent = typeof selected.selectedContent === "string"
+      ? selected.selectedContent.trim().slice(0, 20_000)
+      : undefined
     const originalStyles = isRecord(selected.originalStyles)
       ? Object.fromEntries(Object.entries(selected.originalStyles).filter(([key, value]) => TWEAK_STYLE_KEYS.has(key) && typeof value === "string").map(([key, value]) => [key, String(value).slice(0, 4096)]))
       : {}
@@ -2653,6 +2771,7 @@ export class BrowserRuntime {
         framePath: [],
         ...(typeof selected.domPath === "string" ? { domPath: selected.domPath.slice(0, 8192) } : {}),
         ...(textQuote ? { textQuote } : {}),
+        ...(selectedContent ? { selectedContent } : {}),
         rect,
       },
       originalStyles,
@@ -2856,13 +2975,31 @@ export class BrowserRuntime {
     return publicTab(tab)
   }
 
-  private prepareGuestMount(tabId: string, context: BrowserRequestContext): BrowserGuestMountDescriptor {
+  private prepareGuestMount(tabId: string, context: BrowserRequestContext): BrowserGuestMountDescriptor | null {
     if (context.actor !== "user") throw browserError("action_denied")
     const tab = this.requireTab(tabId, context)
     const win = this.options.getWindow()
     if (!win || win.isDestroyed()) throw browserError("browser_unavailable")
-    if (tab.webContents && !tab.webContents.isDestroyed()) throw browserError("action_denied")
-    if (tab.mountToken) this.guestMounts.delete(tab.mountToken)
+    if (tab.webContents && !tab.webContents.isDestroyed()) return null
+    if (tab.mountToken) {
+      const pending = this.guestMounts.get(tab.mountToken)
+      if (pending
+        && pending.tabId === tab.tabId
+        && pending.generation === tab.generation
+        && pending.ownerWebContentsId === win.webContents.id
+        && pending.expiresAt >= Date.now()) {
+        return {
+          mountToken: pending.token,
+          tabId: pending.tabId,
+          generation: pending.generation,
+          partition: pending.partition,
+          bootstrapUrl: `about:blank#lume-browser-mount=${pending.token}`,
+          expiresAt: new Date(pending.expiresAt).toISOString(),
+        }
+      }
+      this.guestMounts.delete(tab.mountToken)
+      tab.mountToken = undefined
+    }
     const token = randomBytes(24).toString("hex")
     const expiresAt = Date.now() + 30_000
     this.guestMounts.set(token, {
@@ -2889,15 +3026,30 @@ export class BrowserRuntime {
 
   private releaseGuestMount(tabId: string, context: BrowserRequestContext, mountToken: string): { released: boolean } {
     if (context.actor !== "user") throw browserError("action_denied")
-    const tab = this.requireTab(tabId, context)
-    if (mountToken && tab.mountToken && mountToken !== tab.mountToken) throw browserError("stale_target")
+    const tab = this.tabs.get(tabId)
+    if (!tab) {
+      if (mountToken) {
+        const pending = this.guestMounts.get(mountToken)
+        if (pending?.tabId === tabId) this.guestMounts.delete(mountToken)
+      }
+      return { released: false }
+    }
+    if (mountToken && mountToken !== tab.mountToken) {
+      if (!tab.mountToken) return { released: false }
+      throw browserError("stale_target")
+    }
     if (tab.mountToken) this.guestMounts.delete(tab.mountToken)
     tab.mountToken = undefined
+    if (mountToken) {
+      tab.guestState = "unmounted"
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      return { released: true }
+    }
     const contents = tab.webContents
     tab.webContents = null
     tab.guestState = "unmounted"
-    if (contents && !contents.isDestroyed()) contents.close()
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    if (contents) closeWebContentsAfterRenderer(contents)
     return { released: Boolean(contents) }
   }
 
@@ -3058,10 +3210,12 @@ export class BrowserRuntime {
       if (inventory.tabId === tabId) this.pageAssetInventories.delete(inventoryId)
     }
     const contents = tab.webContents
-    if (contents && !contents.isDestroyed()) contents.close()
+    const browserSession = contents && !contents.isDestroyed() ? contents.session : session.fromPartition(tab.partition)
+    tab.webContents = null
     this.tabs.delete(tabId)
-    this.disposeOwnedSessionIfUnused(tab.partition, contents?.session ?? session.fromPartition(tab.partition))
+    this.disposeOwnedSessionIfUnused(tab.partition, browserSession)
     this.options.emit({ method: "browser:tab-closed", params: { tabId } })
+    if (contents) closeWebContentsAfterRenderer(contents)
     this.enforceBackgroundLimit()
     return { ok: true }
   }
@@ -3129,7 +3283,7 @@ export class BrowserRuntime {
     }
     for (const tab of [...this.tabs.values()]) {
       if (!tab.context || tab.context.browserSessionId !== context.browserSessionId || tab.context.browserTurnId !== context.browserTurnId) continue
-      const retained = keep.get(tab.tabId)
+      const retained = keep.get(tab.tabId) ?? (tab.handoff?.browserSessionId === context.browserSessionId ? tab.handoff : undefined)
       if (!retained) { this.closeTab(tab.tabId, context); continue }
       tab.handoff = { browserSessionId: context.browserSessionId, ...retained }
       this.releaseTabs(context, { tabIds: [tab.tabId] })
@@ -3389,6 +3543,21 @@ function browserError(code: BrowserErrorCode): Error & { code: BrowserErrorCode 
   const error = new Error(code) as Error & { code: BrowserErrorCode }
   error.code = code
   return error
+}
+
+function closeWebContentsSafely(contents: Electron.WebContents): void {
+  if (contents.isDestroyed()) return
+  try {
+    contents.close()
+  } catch {
+    // Renderer-owned <webview> guests are destroyed when BrowserWebviewPool
+    // removes their DOM node after the corresponding runtime event.
+  }
+}
+
+function closeWebContentsAfterRenderer(contents: Electron.WebContents): void {
+  const timer = setTimeout(() => closeWebContentsSafely(contents), 250)
+  timer.unref?.()
 }
 
 function stableBrowserErrorCode(error: unknown): BrowserErrorCode {
@@ -3819,6 +3988,8 @@ const TWEAK_STYLE_KEYS = new Set([
   "justifyContent",
   "alignItems",
   "gap",
+  "rowGap",
+  "columnGap",
   "padding",
   "margin",
 ])
@@ -3908,7 +4079,7 @@ function pageSelectionScript(): string {
       });
       document.documentElement.appendChild(overlay);
       const hint = document.createElement("div");
-      hint.textContent = mode === "text" ? "选择文本后松开鼠标 · Esc 取消" : mode === "region" ? "拖动选择区域 · Esc 取消" : "点击选择元素 · Esc 取消";
+      hint.textContent = mode === "auto" ? "选择元素、文本或拖动区域 · Esc 取消" : mode === "text" ? "选择文本后松开鼠标 · Esc 取消" : mode === "region" ? "拖动选择区域 · Esc 取消" : "点击选择元素 · Esc 取消";
       Object.assign(hint.style, {
         position: "fixed", left: "50%", top: "12px", transform: "translateX(-50%)",
         zIndex: "2147483647", padding: "7px 10px", borderRadius: "8px",
@@ -3953,22 +4124,112 @@ function pageSelectionScript(): string {
           padding: style.padding, margin: style.margin
         };
       };
+      const visibleTextFor = (element) => String(element?.innerText || element?.textContent || "")
+        .replace(/\\s+/g, " ").trim().slice(0, 20000);
+      const regionTextFor = (rect) => {
+        const parts = [];
+        const seen = new Set();
+        for (const element of document.querySelectorAll("body *")) {
+          if (!(element instanceof HTMLElement) || element === overlay || element === hint || overlay.contains(element) || hint.contains(element)) continue;
+          if (element.children.length > 0) continue;
+          const box = element.getBoundingClientRect();
+          if (box.width <= 0 || box.height <= 0 || box.right < rect.left || box.left > rect.right || box.bottom < rect.top || box.top > rect.bottom) continue;
+          const text = visibleTextFor(element);
+          if (!text || seen.has(text)) continue;
+          seen.add(text);
+          parts.push(text);
+          if (parts.join("\\n").length >= 20000) break;
+        }
+        return parts.join("\\n").slice(0, 20000);
+      };
       const finish = (kind, rect, element, textQuote) => {
         const result = {
           kind,
           rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
           domPath: element ? pathFor(element) : undefined,
           textQuote,
+          selectedContent: textQuote?.exact || (kind === "region" ? regionTextFor(rect) : visibleTextFor(element)),
           originalStyles: element ? stylesFor(element) : {}
         };
         cleanup();
         resolve(result);
+      };
+      const finishTextSelection = () => {
+        const selection = getSelection();
+        if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        const element = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+        const exact = selection.toString().slice(0, 32000);
+        if (!element || !exact) return false;
+        const source = element.textContent || "";
+        const index = source.indexOf(exact);
+        finish("text", rect, element, {
+          exact,
+          prefix: index >= 0 ? source.slice(Math.max(0, index - 1000), index) : undefined,
+          suffix: index >= 0 ? source.slice(index + exact.length, index + exact.length + 1000) : undefined
+        });
+        return true;
+      };
+      const blockNextClick = () => {
+        const block = (event) => {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        };
+        document.addEventListener("click", block, true);
+        setTimeout(() => document.removeEventListener("click", block, true), 0);
       };
       on(window, "keydown", (event) => {
         if (event.key !== "Escape") return;
         event.preventDefault();
         globalThis.__lumeCancelPageSelection?.();
       }, true);
+      if (mode === "auto") {
+        let start = null;
+        let dragged = false;
+        on(document, "mousemove", (event) => {
+          if (start) {
+            const width = Math.abs(event.clientX - start.x);
+            const height = Math.abs(event.clientY - start.y);
+            dragged = dragged || width >= 6 || height >= 6;
+            if (!dragged) return;
+            const x = Math.min(start.x, event.clientX);
+            const y = Math.min(start.y, event.clientY);
+            Object.assign(overlay.style, { display: "block", left: x + "px", top: y + "px", width: width + "px", height: height + "px" });
+            return;
+          }
+          const element = document.elementFromPoint(event.clientX, event.clientY);
+          if (!(element instanceof Element) || element === overlay || element === hint) return;
+          const rect = element.getBoundingClientRect();
+          Object.assign(overlay.style, { display: "block", left: rect.x + "px", top: rect.y + "px", width: rect.width + "px", height: rect.height + "px" });
+        }, true);
+        on(document, "mousedown", (event) => {
+          if (event.button !== 0) return;
+          start = { x: event.clientX, y: event.clientY };
+          dragged = false;
+        }, true);
+        on(document, "mouseup", (event) => {
+          if (!start || event.button !== 0) return;
+          const origin = start;
+          start = null;
+          blockNextClick();
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          if (finishTextSelection()) return;
+          const rect = {
+            x: Math.min(origin.x, event.clientX), y: Math.min(origin.y, event.clientY),
+            width: Math.abs(event.clientX - origin.x), height: Math.abs(event.clientY - origin.y)
+          };
+          if (dragged && rect.width >= 4 && rect.height >= 4) {
+            finish("region", rect);
+            return;
+          }
+          const element = document.elementFromPoint(event.clientX, event.clientY);
+          if (!(element instanceof Element) || element === overlay || element === hint) return;
+          finish("element", element.getBoundingClientRect(), element);
+        }, true);
+        return;
+      }
       if (mode === "element") {
         on(document, "mousemove", (event) => {
           const element = document.elementFromPoint(event.clientX, event.clientY);
@@ -3986,22 +4247,7 @@ function pageSelectionScript(): string {
         return;
       }
       if (mode === "text") {
-        on(document, "mouseup", () => {
-          const selection = getSelection();
-          if (!selection || selection.isCollapsed || !selection.rangeCount) return;
-          const range = selection.getRangeAt(0);
-          const rect = range.getBoundingClientRect();
-          const element = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
-          const exact = selection.toString().slice(0, 32000);
-          if (!element || !exact) return;
-          const source = element.textContent || "";
-          const index = source.indexOf(exact);
-          finish("text", rect, element, {
-            exact,
-            prefix: index >= 0 ? source.slice(Math.max(0, index - 1000), index) : undefined,
-            suffix: index >= 0 ? source.slice(index + exact.length, index + exact.length + 1000) : undefined
-          });
-        }, true);
+        on(document, "mouseup", finishTextSelection, true);
         return;
       }
       overlay.style.pointerEvents = "auto";

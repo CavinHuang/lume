@@ -14,6 +14,8 @@ export type RuntimeEventType =
   | "assistant.delta"
   | "assistant.thinking_delta"
   | "assistant.final"
+  | "model.retry"
+  | "model.retry_cleared"
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
@@ -125,6 +127,19 @@ export interface ToolCompletedRuntimeEvent extends RuntimeEventBase {
   resultPreview?: string;
   resultRef?: FileResultRef;
   execution?: ToolExecutionMetadata;
+}
+
+export interface ModelRetryRuntimeEvent extends RuntimeEventBase {
+  type: "model.retry";
+  phase: "waiting" | "retrying";
+  attempt: number;
+  maxRetries: number;
+  retryDelayMs: number;
+  errorStatus: number | null;
+}
+
+export interface ModelRetryClearedRuntimeEvent extends RuntimeEventBase {
+  type: "model.retry_cleared";
 }
 
 export interface ToolFailedRuntimeEvent extends RuntimeEventBase {
@@ -941,6 +956,8 @@ export type LumeRuntimeEvent =
   | AssistantDeltaRuntimeEvent
   | AssistantThinkingDeltaRuntimeEvent
   | AssistantFinalRuntimeEvent
+  | ModelRetryRuntimeEvent
+  | ModelRetryClearedRuntimeEvent
   | ToolStartedRuntimeEvent
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent

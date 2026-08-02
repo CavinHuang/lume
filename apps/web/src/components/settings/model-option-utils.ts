@@ -1,10 +1,11 @@
-import type { Channel } from '@lume/shared'
+import { buildConnectionModelRef, isChannelViewReady, type Channel } from '@lume/shared'
 
 export interface ModelOption {
   channelId: string
   provider: string
   modelId: string
   modelRef: string
+  legacyModelRefs?: string[]
   label: string
   channelLabel: string
 }
@@ -16,16 +17,12 @@ function isChatModel(model: Channel['models'][number]): boolean {
   return model.capabilities?.chat !== false
 }
 
-function buildModelRef(channel: Pick<Channel, 'provider'>, modelId: string): string {
-  const trimmed = modelId.trim()
-  const slashIndex = trimmed.indexOf('/')
-  return slashIndex > 0 && slashIndex < trimmed.length - 1
-    ? trimmed
-    : `${channel.provider}/${trimmed}`
+export function isConnectionReady(channel: Channel): boolean {
+  return isChannelViewReady(channel)
 }
 
 export function getEnabledChannels(channels: Channel[]): Channel[] {
-  return channels.filter((channel) => channel.enabled && channel.models.some(isChatModel))
+  return channels.filter((channel) => isConnectionReady(channel) && channel.models.some(isChatModel))
 }
 
 export function buildModelOptions(channels: Channel[], channelId?: string): ModelOption[] {
@@ -40,11 +37,34 @@ export function buildModelOptions(channels: Channel[], channelId?: string): Mode
         channelId: channel.id,
         provider: channel.provider,
         modelId: model.id,
-        modelRef: buildModelRef(channel, model.id),
+        modelRef: buildConnectionModelRef(channel.id, model.id),
+        legacyModelRefs: [
+          model.id,
+          `${channel.providerId || channel.provider}/${model.id}`,
+          `${channel.id}/${model.id}`,
+        ],
         label: model.name,
         channelLabel: channel.name,
       }))
   ))
+}
+
+export function findModelOption(
+  options: ModelOption[],
+  modelRef?: string,
+  channelId?: string,
+): ModelOption | undefined {
+  const normalized = modelRef?.trim()
+  if (!normalized) return undefined
+  const scoped = channelId?.trim()
+  const exact = options.find((option) => (
+    option.modelRef === normalized && (!scoped || option.channelId === scoped)
+  ))
+  if (exact) return exact
+  const legacy = options.filter((option) => (
+    option.legacyModelRefs?.includes(normalized) === true && (!scoped || option.channelId === scoped)
+  ))
+  return legacy.length === 1 ? legacy[0] : undefined
 }
 
 export function getModelLabel(modelOptions: ModelOption[], modelRef?: string): string {
@@ -53,5 +73,5 @@ export function getModelLabel(modelOptions: ModelOption[], modelRef?: string): s
     return '未设置'
   }
 
-  return modelOptions.find((option) => option.modelRef === normalized)?.label ?? normalized
+  return findModelOption(modelOptions, normalized)?.label ?? normalized
 }

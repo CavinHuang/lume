@@ -14,6 +14,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { Button } from '@/components/ui/button'
 import { PlanningReminderRail } from '@/components/todo/PlanningReminderRail'
+import { ConnectionVaultSetupDialog } from '@/components/security/ConnectionVaultSetupDialog'
 function AppInner() {
   useGlobalAgentListeners()
   useReadingListeners()
@@ -97,6 +98,7 @@ export function App() {
       <ModelMetaProvider>
         <TooltipProvider>
           <AppInner />
+          <ConnectionVaultSetupDialog />
           <Toaster position="bottom-right" />
         </TooltipProvider>
       </ModelMetaProvider>

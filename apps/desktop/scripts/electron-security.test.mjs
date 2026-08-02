@@ -95,13 +95,17 @@ test("preview scopes bind unguessable tokens to one webContents owner and expire
 test("renderer sidecar allowlist tracks public shared IPC channels", () => {
   const sharedMethods = Object.entries(sharedIpc)
     .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && value && typeof value === "object")
-    .flatMap(([, value]) => Object.values(value))
-    .filter((value) => typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value));
+    .flatMap(([, value]) => Object.entries(value))
+    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value))
+    .map(([, value]) => value);
   for (const method of sharedMethods) assert.equal(PUBLIC_RENDERER_SIDECAR_METHODS.has(method), true, method);
 });
 
 test("renderer may inspect browser backend availability without invoking browser actions", () => {
   assert.equal(validateRendererSidecarMethod("browser:backends"), "browser:backends");
+  assert.equal(validateRendererSidecarMethod("browser:reference-candidates"), "browser:reference-candidates");
+  assert.equal(validateRendererSidecarMethod("browser:create-reference-grant"), "browser:create-reference-grant");
+  assert.equal(validateRendererSidecarMethod("browser:revoke-reference-grant"), "browser:revoke-reference-grant");
   assert.throws(() => validateRendererSidecarMethod("browser:broker"), /unsupported renderer sidecar method/);
 });
 
@@ -432,6 +436,10 @@ test("desktop windows use secure sandboxed web preferences", () => {
   });
 });
 
+test("connection credential reveal remains main-process privileged", () => {
+  assert.throws(() => validateRendererSidecarMethod("channel:privileged-decrypt-key"), /unsupported renderer sidecar method/);
+});
+
 test("browser webview guests are one-time authorized and receive no host bridge", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   const guestPreloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-guest-preload.ts"), "utf8");
@@ -439,8 +447,23 @@ test("browser webview guests are one-time authorized and receive no host bridge"
   assert.match(mainSource, /authorizeGuestMount/);
   assert.match(mainSource, /did-attach-webview/);
   assert.match(mainSource, /browser-guest-preload\.cjs/);
+  assert.match(mainSource, /ipcMain\.on\('lume:browser-guest-mounted'/);
   assert.equal(guestPreloadSource.includes("contextBridge"), false);
-  assert.equal(guestPreloadSource.includes("ipcRenderer"), false);
+  assert.match(guestPreloadSource, /ipcRenderer\.send\('lume:browser-guest-mounted'/);
+});
+
+test("renderer browser guest pool never reparents an attached webview", () => {
+  const poolSource = readFileSync(resolve(DESKTOP_ROOT, "..", "web", "src", "components", "browser", "BrowserWebviewPool.tsx"), "utf8");
+  assert.match(poolSource, /BROWSER_GUEST_HOST_ID = 'lume-browser-webview-pool'/);
+  assert.match(poolSource, /document\.body\.append\(host\)/);
+  assert.match(poolSource, /lumePendingMounts/);
+  assert.match(poolSource, /await pending/);
+  assert.match(poolSource, /api\.recover\(tabId/);
+  assert.match(poolSource, /wrapper\.style\.position = 'fixed'/);
+  assert.match(poolSource, /wrapper\.style\.visibility = 'hidden'/);
+  assert.doesNotMatch(poolSource, /wrapper\.style\.display = 'none'/);
+  assert.doesNotMatch(poolSource, /append\(existing\.wrapper\)/);
+  assert.doesNotMatch(poolSource, /append\(entry\.wrapper\)/);
 });
 
 test("main process does not opt BrowserWindow renderers out of sandbox", () => {

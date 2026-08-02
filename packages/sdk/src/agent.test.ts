@@ -97,6 +97,24 @@ afterEach(() => {
 })
 
 describe("Agent runtime tool resolver", () => {
+  test("keeps a host-provided provider when initialization and model changes refresh config", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      model: "host/model-a",
+    })
+
+    await agent.getInitializationResult()
+    expect((agent as any).provider).toBe(provider)
+
+    await agent.setModel("host/model-b")
+    expect((agent as any).provider).toBe(provider)
+
+    await agent.close()
+  })
+
   test("applies resolveRuntimeTools after base tools are assembled", async () => {
     const agent = createAgent({
       persistSession: false,

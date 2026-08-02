@@ -11,13 +11,21 @@ describe("browser API registry", () => {
     const unavailable = browserApiSupportForBackend("iab", new Set())
     expect(Object.values(unavailable).every((supported) => !supported)).toBe(true)
 
+    const iab = browserApiSupportForBackend("iab", new Set(["claim", "mark"]))
+    expect(iab["BrowserUser.claimTab"]).toBe(true)
+    expect(iab["Tab.markDeliverable"]).toBe(true)
+    expect(iab["Tab.markHandoff"]).toBe(true)
+
     const extension = browserApiSupportForBackend(
       "extension",
-      new Set(["content", "browserAuth:request"]),
-      { "Tab.content": true, "Tab.browserAuth": false },
+      new Set(["content:export", "browserAuth:request", "nameSession", "dom:click"]),
+      { "Tab.content": true, "ContentAPI.export": true, "Tab.browserAuth": false, "Browser.nameSession": true, "DomCUAAPI.click": true },
     )
     expect(extension["Tab.content"]).toBe(true)
+    expect(extension["ContentAPI.export"]).toBe(true)
+    expect(extension["ContentAPI.exportGsuite"]).toBe(false)
     expect(extension["Tab.browserAuth"]).toBe(false)
-    expect(extension["DomCUAAPI.click"]).toBe(false)
+    expect(extension["Browser.nameSession"]).toBe(true)
+    expect(extension["DomCUAAPI.click"]).toBe(true)
   })
 })

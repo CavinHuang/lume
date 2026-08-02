@@ -24,10 +24,12 @@ export function resolvePiChannelModel(params: {
 }): ResolvedPiChannelModel | null {
   const candidateModelIds = resolveModelCandidatesForChannel(params.channel, params.requestedModelRefOrId);
   for (const candidateModelId of candidateModelIds) {
+    const runtimeModelId = stripMatchingChannelProviderPrefix(candidateModelId, params.channelProvider);
     const { modelId, candidates } = resolveRuntimeProviderCandidates({
       channelProvider: params.channelProvider,
-      modelId: candidateModelId,
-      baseUrl: params.baseUrl
+      modelId: runtimeModelId,
+      baseUrl: params.baseUrl,
+      modelIdIsOpaque: true,
     });
     for (const provider of prioritizeProvidersForBaseUrl(candidates, params.baseUrl)) {
       const channelModel = params.channel.models.find((item) => item.id === candidateModelId || item.alias === candidateModelId);
@@ -51,8 +53,9 @@ export function resolvePiChannelModel(params: {
   }
   const { modelId, candidates } = resolveRuntimeProviderCandidates({
     channelProvider: params.channelProvider,
-    modelId: firstModelId,
-    baseUrl: params.baseUrl
+    modelId: stripMatchingChannelProviderPrefix(firstModelId, params.channelProvider),
+    baseUrl: params.baseUrl,
+    modelIdIsOpaque: true,
   });
   const fallbackProvider = candidates[0];
   if (!fallbackProvider) {
@@ -70,6 +73,15 @@ export function resolvePiChannelModel(params: {
       resolveContextWindowOverride(params, fallbackProvider, modelId)
     )
   };
+}
+
+function stripMatchingChannelProviderPrefix(modelId: string, channelProvider?: string): string {
+  const provider = channelProvider?.trim().toLowerCase();
+  const separator = modelId.indexOf("/");
+  if (!provider || separator <= 0 || modelId.slice(0, separator).trim().toLowerCase() !== provider) {
+    return modelId;
+  }
+  return modelId.slice(separator + 1).trim() || modelId;
 }
 
 export const resolveRuntimeCoreChannelModel = resolvePiChannelModel;

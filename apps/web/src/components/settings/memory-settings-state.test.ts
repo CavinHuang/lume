@@ -679,10 +679,20 @@ describe('memory settings state', () => {
       modelRef: 'local-onnx/Xenova/bge-small-zh-v1.5',
       label: '本地 ONNX bge-small-zh',
     }, {
-      modelRef: 'openai/text-embedding-3-small',
+      modelRef: 'connection:openai-main/text-embedding-3-small',
+      legacyModelRefs: [
+        'text-embedding-3-small',
+        'openai/text-embedding-3-small',
+        'openai-main/text-embedding-3-small',
+      ],
       label: 'Embed small · OpenAI',
     }, {
-      modelRef: 'siliconflow/Qwen/Qwen3-Embedding-0.6B',
+      modelRef: 'connection:siliconflow/Qwen/Qwen3-Embedding-0.6B',
+      legacyModelRefs: [
+        'Qwen/Qwen3-Embedding-0.6B',
+        'siliconflow/Qwen/Qwen3-Embedding-0.6B',
+        'siliconflow/Qwen/Qwen3-Embedding-0.6B',
+      ],
       label: 'Qwen3 0.6B · SiliconFlow',
     }])
   })
@@ -722,7 +732,8 @@ describe('memory settings state', () => {
         { id: 'embedding-3', name: 'Embedding 3', enabled: true, capabilities: { embedding: true, chat: false } },
       ],
     }])).toEqual([{
-      modelRef: 'zai/glm-4.5-air',
+      modelRef: 'connection:glm/glm-4.5-air',
+      legacyModelRefs: ['glm-4.5-air', 'zai/glm-4.5-air', 'glm/glm-4.5-air'],
       label: 'GLM 4.5 Air · GLM',
     }])
   })

@@ -42,9 +42,18 @@ import {
 export function deriveRecentTrayThreads(threads: AgentThreadMeta[]) {
   return threads
     .filter((thread) => !thread.parentThreadId && thread.status !== 'archived' && thread.status !== 'trashed')
+    .flatMap((thread) => {
+      if (typeof thread.id !== 'string' || thread.id.length < 1 || thread.id.length > 128) return []
+      return [{
+        id: thread.id,
+        title: typeof thread.title === 'string' ? thread.title.slice(0, 256) : '',
+        updatedAt: typeof thread.updatedAt === 'number' && Number.isFinite(thread.updatedAt) && thread.updatedAt >= 0
+          ? thread.updatedAt
+          : 0,
+      }]
+    })
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 5)
-    .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }))
 }
 
 export async function confirmTrayThreadNavigation({

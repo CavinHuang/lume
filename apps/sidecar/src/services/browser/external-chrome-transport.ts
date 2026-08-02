@@ -343,6 +343,7 @@ export function mapExternalChromeRequest(request: BrowserActionRequest): { metho
     case "handoff": return { method: "handoff_tabs", params };
     case "resumeHandoff": return { method: "resume_handoff_tabs", params };
     case "finalize": return { method: "finalize_tabs", params };
+    case "mark": return { method: "mark_tab", params: { ...params, tabId, tab_id: tabId, status: request.params?.status } };
     case "close": return { method: "close_tab", params: { ...params, tabId } };
     case "goto": case "navigate": return { method: "navigate_tab_url", params: { ...params, tabId, url: request.params?.url } };
     case "back": return { method: "navigate_tab_back", params: { ...params, tabId } };
@@ -352,14 +353,31 @@ export function mapExternalChromeRequest(request: BrowserActionRequest): { metho
     case "screenshot": return { method: "tab_screenshot", params: { ...params, tabId, options: { format: request.params?.format, quality: request.params?.quality, fullPage: request.params?.fullPage === true, clip: request.params?.clip } } };
     case "url": return { method: "tab_url", params: { ...params, tabId } };
     case "title": return { method: "tab_title", params: { ...params, tabId } };
+    case "content:export": return { method: "tab_content_export", params: { ...params, tabId, tab_id: tabId } };
+    case "content:exportGsuite": return { method: "tab_content_export_gsuite", params: { ...params, tabId, tab_id: tabId, format: request.params?.format } };
     case "nameSession": return { method: "browser_name_session", params };
     case "history:list": return { method: "browser_user_history", params };
+    case "clipboard": return { method: "tab_clipboard", params: { ...params, tabId } };
+    case "clipboard:read": return { method: "tab_clipboard_read", params: { ...params, tabId } };
+    case "clipboard:readText": return { method: "tab_clipboard_read_text", params: { ...params, tabId } };
+    case "clipboard:write": return { method: "tab_clipboard_write", params: { ...params, tabId } };
+    case "clipboard:writeText": return { method: "tab_clipboard_write_text", params: { ...params, tabId } };
     case "browser:visibility:get": return { method: "browser_visibility_get", params };
     case "browser:visibility:set": return { method: "browser_visibility_set", params: { ...params, visible: request.params?.visible } };
     case "browser:viewport:set": return { method: "browser_viewport_set", params: { ...params, options: { width: request.params?.width, height: request.params?.height, deviceScaleFactor: request.params?.deviceScaleFactor, mobile: request.params?.mobile } } };
     case "browser:viewport:reset": return { method: "browser_viewport_reset", params };
-    case "dialog:get": return { method: "tab_js_dialog_get", params: { ...params, tabId } };
-    case "dialog:handle": return { method: "tab_js_dialog_handle", params: { ...params, tabId } };
+    case "dialog:get": return { method: "tab_get_js_dialog", params: { ...params, tabId, tab_id: tabId } };
+    case "dialog:handle": return {
+      method: "tab_handle_js_dialog",
+      params: {
+        ...params,
+        tabId,
+        tab_id: tabId,
+        action: request.params?.accept === true ? "accept" : "dismiss",
+        dialog_id: request.params?.dialogId,
+        prompt_text: request.params?.promptText,
+      },
+    };
     case "elementInfo": return { method: "playwright_element_info", params: { ...params, tabId, options: request.params?.options ?? request.params } };
     case "elementScreenshot": return { method: "playwright_element_screenshot", params: { ...params, tabId, options: request.params?.options ?? request.params } };
     case "evaluate:readonly": return { method: "playwright_evaluate", params: { ...params, tabId, expression: request.params?.script ?? request.params?.expression, arg: request.params?.arg, timeoutMs: request.params?.timeoutMs } };

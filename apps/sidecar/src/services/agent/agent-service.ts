@@ -1,5 +1,5 @@
 
-import { createProvider, type ApiType, type SDKMessage } from "@lume/agent-sdk";
+import type { SDKMessage } from "@lume/agent-sdk";
 import { randomUUID } from "node:crypto";
 import type {
   AgentMessageQueueOperationResult,
@@ -27,10 +27,9 @@ import type {
   LumeRuntimeEvent,
   RuntimeCodingReport
 } from "@lume/shared";
-import { AGENT_IPC_CHANNELS, FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, buildConnectionModelRef, FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
-import { fetchTitle, getAdapter } from "../../providers";
-import { decryptApiKey, listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
+import { listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
 import {
   appendAgentThreadSDKMessages,
   getAgentThreadMessages,
@@ -54,7 +53,6 @@ import { submitAskUserQuestionAnswers as submitRuntimeAskUserQuestionAnswers } f
 import { submitToolPermissionDecision } from "../agent-runtime/interruption/tool-permission-session";
 import {
   resolveAgentDefaultStrategy,
-  resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
 } from "../channel/model-selection";
 import {
@@ -66,6 +64,7 @@ import { resolveSoftToolPolicyForPreferredRoute } from "./capability-routing";
 import { getSubagentRunRegistry } from "./subagents/subagent-run-registry";
 import { buildAgentContentLogData, buildAgentSendStartLogData } from "./agent-log-summary";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { createConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { createAutoTitleJob } from "../agent-runtime/service-runtime/auto-title-job";
 import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runtime";
 import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
@@ -925,19 +924,22 @@ export async function sendAgentMessage(
         },
     globalDefault: effectiveLumeConfig.models?.agent
   });
-  const boundModel = resolveChannelModelBinding(effectiveSelection.modelRef ?? "", "chat");
+  const primaryBoundModel = resolveChannelModelBinding(
+    effectiveSelection.modelRef ?? "",
+    "chat",
+    effectiveSelection.channelId,
+  );
+  const boundModel = primaryBoundModel ?? effectiveSelection.fallbackModelRefs
+    .map((modelRef) => resolveChannelModelBinding(modelRef, "chat"))
+    .find((binding) => binding !== null);
   const resolvedChannelId = boundModel?.channel.id ?? effectiveSelection.channelId;
   const resolvedModelId = boundModel?.modelId ?? pickModelId(resolvedChannelId, input.modelId ?? threadMeta?.modelId);
   const resolvedChannel = resolvedChannelId
     ? listChannels().find((item) => item.id === resolvedChannelId)
     : undefined;
-  const canonicalModelRef = resolvedChannel
-    ? resolveChannelModelSelection({
-      channelProvider: resolvedChannel.provider,
-      baseUrl: resolvedChannel.baseUrl,
-      modelId: boundModel?.modelId ?? input.modelId ?? threadMeta?.modelId ?? resolvedModelId,
-      channelProviderId: resolvedChannel.providerId
-    }).modelRef
+  const canonicalModelId = boundModel?.modelId ?? input.modelId ?? threadMeta?.modelId ?? resolvedModelId;
+  const canonicalModelRef = resolvedChannel && canonicalModelId
+    ? buildConnectionModelRef(resolvedChannel.id, canonicalModelId)
     : effectiveSelection.modelRef;
   const hasExplicitSendSelection = input.modelRef !== undefined || input.channelId !== undefined || input.modelId !== undefined;
 
@@ -1247,7 +1249,8 @@ export async function sendAgentMessage(
       emit.onToolPermissionRequest(request);
     }
   });
-  if (persistedSdkMessages.length > 0) {
+  const shouldPersistRunTranscript = runtimeResult.status === "completed" || runtimeResult.status === "turn_limited";
+  if (shouldPersistRunTranscript && persistedSdkMessages.length > 0) {
     appendAgentThreadSDKMessages(threadId, persistedSdkMessages);
   }
   if ((runtimeResult.status === "completed" || runtimeResult.status === "turn_limited") && activeTurnId) {
@@ -1794,9 +1797,9 @@ export async function generateWelcomeSuggestions(
   if (!binding) return fallback();
 
   try {
-    const provider = createProvider(resolveAgentServiceApiType(binding.channel.provider), {
-      apiKey: decryptApiKey(binding.channel.id),
-      baseURL: binding.channel.baseUrl,
+    const provider = await createConnectionLlmProvider({
+      channel: binding.channel,
+      modelId: binding.modelId,
     });
     const response = await provider.createMessage({
       model: binding.modelId,
@@ -1842,35 +1845,21 @@ export async function generateAgentTitle(input: AgentGenerateTitleInput): Promis
     return null;
   }
 
-  let apiKey: string;
-  try {
-    apiKey = decryptApiKey(channel.id);
-  } catch (error) {
-    log.warn("自动标题生成失败：解密 API Key 失败", {
-      channelId: input.channelId,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    return null;
-  }
-
   try {
     const modelId = boundModel?.modelId ?? input.modelId;
     if (!modelId) return null;
-    const modelSelection = resolveChannelModelSelection({
-      channelProvider: channel.provider,
-      baseUrl: channel.baseUrl,
-      modelId,
-      openaiApiMode: channel.openaiApiMode,
-      channelProviderId: channel.providerId,
+    const provider = await createConnectionLlmProvider({ channel, modelId });
+    const response = await provider.createMessage({
+      model: modelId,
+      maxTokens: 80,
+      system: AGENT_TITLE_PROMPT_FROM_SUMMARY,
+      messages: [{ role: "user", content: sourceText }],
     });
-    const adapter = getAdapter(modelSelection.adapterProvider, modelSelection.openaiApiMode);
-    const request = adapter.buildTitleRequest({
-      baseUrl: channel.baseUrl,
-      apiKey,
-      modelId: modelSelection.resolvedModelId,
-      prompt: AGENT_TITLE_PROMPT_FROM_SUMMARY + sourceText
-    });
-    const title = await fetchTitle(request, adapter);
+    const title = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("")
+      .trim();
     if (!title) return null;
     const cleaned = sanitizeGeneratedTitle(title);
     if (!cleaned || isWeakGeneratedTitle(cleaned)) {
@@ -1926,13 +1915,6 @@ function parseWelcomeSuggestions(text: string): AgentWelcomeSuggestion[] {
   } catch {
     return [];
   }
-}
-
-function resolveAgentServiceApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }
 
 const WELCOME_SUGGESTIONS_SYSTEM_PROMPT = `你是 Lume 欢迎页的任务建议生成器。

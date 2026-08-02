@@ -11,17 +11,14 @@ import { ModelOptionList } from '@/components/model-selection/ModelOptionList'
 import type { ModelOptionGroup } from '@/components/model-selection/model-selection-state'
 import { buildModelSelectionGroups } from '@/components/model-selection/model-selection-state'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
+import {
+  buildModelOptions,
+  findModelOption,
+  getEnabledChannels,
+  type ModelOption,
+} from './model-option-utils'
 
 const EMPTY_SELECT_VALUE = '__empty__'
-
-export interface ModelOption {
-  channelId: string
-  provider: string
-  modelId: string
-  modelRef: string
-  label: string
-  channelLabel: string
-}
 
 interface StrategyDraft {
   defaultModelRef?: string
@@ -34,49 +31,6 @@ interface StrategyDraft {
 function normalizeOptional(value?: string | null): string | undefined {
   const normalized = value?.trim()
   return normalized ? normalized : undefined
-}
-
-function isChatModel(model: Channel['models'][number]): boolean {
-  if (!model.enabled) {
-    return false
-  }
-  return model.capabilities?.chat !== false
-}
-
-function buildModelRef(channel: Pick<Channel, 'provider'>, modelId: string): string {
-  const trimmed = modelId.trim()
-  const slashIndex = trimmed.indexOf('/')
-  return slashIndex > 0 && slashIndex < trimmed.length - 1
-    ? trimmed
-    : `${channel.provider}/${trimmed}`
-}
-
-export function getEnabledChannels(channels: Channel[]): Channel[] {
-  return channels.filter((channel) => channel.enabled && channel.models.some(isChatModel))
-}
-
-export function buildModelOptions(channels: Channel[], channelId?: string): ModelOption[] {
-  const selectedChannels = channelId
-    ? channels.filter((channel) => channel.id === channelId)
-    : channels
-
-  return selectedChannels.flatMap((channel) => (
-    channel.models
-      .filter(isChatModel)
-      .map((model) => ({
-        channelId: channel.id,
-        provider: channel.provider,
-        modelId: model.id,
-        modelRef: buildModelRef(channel, model.id),
-        label: model.name,
-        channelLabel: channel.name,
-      }))
-  ))
-}
-
-function includesModelRef(options: ModelOption[], modelRef?: string): boolean {
-  const normalized = normalizeOptional(modelRef)
-  return normalized ? options.some((option) => option.modelRef === normalized) : false
 }
 
 export function sanitizeFallbackChain(input: {
@@ -128,21 +82,24 @@ export function getDefaultStrategyDraft(input: {
   const rawFallbacks = normalizeFallbackEntries(input.strategy?.fallbackModelRefs ?? [])
   const allModelOptions = buildModelOptions(channels)
   const fallbackDefaultModelRef = allModelOptions[0]?.modelRef
-  const resolvedDefaultModelRef = includesModelRef(allModelOptions, configuredModelRef)
-    ? configuredModelRef
-    : fallbackDefaultModelRef
+  const configuredDefault = findModelOption(allModelOptions, configuredModelRef, configuredChannelId)
+    ?? findModelOption(allModelOptions, configuredModelRef)
+  const resolvedDefaultModelRef = configuredDefault?.modelRef ?? fallbackDefaultModelRef
+  const resolvedFallbacks = rawFallbacks.flatMap((modelRef) => {
+    const option = findModelOption(allModelOptions, modelRef)
+    return option ? [option.modelRef] : []
+  })
 
   return {
     defaultModelRef: resolvedDefaultModelRef,
     fallbackModelRefs: sanitizeFallbackChain({
       defaultModelRef: resolvedDefaultModelRef,
-      fallbackModelRefs: rawFallbacks.filter((modelRef) => includesModelRef(allModelOptions, modelRef)),
+      fallbackModelRefs: resolvedFallbacks,
     }),
     hasExplicitDefaultModel: Boolean(configuredModelRef),
-    unavailableDefaultModelRef:
-      configuredModelRef && configuredModelRef !== resolvedDefaultModelRef ? configuredModelRef : undefined,
+    unavailableDefaultModelRef: configuredModelRef && !configuredDefault ? configuredModelRef : undefined,
     unavailableFallbackModelRefs: rawFallbacks.filter((modelRef) => (
-      !includesModelRef(allModelOptions, modelRef)
+      !findModelOption(allModelOptions, modelRef)
       && modelRef !== configuredModelRef
       && modelRef !== configuredChannelId
     )),
@@ -154,9 +111,7 @@ export function buildStrategySavePayload(
   allModelOptions: ModelOption[]
 ): LumeConfigAgentDefaultStrategy {
   const defaultModelRef = normalizeOptional(draft.defaultModelRef)
-  const selectedModel = defaultModelRef
-    ? allModelOptions.find((option) => option.modelRef === defaultModelRef)
-    : undefined
+  const selectedModel = findModelOption(allModelOptions, defaultModelRef)
   const fallbackModelRefs = sanitizeFallbackChain({
     defaultModelRef,
     fallbackModelRefs: draft.fallbackModelRefs,
@@ -220,7 +175,7 @@ export function getModelLabel(modelOptions: ModelOption[], modelRef?: string): s
     return '未设置'
   }
 
-  return modelOptions.find((option) => option.modelRef === normalized)?.label ?? normalized
+  return findModelOption(modelOptions, normalized)?.label ?? normalized
 }
 
 function FallbackSelectRow(props: {

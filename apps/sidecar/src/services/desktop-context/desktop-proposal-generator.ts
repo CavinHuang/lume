@@ -1,11 +1,12 @@
-import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import type { LLMProvider } from "@lume/agent-sdk";
 import type {
   DesktopContextSnapshot,
   DesktopProactiveProposalKind,
   DesktopProactiveProposalResult,
 } from "@lume/shared";
 import { desktopProposalSuggestedAction } from "@lume/shared";
-import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
+import { resolveChannelModelBinding } from "../channel/channel-manager";
+import { createConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { redactDesktopText } from "./desktop-context-store";
 
@@ -22,7 +23,7 @@ export function createDesktopProposalResultGenerator(input: {
   model?: string;
 } = {}): DesktopProposalResultGenerator {
   return async ({ kind, snapshots }) => {
-    const attempt = resolveGeneratorAttempt(input);
+    const attempt = await resolveGeneratorAttempt(input);
     if (!attempt) return undefined;
     const response = await attempt.provider.createMessage({
       model: attempt.model,
@@ -41,20 +42,20 @@ export function createDesktopProposalResultGenerator(input: {
   };
 }
 
-function resolveGeneratorAttempt(input: {
+async function resolveGeneratorAttempt(input: {
   modelRef?: string;
   provider?: LLMProvider;
   model?: string;
-}): { provider: LLMProvider; model: string } | undefined {
+}): Promise<{ provider: LLMProvider; model: string } | undefined> {
   if (input.provider && input.model) return { provider: input.provider, model: input.model };
   try {
     const modelRef = input.modelRef ?? getEffectiveLumeConfig().models?.background?.defaultModelRef;
     const binding = modelRef ? resolveChannelModelBinding(modelRef, "chat") : undefined;
     if (!binding) return undefined;
     return {
-      provider: createProvider(resolveApiType(binding.channel.provider), {
-        apiKey: decryptApiKey(binding.channel.id),
-        baseURL: binding.channel.baseUrl,
+      provider: await createConnectionLlmProvider({
+        channel: binding.channel,
+        modelId: binding.modelId,
       }),
       model: binding.modelId,
     };
@@ -113,13 +114,6 @@ function truncate(value: string | undefined, limit: number): string {
 
 function redact(value: string | undefined): string | undefined {
   return value === undefined ? undefined : redactDesktopText(value);
-}
-
-function resolveApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }
 
 const DESKTOP_PROPOSAL_SYSTEM_PROMPT = `你是 Lume 的桌面主动建议生成器。

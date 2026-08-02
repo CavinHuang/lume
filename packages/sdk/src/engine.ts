@@ -1073,8 +1073,8 @@ export class QueryEngine {
             }
 
             const chunk = next.value as CreateMessageStreamEvent
-            firstResponseAt ??= performance.now()
             if (chunk.type === 'text_delta' && chunk.text) {
+              firstResponseAt ??= performance.now()
               // Official Claude Agent SDK format (stream_event)
               yield {
                 type: 'stream_event',
@@ -1096,6 +1096,7 @@ export class QueryEngine {
               }
             }
             if (chunk.type === 'thinking_delta' && chunk.thinking) {
+              firstResponseAt ??= performance.now()
               yield {
                 type: 'stream_event',
                 event: {
@@ -1105,6 +1106,29 @@ export class QueryEngine {
                 },
                 parent_tool_use_id: null,
                 session_id: this.config.sessionId,
+              }
+            }
+            if (chunk.type === 'retry_state') {
+              const status = chunk.errorStatus
+              const errorType = status === 429
+                ? 'rate_limit'
+                : status === 400
+                  ? 'invalid_request'
+                  : status === 401 || status === 403
+                    ? 'authentication_failed'
+                    : status === 500 || status === 502 || status === 503 || status === 529
+                      ? 'server_error'
+                      : 'unknown'
+              yield {
+                type: 'system',
+                subtype: 'api_retry',
+                phase: chunk.phase,
+                attempt: chunk.attempt,
+                max_retries: chunk.maxRetries,
+                retry_delay_ms: chunk.retryDelayMs,
+                error_status: status,
+                error: errorType,
+                session_id: this.sessionId,
               }
             }
           }

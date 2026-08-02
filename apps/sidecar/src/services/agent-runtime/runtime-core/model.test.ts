@@ -47,6 +47,19 @@ describe("runtime-core model", () => {
     expect(resolved?.model.baseUrl).toBe("https://api.anthropic.com");
   });
 
+  test("OpenRouter 模型 ID 中的上游 provider 前缀必须保持不变", () => {
+    const resolved = resolvePiChannelModel({
+      channel: {
+        models: [{ id: "anthropic/claude-sonnet-4-5", name: "Claude", enabled: true }]
+      },
+      channelProvider: "openrouter",
+      requestedModelRefOrId: "anthropic/claude-sonnet-4-5",
+      baseUrl: "https://openrouter.ai/api/v1"
+    });
+
+    expect(resolved?.resolvedModelId).toBe("anthropic/claude-sonnet-4-5");
+  });
+
   test("GLM-5.2 应使用元数据中的 1M 上下文窗口", () => {
     const resolved = resolvePiChannelModel({
       channel: {

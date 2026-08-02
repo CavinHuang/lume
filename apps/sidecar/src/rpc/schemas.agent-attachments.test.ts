@@ -103,4 +103,37 @@ describe("agentSendInputSchema browserAttachments", () => {
     expect(() => agentSendInputSchema.parse({ threadId: "thread-1", userMessage: "read", browserAttachments: [{ ...attachment, backend: "firefox" }] })).toThrow();
     expect(() => agentSendInputSchema.parse({ threadId: "thread-1", userMessage: "read", browserAttachments: [{ ...attachment, referenceGrantId: "" }] })).toThrow();
   });
+
+  test("accepts a comment attached to browser design changes", () => {
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "apply these adjustments",
+      browserAttachments: [{
+        id: "browser-design-change:1",
+        origin: "browser-design-change",
+        tab: {
+          id: "browser-tab:1",
+          origin: "browser-tab",
+          tabId: "tab-1",
+          title: "Example",
+          url: "https://example.com/",
+          generation: 2
+        },
+        anchor: {
+          kind: "element",
+          url: "https://example.com/",
+          generation: 2,
+          framePath: [],
+          domPath: "html > body > main",
+          selectedContent: "Primary heading",
+          rect: { x: 10, y: 20, width: 200, height: 100 }
+        },
+        originalStyles: { color: "rgb(0, 0, 0)" },
+        proposedStyles: { color: "rgb(2, 133, 255)" },
+        body: "Use the primary accent color"
+      }]
+    });
+
+    expect(parsed.browserAttachments?.[0]).toMatchObject({ body: "Use the primary accent color" });
+  });
 });

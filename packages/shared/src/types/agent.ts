@@ -965,6 +965,8 @@ export interface AgentBrowserAnchor {
   framePath: string[]
   domPath?: string
   textQuote?: { exact: string; prefix?: string; suffix?: string }
+  /** Bounded visible text captured at selection time; never treated as instructions. */
+  selectedContent?: string
   rect: { x: number; y: number; width: number; height: number }
 }
 
@@ -984,6 +986,7 @@ export interface AgentBrowserDesignChangeAttachment {
   anchor: AgentBrowserAnchor
   originalStyles: Record<string, string>
   proposedStyles: Record<string, string>
+  body?: string
   screenshotRef?: string
 }
 

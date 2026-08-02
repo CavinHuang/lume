@@ -239,6 +239,21 @@ function browserTabFromAttachment(attachment: AgentBrowserAttachment): AgentBrow
   return attachment.origin === 'browser-tab' ? attachment : attachment.tab
 }
 
+type BrowserAnnotationAttachment = Extract<AgentBrowserAttachment, { origin: 'browser-annotation' }>
+
+function browserAnnotationTargetLabel(attachment: BrowserAnnotationAttachment): string {
+  if (attachment.anchor.kind === 'text') return 'text'
+  if (attachment.anchor.kind === 'region') return 'region'
+  const segment = attachment.anchor.domPath?.split('>').at(-1)?.trim()
+  return segment?.replace(/:.*/, '').toLowerCase() || 'element'
+}
+
+function browserAnnotationPreview(attachment: BrowserAnnotationAttachment): string {
+  return attachment.anchor.textQuote?.exact
+    || attachment.anchor.selectedContent
+    || attachment.body
+}
+
 function sameBrowserTab(attachment: AgentBrowserAttachment, backend: 'iab' | 'extension', tabId: string): boolean {
   const tab = browserTabFromAttachment(attachment)
   return (tab.backend ?? 'iab') === backend && tab.tabId === tabId
@@ -1313,6 +1328,16 @@ export function AgentInput({
   ])
   sendNowRef.current = () => { void handleSend() }
 
+  useEffect(() => {
+    const submitAgentInput = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string }>).detail
+      if (detail?.threadId && detail.threadId !== threadId) return
+      window.requestAnimationFrame(() => sendNowRef.current())
+    }
+    window.addEventListener('lume:submit-agent-input', submitAgentInput)
+    return () => window.removeEventListener('lume:submit-agent-input', submitAgentInput)
+  }, [threadId])
+
   const applyContent = (json: AgentInputDraftJSON | undefined) => {
     if (!editor) return
     isNavigatingHistoryRef.current = true
@@ -1631,6 +1656,9 @@ export function AgentInput({
         ? 'bg-[var(--lume-accent-soft)]'
         : 'hover:bg-[var(--surface-3)]',
     )
+  const displayedBrowserAttachments = editingQueuedMessage?.item.browserAttachments ?? browserAttachments
+  const displayedBrowserAnnotations = displayedBrowserAttachments.filter((attachment) => attachment.origin === 'browser-annotation')
+  const displayedOtherBrowserAttachments = displayedBrowserAttachments.filter((attachment) => attachment.origin !== 'browser-annotation')
 
   return (
     <div className="px-3 pb-4 pt-2">
@@ -1721,20 +1749,54 @@ export function AgentInput({
                           )}
                         </div>
                       ))}
-                      {(editingQueuedMessage?.item.browserAttachments ?? browserAttachments).map((attachment) => {
+                      {displayedBrowserAnnotations.length > 0 && (
+                        <div tabIndex={0} aria-label={`${displayedBrowserAnnotations.length} 条网页注释`} className="group/browser-annotations relative flex w-fit max-w-full items-center gap-2 rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-3 py-2 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+                          <div className="invisible absolute bottom-full left-0 z-50 w-[min(480px,calc(100vw-32px))] pb-2 opacity-0 transition-[opacity,visibility] group-hover/browser-annotations:visible group-hover/browser-annotations:opacity-100 group-focus-within/browser-annotations:visible group-focus-within/browser-annotations:opacity-100">
+                            <div className="overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-24px_hsl(var(--lume-shadow-panel)/0.72)]">
+                              {displayedBrowserAnnotations.map((annotation, index) => (
+                                <div key={annotation.id} className={cn('px-4 py-3', index > 0 && 'border-t border-[var(--lume-border-subtle)]')}>
+                                  <div className="flex items-center gap-2">
+                                    <div aria-hidden="true" className="flex h-6 w-8 shrink-0 items-center overflow-hidden rounded-md border border-[var(--lume-border-subtle)] bg-background px-1 text-[4px] leading-[5px] text-muted-foreground">
+                                      <span className="line-clamp-3 break-all">{browserAnnotationPreview(annotation)}</span>
+                                    </div>
+                                    <code className="rounded-md border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2 py-0.5 text-[11px] font-normal text-muted-foreground">
+                                      {browserAnnotationTargetLabel(annotation)}
+                                    </code>
+                                  </div>
+                                  <p className="mt-2 whitespace-pre-wrap break-words text-sm font-normal leading-5 text-foreground">{annotation.body}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <MessageSquareText size={13} className="shrink-0 text-[var(--lume-accent)]" />
+                          <span>{displayedBrowserAnnotations.length} 条注释</span>
+                          {!editingQueuedMessage && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              className="-mr-1 opacity-0 transition-opacity group-hover/browser-annotations:opacity-100 group-focus-within/browser-annotations:opacity-100"
+                              aria-label="移除全部网页批注"
+                              onClick={() => displayedBrowserAnnotations.forEach(handleRemoveBrowserAttachment)}
+                            >
+                              <X size={12} />
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                      {displayedOtherBrowserAttachments.map((attachment) => {
                         const tab = attachment.origin === 'browser-tab' ? attachment : attachment.tab
                         return (
                           <div key={attachment.id} className="flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2.5 py-1.5 text-xs">
                             <Globe size={13} className="shrink-0 text-[var(--lume-accent)]" />
                             <span className="min-w-0 flex-1 truncate">
-                              {attachment.origin === 'browser-annotation'
-                                ? '网页批注 · '
-                                : attachment.origin === 'browser-design-change'
-                                  ? 'Design Tweaks · '
-                                  : tab.backend === 'extension'
-                                    ? 'Chrome · '
-                                    : '内置浏览器 · '}
+                              {attachment.origin === 'browser-design-change'
+                                ? 'Design Tweaks · '
+                                : tab.backend === 'extension'
+                                  ? 'Chrome · '
+                                  : '内置浏览器 · '}
                               {tab.title || tab.url}
+                              {attachment.origin === 'browser-design-change' && attachment.body && ` · ${attachment.body}`}
                             </span>
                             {!editingQueuedMessage && (
                               <Button

@@ -369,7 +369,7 @@ export class Agent {
     this.apiCredentials = this.pickCredentials()
     this.modelId = this.cfg.model ?? this.readEnv('CODEANY_MODEL') ?? 'claude-sonnet-4-6'
     this.apiType = this.resolveApiType()
-    this.provider = createProvider(this.apiType, {
+    this.provider = this.cfg.provider ?? createProvider(this.apiType, {
       apiKey: this.apiCredentials.key,
       baseURL: this.apiCredentials.baseUrl,
     })

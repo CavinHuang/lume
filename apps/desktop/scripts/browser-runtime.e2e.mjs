@@ -67,7 +67,7 @@ function findElectronBinary() {
 
 function electronFixtureMain(modulePath, guestPreloadPath) {
   return `
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { createServer } from 'node:http'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -139,9 +139,11 @@ app.whenReady().then(async () => {
   await win.loadURL('data:text/html,<main id="guests" style="position:fixed;inset:0"></main>')
   const events = []
   const guests = new Map()
-  const pendingGuestMounts = new Set()
+  const pendingGuestContents = new Map()
+  let guestAttachAttempts = 0
   let runtime
   win.webContents.on('will-attach-webview', (event, preferences, params) => {
+    guestAttachAttempts += 1
     const grant = runtime?.authorizeGuestMount(win.webContents.id, params.src, params.partition)
     if (!grant) { event.preventDefault(); return }
     preferences.preload = ${JSON.stringify(guestPreloadPath)}
@@ -149,16 +151,19 @@ app.whenReady().then(async () => {
     preferences.contextIsolation = true
     preferences.nodeIntegration = false
     preferences.webSecurity = true
-    preferences.additionalArguments = ['--lume-browser-mount=' + grant.token]
     delete params.allowpopups
     delete params.preload
     params.partition = grant.partition
-    pendingGuestMounts.add(params.src)
   })
   win.webContents.on('did-attach-webview', (_event, contents) => {
-    const token = contents.getLastWebPreferences().additionalArguments?.find(value => value.startsWith('--lume-browser-mount='))?.slice('--lume-browser-mount='.length)
-    const bootstrapUrl = token ? 'about:blank#lume-browser-mount=' + token : ''
-    if (!pendingGuestMounts.delete(bootstrapUrl) || !runtime.attachGuest(win.webContents.id, bootstrapUrl, contents)) { contents.close(); return }
+    pendingGuestContents.set(contents.id, contents)
+  })
+  ipcMain.on('lume:browser-guest-mounted', (event, bootstrapUrl) => {
+    const contents = pendingGuestContents.get(event.sender.id)
+    if (!contents || contents !== event.sender) return
+    pendingGuestContents.delete(event.sender.id)
+    const token = bootstrapUrl.startsWith('about:blank#lume-browser-mount=') ? bootstrapUrl.slice('about:blank#lume-browser-mount='.length) : ''
+    if (!token || !runtime.attachGuest(win.webContents.id, bootstrapUrl, contents)) { contents.close(); return }
     guests.set(token, contents)
   })
   runtime = new BrowserRuntime({
@@ -183,12 +188,20 @@ app.whenReady().then(async () => {
   const userContext = { actor: 'user', browserSessionId: 'renderer', browserTurnId: 'renderer' }
   const userCall = (method, params = {}) => runtime.dispatch({ requestId: crypto.randomUUID(), context: userContext, method, params })
   const mountTab = async tabId => {
+    const attachAttemptsBeforeMount = guestAttachAttempts
     const mount = await userCall('mount:prepare', { tabId })
     check(runtime.authorizeGuestMount(win.webContents.id + 1, mount.bootstrapUrl, mount.partition) === null, 'guest mount accepted a different renderer owner')
     check(runtime.authorizeGuestMount(win.webContents.id, mount.bootstrapUrl, 'persist:forged-browser') === null, 'guest mount accepted a forged partition')
+    const repeatedMount = await userCall('mount:prepare', { tabId })
+    check(repeatedMount?.mountToken === mount.mountToken, 'a concurrent mount request did not reuse the active mount grant')
     await win.webContents.executeJavaScript(\`(() => { const host = document.querySelector('#guests'); const view = document.createElement('webview'); view.dataset.tabId = \${JSON.stringify(tabId)}; view.setAttribute('partition', \${JSON.stringify(mount.partition)}); view.setAttribute('src', \${JSON.stringify(mount.bootstrapUrl)}); view.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'; host.append(view) })()\`)
-    await waitUntil(() => events.some(event => event.method === 'browser:tab-changed' && event.params?.tabId === tabId && event.params?.guestState === 'ready'))
+    await waitUntil(() => guests.has(mount.mountToken) && events.some(event => event.method === 'browser:tab-changed' && event.params?.tabId === tabId && event.params?.generation === mount.generation && event.params?.guestState === 'ready'))
+    check(await userCall('mount:prepare', { tabId }) === null, 'an attached guest produced a redundant mount grant')
     check(runtime.authorizeGuestMount(win.webContents.id, mount.bootstrapUrl, mount.partition) === null, 'guest mount token was replayable')
+    check(guestAttachAttempts === attachAttemptsBeforeMount + 1, 'one logical mount created more than one renderer guest')
+    await win.webContents.executeJavaScript(\`(() => { const view = document.querySelector('webview[data-tab-id="' + \${JSON.stringify(tabId)} + '"]'); view.style.position = 'fixed'; view.style.left = '40px'; view.style.top = '50px'; view.style.width = '620px'; view.style.height = '430px' })()\`)
+    await new Promise(resolveLayout => setTimeout(resolveLayout, 50))
+    check(guestAttachAttempts === attachAttemptsBeforeMount + 1, 'CSS surface relocation replayed the one-time guest mount token')
     return guests.get(mount.mountToken)
   }
   try {
@@ -201,11 +214,53 @@ app.whenReady().then(async () => {
     check(created.tabId === 'fixture-tab' && created.backend === 'iab', 'logical tab was not created')
     const view = await mountTab('fixture-tab')
     check(view && !view.isDestroyed(), 'authorized renderer webview guest was not attached')
+    setStage('concurrent-guest-mounts')
+    await call('ensure', { tabId: 'concurrent-a' })
+    await call('ensure', { tabId: 'concurrent-b' })
+    const concurrentMountA = await userCall('mount:prepare', { tabId: 'concurrent-a' })
+    const concurrentMountB = await userCall('mount:prepare', { tabId: 'concurrent-b' })
+    await win.webContents.executeJavaScript(\`(() => {
+      const host = document.querySelector('#guests');
+      for (const mount of \${JSON.stringify([concurrentMountA, concurrentMountB])}) {
+        const view = document.createElement('webview');
+        view.dataset.tabId = mount.tabId;
+        view.setAttribute('partition', mount.partition);
+        view.setAttribute('src', mount.bootstrapUrl);
+        view.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
+        host.append(view);
+      }
+    })()\`)
+    await waitUntil(() => [concurrentMountA, concurrentMountB].every(mount => guests.has(mount.mountToken) && events.some(event => event.method === 'browser:tab-changed' && event.params?.tabId === mount.tabId && event.params?.generation === mount.generation && event.params?.guestState === 'ready')))
+    check([concurrentMountA, concurrentMountB].every(mount => !guests.get(mount.mountToken)?.isDestroyed()), 'concurrent guest mounts crossed or destroyed their mount tokens')
+    await userCall('close', { tabId: 'concurrent-a' })
+    await userCall('close', { tabId: 'concurrent-b' })
+    const staleMountRelease = await userCall('mount:release', { tabId: 'concurrent-a', mountToken: concurrentMountA.mountToken })
+    check(staleMountRelease.released === false, 'releasing a mount after its tab closed was not idempotent')
+    await win.webContents.executeJavaScript(\`document.querySelectorAll('webview[data-tab-id^="concurrent-"]').forEach(view => view.remove())\`)
+    await waitUntil(() => [concurrentMountA, concurrentMountB].every(mount => guests.get(mount.mountToken)?.isDestroyed()))
     const bounded = await call('bounds', { tabId: 'fixture-tab', x: 20, y: 30, width: 640, height: 480, surface: 'main', visible: true })
     check(bounded.visible && bounded.surface === 'main', 'renderer browser surface metadata was not applied')
     await call('navigate', { tabId: 'fixture-tab', url: origin + '/' })
     const navigatedUrl = await call('url', { tabId: 'fixture-tab' })
     check(navigatedUrl.startsWith(origin), 'fixture navigation failed: ' + JSON.stringify(navigatedUrl))
+    setStage('annotation-selection')
+    const elementSelectionPromise = userCall('annotation:start', { tabId: 'fixture-tab', mode: 'auto' })
+    await new Promise(resolveSelection => setTimeout(resolveSelection, 25))
+    await view.executeJavaScript("document.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientX:30,clientY:30}));document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,clientX:30,clientY:30}));document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0,clientX:30,clientY:30}))")
+    const elementSelection = await elementSelectionPromise
+    check(elementSelection.anchor.kind === 'element' && elementSelection.anchor.domPath, 'automatic annotation selection did not select an element')
+    const textSelectionPromise = userCall('annotation:start', { tabId: 'fixture-tab', mode: 'auto' })
+    await new Promise(resolveSelection => setTimeout(resolveSelection, 25))
+    await view.executeJavaScript("(() => { const node=document.querySelector('label').firstChild; const range=document.createRange(); range.selectNodeContents(node); const selection=getSelection(); selection.removeAllRanges(); selection.addRange(range); document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,clientX:20,clientY:20})); document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0,clientX:80,clientY:20})); })()")
+    const textSelection = await textSelectionPromise
+    check(textSelection.anchor.kind === 'text' && textSelection.anchor.textQuote?.exact === 'Name ', 'automatic annotation selection did not preserve selected text')
+    const regionSelectionPromise = userCall('annotation:start', { tabId: 'fixture-tab', mode: 'auto' })
+    await new Promise(resolveSelection => setTimeout(resolveSelection, 25))
+    await view.executeJavaScript("getSelection().removeAllRanges();document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,clientX:180,clientY:160}));document.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientX:240,clientY:210}));document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0,clientX:240,clientY:210}))")
+    const regionSelection = await regionSelectionPromise
+    check(regionSelection.anchor.kind === 'region' && regionSelection.anchor.rect.width === 60 && regionSelection.anchor.rect.height === 50, 'automatic annotation selection did not create a region')
+    await userCall('annotation:highlight', { tabId: 'fixture-tab', anchors: [elementSelection.anchor, textSelection.anchor], activeIndex: 1 })
+    check(await view.executeJavaScript("document.querySelectorAll('#__lume_review_highlights > div').length") === 2, 'annotation highlights did not preserve the queued selection set')
     const moved = await call('bounds', { tabId: 'fixture-tab', x: 680, y: 30, width: 200, height: 480, surface: 'right-panel', visible: true })
     check(moved.surface === 'right-panel' && !view.isDestroyed(), 'surface migration replaced the renderer webview guest')
     check((await call('url', { tabId: 'fixture-tab' })).startsWith(origin), 'surface migration reloaded the page')
@@ -233,7 +288,8 @@ app.whenReady().then(async () => {
     check(webMcpResult.result.applied === 'WebMCP Agent' && await view.executeJavaScript("document.querySelector('#result').textContent") === 'WebMCP Agent', 'WebMCP tool invocation failed')
     await view.executeJavaScript("document.querySelector('#result').textContent = ''")
     await call('press', { tabId: 'fixture-tab', locator: locator('#submit'), key: 'Enter' })
-    check(await view.executeJavaScript("document.querySelector('#result').textContent") === 'Lume Agent', 'locator press did not focus and activate the target')
+    const pressedResult = await view.executeJavaScript("document.querySelector('#result').textContent")
+    check(pressedResult === 'Lume Agent', 'locator press did not focus and activate the target: ' + JSON.stringify(pressedResult))
     const frameLocator = selector => ({ version: 1, steps: [{ kind: 'frame', selector: '#cross-origin-frame' }, { kind: 'css', selector }] })
     await call('locator:waitFor', { tabId: 'fixture-tab', locator: frameLocator('#frame-name'), state: 'visible', timeoutMs: 3000 })
     await call('fill', { tabId: 'fixture-tab', locator: frameLocator('#frame-name'), text: 'Cross origin Agent' })
@@ -275,11 +331,19 @@ app.whenReady().then(async () => {
     const afterCrash = await call('get', { tabId: 'fixture-tab' })
     check(afterCrash.generation > beforeCrash.generation, 'renderer crash did not revoke the prior document generation')
     await call('reload', { tabId: 'fixture-tab' })
+    const recoveredView = await mountTab('fixture-tab')
     await call('wait:load', { tabId: 'fixture-tab', timeoutMs: 5000 })
-    check(!view.isDestroyed() && (await call('url', { tabId: 'fixture-tab' })).startsWith(origin), 'logical tab did not recover after renderer crash')
+    const recoveredDescriptor = await call('get', { tabId: 'fixture-tab' })
+    const recoveredUrl = await call('url', { tabId: 'fixture-tab' })
+    check(recoveredView && !recoveredView.isDestroyed() && recoveredUrl.startsWith(origin), 'logical tab did not recover after renderer crash: ' + JSON.stringify({ recoveredUrl, descriptor: recoveredDescriptor, destroyed: recoveredView?.isDestroyed() }))
     await call('handoff', { tabIds: ['fixture-tab'] })
     const resumed = await runtime.dispatch({ requestId: crypto.randomUUID(), context: { ...context, browserTurnId: 'fixture-turn-2' }, method: 'resumeHandoff', params: {} })
     check(resumed.length === 1 && resumed[0].tabId === 'fixture-tab', 'handoff did not resume in the next Agent turn')
+    const secondTurn = { ...context, browserTurnId: 'fixture-turn-2' }
+    await runtime.dispatch({ requestId: crypto.randomUUID(), context: secondTurn, method: 'mark', params: { tabId: 'fixture-tab', status: 'handoff' } })
+    await runtime.dispatch({ requestId: crypto.randomUUID(), context: secondTurn, method: 'finalize', params: {} })
+    const retained = await runtime.dispatch({ requestId: crypto.randomUUID(), context: { ...context, browserTurnId: 'fixture-turn-3' }, method: 'resumeHandoff', params: {} })
+    check(retained.length === 1 && retained[0].tabId === 'fixture-tab', 'markHandoff was not retained by turn finalization')
     writeFileSync(resultPath, JSON.stringify({ ok: true, assertions }))
   } finally {
     runtime.destroy()

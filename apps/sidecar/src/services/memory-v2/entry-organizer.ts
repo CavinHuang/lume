@@ -3,9 +3,10 @@ import type {
   MemoryOrganizeProgress,
   MemoryOrganizeEntriesResult
 } from "@lume/shared";
-import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
 import { createLogger } from "../infra/logger";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
+import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { claimFromEntry, claimKey, claimObjectEquals } from "./claim";
 import { areMemoryStatementsSimilar } from "./dedupe";
 import { createMemoryV2Store } from "./markdown-store";
@@ -246,15 +247,13 @@ function createLlmOrganizerPlanner(input: MemoryOrganizeEntriesOptions): MemoryE
   if (!resolved.modelRef) return undefined;
   const binding = resolveChannelModelBinding(resolved.modelRef, "chat");
   if (!binding && !input.createProvider) return undefined;
-  const providerFactory = input.createProvider ?? ((options) => createProvider(options.apiType, {
-    apiKey: options.apiKey,
-    baseURL: options.baseURL
-  }));
-  const provider = providerFactory({
-    apiType: binding ? resolveOrganizerApiType(binding.channel.provider) : "openai-completions",
-    apiKey: binding ? decryptApiKey(binding.channel.id) : "",
-    baseURL: binding?.channel.baseUrl
-  });
+  const provider = input.createProvider
+    ? input.createProvider({
+      apiType: binding ? resolveOrganizerApiType(binding.channel.provider) : "openai-completions",
+      apiKey: binding ? decryptApiKey(binding.channel.id) : "",
+      baseURL: binding?.channel.baseUrl
+    })
+    : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId });
   const model = binding?.modelId ?? resolved.modelRef.split("/").at(-1) ?? resolved.modelRef;
   return async (entries) => organizeEntriesWithLlm({ provider, model, entries, workspaceSlug: input.workspaceSlug });
 }

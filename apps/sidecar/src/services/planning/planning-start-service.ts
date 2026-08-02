@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { AgentUserMessagePart, PlanningTodoStartInput, PlanningTodoStartResult } from "@lume/shared";
 import { planningTodoUri } from "@lume/shared";
 import { appendAgentMessage } from "../agent/agent-service";
+import { createAgentNotificationEmitter } from "../agent/agent-notification-service";
 import { getAgentSubmissionStore } from "../agent/agent-submission-store";
 import { createAgentThreadWithModelRef, deleteAgentThread, getAgentThreadMessages } from "../agent/agent-thread-manager";
 import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
@@ -63,7 +64,7 @@ export function startPlanningTodo(input: PlanningTodoStartInput, mode: "start" |
       clientSubmissionId,
       trustedPlanningClientSubmissionId: clientSubmissionId,
       traceContext: { submissionId: clientSubmissionId, origin: "internal" }
-    }, { onComplete: () => undefined, onError: () => undefined, onTitleUpdated: () => undefined, onAskUserQuestion: () => undefined, onToolPermissionRequest: () => undefined }, { trustedPlanningOperationId: operation.operationId });
+    }, createAgentNotificationEmitter({ threadId }), { trustedPlanningOperationId: operation.operationId });
     operation = store.advanceOperation(operation.operationId, { phase: "submission_accepted", status: "running", threadId });
     store.link(todo.id, { threadId, relation: "primary", runId: clientSubmissionId });
     operation = store.advanceOperation(operation.operationId, { phase: "link_committed", status: "running", threadId });

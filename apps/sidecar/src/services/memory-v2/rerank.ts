@@ -1,5 +1,6 @@
-import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
+import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { resolveMemoryExtractionModelRef, resolveMemoryExtractionModelRefs } from "./extraction";
 import type { MemoryV2RecallItem } from "./types";
@@ -75,16 +76,14 @@ function createRerankAttempt(
 ): { provider: LLMProvider; model: string } | undefined {
   const binding = resolveChannelModelBinding(modelRef, "chat");
   if (!binding && !createProviderInput) return undefined;
-  const providerFactory = createProviderInput ?? ((options) => createProvider(options.apiType, {
-    apiKey: options.apiKey,
-    baseURL: options.baseURL
-  }));
   return {
-    provider: providerFactory({
-      apiType: binding ? resolveRerankApiType(binding.channel.provider) : "openai-completions",
-      apiKey: binding ? decryptApiKey(binding.channel.id) : "",
-      baseURL: binding?.channel.baseUrl
-    }),
+    provider: createProviderInput
+      ? createProviderInput({
+        apiType: binding ? resolveRerankApiType(binding.channel.provider) : "openai-completions",
+        apiKey: binding ? decryptApiKey(binding.channel.id) : "",
+        baseURL: binding?.channel.baseUrl
+      })
+      : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId }),
     model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef
   };
 }

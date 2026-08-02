@@ -125,6 +125,7 @@ const agentBrowserAnchorSchema = z.object({
     prefix: z.string().max(1000).optional(),
     suffix: z.string().max(1000).optional()
   }).strict().optional(),
+  selectedContent: z.string().max(20_000).optional(),
   rect: z.object({
     x: z.number().finite(),
     y: z.number().finite(),
@@ -150,6 +151,7 @@ const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
     anchor: agentBrowserAnchorSchema,
     originalStyles: z.record(z.string().max(128), z.string().max(4096)),
     proposedStyles: z.record(z.string().max(128), z.string().max(4096)),
+    body: z.string().trim().min(1).max(20_000).optional(),
     screenshotRef: z.string().max(4096).optional()
   }).strict()
 ]);

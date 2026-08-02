@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createChannel } from "../../channel/channel-manager";
+import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
 import { isRuntimeModelFallbackRetryable, resolveRuntimeModelAttemptParams } from "./attempt";
 import type { AgentRuntimeRunParams } from "../runner/types";
@@ -18,6 +19,7 @@ describe("resolveRuntimeModelAttemptParams", () => {
     tempConfigDir = mkdtempSync(join(tmpdir(), "lume-runtime-model-fallback-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
     process.env.LUME_SECRET_SEED = "runtime-model-fallback-test-seed";
+    installConnectionVaultKey(Buffer.alloc(32, 7).toString("base64"));
   });
 
   afterEach(() => {

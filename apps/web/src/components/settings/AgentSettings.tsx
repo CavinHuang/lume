@@ -9,6 +9,7 @@ import {
   GripVertical,
   KeyRound,
   Loader2,
+  Plus,
   RefreshCw,
   Search,
   Trash2,
@@ -36,7 +37,6 @@ import {
   formatContextWindow,
   formatPricing,
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
-  PROVIDER_LABELS,
   PROVIDER_GROUPS,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
@@ -44,7 +44,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { useModelMetaReload, useModelMetaVersion } from '@/lib/model-meta-context'
-import { createChannel, decryptChannelKey, listChannels, updateChannel, deleteChannel } from '@/lib/desktop-api/channel'
+import { createChannel, listChannels, updateChannel, deleteChannel } from '@/lib/desktop-api/channel'
 import {
   getEffectiveLumeConfig,
   updateAgentModelStrategy,
@@ -65,11 +65,15 @@ import { getReadingSnapshot, updateReadingSettings } from '@/lib/desktop-api/rea
 import { ChannelProviderIcon } from '@/components/model-selection/provider-icon-map'
 import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { ChannelForm } from './ChannelForm'
+import { ConnectionSetupSheet } from './ConnectionSetupSheet'
+import { DefaultModelStrategyPanel } from './DefaultModelStrategyPanel'
 import { buildEmbeddingModelOptions, buildRerankModelOptions } from './memory-settings-state'
 import { buildReadingModelPatch, READING_ADVANCED_STAGE_OPTIONS, type ReadingModelField } from './reading-settings-state'
 import {
   buildModelOptions,
+  findModelOption,
   getEnabledChannels,
+  isConnectionReady,
   type ModelOption,
 } from './model-option-utils'
 import {
@@ -87,7 +91,8 @@ export function AgentSettings() {
   const [loading, setLoading] = React.useState(true)
   const [savingModel, setSavingModel] = React.useState(false)
   const [savingAction, setSavingAction] = React.useState<string | null>(null)
-  const [activeTab, setActiveTab] = React.useState<'providers' | 'actions'>('providers')
+  const [activeTab, setActiveTab] = React.useState<'connections' | 'models' | 'routing'>('connections')
+  const [connectionSetupOpen, setConnectionSetupOpen] = React.useState(false)
   const [thinkingLevel, setThinkingLevel] = React.useState<LumeConfigThinkingLevel>('medium')
   const [activeGroup, setActiveGroup] = React.useState<ProviderGroup>('all')
   const [providerSearch, setProviderSearch] = React.useState('')
@@ -95,7 +100,7 @@ export function AgentSettings() {
   const [selectedApiKey, setSelectedApiKey] = React.useState('')
   const [contextModelRef, setContextModelRef] = React.useState('')
   const [contextWindowInput, setContextWindowInput] = React.useState('')
-  const [apiKeyLoading, setApiKeyLoading] = React.useState(false)
+  const apiKeyLoading = false
   const [providerEnabled, setProviderEnabled] = React.useState(false)
   const [savingProvider, setSavingProvider] = React.useState(false)
   const [syncingModelMeta, setSyncingModelMeta] = React.useState(false)
@@ -149,9 +154,8 @@ export function AgentSettings() {
     }),
     [allModelOptions, currentStrategy, enabledChannels]
   )
-  const selectedModelValue = activeDefault.option?.modelRef ?? ''
   const providerRows = React.useMemo(() => buildModelProviderRows(channels), [channels])
-  const connectedProviderCount = providerRows.filter((row) => row.channel?.enabled).length
+  const connectedProviderCount = channels.filter(isConnectionReady).length
   const availableModelCount = allModelOptions.length
   const defaultProviderLabel = activeDefault.channel?.name ?? activeDefault.option?.channelLabel ?? '未设置'
   const filteredProviderRows = React.useMemo(
@@ -171,13 +175,9 @@ export function AgentSettings() {
     [activeGroup, providerRows, providerSearch]
   )
   const activeProviderRow = React.useMemo(() => {
-    // 自定义分组：通过 channelId 查找
-    if (activeGroup === 'custom') {
-      return providerRows.find((row) => row.channelId === activeProvider) ?? providerRows[0]
-    }
-    // 其他分组：通过 provider type 查找
-    return providerRows.find((row) => row.provider === activeProvider && !row.channelId) ?? providerRows[0]
-  }, [activeGroup, activeProvider, providerRows])
+    return providerRows.find((row) => row.channelId === activeProvider)
+      ?? providerRows[0]
+  }, [activeProvider, providerRows])
   const activeChannel = activeProviderRow?.channel ?? null
   const providerFormInitialValue = React.useMemo(
     () => getModelProviderFormInitialValue(
@@ -190,21 +190,18 @@ export function AgentSettings() {
   )
 
   React.useEffect(() => {
-    const defaultProvider = activeDefault.channel?.provider
-    if (defaultProvider && providerRows.some((row) => row.provider === defaultProvider && !row.channelId)) {
-      setActiveProvider(defaultProvider)
+    if (activeDefault.channel && providerRows.some((row) => row.channelId === activeDefault.channel?.id)) {
+      setActiveProvider(activeDefault.channel.id)
       return
     }
-    // 如果当前 activeProvider 不在当前分组的列表中，设置为第一个
+    // 如果当前连接不在列表中，选择当前分组的第一个已配置连接。
     const groupInfo = PROVIDER_GROUPS.find(g => g.key === activeGroup)
     const firstInGroup = providerRows.find((row) => {
       if (activeGroup === 'custom') {
-        return row.provider === 'custom' && row.channelId
+        return row.provider === 'custom'
       }
-      if (activeGroup === 'all') {
-        return !row.channelId
-      }
-      return groupInfo?.providers.includes(row.provider) && !row.channelId
+      if (activeGroup === 'all') return true
+      return groupInfo?.providers.includes(row.provider)
     })
     if (firstInGroup && !providerRows.some((row) => (row.channelId ?? row.provider) === activeProvider)) {
       setActiveProvider(firstInGroup.channelId ?? firstInGroup.provider)
@@ -217,51 +214,11 @@ export function AgentSettings() {
     if (!activeChannel) {
       setSelectedApiKey('')
       setProviderEnabled(false)
-      setApiKeyLoading(false)
       return
     }
-
-    let cancelled = false
     setProviderEnabled(activeChannel.enabled)
-    setApiKeyLoading(true)
-    decryptChannelKey(activeChannel.id)
-      .then((apiKey) => {
-        if (!cancelled) setSelectedApiKey(apiKey)
-      })
-      .catch((error) => {
-        console.error('[AgentSettings] decrypt channel key FAILED:', error)
-        if (!cancelled) setSelectedApiKey('')
-        toast.error('加载供应商密钥失败')
-      })
-      .finally(() => {
-        if (!cancelled) setApiKeyLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
+    setSelectedApiKey('')
   }, [activeChannel?.id, activeChannel?.enabled])
-
-  const persistDefaultModel = async (modelRef: string) => {
-    const selected = allModelOptions.find((option) => option.modelRef === modelRef)
-    if (!selected) return
-
-    setSavingModel(true)
-    try {
-      const nextConfig = await updateAgentModelStrategy({
-        ...currentStrategy,
-        defaultChannelId: selected.channelId,
-        defaultModelRef: selected.modelRef,
-      })
-      setConfig(nextConfig)
-      toast.success('默认模型已更新')
-    } catch (error) {
-      console.error('[AgentSettings] save default model FAILED:', error)
-      toast.error('保存默认模型失败')
-    } finally {
-      setSavingModel(false)
-    }
-  }
 
   const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
     setThinkingLevel(value)
@@ -408,10 +365,10 @@ export function AgentSettings() {
       }
 
       const created = await createChannel(payload)
-      setChannels((prev) => [...prev.filter((channel) => channel.provider !== created.provider), created])
+      setChannels((prev) => [...prev, created])
       setSelectedApiKey(input.apiKey)
       setProviderEnabled(created.enabled)
-      setActiveProvider(created.provider)
+      setActiveProvider(created.id)
       toast.success('供应商配置已创建')
     } catch (error) {
       console.error('[AgentSettings] save provider FAILED:', error)
@@ -468,14 +425,15 @@ export function AgentSettings() {
       <div className="flex items-center justify-between gap-3">
         <div className="lume-segmented flex">
           {[
-            ['providers', '模型供应商'],
-            ['actions', '模型设置'],
+            ['connections', '连接'],
+            ['models', '模型'],
+            ['routing', '用途与路由'],
           ].map(([id, label]) => (
             <Button
               variant="ghost"
               key={id}
               type="button"
-              onClick={() => setActiveTab(id as 'providers' | 'actions')}
+              onClick={() => setActiveTab(id as 'connections' | 'models' | 'routing')}
               className={cn(
                 'lume-segmented-item',
                 activeTab === id
@@ -487,9 +445,15 @@ export function AgentSettings() {
             </Button>
           ))}
         </div>
+        {activeTab === 'connections' && (
+          <Button type="button" onClick={() => setConnectionSetupOpen(true)} className="gap-2">
+            <Plus size={14} />
+            添加连接
+          </Button>
+        )}
       </div>
 
-      {activeTab === 'providers' ? (
+      {activeTab === 'connections' ? (
         <>
           <ModelProviderStats
             connectedProviderCount={connectedProviderCount}
@@ -533,13 +497,26 @@ export function AgentSettings() {
             </Button>
           </div>
         </>
+      ) : activeTab === 'models' ? (
+        <ModelCatalogPanel
+          channels={channels}
+          onToggleModel={async (connectionId, modelId, enabled) => {
+            const channel = channels.find((item) => item.id === connectionId)
+            if (!channel) return
+            const updated = await updateChannel(connectionId, {
+              models: channel.models.map((model) => model.id === modelId ? { ...model, enabled } : model),
+            })
+            setChannels((current) => current.map((item) => item.id === updated.id ? updated : item))
+          }}
+        />
       ) : (
-        <ModelActionSettings
+        <div className="space-y-4">
+          <DefaultModelStrategyPanel />
+          <ModelActionSettings
           chatOptions={allModelOptions}
           embeddingOptions={embeddingOptions}
           imageOptions={imageOptions}
           rerankOptions={rerankOptions}
-          defaultModelValue={selectedModelValue}
           backgroundModelValue={config?.models?.background?.defaultModelRef ?? ''}
           contextCompressionModelValue={config?.models?.contextCompression?.defaultModelRef ?? ''}
           titleModelValue={config?.models?.title?.defaultModelRef ?? ''}
@@ -558,21 +535,28 @@ export function AgentSettings() {
           contextWindowInput={contextWindowInput}
           savingAction={savingAction}
           syncingModelMeta={syncingModelMeta}
-          savingModel={savingModel}
           thinkingLevel={thinkingLevel}
           onThinkingLevelChange={handleThinkingLevelChange}
           readingSettings={readingSettings}
           onReadingModelChange={(field, modelRef) => void persistReadingModel(field, modelRef)}
           onContextModelRefChange={setContextModelRef}
           onContextWindowInputChange={setContextWindowInput}
-          onDefaultModelChange={(modelRef) => void persistDefaultModel(modelRef)}
           onActionModelChange={(action, modelRef) => void persistActionModel(action, modelRef)}
           onImageGenerationChange={(next) => void persistImageGeneration(next)}
           onAddContextWindow={() => void handleAddContextWindow()}
           onRemoveContextWindow={(modelRef) => void handleRemoveContextWindow(modelRef)}
           onSyncModelMeta={() => void handleSyncModelMeta()}
-        />
+          />
+        </div>
       )}
+      <ConnectionSetupSheet
+        open={connectionSetupOpen}
+        onOpenChange={setConnectionSetupOpen}
+        onCreated={(connectionId) => {
+          setActiveProvider(connectionId)
+          void reload()
+        }}
+      />
     </div>
   )
 }
@@ -623,6 +607,7 @@ function ModelProviderStats({
 
 type ActionModelOption = {
   modelRef: string
+  legacyModelRefs?: string[]
   label: string
 }
 
@@ -631,7 +616,6 @@ function ModelActionSettings({
   embeddingOptions,
   imageOptions,
   rerankOptions,
-  defaultModelValue,
   backgroundModelValue,
   contextCompressionModelValue,
   titleModelValue,
@@ -650,14 +634,12 @@ function ModelActionSettings({
   contextWindowInput,
   savingAction,
   syncingModelMeta,
-  savingModel,
   thinkingLevel,
   onThinkingLevelChange,
   readingSettings,
   onReadingModelChange,
   onContextModelRefChange,
   onContextWindowInputChange,
-  onDefaultModelChange,
   onActionModelChange,
   onImageGenerationChange,
   onAddContextWindow,
@@ -668,7 +650,6 @@ function ModelActionSettings({
   embeddingOptions: ActionModelOption[]
   imageOptions: ActionModelOption[]
   rerankOptions: ActionModelOption[]
-  defaultModelValue: string
   backgroundModelValue: string
   contextCompressionModelValue: string
   titleModelValue: string
@@ -687,14 +668,12 @@ function ModelActionSettings({
   contextWindowInput: string
   savingAction: string | null
   syncingModelMeta: boolean
-  savingModel: boolean
   thinkingLevel: LumeConfigThinkingLevel
   onThinkingLevelChange: (value: LumeConfigThinkingLevel) => void
   readingSettings: ReadingSettings | null
   onReadingModelChange: (field: ReadingModelField, modelRef: string) => void
   onContextModelRefChange: (value: string) => void
   onContextWindowInputChange: (value: string) => void
-  onDefaultModelChange: (modelRef: string) => void
   onActionModelChange: (action: string, modelRef: string) => void
   onImageGenerationChange: (value: { priorityModelRefs?: string[] }) => void
   onAddContextWindow: () => void
@@ -717,14 +696,6 @@ function ModelActionSettings({
           </div>
           <ThinkingLevelPicker value={thinkingLevel} onChange={onThinkingLevelChange} inline />
         </div>
-        <ActionModelRow
-          title="默认对话模型"
-          description="主对话、新建话题时使用的模型"
-          value={defaultModelValue}
-          options={chatOptions}
-          disabled={savingModel}
-          onChange={onDefaultModelChange}
-        />
         <ActionModelRow
           title="子 Agent"
           description="多任务并行场景中未指定时使用"
@@ -901,8 +872,9 @@ function ActionModelRow({
   disabled?: boolean
   onChange: (value: string) => void
 }) {
-  const hasCurrentOption = !value || options.some((option) => option.modelRef === value)
-  const selectValue = value || '__inherit__'
+  const currentOption = findActionModelOption(options, value)
+  const hasCurrentOption = !value || Boolean(currentOption)
+  const selectValue = currentOption?.modelRef || value || '__inherit__'
 
   return (
     <div className="grid min-h-[62px] grid-cols-[minmax(0,1fr)_minmax(220px,340px)] items-center gap-5 border-b border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] py-3 last:border-b-0">
@@ -952,7 +924,7 @@ function ImageGenerationSettings({
   const [query, setQuery] = React.useState('')
   const [draggingRef, setDraggingRef] = React.useState<string | null>(null)
   const priority = value.priorityModelRefs ?? []
-  const selected = new Set(priority)
+  const selected = new Set(priority.map((modelRef) => findActionModelOption(options, modelRef)?.modelRef ?? modelRef))
   const filteredOptions = options.filter((option) => {
     const text = `${option.label} ${option.modelRef}`.toLowerCase()
     return text.includes(query.trim().toLowerCase())
@@ -964,7 +936,7 @@ function ImageGenerationSettings({
   })
   const toggleModel = (modelRef: string) => {
     updatePriority(selected.has(modelRef)
-      ? priority.filter((item) => item !== modelRef)
+      ? priority.filter((item) => (findActionModelOption(options, item)?.modelRef ?? item) !== modelRef)
       : [...priority, modelRef])
   }
   const moveByDrop = (targetModelRef: string) => {
@@ -1195,6 +1167,87 @@ function ModelInfoSettings({
   )
 }
 
+function ModelCatalogPanel({
+  channels,
+  onToggleModel,
+}: {
+  channels: Channel[]
+  onToggleModel: (connectionId: string, modelId: string, enabled: boolean) => Promise<void>
+}) {
+  const [query, setQuery] = React.useState('')
+  const [savingId, setSavingId] = React.useState<string | null>(null)
+  const normalizedQuery = query.trim().toLowerCase()
+  const rows = channels.flatMap((channel) => channel.models.map((model) => ({ channel, model })))
+    .filter(({ channel, model }) => !normalizedQuery
+      || model.id.toLowerCase().includes(normalizedQuery)
+      || model.name.toLowerCase().includes(normalizedQuery)
+      || channel.name.toLowerCase().includes(normalizedQuery))
+
+  return (
+    <SettingsCard
+      title="模型目录"
+      description="模型以连接和模型 ID 共同标识；同步发现的新模型会直接启用，手工模型不会被同步删除。"
+    >
+      <div className="space-y-3">
+        <div className="relative max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索模型或连接"
+            className="pl-9"
+          />
+        </div>
+        <div className="overflow-hidden rounded-lg border border-border">
+          {rows.length === 0 ? (
+            <p className="p-6 text-center text-sm text-muted-foreground">没有匹配的模型</p>
+          ) : rows.map(({ channel, model }) => {
+            const rowId = `${channel.id}:${model.id}`
+            const capabilities = Object.entries(model.capabilities ?? {})
+              .filter(([, enabled]) => enabled)
+              .map(([name]) => name)
+            return (
+              <div key={rowId} className="grid grid-cols-[minmax(0,1fr)_minmax(140px,0.45fr)_auto] items-center gap-3 border-b border-border px-3 py-2.5 last:border-b-0">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-foreground">{model.name}</div>
+                  <div className="truncate font-mono text-[11px] text-muted-foreground">{model.id}</div>
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-xs text-foreground/80">{channel.name}</div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      {model.source === 'discovered' ? '已同步' : '手工'}
+                    </span>
+                    {capabilities.map((capability) => (
+                      <span key={capability} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {capability}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <Switch
+                  checked={model.enabled}
+                  disabled={savingId === rowId}
+                  aria-label={`${model.enabled ? '停用' : '启用'} ${model.name}`}
+                  onCheckedChange={(enabled) => {
+                    setSavingId(rowId)
+                    void onToggleModel(channel.id, model.id, enabled)
+                      .catch((error) => {
+                        console.error('[ModelCatalogPanel] toggle model FAILED:', error)
+                        toast.error('更新模型状态失败')
+                      })
+                      .finally(() => setSavingId(null))
+                  }}
+                />
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </SettingsCard>
+  )
+}
+
 const READING_STAGE_DESCRIPTIONS: Record<keyof ReadingAdvancedModelSettings, string> = {
   selectionModelRef: '从书架挑选下一本要读的书',
   seedModelRef: '生成札记的种子草稿',
@@ -1290,7 +1343,7 @@ function ProviderConfigurationWorkbench({
   onReload: () => void
 }) {
   const activeChannel = activeProviderRow?.channel ?? null
-  const activeLabel = activeProviderRow?.label ?? PROVIDER_LABELS[activeProvider as ProviderType]
+  const activeLabel = activeProviderRow?.label ?? '尚未添加连接'
 
   return (
     <div className="lume-subpanel grid min-h-[365px] grid-cols-[276px_minmax(0,1fr)] items-stretch overflow-hidden rounded-[9px]">
@@ -1333,34 +1386,34 @@ function ProviderConfigurationWorkbench({
                 row={row}
                 selected={activeProvider === (row.channelId ?? row.provider)}
                 onClick={() => onActiveProviderChange(row.channelId ?? row.provider)}
-                showDelete={activeGroup === 'custom'}
+                showDelete={Boolean(row.channel)}
                 onDelete={row.channel ? () => {
-                  if (confirm(`确定删除 "${row.label}"？`)) {
-                    deleteChannel(row.channel!.id).then(() => onReload())
+                  if (confirm(`确定直接删除“${row.label}”？引用该连接的模型用途会显示为不可用，凭据也会一并移除。`)) {
+                    deleteChannel(row.channel!.id)
+                      .then(() => { toast.success('连接已删除'); onReload() })
+                      .catch((error) => {
+                        console.error('[AgentSettings] delete connection FAILED:', error)
+                        toast.error('删除连接失败')
+                      })
                   }
                 } : undefined}
               />
             ))}
+            {filteredProviderRows.length === 0 && (
+              <p className="px-2 py-6 text-center text-xs text-muted-foreground">没有匹配的已配置连接</p>
+            )}
           </div>
 
-          {/* 自定义分组：添加按钮 */}
-          {activeGroup === 'custom' && (
-            <Button
-              variant="ghost"
-              type="button"
-              onClick={() => {
-                onActiveProviderChange('__new_custom__')
-              }}
-              className="mt-1 flex h-9 w-full items-center justify-center gap-1.5 rounded-[7px] border border-dashed border-[var(--border)] text-[12px] font-medium text-[var(--text-3)] hover:border-[var(--brand)] hover:text-[var(--brand)]"
-            >
-              <span className="text-[14px]">＋</span>
-              添加自定义供应商
-            </Button>
-          )}
         </div>
       </div>
 
       <div className="min-w-0 border-l border-[color:color-mix(in_oklab,var(--border)_55%,transparent)] bg-[var(--surface-1)] p-4">
+        {!activeChannel ? (
+          <div className="flex h-full min-h-[320px] items-center justify-center rounded-lg border border-dashed p-8 text-center">
+            <div><p className="text-sm font-medium">还没有连接</p><p className="mt-1 text-xs text-muted-foreground">点击右上角“添加连接”，按三步完成配置。</p></div>
+          </div>
+        ) : (
+          <>
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h3 className="text-[15px] font-semibold leading-5 text-[var(--text-1)]">{activeLabel}</h3>
@@ -1392,9 +1445,13 @@ function ProviderConfigurationWorkbench({
               initialValue={initialValue}
               providerLocked={activeGroup !== 'custom'}
               disabled={!providerEnabled || savingProvider}
+              connectionId={activeChannel?.id}
               onSubmit={onProviderSubmit}
+              onSynced={onReload}
             />
           </div>
+        )}
+          </>
         )}
       </div>
     </div>
@@ -1415,7 +1472,10 @@ function ProviderListItem({
   onClick: () => void
 }) {
   const configured = Boolean(row.channel)
-  const connected = Boolean(row.channel?.enabled)
+  const connected = row.channel ? isConnectionReady(row.channel) : false
+  const needsAuthentication = Boolean(row.channel?.enabled && !connected)
+  const unavailable = row.channel?.healthStatus === 'unavailable'
+  const available = row.channel?.healthStatus === 'available'
 
   return (
     <Button
@@ -1434,8 +1494,23 @@ function ProviderListItem({
       </span>
       <span className="truncate text-[12px] font-semibold">{row.label}</span>
       <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]">
-        <span className={cn('size-1.5 rounded-full', connected ? 'bg-[var(--lume-success)]' : configured ? 'bg-[var(--text-3)]' : 'bg-[var(--border-strong)]')} />
-        {configured ? '已配置' : '未配置'}
+        <span className={cn(
+          'size-1.5 rounded-full',
+          unavailable
+            ? 'bg-destructive'
+            : available || connected
+              ? 'bg-[var(--lume-success)]'
+              : configured ? 'bg-[var(--text-3)]' : 'bg-[var(--border-strong)]'
+        )} />
+        {unavailable
+          ? '不可用'
+          : available
+            ? '可用'
+            : needsAuthentication
+              ? '待认证'
+              : connected
+                ? '已连接'
+                : configured ? '已配置' : '未配置'}
       </span>
       {showDelete && onDelete ? (
         <span
@@ -1519,7 +1594,14 @@ function buildImageModelOptions(options: ModelOption[]): ActionModelOption[] {
 }
 
 function getOptionLabel(options: ActionModelOption[], modelRef: string): string {
-  return options.find((option) => option.modelRef === modelRef)?.label ?? modelRef
+  return findActionModelOption(options, modelRef)?.label ?? modelRef
+}
+
+function findActionModelOption(options: ActionModelOption[], modelRef: string): ActionModelOption | undefined {
+  const exact = options.find((option) => option.modelRef === modelRef)
+  if (exact) return exact
+  const legacyMatches = options.filter((option) => option.legacyModelRefs?.includes(modelRef) === true)
+  return legacyMatches.length === 1 ? legacyMatches[0] : undefined
 }
 
 function moveItem<T>(items: T[], from: number, to: number): T[] {
@@ -1585,7 +1667,9 @@ function resolveDefaultModel(input: {
   const configuredModelRef = input.strategy?.defaultModelRef?.trim()
   const fallbackOption = input.options[0] ?? null
   const option = configuredModelRef
-    ? input.options.find((item) => item.modelRef === configuredModelRef) ?? fallbackOption
+    ? findModelOption(input.options, configuredModelRef, input.strategy?.defaultChannelId)
+      ?? findModelOption(input.options, configuredModelRef)
+      ?? fallbackOption
     : fallbackOption
   const channel = option
     ? input.channels.find((item) => item.id === option.channelId) ?? null
