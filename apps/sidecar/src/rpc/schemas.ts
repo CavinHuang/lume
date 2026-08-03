@@ -160,6 +160,14 @@ const agentBrowserAnchorSchema = z.object({
   }).strict()
 }).strict();
 
+// 设计变更单条声明：对齐 Codex A.6，property 限定 CSS 属性名格式，值截断参照 sanitizeStyles
+const agentBrowserDesignDeclarationSchema = z.object({
+  property: z.string().regex(/^[a-zA-Z][a-zA-Z0-9-]{0,127}$/),
+  value: z.string().max(4096),
+  previousValue: z.string().max(4096),
+  placeholderValue: z.string().max(4096).optional()
+}).strict();
+
 const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
   agentBrowserTabAttachmentSchema,
   z.object({
@@ -188,6 +196,12 @@ const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
     anchor: agentBrowserAnchorSchema,
     originalStyles: z.record(z.string().max(128), z.string().max(4096)),
     proposedStyles: z.record(z.string().max(128), z.string().max(4096)),
+    declarations: z.array(agentBrowserDesignDeclarationSchema).max(64).optional(),
+    groupId: z.string().max(256).optional(),
+    text: z.object({
+      previousValue: z.string().max(4096),
+      value: z.string().max(4096)
+    }).strict().optional(),
     body: z.string().trim().min(1).max(20_000).optional(),
     screenshotRef: z.string().max(4096).optional()
   }).strict()

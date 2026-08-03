@@ -389,6 +389,56 @@ describe("ContextAssembler", () => {
     expect(result.userMessageForModel).not.toContain('"body":"Make the heading calmer"');
   });
 
+  test("summarizes design-change declarations for the model", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-design-change",
+      runId: "run-design-change",
+      userMessage: "apply these declarations",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["node_repl"],
+      tokenBudget: 1000,
+      browserAttachments: [{
+        id: "browser-design-change:1",
+        origin: "browser-design-change",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 2 },
+        anchor: { kind: "element", url: "https://example.com/", generation: 2, framePath: [], domPath: "html > body", rect: { x: 1, y: 2, width: 3, height: 4 } },
+        originalStyles: { color: "red" },
+        proposedStyles: { color: "blue" },
+        declarations: [
+          { property: "color", value: "#fff", previousValue: "#000" },
+          { property: "font-size", value: "16px", previousValue: "14px" }
+        ],
+        groupId: "browser-design-change:1",
+        text: { previousValue: "Hello", value: "Hi" },
+        body: "Tweak the heading"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain('"declarationsSummary":"color=#fff (was #000); font-size=16px (was 14px); text: \\"Hello\\" -> \\"Hi\\""');
+  });
+
+  test("omits declarationsSummary when design change has no declarations or text", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-design-change",
+      runId: "run-design-change",
+      userMessage: "apply this review",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["node_repl"],
+      tokenBudget: 1000,
+      browserAttachments: [{
+        id: "browser-design-change:1",
+        origin: "browser-design-change",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 2 },
+        anchor: { kind: "element", url: "https://example.com/", generation: 2, framePath: [], domPath: "html > body", rect: { x: 1, y: 2, width: 3, height: 4 } },
+        originalStyles: { color: "red" },
+        proposedStyles: { color: "blue" },
+        body: "Make the heading calmer"
+      }]
+    });
+
+    expect(result.userMessageForModel).not.toContain("declarationsSummary");
+  });
+
   test("records context assembly and memory retrieval spans when trace context is provided", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-context-trace-"));
     try {

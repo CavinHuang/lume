@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron'
+import type { AgentBrowserDesignDeclaration } from '../../../packages/shared/src/types/agent'
 
 type AnnotationMessage = {
   type: 'sync' | 'prepare-screenshot' | 'restore' | 'close'
@@ -502,6 +503,19 @@ function globalCommentIndex(comment: Record<string, unknown>, state: GuestState,
 function styleSnapshot(element: Element, win: Window): Record<string, string> {
   const computed = win.getComputedStyle(element)
   return Object.fromEntries(['color', 'backgroundColor', 'fontFamily', 'fontSize', 'fontWeight', 'borderRadius', 'borderWidth', 'borderStyle', 'borderColor', 'width', 'height', 'display', 'flexDirection', 'justifyContent', 'alignItems', 'gap', 'rowGap', 'columnGap', 'padding', 'margin', 'textContent'].map((key) => [key, key === 'textContent' ? String(element.textContent ?? '').slice(0, 4096) : String(computed.getPropertyValue(key) || '').slice(0, 4096)]))
+}
+// 设计编辑 declaration baseline：逐属性输出 AgentBrowserDesignDeclaration，
+// previousValue 初始 = value（Codex A.6 对齐）。键集与 styleSnapshot 一致（textContent 单独处理）。
+export function styleSnapshotDeclarations(element: Element, win: Window): AgentBrowserDesignDeclaration[] {
+  const computed = win.getComputedStyle(element)
+  const keys = ['color', 'backgroundColor', 'fontFamily', 'fontSize', 'fontWeight', 'borderRadius', 'borderWidth', 'borderStyle', 'borderColor', 'width', 'height', 'display', 'flexDirection', 'justifyContent', 'alignItems', 'gap', 'rowGap', 'columnGap', 'padding', 'margin']
+  const declarations: AgentBrowserDesignDeclaration[] = keys.map((property) => {
+    const value = String(computed.getPropertyValue(property) || '').slice(0, 4096)
+    return { property, value, previousValue: value }
+  })
+  const text = String(element.textContent ?? '').slice(0, 4096)
+  if (text) declarations.push({ property: 'textContent', value: text, previousValue: text })
+  return declarations
 }
 function rectOf(value: Element | Range): Rect { const rect = value.getBoundingClientRect(); return { x: rect.x, y: rect.y, width: rect.width, height: rect.height } }
 function sanitizeRect(value: Record<string, unknown>): Rect { return { x: boundedNumber(value.x), y: boundedNumber(value.y), width: Math.max(0, boundedNumber(value.width)), height: Math.max(0, boundedNumber(value.height)) } }

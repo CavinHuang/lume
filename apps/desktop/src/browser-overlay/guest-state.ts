@@ -12,6 +12,12 @@ export type GuestState = {
   theme?: string
   comments: GuestComment[]
   activeDraft?: Record<string, unknown>
+  // 新增 design 字段（对齐 Codex sync A.5）
+  isDesignModifierPressed?: boolean
+  canUseTweaks?: boolean
+  isOriginalViewEnabled?: boolean
+  isTweaksEditorOpen?: boolean
+  activeDesignChange?: Record<string, unknown>
 }
 
 export type GuestBridge = {
@@ -38,6 +44,11 @@ export function sanitizeSync(raw: unknown): GuestState | null {
     ...(theme ? { theme } : {}),
     comments: Array.isArray(m.comments) ? m.comments.slice(0, 100).filter((c): c is GuestComment => Boolean(c && typeof c === 'object')) : [],
     ...(m.activeDraft && typeof m.activeDraft === 'object' ? { activeDraft: m.activeDraft as GuestComment } : {}),
+    ...(typeof m.isDesignModifierPressed === 'boolean' ? { isDesignModifierPressed: m.isDesignModifierPressed } : {}),
+    ...(typeof m.canUseTweaks === 'boolean' ? { canUseTweaks: m.canUseTweaks } : {}),
+    ...(typeof m.isOriginalViewEnabled === 'boolean' ? { isOriginalViewEnabled: m.isOriginalViewEnabled } : {}),
+    ...(typeof m.isTweaksEditorOpen === 'boolean' ? { isTweaksEditorOpen: m.isTweaksEditorOpen } : {}),
+    ...(isRecord(m.activeDesignChange) ? { activeDesignChange: m.activeDesignChange } : {}),
   }
 }
 
@@ -70,4 +81,9 @@ export function createGuestBridge(initialListener?: (state: GuestState | null) =
       return () => listeners.delete(listener)
     },
   }
+}
+
+// 纯对象判定（排除数组/null），与 manager.ts isRecord 语义一致
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

@@ -1,4 +1,4 @@
-import type { AgentBrowserAttachment, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentSendInput, PlanningTodo } from "@lume/shared";
+import type { AgentBrowserAttachment, AgentBrowserDesignChangeAttachment, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentSendInput, PlanningTodo } from "@lume/shared";
 import { estimateTokens, type ContentBlockParam, type TodoState } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
 import {
@@ -382,9 +382,12 @@ function serializeBrowserAttachments(attachments: AgentBrowserAttachment[]): str
   });
   const designChanges = attachments.filter((attachment) => attachment.origin === "browser-design-change").map((attachment) => {
     const { body, ...pageContext } = attachment;
+    // 设计变更声明摘要：declarations + text 拼为可读串，供模型快速理解逐属性改动
+    const declarationsSummary = summarizeDesignDeclarations(attachment);
     return {
       id: attachment.id,
       userIntent: body ?? "",
+      ...(declarationsSummary ? { declarationsSummary } : {}),
       pageContext: {
         trust: "untrusted",
         data: promptBrowserAttachment({ ...pageContext, origin: "browser-design-change" } as AgentBrowserAttachment)
@@ -392,6 +395,21 @@ function serializeBrowserAttachments(attachments: AgentBrowserAttachment[]): str
     };
   });
   return `<browser_attachments trust="mixed">\n${JSON.stringify({ tabs, annotations, designChanges }).replaceAll("<", "\\u003c")}\n</browser_attachments>`;
+}
+
+// 将设计变更声明摘要为可读文本：color=#fff (was #000); font-size=16px (was 14px)
+// 文本节点编辑追加：text: "old" -> "new"
+function summarizeDesignDeclarations(attachment: AgentBrowserDesignChangeAttachment): string | undefined {
+  const parts: string[] = [];
+  if (attachment.declarations?.length) {
+    for (const decl of attachment.declarations) {
+      parts.push(`${decl.property}=${decl.value} (was ${decl.previousValue})`);
+    }
+  }
+  if (attachment.text) {
+    parts.push(`text: "${attachment.text.previousValue}" -> "${attachment.text.value}"`);
+  }
+  return parts.length ? parts.join("; ") : undefined;
 }
 
 function asRecord(value: unknown): Record<string, any> {

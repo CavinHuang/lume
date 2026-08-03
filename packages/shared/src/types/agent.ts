@@ -1022,9 +1022,31 @@ export interface BrowserAnnotationSessionSnapshot {
     body: string
     purpose?: 'annotation' | 'tweaks'
   }
+  activeDesignChange?: {                              // 新增（Codex design-edit 进行中态）
+    id: string
+    anchor: AgentBrowserAnchor
+    declarations: AgentBrowserDesignDeclaration[]
+    text?: { previousValue: string; value: string }
+    comment?: string
+    // Task 74：Alt 多选（Codex §1.3）——host 是 additionalAnchors 单一来源；overlay 渲染 + 移除。
+    // groupId === activeDesignChange.id；每条 additionalAnchor 与主 anchor 同结构。
+    additionalAnchors?: AgentBrowserAnchor[]
+  }
+  // Task 71：design-editor 5c 交互状态（overlay → 主进程转发/记状态用，恢复时清空）
+  isDesignModifierPressed?: boolean                  // Alt 多选键按下（host 管理 additionalAnchors 用）
+  isOriginalViewEnabled?: boolean                    // 显示原始视图开关（隐藏 overlay 显示原图）
+  isTweaksEditorOpen?: boolean                       // tweaks 编辑器面板开关
   screenshotRef?: string
   theme?: string
   updatedAt: string
+}
+
+// 单条设计变更声明：对齐 Codex A.6，逐属性记录前后值
+export interface AgentBrowserDesignDeclaration {
+  property: string
+  value: string
+  previousValue: string
+  placeholderValue?: string
 }
 
 export interface AgentBrowserDesignChangeAttachment {
@@ -1034,6 +1056,9 @@ export interface AgentBrowserDesignChangeAttachment {
   anchor: AgentBrowserAnchor
   originalStyles: Record<string, string>
   proposedStyles: Record<string, string>
+  declarations?: AgentBrowserDesignDeclaration[]   // 新增（Codex A.6 对齐，逐属性）
+  groupId?: string                                  // 新增（= id，Codex groupId === designChange.id）
+  text?: { previousValue: string; value: string }   // 新增（文本节点编辑）
   body?: string
   screenshotRef?: string
 }

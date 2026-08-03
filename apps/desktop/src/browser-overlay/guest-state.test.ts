@@ -224,3 +224,24 @@ describe('sanitizeSync - theme', () => {
     expect(sanitizeSync({ ...validBase, theme: '#0b84ff' })?.theme).toBe('#0b84ff')
   })
 })
+
+// Task 55：design 字段（对齐 Codex sync A.5，全可选向后兼容）
+describe('sanitizeSync - design 字段', () => {
+  test('activeDesignChange 透传（对象）', () => {
+    // brief 中 anchor:{...} 为占位简写（{...} 在字面量位置非合法 JS），此处替换为等价具体对象
+    const dc = { id: 'dc1', anchor: { x: 1 }, declarations: [] }
+    const r = sanitizeSync({ ...validBase, mode: 'comment', activeDesignChange: dc })
+    expect(r?.activeDesignChange).toEqual(dc)
+  })
+  test('activeDesignChange 非 object 省略', () => {
+    expect(sanitizeSync({ ...validBase, activeDesignChange: 'x' })?.activeDesignChange).toBeUndefined()
+  })
+  test('boolean design 字段默认/透传', () => {
+    expect(sanitizeSync({ ...validBase, isDesignModifierPressed: true, canUseTweaks: true })?.isDesignModifierPressed).toBe(true)
+    expect(sanitizeSync(validBase)?.isDesignModifierPressed).toBeUndefined()
+    expect(sanitizeSync({ ...validBase, canUseTweaks: true })?.canUseTweaks).toBe(true)
+  })
+  test('isOriginalViewEnabled / isTweaksEditorOpen 透传', () => {
+    expect(sanitizeSync({ ...validBase, isOriginalViewEnabled: true, isTweaksEditorOpen: false })?.isOriginalViewEnabled).toBe(true)
+  })
+})

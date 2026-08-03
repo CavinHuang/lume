@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import type {
   AgentBrowserAnnotationAttachment,
   AgentBrowserAnchor,
+  AgentBrowserDesignChangeAttachment,
+  AgentBrowserDesignDeclaration,
   BrowserAnnotationSessionSnapshot,
 } from '../../../packages/shared/src/types/agent'
 
@@ -91,6 +93,103 @@ export class BrowserAnnotationSessionStore {
     return next
   }
 
+  setActiveDesignChange(input: {
+    threadId: string
+    tabId: string
+    url: string
+    generation: number
+    id: string
+    anchor: AgentBrowserAnchor
+    declarations: AgentBrowserDesignDeclaration[]
+    text?: { previousValue: string; value: string }
+    comment?: string
+    // Task 74：Alt 多选追加。缺省时保留现有 additionalAnchors（DesignEditor submit 不清空）；
+    // 传入时追加（非覆盖）。cap 32 个选区（与 comments 64 / sessions 100 同防御意图）。
+    appendAdditionalAnchors?: AgentBrowserAnchor[]
+  }): BrowserAnnotationSessionSnapshot {
+    const snapshot = this.get(input.threadId, input.tabId, input.url, input.generation)
+    const existingAdditional = snapshot.activeDesignChange?.additionalAnchors ?? []
+    const appended = input.appendAdditionalAnchors ?? []
+    const additionalAnchors = [...existingAdditional, ...appended].slice(0, 32)
+    const next = {
+      ...snapshot,
+      mode: 'comment' as const,
+      activeDesignChange: {
+        id: input.id.slice(0, 256),
+        anchor: input.anchor,
+        declarations: input.declarations.slice(0, 64),
+        ...(input.text ? { text: input.text } : {}),
+        ...(input.comment ? { comment: input.comment.slice(0, MAX_BODY) } : {}),
+        ...(additionalAnchors.length > 0 ? { additionalAnchors } : {}),
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    this.write(next)
+    return next
+  }
+
+  // Task 74：Alt 多选移除（Codex §1.3）。按 selectionIndex 从 activeDesignChange.additionalAnchors
+  // 移除一条；越界或无 activeDesignChange 时 no-op（不写盘）。host 是 additionalAnchors 单一来源。
+  removeAnnotationSelection(input: {
+    threadId: string
+    tabId: string
+    url: string
+    generation: number
+    selectionIndex: number
+  }): BrowserAnnotationSessionSnapshot {
+    const snapshot = this.get(input.threadId, input.tabId, input.url, input.generation)
+    const current = snapshot.activeDesignChange?.additionalAnchors
+    if (!current || !Number.isInteger(input.selectionIndex) || input.selectionIndex < 0 || input.selectionIndex >= current.length) return snapshot
+    const additionalAnchors = current.filter((_, i) => i !== input.selectionIndex)
+    const next = {
+      ...snapshot,
+      activeDesignChange: {
+        ...snapshot.activeDesignChange!,
+        ...(additionalAnchors.length > 0 ? { additionalAnchors } : {}),
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    // additionalAnchors 为空时从 activeDesignChange 移除该字段（保持 undefined 语义）
+    if (additionalAnchors.length === 0) {
+      const dc = next.activeDesignChange as { additionalAnchors?: AgentBrowserAnchor[] }
+      delete dc.additionalAnchors
+    }
+    this.write(next)
+    return next
+  }
+
+  clearActiveDesignChange(threadId: string, tabId: string, url: string, generation: number): BrowserAnnotationSessionSnapshot {
+    const snapshot = this.get(threadId, tabId, url, generation)
+    const { activeDesignChange: _activeDesignChange, ...without } = snapshot
+    const next = { ...without, updatedAt: new Date().toISOString() }
+    this.write(next)
+    return next
+  }
+
+  // Task 71：design-editor 5c 交互状态合并 setter。仅更新入参提供的字段，未传字段保留原值
+  // （合并语义，参照 setMode 的条件展开）。三字段均为可选布尔；false 是有效值（key released
+  // / 关闭），不能用 ?? undefined 吃掉——故用 !== undefined 守卫。
+  setDesignFlags(input: {
+    threadId: string
+    tabId: string
+    url: string
+    generation: number
+    isDesignModifierPressed?: boolean
+    isOriginalViewEnabled?: boolean
+    isTweaksEditorOpen?: boolean
+  }): BrowserAnnotationSessionSnapshot {
+    const snapshot = this.get(input.threadId, input.tabId, input.url, input.generation)
+    const next = {
+      ...snapshot,
+      ...(input.isDesignModifierPressed !== undefined ? { isDesignModifierPressed: input.isDesignModifierPressed } : {}),
+      ...(input.isOriginalViewEnabled !== undefined ? { isOriginalViewEnabled: input.isOriginalViewEnabled } : {}),
+      ...(input.isTweaksEditorOpen !== undefined ? { isTweaksEditorOpen: input.isTweaksEditorOpen } : {}),
+      updatedAt: new Date().toISOString(),
+    }
+    this.write(next)
+    return next
+  }
+
   saveComment(comment: AgentBrowserAnnotationAttachment): BrowserAnnotationSessionSnapshot {
     const threadId = comment.tab.ownerThreadId ?? ''
     if (!threadId) throw new Error('annotation_owner_thread_required')
@@ -100,6 +199,32 @@ export class BrowserAnnotationSessionStore {
       { ...comment, body: comment.body.slice(0, MAX_BODY), createdAt: comment.createdAt ?? new Date().toISOString() },
     ].slice(-MAX_COMMENTS)
     const next = { ...snapshot, comments, activeDraft: undefined, updatedAt: new Date().toISOString() }
+    this.write(next)
+    return next
+  }
+
+  // Task 54：落盘 design-change attachment。designChange 是 AgentBrowserAttachment union 的
+  // 另一成员（origin 'browser-design-change'，body 可选，无 createdAt 字段），与 saveComment
+  // 的入参 AgentBrowserAnnotationAttachment 不是同一类型——故 store 增设专用方法，避免在
+  // manager 层用 `as unknown as` 跨类型 cast。落盘后清空 activeDesignChange（与 saveComment
+  // 清空 activeDraft 对称）。comments 数组运行期可容纳两种 origin，类型层维持 A[] 由 cast 收敛。
+  saveDesignChange(attachment: AgentBrowserDesignChangeAttachment): BrowserAnnotationSessionSnapshot {
+    const threadId = attachment.tab.ownerThreadId ?? ''
+    if (!threadId) throw new Error('annotation_owner_thread_required')
+    const snapshot = this.get(threadId, attachment.tab.tabId, attachment.tab.url, attachment.tab.generation ?? 1)
+    // designChange 的 origin 'browser-design-change' 与 annotation 的 'browser-annotation'
+    // 是不兼容的字面量类型；TS 拒绝直接 cast。先 unknown 再 annotation，表达「形状足够接近、
+    // 运行期共用 comments 数组槽位」的意图（A.6 spec：comments 列表混合两类 attachment）。
+    const comment = {
+      ...attachment,
+      body: (attachment.body ?? '').slice(0, MAX_BODY),
+      createdAt: new Date().toISOString(),
+    } as unknown as AgentBrowserAnnotationAttachment
+    const comments = [
+      ...snapshot.comments.filter((item) => item.id !== comment.id),
+      comment,
+    ].slice(-MAX_COMMENTS)
+    const next = { ...snapshot, comments, activeDesignChange: undefined, updatedAt: new Date().toISOString() }
     this.write(next)
     return next
   }
@@ -179,7 +304,8 @@ export class BrowserAnnotationSessionStore {
       const parsed = JSON.parse(readFileSync(this.path, 'utf8')) as Record<string, unknown>
       for (const [key, value] of Object.entries(parsed)) {
         if (!isStoredSession(value)) continue
-        this.sessions.set(key, { ...value, mode: 'browse', selectionPurpose: undefined, activeDraft: undefined, comments: value.comments.slice(-MAX_COMMENTS) })
+        // Task 71：交互 flag 是瞬时 UI 状态，恢复时一律清空（重启后 Alt 未按 / 原始视图关闭 / tweaks 面板关）
+        this.sessions.set(key, { ...value, mode: 'browse', selectionPurpose: undefined, activeDraft: undefined, activeDesignChange: undefined, isDesignModifierPressed: undefined, isOriginalViewEnabled: undefined, isTweaksEditorOpen: undefined, comments: value.comments.slice(-MAX_COMMENTS) })
       }
     } catch {
       this.sessions.clear()

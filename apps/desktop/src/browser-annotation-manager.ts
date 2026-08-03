@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { isAbsolute, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow, screen, type WebContents } from 'electron'
-import type { AgentBrowserAnchor, AgentBrowserAnnotationAttachment, BrowserAnnotationSessionSnapshot } from '../../../packages/shared/src/types/agent'
+import type { AgentBrowserAnchor, AgentBrowserAnnotationAttachment, AgentBrowserDesignChangeAttachment, AgentBrowserDesignDeclaration, BrowserAnnotationSessionSnapshot } from '../../../packages/shared/src/types/agent'
 import type { BrowserTabDescriptor } from '../../../packages/shared/src/types/browser-runtime'
 import { positionBrowserAnnotationPopup } from './browser-annotation-position'
 import { BrowserAnnotationSessionStore } from './browser-annotation-session'
@@ -23,6 +23,15 @@ type AnnotationGuestPayload = {
   requestId?: unknown
   body?: unknown
   action?: unknown
+  // Task 54：design overlay 分支用到的字段（overlay → 主进程）
+  group?: unknown      // design-overlay-update 携带：{ id, anchor, declarations, text?, comment? }
+  groupId?: unknown    // design-overlay-delete 携带
+  // Task 71：design-editor 5c 交互命令字段（overlay → 主进程）
+  pressed?: unknown    // set-design-modifier-pressed 携带：boolean
+  enabled?: unknown    // set-original-view-enabled 携带：boolean
+  open?: unknown       // tweaks-open-changed 携带：boolean
+  // Task 74：Alt 多选移除（overlay → 主进程）。remove-annotation-selection 携带。
+  selectionIndex?: unknown
 }
 
 type AnnotationPopupCommand = { command?: unknown; body?: unknown }
@@ -187,6 +196,90 @@ export class BrowserAnnotationManager {
       if (id) this.delete(tab, payload.threadId, id)
       return
     }
+    // Task 54：design overlay 更新/删除/提交。与 editor 分支对称：anchor/declarations 从
+    // store activeDesignChange 取（单一来源），不依赖 overlay 二次传入。overlay 在 update
+    // 时把整组（id+anchor+declarations）推给主进程持久化；submit 时仅传 action/body。
+    // Task 74：group.additionalAnchors（数组）经 sanitizeAnchor 逐条净化后作为 appendAdditionalAnchors
+    // 追加（非覆盖）；store 缺省保留现有 additionalAnchors，DesignEditor submit 不清空。
+    if (payload.type === 'design-overlay-update') {
+      const group = isRecord(payload.group) ? payload.group : undefined
+      if (!group || typeof group.id !== 'string' || !isRecord(group.anchor) || !Array.isArray(group.declarations)) return
+      const anchor = sanitizeAnchor(group.anchor, tab.url, tab.generation)
+      if (!anchor) return
+      const appendAdditionalAnchors = Array.isArray(group.additionalAnchors)
+        ? group.additionalAnchors
+            .map((a) => (isRecord(a) ? sanitizeAnchor(a, tab.url, tab.generation) : undefined))
+            .filter((a): a is AgentBrowserAnchor => a !== undefined)
+        : undefined
+      const snapshot = this.store.setActiveDesignChange({
+        threadId: payload.threadId, tabId: tab.tabId, url: tab.url, generation: tab.generation,
+        id: group.id, anchor, declarations: sanitizeDeclarations(group.declarations),
+        ...(isRecord(group.text) ? { text: group.text as { previousValue: string; value: string } } : {}),
+        ...(typeof group.comment === 'string' ? { comment: group.comment } : {}),
+        ...(appendAdditionalAnchors && appendAdditionalAnchors.length > 0 ? { appendAdditionalAnchors } : {}),
+      })
+      this.syncGuest(tab, snapshot)
+      this.emitSnapshot(snapshot)
+      return
+    }
+    // Task 74：Alt 多选移除（Codex §1.3）。overlay 渲染 additionalAnchors 列表时点击 × 按钮
+    // → bridge.send remove-annotation-selection{selectionIndex} → store.removeAnnotationSelection。
+    // manager 先做边界检查（无 activeDesignChange / 越界 / 非整数 → 静默 return，不 emit），
+    // 仅在有效移除时 syncGuest + emitSnapshot。
+    if (payload.type === 'remove-annotation-selection') {
+      const selectionIndex = typeof payload.selectionIndex === 'number' ? payload.selectionIndex : -1
+      if (!Number.isInteger(selectionIndex) || selectionIndex < 0) return
+      const before = this.store.get(payload.threadId, tab.tabId, tab.url, tab.generation)
+      const current = before.activeDesignChange?.additionalAnchors
+      if (!current || selectionIndex >= current.length) return
+      const snapshot = this.store.removeAnnotationSelection({
+        threadId: payload.threadId, tabId: tab.tabId, url: tab.url, generation: tab.generation, selectionIndex,
+      })
+      this.syncGuest(tab, snapshot)
+      this.emitSnapshot(snapshot)
+      return
+    }
+    if (payload.type === 'design-overlay-delete') {
+      const snapshot = this.store.clearActiveDesignChange(payload.threadId, tab.tabId, tab.url, tab.generation)
+      this.syncGuest(tab, snapshot)
+      this.emitSnapshot(snapshot)
+      return
+    }
+    if (payload.type === 'design-submit') {
+      const action = payload.action === 'send' ? 'send' : 'add'
+      const body = text(payload.body, 20_000)
+      const session = this.store.get(payload.threadId, tab.tabId, tab.url, tab.generation)
+      const draft = session.activeDesignChange
+      if (!draft) return
+      const saved = this.saveDesignChange(tab, payload.threadId, draft.id, draft.anchor, draft.declarations, body)
+      this.options.emit(action === 'send' ? 'browser:annotation-direct-submit' : 'browser:annotation-added', { threadId: payload.threadId, tabId: tab.tabId, attachment: saved.attachment, snapshot: saved.snapshot })
+      return
+    }
+    // Task 71：design-editor 5c 交互命令。design-scrub-changed 5c 简化为 no-op（对齐 Codex
+    // scrub 结束不发消息——overlay 本地维护 scrub 实时值，declarations 仍在 activeDesignChange）。
+    // 其余 3 命令 → store.setDesignFlags（合并字段）+ syncGuest + emitSnapshot。payload.pressed/
+    // enabled/open 用 === true 收敛到布尔（防御 guest 传入非布尔），false 仍能落到 store。
+    if (payload.type === 'design-scrub-changed') {
+      return
+    }
+    if (payload.type === 'set-design-modifier-pressed') {
+      const snapshot = this.store.setDesignFlags({ threadId: payload.threadId, tabId: tab.tabId, url: tab.url, generation: tab.generation, isDesignModifierPressed: payload.pressed === true })
+      this.syncGuest(tab, snapshot)
+      this.emitSnapshot(snapshot)
+      return
+    }
+    if (payload.type === 'set-original-view-enabled') {
+      const snapshot = this.store.setDesignFlags({ threadId: payload.threadId, tabId: tab.tabId, url: tab.url, generation: tab.generation, isOriginalViewEnabled: payload.enabled === true })
+      this.syncGuest(tab, snapshot)
+      this.emitSnapshot(snapshot)
+      return
+    }
+    if (payload.type === 'tweaks-open-changed') {
+      const snapshot = this.store.setDesignFlags({ threadId: payload.threadId, tabId: tab.tabId, url: tab.url, generation: tab.generation, isTweaksEditorOpen: payload.open === true })
+      this.syncGuest(tab, snapshot)
+      this.emitSnapshot(snapshot)
+      return
+    }
     if (payload.type !== 'open-editor' || !isRecord(payload.anchor)) return
     const anchor = sanitizeAnchor(payload.anchor, tab.url, tab.generation)
     if (!anchor) return
@@ -292,12 +385,18 @@ export class BrowserAnnotationManager {
 
   private syncGuest(tab: AnnotationRuntimeTab, snapshot: BrowserAnnotationSessionSnapshot): void {
     if (!tab.webContents || tab.webContents.isDestroyed()) return
+    // Task 71：交互 flag 用 !== undefined 守卫（与 theme 的 truthy 守卫不同）——false 是有效值
+    // （key released / 关闭），需推送给 guest；只有未设置过（undefined）才省略。
     tab.webContents.send('lume:browser-annotation-guest', {
       type: 'sync', tabId: tab.tabId, generation: tab.generation, threadId: snapshot.threadId, mode: snapshot.mode,
       purpose: snapshot.selectionPurpose ?? 'annotation',
       ...(snapshot.theme ? { theme: snapshot.theme } : {}),
       comments: snapshot.comments.filter((comment) => comment.tab.url === tab.url),
       ...(snapshot.activeDraft?.anchor.url === tab.url ? { activeDraft: snapshot.activeDraft } : {}),
+      ...(snapshot.activeDesignChange?.anchor.url === tab.url ? { activeDesignChange: snapshot.activeDesignChange } : {}),
+      ...(snapshot.isDesignModifierPressed !== undefined ? { isDesignModifierPressed: snapshot.isDesignModifierPressed } : {}),
+      ...(snapshot.isOriginalViewEnabled !== undefined ? { isOriginalViewEnabled: snapshot.isOriginalViewEnabled } : {}),
+      ...(snapshot.isTweaksEditorOpen !== undefined ? { isTweaksEditorOpen: snapshot.isTweaksEditorOpen } : {}),
     })
   }
 
@@ -460,6 +559,30 @@ export class BrowserAnnotationManager {
     return { attachment, snapshot }
   }
 
+  // Task 54：构造 designChange attachment（含 declarations + originalStyles/proposedStyles
+  // 由 declarations 派生），落盘（store.saveDesignChange 内部清空 activeDesignChange），
+  // syncGuest + emitSnapshot。groupId === attachment.id（对齐 Codex：groupId === designChange.id）。
+  // 注：designChange 类型无 theme/createdAt 字段，故不透传 session.theme；createdAt 由 store
+  // 落盘时补；body 可选（设计提交可无文字说明）。
+  private saveDesignChange(tab: AnnotationRuntimeTab, threadId: string, groupId: string | undefined, anchor: AgentBrowserAnchor, declarations: AgentBrowserDesignDeclaration[], body: string): { attachment: AgentBrowserDesignChangeAttachment; snapshot: BrowserAnnotationSessionSnapshot } {
+    const id = groupId ?? `browser-design-change:${randomUUID()}`
+    const attachment: AgentBrowserDesignChangeAttachment = {
+      id,
+      origin: 'browser-design-change',
+      tab: { id: `browser-tab:${tab.tabId}:${tab.generation}`, origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: tab.tabId, ...(tab.providerTabId ? { providerTabId: tab.providerTabId } : {}), title: tab.title, url: tab.url, generation: tab.generation, ...(tab.lastOpenedAt ? { lastOpenedAt: tab.lastOpenedAt } : {}), ownerThreadId: threadId },
+      anchor,
+      originalStyles: Object.fromEntries(declarations.map((d) => [d.property, d.previousValue])),
+      proposedStyles: Object.fromEntries(declarations.map((d) => [d.property, d.value])),
+      declarations,
+      groupId: id,
+      ...(body ? { body: body.slice(0, 20_000) } : {}),
+    }
+    const snapshot = this.store.saveDesignChange(attachment)
+    this.syncGuest(tab, snapshot)
+    this.emitSnapshot(snapshot)
+    return { attachment, snapshot }
+  }
+
   private deleteScreenshotFile(threadId: string, screenshotRef: string): void {
     const match = /^browser-review-screenshot:([a-zA-Z0-9._-]{1,200}):([a-f0-9-]{36})$/i.exec(screenshotRef)
     if (!match || match[1] !== threadId) return
@@ -511,6 +634,25 @@ function browserAnnotationPopupWidth(surfaceWidth: number | undefined): number {
 function sanitizeStyles(value: unknown): Record<string, string> {
   if (!isRecord(value)) return {}
   return Object.fromEntries(Object.entries(value).slice(0, 32).filter(([key, item]) => /^[a-zA-Z][a-zA-Z0-9-]{0,127}$/.test(key) && typeof item === 'string').map(([key, item]) => [key, (item as string).slice(0, 4096)]))
+}
+// Task 54：design declarations 纯函数净化器，参照 sanitizeStyles 的 property 正则 + 4096 截断。
+// 导出供单测直接调用（manager 的其它 sanitize* 为内部函数，因 manager test 仅通过 onGuestMessage
+// 间接覆盖；declarations 校验逻辑独立且关键，单测直接覆盖更稳）。
+export function sanitizeDeclarations(value: unknown): AgentBrowserDesignDeclaration[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is Record<string, unknown> => isRecord(item)
+      && typeof item.property === 'string'
+      && typeof item.value === 'string'
+      && typeof item.previousValue === 'string'
+      && /^[a-zA-Z][a-zA-Z0-9-]{0,127}$/.test(item.property))
+    .slice(0, 64)
+    .map((item) => ({
+      property: item.property as string,
+      value: (item.value as string).slice(0, 4096),
+      previousValue: (item.previousValue as string).slice(0, 4096),
+      ...(typeof item.placeholderValue === 'string' ? { placeholderValue: (item.placeholderValue as string).slice(0, 4096) } : {}),
+    }))
 }
 function requireWrite(path: string, data: Buffer): void { writeFileSyncSafe(path, data) }
 function writeFileSyncSafe(path: string, data: Buffer): void { writeFileSync(path, data, { mode: 0o600 }) }

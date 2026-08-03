@@ -137,6 +137,112 @@ describe("agentSendInputSchema browserAttachments", () => {
     expect(parsed.browserAttachments?.[0]).toMatchObject({ body: "Use the primary accent color" });
   });
 
+  const validDesignChangeAttachment = {
+    id: "browser-design-change:1",
+    origin: "browser-design-change",
+    tab: {
+      id: "browser-tab:1",
+      origin: "browser-tab",
+      tabId: "tab-1",
+      title: "Example",
+      url: "https://example.com/",
+      generation: 2
+    },
+    anchor: {
+      kind: "element",
+      url: "https://example.com/",
+      generation: 2,
+      framePath: [],
+      domPath: "html > body > main",
+      selectedContent: "Primary heading",
+      rect: { x: 10, y: 20, width: 200, height: 100 }
+    },
+    originalStyles: { color: "rgb(0, 0, 0)" },
+    proposedStyles: { color: "rgb(2, 133, 255)" }
+  };
+
+  test("accepts a browser design change with declarations, groupId and text", () => {
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "apply these declarations",
+      browserAttachments: [{
+        ...validDesignChangeAttachment,
+        declarations: [
+          { property: "color", value: "#fff", previousValue: "#000" },
+          { property: "font-size", value: "16px", previousValue: "14px", placeholderValue: "1rem" }
+        ],
+        groupId: "browser-design-change:1",
+        text: { previousValue: "Hello", value: "Hi" }
+      }]
+    });
+
+    expect(parsed.browserAttachments?.[0]).toMatchObject({
+      declarations: [
+        { property: "color", value: "#fff", previousValue: "#000" },
+        { property: "font-size", value: "16px", previousValue: "14px", placeholderValue: "1rem" }
+      ],
+      groupId: "browser-design-change:1",
+      text: { previousValue: "Hello", value: "Hi" }
+    });
+  });
+
+  test("rejects design change declarations missing property or value", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "apply",
+      browserAttachments: [{
+        ...validDesignChangeAttachment,
+        declarations: [{ value: "#fff", previousValue: "#000" }]
+      }]
+    })).toThrow();
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "apply",
+      browserAttachments: [{
+        ...validDesignChangeAttachment,
+        declarations: [{ property: "color", previousValue: "#000" }]
+      }]
+    })).toThrow();
+  });
+
+  test("rejects design change declarations with invalid property name", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "apply",
+      browserAttachments: [{
+        ...validDesignChangeAttachment,
+        declarations: [{ property: "123bad", value: "#fff", previousValue: "#000" }]
+      }]
+    })).toThrow();
+  });
+
+  test("rejects more than 64 design change declarations", () => {
+    const declarations = Array.from({ length: 65 }, (_, i) => ({
+      property: "color",
+      value: `rgb(${i}, 0, 0)`,
+      previousValue: "rgb(0, 0, 0)"
+    }));
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "apply",
+      browserAttachments: [{ ...validDesignChangeAttachment, declarations }]
+    })).toThrow();
+  });
+
+  test("accepts 64 design change declarations at the limit", () => {
+    const declarations = Array.from({ length: 64 }, (_, i) => ({
+      property: "color",
+      value: `rgb(${i}, 0, 0)`,
+      previousValue: "rgb(0, 0, 0)"
+    }));
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "apply",
+      browserAttachments: [{ ...validDesignChangeAttachment, declarations }]
+    });
+    expect(parsed.browserAttachments?.[0]).toMatchObject({ declarations: { length: 64 } });
+  });
+
   test("rejects a browser screenshot reference owned by another thread", () => {
     expect(() => agentSendInputSchema.parse({
       threadId: "thread-1",

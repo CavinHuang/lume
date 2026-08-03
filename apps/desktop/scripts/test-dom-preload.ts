@@ -25,6 +25,7 @@ const domGlobals: Record<string, unknown> = {
   Range: dom.Range,
   TreeWalker: dom.TreeWalker,
   MutationObserver: dom.MutationObserver,
+  ResizeObserver: dom.ResizeObserver,
   CSS: dom.CSS,
   getComputedStyle: dom.getComputedStyle.bind(dom),
   requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
