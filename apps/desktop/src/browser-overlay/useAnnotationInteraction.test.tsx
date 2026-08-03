@@ -321,3 +321,159 @@ describe('useAnnotationInteraction - 骨架', () => {
     document.body.innerHTML = ''
   })
 })
+
+// Task 74：Alt 多选（Codex §1.3）——useAnnotationInteraction 监听 Alt（keydown/up）→
+// bridge.send set-design-modifier-pressed；design 模式（activeDesignChange 存在）+ Alt + click
+// 元素 → buildAnchor + bridge.send design-overlay-update additionalAnchors（追加）。
+// host 是 additionalAnchors 单一来源；overlay 仅渲染 + 移除。
+describe('useAnnotationInteraction - Alt 多选', () => {
+  test('Alt keydown → bridge.send set-design-modifier-pressed true', () => {
+    const send = mock(() => {})
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts, bridge: { ...baseOpts.bridge, send }, mode: 'comment', purpose: 'annotation',
+    }))
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', bubbles: true })) })
+    expect(send.mock.calls.some((c) => {
+      const p = c[0] as Record<string, unknown>
+      return p.type === 'set-design-modifier-pressed' && p.pressed === true
+    })).toBe(true)
+    document.body.innerHTML = ''
+  })
+
+  test('Alt keyup → bridge.send set-design-modifier-pressed false', () => {
+    const send = mock(() => {})
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts, bridge: { ...baseOpts.bridge, send }, mode: 'comment', purpose: 'annotation',
+    }))
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', bubbles: true })) })
+    act(() => { document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true })) })
+    expect(send.mock.calls.some((c) => {
+      const p = c[0] as Record<string, unknown>
+      return p.type === 'set-design-modifier-pressed' && p.pressed === false
+    })).toBe(true)
+    document.body.innerHTML = ''
+  })
+
+  test('Alt keydown repeat=true → 不重复发送（仅在首次按下上报）', () => {
+    const send = mock(() => {})
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts, bridge: { ...baseOpts.bridge, send }, mode: 'comment', purpose: 'annotation',
+    }))
+    // 首次按下 → 发送一次
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', bubbles: true })) })
+    // repeat → 不再发送
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', repeat: true, bubbles: true })) })
+    const modifierCalls = send.mock.calls.filter((c) => (c[0] as Record<string, unknown>).type === 'set-design-modifier-pressed')
+    expect(modifierCalls.length).toBe(1)
+    document.body.innerHTML = ''
+  })
+
+  test('browse 模式：Alt keydown 不发送（mode guard）', () => {
+    const send = mock(() => {})
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts, bridge: { ...baseOpts.bridge, send }, mode: 'browse', purpose: 'annotation',
+    }))
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', bubbles: true })) })
+    expect(send.mock.calls.some((c) => (c[0] as Record<string, unknown>).type === 'set-design-modifier-pressed')).toBe(false)
+    document.body.innerHTML = ''
+  })
+
+  test('design 模式 + Alt + click 元素 → bridge.send design-overlay-update additionalAnchors', () => {
+    const designAnchor = { kind: 'element', url: 'https://example.com', generation: 1, framePath: [], rect: { x: 0, y: 0, width: 10, height: 10 } }
+    const activeDesignChange = { id: 'dc1', anchor: designAnchor, declarations: [] }
+    const send = mock(() => {})
+    const getState = () => ({ activeDesignChange })
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts,
+      bridge: { send, getState: getState as never, subscribe: () => () => {} },
+      mode: 'comment', purpose: 'annotation',
+    }))
+    // Alt 按下（进入多选态）
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', bubbles: true })) })
+    // click 元素
+    const target = document.createElement('button')
+    Object.defineProperty(target, 'getBoundingClientRect', { value: () => ({ x: 5, y: 6, width: 30, height: 40, top: 6, left: 5, right: 35, bottom: 46, toJSON() {} }) })
+    document.body.append(target)
+    act(() => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 20 })) })
+    // 期望发送 design-overlay-update，且 group.additionalAnchors 是单元素数组
+    const updateCall = send.mock.calls.find((c) => (c[0] as Record<string, unknown>).type === 'design-overlay-update')
+    expect(updateCall).toBeTruthy()
+    const payload = updateCall![0] as Record<string, unknown>
+    const group = payload.group as Record<string, unknown>
+    expect(group.id).toBe('dc1')
+    expect(group.anchor).toBe(designAnchor)
+    expect(Array.isArray(group.declarations)).toBe(true)
+    expect(Array.isArray(group.additionalAnchors)).toBe(true)
+    const additionalAnchors = group.additionalAnchors as Array<Record<string, unknown>>
+    expect(additionalAnchors.length).toBe(1)
+    expect(additionalAnchors[0]!.kind).toBe('element')
+    expect(additionalAnchors[0]!.rect).toEqual({ x: 5, y: 6, width: 30, height: 40 })
+    document.body.innerHTML = ''
+  })
+
+  test('design 模式 + Alt + click：不发送 open-editor（多选分流，不进新建流程）', () => {
+    const designAnchor = { kind: 'element', url: 'https://example.com', generation: 1, framePath: [], rect: { x: 0, y: 0, width: 10, height: 10 } }
+    const activeDesignChange = { id: 'dc1', anchor: designAnchor, declarations: [] }
+    const send = mock(() => {})
+    const getState = () => ({ activeDesignChange })
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts,
+      bridge: { send, getState: getState as never, subscribe: () => () => {} },
+      mode: 'comment', purpose: 'annotation',
+    }))
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', bubbles: true })) })
+    const target = document.createElement('button'); document.body.append(target)
+    act(() => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 1, clientY: 2 })) })
+    expect(send.mock.calls.some((c) => (c[0] as Record<string, unknown>).type === 'open-editor')).toBe(false)
+    document.body.innerHTML = ''
+  })
+
+  test('design 模式 + 无 Alt + click：保持 open-editor 流程（多选仅 Alt 触发）', () => {
+    const designAnchor = { kind: 'element', url: 'https://example.com', generation: 1, framePath: [], rect: { x: 0, y: 0, width: 10, height: 10 } }
+    const activeDesignChange = { id: 'dc1', anchor: designAnchor, declarations: [] }
+    const send = mock(() => {})
+    const getState = () => ({ activeDesignChange })
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts,
+      bridge: { send, getState: getState as never, subscribe: () => () => {} },
+      mode: 'comment', purpose: 'annotation',
+    }))
+    // 不按 Alt，直接 click
+    const target = document.createElement('button')
+    Object.defineProperty(target, 'getBoundingClientRect', { value: () => ({ x: 0, y: 0, width: 10, height: 10, top: 0, left: 0, right: 10, bottom: 10, toJSON() {} }) })
+    document.body.append(target)
+    act(() => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 1, clientY: 1 })) })
+    expect(send.mock.calls.some((c) => (c[0] as Record<string, unknown>).type === 'open-editor')).toBe(true)
+    document.body.innerHTML = ''
+  })
+
+  test('无 activeDesignChange（非 design 模式）+ Alt + click：走 open-editor（多选分流仅 design 模式生效）', () => {
+    const send = mock(() => {})
+    const getState = () => null
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts,
+      bridge: { send, getState: getState as never, subscribe: () => () => {} },
+      mode: 'comment', purpose: 'annotation',
+    }))
+    act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', bubbles: true })) })
+    const target = document.createElement('button')
+    Object.defineProperty(target, 'getBoundingClientRect', { value: () => ({ x: 0, y: 0, width: 10, height: 10, top: 0, left: 0, right: 10, bottom: 10, toJSON() {} }) })
+    document.body.append(target)
+    act(() => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 1, clientY: 1 })) })
+    // 无 design 模式 → 走 open-editor（即使 Alt 按下）
+    expect(send.mock.calls.some((c) => (c[0] as Record<string, unknown>).type === 'open-editor')).toBe(true)
+    expect(send.mock.calls.some((c) => (c[0] as Record<string, unknown>).type === 'design-overlay-update')).toBe(false)
+    document.body.innerHTML = ''
+  })
+
+  test('Alt keyup 未先 keydown：不发送 false（防止与按下态不同步）', () => {
+    const send = mock(() => {})
+    renderHook(() => useAnnotationInteraction({
+      ...baseOpts, bridge: { ...baseOpts.bridge, send }, mode: 'comment', purpose: 'annotation',
+    }))
+    // 未先按 down，直接 up → 不应误发 false（保持 host modifier 状态稳定）
+    act(() => { document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt', bubbles: true })) })
+    expect(send.mock.calls.some((c) => (c[0] as Record<string, unknown>).type === 'set-design-modifier-pressed')).toBe(false)
+    document.body.innerHTML = ''
+  })
+})

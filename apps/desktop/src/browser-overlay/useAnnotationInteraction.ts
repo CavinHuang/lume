@@ -50,6 +50,9 @@ export function useAnnotationInteraction(opts: UseAnnotationInteractionOptions):
   const draggingRef = useRef<{ x: number; y: number } | null>(null)
   // region 拖拽完成后置 true，阻止同周期 click 触发 element 新建（对齐 guest suppressNextClick L268-269）
   const suppressNextClickRef = useRef(false)
+  // Task 74：Alt 多选修饰键状态。true 表示 Alt 已按下（host 已收到 set-design-modifier-pressed true）；
+  // 防止 repeat keydown 重复上报与 keyup 未先 keydown 误发 false。
+  const modifierRef = useRef(false)
 
   useEffect(() => {
     // 只在 comment 模式挂交互（mode 变化时 effect 重跑，自动清理重挂）
@@ -100,6 +103,27 @@ export function useAnnotationInteraction(opts: UseAnnotationInteractionOptions):
       if (!(element instanceof Element) || isOverlayTarget(element, optsRef.current.host)) return
       event.preventDefault(); event.stopImmediatePropagation()
       const o = optsRef.current
+      // Task 74：Alt 多选分流（Codex §1.3）。design 模式（activeDesignChange 存在）+ Alt 按下 →
+      // buildAnchor + design-overlay-update additionalAnchors（追加到 host additionalAnchors）。
+      // groupId === designChange.id；overlay 仅追加，host 是 additionalAnchors 单一来源。
+      if (modifierRef.current) {
+        // GuestState.activeDesignChange 是 Record<string, unknown>，需经 unknown 中转收敛到结构类型。
+        const state = o.bridge.getState() as unknown as { activeDesignChange?: { id: string; anchor: Record<string, unknown>; declarations: unknown[] } } | null
+        const designChange = state?.activeDesignChange
+        if (designChange) {
+          const additionalAnchor = buildAnchor('element', rectOf(element), element, undefined, o.generation, [], o.win)
+          o.bridge.send({
+            type: 'design-overlay-update',
+            group: {
+              id: designChange.id,
+              anchor: designChange.anchor,
+              declarations: designChange.declarations,
+              additionalAnchors: [additionalAnchor],
+            },
+          })
+          return
+        }
+      }
       const anchor = buildAnchor('element', rectOf(element), element, undefined, o.generation, [], o.win)
       o.bridge.send({ type: 'open-editor', annotationId: undefined, purpose, anchor })
     }
@@ -118,9 +142,24 @@ export function useAnnotationInteraction(opts: UseAnnotationInteractionOptions):
     }
     const onKeyDown = (event: KeyboardEvent): void => {
       // ESC → mode-changed:browse（对齐 guest onKeyDown L220-225）
-      if (event.key !== 'Escape') return
-      event.preventDefault(); event.stopImmediatePropagation()
-      optsRef.current.bridge.send({ type: 'mode-changed', mode: 'browse' })
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopImmediatePropagation()
+        optsRef.current.bridge.send({ type: 'mode-changed', mode: 'browse' })
+        return
+      }
+      // Task 74：Alt 多选键监听（Codex §1.3）。仅在首次按下（非 repeat）且当前未按下时上报，
+      // 避免重复；不 preventDefault 以保留 OS 级 Alt 行为（如菜单聚焦）。
+      if (event.key === 'Alt' && !event.repeat && !modifierRef.current) {
+        modifierRef.current = true
+        optsRef.current.bridge.send({ type: 'set-design-modifier-pressed', pressed: true })
+      }
+    }
+    const onKeyUp = (event: KeyboardEvent): void => {
+      // Alt 抬起：仅在已按下态时上报 false，防止与 host modifier 状态不同步（如未先 keydown 的 keyup）。
+      if (event.key === 'Alt' && modifierRef.current) {
+        modifierRef.current = false
+        optsRef.current.bridge.send({ type: 'set-design-modifier-pressed', pressed: false })
+      }
     }
 
     const capture = true
@@ -131,6 +170,7 @@ export function useAnnotationInteraction(opts: UseAnnotationInteractionOptions):
     win.document.addEventListener('click', onClick, capture)
     win.document.addEventListener('mouseup', onMouseUp, capture)
     win.document.addEventListener('keydown', onKeyDown, capture)
+    win.document.addEventListener('keyup', onKeyUp, capture)
     // scroll/resize/DOM 变更 → rAF 去重 → 清 hover/cursor（让其下次 pointermove 重算；marker 由 React 重渲自动重定位）
     let scheduled = false
     const schedule = (): void => {
@@ -151,12 +191,19 @@ export function useAnnotationInteraction(opts: UseAnnotationInteractionOptions):
       win.document.removeEventListener('click', onClick, capture)
       win.document.removeEventListener('mouseup', onMouseUp, capture)
       win.document.removeEventListener('keydown', onKeyDown, capture)
+      win.document.removeEventListener('keyup', onKeyUp, capture)
       win.removeEventListener('scroll', schedule, true)
       win.removeEventListener('resize', schedule)
       mo.disconnect()
       // 卸载时清 preview 定时器（Plan 3 follow-up #3：防止 marker.enter/leave 残留 timer 在组件卸载后回调）
       if (previewTimerRef.current) win.clearTimeout(previewTimerRef.current)
       if (previewHideTimerRef.current) win.clearTimeout(previewHideTimerRef.current)
+      // Task 74：mode 切换/卸载时若 Alt 仍按下，复位 modifierRef + 通知 host。否则用户在 browse
+      // 模式释放 Alt（无 listener 捕获）→ host 卡在 modifier=true；下次 comment 模式 ref 仍 stale true。
+      if (modifierRef.current) {
+        modifierRef.current = false
+        optsRef.current.bridge.send({ type: 'set-design-modifier-pressed', pressed: false })
+      }
     }
   }, [mode, purpose, win])
 

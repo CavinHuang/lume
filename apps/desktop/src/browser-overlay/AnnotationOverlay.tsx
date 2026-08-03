@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from 'react'
 import { Marker } from './Marker'
 import { PreviewCard } from './PreviewCard'
 import { EditorCard } from './EditorCard'
+import { DesignEditor, type ActiveDesignChange } from './DesignEditor'
 import { overlayReducer, type OverlayEditorState, type OverlayTarget } from './overlayReducer'
 import type { GuestBridge, GuestState } from './guest-state'
 import { useAnnotationInteraction } from './useAnnotationInteraction'
@@ -32,6 +33,18 @@ export function AnnotationOverlay({ bridge, host }: { bridge: GuestBridge; host:
       dispatch({ type: 'close-editor' })
     }
   }, [state?.activeDraft])
+  // activeDesignChange → restore-editor design；消失 → close-editor（镜像 activeDraft effect）。
+  // 对称 close-editor 修复 design→clear→draft 序列 bug：design 消失后若不 close-editor，
+  // editor 残留 editing design 态；后续 activeDraft 推送 restore-editor(comment) 被 reducer
+  // 抗打断（prev.type==='editing' → 返回 prev）→ EditorCard 仍以 design 目标渲染。
+  useEffect(() => {
+    const design = state?.activeDesignChange as ActiveDesignChange | undefined
+    if (design) {
+      dispatch({ type: 'restore-editor', target: { mode: 'design', groupId: design.id } })
+    } else {
+      dispatch({ type: 'close-editor' })
+    }
+  }, [state?.activeDesignChange])
   const interaction = useAnnotationInteraction({
     bridge,
     mode: state?.mode ?? 'browse',
@@ -69,6 +82,19 @@ export function AnnotationOverlay({ bridge, host }: { bridge: GuestBridge; host:
             onSubmit={(action, body) => bridge.send({ type: 'editor-submit', action, body })}
             onCancel={() => bridge.send({ type: 'editor-cancel' })}
             onDelete={() => bridge.send({ type: 'editor-delete' })}
+          />
+        ) : null}
+        {editor.type === 'editing' && editor.target.mode === 'design' && state?.activeDesignChange ? (
+          <DesignEditor
+            // key 按 id 重置：DesignEditor 的 useState 仅 mount 初始化（Task 63），切换 design group 需重新初始化
+            key={(state.activeDesignChange as ActiveDesignChange).id}
+            activeDesignChange={state.activeDesignChange as ActiveDesignChange}
+            onUpdate={(group) => bridge.send({ type: 'design-overlay-update', group })}
+            onDelete={() => bridge.send({ type: 'design-overlay-delete', groupId: (state.activeDesignChange as ActiveDesignChange).id })}
+            onToggleOriginalView={(enabled) => bridge.send({ type: 'set-original-view-enabled', enabled })}
+            // Task 74：Alt 多选移除回调（→ bridge.send remove-annotation-selection{selectionIndex}）。
+            // host 是 additionalAnchors 单一来源；overlay 仅渲染 + 移除。
+            onRemoveSelection={(selectionIndex) => bridge.send({ type: 'remove-annotation-selection', selectionIndex })}
           />
         ) : null}
       </div>

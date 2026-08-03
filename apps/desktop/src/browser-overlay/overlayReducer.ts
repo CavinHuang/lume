@@ -14,7 +14,7 @@ export type OverlayAction =
   | { type: 'select-comment'; commentId: string }
   | { type: 'create-comment-at-point' }
   | { type: 'create-comment-from-selection' }
-  | { type: 'open-design-editor-at-point' }
+  | { type: 'open-design-editor-at-point'; groupId?: string }
   | { type: 'restore-editor'; target: OverlayTarget }
   | { type: 'close-editor' }
   | { type: 'sync' }
@@ -33,7 +33,8 @@ function deriveTarget(action: OverlayAction): OverlayTarget {
     case 'select-comment':
       return { mode: 'edit', commentId: action.commentId }
     case 'open-design-editor-at-point':
-      return { mode: 'design' }
+      // 携带 groupId（来自 action，5a sync 推送的 activeDesignChange.id）便于后续回溯
+      return { mode: 'design', ...(action.groupId ? { groupId: action.groupId } : {}) }
     default:
       return { mode: 'create' }
   }
