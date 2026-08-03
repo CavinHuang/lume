@@ -6,9 +6,9 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   agentSend,
+  browserRuntime,
   createBrowserReferenceGrant,
   getThreadMessages,
-  isTerminalAgentSubmissionError,
   listAgentMessageQueue,
   listBrowserReferenceCandidates,
   onBrowserEvent,
@@ -32,6 +32,7 @@ import {
   LUME_CONFIG_IPC_CHANNELS,
   type AgentMessage,
   type AgentBrowserAttachment,
+  type AgentBrowserAnnotationAttachment,
   type AgentBrowserTabAttachment,
   type AgentMessageAttachmentInput,
   type AgentDiffCommentAttachment,
@@ -49,12 +50,14 @@ import {
   type FileIndexEntry,
   type FileRef,
   type FileSearchResult,
+  type BrowserAnnotationSessionSnapshot,
 } from '@lume/shared'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { MentionList } from './MentionList'
 import { formatFileRefMention, parseFileRefDragData } from './file-ref-drag'
 import { serializeAgentEditorMessage } from './agent-editor-message-parts'
+import { buildDirectBrowserAnnotationPayload, parseBrowserAnnotationDirectRequest, projectBrowserAnnotationSnapshot, resolveBrowserAnnotationBatchText, resolveBrowserAnnotationSubmission, serializeBrowserAnnotationDirectRequest, type BrowserAnnotationDirectRequest } from './browser-annotation-submit'
 import { ModelPicker } from './ModelPicker'
 import { PermissionModePicker } from './PermissionModePicker'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
@@ -490,6 +493,26 @@ export function AgentInput({
         invalidateBrowserSuggestionCache()
         return
       }
+      if (event.method === 'browser:annotation-state' && event.params.threadId === threadId && Array.isArray(event.params.comments)) {
+        const snapshot = event.params as unknown as BrowserAnnotationSessionSnapshot
+        setBrowserAttachments((current) => {
+          return { ...current, [threadId]: projectBrowserAnnotationSnapshot(current[threadId] ?? [], snapshot) }
+        })
+        return
+      }
+      if (event.method === 'browser:annotation-direct-submit' && event.params.threadId === threadId && event.params.attachment && typeof event.params.attachment === 'object') {
+        const attachment = event.params.attachment as AgentBrowserAttachment
+        const tab = browserTabFromAttachment(attachment)
+        void browserRuntime<{ comments?: AgentBrowserAnnotationAttachment[] }>({ method: 'annotation:screenshot:prepare', params: { tabId: tab.tabId, threadId } })
+          .then((snapshot) => queueDirectAnnotation(snapshot.comments?.find((item) => item.id === attachment.id) ?? attachment as AgentBrowserAnnotationAttachment))
+          .catch((error) => console.error('[AgentInput] 直接批注截图准备失败，保留批注作为降级回退:', error))
+        return
+      }
+      if (event.method === 'browser:annotation-batch-submit' && event.params.threadId === threadId) {
+        pendingBatchSnapshotRef.current = event.params as unknown as BrowserAnnotationSessionSnapshot
+        if (!localSendingRef.current) window.requestAnimationFrame(() => sendNowRef.current())
+        return
+      }
       if (event.method !== 'browser:tab-changed' && event.method !== 'browser:workspace-changed') return
       const ownerThreadId = typeof event.params.ownerThreadId === 'string' ? event.params.ownerThreadId : undefined
       invalidateBrowserSuggestionCache(ownerThreadId ?? threadId)
@@ -532,6 +555,10 @@ export function AgentInput({
   const [desktopContextPermissionRequestLoading, setDesktopContextPermissionRequestLoading] = useState(false)
   const [localDesktopContextTarget, setLocalDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const sendNowRef = useRef<() => void>(() => undefined)
+  const directAnnotationRef = useRef<AgentBrowserAnnotationAttachment | null>(null)
+  const pendingDirectRequestsRef = useRef<BrowserAnnotationDirectRequest[]>([])
+  const activeDirectRequestRef = useRef<BrowserAnnotationDirectRequest | null>(null)
+  const pendingBatchSnapshotRef = useRef<BrowserAnnotationSessionSnapshot | null>(null)
   const stopNowRef = useRef<() => void>(() => undefined)
   const lastEscapeAtRef = useRef(0)
   const pendingSubmissionRef = useRef<{ id: string; identity: string } | null>(null)
@@ -543,6 +570,37 @@ export function AgentInput({
   const pendingAttachmentsRef = useRef(pendingAttachments)
   pendingAttachmentsRef.current = pendingAttachments
   const attachmentPasteInProgressRef = useRef(false)
+
+  useEffect(() => {
+    if (localSending || (pendingDirectRequestsRef.current.length === 0 && !pendingBatchSnapshotRef.current)) return
+    const frame = window.requestAnimationFrame(() => sendNowRef.current())
+    return () => window.cancelAnimationFrame(frame)
+  }, [localSending])
+
+  const directQueueStorageKey = `lume:browser-annotation-direct:${threadId}`
+  const persistDirectQueue = useCallback((queue: BrowserAnnotationDirectRequest[]) => {
+    pendingDirectRequestsRef.current = queue
+    try { localStorage.setItem(directQueueStorageKey, JSON.stringify(queue.map((request) => serializeBrowserAnnotationDirectRequest(request)))) } catch { /* storage is an optimization; the main session remains the fallback */ }
+  }, [directQueueStorageKey])
+  const queueDirectAnnotation = useCallback((annotation: AgentBrowserAnnotationAttachment) => {
+    if (activeDirectRequestRef.current?.annotation.id === annotation.id || pendingDirectRequestsRef.current.some((request) => request.annotation.id === annotation.id)) return
+    const request: BrowserAnnotationDirectRequest = { version: 1, threadId, tabId: annotation.tab.tabId, annotation, attempts: 0, createdAt: new Date().toISOString() }
+    persistDirectQueue([...pendingDirectRequestsRef.current, request])
+    if (!localSendingRef.current) window.requestAnimationFrame(() => sendNowRef.current())
+  }, [persistDirectQueue, threadId])
+
+  useEffect(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(directQueueStorageKey) ?? '[]') as unknown
+      pendingDirectRequestsRef.current = Array.isArray(parsed)
+        ? parsed.map((item) => parseBrowserAnnotationDirectRequest(typeof item === 'string' ? item : JSON.stringify(item))).filter((item): item is BrowserAnnotationDirectRequest => Boolean(item))
+        : []
+    } catch { pendingDirectRequestsRef.current = [] }
+  }, [directQueueStorageKey])
+
+  useEffect(() => {
+    if (!localSending && (pendingDirectRequestsRef.current.length > 0 || directAnnotationRef.current)) window.requestAnimationFrame(() => sendNowRef.current())
+  }, [localSending])
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
     [threadId],
@@ -817,7 +875,10 @@ export function AgentInput({
           onRejected: (items) => items.forEach(({ file, reason }) => {
             toast.error(`${file.name || '剪贴板文件'}：${pendingAttachmentRejectionMessage(reason)}`)
           }),
-          onSettled: () => { attachmentPasteInProgressRef.current = false },
+          onSettled: () => {
+            attachmentPasteInProgressRef.current = false
+            if (!localSendingRef.current && (pendingDirectRequestsRef.current.length > 0 || pendingBatchSnapshotRef.current)) window.requestAnimationFrame(() => sendNowRef.current())
+          },
         })) return true
 
         return handleCapabilityReferencePaste(view, event)
@@ -1101,11 +1162,24 @@ export function AgentInput({
       toast.info('正在读取粘贴的附件，请稍候')
       return
     }
+    const activeDirectRequest = activeDirectRequestRef.current ?? pendingDirectRequestsRef.current.shift() ?? null
+    if (activeDirectRequest) {
+      activeDirectRequestRef.current = activeDirectRequest
+      directAnnotationRef.current = activeDirectRequest.annotation
+      persistDirectQueue(pendingDirectRequestsRef.current)
+    }
+    const directAttachment = directAnnotationRef.current
+    directAnnotationRef.current = null
     const serialized = serializeAgentEditorMessage(editor.getJSON(), applyAgentRoleMentions)
     const rawText = serialized.userMessage
-    if (!rawText && pendingAttachments.length === 0 && commentAttachments.length === 0 && browserAttachments.length === 0) return
+    const batchSnapshot = pendingBatchSnapshotRef.current
+    pendingBatchSnapshotRef.current = null
+    const sourceBrowserAttachments = batchSnapshot
+      ? projectBrowserAnnotationSnapshot(browserAttachments, batchSnapshot)
+      : browserAttachments
+    if (!directAttachment && !rawText && pendingAttachments.length === 0 && commentAttachments.length === 0 && sourceBrowserAttachments.length === 0) return
 
-    const queueEdit = editingQueuedMessageRef.current
+    const queueEdit = directAttachment ? null : editingQueuedMessageRef.current
     if (queueEdit) {
       setLocalSending(true)
       try {
@@ -1141,13 +1215,20 @@ export function AgentInput({
     }
 
     setLocalSending(true)
-    const text = rawText || (commentAttachments.length > 0
-      ? '请处理这些代码审阅意见。'
-      : browserAttachments.length > 0
-        ? '请处理这些浏览器标签与网页批注。'
-        : '请解读这些附件。')
-    let sendMessageMetadata = effectiveMessageMetadata
-    if (selectedDesktopContextTarget) {
+    const dropActiveDirect = () => {
+      const active = activeDirectRequestRef.current
+      if (!active) return
+      activeDirectRequestRef.current = null
+      directAnnotationRef.current = null
+      persistDirectQueue(pendingDirectRequestsRef.current)
+    }
+    const annotationSubmission = resolveBrowserAnnotationSubmission({ attachments: sourceBrowserAttachments, directAttachment })
+    const effectiveBrowserAttachments = directAttachment ? [directAttachment] : annotationSubmission.attachments
+    const effectiveCommentAttachments = directAttachment ? [] : commentAttachments
+    const effectivePendingAttachments = directAttachment ? [] : pendingAttachments
+    const text = directAttachment ? annotationSubmission.text : resolveBrowserAnnotationBatchText({ rawText, hasSnapshot: Boolean(batchSnapshot), hasCodeComments: commentAttachments.length > 0, hasBrowserAttachments: effectiveBrowserAttachments.length > 0 })
+    let sendMessageMetadata = directAttachment ? undefined : effectiveMessageMetadata
+    if (!directAttachment && selectedDesktopContextTarget) {
       const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
       if (state.status !== 'ready') {
         setDesktopContextCaptureMessage(state.message)
@@ -1170,9 +1251,9 @@ export function AgentInput({
     const submissionIdentity = JSON.stringify({
       userMessage: text,
       messageParts: serialized.messageParts,
-      attachments: pendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
-      commentAttachments,
-      browserAttachments,
+      attachments: effectivePendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
+      commentAttachments: effectiveCommentAttachments,
+      browserAttachments: effectiveBrowserAttachments,
       thinkingLevel,
       permissionMode,
       workspaceId: workspaceIdRef.current,
@@ -1190,11 +1271,11 @@ export function AgentInput({
     pendingSubmissionRef.current = { id: clientSubmissionId, identity: submissionIdentity }
     let messageAttachments: AgentMessageAttachmentInput[] = []
     try {
-      if (pendingAttachments.length > 0) {
+      if (effectivePendingAttachments.length > 0) {
         const savedFiles = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
           threadId,
           clientSubmissionId,
-          files: pendingAttachments.map((attachment) => ({
+          files: effectivePendingAttachments.map((attachment) => ({
             id: attachment.id,
             filename: attachment.filename,
             mediaType: attachment.mediaType,
@@ -1204,7 +1285,7 @@ export function AgentInput({
             ...(attachment.stagedAttachmentId ? { stagedAttachmentId: attachment.stagedAttachmentId } : {}),
           })),
         })
-        messageAttachments = pendingAttachments.map((attachment, index) => {
+        messageAttachments = effectivePendingAttachments.map((attachment, index) => {
           const saved = savedFiles.find((file) => file.id === attachment.id) ?? savedFiles[index]
           return {
             id: attachment.id,
@@ -1217,50 +1298,77 @@ export function AgentInput({
           }
         })
       }
+      for (const attachment of effectiveBrowserAttachments) {
+        const screenshotRef = attachment.origin === 'browser-annotation' ? attachment.screenshotRef : undefined
+        if (!screenshotRef) continue
+        try {
+          const screenshot = await browserRuntime<{ data: string; mediaType: string; size: number }>({ method: 'annotation:screenshot:read', params: { tabId: browserTabFromAttachment(attachment).tabId, threadId, screenshotRef } })
+          const id = `browser-annotation-screenshot:${attachment.id}`
+          const filename = (attachment.origin === 'browser-annotation' ? attachment.screenshot?.filename : undefined)?.replace(/[^a-zA-Z0-9._-]/g, '_') || `${attachment.id.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`
+          const saved = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, { threadId, clientSubmissionId, files: [{ id, filename, mediaType: screenshot.mediaType, size: screenshot.size, data: screenshot.data }] })
+          const file = saved[0]
+          messageAttachments.push({ id, filename, mediaType: screenshot.mediaType, size: screenshot.size, threadPath: file?.threadPath ?? filename, ...(file?.ref ? { fileRef: file.ref } : {}) })
+        } catch (error) {
+          if (directAttachment) throw error
+          /* structured annotation context remains usable when optional pixels are unavailable */
+        }
+      }
     } catch (error) {
       console.error('[AgentInput] 文件上传失败:', error)
       toast.error('文件上传失败')
+      dropActiveDirect()
       setLocalSending(false)
       return
     }
     const createdAt = new Date().toISOString()
     const sentJson = editor.getJSON()
     try {
-      const result = await agentSend({
-        threadId,
-        userMessage: text,
-        clientSubmissionId,
-        ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
-          ? { messageParts: serialized.messageParts }
-          : {}),
-        thinkingLevel,
-        permissionMode,
-        ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
-        ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
-        ...(browserAttachments.length > 0 ? { browserAttachments } : {}),
-        ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
-        ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
-      })
+      const result = await agentSend(directAttachment
+        ? { ...buildDirectBrowserAnnotationPayload({ threadId, annotation: directAttachment, ...(messageAttachments[0] ? { screenshot: messageAttachments[0] } : {}) }), clientSubmissionId }
+        : {
+            threadId,
+            userMessage: text,
+            clientSubmissionId,
+            ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref') ? { messageParts: serialized.messageParts } : {}),
+            thinkingLevel,
+            permissionMode,
+            ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+            ...(effectiveCommentAttachments.length > 0 ? { commentAttachments: effectiveCommentAttachments } : {}),
+            ...(effectiveBrowserAttachments.length > 0 ? { browserAttachments: effectiveBrowserAttachments } : {}),
+            ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
+            ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
+          })
       pendingSubmissionRef.current = null
-      editor.commands.clearContent()
-      setEditorText('')
-      pushHistoryEntry(sentJson)
-      clearDraftState()
-      setCommentDrafts((prev) => {
+      if (!directAttachment) editor.commands.clearContent()
+      if (!directAttachment) setEditorText('')
+      if (!directAttachment) pushHistoryEntry(sentJson)
+      if (!directAttachment) clearDraftState()
+      if (!directAttachment) setCommentDrafts((prev) => {
         if (!prev[threadId]) return prev
         const next = { ...prev }
         delete next[threadId]
         return next
       })
-      setBrowserAttachments((prev) => {
+      if (!directAttachment) setBrowserAttachments((prev) => {
         if (!prev[threadId]) return prev
         const next = { ...prev }
         delete next[threadId]
         return next
       })
-      ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
-      editor.commands.focus('end')
-      onMessageMetadataConsumed()
+      if (directAttachment) setBrowserAttachments((prev) => ({
+        ...prev,
+        [threadId]: (prev[threadId] ?? []).filter((item) => item.id !== directAttachment.id),
+      }))
+      if (directAttachment) {
+        void browserRuntime({ method: 'annotation:delete', params: { tabId: directAttachment.tab.tabId, threadId, annotationId: directAttachment.id } }).catch(() => undefined)
+        activeDirectRequestRef.current = null
+      } else {
+        const sessionTabs = new Set(effectiveBrowserAttachments.filter((item): item is AgentBrowserAnnotationAttachment => item.origin === 'browser-annotation' && item.tab.ownerThreadId === threadId).map((item) => item.tab.tabId))
+        for (const sessionTabId of sessionTabs) void browserRuntime({ method: 'annotation:clear', params: { tabId: sessionTabId, threadId } }).catch(() => undefined)
+      }
+      if (!directAttachment) (debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
+      if (!directAttachment) editor.commands.focus('end')
+      if (!directAttachment) onMessageMetadataConsumed()
       if (shouldReleaseAgentInputLocalSendingAfterDispatch(result.mode)) {
         setLocalSending(false)
       }
@@ -1273,9 +1381,9 @@ export function AgentInput({
           createdAt,
           text,
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-          ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
-          ...(browserAttachments.length > 0 ? { browserAttachments } : {}),
-          ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
+          ...(effectiveCommentAttachments.length > 0 ? { commentAttachments: effectiveCommentAttachments } : {}),
+          ...(effectiveBrowserAttachments.length > 0 ? { browserAttachments: effectiveBrowserAttachments } : {}),
+          ...(!directAttachment && serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
             ? { messageParts: serialized.messageParts }
             : {}),
         }))
@@ -1290,7 +1398,7 @@ export function AgentInput({
           })
         toast.success('已加入队列')
       }
-      if (pendingAttachments.length > 0) {
+      if (!directAttachment && pendingAttachments.length > 0) {
         onClearPendingAttachments()
       }
     } catch (error) {
@@ -1298,7 +1406,8 @@ export function AgentInput({
       toast.error('发送失败')
       setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
       setLocalSending(false)
-      if (isTerminalAgentSubmissionError(error)) pendingSubmissionRef.current = null
+      dropActiveDirect()
+      pendingSubmissionRef.current = null
     }
   }, [
     editor,
@@ -1325,18 +1434,9 @@ export function AgentInput({
     selectedDesktopContextTarget,
     clearDraftState,
     pushHistoryEntry,
+    persistDirectQueue,
   ])
   sendNowRef.current = () => { void handleSend() }
-
-  useEffect(() => {
-    const submitAgentInput = (event: Event) => {
-      const detail = (event as CustomEvent<{ threadId?: string }>).detail
-      if (detail?.threadId && detail.threadId !== threadId) return
-      window.requestAnimationFrame(() => sendNowRef.current())
-    }
-    window.addEventListener('lume:submit-agent-input', submitAgentInput)
-    return () => window.removeEventListener('lume:submit-agent-input', submitAgentInput)
-  }, [threadId])
 
   const applyContent = (json: AgentInputDraftJSON | undefined) => {
     if (!editor) return
@@ -1477,6 +1577,9 @@ export function AgentInput({
 
   const handleRemoveBrowserAttachment = useCallback((attachment: AgentBrowserAttachment) => {
     const tab = browserTabFromAttachment(attachment)
+    if (attachment.origin === 'browser-annotation') {
+      void browserRuntime({ method: 'annotation:delete', params: { tabId: tab.tabId, threadId, annotationId: attachment.id } }).catch(() => undefined)
+    }
     if (tab.referenceGrantId) {
       void revokeBrowserReferenceGrant({
         backend: tab.backend ?? 'iab',
