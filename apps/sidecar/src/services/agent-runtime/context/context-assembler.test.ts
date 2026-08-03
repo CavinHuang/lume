@@ -358,9 +358,35 @@ describe("ContextAssembler", () => {
       }]
     });
 
-    expect(result.userMessageForModel).toContain("<browser_annotation_instructions trust=\"mixed\">");
+    expect(result.userMessageForModel).toContain("<browser_annotation_instructions trust=\"policy\">");
     expect(result.userMessageForModel).toContain("Primary heading");
     expect(result.userMessageForModel).toContain("Use a stronger visual hierarchy");
+    expect(result.userMessageForModel).toContain('"trust":"untrusted"');
+  });
+
+  test("keeps design-change intent separate from untrusted page context", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-design-change",
+      runId: "run-design-change",
+      userMessage: "apply this review",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["node_repl"],
+      tokenBudget: 1000,
+      browserAttachments: [{
+        id: "browser-design-change:1",
+        origin: "browser-design-change",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 2 },
+        anchor: { kind: "element", url: "https://example.com/", generation: 2, framePath: [], domPath: "html > body", rect: { x: 1, y: 2, width: 3, height: 4 } },
+        originalStyles: { color: "red" },
+        proposedStyles: { color: "blue" },
+        body: "Make the heading calmer"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain('"userIntent":"Make the heading calmer"');
+    expect(result.userMessageForModel).toContain('"trust":"untrusted"');
+    expect(result.userMessageForModel).toContain('"proposedStyles":{"color":"blue"}');
+    expect(result.userMessageForModel).not.toContain('"body":"Make the heading calmer"');
   });
 
   test("records context assembly and memory retrieval spans when trace context is provided", async () => {

@@ -136,4 +136,34 @@ describe("agentSendInputSchema browserAttachments", () => {
 
     expect(parsed.browserAttachments?.[0]).toMatchObject({ body: "Use the primary accent color" });
   });
+
+  test("rejects a browser screenshot reference owned by another thread", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "read this page",
+      browserAttachments: [{
+        id: "annotation-1",
+        origin: "browser-annotation",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 1 },
+        anchor: { kind: "element", url: "https://example.com/", generation: 1, framePath: [], rect: { x: 0, y: 0, width: 1, height: 1 } },
+        body: "Review this",
+        screenshotRef: "browser-review-screenshot:thread-2:11111111-1111-4111-8111-111111111111",
+      }],
+    })).toThrow();
+  });
+
+  test("rejects malformed browser screenshot references", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "read this page",
+      browserAttachments: [{
+        id: "annotation-1",
+        origin: "browser-annotation",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 1 },
+        anchor: { kind: "element", url: "https://example.com/", generation: 1, framePath: [], rect: { x: 0, y: 0, width: 1, height: 1 } },
+        body: "Review this",
+        screenshotRef: "temporary-file.png",
+      }],
+    })).toThrow();
+  });
 });

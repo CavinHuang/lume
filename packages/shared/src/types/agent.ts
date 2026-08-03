@@ -963,10 +963,27 @@ export interface AgentBrowserAnchor {
   url: string
   generation: number
   framePath: string[]
+  frameUrl?: string
+  selector?: string
+  role?: string
+  name?: string
+  title?: string
   domPath?: string
   textQuote?: { exact: string; prefix?: string; suffix?: string }
+  textRange?: {
+    startPath?: string
+    startOffset?: number
+    endPath?: string
+    endOffset?: number
+  }
   /** Bounded visible text captured at selection time; never treated as instructions. */
   selectedContent?: string
+  immediateText?: string
+  nearbyText?: string
+  viewport?: { width: number; height: number; deviceScaleFactor?: number; scrollX?: number; scrollY?: number }
+  markerPoint?: { x: number; y: number }
+  fixed?: boolean
+  scrollContainer?: { selector?: string; domPath?: string }
   rect: { x: number; y: number; width: number; height: number }
 }
 
@@ -977,6 +994,37 @@ export interface AgentBrowserAnnotationAttachment {
   anchor: AgentBrowserAnchor
   body: string
   screenshotRef?: string
+  additionalAnchors?: AgentBrowserAnchor[]
+  createdAt?: string
+  theme?: string
+  screenshot?: {
+    ref?: string
+    filename?: string
+    mode?: 'off' | 'necessary' | 'always'
+    width?: number
+    height?: number
+    deviceScaleFactor?: number
+  }
+}
+
+export interface BrowserAnnotationSessionSnapshot {
+  version: 2
+  threadId: string
+  tabId: string
+  url: string
+  generation: number
+  mode: 'browse' | 'comment'
+  selectionPurpose?: 'annotation' | 'tweaks'
+  comments: AgentBrowserAnnotationAttachment[]
+  activeDraft?: {
+    id?: string
+    anchor: AgentBrowserAnchor
+    body: string
+    purpose?: 'annotation' | 'tweaks'
+  }
+  screenshotRef?: string
+  theme?: string
+  updatedAt: string
 }
 
 export interface AgentBrowserDesignChangeAttachment {
