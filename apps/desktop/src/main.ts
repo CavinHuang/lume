@@ -17,6 +17,7 @@ import {
   utilityProcess,
 } from 'electron'
 import { autoUpdater } from 'electron-updater'
+import { execFileSync } from 'node:child_process'
 import {
   appendFileSync,
   copyFileSync,
@@ -110,6 +111,10 @@ import {
 import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
+import {
+  createChromeNativeHostInstallPlan,
+  writeChromeNativeHostRegistration,
+} from './plugin-native-host-installer'
 import { loadOrCreateDesktopContextKey } from './desktop-context-key'
 import {
   autoUnlockConnectionVault,
@@ -1644,6 +1649,71 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         throw error
       }
     }
+    case 'desktop:install-plugin-package': {
+      requireMainWindowSender(context, command)
+      const input = payload && typeof payload === 'object' ? payload : {}
+      if (typeof input.workspaceSlug !== 'string' || typeof input.catalogItemKey !== 'string' || typeof input.setupStepId !== 'string') {
+        throw new Error('invalid plugin package install request')
+      }
+      if (!mainWindow || mainWindow.isDestroyed() || context.ownerWebContentsId === undefined) throw new Error('main window unavailable')
+      const ownerWebContentsId = context.ownerWebContentsId
+      const ownerGeneration = mainWindowLifecycle.getGeneration()
+      const owner = { ownerWebContentsId, ownerGeneration }
+      const prepared = await sidecarHost.callPluginPackagePrivileged('plugin-package:privileged-prepare', { ...input, ...owner }) as {
+        token: string
+        kind: 'file' | 'directory'
+        suggestedFilename: string
+        version?: string
+        verification: 'verified' | 'unverified'
+        originChanged?: boolean
+        installer?: {
+          kind: 'chrome-native-host'
+          hostName: string
+          extensionId: string
+          appServerUrl: string
+        }
+      }
+      let consumed = false
+      const revoke = async () => {
+        if (consumed) return
+        await sidecarHost.callPluginPackagePrivileged('plugin-package:privileged-revoke', { token: prepared.token, ...owner }).catch(() => undefined)
+      }
+      try {
+        if (prepared.kind !== 'file' || prepared.verification !== 'verified' || prepared.originChanged) {
+          throw new Error('本机安装器必须是来源稳定且通过校验的单文件产物')
+        }
+        if (!prepared.installer || !prepared.version) throw new Error('插件没有声明可执行的本机安装器')
+        const plan = createChromeNativeHostInstallPlan({
+          installer: prepared.installer,
+          version: prepared.version,
+          configRoot: resolveConfigDir(),
+          homeDir: homedir(),
+          localAppData: process.env.LOCALAPPDATA,
+        })
+        if (!mainWindowLifecycle.isCurrent(ownerGeneration) || mainWindow.isDestroyed() || mainWindow.webContents.id !== ownerWebContentsId) {
+          await revoke()
+          throw new Error('安装窗口已失效，请重试')
+        }
+        await sidecarHost.callPluginPackagePrivileged('plugin-package:privileged-finalize', {
+          token: prepared.token,
+          ...owner,
+          targetPath: plan.hostPath,
+          overwrite: true,
+        })
+        consumed = true
+        writeChromeNativeHostRegistration(plan)
+        if (plan.registry) execFileSync(plan.registry.command, plan.registry.args, { windowsHide: true, stdio: 'ignore' })
+        return {
+          status: 'installed',
+          hostName: plan.hostName,
+          hostPath: plan.hostPath,
+          manifestPath: plan.manifestPath,
+        }
+      } catch (error) {
+        await revoke()
+        throw error
+      }
+    }
     case 'desktop_wiki_get_proposal_summary':
       requireMainWindowSender(context, command)
       return sidecarHost.callWikiPrivileged('wiki:privileged-get-proposal-summary', { draftId: payload.draftId })
@@ -2650,6 +2720,10 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
   }
   return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId })
 })
+ipcMain.handle('lume:browser-annotation-popup', async (event, payload) => {
+  if (!browserRuntime?.isAnnotationPopupSender(event.sender.id)) throw new Error('untrusted ipc sender')
+  return browserRuntime.handleAnnotationPopupCommand(event.sender.id, payload)
+})
 ipcMain.handle('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。
   // 子窗口 close 会命中 createQuickInputWindow 的 close 拦截 → hide（除非退出中）。
@@ -2810,6 +2884,8 @@ app.whenReady().then(async () => {
     },
     credentialStorage: safeStorage,
     authPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-auth-preload.cjs'),
+    annotationPopupPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-annotation-preload.cjs'),
+    rendererUrl: () => app.isPackaged ? getPackagedAppUrl() : getDevServerUrl(),
     onInternalError: ({ method, actor, tabId, message }) => {
       writeMainLog('error', 'browser.runtime', 'runtime.dispatch_failed', 'browser runtime action failed', {
         data: { method, actor, ...(tabId ? { tabId } : {}), message },

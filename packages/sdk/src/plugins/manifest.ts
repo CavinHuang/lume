@@ -66,9 +66,21 @@ export type PluginSetupArtifactKind =
   | "node-bundle"
   | "file";
 
+export type PluginSetupPlatform = "win32" | "darwin" | "linux";
+export type PluginSetupArch = "x64" | "arm64";
+
 export interface PluginSetupArtifact {
   path: string;
   kind: PluginSetupArtifactKind;
+  platform?: PluginSetupPlatform;
+  arch?: PluginSetupArch;
+}
+
+export interface PluginSetupInstaller {
+  kind: "chrome-native-host";
+  hostName: string;
+  extensionId: string;
+  appServerUrl: string;
 }
 
 export interface PluginSetupDownload {
@@ -100,8 +112,10 @@ export interface PluginMarketplaceSetupStep {
   description: string;
   kind?: PluginMarketplaceSetupKind;
   artifact?: PluginSetupArtifact;
+  artifacts?: PluginSetupArtifact[];
   download?: PluginSetupDownload;
   build?: PluginSetupBuild;
+  installer?: PluginSetupInstaller;
   targetApp?: PluginSetupTargetApp;
   verify?: PluginSetupVerify;
 }
@@ -254,12 +268,18 @@ function normalizeMarketplace(raw: unknown): PluginMarketplaceManifest | undefin
         return [];
       }
       const artifact = parseArtifact(step.artifact);
+      const artifacts = Array.isArray(step.artifacts)
+        ? step.artifacts.flatMap((entry) => parseArtifact(entry) ?? [])
+        : undefined;
       const download = parseDownload(step.download);
       const build = parseBuild(step.build);
+      const installer = parseInstaller(step.installer);
       const targetApp = parseTargetApp(step.targetApp);
       const verify = parseVerify(step.verify);
       // artifact.path 非法时整步丢弃（与现有 validatePluginPath 抛错语义一致）
       if (step.artifact && !artifact) return [];
+      if (step.artifacts && !artifacts?.length) return [];
+      if (step.installer && !installer) return [];
       return [{
         id: step.id,
         title: step.title,
@@ -268,8 +288,10 @@ function normalizeMarketplace(raw: unknown): PluginMarketplaceManifest | undefin
           ? { kind: step.kind as PluginMarketplaceSetupKind }
           : {}),
         ...(artifact ? { artifact } : {}),
+        ...(artifacts?.length ? { artifacts } : {}),
         ...(download ? { download } : {}),
         ...(build ? { build } : {}),
+        ...(installer ? { installer } : {}),
         ...(targetApp ? { targetApp } : {}),
         ...(verify ? { verify } : {}),
       }];
@@ -285,6 +307,8 @@ function normalizeMarketplace(raw: unknown): PluginMarketplaceManifest | undefin
 const SETUP_ARTIFACT_KINDS = new Set<PluginSetupArtifactKind>([
   "chrome-extension", "obsidian-plugin", "native-binary", "node-bundle", "file",
 ]);
+const SETUP_PLATFORMS = new Set<PluginSetupPlatform>(["win32", "darwin", "linux"]);
+const SETUP_ARCHES = new Set<PluginSetupArch>(["x64", "arm64"]);
 const SETUP_TARGET_KINDS = new Set<PluginSetupTargetApp["kind"]>(["chrome", "obsidian", "system-path"]);
 const SETUP_VERIFY_METHODS = new Set<PluginSetupVerify["method"]>(["tcp-port", "chrome-extension", "http-get", "none"]);
 
@@ -298,7 +322,38 @@ function parseArtifact(raw: unknown): PluginSetupArtifact | undefined {
   } catch {
     return undefined;
   }
-  return { path: v.path, kind: v.kind as PluginSetupArtifactKind };
+  if (v.platform !== undefined && (typeof v.platform !== "string" || !SETUP_PLATFORMS.has(v.platform as PluginSetupPlatform))) return undefined;
+  if (v.arch !== undefined && (typeof v.arch !== "string" || !SETUP_ARCHES.has(v.arch as PluginSetupArch))) return undefined;
+  return {
+    path: v.path,
+    kind: v.kind as PluginSetupArtifactKind,
+    ...(typeof v.platform === "string" ? { platform: v.platform as PluginSetupPlatform } : {}),
+    ...(typeof v.arch === "string" ? { arch: v.arch as PluginSetupArch } : {}),
+  };
+}
+
+function parseInstaller(raw: unknown): PluginSetupInstaller | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const v = raw as Record<string, unknown>;
+  if (v.kind !== "chrome-native-host") return undefined;
+  if (typeof v.hostName !== "string" || !/^(?=.{1,128}$)[a-z0-9_]+(?:\.[a-z0-9_]+)*$/.test(v.hostName)) return undefined;
+  if (typeof v.extensionId !== "string" || !/^[a-p]{32}$/.test(v.extensionId)) return undefined;
+  if (typeof v.appServerUrl !== "string" || !isLoopbackWebSocketUrl(v.appServerUrl)) return undefined;
+  return {
+    kind: "chrome-native-host",
+    hostName: v.hostName,
+    extensionId: v.extensionId,
+    appServerUrl: v.appServerUrl,
+  };
+}
+
+function isLoopbackWebSocketUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "ws:" && (url.hostname === "127.0.0.1" || url.hostname === "localhost");
+  } catch {
+    return false;
+  }
 }
 
 function parseDownload(raw: unknown): PluginSetupDownload | undefined {

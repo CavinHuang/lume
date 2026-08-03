@@ -438,7 +438,9 @@ function appendContextCompactionNotice(
     variant: 'context_compaction' as const,
     status: event.type === 'context.compaction.completed' ? 'completed' as const : 'active' as const,
     text: formatContextCompactionNoticeText(event),
-    ...(event.type === 'context.compaction.completed' && event.summary ? { summary: event.summary } : {}),
+    ...(event.type === 'context.compaction.completed' && event.outcome !== 'failed' && event.summary
+      ? { summary: event.summary }
+      : {}),
     createdAt: event.createdAt,
   }
   if (existingIndex >= 0) {
@@ -458,7 +460,9 @@ function formatContextCompactionNoticeText(
   }
   return event.type === 'context.compaction.started'
     ? `正在${mode}压缩上下文`
-    : `上下文已${mode}压缩`
+    : event.outcome === 'failed'
+      ? '上下文压缩失败，已保留原上下文'
+      : `上下文已${mode}压缩`
 }
 
 function getSubagentOwner(event: LumeRuntimeEvent): { parentToolUseId: string; subagentRunId?: string } | null {

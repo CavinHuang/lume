@@ -620,6 +620,7 @@ describe("Agent session persistence", () => {
           return {
             compactedMessages: [
               { role: "user", content: "[Previous conversation summary]\n\ndurable compact summary" },
+              { role: "user", content: "retained latest task" },
               { role: "assistant", content: "I will continue." },
             ],
             summary: "durable compact summary",
@@ -650,6 +651,7 @@ describe("Agent session persistence", () => {
 
     const requestPayload = JSON.stringify(provider.requests[0]?.messages)
     expect(requestPayload).toContain("durable compact summary")
+    expect(requestPayload).toContain("retained latest task")
     expect(requestPayload).not.toContain("old long context")
     await resumedAgent.close()
   })

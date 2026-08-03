@@ -488,7 +488,7 @@ export class QueryEngine {
   }
 
   private getContextWindow(): number {
-    return getContextWindowSize(this.config.model)
+    return this.config.contextWindow ?? getContextWindowSize(this.config.model)
   }
 
   private estimateToolSchemaTokens(): number {
@@ -601,9 +601,14 @@ export class QueryEngine {
   private async compactMessages(
     trigger: AgentContextCompactionTrigger,
     preTokens: number,
+    protectedMessageIndex?: number,
   ): Promise<{
+    compacted: boolean
     compactedMessages: NormalizedMessageParam[]
     summary: string
+    failureReason?: import('./utils/compact.js').CompactionFailureReason
+    retainedTokens?: number
+    retainedMessageCount?: number
     state: AutoCompactState
     metadata?: AgentContextCompactionMetadata
     usage?: NormalizedProviderUsage
@@ -617,10 +622,16 @@ export class QueryEngine {
         state: this.compactState,
         trigger,
         preTokens,
+        protectedMessageIndex,
+        abortSignal: this.config.abortSignal,
       })
       return {
+        compacted: result.compacted ?? true,
         compactedMessages: result.compactedMessages,
         summary: result.summary,
+        failureReason: result.failureReason,
+        retainedTokens: result.retainedTokens,
+        retainedMessageCount: result.retainedMessageCount,
         state: result.state ?? {
           ...this.compactState,
           compacted: true,
@@ -635,6 +646,12 @@ export class QueryEngine {
       this.config.model,
       this.messages as any[],
       this.compactState,
+      {
+        trigger,
+        reserveTokens: Math.min(this.config.maxTokens, 20_000),
+        protectedMessageIndex,
+        abortSignal: this.config.abortSignal,
+      },
     )
   }
 
@@ -710,6 +727,16 @@ export class QueryEngine {
         ...(boundary.metadata?.preservedSegment
           ? { preserved_segment: boundary.metadata.preservedSegment }
           : {}),
+        ...(boundary.metadata?.outcome ? { outcome: boundary.metadata.outcome } : {}),
+        ...(boundary.metadata?.failureReason
+          ? { failure_reason: boundary.metadata.failureReason }
+          : {}),
+        ...(typeof boundary.metadata?.retainedTokens === 'number'
+          ? { retained_tokens: boundary.metadata.retainedTokens }
+          : {}),
+        ...(typeof boundary.metadata?.retainedMessageCount === 'number'
+          ? { retained_message_count: boundary.metadata.retainedMessageCount }
+          : {}),
       },
       session_id: this.sessionId,
     } as SDKMessage
@@ -739,21 +766,43 @@ export class QueryEngine {
 
   private async *runCompaction(
     trigger: AgentContextCompactionTrigger,
-  ): AsyncGenerator<SDKMessage> {
+    protectedMessageIndex?: number,
+  ): AsyncGenerator<SDKMessage, boolean> {
     const preTokens = this.createContextUsage().totalTokens
     const startMetadata = await this.getCompactionStartMetadata(trigger, preTokens)
     yield this.createCompactionStartedEvent(trigger, preTokens, startMetadata)
     yield this.createCompactionProgressEvent(trigger, preTokens, 'summarizing', 45, startMetadata)
 
-    const result = await this.compactMessages(trigger, preTokens)
-    const resultMetadata = mergeCompactionMetadata({ contextWindow: this.getContextWindow() }, result.metadata)
-    yield this.createCompactionProgressEvent(trigger, preTokens, 'rewriting_context', 85, resultMetadata)
+    const result = await this.compactMessages(trigger, preTokens, protectedMessageIndex)
+    const resultMetadata = mergeCompactionMetadata({
+      contextWindow: this.getContextWindow(),
+      outcome: result.compacted ? 'succeeded' : 'failed',
+      ...(result.failureReason ? { failureReason: result.failureReason } : {}),
+      ...(typeof result.retainedTokens === 'number' ? { retainedTokens: result.retainedTokens } : {}),
+      ...(typeof result.retainedMessageCount === 'number'
+        ? { retainedMessageCount: result.retainedMessageCount }
+        : {}),
+    }, result.metadata)
     if (result.usage) {
       this.recordProviderUsage(result.usage, this.createUsageIdentity('compaction', {
         callerLabel: 'Compaction',
         turn: this.turnCount,
       }))
     }
+    this.compactState = result.state
+    if (!result.compacted) {
+      const boundary: AgentContextCompactionBoundary = {
+        trigger,
+        preTokens,
+        postTokens: estimateMessagesTokens(this.messages),
+        metadata: resultMetadata,
+      }
+      await this.config.contextController?.onCompactionBoundary?.(boundary)
+      yield this.createCompactBoundaryEvent(boundary)
+      return false
+    }
+
+    yield this.createCompactionProgressEvent(trigger, preTokens, 'rewriting_context', 85, resultMetadata)
     const latestRuntimeMessage = [...this.messages]
       .reverse()
       .find((message) => message.role === 'runtime')
@@ -761,7 +810,6 @@ export class QueryEngine {
     this.messages = latestRuntimeMessage
       ? [...compactedMessages, latestRuntimeMessage]
       : compactedMessages
-    this.compactState = result.state
     const boundary: AgentContextCompactionBoundary = {
       trigger,
       preTokens,
@@ -771,6 +819,7 @@ export class QueryEngine {
     }
     await this.config.contextController?.onCompactionBoundary?.(boundary)
     yield this.createCompactBoundaryEvent(boundary)
+    return true
   }
 
   private async microCompactForProvider(messages: NormalizedMessageParam[]): Promise<NormalizedMessageParam[]> {
@@ -867,19 +916,18 @@ export class QueryEngine {
     }
 
     if (this.isManualCompactPrompt(prompt)) {
-      for await (const event of this.runCompaction('manual')) {
-        yield event
-      }
+      const compacted = yield* this.runCompaction('manual')
       yield {
         type: 'result',
-        subtype: 'success',
+        subtype: compacted ? 'success' : 'error_during_execution',
         session_id: this.sessionId,
-        is_error: false,
+        is_error: !compacted,
         num_turns: 0,
         total_cost_usd: this.totalCost,
         duration_api_ms: Math.round(this.apiTimeMs),
         ...this.createResultUsageFields(),
         cost: this.totalCost,
+        ...(!compacted ? { errors: ['Context compaction failed; the original context was preserved.'] } : {}),
       } as SDKMessage
       yield {
         type: 'system',
@@ -888,17 +936,6 @@ export class QueryEngine {
         session_id: this.sessionId,
       }
       return
-    }
-
-    // Runtime context is persisted in history but remains an internal message.
-    if (this.config.runtimeContext?.trim()) {
-      this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
-    }
-
-    // Exact cold-start continuation resumes at the persisted tool boundary,
-    // so it must not add a second model-facing user prompt.
-    if (!this.config.toolContinuation) {
-      this.messages.push({ role: 'user', content: prompt as any })
     }
 
     // Build system prompt
@@ -923,6 +960,35 @@ export class QueryEngine {
       output_style: this.config.initialization?.outputStyle || 'text',
       claude_code_version: this.config.initialization?.claudeCodeVersion || 'open-agent-sdk/0.2.0',
     } as SDKMessage
+
+    // Match Pi's timing: compact completed history once before appending the
+    // new user turn. Tool-loop growth is handled by prompt-too-long recovery.
+    let autoCompacted = false
+    try {
+      if (await this.shouldCompactAutomatically()) {
+        await this.executeHooks('PreCompact')
+        autoCompacted = yield* this.runCompaction('auto')
+        if (autoCompacted) await this.executeHooks('PostCompact')
+      }
+    } catch {
+      // Host-owned compaction remains fail-open for normal conversation turns.
+    }
+
+    // Runtime context is persisted in history but remains an internal message.
+    if (this.config.runtimeContext?.trim()) {
+      if (autoCompacted) {
+        this.messages = this.messages.filter((message) => message.role !== 'runtime')
+      }
+      this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
+    }
+
+    // Exact cold-start continuation resumes at the persisted tool boundary,
+    // so it must not add a second model-facing user prompt.
+    let protectedMessageIndex: number | undefined
+    if (!this.config.toolContinuation) {
+      protectedMessageIndex = this.messages.length
+      this.messages.push({ role: 'user', content: prompt as any })
+    }
 
     if (this.config.toolContinuation) {
       const persisted = this.config.toolContinuation
@@ -986,19 +1052,6 @@ export class QueryEngine {
       if (this.config.maxBudgetUsd && this.totalCost >= this.config.maxBudgetUsd) {
         budgetExceeded = true
         break
-      }
-
-      // Auto-compact if context is too large
-      if (await this.shouldCompactAutomatically()) {
-        await this.executeHooks('PreCompact')
-        try {
-          for await (const event of this.runCompaction('auto')) {
-            yield event
-          }
-          await this.executeHooks('PostCompact')
-        } catch {
-          // Continue with uncompacted messages
-        }
       }
 
       // Micro-compact: truncate large tool results
@@ -1176,14 +1229,14 @@ export class QueryEngine {
         // Handle prompt-too-long by compacting
         if (isPromptTooLongError(err) && !this.compactState.compacted) {
           try {
-            for await (const event of this.runCompaction('prompt_too_long')) {
-              yield event
+            const compacted = yield* this.runCompaction('prompt_too_long', protectedMessageIndex)
+            if (compacted) {
+              turnsRemaining++ // Retry this turn
+              this.turnCount--
+              continue
             }
-            turnsRemaining++ // Retry this turn
-            this.turnCount--
-            continue
           } catch {
-            // Can't compact, give up
+            // Preserve the original provider error when compaction itself fails.
           }
         }
 

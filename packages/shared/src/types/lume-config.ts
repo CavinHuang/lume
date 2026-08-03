@@ -1,3 +1,5 @@
+import type { AgentFollowUpMode } from "./agent"
+
 export type LumeConfigPermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk"
 
 export type LumeConfigThinkingLevel = "off" | "low" | "medium" | "high" | "max"
@@ -41,6 +43,7 @@ export interface LumeConfigComputerUseStrategy {
 export interface LumeConfigAgentSection {
   permissionMode?: LumeConfigPermissionMode
   thinkingLevel?: LumeConfigThinkingLevel
+  followUpQueueMode?: AgentFollowUpMode
 }
 
 export interface LumeConfigSkillsSection {

@@ -290,6 +290,10 @@ export interface AgentContextCompactionMetadata {
     anchor_uuid?: string
     tail_uuid?: string
   }
+  outcome?: 'succeeded' | 'failed'
+  failureReason?: import('./utils/compact.js').CompactionFailureReason
+  retainedTokens?: number
+  retainedMessageCount?: number
   [key: string]: unknown
 }
 
@@ -336,9 +340,15 @@ export interface AgentContextController {
     state: import('./utils/compact.js').AutoCompactState
     trigger: AgentContextCompactionTrigger
     preTokens: number
+    protectedMessageIndex?: number
+    abortSignal?: AbortSignal
   }) => Promise<{
+    compacted?: boolean
     compactedMessages: import('./providers/types.js').NormalizedMessageParam[]
     summary: string
+    failureReason?: import('./utils/compact.js').CompactionFailureReason
+    retainedTokens?: number
+    retainedMessageCount?: number
     state?: import('./utils/compact.js').AutoCompactState
     metadata?: AgentContextCompactionMetadata
     usage?: NormalizedProviderUsage
@@ -384,6 +394,10 @@ export interface SDKCompactBoundaryMessage {
       anchor_uuid?: string
       tail_uuid?: string
     }
+    outcome?: 'succeeded' | 'failed'
+    failure_reason?: import('./utils/compact.js').CompactionFailureReason
+    retained_tokens?: number
+    retained_message_count?: number
   }
   /** @deprecated Use compact_metadata.trigger. */
   summary?: string
@@ -1458,6 +1472,8 @@ export interface AgentOptions {
   agents?: Record<string, AgentDefinition>
   /** Maximum tokens for responses */
   maxTokens?: number
+  /** Resolved context window for the selected model. */
+  contextWindow?: number
   /** Effort level for reasoning */
   effort?: 'low' | 'medium' | 'high' | 'max'
   /** Fallback model if primary is unavailable */
@@ -1555,6 +1571,8 @@ export interface QueryEngineConfig {
   maxTurns: number
   maxBudgetUsd?: number
   maxTokens: number
+  /** Resolved context window for the selected model. */
+  contextWindow?: number
   thinking?: ThinkingConfig
   jsonSchema?: Record<string, unknown>
   outputFormat?: OutputFormat

@@ -1,21 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
 import { useAtom, useSetAtom } from 'jotai'
 import {
   ArrowLeft,
   ArrowRight,
   Camera,
-  Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   Eye,
   ExternalLink,
   Globe,
-  Highlighter,
   MoreHorizontal,
   MessageCirclePlus,
-  Mic,
   Minus,
   Plus,
   RotateCw,
@@ -33,6 +29,7 @@ import type {
   AgentBrowserAttachment,
   AgentBrowserDesignChangeAttachment,
   AgentBrowserTabAttachment,
+  BrowserAnnotationSessionSnapshot,
   BrowserHistoryEntry,
   BrowserTabDescriptor,
   BrowserViewportState,
@@ -53,7 +50,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { browserRuntime, createBrowserReferenceGrant, getBrowserSettings, listBrowserReferenceCandidates, onBrowserEvent } from '@/lib/desktop-api'
+import { browserRuntime, createBrowserReferenceGrant, listBrowserReferenceCandidates, onBrowserEvent } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import { normalizeUrl } from './browser-url'
 import { BrowserImportModal } from './BrowserImportModal'
@@ -128,10 +125,10 @@ export function BrowserShell({
   const [viewportRotationKey, setViewportRotationKey] = useState(0)
   const [pageSelection, setPageSelection] = useState<PageSelection | null>(initialDraft ? { anchor: initialDraft.anchor, originalStyles: initialDraft.originalStyles } : null)
   const [annotationBody, setAnnotationBody] = useState(initialDraft?.body ?? '')
-  const [annotationSubmitting, setAnnotationSubmitting] = useState(false)
   const [tweakDraft, setTweakDraft] = useState<Record<string, string>>(initialDraft?.proposedStyles ?? {})
   const [selecting, setSelecting] = useState(false)
   const [annotationMode, setAnnotationMode] = useState(false)
+  const [annotationSession, setAnnotationSession] = useState<BrowserAnnotationSessionSnapshot | null>(null)
   const [editingReviewItemId, setEditingReviewItemId] = useState<string | null>(null)
   const [discardReviewOpen, setDiscardReviewOpen] = useState(false)
   const [showingOriginal, setShowingOriginal] = useState(false)
@@ -147,9 +144,10 @@ export function BrowserShell({
     attachment.origin === 'browser-annotation'
       && attachment.tab.tabId === tabId
       && attachment.tab.url === descriptor.url
-      && attachment.tab.generation === descriptor.generation
   ))
-  const hasPendingReview = reviewItems.length > 0 || pendingPageAnnotations.length > 0 || Boolean(reviewSession?.screenshotRef)
+  const sessionPageAnnotations = annotationSession?.comments.filter((comment) => comment.tab.tabId === tabId && comment.tab.url === descriptor.url) ?? []
+  const currentAnnotationCount = new Set([...sessionPageAnnotations.map((comment) => comment.id), ...pendingPageAnnotations.map((comment) => comment.id)]).size
+  const hasPendingReview = reviewItems.length > 0 || currentAnnotationCount > 0 || Boolean(reviewSession?.screenshotRef)
   const staleReviewCount = reviewItems.filter((item) => item.status === 'stale').length
 
   useEffect(() => {
@@ -188,7 +186,7 @@ export function BrowserShell({
 
   useEffect(() => {
     const session = reviewSessions[draftKey]
-    if (!session || !descriptor.url) return
+    if (!ready || !session || !descriptor.url) return
     const screenshotStale = Boolean(session.screenshotRef) && (session.url !== descriptor.url || session.generation !== descriptor.generation)
     const items = session.items.map((item) => ({
       ...item,
@@ -207,7 +205,7 @@ export function BrowserShell({
         updatedAt: new Date().toISOString(),
       },
     }))
-  }, [descriptor.generation, descriptor.url, draftKey, reviewSessions, setReviewSessions])
+  }, [descriptor.generation, descriptor.url, draftKey, ready, reviewSessions, setReviewSessions])
 
   const clearPageDraft = () => setPageDrafts((current) => {
     if (!current[draftKey]) return current
@@ -236,6 +234,7 @@ export function BrowserShell({
 
   useEffect(() => {
     let disposed = false
+    let established = false
     let stopListening: (() => void) | undefined
     const restoreWorkspace = ownerThreadId
       ? browserRuntime({ method: 'workspace:get', params: { ownerThreadId } }).catch(() => undefined)
@@ -248,6 +247,7 @@ export function BrowserShell({
         url: initialUrlRef.current || undefined,
       },
     })).then((next) => {
+      established = true
       if (disposed) return
       acceptDescriptor(next)
       setReady(true)
@@ -255,6 +255,23 @@ export function BrowserShell({
 
     void onBrowserEvent((event) => {
       if (event.params.tabId !== tabId) return
+      if (event.method === 'browser:annotation-state' && event.params.threadId === ownerThreadId) {
+        const snapshot = event.params as unknown as BrowserAnnotationSessionSnapshot
+        const inAnnotationMode = snapshot.mode === 'comment'
+        setAnnotationSession(snapshot)
+        annotationModeRef.current = inAnnotationMode
+        setAnnotationMode(inAnnotationMode)
+        if (!inAnnotationMode) setSelecting(false)
+      }
+      if (event.method === 'browser:annotation-selection' && event.params.threadId === ownerThreadId && event.params.purpose === 'tweaks' && event.params.anchor && typeof event.params.anchor === 'object') {
+        const originalStyles = event.params.originalStyles && typeof event.params.originalStyles === 'object' && !Array.isArray(event.params.originalStyles)
+          ? Object.fromEntries(Object.entries(event.params.originalStyles as Record<string, unknown>).filter(([, value]) => typeof value === 'string')) as Record<string, string>
+          : {}
+        setPageSelection({ anchor: event.params.anchor as AgentBrowserAnchor, originalStyles })
+        setAuxiliaryPanel('tweaks')
+        annotationModeRef.current = true
+        setAnnotationMode(true)
+      }
       if (event.method === 'browser:tab-changed') acceptDescriptor(event.params as unknown as BrowserTabDescriptor)
       if (event.method === 'browser:find-result') {
         setFindResult({
@@ -332,12 +349,32 @@ export function BrowserShell({
     return () => {
       disposed = true
       stopListening?.()
-      void browserRuntime<{ x: number; y: number }>({ method: 'scroll:get', params: { tabId } })
-        .then((scrollPosition) => onDescriptorChangeRef.current?.({ ...descriptorRef.current, scrollPosition }))
-        .catch(() => undefined)
-      void browserRuntime({ method: 'visible', params: { tabId, visible: false } }).catch(() => undefined)
+      if (established) {
+        if (descriptorRef.current.guestState === 'ready') {
+          void browserRuntime<{ x: number; y: number }>({ method: 'scroll:get', params: { tabId } })
+            .then((scrollPosition) => onDescriptorChangeRef.current?.({ ...descriptorRef.current, scrollPosition }))
+            .catch(() => undefined)
+        }
+        void browserRuntime({ method: 'visible', params: { tabId, visible: false } }).catch(() => undefined)
+      }
     }
   }, [acceptDescriptor, ownerThreadId, tabId])
+
+  useEffect(() => {
+    if (!ready || !ownerThreadId) return
+    void browserRuntime<BrowserAnnotationSessionSnapshot>({ method: 'annotation:session', params: { tabId, threadId: ownerThreadId } })
+      .then(setAnnotationSession)
+      .catch(() => undefined)
+    const legacy = typeof localStorage !== 'undefined' ? localStorage.getItem('browser-review-sessions-v1') : null
+    if (!legacy) return
+    try {
+      void browserRuntime({ method: 'annotation:migrate', params: { sessions: JSON.parse(legacy) } }).then(async () => {
+        localStorage.removeItem('browser-review-sessions-v1')
+        const refreshed = await browserRuntime<BrowserAnnotationSessionSnapshot>({ method: 'annotation:session', params: { tabId, threadId: ownerThreadId } })
+        setAnnotationSession(refreshed)
+      }).catch(() => undefined)
+    } catch { localStorage.removeItem('browser-review-sessions-v1') }
+  }, [ownerThreadId, ready, tabId])
 
   useEffect(() => {
     if (!initialUrl || initialUrl === currentUrlRef.current || !ready) return
@@ -662,42 +699,38 @@ export function BrowserShell({
     window.addEventListener('pointercancel', finish, { once: true })
   }
 
-  const selectPage = async (purpose: 'annotation' | 'tweaks', mode: 'auto' | 'element' | 'text' | 'region' = purpose === 'annotation' ? 'auto' : 'element') => {
-    setSelecting(true)
-    setAuxiliaryPanel(null)
-    setEditingReviewItemId(null)
-    try {
-      const selection = await browserRuntime<PageSelection>({
-        method: purpose === 'annotation' ? 'annotation:start' : 'tweaks:start',
-        params: { tabId, mode },
-      })
-      setPageSelection(selection)
-      setTweakDraft({})
-      setAnnotationBody('')
-      setAuxiliaryPanel(purpose)
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('selection_cancelled')) {
-        annotationModeRef.current = false
-        setAnnotationMode(false)
-      } else toast.error('网页选择失败')
-    } finally {
-      setSelecting(false)
-    }
-  }
-
-  const startAnnotationSelection = (mode: 'auto' | 'element' | 'text' | 'region' = 'auto') => {
+  const startAnnotationSelection = async (mode: 'auto' | 'element' | 'text' | 'region' = 'auto') => {
     annotationModeRef.current = true
     setAnnotationMode(true)
     if (!reviewCoachmarkSeen) setReviewCoachmarkSeen(true)
-    void selectPage('annotation', mode)
+    try {
+      await browserRuntime({ method: 'annotation:mode', params: { tabId, threadId: ownerThreadId, mode: 'comment', purpose: 'annotation', selectionMode: mode, theme: browserAnnotationThemeColor() } })
+    } catch {
+      annotationModeRef.current = false
+      setAnnotationMode(false)
+      setSelecting(false)
+      toast.error('批注模式启动失败')
+    }
+  }
+
+  const startDesignSelection = async () => {
+    annotationModeRef.current = true
+    setAnnotationMode(true)
+    try {
+      await browserRuntime({ method: 'annotation:mode', params: { tabId, threadId: ownerThreadId, mode: 'comment', purpose: 'tweaks', selectionMode: 'element', theme: browserAnnotationThemeColor() } })
+    } catch {
+      annotationModeRef.current = false
+      setAnnotationMode(false)
+      toast.error('设计调整模式启动失败')
+    }
   }
 
   const exitAnnotationMode = () => {
     annotationModeRef.current = false
     setAnnotationMode(false)
     setSelecting(false)
-    setAuxiliaryPanel((current) => current === 'annotation' ? null : current)
-    void browserRuntime({ method: 'annotation:stop', params: { tabId } }).catch(() => undefined)
+    setAuxiliaryPanel((current) => current === 'annotation' || current === 'tweaks' ? null : current)
+    void browserRuntime({ method: 'annotation:mode', params: { tabId, threadId: ownerThreadId, mode: 'browse' } }).catch(() => undefined)
   }
 
   useEffect(() => {
@@ -728,6 +761,7 @@ export function BrowserShell({
     setPageSelection(null)
     setEditingReviewItemId(null)
     clearPageDraft()
+    if (ownerThreadId) void browserRuntime({ method: 'annotation:clear', params: { tabId, threadId: ownerThreadId } }).catch(() => undefined)
     void setOriginalPreview(true).finally(() => setShowingOriginal(false))
   }
 
@@ -821,28 +855,18 @@ export function BrowserShell({
       toast.error('存在已失效的批注，请移除后重新选择')
       return
     }
-    let screenshotRef = session.screenshotRef
-    if (!screenshotRef) {
-      const screenshotMode = await getBrowserSettings().then((value) => value.annotationScreenshots).catch(() => 'necessary' as const)
-      const shouldCapture = screenshotMode === 'always'
-        || ((screenshotMode === 'necessary' || screenshotMode === 'ask') && session.items.some((item) => item.attachment.anchor.kind === 'region'))
-      if (shouldCapture) {
-        screenshotRef = await captureReviewScreenshot(true)
-        if (!screenshotRef) return
-      }
-    }
     try {
       const authorizedTabs = new Map<string, AgentBrowserTabAttachment>()
       const attachments: AgentBrowserAttachment[] = []
       for (const item of session.items) {
         const originalTab = item.attachment.tab
-        const tab = authorizedTabs.get(originalTab.tabId)
-          ?? await authorizeTabAttachment(originalTab)
+        const tab = item.attachment.origin === 'browser-annotation' || item.attachment.origin === 'browser-design-change'
+          ? originalTab
+          : authorizedTabs.get(originalTab.tabId) ?? await authorizeTabAttachment(originalTab)
         authorizedTabs.set(originalTab.tabId, tab)
         attachments.push({
           ...item.attachment,
           tab,
-          ...(screenshotRef ? { screenshotRef } : {}),
         })
       }
       attachments.forEach(enqueueBrowserAttachment)
@@ -862,6 +886,7 @@ export function BrowserShell({
 
   const removeReviewItem = (id: string) => {
     const removed = reviewItems.find((item) => item.id === id)
+    if (removed?.attachment.origin === 'browser-annotation' && ownerThreadId) void browserRuntime({ method: 'annotation:delete', params: { tabId, threadId: ownerThreadId, annotationId: id } }).catch(() => undefined)
     const domPath = removed?.attachment.origin === 'browser-design-change' ? removed.attachment.anchor.domPath : undefined
     if (domPath) void browserRuntime({ method: 'tweaks:reset', params: { tabId, domPath } }).catch(() => undefined)
     setReviewSessions((current) => {
@@ -880,6 +905,10 @@ export function BrowserShell({
 
   const setOriginalPreview = async (original: boolean) => {
     setShowingOriginal(original)
+    if (surface === 'right-panel' && ownerThreadId) {
+      await browserRuntime({ method: 'annotation:preview', params: { tabId, threadId: ownerThreadId, original } }).catch(() => undefined)
+      return
+    }
     const tweaks = reviewItems.filter((item): item is typeof item & { attachment: AgentBrowserDesignChangeAttachment } => item.attachment.origin === 'browser-design-change')
     await Promise.all(tweaks.map((item) => {
       const domPath = item.attachment.anchor.domPath
@@ -893,71 +922,6 @@ export function BrowserShell({
     }))
   }
 
-  const captureReviewScreenshot = async (quiet = false): Promise<string | undefined> => {
-    if (!ownerThreadId) {
-      if (!quiet) toast.error('当前页面未关联任务，无法附加截图')
-      return undefined
-    }
-    try {
-      const result = await browserRuntime<{ screenshotRef: string }>({ method: 'screenshot:attachment', params: { tabId, ownerThreadId } })
-      setReviewSessions((current) => {
-        const session = current[draftKey]
-        return {
-          ...current,
-          [draftKey]: session
-            ? { ...session, screenshotRef: result.screenshotRef, updatedAt: new Date().toISOString() }
-            : {
-                ownerThreadId,
-                tabId,
-                url: descriptor.url,
-                generation: descriptor.generation,
-                screenshotRef: result.screenshotRef,
-                items: [],
-                updatedAt: new Date().toISOString(),
-              },
-        }
-      })
-      if (!quiet) toast.success('截图已附加到当前审阅')
-      return result.screenshotRef
-    } catch {
-      toast.error(quiet ? '自动附加网页截图失败，审阅队列已保留' : '无法附加网页截图')
-      return undefined
-    }
-  }
-
-  const validReviewItems = reviewItems.filter((item) => item.status === 'valid')
-  const reviewItemIds = new Set(validReviewItems.map((item) => item.id))
-  const browserMarkerItems: Array<{
-    id: string
-    attachment: AgentBrowserAnnotationAttachment | AgentBrowserDesignChangeAttachment
-    editable: boolean
-  }> = [
-    ...validReviewItems.map((item) => ({ id: item.id, attachment: item.attachment, editable: true })),
-    ...pendingPageAnnotations
-      .filter((attachment) => !reviewItemIds.has(attachment.id))
-      .map((attachment) => ({ id: attachment.id, attachment, editable: false })),
-  ]
-
-  useEffect(() => {
-    if (!ready) return
-    void browserRuntime({
-      method: 'annotation:highlight',
-      params: { tabId, anchors: browserMarkerItems.map((item) => item.attachment.anchor) },
-    }).catch(() => undefined)
-  }, [pendingThreadAttachments, ready, reviewSession?.updatedAt, tabId])
-
-  const highlightReviewItem = (itemId: string | null) => {
-    const activeIndex = itemId ? browserMarkerItems.findIndex((candidate) => candidate.id === itemId) : -1
-    void browserRuntime({
-      method: 'annotation:highlight',
-      params: {
-        tabId,
-        anchors: browserMarkerItems.map((candidate) => candidate.attachment.anchor),
-        activeIndex,
-      },
-    }).catch(() => undefined)
-  }
-
   const closeReviewEditor = () => {
     setAuxiliaryPanel(null)
     setPageSelection(null)
@@ -965,61 +929,6 @@ export function BrowserShell({
     setTweakDraft({})
     setEditingReviewItemId(null)
     clearPageDraft()
-  }
-
-  const editReviewItem = (item: typeof reviewItems[number]) => {
-    setAnnotationMode(true)
-    annotationModeRef.current = true
-    setEditingReviewItemId(item.id)
-    if (item.attachment.origin === 'browser-annotation') {
-      setPageSelection({ anchor: item.attachment.anchor, originalStyles: {} })
-      setAnnotationBody(item.attachment.body)
-      setTweakDraft({})
-      setAuxiliaryPanel('annotation')
-      return
-    }
-    setPageSelection({ anchor: item.attachment.anchor, originalStyles: item.attachment.originalStyles })
-    setAnnotationBody(item.attachment.body ?? '')
-    setTweakDraft(item.attachment.proposedStyles)
-    setAuxiliaryPanel('tweaks')
-  }
-
-  const addAnnotationToChat = (action: 'add' | 'send' = 'add') => {
-    if (!pageSelection || annotationSubmitting) return
-    void addAnnotationSelectionToChat(pageSelection, annotationBody, action)
-  }
-
-  const addAnnotationSelectionToChat = async (selection: PageSelection, body: string, action: 'add' | 'send') => {
-    const tab = tabAttachment()
-    if (!tab || !body.trim()) return
-    const existing = editingReviewItemId ? reviewItems.find((item) => item.id === editingReviewItemId && item.attachment.origin === 'browser-annotation') : undefined
-    const attachment: AgentBrowserAnnotationAttachment = {
-      id: existing?.id ?? `browser-annotation:${crypto.randomUUID()}`,
-      origin: 'browser-annotation',
-      tab,
-      anchor: selection.anchor,
-      body: body.trim(),
-    }
-    if (surface === 'right-panel') {
-      setAnnotationSubmitting(true)
-      try {
-        const authorizedTab = await authorizeTabAttachment(tab)
-        enqueueBrowserAttachment({ ...attachment, tab: authorizedTab })
-        closeReviewEditor()
-        if (action === 'send') {
-          window.setTimeout(() => window.dispatchEvent(new CustomEvent('lume:submit-agent-input', { detail: { threadId: ownerThreadId } })), 0)
-        } else {
-          toast.success('批注已添加到输入框')
-        }
-      } catch {
-        toast.error('批注添加失败，页面可能已变化')
-      } finally {
-        setAnnotationSubmitting(false)
-      }
-      return
-    }
-    enqueueReviewAttachment(attachment)
-    closeReviewEditor()
   }
 
   const discardCurrentPageAnnotations = () => {
@@ -1043,13 +952,12 @@ export function BrowserShell({
     setAnnotationBody('')
     setEditingReviewItemId(null)
     clearPageDraft()
-    void browserRuntime({ method: 'annotation:highlight', params: { tabId, anchors: [] } }).catch(() => undefined)
+    if (ownerThreadId) void browserRuntime({ method: 'annotation:clear', params: { tabId, threadId: ownerThreadId } }).catch(() => undefined)
   }
 
   const sendCurrentPageAnnotations = () => {
-    if (!pendingPageAnnotations.length) return
-    exitAnnotationMode()
-    window.setTimeout(() => window.dispatchEvent(new CustomEvent('lume:submit-agent-input', { detail: { threadId: ownerThreadId } })), 0)
+    if (!ownerThreadId || currentAnnotationCount === 0) return
+    void browserRuntime({ method: 'annotation:submit', params: { tabId, threadId: ownerThreadId } }).then(() => exitAnnotationMode()).catch(() => toast.error('网页批注发送失败'))
   }
 
   const applyTweaks = () => {
@@ -1122,14 +1030,6 @@ export function BrowserShell({
         auxiliaryPanel === 'tweaks' ? 420 : 150,
       )
     : null
-  const viewportRect = viewportRef.current?.getBoundingClientRect()
-  const portalReviewEditorPosition = surface === 'right-panel' && reviewEditorPosition && viewportRect
-    ? {
-        ...reviewEditorPosition,
-        left: viewportRect.left + reviewEditorPosition.left,
-        top: viewportRect.top + reviewEditorPosition.top,
-      }
-    : null
   const currentZoomPercent = Math.round((descriptor.zoomFactor ?? 1) * 100)
   const pageActionsDisabled = !descriptor.url
   const hasQueuedTweaks = reviewItems.some((item) => item.attachment.origin === 'browser-design-change')
@@ -1164,21 +1064,47 @@ export function BrowserShell({
               >
                 <MessageCirclePlus size={15} />
               </ToolbarButton>}
-              {surface === 'right-panel' && <>
-                <ToolbarButton title="继续选择批注区域" disabled={selecting} onClick={() => startAnnotationSelection()}><Highlighter size={15} /></ToolbarButton>
-                <ToolbarButton title="显示全部批注" disabled={!browserMarkerItems.length} onClick={() => highlightReviewItem(null)}><Eye size={15} /></ToolbarButton>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8 rounded-xl px-3 text-xs font-semibold"
-                  disabled={!pendingPageAnnotations.length}
-                  onClick={sendCurrentPageAnnotations}
-                >
-                  发送
-                  {pendingPageAnnotations.length > 0 && <span className="inline-flex size-5 items-center justify-center rounded-full bg-black/15 text-[11px] tabular-nums">{pendingPageAnnotations.length}</span>}
-                </Button>
-              </>}
-              {surface !== 'right-panel' && <ToolbarButton title="为当前审阅附加截图" onClick={() => void captureReviewScreenshot()}><Camera size={14} /></ToolbarButton>}
+              <ToolbarButton title="为当前批注准备截图" disabled={!ownerThreadId || !currentAnnotationCount} onClick={() => {
+                if (!ownerThreadId) return
+                void browserRuntime<BrowserAnnotationSessionSnapshot>({ method: 'annotation:screenshot:prepare', params: { tabId, threadId: ownerThreadId } })
+                  .then(setAnnotationSession)
+                  .then(() => toast.success('截图已准备'))
+                  .catch(() => toast.error('无法准备网页截图'))
+              }}><Camera size={14} /></ToolbarButton>
+              {surface === 'right-panel' && <ToolbarButton
+                title="按住查看原始页面"
+                active={showingOriginal}
+                disabled={!currentAnnotationCount}
+                onPointerDown={() => void setOriginalPreview(true)}
+                onPointerUp={() => void setOriginalPreview(false)}
+                onPointerCancel={() => showingOriginal && void setOriginalPreview(false)}
+                onPointerLeave={() => showingOriginal && void setOriginalPreview(false)}
+                onBlur={() => showingOriginal && void setOriginalPreview(false)}
+                onKeyDown={(event) => {
+                  if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) {
+                    event.preventDefault()
+                    void setOriginalPreview(true)
+                  }
+                }}
+                onKeyUp={(event) => {
+                  if (event.key === ' ' || event.key === 'Enter') {
+                    event.preventDefault()
+                    void setOriginalPreview(false)
+                  }
+                }}
+              >
+                <span className={cn('inline-flex items-center justify-center transition-transform', showingOriginal && 'scale-[0.8]')}><Eye size={14} /></span>
+              </ToolbarButton>}
+              <Button
+                type="button"
+                size="sm"
+                className="h-8 rounded-xl px-3 text-xs font-semibold"
+                disabled={!currentAnnotationCount}
+                onClick={sendCurrentPageAnnotations}
+              >
+                发送
+                {currentAnnotationCount > 0 && <span className="inline-flex size-5 items-center justify-center rounded-full bg-black/15 text-[11px] tabular-nums">{currentAnnotationCount}</span>}
+              </Button>
               {surface !== 'right-panel' && <ToolbarButton
                 title="按住查看原始页面"
                 active={showingOriginal}
@@ -1348,6 +1274,7 @@ export function BrowserShell({
               <span className="min-w-0 flex-1">页面批注</span>
               {reviewItems.length > 0 && <span className="text-[10px] text-muted-foreground">{reviewItems.length}</span>}
             </DropdownMenuItem>
+            <DropdownMenuItem disabled={!descriptor.url || selecting} onSelect={() => startDesignSelection()}>调整设计</DropdownMenuItem>
             <DropdownMenuSeparator />
             <div className="flex h-9 items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground">
               <span className="min-w-0 flex-1">缩放</span>
@@ -1553,121 +1480,6 @@ export function BrowserShell({
                 </div>
               </div>
             )}
-            {ready && descriptor.url && !loadError && browserMarkerItems.map((item, index) => {
-              const marker = getBrowserReviewMarkerPosition(item.attachment.anchor.rect, reviewScale, reviewSurfaceWidth, reviewSurfaceHeight)
-              const portalMarker = surface === 'right-panel' && Boolean(viewportRect)
-              const comment = browserReviewMarkerComment(item.attachment)
-              return (
-                <BrowserAnnotationPortal key={item.id} enabled={portalMarker}>
-                  <div
-                    className={cn('group/browser-marker absolute z-[75]', portalMarker && 'fixed')}
-                    style={{
-                      left: marker.left + (portalMarker ? viewportRect?.left ?? 0 : 0),
-                      top: marker.top + (portalMarker ? viewportRect?.top ?? 0 : 0),
-                    }}
-                  >
-                    <div role="tooltip" className="pointer-events-none invisible absolute top-1/2 right-full mr-2 max-w-72 min-w-20 -translate-y-1/2 rounded-xl border border-[var(--lume-border-subtle)] bg-popover px-3 py-2 text-xs leading-5 whitespace-pre-wrap text-popover-foreground opacity-0 shadow-xl transition-[opacity,visibility] group-hover/browser-marker:visible group-hover/browser-marker:opacity-100 group-focus-within/browser-marker:visible group-focus-within/browser-marker:opacity-100">
-                      {comment}
-                    </div>
-                    <Button
-                      type="button"
-                      size="icon"
-                      className="relative size-6 overflow-visible rounded-full border-2 border-background bg-primary p-0 text-[10px] font-semibold text-primary-foreground shadow-lg hover:bg-primary/90"
-                      title={item.attachment.origin === 'browser-design-change' ? `调整 ${index + 1}` : `批注 ${index + 1}`}
-                      aria-label={`${item.editable ? '编辑' : '查看'}${item.attachment.origin === 'browser-design-change' ? '调整' : '批注'} ${index + 1}`}
-                      onMouseEnter={() => highlightReviewItem(item.id)}
-                      onMouseLeave={() => highlightReviewItem(null)}
-                      onFocus={() => highlightReviewItem(item.id)}
-                      onBlur={() => highlightReviewItem(null)}
-                      onClick={() => {
-                        const reviewItem = item.editable ? reviewItems.find((candidate) => candidate.id === item.id) : undefined
-                        if (reviewItem) editReviewItem(reviewItem)
-                        else highlightReviewItem(item.id)
-                      }}
-                    >
-                      {index + 1}
-                      <span aria-hidden="true" className="absolute -bottom-0.5 left-1 size-2 rotate-45 rounded-[2px] bg-primary" />
-                    </Button>
-                  </div>
-                </BrowserAnnotationPortal>
-              )
-            })}
-            {reviewEditorPosition && pageSelection && auxiliaryPanel === 'annotation' && (
-              <BrowserAnnotationPortal enabled={Boolean(portalReviewEditorPosition)}>
-              <div
-                data-browser-comment-editor
-                  className={cn(
-                  'absolute z-[80] flex flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl',
-                  surface === 'right-panel' && 'flex-row items-center overflow-visible rounded-full border-[var(--border-strong)] bg-[var(--lume-bg-elevated)] px-3 py-1.5 text-foreground shadow-2xl',
-                )}
-                style={portalReviewEditorPosition
-                  ? { position: 'fixed', left: portalReviewEditorPosition.left, top: portalReviewEditorPosition.top, width: portalReviewEditorPosition.width }
-                  : { left: reviewEditorPosition.left, top: reviewEditorPosition.top, width: reviewEditorPosition.width }}
-              >
-                {surface === 'right-panel' && <SlidersHorizontal className="mr-2 size-3.5 shrink-0 text-muted-foreground" />}
-                <div className={cn('flex min-h-9 items-center gap-2 border-b border-border/60 px-3 text-xs text-muted-foreground', surface === 'right-panel' && 'hidden')}>
-                  <Highlighter className="size-3.5 shrink-0 text-primary" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {pageSelection.anchor.kind === 'text'
-                      ? pageSelection.anchor.textQuote?.exact || '所选文本'
-                      : pageSelection.anchor.kind === 'region'
-                        ? '所选区域'
-                        : pageSelection.anchor.domPath || '所选元素'}
-                  </span>
-                  <Button type="button" variant="ghost" size="icon-xs" aria-label="移除所选项" onClick={() => closeReviewEditor()}><X size={12} /></Button>
-                </div>
-                <Textarea
-                  autoFocus
-                  value={annotationBody}
-                  onChange={(event) => setAnnotationBody(event.target.value)}
-                  placeholder="添加评论…"
-                  className={cn(
-                    'min-h-16 resize-none rounded-none border-0 bg-transparent px-3 py-2 text-sm shadow-none focus-visible:ring-0',
-                    surface === 'right-panel' && 'h-8 min-h-8 flex-1 resize-none px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground',
-                  )}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Escape') {
-                      event.preventDefault()
-                      closeReviewEditor()
-                    } else if (event.key === 'Enter') {
-                      event.preventDefault()
-                      addAnnotationToChat(event.metaKey || event.ctrlKey ? 'send' : 'add')
-                    }
-                  }}
-                />
-                <div className={cn('flex h-11 items-center justify-between border-t border-border/60 px-2', surface === 'right-panel' && 'h-8 border-0 px-0')}>
-                  <div className={cn('flex items-center gap-1', surface === 'right-panel' && 'hidden')}>
-                    {pageSelection.anchor.kind === 'element' && Object.keys(pageSelection.originalStyles).length > 0 && (
-                      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => { setTweakDraft({}); setAuxiliaryPanel('tweaks') }}>
-                        <SlidersHorizontal size={13} />调整
-                      </Button>
-                    )}
-                    {editingReviewItemId && <Button type="button" variant="ghost" size="icon-xs" aria-label="删除批注" onClick={() => removeReviewItem(editingReviewItemId)}><Trash2 size={13} /></Button>}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {editingReviewItemId && surface !== 'right-panel' && <Button type="button" variant="outline" size="sm" className="h-7" onClick={() => closeReviewEditor()}>取消</Button>}
-                    <div className="group/annotation-action relative flex items-center">
-                      {surface === 'right-panel' && annotationBody.trim() && (
-                        <div className="invisible absolute right-0 bottom-full z-50 min-w-36 pb-1.5 opacity-0 transition-[opacity,visibility] group-hover/annotation-action:visible group-hover/annotation-action:opacity-100 group-focus-within/annotation-action:visible group-focus-within/annotation-action:opacity-100">
-                          <div className="rounded-lg border border-border bg-popover p-1 text-[12px] text-popover-foreground shadow-xl">
-                            <Button type="button" variant="ghost" size="sm" className="h-7 w-full justify-between gap-4 px-2 text-xs" onClick={() => addAnnotationToChat('add')}>
-                              <span>添加</span><kbd className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">Enter</kbd>
-                            </Button>
-                            <Button type="button" variant="ghost" size="sm" className="h-7 w-full justify-between gap-4 px-2 text-xs" onClick={() => addAnnotationToChat('send')}>
-                              <span>发送</span><kbd className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">Ctrl+Enter</kbd>
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                      <Button type="button" size="icon" variant="ghost" className={cn('size-7 rounded-full bg-primary text-primary-foreground hover:bg-primary/90', surface === 'right-panel' && !annotationBody.trim() && 'bg-transparent text-muted-foreground hover:bg-foreground/10')} disabled={!annotationBody.trim() || annotationSubmitting} aria-label={editingReviewItemId ? '保存批注' : '添加批注'} onClick={() => addAnnotationToChat('add')}>
-                        {annotationBody.trim() ? <Check size={15} /> : <Mic size={14} />}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              </BrowserAnnotationPortal>
-            )}
             {reviewEditorPosition && pageSelection && auxiliaryPanel === 'tweaks' && (
               <div
                 data-browser-design-editor
@@ -1790,24 +1602,6 @@ function getBrowserReviewOverlayPosition(
   return { left, top, width, maxHeight }
 }
 
-function getBrowserReviewMarkerPosition(
-  rect: AgentBrowserAnchor['rect'],
-  scale: number,
-  surfaceWidth: number,
-  surfaceHeight: number,
-) {
-  const size = 20
-  return {
-    left: Math.max(0, Math.min(surfaceWidth - size, (rect.x + rect.width) * scale - size / 2)),
-    top: Math.max(0, Math.min(surfaceHeight - size, rect.y * scale - size / 2)),
-  }
-}
-
-function browserReviewMarkerComment(attachment: AgentBrowserAnnotationAttachment | AgentBrowserDesignChangeAttachment): string {
-  if (attachment.origin === 'browser-annotation') return attachment.body
-  return attachment.body?.trim() || '样式调整'
-}
-
 function ToolbarButton({ children, title, active, expanded, disabled, className, onClick, onPointerDown, onPointerUp, onPointerCancel, onPointerLeave, onBlur, onKeyDown, onKeyUp }: {
   children: ReactNode
   title: string
@@ -1845,11 +1639,6 @@ function ToolbarButton({ children, title, active, expanded, disabled, className,
       {children}
     </Button>
   )
-}
-
-function BrowserAnnotationPortal({ enabled, children }: { enabled: boolean; children: ReactNode }) {
-  if (!enabled || typeof document === 'undefined') return <>{children}</>
-  return createPortal(children, document.body)
 }
 
 function ViewportResizeHandles({ onResizeStart }: {
@@ -1966,6 +1755,11 @@ function safeHost(value: string): string {
 
 function browserToolbarTitle(value: string): string {
   return safeHost(value) || value || '新标签页'
+}
+
+function browserAnnotationThemeColor(): string | undefined {
+  const color = getComputedStyle(document.documentElement).getPropertyValue('--lume-accent').trim()
+  return color || undefined
 }
 
 function getDeviceFrameSize(

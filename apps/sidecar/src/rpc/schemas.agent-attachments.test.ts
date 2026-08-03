@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { agentSendInputSchema } from "./schemas";
+import { agentAppendInputSchema, agentSendInputSchema } from "./schemas";
+import { validateInput } from "./validation";
 
 describe("agentSendInputSchema messageAttachments", () => {
   test("accepts thread-relative message attachment references", () => {
@@ -135,5 +136,91 @@ describe("agentSendInputSchema browserAttachments", () => {
     });
 
     expect(parsed.browserAttachments?.[0]).toMatchObject({ body: "Use the primary accent color" });
+  });
+
+  test("rejects a browser screenshot reference owned by another thread", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "read this page",
+      browserAttachments: [{
+        id: "annotation-1",
+        origin: "browser-annotation",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 1 },
+        anchor: { kind: "element", url: "https://example.com/", generation: 1, framePath: [], rect: { x: 0, y: 0, width: 1, height: 1 } },
+        body: "Review this",
+        screenshotRef: "browser-review-screenshot:thread-2:11111111-1111-4111-8111-111111111111",
+      }],
+    })).toThrow();
+  });
+
+  test("rejects malformed browser screenshot references", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "read this page",
+      browserAttachments: [{
+        id: "annotation-1",
+        origin: "browser-annotation",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 1 },
+        anchor: { kind: "element", url: "https://example.com/", generation: 1, framePath: [], rect: { x: 0, y: 0, width: 1, height: 1 } },
+        body: "Review this",
+        screenshotRef: "temporary-file.png",
+      }],
+    })).toThrow();
+  });
+});
+
+// 三态路由契约:经 validateInput(RPC 入口)提交 followUpQueueMode 时不可被 strip。
+// 回归:zod 默认 unknownKeys='strip' + schema 未声明字段会被丢弃 → agent-service 三态路由恒走 queue。
+describe("agentSendInputSchema followUpQueueMode (RPC contract)", () => {
+  test("validateInput 保留 followUpQueueMode='steer'(不被 strip)", () => {
+    const parsed = validateInput(
+      agentSendInputSchema,
+      { threadId: "t1", userMessage: "hi", followUpQueueMode: "steer" },
+      "agent.send",
+    );
+    expect(parsed.followUpQueueMode).toBe("steer");
+  });
+
+  test("validateInput 保留 followUpQueueMode='interrupt'(不被 strip)", () => {
+    const parsed = validateInput(
+      agentSendInputSchema,
+      { threadId: "t1", userMessage: "hi", followUpQueueMode: "interrupt" },
+      "agent.append",
+    );
+    expect(parsed.followUpQueueMode).toBe("interrupt");
+  });
+
+  test("validateInput 接受 followUpQueueMode='queue' 与缺省(undefined)", () => {
+    const queued = validateInput(
+      agentSendInputSchema,
+      { threadId: "t1", userMessage: "hi", followUpQueueMode: "queue" },
+      "agent.send",
+    );
+    expect(queued.followUpQueueMode).toBe("queue");
+
+    const omitted = validateInput(
+      agentSendInputSchema,
+      { threadId: "t1", userMessage: "hi" },
+      "agent.send",
+    );
+    expect(omitted.followUpQueueMode).toBeUndefined();
+  });
+
+  test("validateInput 拒绝非法 followUpQueueMode 值", () => {
+    expect(() => validateInput(
+      agentSendInputSchema,
+      { threadId: "t1", userMessage: "hi", followUpQueueMode: "bogus" },
+      "agent.send",
+    )).toThrow();
+  });
+
+  test("agentAppendInputSchema 同步保留 followUpQueueMode(别名)", () => {
+    // agentAppendInputSchema 是 agentSendInputSchema 的别名,字段同步覆盖
+    const parsed = validateInput(
+      agentAppendInputSchema,
+      { threadId: "t1", userMessage: "hi", followUpQueueMode: "steer" },
+      "agent.append",
+    );
+    expect(parsed.followUpQueueMode).toBe("steer");
   });
 });

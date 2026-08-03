@@ -4,6 +4,31 @@ import type { CreateMessageParams, CreateMessageResponse, LLMProvider } from "./
 import type { SDKMessage, ToolContext } from "./types.js"
 import { normalizeProviderUsage } from "./utils/usage.js"
 
+const structuredCompactionSummary = `## Goal
+Continue the current task.
+
+## Constraints & Preferences
+- Preserve recent context.
+
+## Progress
+### Done
+- [x] Summarized old history.
+
+### In Progress
+- [ ] Continue.
+
+### Blocked
+- (none)
+
+## Key Decisions
+- **Retention**: Keep the recent tail.
+
+## Next Steps
+1. Continue the task.
+
+## Critical Context
+- Recent messages remain verbatim.`
+
 class StaticProvider implements LLMProvider {
   readonly apiType = "anthropic-messages" as const
   private index = 0
@@ -610,6 +635,7 @@ describe("QueryEngine context controller", () => {
         }
       }
     });
+    engine.messages.push({ role: "user", content: "old context" });
 
     const events = await collectEvents(engine);
 
@@ -804,13 +830,153 @@ describe("QueryEngine context controller", () => {
       is_error: false
     }));
   });
+
+  test("keeps the original history when compaction is rejected", async () => {
+    const provider = new StaticProvider([{
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 }
+    }]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => true,
+        async compactConversation({ messages, state }) {
+          return {
+            compacted: false,
+            compactedMessages: messages,
+            summary: "",
+            failureReason: "max_tokens",
+            state: { ...state, consecutiveFailures: state.consecutiveFailures + 1 }
+          };
+        }
+      }
+    });
+    engine.messages.push({ role: "user", content: "original history" });
+
+    const events = await collectEvents(engine);
+
+    expect(provider.requests).toHaveLength(1);
+    expect(JSON.stringify(provider.requests[0]?.messages)).toContain("original history");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: expect.objectContaining({
+        outcome: "failed",
+        failure_reason: "max_tokens"
+      })
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "system",
+      subtype: "context_compaction_progress",
+      compact_metadata: expect.objectContaining({ stage: "rewriting_context" })
+    }));
+  });
+
+  test("checks automatic compaction only once before a tool loop", async () => {
+    let checks = 0;
+    const provider = new StaticProvider([
+      {
+        content: [{ type: "tool_use", id: "read-1", name: "Read", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 }
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 2, output_tokens: 1 }
+      }
+    ]);
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        isReadOnly: () => true,
+        async call() {
+          return { type: "tool_result", tool_use_id: "read-1", content: "result" };
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => {
+          checks += 1;
+          return false;
+        }
+      }
+    });
+
+    await collectEvents(engine);
+
+    expect(checks).toBe(1);
+    expect(provider.requests).toHaveLength(2);
+  });
+
+  test("does not retry a prompt-too-long request when compaction is rejected", async () => {
+    let calls = 0;
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage() {
+        calls += 1;
+        const error = new Error("prompt is too long") as Error & { status: number };
+        error.status = 400;
+        throw error;
+      }
+    };
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+      contextController: {
+        shouldAutoCompact: () => false,
+        async compactConversation({ messages }) {
+          return {
+            compacted: false,
+            compactedMessages: messages,
+            summary: "",
+            failureReason: "max_tokens"
+          };
+        }
+      }
+    });
+
+    const events = await collectEvents(engine, "current task");
+
+    expect(calls).toBe(1);
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true
+    }));
+  });
 });
 
 describe("QueryEngine auto compaction usage", () => {
   test("uses provider context usage threshold and records compaction usage outside the context anchor", async () => {
     const provider = new StaticProvider([
       {
-        content: [{ type: "text", text: "compact summary" }],
+        content: [{ type: "text", text: structuredCompactionSummary }],
         stopReason: "end_turn",
         usage: { input_tokens: 1000, output_tokens: 8 }
       },
@@ -832,15 +998,16 @@ describe("QueryEngine auto compaction usage", () => {
       canUseTool: async () => ({ behavior: "allow" }),
       sessionId: "thread-compact"
     });
+    engine.messages.push({ role: "user", content: "o".repeat(80_000) });
     engine.messages.push({
       role: "assistant",
       content: "",
       usage: {
-        inputTokens: 170_600,
+        inputTokens: 190_600,
         outputTokens: 20,
         cacheReadInputTokens: 0,
         cacheCreationInputTokens: 0,
-        totalTokens: 170_620
+        totalTokens: 190_620
       },
       usageIdentity: {
         threadId: "thread-compact",
@@ -848,6 +1015,7 @@ describe("QueryEngine auto compaction usage", () => {
         turn: 1
       }
     } as any);
+    engine.messages.push({ role: "user", content: "r".repeat(84_000) });
 
     const events = await collectEvents(engine);
     const result = events.find((event) => (event as { type?: string }).type === "result") as any;

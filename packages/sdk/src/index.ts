@@ -461,8 +461,17 @@ export {
   compactConversation,
   microCompactMessages,
   createAutoCompactState,
+  prepareCompaction,
+  findCompactionCutPoint,
+  serializeConversation,
 } from './utils/compact.js'
-export type { AutoCompactState } from './utils/compact.js'
+export type {
+  AutoCompactState,
+  CompactConversationOptions,
+  CompactConversationResult,
+  CompactionFailureReason,
+  CompactionPreparation,
+} from './utils/compact.js'
 
 // --------------------------------------------------------------------------
 // Retry Logic

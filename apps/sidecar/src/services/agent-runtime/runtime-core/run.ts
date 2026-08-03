@@ -2215,6 +2215,7 @@ export async function createRuntimeCoreSession(
     apiKey: input.apiKey,
     ...(input.resolvedModel?.baseUrl ? { baseURL: input.resolvedModel.baseUrl } : {}),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
+    contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
     cwd: input.cwd,
     threadType: input.threadType,
     artifactsRoot: input.artifactsRoot,

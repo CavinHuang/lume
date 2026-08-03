@@ -2,6 +2,7 @@ import { builtinModules } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 const desktopRoot = dirname(fileURLToPath(import.meta.url))
 const external = ['electron', /^node:/, ...builtinModules]
@@ -28,6 +29,7 @@ export const mainConfig = defineConfig({
 })
 
 export const preloadConfig = defineConfig({
+  plugins: [react()],
   build: {
     target: 'node22',
     outDir: resolve(desktopRoot, 'dist', 'preload'),
@@ -38,6 +40,8 @@ export const preloadConfig = defineConfig({
         preload: resolve(desktopRoot, 'src', 'preload.ts'),
         'browser-auth-preload': resolve(desktopRoot, 'src', 'browser-auth-preload.ts'),
         'browser-guest-preload': resolve(desktopRoot, 'src', 'browser-guest-preload.ts'),
+        'browser-annotation-preload': resolve(desktopRoot, 'src', 'browser-annotation-preload.ts'),
+        'browser-overlay-preload': resolve(desktopRoot, 'src', 'browser-overlay-preload.tsx'),
       },
       formats: ['cjs'],
       fileName: (_format, entryName) => `${entryName}.cjs`,

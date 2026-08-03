@@ -1,9 +1,10 @@
 import { ChevronDown, ChevronRight, CornerDownRight, Edit3, GripVertical, MoreHorizontal, Trash2 } from 'lucide-react'
 import { useRef, useState } from 'react'
-import type { AgentMessageQueueSnapshot, AgentQueuedMessage } from '@lume/shared'
+import type { AgentMessageQueueSnapshot, AgentQueuedMessage, AgentFollowUpMode } from '@lume/shared'
 import { cn } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
+import { summarizeQueuedMessage } from './agent-message-queue-summary'
 type QueueDropPlacement = 'before' | 'after'
 
 interface AgentMessageQueueListProps {
@@ -12,6 +13,18 @@ interface AgentMessageQueueListProps {
   onRemove: (queuedMessageId: string) => void
   onEdit: (queuedMessageId: string) => void
   onPromoteToGuidance: (queuedMessageId: string) => void
+  /** blocked 行点击"重试"时触发;T7 在 AgentInput 接线,未传时按钮不触发外部回调。 */
+  onRetry?: (queuedMessageId: string) => void
+  /** 队列因中断(STOP)暂停时为 true,渲染 Resume 横幅。 */
+  interrupted?: boolean
+  /** Resume 横幅"继续"按钮回调;对队列首项触发 retry/resume。 */
+  onResume?: () => void
+  /** 当前 followUpQueueMode(排队/引导/中断),用于菜单标记当前项。 */
+  followUpMode?: AgentFollowUpMode
+  /** 切换 followUpQueueMode;提供时在行"更多"菜单追加三态切换。 */
+  onFollowUpModeChange?: (mode: AgentFollowUpMode) => void
+  /** 初始是否展开队列行;默认 false(折叠),契约测试传 true 以便 SSR 断言行内容。 */
+  defaultExpanded?: boolean
 }
 
 export function AgentMessageQueueList({
@@ -20,10 +33,16 @@ export function AgentMessageQueueList({
   onRemove,
   onEdit,
   onPromoteToGuidance,
+  onRetry,
+  interrupted = false,
+  onResume,
+  followUpMode,
+  onFollowUpModeChange,
+  defaultExpanded = false,
 }: AgentMessageQueueListProps) {
   const draggedIdRef = useRef<string | null>(null)
   const [draggedId, setDraggedId] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(defaultExpanded)
   const visibleQueuedMessages = snapshot.queuedMessages.filter((item) => !item.internal)
   const hasQueue = visibleQueuedMessages.length > 0
   const hasGuidance = snapshot.pendingGuidance.length > 0
@@ -31,6 +50,14 @@ export function AgentMessageQueueList({
 
   return (
     <div className="-mx-4 -mt-3 mb-3 border-b border-[color:color-mix(in_oklab,var(--border-strong)_34%,transparent)]">
+      {interrupted && hasQueue && (
+        <div className="flex items-center justify-between gap-2 border-b border-[color:color-mix(in_oklab,var(--lume-warning)_30%,transparent)] px-4 py-2 text-[12px] text-[var(--lume-warning)]">
+          <span>队列已暂停(你中断了当前输出)</span>
+          <Button variant="ghost" type="button" onClick={onResume} className="h-7 px-2 text-[12px] text-[var(--lume-warning)]">
+            继续
+          </Button>
+        </div>
+      )}
       <Button
         variant="ghost"
         type="button"
@@ -78,6 +105,9 @@ export function AgentMessageQueueList({
           onRemove={() => onRemove(item.id)}
           onEdit={() => onEdit(item.id)}
           onPromoteToGuidance={() => onPromoteToGuidance(item.id)}
+          onRetry={onRetry ? () => onRetry(item.id) : undefined}
+          followUpMode={followUpMode}
+          onFollowUpModeChange={onFollowUpModeChange}
         />
       ))}
     </div>
@@ -93,6 +123,9 @@ function QueuedMessageRow({
   onRemove,
   onEdit,
   onPromoteToGuidance,
+  onRetry,
+  followUpMode,
+  onFollowUpModeChange,
 }: {
   item: AgentQueuedMessage
   dragging: boolean
@@ -102,13 +135,12 @@ function QueuedMessageRow({
   onRemove: () => void
   onEdit: () => void
   onPromoteToGuidance: () => void
+  onRetry?: () => void
+  followUpMode?: AgentFollowUpMode
+  onFollowUpModeChange?: (mode: AgentFollowUpMode) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const canPromote = item.status === 'queued'
-    && !item.messageAttachments?.length
-    && !item.messageParts?.some((part) => part.type === 'capability_ref')
-    && !item.desktopContextSnapshotId
-    && item.text.trim().length > 0
+  const canPromote = item.status === 'queued' && item.text.trim().length > 0
   return (
     <div
       draggable={item.status !== 'validating'}
@@ -129,13 +161,13 @@ function QueuedMessageRow({
       }}
       onDragEnd={onDragEnd}
       className={cn(
-        'group relative flex h-11 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_28%,transparent)] px-4 text-[14px] text-[var(--text-2)] transition-colors last:border-b-0 hover:bg-[color:color-mix(in_oklab,var(--surface-2)_62%,transparent)]',
+        'group relative flex h-11 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_28%,transparent)] px-4 text-[14px] text-[var(--text-2)] transition-colors transition-opacity last:border-b-0 hover:bg-[color:color-mix(in_oklab,var(--surface-2)_62%,transparent)]',
         dragging && 'bg-[color:color-mix(in_oklab,var(--surface-3)_70%,transparent)] opacity-70',
       )}
     >
       <GripVertical size={15} strokeWidth={2} className="shrink-0 cursor-grab text-[var(--text-3)]" />
       <CornerDownRight size={15} strokeWidth={2} className="shrink-0 text-[var(--text-3)]" />
-      <span className="min-w-0 flex-1 truncate font-medium text-[var(--text-2)]">{item.text}</span>
+      <span className="min-w-0 flex-1 truncate font-medium text-[var(--text-2)]">{summarizeQueuedMessage(item)}</span>
       {item.status !== 'queued' ? (
         <span
           className={cn(
@@ -149,13 +181,24 @@ function QueuedMessageRow({
           {item.status === 'blocked' ? '已暂停' : '校验中'}
         </span>
       ) : null}
+      {item.status === 'blocked' && (
+        <Button
+          variant="ghost"
+          type="button"
+          onClick={() => onRetry?.()}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-3 text-[12px] font-medium text-[var(--lume-warning)] transition-colors hover:text-[var(--lume-warning)]"
+          title={item.blockedReason ? `发送失败：${item.blockedReason}。重试、编辑或删除以继续队列。` : '重试发送'}
+        >
+          重试
+        </Button>
+      )}
       <Button
                 variant="ghost"
         type="button"
         onClick={onPromoteToGuidance}
         disabled={!canPromote}
         className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-[color:color-mix(in_oklab,var(--surface-3)_76%,transparent)] px-3 text-[12px] font-medium text-[var(--text-2)] transition-colors hover:text-[var(--text-1)]"
-        title={canPromote ? '在下次工具调用前发送' : '包含附件、能力引用或桌面上下文的消息不能提升为引导'}
+        title={canPromote ? '在下次工具调用前发送(引导)' : '请先输入消息文本'}
       >
         <CornerDownRight size={14} strokeWidth={2} />
         引导
@@ -214,6 +257,22 @@ function QueuedMessageRow({
               <CornerDownRight size={14} strokeWidth={2} className="text-[var(--text-3)]" />
               关闭排队
             </Button>
+            {onFollowUpModeChange && (
+              <>
+                <div className="my-1 border-t border-[color:color-mix(in_oklab,var(--border-strong)_34%,transparent)]" />
+                {(['queue', 'steer', 'interrupt'] as const).map((mode) => (
+                  <Button
+                    key={mode}
+                    variant="ghost"
+                    type="button"
+                    onClick={() => { setMenuOpen(false); onFollowUpModeChange(mode) }}
+                    className="flex h-9 w-full items-center gap-2 px-3 text-left text-[13px] font-medium text-[var(--text-1)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--surface-3)_68%,transparent)]"
+                  >
+                    {followUpMode === mode ? '●' : '○'} {mode === 'queue' ? '排队模式' : mode === 'steer' ? '引导模式' : '中断模式'}
+                  </Button>
+                ))}
+              </>
+            )}
           </div>
         </>
       )}

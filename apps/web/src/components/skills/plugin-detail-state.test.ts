@@ -233,6 +233,33 @@ describe('plugin-detail-state', () => {
     })
   })
 
+  test('explicit setup 步骤保留平台产物和受限安装器', () => {
+    const items = buildPluginSetupItems(plugin({
+      marketplace: {
+        setup: [{
+          id: 'install-host',
+          title: '安装 Native Host',
+          description: '安装预编译 Host',
+          kind: 'install',
+          artifacts: [{
+            path: './runtime/win32-x64/lume-chrome-host.exe',
+            kind: 'native-binary',
+            platform: 'win32',
+            arch: 'x64',
+          }],
+          installer: {
+            kind: 'chrome-native-host',
+            hostName: 'com.lume.browser',
+            extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+            appServerUrl: 'ws://127.0.0.1:43127/browser',
+          },
+        }],
+      },
+    }))
+    expect(items[0]?.artifacts?.[0]?.platform).toBe('win32')
+    expect(items[0]?.installer?.hostName).toBe('com.lume.browser')
+  })
+
   test('formats README metadata', () => {
     expect(formatReadmeMeta({ markdown: '# Demo', path: 'README.md', truncated: false })).toBe('README.md')
     expect(formatReadmeMeta({ markdown: '# Demo', path: 'README.md', truncated: true })).toBe('README.md · 已截断')

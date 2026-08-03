@@ -234,13 +234,13 @@ export function BrowserWebviewPoolProvider({ children }: { children: ReactNode }
         wrapper.style.pointerEvents = 'none'
         const webview = document.createElement('webview') as BrowserWebviewElement
         webview.setAttribute('partition', descriptor.partition)
-        webview.setAttribute('src', descriptor.bootstrapUrl)
         webview.style.display = 'flex'
         webview.style.width = '100%'
         webview.style.height = '100%'
         webview.style.border = '0'
         wrapper.append(webview)
         hostRef.current.append(wrapper)
+        webview.setAttribute('src', descriptor.bootstrapUrl)
         const entry = { generation, wrapper, webview }
         entriesRef.current.set(tabId, entry)
         const visibleTarget = targetsRef.current.get(tabId)

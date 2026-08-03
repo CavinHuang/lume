@@ -466,6 +466,7 @@ function projectPersistedCompactionMessage(
     : typeof (sdkMessage as SDKMessage & { summary?: unknown }).summary === 'string'
       ? (sdkMessage as SDKMessage & { summary: string }).summary
       : undefined
+  const compactionFailed = metadata?.outcome === 'failed'
   const createdAt = typeof (sdkMessage as SDKMessage & { timestamp?: unknown }).timestamp === 'string'
     ? (sdkMessage as SDKMessage & { timestamp: string }).timestamp
     : fallbackCreatedAt
@@ -478,8 +479,10 @@ function projectPersistedCompactionMessage(
       ? progressMessage ?? `正在${mode}压缩上下文`
       : sdkMessage.subtype === 'context_compaction_started'
       ? `正在${mode}压缩上下文`
-      : `上下文已${mode}压缩`,
-    ...(sdkMessage.subtype === 'compact_boundary' && summary ? { summary } : {}),
+      : compactionFailed
+        ? '上下文压缩失败，已保留原上下文'
+        : `上下文已${mode}压缩`,
+    ...(sdkMessage.subtype === 'compact_boundary' && !compactionFailed && summary ? { summary } : {}),
     createdAt,
   }
 }

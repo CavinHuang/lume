@@ -233,6 +233,94 @@ describe("PluginMarketplaceSetupStep bridge fields", () => {
     expect(parsed.marketplace!.setup![0].download).toBeUndefined();
   });
 
+  test("解析按平台分发的 Native Host 安装器", () => {
+    const parsed = parseManifest({
+      schema: "lume-plugin/v1",
+      name: "browser",
+      version: "1.0.0",
+      marketplace: {
+        setup: [{
+          id: "install-host",
+          title: "安装 Host",
+          description: "安装预编译 Host",
+          kind: "install",
+          artifacts: [
+            { path: "./runtime/win32-x64/host.exe", kind: "native-binary", platform: "win32", arch: "x64" },
+            { path: "./runtime/darwin-arm64/host", kind: "native-binary", platform: "darwin", arch: "arm64" },
+          ],
+          installer: {
+            kind: "chrome-native-host",
+            hostName: "com.lume.browser",
+            extensionId: "abcdefghijklmnopabcdefghijklmnop",
+            appServerUrl: "ws://127.0.0.1:43127/browser",
+          },
+        }],
+      },
+    });
+    const step = parsed.marketplace!.setup![0];
+    expect(step.artifacts).toHaveLength(2);
+    expect(step.artifacts![0]).toEqual({
+      path: "./runtime/win32-x64/host.exe",
+      kind: "native-binary",
+      platform: "win32",
+      arch: "x64",
+    });
+    expect(step.installer).toEqual({
+      kind: "chrome-native-host",
+      hostName: "com.lume.browser",
+      extensionId: "abcdefghijklmnopabcdefghijklmnop",
+      appServerUrl: "ws://127.0.0.1:43127/browser",
+    });
+  });
+
+  test("拒绝非回环地址的 Native Host 安装器", () => {
+    const parsed = parseManifest({
+      schema: "lume-plugin/v1",
+      name: "browser",
+      version: "1.0.0",
+      marketplace: {
+        setup: [{
+          id: "install-host",
+          title: "安装 Host",
+          description: "invalid",
+          artifact: { path: "./host", kind: "native-binary" },
+          installer: {
+            kind: "chrome-native-host",
+            hostName: "com.lume.browser",
+            extensionId: "abcdefghijklmnopabcdefghijklmnop",
+            appServerUrl: "wss://example.com/browser",
+          },
+        }],
+      },
+    });
+    expect(parsed.marketplace?.setup?.length ?? 0).toBe(0);
+  });
+
+  test("拒绝非法 Native Host 名称", () => {
+    for (const hostName of ["com.lume-browser", ".", "..", ".com.lume", "com..lume", "com.lume."]) {
+      const parsed = parseManifest({
+        schema: "lume-plugin/v1",
+        name: "browser",
+        version: "1.0.0",
+        marketplace: {
+          setup: [{
+            id: "install-host",
+            title: "安装 Host",
+            description: "invalid",
+            artifact: { path: "./host", kind: "native-binary" },
+            installer: {
+              kind: "chrome-native-host",
+              hostName,
+              extensionId: "abcdefghijklmnopabcdefghijklmnop",
+              appServerUrl: "ws://127.0.0.1:43127/browser",
+            },
+          }],
+        },
+      });
+      expect(parsed.marketplace?.setup?.length ?? 0).toBe(0);
+    }
+  });
+
   test("拒绝含 .. 的 artifact.path（整步丢弃）", () => {
     const parsed = parseManifest({
       schema: "lume-plugin/v1",

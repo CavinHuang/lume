@@ -110,6 +110,8 @@ const server = createServer((request, response) => {
   response.end(\`<!doctype html><meta name="viewport" content="width=device-width"><title>Lume fixture</title>
     <label>Name <input id="name" aria-label="Name"></label>
     <button id="submit" onclick="document.querySelector('#result').textContent=document.querySelector('#name').value">Apply</button>
+    <button id="annotation-target" onclick="document.querySelector('#annotation-result').textContent='clicked'">Annotation target</button>
+    <output id="annotation-result"></output>
     <a id="download" href="/download" download="fixture.txt">Download</a>
     <output id="result"></output>
     <iframe id="cross-origin-frame" src="\${frameOrigin}/"></iframe>
@@ -210,7 +212,7 @@ app.whenReady().then(async () => {
     check(handshake.protocolVersion === 8 && handshake.minSupported === 5 && handshake.maxSupported === 8, 'browser protocol handshake drifted from the canonical client')
     check(handshake.capabilities.some(capability => capability.id === 'pageAssets'), 'pageAssets capability was not advertised')
     check(handshake.capabilities.some(capability => capability.id === 'webmcp'), 'WebMCP capability was not advertised')
-    const created = await call('ensure', { tabId: 'fixture-tab' })
+    const created = await call('ensure', { tabId: 'fixture-tab', ownerThreadId: 'fixture-thread' })
     check(created.tabId === 'fixture-tab' && created.backend === 'iab', 'logical tab was not created')
     const view = await mountTab('fixture-tab')
     check(view && !view.isDestroyed(), 'authorized renderer webview guest was not attached')
@@ -236,6 +238,8 @@ app.whenReady().then(async () => {
     await userCall('close', { tabId: 'concurrent-b' })
     const staleMountRelease = await userCall('mount:release', { tabId: 'concurrent-a', mountToken: concurrentMountA.mountToken })
     check(staleMountRelease.released === false, 'releasing a mount after its tab closed was not idempotent')
+    const staleVisibility = await userCall('visible', { tabId: 'concurrent-a', visible: false })
+    check(staleVisibility.ok === true, 'hiding a tab after its runtime closed was not idempotent')
     await win.webContents.executeJavaScript(\`document.querySelectorAll('webview[data-tab-id^="concurrent-"]').forEach(view => view.remove())\`)
     await waitUntil(() => [concurrentMountA, concurrentMountB].every(mount => guests.get(mount.mountToken)?.isDestroyed()))
     const bounded = await call('bounds', { tabId: 'fixture-tab', x: 20, y: 30, width: 640, height: 480, surface: 'main', visible: true })
@@ -243,24 +247,26 @@ app.whenReady().then(async () => {
     await call('navigate', { tabId: 'fixture-tab', url: origin + '/' })
     const navigatedUrl = await call('url', { tabId: 'fixture-tab' })
     check(navigatedUrl.startsWith(origin), 'fixture navigation failed: ' + JSON.stringify(navigatedUrl))
-    setStage('annotation-selection')
-    const elementSelectionPromise = userCall('annotation:start', { tabId: 'fixture-tab', mode: 'auto' })
-    await new Promise(resolveSelection => setTimeout(resolveSelection, 25))
-    await view.executeJavaScript("document.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientX:30,clientY:30}));document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,clientX:30,clientY:30}));document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0,clientX:30,clientY:30}))")
-    const elementSelection = await elementSelectionPromise
-    check(elementSelection.anchor.kind === 'element' && elementSelection.anchor.domPath, 'automatic annotation selection did not select an element')
-    const textSelectionPromise = userCall('annotation:start', { tabId: 'fixture-tab', mode: 'auto' })
-    await new Promise(resolveSelection => setTimeout(resolveSelection, 25))
-    await view.executeJavaScript("(() => { const node=document.querySelector('label').firstChild; const range=document.createRange(); range.selectNodeContents(node); const selection=getSelection(); selection.removeAllRanges(); selection.addRange(range); document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,clientX:20,clientY:20})); document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0,clientX:80,clientY:20})); })()")
-    const textSelection = await textSelectionPromise
-    check(textSelection.anchor.kind === 'text' && textSelection.anchor.textQuote?.exact === 'Name ', 'automatic annotation selection did not preserve selected text')
-    const regionSelectionPromise = userCall('annotation:start', { tabId: 'fixture-tab', mode: 'auto' })
-    await new Promise(resolveSelection => setTimeout(resolveSelection, 25))
-    await view.executeJavaScript("getSelection().removeAllRanges();document.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0,clientX:180,clientY:160}));document.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientX:240,clientY:210}));document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0,clientX:240,clientY:210}))")
-    const regionSelection = await regionSelectionPromise
-    check(regionSelection.anchor.kind === 'region' && regionSelection.anchor.rect.width === 60 && regionSelection.anchor.rect.height === 50, 'automatic annotation selection did not create a region')
-    await userCall('annotation:highlight', { tabId: 'fixture-tab', anchors: [elementSelection.anchor, textSelection.anchor], activeIndex: 1 })
-    check(await view.executeJavaScript("document.querySelectorAll('#__lume_review_highlights > div').length") === 2, 'annotation highlights did not preserve the queued selection set')
+    setStage('annotation-runtime')
+    const annotationSession = await userCall('annotation:session', { tabId: 'fixture-tab', threadId: 'fixture-thread' })
+    check(annotationSession.version === 2 && annotationSession.threadId === 'fixture-thread', 'annotation session did not use the bounded v2 contract')
+    const commentMode = await userCall('annotation:mode', { tabId: 'fixture-tab', threadId: 'fixture-thread', mode: 'comment' })
+    check(commentMode.mode === 'comment', 'annotation comment mode did not persist in the main-process session')
+    await waitUntil(() => view.executeJavaScript("document.querySelector('[data-lume-annotation-host]') !== null"))
+    await view.executeJavaScript("document.querySelector('#annotation-target').click()")
+    check(await view.executeJavaScript("document.querySelector('#annotation-result').textContent") === '', 'comment mode did not intercept the fixture click')
+    check(await view.executeJavaScript("document.querySelector('[id^=__lume_review_]') === null") === true, 'legacy DOM annotation overlay is still present')
+    await userCall('annotation:preview', { tabId: 'fixture-tab', threadId: 'fixture-thread', original: true })
+    await view.executeJavaScript("document.querySelector('#annotation-target').click()")
+    check(await view.executeJavaScript("document.querySelector('#annotation-result').textContent") === 'clicked', 'original preview did not restore normal page interaction')
+    await view.executeJavaScript("document.querySelector('#annotation-result').textContent = ''")
+    await userCall('annotation:preview', { tabId: 'fixture-tab', threadId: 'fixture-thread', original: false })
+    await view.executeJavaScript("document.querySelector('#annotation-target').click()")
+    check(await view.executeJavaScript("document.querySelector('#annotation-result').textContent") === '', 'leaving original preview did not restore comment interception')
+    const browseMode = await userCall('annotation:mode', { tabId: 'fixture-tab', threadId: 'fixture-thread', mode: 'browse' })
+    check(browseMode.mode === 'browse', 'annotation browse mode did not restore')
+    await view.executeJavaScript("document.querySelector('#annotation-target').click()")
+    check(await view.executeJavaScript("document.querySelector('#annotation-result').textContent") === 'clicked', 'browse mode did not restore fixture clicking')
     const moved = await call('bounds', { tabId: 'fixture-tab', x: 680, y: 30, width: 200, height: 480, surface: 'right-panel', visible: true })
     check(moved.surface === 'right-panel' && !view.isDestroyed(), 'surface migration replaced the renderer webview guest')
     check((await call('url', { tabId: 'fixture-tab' })).startsWith(origin), 'surface migration reloaded the page')
@@ -276,7 +282,7 @@ app.whenReady().then(async () => {
     check(await call('locator:evaluate', { tabId: 'fixture-tab', locator: locator('#name'), expression: '(element, suffix) => element.value + suffix', arg: '!' }) === 'Lume Agent!', 'locator evaluate did not receive the strict element')
     await checkRejects(() => call('locator:evaluate', { tabId: 'fixture-tab', locator: locator('#name'), expression: '(element) => { element.value = \"mutated\"; return element.value }' }), 'action_denied', 'locator evaluate allowed a side effect')
     check(await call('locator:inputValue', { tabId: 'fixture-tab', locator: locator('#name') }) === 'Lume Agent', 'rejected locator evaluate changed the page')
-    check(await call('locator:count', { tabId: 'fixture-tab', locator: locator('button') }) === 1, 'locator count was incorrect')
+    check(await call('locator:count', { tabId: 'fixture-tab', locator: locator('button') }) === 2, 'locator count was incorrect')
     await call('locator:waitFor', { tabId: 'fixture-tab', locator: locator('#submit'), state: 'visible', timeoutMs: 1000 })
     await call('wait:url', { tabId: 'fixture-tab', url: origin + '/*', timeoutMs: 1000 })
     await call('click', { tabId: 'fixture-tab', locator: locator('#submit') })

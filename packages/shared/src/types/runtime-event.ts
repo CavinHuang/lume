@@ -795,6 +795,10 @@ export interface ContextCompactionCompletedRuntimeEvent extends RuntimeEventBase
   policy: string;
   source: string;
   summary?: string;
+  outcome?: "succeeded" | "failed";
+  failureReason?: string;
+  retainedTokens?: number;
+  retainedMessageCount?: number;
 }
 
 export interface RuntimeNormalizedUsage {

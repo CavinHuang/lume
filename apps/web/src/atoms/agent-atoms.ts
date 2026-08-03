@@ -26,6 +26,12 @@ export const currentThreadIdAtom = atom<string | null>(null)
 export type StreamingState = 'idle' | 'streaming' | 'errored'
 export const agentStreamingStatesAtom = atom<Record<string, StreamingState>>({})
 export const agentStreamingStatesFamily = createThreadSliceFamily(agentStreamingStatesAtom)
+/**
+ * 队列因中断(STOP)暂停的 per-thread 标记。run.cancelled 且队列非空时置 true;
+ * 任何 dispatch(requeue/retry/send)或队列清空时置 false。驱动 Resume 横幅。
+ */
+export const agentQueueInterruptedAtom = atom<Record<string, boolean>>({})
+export const agentQueueInterruptedFamily = createThreadSliceFamily(agentQueueInterruptedAtom)
 export const agentRuntimeStatusAtom = atom<Record<string, AgentRuntimeStatus>>({})
 export const agentRuntimeStatusFamily = createThreadSliceFamily(agentRuntimeStatusAtom)
 export const agentRuntimeEventsAtom = atom<RuntimeEventState>({})

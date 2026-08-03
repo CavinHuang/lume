@@ -399,7 +399,7 @@ function createLspTool(allowWrite: boolean) {
           const edits = await requestAll<LspWorkspaceEdit | null>('workspace/willRenameFiles', { files })
           const merged = mergeRenameWorkspaceEdits(
             edits,
-            new Map(clients.map((candidate) => [candidate.serverName, candidate.serverRole])),
+            new Map(clients.map((candidate) => [candidate.serverName, candidate.serverRole] as const)),
           )
           const renameOperation: LspWorkspaceEdit = {
             ...merged,

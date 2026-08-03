@@ -1,9 +1,8 @@
 import {
-  calculateAutoCompactThreshold,
   compactConversation,
   estimateMessagesTokens,
   estimateTokens,
-  shouldAutoCompact,
+  type AutoCompactState,
   type AgentContextController,
   type AgentContextCompactionMetadata
 } from "@lume/agent-sdk";
@@ -52,6 +51,8 @@ export interface KernelContextControllerInput {
 }
 
 const DEFAULT_TOOL_RESULT_CHARS = 50_000;
+const DEFAULT_RESERVED_OUTPUT_TOKENS = 16_384;
+const MAX_RESERVED_OUTPUT_TOKENS = 20_000;
 const KERNEL_CONTEXT_POLICY = "kernel-v1";
 const KERNEL_CONTEXT_SOURCE = "agent-runtime-kernel";
 
@@ -64,7 +65,7 @@ export function createContextBudgetSnapshot(input: ContextBudgetSnapshotInput): 
       ? estimateMessagesTokens(sessionMessages)
       : 0,
     toolSchemas: input.toolSchemaTokens ?? 0,
-    reservedOutput: input.reservedOutputTokens ?? Math.floor(input.total * 0.05)
+    reservedOutput: input.reservedOutputTokens ?? DEFAULT_RESERVED_OUTPUT_TOKENS
   };
   const usedTokens = Object.values(sections).reduce((sum, value) => sum + value, 0);
   return {
@@ -148,8 +149,8 @@ export function createKernelContextController(input: KernelContextControllerInpu
     sessionMessages: input.sessionMessages,
     toolSchemaTokens: input.toolSchemaTokens,
     reservedOutputTokens: input.maxOutputTokens !== undefined
-      ? Math.min(Math.max(0, input.maxOutputTokens), 20_000)
-      : undefined
+      ? Math.min(Math.max(0, input.maxOutputTokens), MAX_RESERVED_OUTPUT_TOKENS)
+      : DEFAULT_RESERVED_OUTPUT_TOKENS
   });
   const metadata = createKernelCompactionMetadata(input.contextWindow, sourceMessageIds, preservedSegment, budget);
   return {
@@ -166,12 +167,28 @@ export function createKernelContextController(input: KernelContextControllerInpu
     microCompactMessages: ({ messages }) =>
       microCompactKernelMessages(sanitizeKernelContextMessages(messages)),
     getCompactionMetadata: () => metadata,
-    compactConversation: async ({ provider, model, messages, state }) => {
-      const sanitized = microCompactKernelMessages(sanitizeKernelContextMessages(messages));
-      const result = await compactConversation(provider, model, sanitized, state);
+    compactConversation: async ({ provider, model, messages, state, trigger, protectedMessageIndex, abortSignal }) => {
+      const sanitized = sanitizeKernelContextMessages(messages);
+      const sanitizedProtectedMessageIndex = protectedMessageIndex === undefined
+        ? undefined
+        : sanitizeKernelContextMessages(messages.slice(0, protectedMessageIndex)).length;
+      const result = await compactConversation(provider, model, sanitized, state, {
+        trigger,
+        reserveTokens: budget.sections.reservedOutput,
+        protectedMessageIndex: sanitizedProtectedMessageIndex,
+        abortSignal
+      });
       return {
         ...result,
-        metadata
+        metadata: {
+          ...metadata,
+          outcome: result.compacted ? "succeeded" : "failed",
+          ...(result.failureReason ? { failureReason: result.failureReason } : {}),
+          ...(typeof result.retainedTokens === "number" ? { retainedTokens: result.retainedTokens } : {}),
+          ...(typeof result.retainedMessageCount === "number"
+            ? { retainedMessageCount: result.retainedMessageCount }
+            : {})
+        }
       };
     }
   };
@@ -180,21 +197,21 @@ export function createKernelContextController(input: KernelContextControllerInpu
 function shouldKernelAutoCompact(input: {
   messages: KernelMessage[];
   model: string;
-  state: Parameters<typeof shouldAutoCompact>[2];
+  state: AutoCompactState;
   estimatedTokens: number;
   contextWindow: number;
   maxOutputTokens?: number;
   budget: ContextBudgetSnapshot;
 }): boolean {
   if (input.state.consecutiveFailures >= 3) return false;
-  const sdkHistoryTriggers = shouldAutoCompact(input.messages, input.model, input.state);
-  if (sdkHistoryTriggers) return true;
-
-  const threshold = calculateAutoCompactThreshold(input.contextWindow, input.maxOutputTokens);
-  const nonSessionBudgetTokens = Math.max(0, input.budget.usedTokens - input.budget.sections.session);
-  const estimatedFullRequestTokens =
-    nonSessionBudgetTokens + Math.max(input.budget.sections.session, input.estimatedTokens);
-  return input.budget.sections.session > 0 && estimatedFullRequestTokens >= threshold;
+  const reserveTokens = Math.min(
+    Math.max(0, input.maxOutputTokens ?? DEFAULT_RESERVED_OUTPUT_TOKENS),
+    MAX_RESERVED_OUTPUT_TOKENS
+  );
+  const threshold = Math.max(0, input.contextWindow - reserveTokens);
+  const budgetInputTokens = Math.max(0, input.budget.usedTokens - input.budget.sections.reservedOutput);
+  const estimatedFullRequestTokens = Math.max(budgetInputTokens, input.estimatedTokens);
+  return input.budget.sections.session > 0 && estimatedFullRequestTokens > threshold;
 }
 
 function createKernelCompactionMetadata(

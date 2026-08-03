@@ -11,7 +11,8 @@
     "useUnknownInCatchVariables": false,
     "noUncheckedIndexedAccess": false,
     "noEmit": true,
-    "types": ["node"]
+    "jsx": "react-jsx",
+    "types": ["node", "react", "react-dom"]
   },
-  "include": ["src/**/*.ts", "scripts/build.ts", "scripts/dev.ts", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/build.ts", "scripts/dev.ts", "vite.config.ts"]
 }

@@ -119,13 +119,39 @@ const agentBrowserAnchorSchema = z.object({
   url: z.string().url().max(8192),
   generation: z.number().int().min(1),
   framePath: z.array(z.string().max(2048)).max(16),
+  frameUrl: z.string().url().max(8192).optional(),
+  selector: z.string().max(8192).optional(),
+  role: z.string().max(256).optional(),
+  name: z.string().max(1024).optional(),
+  title: z.string().max(1024).optional(),
   domPath: z.string().max(8192).optional(),
   textQuote: z.object({
     exact: z.string().max(32_000),
     prefix: z.string().max(1000).optional(),
     suffix: z.string().max(1000).optional()
   }).strict().optional(),
+  textRange: z.object({
+    startPath: z.string().max(8192).optional(),
+    startOffset: z.number().int().min(0).max(1_000_000).optional(),
+    endPath: z.string().max(8192).optional(),
+    endOffset: z.number().int().min(0).max(1_000_000).optional()
+  }).strict().optional(),
   selectedContent: z.string().max(20_000).optional(),
+  immediateText: z.string().max(20_000).optional(),
+  nearbyText: z.string().max(20_000).optional(),
+  viewport: z.object({
+    width: z.number().finite().nonnegative(),
+    height: z.number().finite().nonnegative(),
+    deviceScaleFactor: z.number().finite().positive().optional(),
+    scrollX: z.number().finite().nonnegative().optional(),
+    scrollY: z.number().finite().nonnegative().optional()
+  }).strict().optional(),
+  markerPoint: z.object({ x: z.number().finite(), y: z.number().finite() }).strict().optional(),
+  fixed: z.boolean().optional(),
+  scrollContainer: z.object({
+    selector: z.string().max(8192).optional(),
+    domPath: z.string().max(8192).optional()
+  }).strict().optional(),
   rect: z.object({
     x: z.number().finite(),
     y: z.number().finite(),
@@ -142,7 +168,18 @@ const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
     tab: agentBrowserTabAttachmentSchema,
     anchor: agentBrowserAnchorSchema,
     body: z.string().trim().min(1).max(20_000),
-    screenshotRef: z.string().max(4096).optional()
+    screenshotRef: z.string().max(4096).optional(),
+    additionalAnchors: z.array(agentBrowserAnchorSchema).max(20).optional(),
+    createdAt: z.string().datetime().optional(),
+    theme: z.string().max(128).optional(),
+    screenshot: z.object({
+      ref: z.string().max(4096).optional(),
+      filename: z.string().trim().min(1).max(255).optional(),
+      mode: z.enum(["off", "necessary", "always"]).optional(),
+      width: z.number().int().positive().optional(),
+      height: z.number().int().positive().optional(),
+      deviceScaleFactor: z.number().finite().positive().optional()
+    }).strict().optional()
   }).strict(),
   z.object({
     id: z.string().trim().min(1).max(256),
@@ -172,6 +209,8 @@ export const agentSendInputSchema = z
       .enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"])
       .optional(),
     thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
+    // 三态路由字段:经 validateInput 入口时必须保留,否则 agent-service 三态路由恒走 queue
+    followUpQueueMode: z.enum(["steer", "queue", "interrupt"]).optional(),
     messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
     commentAttachments: z
       .array(agentDiffCommentAttachmentSchema)
@@ -212,6 +251,17 @@ export const agentSendInputSchema = z
       .optional(),
   })
   .superRefine((input, ctx) => {
+    input.browserAttachments?.forEach((attachment, index) => {
+      if ((attachment.origin !== "browser-annotation" && attachment.origin !== "browser-design-change") || !attachment.screenshotRef) return;
+      const embeddedThread = /^browser-review-screenshot:([^:]+):[a-f0-9-]{36}$/i.exec(attachment.screenshotRef)?.[1];
+      if (embeddedThread !== input.threadId) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["browserAttachments", index, "screenshotRef"],
+          message: "browser annotation screenshotRef 必须是当前 threadId 的合法引用",
+        });
+      }
+    });
     if (!input.messageParts) return;
     const visibleMessage = input.messageParts
       .map((part) =>
@@ -903,6 +953,9 @@ export const agentQueuedMessageInputSchema = z.object({
   expectedRevision: z.number().int().min(0),
   queueOperationId: idSchema
 });
+
+// retry 与 remove/promote 共用同一组字段,直接复用 agentQueuedMessageInputSchema
+export const agentRetryQueuedMessageInputSchema = agentQueuedMessageInputSchema;
 
 export const agentUpdateQueuedMessageInputSchema = z.object({
   threadId: idSchema,
