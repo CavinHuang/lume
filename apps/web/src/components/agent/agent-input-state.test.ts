@@ -201,3 +201,31 @@ describe('shouldSendAgentInputOnEnter', () => {
     }, false)).toBe(false)
   })
 })
+
+describe('deriveAgentInputSubmitState followUpQueueMode', () => {
+  test('streaming + steer → steer 动作', () => {
+    const state = deriveAgentInputSubmitState({ hasText: true, streaming: true, localSending: false, followUpMode: 'steer' })
+    expect(state.action).toBe('steer')
+    expect(state.canSubmit).toBe(true)
+  })
+
+  test('streaming + queue → queue 动作(默认/现状)', () => {
+    const state = deriveAgentInputSubmitState({ hasText: true, streaming: true, localSending: false, followUpMode: 'queue' })
+    expect(state.action).toBe('queue')
+  })
+
+  test('streaming + interrupt → interrupt 动作', () => {
+    const state = deriveAgentInputSubmitState({ hasText: true, streaming: true, localSending: false, followUpMode: 'interrupt' })
+    expect(state.action).toBe('interrupt')
+  })
+
+  test('followUpMode 缺省时保持现状 queue', () => {
+    const state = deriveAgentInputSubmitState({ hasText: true, streaming: true, localSending: false })
+    expect(state.action).toBe('queue')
+  })
+
+  test('非 streaming 不受 followUpMode 影响', () => {
+    const state = deriveAgentInputSubmitState({ hasText: true, streaming: false, localSending: false, followUpMode: 'steer' })
+    expect(state.action).toBe('send')
+  })
+})

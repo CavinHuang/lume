@@ -31,7 +31,7 @@ interface AgentInputEnterEvent {
   shiftKey: boolean
 }
 
-export type AgentInputSubmitAction = 'send' | 'queue' | 'stop' | 'busy' | 'disabled'
+export type AgentInputSubmitAction = 'send' | 'queue' | 'steer' | 'interrupt' | 'stop' | 'busy' | 'disabled'
 export type AgentInputDispatchMode = 'sent' | 'queued'
 
 export interface AgentInputSubmitState {
@@ -44,40 +44,25 @@ export function deriveAgentInputSubmitState(input: {
   hasText: boolean
   streaming: boolean
   localSending: boolean
+  followUpMode?: 'steer' | 'queue' | 'interrupt'
 }): AgentInputSubmitState {
   if (input.localSending) {
-    return {
-      action: 'busy',
-      canSubmit: false,
-      label: '发送中',
-    }
+    return { action: 'busy', canSubmit: false, label: '发送中' }
   }
   if (input.streaming) {
     if (input.hasText) {
-      return {
-        action: 'queue',
-        canSubmit: true,
-        label: '排队',
-      }
+      // followUpMode 缺省走 'queue'，保持向后兼容
+      const mode = input.followUpMode ?? 'queue'
+      if (mode === 'steer') return { action: 'steer', canSubmit: true, label: '引导' }
+      if (mode === 'interrupt') return { action: 'interrupt', canSubmit: true, label: '中断发送' }
+      return { action: 'queue', canSubmit: true, label: '排队' }
     }
-    return {
-      action: 'stop',
-      canSubmit: true,
-      label: '停止',
-    }
+    return { action: 'stop', canSubmit: true, label: '停止' }
   }
   if (input.hasText) {
-    return {
-      action: 'send',
-      canSubmit: true,
-      label: '发送',
-    }
+    return { action: 'send', canSubmit: true, label: '发送' }
   }
-  return {
-    action: 'disabled',
-    canSubmit: false,
-    label: '发送',
-  }
+  return { action: 'disabled', canSubmit: false, label: '发送' }
 }
 
 export function shouldReleaseAgentInputLocalSendingAfterDispatch(_mode: AgentInputDispatchMode): boolean {
