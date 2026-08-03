@@ -110,18 +110,27 @@ describe("evaluateSuggestions — 去重四连", () => {
   });
 
   test("同次评估内重复候选 → suppressed", () => {
-    // 同一意图重复 2 次（repeat signal）+ correction 可能产生同 duplicateKey 的 automation 候选
-    // 用两条产生相同 duplicateKey 的消息构造
+    // 两条消息各自触发 followup 信号，且 FOLLOWUP 匹配 raw 均为 "明天提醒我提交"
+    // （贪婪 {0,30} 回溯到最长：明天 + 提醒我提 + 动词"提交"），slice(0,24) 后同
+    // duplicateKey "followup:明天提醒我提交"，第二条被同次评估去重抑制。
     const out = evaluateSuggestions(
-      [...um("帮我跑一下测试"), ...um("帮我跑测试"), ...um("帮我跑一下测试")],
+      [
+        ...um("明天提醒我提交代码审查的最终版本"),
+        ...um("明天提醒我提交代码审查的另一部分"),
+      ],
       {
         seenKeys: new Set(),
         typeWeights: fullWeights,
       },
     );
-    // 至少有一条进 suppressed（重复候选），且 candidates 中无同 key 重复
-    const candidateKeys = out.candidates.map((c) => c.duplicateKey);
-    expect(new Set(candidateKeys).size).toBe(candidateKeys.length);
+    // 候选中至多 1 条 followup（重复的被去重）
+    const followupCandidates = out.candidates.filter((c) => c.kind === "followup");
+    expect(followupCandidates.length).toBeLessThanOrEqual(1);
+    // 第二条 followup 必须以 "重复候选" 原因被同次评估去重抑制
+    const dedupSuppressed = out.suppressed.find((s) => s.reason.includes("重复候选"));
+    expect(dedupSuppressed).toBeDefined();
+    expect(dedupSuppressed?.candidate.kind).toBe("followup");
+    expect(dedupSuppressed?.candidate.duplicateKey).toBe("followup:明天提醒我提交");
   });
 });
 
