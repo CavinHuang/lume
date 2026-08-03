@@ -206,6 +206,33 @@ export function getTypeWeights(): SuggestionTypeWeights {
   return { ...readIndex().typeWeights };
 }
 
+/**
+ * 整体替换类型权重表并落盘。
+ * feedback 层计算完新权重后调用此函数写回（不在此处做 clamp——业务约束由 feedback 负责）。
+ */
+export function setTypeWeights(weights: SuggestionTypeWeights): void {
+  const index = readIndex();
+  writeIndex({ ...index, typeWeights: { ...weights } });
+}
+
+/**
+ * 更新单条建议的反馈状态 + feedbackAt 时间戳（feedback 层调用）。
+ * id 不存在时为安全无操作。
+ */
+export function updateSuggestionStatus(
+  id: number,
+  status: SuggestionRecord["status"],
+): void {
+  const index = readIndex();
+  if (!index.records.some((r) => r.id === id)) return;
+  writeIndex({
+    ...index,
+    records: index.records.map((r) =>
+      r.id === id ? { ...r, status, feedbackAt: Date.now() } : r,
+    ),
+  });
+}
+
 export function resetSuggestionStoreForTest(): void {
   cache = null;
 }
