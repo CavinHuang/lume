@@ -39,6 +39,7 @@ import { AGENT_DOWNLOAD_LIMITS, AgentDownloadQuota, BrowserDownloadHistory, comp
 import { BrowserCredentialVault } from "./browser-credentials"
 import { BrowserWorkspaceStore } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
+import { BrowserAnnotationManager } from "./browser-annotation-manager"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -51,6 +52,8 @@ type BrowserRuntimeOptions = {
   journalEncryption?: { available: boolean; encrypt: (value: string) => Buffer; decrypt?: (value: Buffer) => string }
   credentialStorage: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
   authPreloadPath?: string
+  annotationPopupPreloadPath?: string
+  rendererUrl?: () => string
   onInternalError?: (details: { method: string; actor: BrowserRequestContext["actor"]; tabId?: string; message: string }) => void
 }
 
@@ -164,6 +167,8 @@ const MUTATING_METHODS = new Set([
 const GUEST_OPTIONAL_METHODS = new Set([
   "url", "title", "site-info", "dialog:get", "wait:download", "download:path",
   "screenshot:attachment:delete", "clipboard:read", "clipboard:readText", "clipboard:write", "clipboard:writeText",
+  "annotation:session", "annotation:mode", "annotation:clear", "annotation:delete",
+  "annotation:preview", "annotation:screenshot:prepare", "annotation:submit", "annotation:screenshot:read",
 ])
 const REGISTERED_BROWSER_RUNTIME_METHODS = new Set(BROWSER_API_REGISTRY.map((entry) => entry.runtimeMethod))
 
@@ -183,6 +188,7 @@ export class BrowserRuntime {
   private readonly credentials: BrowserCredentialVault
   private readonly workspaces: BrowserWorkspaceStore
   private readonly referenceGrants = new BrowserReferenceGrantStore()
+  private readonly annotations: BrowserAnnotationManager
   private agentPluginEnabled = false
   private cursorOverlay: BrowserWindow | null = null
   private cursorState: { x: number; y: number; pulse: boolean } | null = null
@@ -201,6 +207,10 @@ export class BrowserRuntime {
     const auth = this.authSessions.get(event.sender.id)
     if (!auth || auth.window.isDestroyed()) return
     void this.handleBrowserAuthMessage(auth, payload)
+  }
+  private readonly browserAnnotationGuestMessageHandler = (event: IpcMainEvent, payload: unknown): void => {
+    const tab = this.tabForContents(event.sender)
+    if (tab) this.annotations.onGuestMessage(tab, payload)
   }
   private readonly loginHandler = (event: Electron.Event, webContents: Electron.WebContents, _details: Electron.AuthenticationResponseDetails, authInfo: Electron.AuthInfo, callback: (username?: string, password?: string) => void): void => {
     const tab = this.tabForContents(webContents)
@@ -241,11 +251,27 @@ export class BrowserRuntime {
     this.extensions = new BrowserExtensionStore(options.configDir)
     this.credentials = new BrowserCredentialVault(options.configDir, options.credentialStorage)
     this.workspaces = new BrowserWorkspaceStore(options.configDir)
+    this.annotations = new BrowserAnnotationManager({
+      configDir: options.configDir,
+      getParentWindow: options.getWindow,
+      annotationPopupPreloadPath: options.annotationPopupPreloadPath ?? options.authPreloadPath ?? '',
+      rendererUrl: options.rendererUrl ?? (() => 'about:blank'),
+      emit: (method, params) => this.options.emit({ method, params }),
+      getScreenshotMode: () => this.settings.annotationScreenshots === 'always' ? 'always' : this.settings.annotationScreenshots === 'off' ? 'off' : 'necessary',
+      captureScreenshot: async (tab) => {
+        const data = Buffer.from(await this.screenshot(tab as BrowserTab, { fullPage: false }), 'base64')
+        const image = nativeImage.createFromBuffer(data)
+        const size = image.getSize()
+        return { data, width: size.width, height: size.height, deviceScaleFactor: tab.zoomFactor ?? 1 }
+      },
+      resolveTab: (tabId) => this.tabs.get(tabId),
+    })
     void this.restoreBrowserExtensions()
     app.on("login", this.loginHandler)
     app.on("certificate-error", this.certificateErrorHandler)
     app.on("select-client-certificate", this.clientCertificateHandler)
     ipcMain.on("lume:browser-auth", this.browserAuthMessageHandler)
+    ipcMain.on("lume:browser-annotation-guest", this.browserAnnotationGuestMessageHandler)
   }
 
   descriptor(): BrowserRuntimeDescriptor {
@@ -288,6 +314,12 @@ export class BrowserRuntime {
   }
 
   getSettings(): BrowserSettings { return { ...this.settings } }
+
+  handleAnnotationPopupCommand(senderId: number, payload: unknown): { ok: true } {
+    return this.annotations.handlePopupCommand(senderId, payload)
+  }
+
+  isAnnotationPopupSender(senderId: number): boolean { return this.annotations.isPopupSender(senderId) }
 
   authorizeGuestMount(ownerWebContentsId: number, bootstrapUrl: string, requestedPartition: string): { token: string; partition: string } | null {
     const token = guestMountTokenFromUrl(bootstrapUrl)
@@ -363,6 +395,7 @@ export class BrowserRuntime {
           if (scroll) void contents.executeJavaScriptInIsolatedWorld(999, [{ code: `scrollTo(${scroll.x},${scroll.y})` }], true).catch(() => undefined)
         })
       }
+      this.annotations.onGuestReady(tab)
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     })
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
@@ -662,6 +695,10 @@ export class BrowserRuntime {
       }
       return {}
     }
+    if (method === "annotation:migrate") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      return this.annotations.migrate(params.sessions)
+    }
 
     const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (tab.dialogOpen && method !== "dialog:handle" && method !== "dialog:get") throw browserError("dialog_blocking")
@@ -798,16 +835,52 @@ export class BrowserRuntime {
       securityState: tab.securityState,
       permissions: safeOrigin(tab.url) ? this.settings.sitePermissionOverrides?.[safeOrigin(tab.url)!] ?? {} : {},
     }
-    if (method === "annotation:start" || method === "tweaks:start") {
+    if (method === "annotation:session") {
       if (context.actor !== "user") throw browserError("action_denied")
-      return this.selectPageAnchor(tab, method === "tweaks:start" ? "element" : String(params.mode ?? "auto"))
+      const threadId = annotationThreadId(tab, params)
+      return this.annotations.session(tab, threadId)
     }
-    if (method === "annotation:stop") {
+    if (method === "annotation:mode") {
       if (context.actor !== "user") throw browserError("action_denied")
-      await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: "globalThis.__lumeCancelPageSelection?.()" }], true)
-      return { ok: true }
+      const threadId = annotationThreadId(tab, params)
+      if (params.mode !== 'browse' && params.mode !== 'comment') throw browserError("invalid_browser_request")
+      if (params.purpose !== undefined && params.purpose !== 'annotation' && params.purpose !== 'tweaks') throw browserError("invalid_browser_request")
+      const theme = safeAnnotationTheme(params.theme)
+      return this.annotations.setMode(tab, threadId, params.mode, params.purpose === 'tweaks' ? 'tweaks' : 'annotation', theme)
     }
-    if (method === "annotation:highlight") return this.highlightPageAnchors(tab, params)
+    if (method === "annotation:clear") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      return this.annotations.clear(tab, annotationThreadId(tab, params))
+    }
+    if (method === "annotation:delete") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      const threadId = annotationThreadId(tab, params)
+      const annotationId = String(params.annotationId ?? '').trim().slice(0, 256)
+      if (!threadId || !annotationId) throw browserError("invalid_browser_request")
+      return this.annotations.delete(tab, threadId, annotationId)
+    }
+    if (method === "annotation:preview") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      return this.annotations.setOriginalPreview(tab, annotationThreadId(tab, params), params.original === true)
+    }
+    if (method === "annotation:screenshot:prepare") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      const threadId = annotationThreadId(tab, params)
+      return this.annotations.prepareScreenshot(tab, threadId, params.restorePopup !== false)
+    }
+    if (method === "annotation:submit") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      const threadId = annotationThreadId(tab, params)
+      return this.annotations.requestBatchSubmit(tab, threadId)
+    }
+    if (method === "annotation:screenshot:read") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      const threadId = annotationThreadId(tab, params)
+      const ref = String(params.screenshotRef ?? '').trim().slice(0, 4096)
+      if (!threadId || !ref || tab.ownerThreadId !== threadId) throw browserError("action_denied")
+      const data = this.annotations.readScreenshot(threadId, ref)
+      return { data: data.toString('base64'), mediaType: 'image/png', size: data.length }
+    }
     if (method === "tweaks:apply") return this.applyPageTweaks(tab, params, context)
     if (method === "tweaks:reset") return this.resetPageTweaks(tab, params, context)
     if (method === "cdp") return this.cdp(tab, params)
@@ -870,6 +943,7 @@ export class BrowserRuntime {
   }
 
   destroy(): void {
+    this.annotations.destroy()
     this.hideAgentCursor()
     if (this.cursorOverlay && !this.cursorOverlay.isDestroyed()) this.cursorOverlay.close()
     this.cursorOverlay = null
@@ -877,6 +951,7 @@ export class BrowserRuntime {
     app.off("certificate-error", this.certificateErrorHandler)
     app.off("select-client-certificate", this.clientCertificateHandler)
     ipcMain.off("lume:browser-auth", this.browserAuthMessageHandler)
+    ipcMain.off("lume:browser-annotation-guest", this.browserAnnotationGuestMessageHandler)
     for (const auth of this.authSessions.values()) if (!auth.window.isDestroyed()) auth.window.close()
     this.authSessions.clear()
     this.workspaces.flush()
@@ -1026,6 +1101,7 @@ export class BrowserRuntime {
         tab.agentLease = undefined
       }
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      this.annotations.onGuestReady(tab)
       this.rememberTab(tab)
     })
     wc.on("did-navigate-in-page", (_event, url) => {
@@ -1036,6 +1112,7 @@ export class BrowserRuntime {
       tab.securityState = securityStateForUrl(tab.url)
       tab.lastOpenedAt = new Date().toISOString()
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      this.annotations.onGuestReady(tab)
       this.rememberTab(tab)
     })
     wc.on("did-start-loading", () => {
@@ -1047,6 +1124,10 @@ export class BrowserRuntime {
       tab.canGoBack = tab.navigationIndex > 0
       tab.canGoForward = tab.navigationIndex >= 0 && tab.navigationIndex < tab.navigationStack.length - 1
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    })
+    wc.on("did-finish-load", () => {
+      if (tab.webContents !== wc || wc.isDestroyed()) return
+      this.annotations.onGuestReady(tab)
     })
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return
@@ -2446,37 +2527,6 @@ export class BrowserRuntime {
     return { deleted: true }
   }
 
-  private async highlightPageAnchors(tab: BrowserTab, params: Record<string, unknown>): Promise<{ ok: true }> {
-    const values = Array.isArray(params.anchors) ? params.anchors.slice(0, 100) : params.anchor ? [params.anchor] : []
-    const safeRects = values.flatMap((value) => {
-      const rect = isRecord(value) && isRecord(value.rect) ? value.rect : undefined
-      return rect ? [{
-        x: boundedNumber(rect.x, -100_000, 100_000),
-        y: boundedNumber(rect.y, -100_000, 100_000),
-        width: boundedNumber(rect.width, 0, 100_000),
-        height: boundedNumber(rect.height, 0, 100_000),
-      }] : []
-    })
-    const activeIndex = boundedNumber(params.activeIndex, -1, safeRects.length - 1)
-    await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
-      document.getElementById("__lume_review_highlights")?.remove();
-      const rects = ${JSON.stringify(safeRects)};
-      const activeIndex = ${JSON.stringify(activeIndex)};
-      if (!rects.length) return;
-      const layer = document.createElement("div");
-      layer.id = "__lume_review_highlights";
-      Object.assign(layer.style, { position:"fixed", inset:"0", pointerEvents:"none", zIndex:"2147483646" });
-      rects.forEach((rect, index) => {
-        const marker = document.createElement("div");
-        const active = index === activeIndex;
-        Object.assign(marker.style, { position:"fixed", pointerEvents:"none", left:rect.x+"px", top:rect.y+"px", width:rect.width+"px", height:rect.height+"px", border:(active?"2px":"1.5px")+" solid "+(active?"#0285ff":"#8b5cf6"), borderRadius:"4px", background:active?"rgba(2,133,255,.16)":"rgba(139,92,246,.10)", boxSizing:"border-box", boxShadow:active?"0 0 0 2px rgba(2,133,255,.18)":"none" });
-        layer.appendChild(marker);
-      });
-      document.documentElement.appendChild(layer);
-    })()` }], true)
-    return { ok: true }
-  }
-
   private async copyScreenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<{ copied: true }> {
     const data = await this.screenshot(tab, params)
     clipboard.writeImage(nativeImage.createFromBuffer(Buffer.from(data, "base64")))
@@ -2718,66 +2768,6 @@ export class BrowserRuntime {
     }
   }
 
-  private async selectPageAnchor(tab: BrowserTab, requestedMode: string): Promise<{
-    anchor: {
-      kind: "element" | "text" | "region"
-      url: string
-      generation: number
-      framePath: string[]
-      domPath?: string
-      textQuote?: { exact: string; prefix?: string; suffix?: string }
-      selectedContent?: string
-      rect: { x: number; y: number; width: number; height: number }
-    }
-    originalStyles: Record<string, string>
-  }> {
-    const mode = requestedMode === "text" || requestedMode === "region" || requestedMode === "auto" ? requestedMode : "element"
-    const generation = tab.generation
-    const selected = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{
-      code: `(${pageSelectionScript()})(${JSON.stringify(mode)})`,
-    }], true) as {
-      kind?: unknown
-      domPath?: unknown
-      textQuote?: unknown
-      selectedContent?: unknown
-      rect?: unknown
-      originalStyles?: unknown
-    }
-    if (generation !== tab.generation) throw browserError("stale_target")
-    const rect = isRecord(selected.rect) ? {
-      x: finiteNumber(selected.rect.x),
-      y: finiteNumber(selected.rect.y),
-      width: Math.max(0, finiteNumber(selected.rect.width)),
-      height: Math.max(0, finiteNumber(selected.rect.height)),
-    } : { x: 0, y: 0, width: 0, height: 0 }
-    const textQuote = isRecord(selected.textQuote) && typeof selected.textQuote.exact === "string"
-      ? {
-          exact: selected.textQuote.exact.slice(0, 32_000),
-          ...(typeof selected.textQuote.prefix === "string" ? { prefix: selected.textQuote.prefix.slice(0, 1000) } : {}),
-          ...(typeof selected.textQuote.suffix === "string" ? { suffix: selected.textQuote.suffix.slice(0, 1000) } : {}),
-        }
-      : undefined
-    const selectedContent = typeof selected.selectedContent === "string"
-      ? selected.selectedContent.trim().slice(0, 20_000)
-      : undefined
-    const originalStyles = isRecord(selected.originalStyles)
-      ? Object.fromEntries(Object.entries(selected.originalStyles).filter(([key, value]) => TWEAK_STYLE_KEYS.has(key) && typeof value === "string").map(([key, value]) => [key, String(value).slice(0, 4096)]))
-      : {}
-    return {
-      anchor: {
-        kind: selected.kind === "text" || selected.kind === "region" ? selected.kind : "element",
-        url: tab.url,
-        generation,
-        framePath: [],
-        ...(typeof selected.domPath === "string" ? { domPath: selected.domPath.slice(0, 8192) } : {}),
-        ...(textQuote ? { textQuote } : {}),
-        ...(selectedContent ? { selectedContent } : {}),
-        rect,
-      },
-      originalStyles,
-    }
-  }
-
   private async applyPageTweaks(tab: BrowserTab, params: Record<string, unknown>, context: BrowserRequestContext): Promise<{ applied: Record<string, string> }> {
     if (context.actor !== "user") throw browserError("action_denied")
     const domPath = String(params.domPath ?? "").slice(0, 8192)
@@ -2959,12 +2949,17 @@ export class BrowserRuntime {
     if (tab.visible) tab.lastOpenedAt = new Date().toISOString()
     tab.webContents?.setBackgroundThrottling(!tab.visible)
     if (tab.visible) void this.setTabSuspended(tab, false)
+    this.annotations.reposition(tab)
     this.enforceBackgroundLimit()
     return publicTab(tab)
   }
 
-  private setVisible(tabId: string, visible: boolean): BrowserTabDescriptor {
-    const tab = this.requireTab(tabId, userContext())
+  private setVisible(tabId: string, visible: boolean): BrowserTabDescriptor | { ok: true } {
+    const tab = this.tabs.get(tabId)
+    if (!tab) {
+      if (!visible) return { ok: true }
+      throw browserError("tab_not_found")
+    }
     tab.visible = visible
     tab.lifecycle = visible ? "active" : tab.lifecycle === "crashed" ? "crashed" : "background"
     if (visible) tab.lastOpenedAt = new Date().toISOString()
@@ -3539,6 +3534,12 @@ function canContextUseTab(tab: BrowserTab, context: BrowserRequestContext): bool
   return context.actor === "user" || (canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation) && (!context.tabId || context.tabId === tab.tabId))
 }
 
+function annotationThreadId(tab: BrowserTab, params: Record<string, unknown>): string {
+  const value = typeof params.threadId === "string" ? params.threadId.trim() : (tab.ownerThreadId ?? "")
+  if (!/^[a-zA-Z0-9._-]{1,200}$/.test(value) || (tab.ownerThreadId && tab.ownerThreadId !== value)) throw browserError("action_denied")
+  return value
+}
+
 function browserError(code: BrowserErrorCode): Error & { code: BrowserErrorCode } {
   const error = new Error(code) as Error & { code: BrowserErrorCode }
   error.code = code
@@ -4061,228 +4062,6 @@ function browserAuthHtml(request: BrowserAuthRequest): string {
 <style>*{box-sizing:border-box}body{margin:0;background:#151517;color:#f4f4f5;font:13px system-ui,-apple-system,sans-serif}.wrap{padding:22px}.eyebrow{color:#a78bfa;font-size:11px;font-weight:600}.title{font-size:18px;font-weight:650;margin-top:5px}.origin{color:#a1a1aa;font-size:11px;margin:5px 0 18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.field{display:block;margin:11px 0}.label{display:flex;gap:4px;margin-bottom:5px;color:#d4d4d8;font-size:11px}.required{color:#fb7185}input,select{width:100%;height:36px;border:1px solid #3f3f46;border-radius:8px;background:#202024;color:#fafafa;padding:0 10px;outline:none}input:focus,select:focus{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.2)}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}button{height:34px;border:0;border-radius:8px;padding:0 14px;font:inherit;cursor:pointer}.cancel{background:#29292e;color:#e4e4e7}.submit{background:#7c3aed;color:white;font-weight:600}.note{margin-top:12px;color:#71717a;font-size:10px;line-height:1.5}</style></head><body><form class="wrap" id="form"><div class="eyebrow">Lume Browser Auth</div><div class="title">在当前页面安全填写</div><div class="origin" id="origin"></div><div id="option"></div><div id="fields"></div><div class="note">凭证只会发送到主进程并直接填写到此标签页，不会进入聊天、Sidecar、日志或审计详情。</div><div class="actions"><button type="button" class="cancel" id="cancel">取消</button><button class="submit">填写并继续</button></div></form><script>const state=${safe};document.getElementById('origin').textContent=state.origin;const fields=document.getElementById('fields');const controls=new Map();for(const field of state.fields){const row=document.createElement('label');row.className='field';row.dataset.fieldId=field.id;const label=document.createElement('span');label.className='label';label.textContent=field.label;if(field.required){const mark=document.createElement('span');mark.className='required';mark.textContent='*';label.append(mark)}const input=document.createElement('input');input.type=field.inputType==='otp'?'text':field.inputType;input.autocomplete=field.autocomplete||'off';input.required=field.required;if(field.inputType==='otp')input.inputMode='numeric';row.append(label,input);fields.append(row);controls.set(field.id,{row,input})}let selectedOption;if(state.options.length){const select=document.createElement('select');for(const option of state.options){const item=document.createElement('option');item.value=option.id;item.textContent=option.label;select.append(item)}document.getElementById('option').append(select);const update=()=>{selectedOption=select.value;const enabled=new Set(state.options.find(item=>item.id===selectedOption)?.fields||[]);for(const [id,control] of controls){control.row.hidden=!enabled.has(id);control.input.disabled=!enabled.has(id)}};select.addEventListener('change',update);update()}document.getElementById('cancel').addEventListener('click',()=>window.lumeBrowserAuth.cancel());document.getElementById('form').addEventListener('submit',event=>{event.preventDefault();const values={};for(const [id,control] of controls)if(!control.input.disabled)values[id]=control.input.value;window.lumeBrowserAuth.submit({selectedOption,values});for(const control of controls.values())control.input.value=''})</script></body></html>`
 }
 
-function pageSelectionScript(): string {
-  return `function(mode) {
-    return new Promise((resolve, reject) => {
-      globalThis.__lumeCancelPageSelection?.();
-      const cleanupTasks = [];
-      const on = (target, type, handler, options) => {
-        target.addEventListener(type, handler, options);
-        cleanupTasks.push(() => target.removeEventListener(type, handler, options));
-      };
-      const overlay = document.createElement("div");
-      overlay.setAttribute("data-lume-browser-selection", "");
-      Object.assign(overlay.style, {
-        position: "fixed", zIndex: "2147483647", pointerEvents: "none",
-        border: "2px solid #2f7cf6", background: "rgba(47,124,246,.12)",
-        borderRadius: "3px", boxSizing: "border-box", display: "none"
-      });
-      document.documentElement.appendChild(overlay);
-      const hint = document.createElement("div");
-      hint.textContent = mode === "auto" ? "选择元素、文本或拖动区域 · Esc 取消" : mode === "text" ? "选择文本后松开鼠标 · Esc 取消" : mode === "region" ? "拖动选择区域 · Esc 取消" : "点击选择元素 · Esc 取消";
-      Object.assign(hint.style, {
-        position: "fixed", left: "50%", top: "12px", transform: "translateX(-50%)",
-        zIndex: "2147483647", padding: "7px 10px", borderRadius: "8px",
-        color: "#fff", background: "rgba(20,20,22,.92)", font: "12px system-ui",
-        boxShadow: "0 6px 20px rgba(0,0,0,.24)", pointerEvents: "none"
-      });
-      document.documentElement.appendChild(hint);
-      const cleanup = () => {
-        cleanupTasks.splice(0).forEach((task) => task());
-        overlay.remove();
-        hint.remove();
-        delete globalThis.__lumeCancelPageSelection;
-      };
-      globalThis.__lumeCancelPageSelection = () => {
-        cleanup();
-        reject(new Error("selection_cancelled"));
-      };
-      const pathFor = (element) => {
-        const parts = [];
-        let current = element;
-        while (current && current.nodeType === 1 && parts.length < 32) {
-          const tag = current.tagName.toLowerCase();
-          if (tag === "html") { parts.unshift("html"); break; }
-          const parent = current.parentElement;
-          if (!parent) break;
-          const siblings = Array.from(parent.children).filter((item) => item.tagName === current.tagName);
-          const suffix = siblings.length > 1 ? ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")" : "";
-          parts.unshift(tag + suffix);
-          current = parent;
-        }
-        return parts.join(" > ");
-      };
-      const stylesFor = (element) => {
-        const style = getComputedStyle(element);
-        return {
-          textContent: element.textContent || "",
-          color: style.color, backgroundColor: style.backgroundColor, borderColor: style.borderColor,
-          fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight,
-          borderRadius: style.borderRadius, borderWidth: style.borderWidth, borderStyle: style.borderStyle,
-          width: style.width, height: style.height, display: style.display, flexDirection: style.flexDirection,
-          justifyContent: style.justifyContent, alignItems: style.alignItems, gap: style.gap,
-          padding: style.padding, margin: style.margin
-        };
-      };
-      const visibleTextFor = (element) => String(element?.innerText || element?.textContent || "")
-        .replace(/\\s+/g, " ").trim().slice(0, 20000);
-      const regionTextFor = (rect) => {
-        const parts = [];
-        const seen = new Set();
-        for (const element of document.querySelectorAll("body *")) {
-          if (!(element instanceof HTMLElement) || element === overlay || element === hint || overlay.contains(element) || hint.contains(element)) continue;
-          if (element.children.length > 0) continue;
-          const box = element.getBoundingClientRect();
-          if (box.width <= 0 || box.height <= 0 || box.right < rect.left || box.left > rect.right || box.bottom < rect.top || box.top > rect.bottom) continue;
-          const text = visibleTextFor(element);
-          if (!text || seen.has(text)) continue;
-          seen.add(text);
-          parts.push(text);
-          if (parts.join("\\n").length >= 20000) break;
-        }
-        return parts.join("\\n").slice(0, 20000);
-      };
-      const finish = (kind, rect, element, textQuote) => {
-        const result = {
-          kind,
-          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-          domPath: element ? pathFor(element) : undefined,
-          textQuote,
-          selectedContent: textQuote?.exact || (kind === "region" ? regionTextFor(rect) : visibleTextFor(element)),
-          originalStyles: element ? stylesFor(element) : {}
-        };
-        cleanup();
-        resolve(result);
-      };
-      const finishTextSelection = () => {
-        const selection = getSelection();
-        if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
-        const range = selection.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        const element = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
-        const exact = selection.toString().slice(0, 32000);
-        if (!element || !exact) return false;
-        const source = element.textContent || "";
-        const index = source.indexOf(exact);
-        finish("text", rect, element, {
-          exact,
-          prefix: index >= 0 ? source.slice(Math.max(0, index - 1000), index) : undefined,
-          suffix: index >= 0 ? source.slice(index + exact.length, index + exact.length + 1000) : undefined
-        });
-        return true;
-      };
-      const blockNextClick = () => {
-        const block = (event) => {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        };
-        document.addEventListener("click", block, true);
-        setTimeout(() => document.removeEventListener("click", block, true), 0);
-      };
-      on(window, "keydown", (event) => {
-        if (event.key !== "Escape") return;
-        event.preventDefault();
-        globalThis.__lumeCancelPageSelection?.();
-      }, true);
-      if (mode === "auto") {
-        let start = null;
-        let dragged = false;
-        on(document, "mousemove", (event) => {
-          if (start) {
-            const width = Math.abs(event.clientX - start.x);
-            const height = Math.abs(event.clientY - start.y);
-            dragged = dragged || width >= 6 || height >= 6;
-            if (!dragged) return;
-            const x = Math.min(start.x, event.clientX);
-            const y = Math.min(start.y, event.clientY);
-            Object.assign(overlay.style, { display: "block", left: x + "px", top: y + "px", width: width + "px", height: height + "px" });
-            return;
-          }
-          const element = document.elementFromPoint(event.clientX, event.clientY);
-          if (!(element instanceof Element) || element === overlay || element === hint) return;
-          const rect = element.getBoundingClientRect();
-          Object.assign(overlay.style, { display: "block", left: rect.x + "px", top: rect.y + "px", width: rect.width + "px", height: rect.height + "px" });
-        }, true);
-        on(document, "mousedown", (event) => {
-          if (event.button !== 0) return;
-          start = { x: event.clientX, y: event.clientY };
-          dragged = false;
-        }, true);
-        on(document, "mouseup", (event) => {
-          if (!start || event.button !== 0) return;
-          const origin = start;
-          start = null;
-          blockNextClick();
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          if (finishTextSelection()) return;
-          const rect = {
-            x: Math.min(origin.x, event.clientX), y: Math.min(origin.y, event.clientY),
-            width: Math.abs(event.clientX - origin.x), height: Math.abs(event.clientY - origin.y)
-          };
-          if (dragged && rect.width >= 4 && rect.height >= 4) {
-            finish("region", rect);
-            return;
-          }
-          const element = document.elementFromPoint(event.clientX, event.clientY);
-          if (!(element instanceof Element) || element === overlay || element === hint) return;
-          finish("element", element.getBoundingClientRect(), element);
-        }, true);
-        return;
-      }
-      if (mode === "element") {
-        on(document, "mousemove", (event) => {
-          const element = document.elementFromPoint(event.clientX, event.clientY);
-          if (!(element instanceof Element) || element === overlay || element === hint) return;
-          const rect = element.getBoundingClientRect();
-          Object.assign(overlay.style, { display: "block", left: rect.x + "px", top: rect.y + "px", width: rect.width + "px", height: rect.height + "px" });
-        }, true);
-        on(document, "click", (event) => {
-          const element = document.elementFromPoint(event.clientX, event.clientY);
-          if (!(element instanceof Element) || element === overlay || element === hint) return;
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          finish("element", element.getBoundingClientRect(), element);
-        }, true);
-        return;
-      }
-      if (mode === "text") {
-        on(document, "mouseup", finishTextSelection, true);
-        return;
-      }
-      overlay.style.pointerEvents = "auto";
-      overlay.style.display = "block";
-      overlay.style.inset = "0";
-      overlay.style.border = "0";
-      overlay.style.background = "rgba(47,124,246,.04)";
-      let start = null;
-      on(overlay, "mousedown", (event) => {
-        start = { x: event.clientX, y: event.clientY };
-        event.preventDefault();
-      }, true);
-      on(window, "mousemove", (event) => {
-        if (!start) return;
-        const x = Math.min(start.x, event.clientX);
-        const y = Math.min(start.y, event.clientY);
-        Object.assign(overlay.style, {
-          inset: "auto", left: x + "px", top: y + "px",
-          width: Math.abs(event.clientX - start.x) + "px", height: Math.abs(event.clientY - start.y) + "px",
-          border: "2px solid #2f7cf6", background: "rgba(47,124,246,.12)"
-        });
-      }, true);
-      on(window, "mouseup", (event) => {
-        if (!start) return;
-        const rect = {
-          x: Math.min(start.x, event.clientX), y: Math.min(start.y, event.clientY),
-          width: Math.abs(event.clientX - start.x), height: Math.abs(event.clientY - start.y)
-        };
-        if (rect.width < 4 || rect.height < 4) return;
-        finish("region", rect);
-      }, true);
-    });
-  }`
-}
-
 function applyPageTweaksScript(): string {
   return `function(domPath, styles) {
     const element = document.querySelector(domPath);
@@ -4493,4 +4272,9 @@ function isBrowserHistoryEntry(value: unknown): value is BrowserHistoryEntry {
     && typeof entry.url === "string"
     && typeof entry.title === "string"
     && typeof entry.visitedAt === "string"
+}
+
+function safeAnnotationTheme(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 128 || /[;{}\u0000-\u001f]/.test(value)) return undefined
+  return value
 }
