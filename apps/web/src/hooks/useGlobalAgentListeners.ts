@@ -19,12 +19,14 @@ import {
   currentWorkspaceIdAtom,
   tabsAtom,
   welcomePromptSeedAtom,
+  suggestionsVersionAtom,
 } from '@/atoms'
 import { buildDesktopProposalOpenRequestState } from '@/components/settings/desktop-assistant-proposals-state'
 import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
 import {
   AGENT_IPC_CHANNELS,
   DESKTOP_CONTEXT_IPC_CHANNELS,
+  SUGGESTION_IPC_CHANNELS,
   type AgentMessageAppendedEvent,
   type AgentPendingInteractiveState,
   type AgentRuntimeEventNotification,
@@ -91,6 +93,7 @@ export function useGlobalAgentListeners() {
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
+  const setSuggestionsVersion = useSetAtom(suggestionsVersionAtom)
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const runtimeEventsRafRef = useRef<number | null>(null)
@@ -376,6 +379,14 @@ export function useGlobalAgentListeners() {
           )))
           break
         }
+        case SUGGESTION_IPC_CHANNELS.CHANGED: {
+          // sidecar 推送的建议变更信号。bump 版本号 → 消费方（建议列表 / Banner，
+          // Task 14+）订阅 suggestionsVersionAtom 触发 suggestion:list 重拉。
+          // TODO(Task 13): 改用 desktop-api/suggestion.ts 的 onSuggestionsChanged
+          // 类型化封装，替代此处直接订阅 SUGGESTION_IPC_CHANNELS.CHANGED。
+          setSuggestionsVersion((v) => v + 1)
+          break
+        }
       }
     })
     return () => {
@@ -395,5 +406,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, enqueueRuntimeEvent])
 }

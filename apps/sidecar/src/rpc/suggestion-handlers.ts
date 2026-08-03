@@ -18,8 +18,12 @@ import {
   setEnabled,
   suggestionStats,
 } from "../services/suggest/store";
-import { handleSuggestionFeedback, runAnalysisAndPersist } from "../services/suggest/service";
-import type { RpcHandler } from "./types";
+import {
+  handleSuggestionFeedback,
+  runAnalysisAndPersist,
+  setSuggestionChangeBroadcaster,
+} from "../services/suggest/service";
+import type { NotificationWriter, RpcHandler } from "./types";
 import { validateInput, z } from "./validation";
 
 const SUGGESTION_STATUS_VALUES = ["suggested", "accepted", "ignored", "never"] as const;
@@ -56,7 +60,21 @@ const setEnabledInputSchema = z
   })
   .strict();
 
-export function createSuggestionHandlers(): Record<string, RpcHandler> {
+export interface SuggestionHandlersContext {
+  /**
+   * sidecar → web 推送通道（与 agent-handlers / reading-handlers 同一机制）。
+   * 用于实时广播建议变更：service.notifySuggestionsChanged 触发后，broadcaster
+   * 经此通道推送 SUGGESTION_IPC_CHANNELS.CHANGED，web 收到后刷新建议状态。
+   */
+  writeNotification: NotificationWriter;
+}
+
+export function createSuggestionHandlers(context: SuggestionHandlersContext): Record<string, RpcHandler> {
+  // 接线 broadcaster：service 落库后调用 notifySuggestionsChanged → 此处推送 notification。
+  // fail-open：notifySuggestionsChanged 内部已 try/catch，channel 推送失败不影响持久化。
+  setSuggestionChangeBroadcaster(() => {
+    context.writeNotification(SUGGESTION_IPC_CHANNELS.CHANGED, { type: "suggestions_changed" });
+  });
   return {
     [SUGGESTION_IPC_CHANNELS.LIST]: async (params) => {
       const input = validateInput(listInputSchema, params, SUGGESTION_IPC_CHANNELS.LIST);

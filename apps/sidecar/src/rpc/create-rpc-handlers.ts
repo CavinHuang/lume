@@ -72,7 +72,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     }),
     createAutomationHandlers(),
     createRoutineHandlers(),
-    createSuggestionHandlers(),
+    createSuggestionHandlers({ writeNotification: context.writeNotification }),
     createDesktopContextHandlers(desktopContextRpcService),
     createWikiHandlers(),
     createAgentHandlers({

@@ -71,4 +71,10 @@ export const SUGGESTION_IPC_CHANNELS = {
   RUN_ANALYSIS: "suggestion:run-analysis",
   /** 开关建议系统 → store.setEnabled */
   SET_ENABLED: "suggestion:set-enabled",
+  /**
+   * 建议变更推送（sidecar → web notification）。payload 仅作信号：
+   * `{ type: "suggestions_changed" }`。web 收到后自取最新建议列表。
+   * 由 service.notifySuggestionsChanged 经注入的 broadcaster 触发。
+   */
+  CHANGED: "suggestion:changed",
 } as const;
