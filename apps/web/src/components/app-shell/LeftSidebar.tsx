@@ -279,6 +279,14 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
     }
   }
 
+  const openProactive = () => {
+    const proactiveId = '__proactive__'
+    setActiveTabId(proactiveId)
+    if (!tabs.find((tab) => tab.id === proactiveId)) {
+      setTabs((previous) => [...previous, { id: proactiveId, type: 'proactive', title: '主动' }])
+    }
+  }
+
   const togglePin = async (threadId: string) => {
     const thread = threads.find((item) => item.id === threadId)
     if (!thread) return
@@ -455,6 +463,9 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         return
       case 'todos':
         openTodos()
+        return
+      case 'proactive':
+        openProactive()
         return
     }
   }
