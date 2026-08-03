@@ -477,4 +477,63 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       is_error: true
     });
   });
+
+  test("keeps the writer lease when a foreground Bash call auto-backgrounds", async () => {
+    const root = join(tmpdir(), `lume-wrapper-background-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    let completeBackground: (() => void) | undefined;
+    const bash = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Bash", {
+        name: "Bash",
+        description: "bash",
+        inputSchema: { type: "object", properties: {} },
+        async call(_input, context) {
+          completeBackground = context.onBackgroundTaskCompleted;
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: "continuing in background",
+            _meta: {
+              execution: {
+                version: 1,
+                durationMs: 0,
+                command: "slow mutation",
+                terminationReason: "running"
+              }
+            }
+          };
+        }
+      }),
+      threadId: "thread-background",
+      cwd: root,
+      fileLedger: createFileAccessLedger()
+    });
+    const write = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-write",
+      cwd: root,
+      fileLedger: createFileAccessLedger()
+    });
+
+    await bash.call({ command: "slow mutation" }, { cwd: root, toolUseId: "tool-bash" });
+    expect(completeBackground).toBeFunction();
+
+    let writeFinished = false;
+    const writing = write.call({}, { cwd: root, toolUseId: "tool-write" }).then(() => {
+      writeFinished = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(writeFinished).toBe(false);
+
+    completeBackground?.();
+    await writing;
+    expect(writeFinished).toBe(true);
+  });
 });

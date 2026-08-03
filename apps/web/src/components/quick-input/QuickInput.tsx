@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useAtom } from 'jotai'
-import { currentWorkspaceIdAtom } from '@/atoms'
+import { useAtom, useAtomValue } from 'jotai'
+import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { useGlobalAgentListeners } from '@/hooks/useGlobalAgentListeners'
 import { useWorkspaceBootstrap } from '@/hooks/useWorkspaceBootstrap'
@@ -17,6 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { DRAG_REGION, NO_DRAG_REGION } from '@/components/app-shell/app-region'
 import { WindowButtons } from '@/components/app-shell/WindowButtons'
 import type { DesktopContextTarget } from '@lume/shared'
+import { QuickInputTodoCapture } from './QuickInputTodoCapture'
 
 /**
  * 快速输入窗口主体：管理 threadId 与 workspace，装配全局监听器，
@@ -26,6 +27,9 @@ export function QuickInput() {
   useGlobalAgentListeners()
   const workspacesReady = useWorkspaceBootstrap()
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
+  const workspaces = useAtomValue(agentWorkspacesAtom)
+  const [mode, setMode] = useState<'chat' | 'todo'>('chat')
+  const [todoPrefill, setTodoPrefill] = useState('')
   const [threadId, setThreadId] = useState<string | null>(null)
   const [messageMetadata, setMessageMetadata] = useState<Record<string, unknown> | undefined>()
   const [desktopContextTarget, setDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
@@ -90,6 +94,7 @@ export function QuickInput() {
         )}
         <div className="flex-1" />
         <div style={NO_DRAG_REGION}>
+          <Button variant="ghost" onClick={() => setMode((value) => value === 'chat' ? 'todo' : 'chat')} className="px-2 py-1 text-[12px]">{mode === 'todo' ? '聊天' : '待办'}</Button>
           <Button variant="ghost" onClick={handleNewThread} className="flex items-center gap-1 px-2 py-1 text-[12px] text-foreground/60 hover:bg-foreground/[0.06]">
             <Plus size={13} />
             新建对话
@@ -99,9 +104,20 @@ export function QuickInput() {
           <WindowButtons showMaximize={false} />
         </div>
       </header>
-      <main className="flex-1 min-h-0 flex min-w-0">
+      <main className="flex-1 min-h-0 flex min-w-0" onInputCapture={(event) => {
+        if (mode !== 'chat') return
+        const target = event.target as HTMLElement & { value?: unknown }
+        const value = typeof target.value === 'string' ? target.value : target.textContent ?? ''
+        const match = value.match(/^\s*\/todo(?:\s+([\s\S]*))?$/u)
+        if (match) {
+          setTodoPrefill(match[1]?.trim() ?? '')
+          setMode('todo')
+        }
+      }}>
         {!workspacesReady ? (
           <div className="h-full grid flex-1 place-items-center text-[12px] text-muted-foreground">正在加载项目…</div>
+        ) : mode === 'todo' ? (
+          <QuickInputTodoCapture workspaces={workspaces} workspaceId={currentWorkspaceId} initialTitle={todoPrefill} onSaved={() => undefined} />
         ) : threadId ? (
           <AgentView
             threadId={threadId}

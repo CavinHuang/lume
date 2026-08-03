@@ -23,13 +23,18 @@ import { DEFAULT_RETRY_CONFIG, type RetryConfig, withRetry } from '../utils/retr
 // --------------------------------------------------------------------------
 
 type ResponsesInputItem =
-  | { role: 'developer' | 'user' | 'assistant'; content: ResponsesInputContent[]; type: 'message' }
+  | { role: 'developer' | 'user'; content: ResponsesInputContent[]; type: 'message' }
+  | { role: 'assistant'; content: ResponsesAssistantContent[]; type: 'message' }
   | { type: 'function_call'; id?: string; call_id: string; name: string; arguments: string }
   | { type: 'function_call_output'; call_id: string; output: string }
 
 type ResponsesInputContent =
   | { type: 'input_text'; text: string }
   | { type: 'input_image'; image_url: string }
+
+type ResponsesAssistantContent =
+  | { type: 'output_text'; text: string }
+  | { type: 'refusal'; refusal: string }
 
 const TOOL_RESULT_IMAGE_INSTRUCTION =
   'The following image was returned by a tool. Inspect its pixels directly and use it as visual evidence for the current user request.'
@@ -49,8 +54,11 @@ interface ResponsesToolNames {
 interface ResponsesApiResponse {
   id: string
   object: 'response'
-  status: 'completed' | 'failed' | 'incomplete' | 'in_progress'
+  status: 'completed' | 'failed' | 'incomplete' | 'in_progress' | 'cancelled' | 'queued'
   output: ResponsesOutputItem[]
+  incomplete_details?: {
+    reason?: string
+  } | null
   usage?: {
     input_tokens: number
     output_tokens: number
@@ -60,7 +68,10 @@ interface ResponsesApiResponse {
       cache_write_tokens?: number
     }
   }
-  error?: { message: string }
+  error?: {
+    code?: string
+    message: string
+  } | null
 }
 
 type ResponsesOutputItem =
@@ -77,17 +88,28 @@ type ResponsesOutputItem =
       arguments: string
       status: string
     }
+  | {
+      type: 'reasoning'
+      id: string
+      summary: Array<{ type: 'summary_text'; text: string }>
+      encrypted_content?: string | null
+    }
 
 interface ResponsesStreamEvent {
   type: string
   delta?: string
+  arguments?: string
   output_index?: number
   content_index?: number
+  code?: string
+  message?: string
+  param?: string | null
   item?: {
     type: string
     id?: string
     call_id?: string
     name?: string
+    arguments?: string
     status?: string
   }
   response?: ResponsesApiResponse
@@ -172,14 +194,11 @@ export class OpenAIResponsesProvider implements LLMProvider {
       max_output_tokens: params.maxTokens,
     }
     this.applyPromptCachePolicy(body, params)
+    this.applyOutputOptions(body, params)
 
-    if (params.effort) {
-      body.reasoning = { effort: params.effort }
-    }
-
-    const response = await this.fetchResponse(body)
+    const response = await this.fetchResponse(body, params.abortSignal)
     const data = (await response.json()) as ResponsesApiResponse
-    return this.convertResponse(data, toolNames)
+    return this.convertResponse(data, toolNames, params.thinking?.type === 'enabled')
   }
 
   async *createMessageStream(
@@ -195,12 +214,9 @@ export class OpenAIResponsesProvider implements LLMProvider {
       max_output_tokens: params.maxTokens,
     }
     this.applyPromptCachePolicy(body, params)
+    this.applyOutputOptions(body, params)
 
-    if (params.effort) {
-      body.reasoning = { effort: params.effort }
-    }
-
-    const response = await this.fetchResponse(body)
+    const response = await this.fetchResponse(body, params.abortSignal)
 
     if (!response.body) {
       throw new Error('OpenAI Responses API returned no response body for streaming request')
@@ -210,16 +226,26 @@ export class OpenAIResponsesProvider implements LLMProvider {
     let buffer = ''
     let finalResponse: ResponsesApiResponse | undefined
     const textParts: string[] = []
+    const reasoningParts: string[] = []
     const functionCalls = new Map<number, { id: string; call_id: string; name: string; arguments: string }>()
+    const includeReasoning = params.thinking?.type === 'enabled'
 
     const handleEvent = (event: ResponsesStreamEvent): CreateMessageStreamEvent[] => {
       const events: CreateMessageStreamEvent[] = []
 
       switch (event.type) {
-        case 'response.output_text.delta': {
+        case 'response.output_text.delta':
+        case 'response.refusal.delta': {
           if (event.delta) {
             textParts.push(event.delta)
             events.push({ type: 'text_delta', text: event.delta })
+          }
+          break
+        }
+        case 'response.reasoning_summary_text.delta': {
+          if (includeReasoning && event.delta) {
+            reasoningParts.push(event.delta)
+            events.push({ type: 'thinking_delta', thinking: event.delta })
           }
           break
         }
@@ -233,6 +259,13 @@ export class OpenAIResponsesProvider implements LLMProvider {
           }
           break
         }
+        case 'response.function_call_arguments.done': {
+          const existing = functionCalls.get(event.output_index ?? 0)
+          if (existing && typeof event.arguments === 'string') {
+            existing.arguments = event.arguments
+          }
+          break
+        }
         case 'response.output_item.added': {
           const item = event.item
           if (item && item.type === 'function_call') {
@@ -240,58 +273,85 @@ export class OpenAIResponsesProvider implements LLMProvider {
               id: item.id ?? '',
               call_id: item.call_id ?? '',
               name: toolNames.wireToOriginal.get(item.name ?? '') ?? item.name ?? '',
-              arguments: '',
+              arguments: item.arguments ?? '',
             })
           }
           break
         }
-        case 'response.completed': {
+        case 'response.output_item.done': {
+          const item = event.item
+          if (item && item.type === 'function_call') {
+            const outputIndex = event.output_index ?? functionCalls.size
+            const existing = functionCalls.get(outputIndex)
+            functionCalls.set(outputIndex, {
+              id: item.id ?? existing?.id ?? '',
+              call_id: item.call_id ?? existing?.call_id ?? '',
+              name: toolNames.wireToOriginal.get(item.name ?? '')
+                ?? item.name
+                ?? existing?.name
+                ?? '',
+              arguments: item.arguments ?? existing?.arguments ?? '',
+            })
+          }
+          break
+        }
+        case 'response.completed':
+        case 'response.incomplete': {
           if (event.response) {
             finalResponse = event.response
           }
           break
+        }
+        case 'response.failed':
+        case 'response.cancelled': {
+          throw createResponsesApiError(event.response, event.type)
+        }
+        case 'error': {
+          throw new Error(formatResponsesError(event.message, event.code, event.param))
         }
       }
 
       return events
     }
 
+    const processFrame = (frame: string): CreateMessageStreamEvent[] => {
+      const events: CreateMessageStreamEvent[] = []
+      for (const line of frame.split(/\r?\n/)) {
+        const trimmed = line.trim()
+        if (!trimmed.startsWith('data:')) continue
+        const data = trimmed.slice(5).trim()
+        if (!data || data === '[DONE]') continue
+        let parsed: ResponsesStreamEvent
+        try {
+          parsed = JSON.parse(data) as ResponsesStreamEvent
+        } catch {
+          continue
+        }
+        events.push(...handleEvent(parsed))
+      }
+      return events
+    }
+
     const processBuffer = (flush = false): CreateMessageStreamEvent[] => {
       const events: CreateMessageStreamEvent[] = []
       while (true) {
-        const separatorIndex = buffer.indexOf('\n\n')
+        const lfIndex = buffer.indexOf('\n\n')
+        const crlfIndex = buffer.indexOf('\r\n\r\n')
+        const separatorIndex = lfIndex === -1
+          ? crlfIndex
+          : crlfIndex === -1
+            ? lfIndex
+            : Math.min(lfIndex, crlfIndex)
         if (separatorIndex === -1) break
 
-        const frame = buffer.slice(0, separatorIndex)
-        buffer = buffer.slice(separatorIndex + 2)
-
-        for (const line of frame.split('\n')) {
-          const trimmed = line.trim()
-          if (!trimmed.startsWith('data:')) continue
-          const data = trimmed.slice(5).trim()
-          if (!data) continue
-          try {
-            const parsed = JSON.parse(data) as ResponsesStreamEvent
-            events.push(...handleEvent(parsed))
-          } catch {
-            // skip malformed JSON
-          }
-        }
+        const separatorLength = separatorIndex === crlfIndex ? 4 : 2
+        events.push(...processFrame(buffer.slice(0, separatorIndex)))
+        buffer = buffer.slice(separatorIndex + separatorLength)
       }
 
       if (flush && buffer.trim().length > 0) {
-        for (const line of buffer.split('\n')) {
-          const trimmed = line.trim()
-          if (!trimmed.startsWith('data:')) continue
-          const data = trimmed.slice(5).trim()
-          if (!data) continue
-          try {
-            const parsed = JSON.parse(data) as ResponsesStreamEvent
-            events.push(...handleEvent(parsed))
-          } catch {
-            // skip
-          }
-        }
+        events.push(...processFrame(buffer))
+        buffer = ''
       }
 
       return events
@@ -313,8 +373,31 @@ export class OpenAIResponsesProvider implements LLMProvider {
       yield event
     }
 
+    if (finalResponse) {
+      assertResponsesTerminalState(finalResponse)
+      if (textParts.length === 0) {
+        textParts.push(...responseTextParts(finalResponse))
+      }
+      if (includeReasoning && reasoningParts.length === 0) {
+        reasoningParts.push(...responseReasoningParts(finalResponse))
+      }
+      for (const [outputIndex, item] of finalResponse.output.entries()) {
+        if (item.type !== 'function_call' || functionCalls.has(outputIndex)) continue
+        functionCalls.set(outputIndex, {
+          id: item.id,
+          call_id: item.call_id,
+          name: toolNames.wireToOriginal.get(item.name) ?? item.name,
+          arguments: item.arguments,
+        })
+      }
+    }
+
     // Build final response
     const content: NormalizedResponseBlock[] = []
+    const reasoning = reasoningParts.join('')
+    if (reasoning) {
+      content.push({ type: 'thinking', thinking: reasoning })
+    }
     const text = textParts.join('')
     if (text) {
       content.push({ type: 'text', text })
@@ -341,9 +424,11 @@ export class OpenAIResponsesProvider implements LLMProvider {
     }
 
     const status = finalResponse?.status
-    const stopReason = status === 'incomplete' ? 'max_tokens'
-      : functionCalls.size > 0 ? 'tool_use'
-      : 'end_turn'
+    const stopReason = mapResponsesStopReason(
+      status,
+      finalResponse?.incomplete_details?.reason,
+      functionCalls.size > 0,
+    )
 
     const usage = normalizeResponsesUsage(finalResponse?.usage)
     return {
@@ -485,7 +570,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       items.push({
         role: 'assistant',
         type: 'message',
-        content: [{ type: 'input_text', text: msg.content }],
+        content: [{ type: 'output_text', text: msg.content }],
       })
       return
     }
@@ -513,7 +598,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
       items.push({
         role: 'assistant',
         type: 'message',
-        content: [{ type: 'input_text', text: textParts.join('\n') }],
+        content: [{ type: 'output_text', text: textParts.join('\n') }],
       })
     }
     items.push(...functionCallItems)
@@ -532,22 +617,21 @@ export class OpenAIResponsesProvider implements LLMProvider {
   // Response conversion
   // --------------------------------------------------------------------------
 
-  private convertResponse(data: ResponsesApiResponse, toolNames: ResponsesToolNames): CreateMessageResponse {
+  private convertResponse(
+    data: ResponsesApiResponse,
+    toolNames: ResponsesToolNames,
+    includeReasoning = false,
+  ): CreateMessageResponse {
+    assertResponsesTerminalState(data)
     const content: NormalizedResponseBlock[] = []
-
-    if (data.error) {
-      return {
-        content: [{ type: 'text', text: `Error: ${data.error.message}` }],
-        stopReason: 'end_turn',
-        usage: { input_tokens: 0, output_tokens: 0 },
-      }
-    }
 
     for (const item of data.output ?? []) {
       if (item.type === 'message' && item.role === 'assistant') {
         for (const c of item.content) {
           if (c.type === 'output_text' && c.text) {
             content.push({ type: 'text', text: c.text })
+          } else if (c.type === 'refusal' && c.refusal) {
+            content.push({ type: 'text', text: c.refusal })
           }
         }
       } else if (item.type === 'function_call') {
@@ -564,6 +648,14 @@ export class OpenAIResponsesProvider implements LLMProvider {
           name: toolNames.wireToOriginal.get(item.name) ?? item.name,
           input,
         })
+      } else if (includeReasoning && item.type === 'reasoning') {
+        const thinking = item.summary
+          .filter((summary) => summary.type === 'summary_text')
+          .map((summary) => summary.text)
+          .join('\n')
+        if (thinking) {
+          content.push({ type: 'thinking', thinking })
+        }
       }
     }
 
@@ -572,9 +664,11 @@ export class OpenAIResponsesProvider implements LLMProvider {
     }
 
     const hasToolCalls = data.output?.some((item) => item.type === 'function_call') ?? false
-    const stopReason = data.status === 'incomplete' ? 'max_tokens'
-      : hasToolCalls ? 'tool_use'
-      : 'end_turn'
+    const stopReason = mapResponsesStopReason(
+      data.status,
+      data.incomplete_details?.reason,
+      hasToolCalls,
+    )
 
     return {
       content,
@@ -597,7 +691,31 @@ export class OpenAIResponsesProvider implements LLMProvider {
     }
   }
 
-  private async fetchResponse(body: Record<string, unknown>): Promise<Response> {
+  private applyOutputOptions(body: Record<string, unknown>, params: CreateMessageParams): void {
+    if (params.effort || params.thinking?.type === 'enabled') {
+      body.reasoning = {
+        ...(params.effort ? { effort: params.effort } : {}),
+        ...(params.thinking?.type === 'enabled' ? { summary: 'auto' } : {}),
+      }
+    }
+
+    const outputFormat = params.outputFormat
+      ?? (params.jsonSchema
+        ? { type: 'json_schema' as const, schema: params.jsonSchema }
+        : undefined)
+    if (outputFormat?.type === 'json_schema') {
+      body.text = {
+        format: {
+          type: 'json_schema',
+          name: 'structured_output',
+          strict: true,
+          schema: outputFormat.schema,
+        },
+      }
+    }
+  }
+
+  private async fetchResponse(body: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
     return withRetry(async () => {
       const response = await fetch(`${this.baseURL}/responses`, {
         method: 'POST',
@@ -606,6 +724,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
       })
 
       if (!response.ok) {
@@ -618,8 +737,75 @@ export class OpenAIResponsesProvider implements LLMProvider {
       }
 
       return response
-    }, this.retryConfig)
+    }, this.retryConfig, signal)
   }
+}
+
+function responseTextParts(response: ResponsesApiResponse): string[] {
+  const parts: string[] = []
+  for (const item of response.output ?? []) {
+    if (item.type !== 'message') continue
+    for (const content of item.content) {
+      if (content.type === 'output_text' && content.text) {
+        parts.push(content.text)
+      } else if (content.type === 'refusal' && content.refusal) {
+        parts.push(content.refusal)
+      }
+    }
+  }
+  return parts
+}
+
+function responseReasoningParts(response: ResponsesApiResponse): string[] {
+  return (response.output ?? [])
+    .filter((item): item is Extract<ResponsesOutputItem, { type: 'reasoning' }> => item.type === 'reasoning')
+    .flatMap((item) => item.summary)
+    .filter((summary) => summary.type === 'summary_text' && summary.text)
+    .map((summary) => summary.text)
+}
+
+function assertResponsesTerminalState(response: ResponsesApiResponse): void {
+  if (response.status === 'failed' || response.error) {
+    throw createResponsesApiError(response, 'response.failed')
+  }
+  if (response.status === 'cancelled') {
+    throw createResponsesApiError(response, 'response.cancelled')
+  }
+  if (response.status === 'queued' || response.status === 'in_progress') {
+    throw new Error(`OpenAI Responses API returned non-terminal status: ${response.status}`)
+  }
+}
+
+function createResponsesApiError(
+  response: ResponsesApiResponse | undefined,
+  eventType: string,
+): Error {
+  if (response?.error) {
+    return new Error(formatResponsesError(response.error.message, response.error.code))
+  }
+  return new Error(`OpenAI Responses API ${eventType.replace('response.', '')}`)
+}
+
+function formatResponsesError(message?: string, code?: string, param?: string | null): string {
+  const details = [
+    code ? `[${code}]` : '',
+    message || 'Unknown streaming error',
+    param ? `(param: ${param})` : '',
+  ].filter(Boolean).join(' ')
+  return `OpenAI Responses API error: ${details}`
+}
+
+function mapResponsesStopReason(
+  status: ResponsesApiResponse['status'] | undefined,
+  incompleteReason: string | undefined,
+  hasToolCalls: boolean,
+): CreateMessageResponse['stopReason'] {
+  if (status === 'incomplete') {
+    return incompleteReason === 'max_output_tokens'
+      ? 'max_tokens'
+      : incompleteReason || 'incomplete'
+  }
+  return hasToolCalls ? 'tool_use' : 'end_turn'
 }
 
 function normalizeResponsesUsage(

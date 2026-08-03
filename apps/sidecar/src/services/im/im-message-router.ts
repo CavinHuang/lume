@@ -31,6 +31,7 @@ import {
 } from "./im-thread-binding-store";
 import { sendBoundImTextMessage, type SendBoundImTextMessageInput } from "./im-send-service";
 import { resolveMediaContents } from "./im-media-resolver";
+import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
 
 const log = createLogger("im-router");
 
@@ -581,16 +582,33 @@ export async function routeInboundImMessage(
     : [];
 
   const mediaAttachments = buildImMediaAttachments(resolvedContents, message.messageId);
+  const submissionId = randomUUID();
+  registerPlanningExecutionContext({
+    surface: "im",
+    threadId: binding.threadId,
+    clientSubmissionId: submissionId,
+    ...(message.workspaceId ? { workspaceId: message.workspaceId } : {})
+  });
+  const imScope = message.workspaceId ? "current" : "unassigned";
+  issuePlanningScopeGrant({
+    clientSubmissionId: submissionId,
+    surface: "im",
+    scope: imScope,
+    ...(message.workspaceId ? { workspaceId: message.workspaceId } : {}),
+    allowedOperations: ["list", "get"],
+    mode: "turn"
+  });
 
   await sendMessage({
     threadId: binding.threadId,
     userMessage: userMessageForMessage(message),
     messageAttachments: mediaAttachments.length > 0 ? mediaAttachments : undefined,
     workspaceId: message.workspaceId,
+    trustedPlanningClientSubmissionId: submissionId,
     chatType: message.peerKind === "group" ? "group" : "direct",
     threadType: message.peerKind === "group" ? "group" : "main",
     traceContext: {
-      submissionId: randomUUID(),
+      submissionId,
       traceId: randomUUID(),
       origin: `im.${message.provider}`
     },

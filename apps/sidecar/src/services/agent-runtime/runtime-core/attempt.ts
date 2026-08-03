@@ -15,6 +15,7 @@ import {
   setToolPermissionApprovalSession,
   waitForToolPermissionDecision
 } from "../interruption/tool-permission-session";
+import { runtimePermissionSessionStore } from "../permissions/permission-session";
 import {
   setAskUserQuestionApprovalSession,
   waitForAskUserQuestionAnswers
@@ -177,6 +178,9 @@ export function createCanUseToolHandler(
 
   return async (tool, input, metadata) => {
     const toolName = tool.name || "unknown_tool";
+    const bypassPermissions = params.input.permissionMode === "bypassPermissions"
+      || runtimePermissionSessionStore.isBypassed(params.runtime.sessionId);
+    const sourcePluginId = (tool as { runtimeMetadata?: { pluginId?: string } }).runtimeMetadata?.pluginId;
 
     // Plugin permission interceptor: run before global PermissionEngine
     for (const interceptor of pluginInterceptors) {
@@ -186,6 +190,7 @@ export function createCanUseToolHandler(
         context: {
           cwd: prepared.agentCwd,
           threadId: params.runtime.sessionId,
+          ...(sourcePluginId ? { sourcePluginId } : {}),
         },
       } as InterceptorInput);
       if (pluginResult) {
@@ -313,7 +318,9 @@ export function createCanUseToolHandler(
           message: gateResult.reason ?? `Plugin tool ${toolName} blocked by sensitive-capability gate.`,
         };
       }
-      if (gateResult.decision === "ask" && gateResult.pluginId && gateResult.capabilityKey) {
+      if (gateResult.decision === "ask" && bypassPermissions) {
+        log.debug("Plugin sensitive approval bypassed by permission mode", { toolName });
+      } else if (gateResult.decision === "ask" && gateResult.pluginId && gateResult.capabilityKey) {
         // Phase 4A: interactive plugin sensitive approval via the existing tool-permission pipeline.
         const pluginRequest: AgentToolPermissionRequest = {
           threadId: approvalThreadId,
@@ -448,6 +455,7 @@ export function createCanUseToolHandler(
       context: {
         threadId: params.runtime.sessionId,
         cwd: prepared.agentCwd,
+        additionalDirectories: privateWriteRoots,
         workspaceSlug: prepared.workspaceSlug
       }
     });
@@ -849,8 +857,6 @@ export async function runRuntimeCoreAttempt(
 // ─── Agent Runtime runner (migrated from runner/run.ts) ───
 
 const activePiSessions = new Map<string, { abort: () => Promise<void> }>();
-const DEFAULT_MAX_ATTEMPTS = 1;
-const RETRY_DELAY_MS = 700;
 
 export function resolveRuntimeModelAttemptParams(params: AgentRuntimeRunParams): AgentRuntimeRunParams[] {
   const workspaceSlug = params.runtime.workspaceId
@@ -880,58 +886,18 @@ export async function runAgentRuntime(
   params: AgentRuntimeRunParams,
   emit: AgentRuntimeEmitter
 ): Promise<AgentRuntimeRunResult> {
-  const modelAttempts = resolveRuntimeModelAttemptParams(params);
-  const maxAttempts = Math.max(resolveMaxAttempts(), modelAttempts.length);
-  let attempt = 0;
-  let lastResult: AgentRuntimeRunResult = { status: "errored", errorMessage: "Agent Runtime 未执行" };
-
-  while (attempt < maxAttempts) {
-    attempt += 1;
-    const attemptParams = modelAttempts[Math.min(attempt - 1, modelAttempts.length - 1)] ?? params;
-    log.info("[Agent 编排] 开始执行 attempt", {
-      threadId: attemptParams.runtime.sessionId.slice(0, 8),
-      attempt,
-      maxAttempts,
-      modelRef: attemptParams.runtime.modelRef
-    });
-    const result = await runRuntimeCoreAttempt(attemptParams, emit, {
-      registerAbort: (sessionId, abort) => {
-        activePiSessions.set(sessionId, { abort });
-      },
-      unregisterAbort: (sessionId) => {
-        activePiSessions.delete(sessionId);
-      }
-    });
-    lastResult = result;
-    log.info("[Agent 编排] attempt 结束", {
-      threadId: attemptParams.runtime.sessionId.slice(0, 8),
-      attempt,
-      status: result.status,
-      errorMessage: result.status === "errored" ? result.errorMessage : undefined
-    });
-    if (result.status !== "errored") {
-      return result;
+  const result = await runRuntimeCoreAttempt(params, emit, {
+    registerAbort: (sessionId, abort) => {
+      activePiSessions.set(sessionId, { abort });
+    },
+    unregisterAbort: (sessionId) => {
+      activePiSessions.delete(sessionId);
     }
-    const retryable = isRuntimeModelFallbackRetryable(result.errorMessage);
-    if (!retryable || attempt >= maxAttempts) {
-      const message = result.errorMessage ?? "未知错误";
-      emit.onError(`Agent Runtime 执行失败: ${message}`);
-      return result;
-    }
-
-    log.warn("Agent Runtime attempt 失败，准备重试", {
-      threadId: attemptParams.runtime.sessionId.slice(0, 8),
-      attempt,
-      maxAttempts,
-      modelRef: attemptParams.runtime.modelRef,
-      errorMessage: result.errorMessage
-    });
-    await sleep(RETRY_DELAY_MS);
+  });
+  if (result.status === "errored") {
+    emit.onError(`Agent Runtime 执行失败: ${result.errorMessage ?? "未知错误"}`);
   }
-
-  const fallbackMessage = lastResult.errorMessage ?? "未知错误";
-  emit.onError(`Agent Runtime 执行失败: ${fallbackMessage}`);
-  return lastResult;
+  return result;
 }
 
 function uniqueModelRefs(values: Array<string | undefined>): string[] {
@@ -942,15 +908,6 @@ function uniqueModelRefs(values: Array<string | undefined>): string[] {
     result.push(trimmed);
   }
   return result;
-}
-
-function resolveMaxAttempts(): number {
-  const raw = process.env.LUME_AGENT_RUNTIME_MAX_ATTEMPTS?.trim();
-  const parsed = raw ? Number(raw) : DEFAULT_MAX_ATTEMPTS;
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_MAX_ATTEMPTS;
-  }
-  return Math.max(1, Math.min(3, Math.floor(parsed)));
 }
 
 export function isRuntimeModelFallbackRetryable(errorMessage?: string): boolean {
@@ -976,15 +933,6 @@ export function isRuntimeModelFallbackRetryable(errorMessage?: string): boolean 
     || value.includes("connection refused")
     || value.includes("socket hang up")
   );
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
-      timer.unref();
-    }
-  });
 }
 
 export async function stopAgentRuntime(threadId: string): Promise<boolean> {

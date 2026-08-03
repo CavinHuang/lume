@@ -23,8 +23,10 @@ export interface LumeGuardrailContext {
   threadId: string;
   runId?: string;
   cwd?: string;
+  additionalDirectories?: string[];
   workspaceSlug?: string;
   toolName?: string;
+  permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 }
 
 export interface LumeGuardrail<TInput = unknown> {

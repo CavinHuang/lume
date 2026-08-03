@@ -1,4 +1,5 @@
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -295,7 +296,7 @@ export function PluginDetailPage({
                 {readme ? (
                   <section className="space-y-3">
                     <div className="text-[12px] text-[var(--text-3)]">{formatReadmeMeta(readme)}</div>
-                    <XMarkdown className="x-markdown text-[15px] leading-8 text-[var(--text-1)]">
+                    <XMarkdown components={DIFF_AWARE_MARKDOWN_COMPONENTS} className="x-markdown text-[15px] leading-8 text-[var(--text-1)]">
                       {readme.markdown}
                     </XMarkdown>
                   </section>

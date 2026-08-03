@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { fileRefInputSchema, guardedFileRefInputSchema } from './schemas'
+import { fileRefInputSchema, fileSelectionEditInputSchema, guardedFileRefInputSchema } from './schemas'
 
 const projectRef = { source: 'project' as const, scopeId: 'demo', relativePath: 'src/app.ts' }
 const projectGuard = {
@@ -22,5 +22,23 @@ describe('message file reference schemas', () => {
     expect(fileRefInputSchema.safeParse({ ref: projectRef }).success).toBe(true)
     expect(guardedFileRefInputSchema.safeParse({ ref: projectRef }).success).toBe(false)
     expect(fileRefInputSchema.safeParse({ guardedRef }).success).toBe(false)
+  })
+
+  test('selection edits reject stale or oversized ranges at the RPC boundary', () => {
+    const valid = {
+      threadId: 'thread-1',
+      ref: projectRef,
+      content: 'hello world',
+      startOffset: 0,
+      endOffset: 5,
+      instruction: 'Uppercase it',
+    }
+    expect(fileSelectionEditInputSchema.safeParse(valid).success).toBe(true)
+    expect(fileSelectionEditInputSchema.safeParse({ ...valid, endOffset: 20 }).success).toBe(false)
+    expect(fileSelectionEditInputSchema.safeParse({
+      ...valid,
+      content: 'x'.repeat(32 * 1024 + 1),
+      endOffset: 32 * 1024 + 1,
+    }).success).toBe(false)
   })
 })

@@ -63,3 +63,15 @@ test('rejects remote app server URLs', () => {
     platform: 'linux',
   }), /loopback WebSocket/)
 })
+
+test('rejects invalid Chrome Native Messaging host names', () => {
+  for (const hostName of ['com.lume-browser', '.', '..', '.com.lume', 'com..lume', 'com.lume.']) {
+    assert.throws(() => createChromeNativeHostInstallPlan({
+      installer: { ...installer, hostName },
+      version: '0.4.0',
+      configRoot: '/tmp/lume',
+      homeDir: '/tmp/home',
+      platform: 'linux',
+    }), /invalid native host name/)
+  }
+})

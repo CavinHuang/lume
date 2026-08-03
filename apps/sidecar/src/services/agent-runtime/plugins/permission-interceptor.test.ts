@@ -14,7 +14,7 @@ describe("createPluginPermissionInterceptor", () => {
     const result = await interceptor({
       toolName: "Bash",
       input: { command: "rm -rf /" },
-      context: { cwd: "/project", threadId: "t1" },
+      context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
 
     expect(result!.behavior).toBe("deny");
@@ -33,7 +33,7 @@ describe("createPluginPermissionInterceptor", () => {
     const result = await interceptor({
       toolName: "FileRead",
       input: { file_path: "/plugins/demo/data/notes.md" },
-      context: { cwd: "/project", threadId: "t1" },
+      context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
 
     expect(result!.behavior).toBe("allow");
@@ -51,7 +51,7 @@ describe("createPluginPermissionInterceptor", () => {
     const result = await interceptor({
       toolName: "WebFetch",
       input: { url: "https://example.com" },
-      context: { cwd: "/project", threadId: "t1" },
+      context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
 
     // Not in any list → pass through to global permission engine
@@ -70,7 +70,7 @@ describe("createPluginPermissionInterceptor", () => {
     const result = await interceptor({
       toolName: "FileRead",
       input: { file_path: "/plugins/demo/secret.json" },
-      context: { cwd: "/project", threadId: "t1" },
+      context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
 
     expect(result!.behavior).toBe("ask");
@@ -88,7 +88,7 @@ describe("createPluginPermissionInterceptor", () => {
     const result = await interceptor({
       toolName: "FileRead",
       input: { file_path: "/plugins/demo/data/config.json" },
-      context: { cwd: "/project", threadId: "t1" },
+      context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
 
     expect(result!.behavior).toBe("allow");
@@ -106,7 +106,7 @@ describe("createPluginPermissionInterceptor", () => {
     const result = await interceptor({
       toolName: "WebFetch",
       input: { url: "https://evil.com" },
-      context: { cwd: "/project", threadId: "t1" },
+      context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
     });
 
     expect(result!.behavior).toBe("ask");
@@ -122,6 +122,22 @@ describe("createPluginPermissionInterceptor", () => {
     const result = await interceptor({
       toolName: "FileRead",
       input: { file_path: "/any/path" },
+      context: { cwd: "/project", threadId: "t1", sourcePluginId: "demo" },
+    });
+
+    expect(result).toBeUndefined();
+  });
+
+  test("passes through built-in tools when a plugin denies the same tool", async () => {
+    const interceptor = createPluginPermissionInterceptor({
+      pluginName: "computer-use",
+      pluginRoot: "/plugins/computer-use",
+      permissions: { tools: { deny: ["Bash"] } },
+    });
+
+    const result = await interceptor({
+      toolName: "Bash",
+      input: { command: "echo ok" },
       context: { cwd: "/project", threadId: "t1" },
     });
 

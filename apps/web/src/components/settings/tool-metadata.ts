@@ -191,14 +191,6 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'control',
     riskLevel: 'low',
   },
-  task_output: {
-    name: 'task_output',
-    label: 'TaskOutput',
-    description: '获取任务输出',
-    category: 'read',
-    riskLevel: 'low',
-  },
-
   // === Worktree ===
   enter_worktree: {
     name: 'enter_worktree',

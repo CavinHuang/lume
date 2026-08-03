@@ -13,7 +13,7 @@ export function generatePromptSuggestion(
     return 'Review the changes or ask for tests on the updated files.'
   }
 
-  if (toolsUsed.some((tool) => ['Bash', 'TaskOutput', 'Agent'].includes(tool))) {
+  if (toolsUsed.some((tool) => ['Bash', 'ProcessOutput', 'TaskOutput', 'Agent'].includes(tool))) {
     return 'Ask for verification details, logs, or a follow-up change.'
   }
 
@@ -22,4 +22,3 @@ export function generatePromptSuggestion(
 
   return `Ask a focused follow-up about: ${firstSentence.slice(0, 120)}`
 }
-

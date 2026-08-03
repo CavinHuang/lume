@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import { Archive, ChevronRight, FileText, Folder, FolderOpen, Import, Inbox, LoaderCircle, MessageSquare, MoreHorizontal, PanelLeftOpen, PanelRightOpen, RefreshCw, Save, Search, ShieldAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { WikiPageRecord, WikiPageType, WikiPrivacyImpactPreview, WikiProposalSummaryV1, WikiReadResult, WikiSnapshot, WikiSourceRef } from '@lume/shared'
@@ -228,7 +229,7 @@ export function WikiView() {
         <form className="flex gap-2 p-3" onSubmit={(event) => { event.preventDefault(); search() }}><div className="relative min-w-0 flex-1"><Input value={query} onChange={(event) => { searchRequestRef.current += 1; setQuery(event.target.value); setResultIds(null) }} placeholder="搜索知识" className="pr-8" aria-label="搜索知识" />{query && <Button type="button" variant="ghost" size="icon-xs" className="absolute right-1 top-1/2 -translate-y-1/2" onClick={() => { searchRequestRef.current += 1; setQuery(''); setResultIds(null) }} title="清除搜索" aria-label="清除搜索"><X size={13} /></Button>}</div><Button type="submit" variant="outline" size="icon" disabled={busy || !query.trim()} title="搜索" aria-label="搜索">{searching ? <LoaderCircle className="animate-spin" size={15} /> : <Search size={15} />}</Button></form>
         {(searching || resultIds !== null) && <div className="px-3 pb-1 text-[11px] text-[var(--text-3)]">{searching ? '搜索中…' : `找到 ${visiblePages.length} 条知识`}</div>}
         <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
-          {visiblePages.map((page) => <Button key={page.id} variant="ghost" onClick={() => selectPage(page.id)} className={cn('mb-1 h-auto w-full justify-start gap-2 px-2 py-2 text-left', selectedId === page.id && 'bg-[var(--surface-2)]')}><FileText size={14} /><span className="min-w-0"><span className="block truncate text-sm">{page.title}</span><span className="block text-[11px] text-[var(--text-3)]">{pageTypeLabel(page.type)}</span></span></Button>)}
+          {visiblePages.map((page) => <Button key={page.id} variant="ghost" onClick={() => selectPage(page.id)} className={cn('mb-1 h-auto w-full justify-start gap-2 px-2 py-2 text-left', selectedId === page.id && 'bg-muted')}><FileText size={14} /><span className="min-w-0"><span className="block truncate text-sm">{page.title}</span><span className="block text-[11px] text-[var(--text-3)]">{pageTypeLabel(page.type)}</span></span></Button>)}
           {loading ? <div className="flex items-center justify-center gap-2 p-6 text-sm text-[var(--text-3)]"><LoaderCircle className="animate-spin" size={15} />正在打开 Wiki…</div> : !visiblePages.length && <div className="space-y-3 p-5 text-center"><div className="text-sm text-[var(--text-3)]">{resultIds ? '没有匹配的知识' : '这个归宿还没有内容'}</div>{!resultIds && <Button size="sm" variant="outline" onClick={openImport}><Import size={14} />导入第一份内容</Button>}</div>}
         </ScrollArea>
       </section>
@@ -271,7 +272,7 @@ export function WikiView() {
             <Input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="标签，用逗号分隔" />
             <div className="rounded-md border border-[var(--border)] p-3"><div className="mb-2 text-xs text-[var(--text-3)]">关联工作区</div><div className="flex flex-wrap gap-2">{workspaces.filter((workspace) => workspace.id !== primaryWorkspaceId).map((workspace) => <Button key={workspace.id} type="button" size="xs" variant={associatedWorkspaceIds.includes(workspace.id) ? 'secondary' : 'outline'} onClick={() => setAssociatedWorkspaceIds((items) => items.includes(workspace.id) ? items.filter((id) => id !== workspace.id) : [...items, workspace.id])}>{workspace.name}</Button>)}</div></div>
             <Textarea value={body} onChange={(event) => setBody(event.target.value)} className="min-h-[560px] font-mono text-sm" />
-          </div> : <XMarkdown className="wiki-page-markdown x-markdown text-[15px] leading-7 text-[var(--text-1)]" rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}>{selected.page.body}</XMarkdown>}</article></ScrollArea>
+          </div> : <XMarkdown components={DIFF_AWARE_MARKDOWN_COMPONENTS} className="wiki-page-markdown x-markdown text-[15px] leading-7 text-[var(--text-1)]" rootClassName={isDark ? 'x-markdown-dark' : 'x-markdown-light'}>{selected.page.body}</XMarkdown>}</article></ScrollArea>
           {inspectorOpen ? <aside className="w-[280px] shrink-0 border-l border-[var(--border)] p-4"><Button variant="ghost" size="sm" className="mb-3 w-full justify-between" onClick={() => setInspectorOpen(false)}>详情 <ChevronRight size={14} /></Button><Inspector page={selected.page} read={selected} snapshot={snapshot} disableMutations={busy || isDirty} onUndo={(batchId) => void act(async () => { await undoWikiBatch(batchId); await load() })} onReload={load} /></aside> : <Button variant="outline" size="icon-sm" className="absolute right-2 top-2 z-20 bg-[var(--surface-1)] shadow-sm" onClick={() => setInspectorOpen(true)} title="展开详情" aria-label="展开详情"><PanelRightOpen size={15} /></Button>}
         </div> : <div className="flex flex-1 items-center justify-center">{loading ? <div className="flex items-center gap-2 text-sm text-[var(--text-3)]"><LoaderCircle className="animate-spin" size={16} />正在加载知识库…</div> : <div className="space-y-3 text-center"><div className="text-sm text-[var(--text-3)]">导入一份内容，开始建立你的 Wiki</div><Button size="sm" onClick={openImport}><Import size={14} />导入内容</Button></div>}</div>}
       </main>
@@ -298,7 +299,7 @@ export function WikiView() {
 }
 
 function ScopeButton({ icon, label, count, active, onClick }: { icon: ReactNode; label: string; count: number; active: boolean; onClick: () => void }) {
-  return <Button variant="ghost" onClick={onClick} className={cn('mt-1 h-8 w-full justify-start gap-2 px-2 text-xs font-normal', active && 'bg-[var(--surface-2)] font-medium')}><span className="text-[var(--text-3)]">{icon}</span><span className="min-w-0 flex-1 truncate text-left">{label}</span><span className="tabular-nums text-[var(--text-3)]">{count}</span></Button>
+  return <Button variant="ghost" onClick={onClick} className={cn('mt-1 h-8 w-full justify-start gap-2 px-2 text-xs font-normal', active && 'bg-muted font-medium')}><span className="text-[var(--text-3)]">{icon}</span><span className="min-w-0 flex-1 truncate text-left">{label}</span><span className="tabular-nums text-[var(--text-3)]">{count}</span></Button>
 }
 function pageTypeLabel(type: WikiPageRecord['type']): string {
   return { source: '来源', topic: '主题', decision: '决策', synthesis: '综合' }[type]

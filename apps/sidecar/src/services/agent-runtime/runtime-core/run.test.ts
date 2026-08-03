@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AskUserQuestionTool } from "@lume/agent-sdk";
@@ -25,6 +25,7 @@ import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { getSubagentCoordinator, resetSubagentCoordinatorForTest } from "../../agent/subagents/subagent-coordinator";
 import { resetSubagentWorkStoreForTest } from "../../agent/subagents/subagent-work-store";
 import { createChannel } from "../../channel/channel-manager";
+import { installConnectionVaultKey } from "../../channel/connection-credential-store";
 import { updateLumeConfigSection } from "../../system/lume-config-service";
 import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
 import { evaluatePluginSensitiveGate } from "../plugins/sensitive-gate.js";
@@ -35,9 +36,22 @@ import {
   type WorkspaceMcpManager
 } from "../../mcp/workspace-mcp-manager";
 
+function availableTools(result: Awaited<ReturnType<typeof createRuntimeCoreSession>>): ToolDefinition[] {
+  const deferred = (result.agent as unknown as { deferredToolPool?: ToolDefinition[] }).deferredToolPool ?? [];
+  return [...result.tools, ...deferred];
+}
+
+function availableToolNames(result: Awaited<ReturnType<typeof createRuntimeCoreSession>>): string[] {
+  return availableTools(result).map((tool) => tool.name);
+}
+
 describe("runtime-core run", () => {
   const prevConfigDir = process.env.LUME_CONFIG_DIR;
   const prevAliceConfigDir = process.env.ALICE_CONFIG_DIR;
+
+  beforeEach(() => {
+    installConnectionVaultKey(Buffer.alloc(32, 23).toString("base64"));
+  });
 
   function createHookRuntimeSessionInput(
     overrides: Partial<CreateRuntimeCoreSessionInput> = {}
@@ -92,9 +106,11 @@ describe("runtime-core run", () => {
     expect(result.session.threadId).toBe(result.sessionManager.getSessionId());
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
-    expect(result.session.getActiveToolNames()).toContain("ls");
+    expect(result.session.getActiveToolNames()).toContain("Read");
+    expect(result.session.getActiveToolNames()).not.toContain("ls");
     expect(result.session.getActiveToolNames()).toContain("AskUserQuestion");
-    expect(result.session.getActiveToolNames()).toContain("TaskContractWrite");
+    expect(result.session.getActiveToolNames()).toContain("TaskList");
+    expect(result.session.getActiveToolNames()).toContain("TaskGet");
     expect(result.session.getActiveToolNames()).not.toContain("TaskReport");
     expect(result.session.getActiveToolNames()).not.toContain("Write");
     expect(result.session.getActiveToolNames()).not.toContain("Bash");
@@ -122,8 +138,8 @@ describe("runtime-core run", () => {
   test("新运行时只暴露持久化 Agent 任务工具，子会话不能继续派生", async () => {
     const parent = await createRuntimeCoreSession(createHookRuntimeSessionInput({ permissionMode: "default", runId: "parent-run" }));
     expect(parent.session.getActiveToolNames()).toContain("Agent");
-    expect(parent.session.getActiveToolNames()).toContain("FinishAgentTask");
-    expect(parent.session.getActiveToolNames()).toContain("RetireSubagent");
+    expect(availableToolNames(parent)).toContain("FinishAgentTask");
+    expect(availableToolNames(parent)).toContain("RetireSubagent");
     expect(parent.session.getActiveToolNames()).not.toContain("Delegate");
     expect(parent.session.getActiveToolNames()).not.toContain("WaitForDelegations");
     await parent.session.dispose();
@@ -146,6 +162,9 @@ describe("runtime-core run", () => {
     expect(taskReportDescriptor?.metadata.isConcurrencySafe).toBe(false);
     expect(child.session.getActiveToolNames()).not.toContain("Agent");
     expect(child.session.getActiveToolNames()).not.toContain("FinishAgentTask");
+    for (const taskTool of ["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskOutput", "ProcessOutput", "ProcessStop"]) {
+      expect(child.session.getActiveToolNames()).not.toContain(taskTool);
+    }
     expect(typeof (child.agent as any).baseOptions.completionGuard).toBe("function");
     await child.session.dispose();
   });
@@ -414,7 +433,7 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits"
     });
 
-    const toolNames = result.session.getActiveToolNames();
+    const toolNames = availableToolNames(result);
     expect(toolNames).toContain("Read");
     expect(toolNames).toContain("Write");
     expect(toolNames).toContain("Edit");
@@ -424,7 +443,15 @@ describe("runtime-core run", () => {
     expect(toolNames).toContain("WebSearch");
     expect(toolNames).toContain("WebFetch");
     expect(toolNames).not.toContain("TaskContractWrite");
-    expect(toolNames).toContain("TaskReport");
+    expect(toolNames).toContain("TaskCreate");
+    expect(toolNames).toContain("TaskUpdate");
+    expect(toolNames).toContain("TaskList");
+    expect(toolNames).toContain("TaskGet");
+    expect(toolNames).toContain("TaskStop");
+    expect(toolNames).toContain("ProcessOutput");
+    expect(toolNames).toContain("ProcessStop");
+    expect(toolNames).toContain("LSPApply");
+    expect(toolNames).not.toContain("TaskReport");
     expect(toolNames).not.toContain("read");
     expect(toolNames).not.toContain("write");
     expect(toolNames).not.toContain("edit");
@@ -433,6 +460,34 @@ describe("runtime-core run", () => {
     expect(toolNames).not.toContain("grep");
     expect(toolNames).not.toContain("web_search");
     expect(toolNames).not.toContain("web_fetch");
+
+    result.session.dispose();
+  });
+
+  test("Coding 路由仅暴露仓库基础工具，不混入 Web 和任务编排工具", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-coding-tools-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const result = await createRuntimeCoreSession({
+      lumeSessionId: "coding-tool-session",
+      cwd,
+      agentDir,
+      userMessage: "修复这个 TypeScript 错误",
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      messageMetadata: { preferredCapabilityRoute: "coding" }
+    });
+
+    const toolNames = availableToolNames(result);
+    for (const toolName of ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "NotebookEdit", "LSP", "LSPApply", "ProcessOutput", "ProcessStop"]) {
+      expect(toolNames).toContain(toolName);
+    }
+    for (const toolName of ["WebSearch", "WebFetch", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"]) {
+      expect(toolNames).not.toContain(toolName);
+    }
 
     result.session.dispose();
   });
@@ -467,7 +522,7 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits"
     });
 
-    const toolNames = result.session.getActiveToolNames();
+    const toolNames = availableToolNames(result);
     expect(toolNames).toContain("guanlan_search");
     expect(toolNames).toContain("guanlan_read");
     expect(toolNames).toContain("guanlan_hotnews");
@@ -527,7 +582,7 @@ describe("runtime-core run", () => {
         permissionMode: "acceptEdits"
       });
 
-      const toolNames = result.session.getActiveToolNames();
+      const toolNames = availableToolNames(result);
       expect(createRuntimeToolsCalls).toBe(1);
       expect(toolNames).toContain("mcp__github__search_issues");
       expect(toolNames).toContain("ListMcpResourcesTool");
@@ -571,7 +626,8 @@ describe("runtime-core run", () => {
 
       expect(createRuntimeToolsCalls).toBe(1);
       expect(result.session.getActiveToolNames()).toContain("Read");
-      expect(result.session.getActiveToolNames()).toContain("TaskReport");
+      expect(result.session.getActiveToolNames()).toContain("TaskCreate");
+      expect(result.session.getActiveToolNames()).not.toContain("TaskReport");
 
       result.session.dispose();
     } finally {
@@ -734,7 +790,7 @@ describe("runtime-core run", () => {
       permissionMode: "plan"
     });
 
-    expect(result.session.getActiveToolNames()).toContain("demo_echo");
+    expect(availableToolNames(result)).toContain("demo_echo");
     expect(getRuntimeToolDescriptor("plugin-session", "demo_echo")).toMatchObject({
       canonicalName: "demo_echo",
       source: "plugin",
@@ -818,9 +874,7 @@ describe("runtime-core run", () => {
     expect(first).toBe(second);
   });
 
-  test("plan mode TaskContractWrite writes markdown plans into the thread workspace", async () => {
-    const configDir = mkdtempSync(join(tmpdir(), "lume-runtime-core-plan-md-config-"));
-    process.env.LUME_CONFIG_DIR = configDir;
+  test("plan mode exposes read-only persistent Task tools without the legacy TaskContractWrite", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-plan-md-thread-"));
     const agentDir = join(cwd, ".runtime-core-test");
     mkdirSync(agentDir, { recursive: true });
@@ -836,21 +890,45 @@ describe("runtime-core run", () => {
       workspaceSlug: "plan-md-workspace"
     });
 
-    const tool = result.tools.find((item) => item.name === "TaskContractWrite");
-    expect(tool).toBeTruthy();
-    await tool!.call({
-      id: "plan-md-contract",
-      goal: "Plan with markdown",
-      summary: "Persist readable markdown",
-      status: "needs_approval",
-      planMarkdown: "# Plan with markdown",
-      steps: ["Inspect"]
-    }, {} as any);
-
-    expect(readFileSync(join(cwd, "plans", "plan-md-contract.md"), "utf-8")).toBe("# Plan with markdown");
+    expect(result.tools.find((item) => item.name === "TaskContractWrite")).toBeUndefined();
+    expect(result.tools.find((item) => item.name === "TaskList")).toBeTruthy();
+    expect(result.tools.find((item) => item.name === "TaskGet")).toBeTruthy();
 
     result.session.dispose();
-    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  test("只有明确隔离或并行请求时才暴露 Worktree 工具", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "lume-runtime-core-worktree-tools-"));
+    const agentDir = join(cwd, ".runtime-core-test");
+    mkdirSync(agentDir, { recursive: true });
+
+    const ordinary = await createRuntimeCoreSession({
+      lumeSessionId: "ordinary-worktree-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      userMessage: "修复一个小的类型错误"
+    });
+    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "EnterWorktree")).toBeUndefined();
+    expect(getRuntimeToolDescriptor("ordinary-worktree-session", "ExitWorktree")).toBeUndefined();
+    await ordinary.session.dispose();
+
+    const isolated = await createRuntimeCoreSession({
+      lumeSessionId: "isolated-worktree-session",
+      cwd,
+      agentDir,
+      provider: "anthropic",
+      resolvedModelId: "claude-sonnet-4-5",
+      apiKey: "test-key",
+      permissionMode: "acceptEdits",
+      userMessage: "请在隔离 worktree 中并行修改这个模块"
+    });
+    expect(getRuntimeToolDescriptor("isolated-worktree-session", "EnterWorktree")).toBeDefined();
+    expect(getRuntimeToolDescriptor("isolated-worktree-session", "ExitWorktree")).toBeDefined();
+    await isolated.session.dispose();
   });
 
   test("同一个 Lume session 应恢复既有 transcript", async () => {
@@ -1000,8 +1078,10 @@ describe("runtime-core run", () => {
     expect(result.runtimeContext).toContain('<todo_state source="lume_runtime">');
     expect(result.runtimeContext).toContain('"content":"D"');
     expect(result.userMessageForModel).toBe("继续");
-    const todoTool = result.tools.find((tool) => tool.name === "TodoWrite");
+    const todoTool = availableTools(result).find((tool) => tool.name === "TodoWrite");
     expect(todoTool).toBeTruthy();
+    const completionGuard = (result.agent as any).baseOptions.completionGuard as () => Promise<string | undefined>;
+    expect(await completionGuard()).toContain("正在进行：D");
     const update = await todoTool!.call({
       todos: [
         { content: "A", activeForm: "Doing A", status: "completed" },
@@ -1012,6 +1092,19 @@ describe("runtime-core run", () => {
       ]
     }, {} as any);
     expect(update.content).not.toContain("verification");
+    expect(await completionGuard()).toContain("正在进行：E");
+
+    const completed = await todoTool!.call({
+      todos: [
+        { content: "A", activeForm: "Doing A", status: "completed" },
+        { content: "B", activeForm: "Doing B", status: "completed" },
+        { content: "C", activeForm: "Doing C", status: "completed" },
+        { content: "D", activeForm: "Doing D", status: "completed" },
+        { content: "E", activeForm: "Doing E", status: "completed" }
+      ]
+    }, {} as any);
+    expect(completed.content).toBe("No active todos.");
+    expect(await completionGuard()).toBeUndefined();
     await result.session.dispose();
   });
 

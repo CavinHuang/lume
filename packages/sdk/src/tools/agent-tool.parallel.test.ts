@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { QueryEngine } from "../engine.js"
 import { AgentTool, clearAgents, registerAgents } from "./agent-tool.js"
+import { ProcessOutputTool } from "./process-job-registry.js"
 import { clearSkills, registerSkill } from "../skills/registry.js"
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -251,17 +252,12 @@ describe("AgentTool parallel execution", () => {
     })
   })
 
-  test("legacy background inputs are hidden from the schema and still await subagent completion", async () => {
-    expect(AgentTool.inputSchema.properties).not.toHaveProperty("run_in_background")
-    expect(AgentTool.inputSchema.properties).not.toHaveProperty("isolation")
+  test("background inputs are exposed and return a task before subagent completion", async () => {
+    expect(AgentTool.inputSchema.properties).toHaveProperty("run_in_background")
+    expect(AgentTool.inputSchema.properties).toHaveProperty("isolation")
 
     let resolveResponse: ((response: CreateMessageResponse) => void) | undefined
     let endStarted = false
-    let settled = false
-    let releaseEnd!: () => void
-    const endRelease = new Promise<void>((resolve) => {
-      releaseEnd = resolve
-    })
     const provider: LLMProvider = {
       apiType: "anthropic-messages",
       createMessage: async () => new Promise<CreateMessageResponse>((resolveResponsePromise) => {
@@ -269,25 +265,30 @@ describe("AgentTool parallel execution", () => {
       })
     }
 
+    const events: SDKMessage[] = []
     const pending = AgentTool.call({
       prompt: "legacy background child task",
       description: "background",
       subagent_run_id: "child-run-bg",
       mode: "bypassPermissions",
       run_in_background: true,
-      isolation: "remote"
+      isolation: "none"
     }, {
       cwd: process.cwd(),
       provider,
       model: "test-model",
       apiType: "anthropic-messages",
       sessionId: "parent-thread",
+      emitEvent: (event) => events.push(event),
       onSubagentEnd: async () => {
         endStarted = true
-        await endRelease
       }
     })
-    pending.then(() => { settled = true })
+    const started = await pending
+    expect(started.is_error).toBeFalsy()
+    expect(String(started.content)).toContain("Background agent started")
+    const taskId = (started._meta?.task as { id?: string } | undefined)?.id
+    expect(taskId).toBeString()
 
     await waitFor(() => resolveResponse !== undefined)
     resolveResponse?.({
@@ -296,10 +297,21 @@ describe("AgentTool parallel execution", () => {
       usage: { input_tokens: 20, output_tokens: 6 }
     })
     await waitFor(() => endStarted)
-    expect(settled).toBeFalse()
-    releaseEnd()
-    await pending
-    expect(settled).toBeTrue()
+    const output = await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 1000 }, {
+      cwd: process.cwd(),
+      sessionId: "parent-thread",
+    })
+    expect(String(output.content)).toContain("child done")
+    await waitFor(() => events.some((event) =>
+      event.type === "system"
+      && event.subtype === "task_notification"
+      && event.task_id === taskId
+    ))
+    expect(events.filter((event) =>
+      event.type === "system"
+      && event.subtype === "task_notification"
+      && event.task_id === taskId
+    )).toHaveLength(1)
   })
 })
 

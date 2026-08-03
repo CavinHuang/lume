@@ -1,4 +1,6 @@
 import {
+  buildConnectionModelRef,
+  isChannelViewReady,
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL,
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
 } from '@lume/shared'
@@ -202,37 +204,44 @@ export type MemoryToolPolicyGroupId = typeof MEMORY_TOOL_POLICY_GROUPS[number]['
 
 export interface MemoryEmbeddingModelOption {
   modelRef: string
+  legacyModelRefs?: string[]
   label: string
 }
 
 type LocalOnnxStatus = NonNullable<MemorySettingsSnapshot['retrieval']['semantic']['localOnnx']>['status']
-
-function buildChannelModelRef(channel: Channel, modelId: string): string {
-  return modelId.startsWith(`${channel.provider}/`) ? modelId : `${channel.provider}/${modelId}`
-}
 
 export function buildEmbeddingModelOptions(channels: Channel[]): MemoryEmbeddingModelOption[] {
   return [{
     modelRef: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
     label: MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_LABEL,
   }, ...channels
-    .filter((channel) => channel.enabled)
+    .filter(isChannelViewReady)
     .flatMap((channel) => channel.models
       .filter((model) => model.enabled && model.capabilities?.embedding === true)
       .map((model) => ({
-        modelRef: buildChannelModelRef(channel, model.id),
+        modelRef: buildConnectionModelRef(channel.id, model.id),
+        legacyModelRefs: [
+          model.id,
+          `${channel.providerId || channel.provider}/${model.id}`,
+          `${channel.id}/${model.id}`,
+        ],
         label: `${model.name} · ${channel.name}`,
       })))]
 }
 
 export function buildRerankModelOptions(channels: Channel[]): MemoryEmbeddingModelOption[] {
   return channels
-    .filter((channel) => channel.enabled)
+    .filter(isChannelViewReady)
     .flatMap((channel) => channel.models
       .filter((model) => model.enabled && model.capabilities?.chat !== false)
       .filter((model) => model.capabilities?.embedding !== true || model.capabilities?.chat === true)
       .map((model) => ({
-        modelRef: buildChannelModelRef(channel, model.id),
+        modelRef: buildConnectionModelRef(channel.id, model.id),
+        legacyModelRefs: [
+          model.id,
+          `${channel.providerId || channel.provider}/${model.id}`,
+          `${channel.id}/${model.id}`,
+        ],
         label: `${model.name} · ${channel.name}`,
       })))
 }

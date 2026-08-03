@@ -54,3 +54,86 @@ describe("agentSendInputSchema messageAttachments", () => {
     })).toThrow();
   });
 });
+
+describe("agentSendInputSchema browserAttachments", () => {
+  test("accepts authorized browser references and legacy browser tabs", () => {
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "read this page",
+      browserAttachments: [{
+        id: "browser-tab:iab:provider-1:3",
+        origin: "browser-tab",
+        backend: "iab",
+        browserId: "lume-iab",
+        referenceGrantId: "grant-1",
+        access: "control",
+        tabId: "tab-1",
+        providerTabId: "provider-1",
+        title: "Example",
+        url: "https://example.com/",
+        generation: 3,
+        lastOpenedAt: "2026-08-01T00:00:00.000Z",
+        ownerThreadId: "thread-1"
+      }, {
+        id: "legacy-tab",
+        origin: "browser-tab",
+        tabId: "tab-old",
+        providerTabId: "provider-old",
+        title: "Legacy",
+        url: "https://legacy.example/",
+        generation: 1
+      }]
+    });
+
+    expect(parsed.browserAttachments).toHaveLength(2);
+  });
+
+  test("rejects invalid browser reference fields", () => {
+    const attachment = {
+      id: "browser-tab:1",
+      origin: "browser-tab",
+      backend: "iab",
+      browserId: "lume-iab",
+      referenceGrantId: "grant-1",
+      access: "control",
+      tabId: "tab-1",
+      title: "Example",
+      url: "https://example.com/"
+    };
+    expect(() => agentSendInputSchema.parse({ threadId: "thread-1", userMessage: "read", browserAttachments: [{ ...attachment, backend: "firefox" }] })).toThrow();
+    expect(() => agentSendInputSchema.parse({ threadId: "thread-1", userMessage: "read", browserAttachments: [{ ...attachment, referenceGrantId: "" }] })).toThrow();
+  });
+
+  test("accepts a comment attached to browser design changes", () => {
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "apply these adjustments",
+      browserAttachments: [{
+        id: "browser-design-change:1",
+        origin: "browser-design-change",
+        tab: {
+          id: "browser-tab:1",
+          origin: "browser-tab",
+          tabId: "tab-1",
+          title: "Example",
+          url: "https://example.com/",
+          generation: 2
+        },
+        anchor: {
+          kind: "element",
+          url: "https://example.com/",
+          generation: 2,
+          framePath: [],
+          domPath: "html > body > main",
+          selectedContent: "Primary heading",
+          rect: { x: 10, y: 20, width: 200, height: 100 }
+        },
+        originalStyles: { color: "rgb(0, 0, 0)" },
+        proposedStyles: { color: "rgb(2, 133, 255)" },
+        body: "Use the primary accent color"
+      }]
+    });
+
+    expect(parsed.browserAttachments?.[0]).toMatchObject({ body: "Use the primary accent color" });
+  });
+});

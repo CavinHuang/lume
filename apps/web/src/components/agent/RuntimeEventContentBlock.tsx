@@ -1,18 +1,22 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, FileText, Gauge, GitFork, History, ListChecks, ListCollapse, Loader2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, MessageSquareText, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
+import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { cn } from '@/lib/utils'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentThreadsAtom, capabilityDetailTargetAtom, codingReviewPanelActionAtom, generalSettingsAtom, tabsAtom } from '@/atoms'
+import { codingReviewFileKey } from '@/atoms/right-panel-atoms'
 import type { MemoryContextUsedViewEvent, PlanPreviewView, RuntimeAssistantBlock, RuntimeAssistantTokenUsageView, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
+import type { RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
-import { agentSend, getThreadMessageVersions, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
+import { AskUserQuestionBlock } from './AskUserQuestionBlock'
+import { agentSend, getThreadMessageVersions, openExternal, revokeFilePreviewScope, sidecarCall, saveTextFileDialog, openInSystem, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference, stripFileReferenceProtocolFromMarkdown } from './thread-file-links'
 import { MessageFileReferenceBindingProvider, useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from './thread-file-env'
-import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, getAgentRole, parseAfterglowBlocks, stripAfterglowLines, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentThreadMeta, type AgentUserMessagePart, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
@@ -30,8 +34,11 @@ import {
 } from './expression-actions'
 
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentFileReference, type OpenThreadFile } from './AgentFileReference'
+import { collectAssistantSources, type AssistantSourceReference } from './source-references'
+import { prefetchSessionCodingDiffs, requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
 interface RuntimeEventContentBlockProps {
@@ -158,6 +165,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
     () => contentBlocks.filter((block) => block.type !== 'memory_context_used'),
     [contentBlocks],
   )
+  const sourceCollection = useMemo(() => collectAssistantSources(contentBlocks), [contentBlocks])
   const activeStreamingTextBlockId = streaming === true && message.status === 'streaming'
     ? findActiveStreamingTextBlockId(message.blocks)
     : null
@@ -171,7 +179,7 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
     })
     .join('|')
   const showIdleStatus = useDelayedAssistantIdleStatus(
-    streaming === true && message.status === 'streaming' && !latestTaskProgressBlock,
+    streaming === true && message.status === 'streaming' && !latestTaskProgressBlock && !message.retry,
     activitySignature,
   )
   const expressionActions = useMemo(
@@ -212,8 +220,14 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
             onUserResizeStart={onUserResizeStart}
           />
         )}
+        {message.codingReport && (
+          <CodingRunReportCard report={message.codingReport} assistantMessageId={message.messageId} threadId={threadId} onOpenThreadFile={onOpenThreadFile} />
+        )}
         {latestTaskProgressBlock && (
           <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
+        )}
+        {message.retry && (
+          <ShimmerStatusLine text={`正在重新连接 ${message.retry.attempt}/${message.retry.maxRetries}`} />
         )}
         {showIdleStatus && <ShimmerStatusLine text="正在思考" />}
         {message.error && (
@@ -240,6 +254,8 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
           memoryEvents={contentBlocks
             .filter((b): b is Extract<typeof b, { type: 'memory_context_used' }> => b.type === 'memory_context_used')
             .map(b => b.event)}
+          sources={sourceCollection.sources}
+          sourcesTruncated={sourceCollection.truncated}
           onOpenMemorySource={onOpenMemorySource}
         />
         {message.imDelivery && <ImDeliveryStatusLine delivery={message.imDelivery} />}
@@ -484,6 +500,23 @@ function UserMessageBlock({
             onOpenFile={(attachment) => onOpenThreadFile?.(attachment.threadPath, attachment.fileRef)}
             onOpenImage={(attachment) => onOpenThreadImage?.(attachment)}
           />
+        )}
+        {message.commentAttachments && message.commentAttachments.length > 0 && (
+          <div className={cn('flex flex-wrap gap-1.5', leftAligned ? 'justify-start' : 'justify-end')}>
+            {message.commentAttachments.map((comment) => (
+              <span
+                key={comment.id}
+                className="inline-flex max-w-[520px] items-center gap-1.5 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2 py-1 text-[12px] font-normal text-[var(--lume-text-secondary)]"
+                title={comment.body}
+              >
+                <MessageSquareText size={12} className="shrink-0 text-[var(--lume-accent)]" />
+                <span className="truncate">
+                  {comment.intent === 'modify' ? '修改请求 · ' : comment.intent === 'context' ? '代码上下文 · ' : ''}
+                  {comment.position.path}:L{comment.position.startLine ?? comment.position.line}{(comment.position.startLine ?? comment.position.line) !== comment.position.line ? `–L${comment.position.line}` : ''} · {comment.body}
+                </span>
+              </span>
+            ))}
+          </div>
         )}
         <div className={cn(
           'text-[15px] font-medium leading-[22px] text-[var(--lume-text-primary)]',
@@ -739,6 +772,11 @@ function CapabilityMessageText({
     >
       {parts.map((part, index) => {
         if (part.type === 'text') return part.text ? <span key={index}>{part.text}</span> : null
+        if (part.type === 'planning_todo_ref') {
+          let available = true
+          try { validatePlanningTodoRefPart(part) } catch { available = false }
+          return <span key={index} data-planning-todo-unavailable={!available || undefined} className={cn('mx-0.5 inline-flex rounded-md border px-1.5 py-0.5 align-baseline text-[13px]', available ? 'border-border' : 'border-destructive/50 text-muted-foreground')} title={available ? part.uri : '此 Planning Todo 引用已不可用'}>&amp;{available ? part.displayText : '待办不可用'}</span>
+        }
         const reference = referencesByUri.get(part.uri)
         const isPlugin = reference?.kind === 'plugin'
         return (
@@ -843,10 +881,33 @@ const RuntimeEventAssistantBlockItem = memo(function RuntimeEventAssistantBlockI
     return null
   }
 
+  if (block.type === 'advisor_review') {
+    const tone = block.event.severity === 'blocker'
+      ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
+      : block.event.severity === 'concern'
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+        : 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+    return (
+      <div className={cn('my-2 rounded-lg border px-3 py-2 text-sm', tone)}>
+        <div className="flex items-center gap-2 font-medium">
+          <Sparkles className="size-4" />
+          <span>Advisor · {block.event.severity}</span>
+        </div>
+        <div className="mt-1">{block.event.summary}</div>
+        {block.event.details ? <div className="mt-1 whitespace-pre-wrap opacity-85">{block.event.details}</div> : null}
+      </div>
+    )
+  }
+
+  if (block.toolCall.toolName === 'AskUserQuestion') {
+    return <AskUserQuestionBlock toolCall={block.toolCall} />
+  }
+
   return (
     <RuntimeEventToolCallBlock
       toolCall={block.toolCall}
       threadId={threadId}
+      onOpenThreadFile={onOpenThreadFile}
       onUserResizeStart={onUserResizeStart}
     />
   )
@@ -856,6 +917,7 @@ type MinimalProcessGroupProps = {
   blocks: RuntimeAssistantBlock[]
   threadId: string
   isStreamingMessage: boolean
+  onOpenThreadFile?: OpenThreadFile
   onUserResizeStart?: () => void
 }
 
@@ -918,6 +980,7 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
   blocks,
   threadId,
   isStreamingMessage,
+  onOpenThreadFile,
   onUserResizeStart,
 }: MinimalProcessGroupProps) {
   const [expanded, setExpanded] = useState(false)
@@ -1058,7 +1121,7 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
                   />
                 )
               }
-              return <MinimalToolCallRow key={block.id} toolCall={block.toolCall} />
+              return <MinimalToolCallRow key={block.id} toolCall={block.toolCall} onOpenThreadFile={onOpenThreadFile} />
             }
             return null
           })}
@@ -1068,7 +1131,13 @@ const MinimalProcessGroup = memo(function MinimalProcessGroup({
   )
 }, areMinimalProcessGroupPropsEqual)
 
-const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { toolCall: RuntimeToolCallView }) {
+const MinimalToolCallRow = memo(function MinimalToolCallRow({
+  toolCall,
+  onOpenThreadFile,
+}: {
+  toolCall: RuntimeToolCallView
+  onOpenThreadFile?: OpenThreadFile
+}) {
   const [open, setOpen] = useState(false)
   const input = asRecord(toolCall.input)
   const isRunning = toolCall.status === 'running'
@@ -1097,6 +1166,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { tool
       >
         <Icon size={12} className="shrink-0" />
         <span className="shrink-0 font-mono font-medium">{toolCall.toolName}</span>
+        {toolCall.riskLevel && <span className={cn('shrink-0', riskLevelClassName(toolCall.riskLevel))}>{riskLevelLabel(toolCall.riskLevel)}</span>}
         <span className="min-w-0 flex-1 truncate">{summarizeInput(input)}</span>
         {toolCall.status === 'failed' && <TriangleAlert size={11} className="shrink-0 text-destructive/70" />}
         {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
@@ -1111,6 +1181,7 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({ toolCall }: { tool
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="mb-1 mt-1 max-h-[min(40vh,360px)] overflow-y-auto rounded-md bg-foreground/[0.03] p-2">
+            <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
             <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>
@@ -1209,6 +1280,9 @@ function StandardAssistantContent({
     if (segment.kind === 'image_tools') {
       return <ImageGenerationGroup key={`images:${segment.blocks[0]?.id ?? 'empty'}`} blocks={segment.blocks} />
     }
+    if (segment.kind === 'ask_user_question') {
+      return <AskUserQuestionBlock key={segment.block.id} toolCall={segment.block.toolCall} />
+    }
     if (segment.kind === 'wiki_proposal') {
       return <WikiProposalBlock key={segment.block.id} block={segment.block} />
     }
@@ -1304,6 +1378,276 @@ function parseToolCallOutput(output: unknown): unknown {
   }
 }
 
+function CodingRunReportCard({
+  report,
+  assistantMessageId,
+  threadId,
+  onOpenThreadFile,
+}: {
+  report: RuntimeCodingReport
+  assistantMessageId?: string
+  threadId: string
+  onOpenThreadFile?: OpenThreadFile
+}) {
+  const codingReviewPanelAction = useSetAtom(codingReviewPanelActionAtom)
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  const [showAllChanges, setShowAllChanges] = useState(false)
+  const [liveChangeSet, setLiveChangeSet] = useState(report.changeSet)
+  const hasRisk = report.status === 'failed' || Boolean(report.baselineFailure) || report.externalChangedFiles.length > 0
+
+  useEffect(() => {
+    setLiveChangeSet(report.changeSet)
+  }, [report.changeSet?.generatedAt])
+
+  useEffect(() => {
+    if (report.changeSet || report.changedFiles.length === 0) return
+    let cancelled = false
+    void sidecarCall<RuntimeCodingReport['changeSet']>(AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET, {
+      threadId,
+      paths: report.changedFiles,
+    }).then((refreshed) => {
+      if (!cancelled && refreshed) setLiveChangeSet(refreshed)
+    }).catch(() => {
+      // Historical reports may no longer have an accessible workspace.
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [report.changeSet, report.changedFiles, threadId])
+
+  const currentChangeSet = liveChangeSet ?? report.changeSet
+  const changes: RuntimeCodingFileChange[] = currentChangeSet
+    ? currentChangeSet.files
+    : report.fileChanges?.length
+      ? report.fileChanges
+      : report.changedFiles.map((path) => ({ path }))
+  const activeChanges = changes
+  const visibleChanges = showAllChanges ? activeChanges : activeChanges.slice(0, 3)
+  const hiddenChangeCount = Math.max(0, activeChanges.length - visibleChanges.length)
+  const addedLines = liveChangeSet ? liveChangeSet.totalAddedLines : report.totalAddedLines ?? changes.reduce((sum, change) => sum + (change.addedLines ?? 0), 0)
+  const removedLines = liveChangeSet ? liveChangeSet.totalRemovedLines : report.totalRemovedLines ?? changes.reduce((sum, change) => sum + (change.removedLines ?? 0), 0)
+  // The compact Coding card always reserves the diff counter row. Older
+  // reports may not have per-file stats, but hiding the counters makes the
+  // result look incomplete and differs from the Review panel.
+  const hasLineStats = changes.length > 0
+  const firstReviewChange = activeChanges[0]
+  const canReviewDiff = activeChanges.length > 0 && (currentChangeSet !== undefined || report.fileChanges !== undefined)
+  const reviewPathsKey = activeChanges.map(codingReviewFileKey).join('\u0000')
+
+  useEffect(() => {
+    codingReviewPanelAction({
+      type: 'update',
+      threadId,
+      patch: {
+        phase: report.phase,
+        verificationRecords: report.verificationRecords,
+        recommendedVerificationCommands: report.recommendedVerificationCommands,
+        gitActions: report.gitActions,
+        review: report.review,
+      },
+    })
+  }, [codingReviewPanelAction, report.gitActions, report.phase, report.recommendedVerificationCommands, report.review, report.verificationRecords, threadId])
+  const prefetchReviewDiffs = (limit = activeChanges.length) => {
+    if (!report.runId) return
+    void prefetchSessionCodingDiffs(
+      threadId,
+      report.runId,
+      activeChanges.slice(0, limit).map((change) => ({ path: change.path, rootId: change.rootId })),
+    )
+  }
+
+  useEffect(() => {
+    const element = cardRef.current
+    if (!element || !report.runId || !canReviewDiff || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return
+      prefetchReviewDiffs(3)
+      observer.disconnect()
+    }, { rootMargin: '240px 0px' })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [canReviewDiff, report.runId, reviewPathsKey, threadId])
+
+  if (report.status === 'not_required' && !report.workspaceChanged && !report.pendingBackground) return null
+
+  const openReview = async (change: RuntimeCodingFileChange, expand = true) => {
+    if (!canReviewDiff) {
+      if (onOpenThreadFile) await onOpenThreadFile(change.path)
+      else toast.info('当前工作区没有可读取的 Coding diff')
+      return
+    }
+    codingReviewPanelAction({
+      type: 'open',
+      threadId,
+      changes: activeChanges,
+      selectedPath: expand ? change.path : '',
+      selectedRootId: expand ? change.rootId : undefined,
+      runId: report.runId,
+      turnId: report.turnId,
+      assistantMessageId: report.assistantMessageId ?? assistantMessageId,
+      phase: report.phase,
+      verificationRecords: report.verificationRecords,
+      recommendedVerificationCommands: report.recommendedVerificationCommands,
+      gitActions: report.gitActions,
+      review: report.review,
+    })
+  }
+
+  return (
+    <div ref={cardRef} onPointerEnter={() => prefetchReviewDiffs()} className={cn(
+      'coding-summary-card w-full max-w-[640px] overflow-hidden rounded-[12px] border bg-[var(--lume-bg-elevated)] shadow-[0_8px_28px_-22px_hsl(var(--lume-shadow-panel)/0.8)]',
+      report.status === 'failed' ? 'border-destructive/30' : 'border-[var(--lume-border-subtle)]',
+    )}>
+      <div className="coding-summary-header flex items-start gap-3 px-4 py-3.5">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-foreground/[0.08] text-[var(--lume-text-secondary)]">
+          <Edit3 size={20} strokeWidth={1.8} />
+        </div>
+        <div className="coding-summary-title min-w-0 flex-1">
+          <div className="truncate whitespace-nowrap text-[16px] font-semibold leading-5 text-[var(--lume-text-primary)]">
+            {report.workspaceChanged && changes.length > 0 ? `已编辑 ${changes.length} 个文件` : '编码任务执行完成'}
+          </div>
+          {hasLineStats && (
+            <div className="mt-1 whitespace-nowrap text-[13px] leading-4">
+              <span className="text-emerald-500">+{addedLines}</span>
+              <span className="ml-1 text-red-500">-{removedLines}</span>
+            </div>
+          )}
+        </div>
+        <div className="coding-summary-actions flex shrink-0 items-center gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!firstReviewChange || (!canReviewDiff && !onOpenThreadFile)}
+            title={canReviewDiff ? '在右侧面板查看变更' : '当前仅支持打开文件预览'}
+            className="h-8 px-3 text-[12px]"
+            onPointerEnter={() => prefetchReviewDiffs()}
+            onFocus={() => prefetchReviewDiffs()}
+            onClick={() => firstReviewChange && void openReview(firstReviewChange, false)}
+          >
+            审核
+          </Button>
+        </div>
+      </div>
+      {visibleChanges.length > 0 && (
+        <div className="border-t border-[var(--lume-border-subtle)] bg-foreground/[0.025] px-4 py-1">
+          {visibleChanges.map((change) => (
+            <div
+              key={codingReviewFileKey(change)}
+              className="flex min-h-9 w-full items-center gap-2 rounded-none text-[13px] text-[var(--lume-text-secondary)]"
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-9 min-w-0 flex-1 justify-start rounded-none px-0 text-left text-[13px] font-normal text-[var(--lume-text-secondary)] hover:bg-transparent hover:text-[var(--lume-text-primary)]"
+                onPointerEnter={() => report.runId && void requestSessionCodingDiff(threadId, report.runId, change.path, change.rootId).catch(() => undefined)}
+                onFocus={() => report.runId && void requestSessionCodingDiff(threadId, report.runId, change.path, change.rootId).catch(() => undefined)}
+                onClick={() => void openReview(change)}
+              >
+                <span className="min-w-0 truncate">{change.path}</span>
+              </Button>
+              <span className="shrink-0 tabular-nums">
+                <span className="text-emerald-500">+{change.addedLines ?? 0}</span>
+                <span className="ml-2 text-red-500">-{change.removedLines ?? 0}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {hiddenChangeCount > 0 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-9 w-full justify-start gap-1 rounded-none border-t border-[var(--lume-border-subtle)] px-4 text-[13px] font-medium text-[var(--lume-text-secondary)] hover:bg-transparent hover:text-[var(--lume-text-primary)]"
+          onClick={() => setShowAllChanges(true)}
+        >
+          <span>再显示 {hiddenChangeCount} 个文件</span>
+          <ChevronDown size={16} />
+        </Button>
+      )}
+      {hasRisk && (
+        <div className="flex items-start gap-1.5 border-t border-[var(--lume-border-subtle)] px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-300">
+          <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+          <span>{report.baselineFailure ? `验证命令失败：${report.baselineFailure.command}` : report.externalChangedFiles.length > 0 ? `检测到外部改动：${formatFileList(report.externalChangedFiles)}` : report.message ?? '编码任务未通过验证'}</span>
+        </div>
+      )}
+      {report.pendingBackground && (
+        <div className="border-t border-[var(--lume-border-subtle)] px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-300">后台命令仍在运行，不影响继续对话；可稍后查看或停止任务。</div>
+      )}
+    </div>
+  )
+}
+
+function formatFileList(files: string[]): string {
+  if (files.length <= 4) return files.join('、')
+  return `${files.slice(0, 4).join('、')} 等 ${files.length} 个文件`
+}
+
+function ToolExecutionDetails({
+  toolCall,
+  onOpenThreadFile,
+}: {
+  toolCall: RuntimeToolCallView
+  onOpenThreadFile?: OpenThreadFile
+}) {
+  const execution = toolCall.execution
+  const resultRef = toolCall.resultRef ?? execution?.resultRef
+  const authorizedResultRef = resultRef?.fileRef
+  const errorText = toolCall.status === 'failed' ? formatToolErrorOutput(toolCall.output) : ''
+  if (!execution && !resultRef && !errorText) return null
+
+  const terminationLabel = execution?.terminationReason === 'completed'
+    ? '正常结束'
+    : execution?.terminationReason === 'nonzero'
+      ? '非零退出'
+      : execution?.terminationReason === 'timeout'
+        ? '超时'
+      : execution?.terminationReason === 'aborted'
+          ? '已中止'
+          : execution?.terminationReason === 'output_limit'
+            ? '输出超限'
+          : execution?.terminationReason === 'spawn_error'
+            ? '启动失败'
+            : null
+
+  return (
+    <div className="mb-2 space-y-1 rounded-md bg-foreground/[0.03] px-2.5 py-2 text-[11px] text-foreground/55">
+      {errorText && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-destructive/[0.06] p-2 font-mono text-[11px] leading-5 text-destructive">{errorText}</pre>}
+      {execution?.command && <div className="break-all"><span className="mr-1 text-foreground/40">命令</span><code>{execution.command}</code></div>}
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {terminationLabel && <span>结果：{terminationLabel}</span>}
+        {typeof execution?.exitCode === 'number' && <span>退出码：{execution.exitCode}</span>}
+        {execution?.shell && <span>Shell：{execution.shell === 'powershell' ? 'PowerShell' : 'Bash'}</span>}
+        {typeof execution?.durationMs === 'number' && <span>耗时：{formatDurationLabel(execution.durationMs)}</span>}
+      </div>
+      {execution?.stderrPreview && <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-words text-[10px] text-amber-600 dark:text-amber-300">stderr: {execution.stderrPreview}</pre>}
+      {resultRef && (
+        <div className="flex min-w-0 items-center gap-1">
+          <span className="shrink-0 text-foreground/40">结果文件</span>
+          {authorizedResultRef && onOpenThreadFile ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-auto min-w-0 justify-start gap-1 p-0 text-[11px] font-normal text-[var(--lume-accent)] hover:bg-transparent"
+              onClick={() => void onOpenThreadFile(authorizedResultRef.relativePath, authorizedResultRef)}
+            >
+              <Package size={11} className="shrink-0" />
+              <span className="truncate">{authorizedResultRef.relativePath.replace(/^artifacts\//, '')}</span>
+            </Button>
+          ) : (
+            <span className="min-w-0 break-all">{resultRef.path}</span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatToolErrorOutput(output: unknown): string {
+  if (typeof output === 'string') return output.slice(0, 8_000)
+  if (!output || typeof output !== 'object') return String(output ?? '')
+  try { return JSON.stringify(output, null, 2).slice(0, 8_000) } catch { return String(output) }
+}
+
 function MinimalAssistantContent({
   blocks,
   threadId,
@@ -1326,6 +1670,9 @@ function MinimalAssistantContent({
       {segments.map((segment) => {
         if (segment.kind === 'image_tools') {
           return <ImageGenerationGroup key={`images:${segment.blocks[0]?.id ?? 'empty'}`} blocks={segment.blocks} />
+        }
+        if (segment.kind === 'ask_user_question') {
+          return <AskUserQuestionBlock key={segment.block.id} toolCall={segment.block.toolCall} />
         }
         if (segment.kind === 'wiki_proposal') {
           return <WikiProposalBlock key={segment.block.id} block={segment.block} />
@@ -1353,6 +1700,7 @@ function MinimalAssistantContent({
             blocks={segment.blocks}
             threadId={threadId}
             isStreamingMessage={isStreamingMessage}
+            onOpenThreadFile={onOpenThreadFile}
             onUserResizeStart={onUserResizeStart}
           />
         )
@@ -1812,17 +2160,72 @@ export function MarkdownPre({
   streamStatus,
   ...rest
 }: MarkdownPreProps) {
+  const [mermaidPreviewSvg, setMermaidPreviewSvg] = useState<string | null>(null)
+  const [mermaidOriginalSize, setMermaidOriginalSize] = useState(false)
   const mermaidCode = getMermaidCodeFromPreNode(domNode)
   if (mermaidCode !== null) {
     if (streamStatus === 'loading' || isMermaidPreStreaming(domNode)) {
       return <pre {...rest}>{children}</pre>
     }
+    const closeMermaidPreview = () => {
+      setMermaidPreviewSvg(null)
+      setMermaidOriginalSize(false)
+    }
+    const mermaidPreviewSrc = mermaidPreviewSvg
+      ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(mermaidPreviewSvg)}`
+      : undefined
+
     return (
-      <MermaidBlock
-        code={mermaidCode}
-        onCopy={copyMermaidToClipboard}
-        onCopyImage={copyMermaidImageToClipboard}
-      />
+      <>
+        <MermaidBlock
+          code={mermaidCode}
+          onCopy={copyMermaidToClipboard}
+          onCopyImage={copyMermaidImageToClipboard}
+          onPreview={setMermaidPreviewSvg}
+        />
+        <Dialog open={Boolean(mermaidPreviewSvg)} onOpenChange={(open) => { if (!open) closeMermaidPreview() }}>
+          <DialogContent
+            showCloseButton={false}
+            className="inset-0 left-0 top-0 z-[151] block h-dvh w-dvw max-w-none translate-x-0 translate-y-0 overflow-auto rounded-none bg-black/92 p-4 ring-0 sm:max-w-none"
+            onClick={closeMermaidPreview}
+          >
+            <DialogTitle className="sr-only">预览 Mermaid 图表</DialogTitle>
+            <div className="fixed right-4 top-4 z-10 flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="bg-black/35 text-white hover:bg-white/15 hover:text-white"
+                onClick={() => setMermaidOriginalSize((value) => !value)}
+              >
+                {mermaidOriginalSize ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                {mermaidOriginalSize ? '适应窗口' : '原始尺寸'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="bg-black/35 text-white hover:bg-white/15 hover:text-white"
+                onClick={closeMermaidPreview}
+                aria-label="关闭 Mermaid 预览"
+              >
+                <X size={18} />
+              </Button>
+            </div>
+            {mermaidPreviewSrc && (
+              <div className={mermaidOriginalSize ? 'min-h-full min-w-full' : 'flex h-full w-full items-center justify-center'}>
+                <img
+                  src={mermaidPreviewSrc}
+                  alt="Mermaid 图表"
+                  className={mermaidOriginalSize ? 'max-w-none' : 'max-h-full max-w-full object-contain'}
+                  onClick={(event) => event.stopPropagation()}
+                  onDoubleClick={() => setMermaidOriginalSize((value) => !value)}
+                />
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      </>
     )
   }
 
@@ -1836,7 +2239,7 @@ export function MarkdownPre({
     )
   }
 
-  return <pre {...rest}>{children}</pre>
+  return <DiffAwareMarkdownPre streamStatus={streamStatus}>{children}</DiffAwareMarkdownPre>
 }
 
 export function MarkdownCode({
@@ -1940,10 +2343,12 @@ function IncompleteTable() {
 const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   toolCall,
   threadId,
+  onOpenThreadFile,
   onUserResizeStart,
 }: {
   toolCall: RuntimeToolCallView
   threadId: string
+  onOpenThreadFile?: OpenThreadFile
   onUserResizeStart?: () => void
 }) {
   const [collapsed, setCollapsed] = useState(true)
@@ -1996,6 +2401,11 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
       >
         <Icon size={15} className="shrink-0 text-[var(--lume-text-muted)]" />
         <span className="font-mono font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
+        {toolCall.riskLevel && (
+          <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
+            {riskLevelLabel(toolCall.riskLevel)}
+          </span>
+        )}
         {getToolPermissionTitleBadgeText(toolCall) && (
           <span className="rounded-full bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,transparent)] px-2 py-0.5 text-[12px] font-semibold text-[var(--lume-warning)]">
             {getToolPermissionTitleBadgeText(toolCall)}
@@ -2026,6 +2436,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
       {shouldRenderResult && (
         <AnimatedCollapsiblePanel open={resultOpen}>
           <div className="max-h-[min(60vh,520px)] overflow-y-auto overscroll-contain border-t border-[var(--lume-border-subtle)] p-3">
+            <ToolExecutionDetails toolCall={toolCall} onOpenThreadFile={onOpenThreadFile} />
             <ToolResultRenderer toolName={toolCall.toolName} input={input} result={resultData} />
           </div>
         </AnimatedCollapsiblePanel>
@@ -2037,6 +2448,18 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
 export function getToolPermissionTitleBadgeText(toolCall: RuntimeToolCallView): string | null {
   if (toolCall.permissionState === 'timeout') return '权限超时'
   return null
+}
+
+function riskLevelLabel(level: NonNullable<RuntimeToolCallView['riskLevel']>): string {
+  return level === 'high' ? '高风险' : level === 'medium' ? '中风险' : '低风险'
+}
+
+function riskLevelClassName(level: NonNullable<RuntimeToolCallView['riskLevel']>): string {
+  return level === 'high'
+    ? 'text-destructive'
+    : level === 'medium'
+      ? 'text-amber-700 dark:text-amber-300'
+      : 'text-emerald-700 dark:text-emerald-300'
 }
 function FooterMemoryNotice({
   events,
@@ -2108,6 +2531,67 @@ function FooterMemoryNotice({
   )
 }
 
+function FooterSourceNotice({
+  sources,
+  truncated,
+}: {
+  sources: AssistantSourceReference[]
+  truncated: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="relative shrink-0">
+      <Button
+        variant="ghost"
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="assistant-footer-action inline-flex items-center gap-1 rounded-md px-0 py-0.5 text-[12px] font-medium leading-5 transition-colors hover:text-[var(--lume-accent)]"
+      >
+        <Globe size={13} strokeWidth={1.8} />
+        <span>来源 · {sources.length}{truncated ? '+' : ''}</span>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </Button>
+      {expanded && (
+        <div className="absolute left-0 top-full z-30 mt-1 max-h-60 min-w-[260px] max-w-[380px] overflow-y-auto rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-2 shadow-[0_16px_40px_-24px_hsl(var(--lume-shadow-panel)/0.62)]">
+          <div className="space-y-1 text-[11px] leading-5">
+            {sources.map((source, index) => {
+              const content = (
+                <>
+                  <span className="shrink-0 tabular-nums">{index + 1}.</span>
+                  <span className="min-w-0 truncate">{source.title}</span>
+                  <span className="shrink-0 truncate text-[var(--lume-text-muted)]">{source.domain}</span>
+                </>
+              )
+              if (!source.clickable) {
+                return (
+                  <div key={`${source.url}:${index}`} className="flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 font-mono text-[var(--lume-text-secondary)]" title={source.url}>
+                    {content}
+                  </div>
+                )
+              }
+              return (
+                <Button
+                  key={`${source.url}:${index}`}
+                  variant="ghost"
+                  type="button"
+                  onClick={() => { void openExternal(source.url) }}
+                  className="flex w-full min-w-0 items-center justify-start gap-1.5 rounded-md px-1 py-0.5 text-left font-mono text-[var(--lume-text-secondary)] transition-colors hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-accent)]"
+                  title={source.url}
+                >
+                  {content}
+                  <ExternalLink size={11} className="ml-auto shrink-0" />
+                </Button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AssistantMessageFooter({
   threadId,
   messageId,
@@ -2118,6 +2602,8 @@ function AssistantMessageFooter({
   tokenUsage,
   completedAt,
   memoryEvents,
+  sources,
+  sourcesTruncated,
   onOpenMemorySource,
 }: {
   threadId: string
@@ -2129,6 +2615,8 @@ function AssistantMessageFooter({
   tokenUsage?: RuntimeAssistantTokenUsageView
   completedAt?: string
   memoryEvents?: MemoryContextUsedViewEvent[]
+  sources: AssistantSourceReference[]
+  sourcesTruncated: boolean
   onOpenMemorySource?: (path: string, fileRef?: FileRef) => void
 }) {
   const setThreads = useSetAtom(agentThreadsAtom)
@@ -2158,8 +2646,9 @@ function AssistantMessageFooter({
   }, [downloadMenuOpen])
 
   const hasMemory = memoryEvents && memoryEvents.length > 0
+  const hasSources = sources.length > 0
 
-  if (!canCopy && !canFork && !canDownload && !showTokens && !completedTimeLabel && !hasMemory) return null
+  if (!canCopy && !canFork && !canDownload && !showTokens && !completedTimeLabel && !hasMemory && !hasSources) return null
 
   const handleFork = async () => {
     if (!messageId || forking) return
@@ -2287,6 +2776,7 @@ function AssistantMessageFooter({
             onOpenMemorySource={onOpenMemorySource}
           />
         )}
+        {hasSources && <FooterSourceNotice sources={sources} truncated={sourcesTruncated} />}
       </div>
       {showTokens && (
         <AssistantTokenUsageMetrics usage={footerTokenUsage} />

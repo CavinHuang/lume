@@ -21,9 +21,12 @@ import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-sur
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
 import { getAgentThreadMeta } from "../../agent/agent-thread-manager";
 import { getAgentWorkspace } from "../../agent/agent-workspace-manager";
+import { hasCodingIntent } from "../../agent/capability-routing";
 import { createWikiProposalTool, createWikiReadTools } from "./wiki/create-wiki-tools";
 import { resolveTrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
+import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
+import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
@@ -51,6 +54,7 @@ export interface CreateLumeRuntimeToolsInput {
   includeCitations: boolean;
   automationExecution?: boolean;
   wikiProposalEnabled?: boolean;
+  planningExecutionContext?: ExecutionSurfaceContext;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
@@ -153,7 +157,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     currentModelRef: input.modelRef,
     workspaceSlug: input.workspaceSlug,
   });
-  const computerUseTools = createComputerUseMcpTools({
+  const allComputerUseTools = createComputerUseMcpTools({
     workspaceSlug: input.workspaceSlug,
     threadId: input.threadId,
     filesRoot: input.filesRoot,
@@ -171,20 +175,30 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitComputerUseRequest: computerUseSurface === "sky"
       ? createComputerUseRequestBridge({
-        tools: computerUseTools,
+        tools: allComputerUseTools,
         threadId: input.threadId,
         cwd,
       })
       : undefined,
   });
-  const nodeReplTools = computerUseSurface === "sky"
-    ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
-    : allNodeReplTools;
+  const nodeReplTools = shouldExposeNodeReplTools(input)
+    ? computerUseSurface === "sky"
+      ? allNodeReplTools.filter((tool) => tool.name === "mcp__node_repl__js")
+      : allNodeReplTools
+    : [];
   const ordinaryWikiTools = createOrdinaryWikiTools({
     profile: wikiProfile,
     proposalEnabled: input.wikiProposalEnabled,
     creatorThreadId: input.threadId,
   });
+  // Planning Todo is a trusted capability. A runtime without a sidecar-issued
+  // surface context must not even receive the tool definitions.
+  const planningTodoTools = input.planningExecutionContext && input.planningExecutionContext.surface !== "subagent"
+    ? createPlanningTodoTools({ workspaceId: input.workspaceId, executionContext: input.planningExecutionContext })
+    : [];
+  const computerUseTools = computerUseSurface === "mcp" && shouldExposeComputerUseTools(input)
+    ? allComputerUseTools
+    : [];
   const customTools = [
     ...memoryTools,
     ...cronTools,
@@ -198,16 +212,83 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...imageGenTools,
     ...nodeReplTools,
     ...ordinaryWikiTools,
-    ...(computerUseSurface === "mcp" ? computerUseTools : []),
+    ...planningTodoTools,
+    ...computerUseTools,
   ];
-  const customToolNames = customTools.map((tool) => tool.name);
+  // Coding/raw-tools runs should start with the SDK's repository tools only.
+  // Product integrations remain available through their explicit capability
+  // routes instead of competing with Read/Edit/Bash in the initial schema.
+  const directToolRoute = isDirectRepositoryToolRoute(input);
+  const visibleCustomTools = directToolRoute ? [] : customTools;
+  const customToolNames = visibleCustomTools.map((tool) => tool.name);
 
   return {
-    customTools,
+    customTools: visibleCustomTools,
     availableToolNames: [
       ...BASE_RUNTIME_TOOL_NAMES,
-      ...AUTOMATION_TOOL_NAMES,
+      ...(directToolRoute ? [] : AUTOMATION_TOOL_NAMES),
       ...customToolNames
     ]
   };
+}
+
+function isDirectRepositoryToolRoute(input: CreateLumeRuntimeToolsInput): boolean {
+  const preferredRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
+    ? input.messageMetadata.preferredCapabilityRoute
+    : undefined;
+  return preferredRoute === "coding"
+    || preferredRoute === "raw-tools"
+    || hasCodingIntent(input.originalUserInstruction);
+}
+
+function shouldExposeNodeReplTools(input: CreateLumeRuntimeToolsInput): boolean {
+  const preferredRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
+    ? input.messageMetadata.preferredCapabilityRoute
+    : undefined;
+  if (preferredRoute === "coding" || preferredRoute === "raw-tools" || hasCodingIntent(input.originalUserInstruction)) return false;
+  if (input.computerUseSurface === "sky") return true;
+
+  const instruction = [
+    input.originalUserInstruction,
+    typeof input.messageMetadata?.preferredCapabilityRoute === "string"
+      ? input.messageMetadata.preferredCapabilityRoute
+      : undefined,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return [
+    "node_repl",
+    "node repl",
+    "playwright",
+    "puppeteer",
+    "browser automation",
+    "chrome automation",
+    "网页自动化",
+    "浏览器自动化",
+    "用 js 操作网页",
+    "用 javascript 操作网页",
+  ].some((marker) => instruction.includes(marker));
+}
+
+function shouldExposeComputerUseTools(input: CreateLumeRuntimeToolsInput): boolean {
+  const preferredRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
+    ? input.messageMetadata.preferredCapabilityRoute
+    : undefined;
+  if (preferredRoute === "coding" || preferredRoute === "raw-tools" || hasCodingIntent(input.originalUserInstruction)) return false;
+  if (preferredRoute === "browser") return true;
+
+  const instruction = (input.originalUserInstruction ?? "").trim().toLowerCase();
+  return [
+    "computer use",
+    "computer_use",
+    "desktop automation",
+    "桌面自动化",
+    "操作当前页面",
+    "操作浏览器",
+    "控制浏览器",
+    "控制窗口",
+    "切换窗口",
+    "启动应用",
+    "点击当前页面",
+    "截图当前页面",
+  ].some((marker) => instruction.includes(marker));
 }

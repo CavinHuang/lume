@@ -60,6 +60,10 @@ export function getChannelsPath(): string {
   return join(getConfigDir(), "channels.json");
 }
 
+export function getConnectionCredentialsPath(): string {
+  return join(getConfigDir(), "connection-credentials.json");
+}
+
 export function getImConfigPath(): string {
   return join(getConfigDir(), "im.json");
 }

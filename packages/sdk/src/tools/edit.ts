@@ -2,10 +2,15 @@
  * FileEditTool - Precise string replacement in files
  */
 
-import { readFile, writeFile, rename, rm } from 'fs/promises'
-import { resolve, dirname, basename, join } from 'path'
+import { readFile, stat, writeFile, rename, rm } from 'fs/promises'
+import { dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
-import { ensurePathAllowed } from '../utils/pathing.js'
+import type { ToolContext } from '../types.js'
+import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
+import { prepareLspWritethrough } from '../lsp/writethrough.js'
+import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
+import { countLineChanges } from '../utils/line-change-stats.js'
+import { withFileMutationLock } from '../utils/file-mutation-lock.js'
 
 export const FileEditTool = defineTool({
   name: 'Edit',
@@ -34,8 +39,20 @@ export const FileEditTool = defineTool({
   },
   isReadOnly: false,
   isConcurrencySafe: false,
+  validateInput(input) {
+    if (!input || typeof input !== 'object') return 'Input must be an object.'
+    if (typeof input.file_path !== 'string' || !input.file_path.trim()) return 'file_path is required.'
+    if (typeof input.old_string !== 'string') return 'old_string must be a string.'
+    if (typeof input.new_string !== 'string') return 'new_string must be a string.'
+    if (input.replace_all !== undefined && typeof input.replace_all !== 'boolean') return 'replace_all must be a boolean.'
+  },
+  getPath(input, context) {
+    return resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
+  },
   async call(input, context) {
-    const filePath = resolve(context.cwd, input.file_path)
+    const unsafePathReason = getUnsafeFilePathReason(input.file_path)
+    if (unsafePathReason) return { data: `Error: ${unsafePathReason}`, is_error: true }
+    const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
     const { old_string, new_string, replace_all } = input
     const sandboxError = ensurePathAllowed(
       filePath,
@@ -51,24 +68,40 @@ export const FileEditTool = defineTool({
       return { data: 'Error: old_string and new_string are identical', is_error: true }
     }
 
-    try {
-      let content = await readFile(filePath, 'utf-8')
+    return withFileMutationLock(filePath, async () => { try {
+      const decoded = decodeTextFile(await readFile(filePath))
+      let content = decoded.content
 
-      if (!content.includes(old_string)) {
+      const previousRead = context.fileStateCache?.get(filePath)
+      if (previousRead && !previousRead.isPartialView && previousRead.content !== content) {
+        return {
+          data: `Error: File has been modified since it was read: ${filePath}. The earlier edit may have succeeded or another process changed it. Read the file again before attempting another Edit.`,
+          is_error: true,
+          _meta: { file: { path: filePath, conflict: 'stale_read', retryable: true } },
+        }
+      }
+
+      const matches = findMatchingRanges(content, old_string)
+      if (matches.length === 0) {
         return { data: `Error: old_string not found in ${filePath}. Make sure it matches exactly including whitespace.`, is_error: true }
       }
 
       if (!replace_all) {
         // Check uniqueness
-        const count = content.split(old_string).length - 1
-        if (count > 1) {
+        if (matches.length > 1) {
           return {
-            data: `Error: old_string appears ${count} times in the file. Provide more context to make it unique, or set replace_all: true.`,
+            data: `Error: old_string appears ${matches.length} times in the file. Provide more context to make it unique, or set replace_all: true.`,
             is_error: true,
           }
         }
-        content = content.replace(old_string, new_string)
-        await writeFileAtomic(filePath, content)
+        const match = matches[0]!
+        content = replaceRanges(content, [match], new_string, old_string.length)
+        const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: true })
+        content = lsp.content
+        const lineChanges = countLineChanges(decoded.content, content)
+        await writeFileAtomic(filePath, encodeTextFile(content, decoded))
+        const lspResult = await lsp.commit()
+        await updateFileState(context, filePath, content)
         return {
           data: {
             filePath,
@@ -76,11 +109,28 @@ export const FileEditTool = defineTool({
             replaceAll: false,
             message: `File edited: ${filePath}`,
           },
+          _meta: {
+            file: {
+              path: filePath,
+              replacements: 1,
+              overwritten: true,
+              checkpointable: true,
+              checkpointId: context.currentUserMessageId,
+              ...(match.normalized ? { normalizedQuotes: true } : {}),
+              ...lineChanges,
+            },
+            lsp: lspResult,
+          },
         }
       } else {
-        const count = content.split(old_string).length - 1
-        content = content.split(old_string).join(new_string)
-        await writeFileAtomic(filePath, content)
+        const count = matches.length
+        content = replaceRanges(content, matches, new_string, old_string.length)
+        const lsp = await prepareLspWritethrough({ filePath, content, context, existedBefore: true })
+        content = lsp.content
+        const lineChanges = countLineChanges(decoded.content, content)
+        await writeFileAtomic(filePath, encodeTextFile(content, decoded))
+        const lspResult = await lsp.commit()
+        await updateFileState(context, filePath, content)
         return {
           data: {
             filePath,
@@ -88,25 +138,85 @@ export const FileEditTool = defineTool({
             replaceAll: true,
             message: `File edited: ${filePath}`,
           },
+          _meta: {
+            file: {
+              path: filePath,
+              replacements: count,
+              overwritten: true,
+              checkpointable: true,
+              checkpointId: context.currentUserMessageId,
+              ...(matches.some((match) => match.normalized) ? { normalizedQuotes: true } : {}),
+              ...lineChanges,
+            },
+            lsp: lspResult,
+          },
         }
       }
     } catch (err: any) {
       if (err.code === 'ENOENT') {
         return { data: `Error: File not found: ${filePath}`, is_error: true }
       }
-      return { data: `Error editing file: ${err.message}`, is_error: true }
-    }
+      return { data: `Error editing file ${filePath}: ${err.code ? `[${err.code}] ` : ''}${err.message}`, is_error: true }
+    } })
   },
 })
 
-async function writeFileAtomic(filePath: string, content: string): Promise<void> {
+type TextMatch = { index: number; normalized: boolean }
+
+function findMatchingRanges(content: string, needle: string): TextMatch[] {
+  const exact = collectMatches(content, needle)
+  if (exact.length > 0) return exact.map((index) => ({ index, normalized: false }))
+
+  const normalizedContent = normalizeQuotes(content)
+  const normalizedNeedle = normalizeQuotes(needle)
+  if (normalizedContent === content && normalizedNeedle === needle) return []
+  return collectMatches(normalizedContent, normalizedNeedle).map((index) => ({ index, normalized: true }))
+}
+
+function collectMatches(content: string, needle: string): number[] {
+  if (!needle) return []
+  const matches: number[] = []
+  let index = content.indexOf(needle)
+  while (index >= 0) {
+    matches.push(index)
+    index = content.indexOf(needle, index + needle.length)
+  }
+  return matches
+}
+
+function replaceRanges(content: string, matches: TextMatch[], replacement: string, originalLength: number): string {
+  let result = content
+  for (const match of [...matches].sort((left, right) => right.index - left.index)) {
+    result = result.slice(0, match.index) + replacement + result.slice(match.index + originalLength)
+  }
+  return result
+}
+
+function normalizeQuotes(value: string): string {
+  return value
+    .replace(/[“”＂]/g, '"')
+    .replace(/[‘’＇]/g, "'")
+}
+
+async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
   const dir = dirname(filePath)
   const tempPath = join(dir, `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
   try {
-    await writeFile(tempPath, content, 'utf-8')
+    await writeFile(tempPath, content)
     await rename(tempPath, filePath)
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => undefined)
     throw error
   }
+}
+
+async function updateFileState(context: ToolContext, filePath: string, content: string): Promise<void> {
+  if (!context.fileStateCache) return
+  const fileStat = await stat(filePath)
+  context.fileStateCache.set(filePath, {
+    content,
+    timestamp: fileStat.mtimeMs,
+    size: fileStat.size,
+    isPartialView: false,
+  })
 }

@@ -14,6 +14,7 @@ import { ImageGenResult } from './image-gen-result'
 import { TodoResult } from './todo-result'
 import { DefaultResult } from './default-result'
 import { WikiProposalResult } from './wiki-proposal-result'
+import { PlanningTodoResult } from './planning-todo-result'
 
 interface ToolResultRendererProps {
   toolName: string
@@ -40,6 +41,15 @@ export function ToolResultRenderer({ toolName, input, result, imagePresentation 
     case 'image_gen': return <ImageGenResult input={input} result={result} presentation={imagePresentation} />
     case 'TodoWrite': return <TodoResult input={input} result={result} />
     case 'wiki.propose_changes': return <WikiProposalResult result={result} />
+    case 'PlanningTodoList':
+    case 'PlanningTodoGet':
+    case 'PlanningTodoCreate':
+    case 'PlanningTodoUpdate':
+    case 'PlanningTodoComplete':
+    case 'PlanningTodoReopen':
+    case 'PlanningTodoDelete':
+    case 'PlanningTodoRestore':
+      return <PlanningTodoResult toolName={toolName} input={input} result={result} />
     default: return <DefaultResult toolName={toolName} input={input} result={result} />
   }
 }

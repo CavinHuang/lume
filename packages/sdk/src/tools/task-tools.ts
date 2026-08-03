@@ -1,391 +1,268 @@
 /**
- * Task Management Tools
+ * Claude Code-style persistent Task tools.
  *
- * TaskCreate, TaskList, TaskUpdate, TaskGet, TaskStop, TaskOutput
- *
- * Provides in-memory task tracking for agent coordination.
- * Tasks persist across turns within a session.
+ * The SDK only owns the tool contract. State is supplied by the host through
+ * TaskStoreAdapter so a Task list can be scoped to a thread and persisted by
+ * the sidecar. In particular, this module deliberately has no module-level
+ * Task state.
  */
 
 import type { ToolDefinition, ToolResult } from '../types.js'
 
-/**
- * Task status.
- */
-export type TaskStatus =
-  | 'pending'
-  | 'in_progress'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-  | 'stopped'
+export type TaskStatus = 'pending' | 'in_progress' | 'completed'
 
-/**
- * Task entry.
- */
+export interface TaskMetadata {
+  [key: string]: unknown
+}
+
 export interface Task {
   id: string
   subject: string
   description?: string
   activeForm?: string
+  owner?: string
   status: TaskStatus
-  owner?: string
-  createdAt: string
-  updatedAt: string
-  output?: string
-  outputFile?: string
-  taskType?: string
-  blockedBy?: string[]
-  blocks?: string[]
-  metadata?: Record<string, unknown>
+  blocks: string[]
+  blockedBy: string[]
+  metadata?: TaskMetadata
 }
 
-/**
- * Global task store (shared across tools in a session).
- */
-const taskStore = new Map<string, Task>()
-
-let taskCounter = 0
-
-/**
- * Get all tasks.
- */
-export function getAllTasks(): Task[] {
-  return Array.from(taskStore.values())
+export interface TaskRef {
+  taskListId: string
+  taskId: string
+  claimToken: string
 }
 
-/**
- * Get a task by ID.
- */
-export function getTask(id: string): Task | undefined {
-  return taskStore.get(id)
+export interface TaskStoreContext {
+  threadId: string
+  threadType: 'main' | 'subagent' | 'group' | 'channel' | 'system' | 'recovery'
+  actorId: string
+  runId?: string
+  trusted?: boolean
 }
 
-/**
- * Clear all tasks (for session reset).
- */
-export function clearTasks(): void {
-  taskStore.clear()
-  taskCounter = 0
+export interface TaskMutationResult {
+  task: Task
+  revision: number
+  claimToken?: string
 }
 
-export function createTaskRecord(input: {
-  subject: string
-  description?: string
-  activeForm?: string
-  owner?: string
-  status?: TaskStatus
-  outputFile?: string
-  taskType?: string
-  metadata?: Record<string, unknown>
-}): Task {
-  const id = `task_${++taskCounter}`
-  const task: Task = {
-    id,
-    subject: input.subject,
-    description: input.description,
-    activeForm: input.activeForm,
-    status: input.status || 'pending',
-    owner: input.owner,
-    outputFile: input.outputFile,
-    taskType: input.taskType,
-    metadata: input.metadata,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+export interface TaskStoreAdapter {
+  create(input: {
+    subject: string
+    description?: string
+    activeForm?: string
+  }, context: TaskStoreContext): Promise<TaskMutationResult>
+  update(input: Record<string, unknown>, context: TaskStoreContext): Promise<TaskMutationResult>
+  list(input: { status?: TaskStatus; owner?: string }, context: TaskStoreContext): Promise<Task[]>
+  get(taskId: string, context: TaskStoreContext): Promise<TaskMutationResult | null>
+  delete(taskId: string, context: TaskStoreContext): Promise<void>
+  stop(input: { taskId: string; expectedRevision?: number; claimToken?: string; reason?: string }, context: TaskStoreContext): Promise<TaskMutationResult>
+}
+
+function result(content: unknown, isError = false): ToolResult {
+  return {
+    type: 'tool_result',
+    tool_use_id: '',
+    content: typeof content === 'string' ? content : JSON.stringify(content, null, 2),
+    ...(isError ? { is_error: true } : {}),
   }
-  taskStore.set(id, task)
-  return task
 }
 
-export function updateTaskRecord(
-  id: string,
-  patch: Partial<Omit<Task, 'id' | 'createdAt'>>,
-): Task | undefined {
-  const task = taskStore.get(id)
-  if (!task) return undefined
-  Object.assign(task, patch)
-  task.updatedAt = new Date().toISOString()
-  return task
+function contextFrom(input: {
+  threadId: string
+  threadType: TaskStoreContext['threadType']
+  actorId: string
+  runId?: string
+}): TaskStoreContext {
+  return input
 }
 
-// ============================================================================
-// TaskCreateTool
-// ============================================================================
+export function createTaskTools(input: {
+  store: TaskStoreAdapter
+  context: Omit<TaskStoreContext, 'runId'>
+  getRunId?: () => string | undefined
+}): ToolDefinition[] {
+  const context = (): TaskStoreContext => contextFrom({
+    ...input.context,
+    ...(input.getRunId?.() ? { runId: input.getRunId?.() } : {}),
+  })
 
-export const TaskCreateTool: ToolDefinition = {
-  name: 'TaskCreate',
-  description: 'Create a new task for tracking work progress. Tasks help organize multi-step operations.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      subject: { type: 'string', description: 'Short task title' },
-      description: { type: 'string', description: 'Detailed task description' },
-      activeForm: { type: 'string', description: 'Present-continuous label while the task is running' },
-      owner: { type: 'string', description: 'Task owner/assignee' },
-      status: { type: 'string', enum: ['pending', 'in_progress'], description: 'Initial status' },
+  const taskCreate: ToolDefinition = {
+    name: 'TaskCreate',
+    description: 'Create a persistent task item. Use TaskUpdate to add dependencies or claim it.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['subject'],
+      properties: {
+        subject: { type: 'string', minLength: 1 },
+        description: { type: 'string' },
+        activeForm: { type: 'string' },
+      },
     },
-    required: ['subject'],
-  },
-  isReadOnly: () => false,
-  isConcurrencySafe: () => true,
-  isEnabled: () => true,
-  async prompt() { return 'Create a task for tracking progress.' },
-  async call(input: any): Promise<ToolResult> {
-    const task = createTaskRecord({
-      subject: input.subject,
-      description: input.description,
-      activeForm: input.activeForm,
-      status: input.status || 'pending',
-      owner: input.owner,
-    })
-
-    return {
-      type: 'tool_result',
-      tool_use_id: '',
-      content: `Task created: ${task.id} - "${task.subject}" (${task.status})`,
-    }
-  },
-}
-
-// ============================================================================
-// TaskListTool
-// ============================================================================
-
-export const TaskListTool: ToolDefinition = {
-  name: 'TaskList',
-  description: 'List all tasks with their status, ownership, and dependencies.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      status: { type: 'string', description: 'Filter by status' },
-      owner: { type: 'string', description: 'Filter by owner' },
-    },
-  },
-  isReadOnly: () => true,
-  isConcurrencySafe: () => true,
-  isEnabled: () => true,
-  async prompt() { return 'List tasks.' },
-  async call(input: any): Promise<ToolResult> {
-    let tasks = getAllTasks()
-
-    if (input.status) {
-      tasks = tasks.filter(t => t.status === input.status)
-    }
-    if (input.owner) {
-      tasks = tasks.filter(t => t.owner === input.owner)
-    }
-
-    if (tasks.length === 0) {
-      return { type: 'tool_result', tool_use_id: '', content: 'No tasks found.' }
-    }
-
-    const lines = tasks.map(t =>
-      `[${t.id}] ${t.status.toUpperCase()} - ${t.subject}${t.owner ? ` (owner: ${t.owner})` : ''}`
-    )
-
-    return {
-      type: 'tool_result',
-      tool_use_id: '',
-      content: lines.join('\n'),
-    }
-  },
-}
-
-// ============================================================================
-// TaskUpdateTool
-// ============================================================================
-
-export const TaskUpdateTool: ToolDefinition = {
-  name: 'TaskUpdate',
-  description: 'Update a task\'s status, description, or other properties.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      id: { type: 'string', description: 'Task ID' },
-      status: { type: 'string', enum: ['pending', 'in_progress', 'running', 'completed', 'failed', 'cancelled', 'stopped'] },
-      description: { type: 'string', description: 'Updated description' },
-      activeForm: { type: 'string', description: 'Present-continuous status label shown while in progress' },
-      owner: { type: 'string', description: 'New owner' },
-      output: { type: 'string', description: 'Task output/result' },
-    },
-    required: ['id'],
-  },
-  isReadOnly: () => false,
-  isConcurrencySafe: () => true,
-  isEnabled: () => true,
-  async prompt() { return 'Update a task.' },
-  async call(input: any): Promise<ToolResult> {
-    const task = taskStore.get(input.id)
-    if (!task) {
-      return { type: 'tool_result', tool_use_id: '', content: `Task not found: ${input.id}`, is_error: true }
-    }
-
-    if (input.status) task.status = input.status
-    if (input.description) task.description = input.description
-    if (input.activeForm) task.activeForm = input.activeForm
-    if (input.owner) task.owner = input.owner
-    if (input.output) task.output = input.output
-    task.updatedAt = new Date().toISOString()
-
-    return {
-      type: 'tool_result',
-      tool_use_id: '',
-      content: `Task updated: ${task.id} - ${task.status} - "${task.subject}"`,
-    }
-  },
-}
-
-// ============================================================================
-// TaskGetTool
-// ============================================================================
-
-export const TaskGetTool: ToolDefinition = {
-  name: 'TaskGet',
-  description: 'Get full details of a specific task.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      id: { type: 'string', description: 'Task ID' },
-    },
-    required: ['id'],
-  },
-  isReadOnly: () => true,
-  isConcurrencySafe: () => true,
-  isEnabled: () => true,
-  async prompt() { return 'Get task details.' },
-  async call(input: any): Promise<ToolResult> {
-    const task = taskStore.get(input.id)
-    if (!task) {
-      return { type: 'tool_result', tool_use_id: '', content: `Task not found: ${input.id}`, is_error: true }
-    }
-
-    return {
-      type: 'tool_result',
-      tool_use_id: '',
-      content: JSON.stringify(task, null, 2),
-    }
-  },
-}
-
-// ============================================================================
-// TaskStopTool
-// ============================================================================
-
-export const TaskStopTool: ToolDefinition = {
-  name: 'TaskStop',
-  description: 'Stop a running background task by task ID.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: { type: 'string', description: 'Task ID to stop' },
-      shell_id: { type: 'string', description: 'Deprecated alias for task_id' },
-      reason: { type: 'string', description: 'Reason for stopping' },
-    },
-    required: ['task_id'],
-  },
-  isReadOnly: () => false,
-  isConcurrencySafe: () => true,
-  isEnabled: () => true,
-  async prompt() { return 'Stop a task.' },
-  async call(input: any): Promise<ToolResult> {
-    const taskId = input.task_id ?? input.shell_id ?? input.id
-    const task = taskStore.get(taskId)
-    if (!task) {
-      return { type: 'tool_result', tool_use_id: '', content: `Task not found: ${taskId}`, is_error: true }
-    }
-
-    task.status = 'stopped'
-    task.updatedAt = new Date().toISOString()
-    if (input.reason) task.output = `Stopped: ${input.reason}`
-
-    return {
-      type: 'tool_result',
-      tool_use_id: '',
-      content: JSON.stringify({
-        message: `Successfully stopped task: ${task.id}${task.description ? ` (${task.description})` : ''}`,
-        task_id: task.id,
-        task_type: task.taskType || 'unknown',
-        command: task.description || task.subject,
-      }),
-    }
-  },
-}
-
-// ============================================================================
-// TaskOutputTool
-// ============================================================================
-
-export const TaskOutputTool: ToolDefinition = {
-  name: 'TaskOutput',
-  description: 'Get output from a running or completed background task.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: { type: 'string', description: 'Task ID' },
-      block: { type: 'boolean', description: 'Whether to wait for completion (default: true)' },
-      timeout: { type: 'number', description: 'Maximum wait time in milliseconds (default: 30000)' },
-    },
-    required: ['task_id'],
-  },
-  isReadOnly: () => true,
-  isConcurrencySafe: () => true,
-  isEnabled: () => true,
-  async prompt() { return 'Get task output.' },
-  async call(input: any): Promise<ToolResult> {
-    const taskId = input.task_id ?? input.id
-    let task = taskStore.get(taskId)
-    if (!task) {
-      return { type: 'tool_result', tool_use_id: '', content: `Task not found: ${taskId}`, is_error: true }
-    }
-
-    const block = input.block !== false
-    const timeout = Math.max(0, Math.min(Number(input.timeout ?? 30000), 600000))
-    if (block && (task.status === 'running' || task.status === 'in_progress' || task.status === 'pending')) {
-      const start = Date.now()
-      while (Date.now() - start < timeout) {
-        const current = taskStore.get(taskId)
-        if (!current) break
-        if (current.status !== 'running' && current.status !== 'in_progress' && current.status !== 'pending') {
-          break
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
-      task = taskStore.get(taskId)
-      if (!task) {
-        return { type: 'tool_result', tool_use_id: '', content: `Task not found: ${taskId}`, is_error: true }
-      }
-    }
-
-    if (!task.output && task.outputFile) {
+    isReadOnly: () => false,
+    isConcurrencySafe: () => false,
+    isEnabled: () => true,
+    async prompt() { return 'Create a persistent task item.' },
+    async call(raw): Promise<ToolResult> {
       try {
-        const { readFile } = await import('fs/promises')
-        task.output = await readFile(task.outputFile, 'utf-8')
-      } catch {
-        // Ignore unreadable task output files and fall back to in-memory output.
+        const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+        const subject = typeof value.subject === 'string' ? value.subject.trim() : ''
+        if (!subject) return result('TaskCreate requires a non-empty subject.', true)
+        const created = await input.store.create({
+          subject,
+          ...(typeof value.description === 'string' ? { description: value.description } : {}),
+          ...(typeof value.activeForm === 'string' ? { activeForm: value.activeForm } : {}),
+        }, context())
+        return result(created)
+      } catch (error) {
+        return result(error instanceof Error ? error.message : String(error), true)
       }
-    }
+    },
+  }
 
-    return {
-      type: 'tool_result',
-      tool_use_id: '',
-      content: JSON.stringify({
-        retrieval_status:
-          task.status === 'running' || task.status === 'in_progress' || task.status === 'pending'
-            ? block
-              ? 'timeout'
-              : 'not_ready'
-            : 'success',
-        task: {
-          task_id: task.id,
-          task_type: task.taskType || 'unknown',
-          status: task.status,
-          description: task.subject,
-          activeForm: task.activeForm,
-          output: task.output || '(no output yet)',
-          error: task.status === 'failed' ? task.output || 'Task failed' : undefined,
-        },
-      }),
-    }
-  },
+  const taskList: ToolDefinition = {
+    name: 'TaskList',
+    description: 'List persistent tasks and their dependency/ownership summary.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+        owner: { type: 'string' },
+      },
+    },
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
+    isEnabled: () => true,
+    async prompt() { return 'List persistent tasks.' },
+    async call(raw): Promise<ToolResult> {
+      try {
+        const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+        const status = value.status === 'pending' || value.status === 'in_progress' || value.status === 'completed'
+          ? value.status
+          : undefined
+        const tasks = await input.store.list({
+          ...(status ? { status } : {}),
+          ...(typeof value.owner === 'string' ? { owner: value.owner } : {}),
+        }, context())
+        return result(tasks)
+      } catch (error) {
+        return result(error instanceof Error ? error.message : String(error), true)
+      }
+    },
+  }
+
+  const taskUpdate: ToolDefinition = {
+    name: 'TaskUpdate',
+    description: 'Update a persistent task, claim it, complete it, or add/remove dependencies.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['taskId'],
+      properties: {
+        taskId: { type: 'string' },
+        subject: { type: 'string' },
+        description: { type: 'string' },
+        activeForm: { type: 'string' },
+        status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+        owner: { type: ['string', 'null'] },
+        metadata: { type: ['object', 'null'] },
+        delete: { type: 'boolean', description: 'Delete this task when it is pending.' },
+        addBlocks: { type: 'array', items: { type: 'string' } },
+        addBlockedBy: { type: 'array', items: { type: 'string' } },
+        removeBlocks: { type: 'array', items: { type: 'string' } },
+        removeBlockedBy: { type: 'array', items: { type: 'string' } },
+        expectedRevision: { type: 'number' },
+        claimToken: { type: 'string' },
+      },
+    },
+    isReadOnly: () => false,
+    isConcurrencySafe: () => false,
+    isEnabled: () => true,
+    async prompt() { return 'Update or claim a persistent task.' },
+    async call(raw): Promise<ToolResult> {
+      try {
+        const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+        if (typeof value.taskId !== 'string' || !value.taskId.trim()) return result('TaskUpdate requires taskId.', true)
+        if (value.delete === true) {
+          await input.store.delete(value.taskId, context())
+          return result({ deleted: value.taskId })
+        }
+        const updated = await input.store.update(value, context())
+        return result(updated)
+      } catch (error) {
+        return result(error instanceof Error ? error.message : String(error), true)
+      }
+    },
+  }
+
+  const taskGet: ToolDefinition = {
+    name: 'TaskGet',
+    description: 'Get one persistent task with its revision and claim details.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['taskId'],
+      properties: { taskId: { type: 'string' } },
+    },
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
+    isEnabled: () => true,
+    async prompt() { return 'Get persistent task details.' },
+    async call(raw): Promise<ToolResult> {
+      try {
+        const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+        if (typeof value.taskId !== 'string' || !value.taskId.trim()) return result('TaskGet requires taskId.', true)
+        const task = await input.store.get(value.taskId, context())
+        return task ? result(task) : result(`Task not found: ${value.taskId}`, true)
+      } catch (error) {
+        return result(error instanceof Error ? error.message : String(error), true)
+      }
+    },
+  }
+
+  const taskStop: ToolDefinition = {
+    name: 'TaskStop',
+    description: 'Cancel the current claim and return an in-progress task to pending.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['taskId'],
+      properties: {
+        taskId: { type: 'string' },
+        expectedRevision: { type: 'number' },
+        claimToken: { type: 'string' },
+        reason: { type: 'string' },
+      },
+    },
+    isReadOnly: () => false,
+    isConcurrencySafe: () => false,
+    isEnabled: () => true,
+    async prompt() { return 'Stop the active claim for a persistent task.' },
+    async call(raw): Promise<ToolResult> {
+      try {
+        const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+        if (typeof value.taskId !== 'string' || !value.taskId.trim()) return result('TaskStop requires taskId.', true)
+        const stopped = await input.store.stop({
+          taskId: value.taskId,
+          ...(typeof value.expectedRevision === 'number' ? { expectedRevision: value.expectedRevision } : {}),
+          ...(typeof value.claimToken === 'string' ? { claimToken: value.claimToken } : {}),
+          ...(typeof value.reason === 'string' ? { reason: value.reason } : {}),
+        }, context())
+        return result(stopped)
+      } catch (error) {
+        return result(error instanceof Error ? error.message : String(error), true)
+      }
+    },
+  }
+
+  return [taskCreate, taskUpdate, taskList, taskGet, taskStop]
 }
+
+export type TaskToolName = 'TaskCreate' | 'TaskUpdate' | 'TaskList' | 'TaskGet' | 'TaskStop'
+
+// Kept only for source compatibility with older SDK tests/callers. These
+// aliases address ephemeral process jobs, never persistent Task items.
+export { ProcessOutputTool as TaskOutputTool, clearProcessJobs as clearTasks } from './process-job-registry.js'

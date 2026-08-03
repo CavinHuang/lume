@@ -1,3 +1,4 @@
+import { forwardRef } from "react"
 import { Menu } from "@base-ui/react/menu"
 import { cn } from "@/lib/utils"
 
@@ -9,28 +10,35 @@ function DropdownMenuTrigger({ ...props }: Menu.Trigger.Props) {
   return <Menu.Trigger data-slot="dropdown-menu-trigger" {...props} />
 }
 
-function DropdownMenuContent({
-  className,
-  children,
-  ...props
-}: Menu.Popup.Props & { className?: string }) {
-  return (
-    <Menu.Portal>
-      <Menu.Positioner sideOffset={4} align="start" className="z-[9999]">
-        <Menu.Popup
-          data-slot="dropdown-menu-content"
-          className={cn(
-            "min-w-[140px] overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)] animate-in fade-in-0 zoom-in-95",
-            className
-          )}
-          {...props}
-        >
-          {children}
-        </Menu.Popup>
-      </Menu.Positioner>
-    </Menu.Portal>
-  )
+type DropdownMenuContentProps = Menu.Popup.Props & {
+  className?: string
+  align?: 'start' | 'center' | 'end'
+  side?: 'top' | 'right' | 'bottom' | 'left'
+  sideOffset?: number
+  collisionPadding?: number
 }
+
+const DropdownMenuContent = forwardRef<HTMLDivElement, DropdownMenuContentProps>(
+  function DropdownMenuContent({ className, children, align = 'start', side = 'bottom', sideOffset = 4, collisionPadding = 8, ...props }, ref) {
+    return (
+      <Menu.Portal>
+        <Menu.Positioner side={side} sideOffset={sideOffset} align={align} collisionPadding={collisionPadding} positionMethod="fixed" className="z-[9999]">
+          <Menu.Popup
+            ref={ref}
+            data-slot="dropdown-menu-content"
+            className={cn(
+              "min-w-[140px] overflow-hidden rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_80%,transparent)] bg-[var(--surface-1)] p-1 shadow-[0_24px_48px_-32px_hsl(var(--shadow-panel)/0.5)] animate-in fade-in-0 zoom-in-95",
+              className
+            )}
+            {...props}
+          >
+            {children}
+          </Menu.Popup>
+        </Menu.Positioner>
+      </Menu.Portal>
+    )
+  }
+)
 
 function DropdownMenuItem({
   className,
@@ -88,10 +96,10 @@ function DropdownMenuSubTrigger({ className, ...props }: Menu.SubmenuTrigger.Pro
   )
 }
 
-function DropdownMenuSubContent({ className, children, ...props }: Menu.Popup.Props & { className?: string }) {
+function DropdownMenuSubContent({ className, children, align = 'start', side = 'right', sideOffset = 4, collisionPadding = 8, ...props }: DropdownMenuContentProps) {
   return (
     <Menu.Portal>
-      <Menu.Positioner sideOffset={4} align="start" className="z-[9999]">
+      <Menu.Positioner side={side} sideOffset={sideOffset} align={align} collisionPadding={collisionPadding} positionMethod="fixed" className="z-[9999]">
         <Menu.Popup
           data-slot="dropdown-menu-sub-content"
           className={cn(

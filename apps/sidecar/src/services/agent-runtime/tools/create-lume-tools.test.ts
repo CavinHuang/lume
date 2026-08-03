@@ -116,44 +116,55 @@ describe("create-lume-tools", () => {
     expect(result.availableToolNames).toContain("weread_export_all_notes");
   });
 
-  test("includes built-in node_repl tools as MCP-wrapped runtime tools", () => {
+  test("does not expose node_repl to an ordinary runtime", () => {
     const result = createLumeRuntimeTools({ ...baseInput(), workspaceSlug: "workspace-1" });
     const toolNames = result.customTools.map((tool) => tool.name);
 
-    expect(toolNames).toContain("mcp__node_repl__js");
-    expect(toolNames).toContain("mcp__node_repl__js_reset");
-    expect(toolNames).toContain("mcp__node_repl__js_add_node_module_dir");
-    expect(result.availableToolNames).toContain("mcp__node_repl__js");
-    expect(result.availableToolNames).toContain("mcp__node_repl__js_reset");
-    expect(result.availableToolNames).toContain("mcp__node_repl__js_add_node_module_dir");
+    expect(toolNames).not.toContain("mcp__node_repl__js");
+    expect(toolNames).not.toContain("mcp__node_repl__js_reset");
+    expect(toolNames).not.toContain("mcp__node_repl__js_add_node_module_dir");
+    expect(result.availableToolNames).not.toContain("mcp__node_repl__js");
     expect(toolNames).not.toContain("js");
   });
 
-  test("includes built-in computer-use tools with MCP-compatible names", () => {
+  test("exposes node_repl only for explicit browser JavaScript automation", () => {
+    const result = createLumeRuntimeTools({
+      ...baseInput(),
+      workspaceSlug: "workspace-1",
+      originalUserInstruction: "用 Playwright 检查当前网页的交互"
+    });
+    expect(result.customTools.map((tool) => tool.name)).toContain("mcp__node_repl__js");
+  });
+
+  test("does not expose Computer Use to an ordinary runtime", () => {
     const result = createLumeRuntimeTools(baseInput());
     const toolNames = result.customTools.map((tool) => tool.name);
 
-    for (const name of [
-      "list_apps",
-      "list_windows",
-      "get_window",
-      "get_window_state",
-      "launch_app",
-      "activate_window",
-      "click",
-      "press_key",
-      "type_text",
-      "scroll",
-      "set_value",
-      "drag",
-      "perform_secondary_action",
-    ]) {
-      expect(toolNames).toContain(`mcp__computer_use__${name}`);
-      expect(result.availableToolNames).toContain(`mcp__computer_use__${name}`);
-    }
-    for (const removed of ["take_screenshot", "move_pointer", "current_context", "search_context", "wait_for_state"] ) {
-      expect(toolNames).not.toContain(`mcp__computer_use__${removed}`);
-    }
+    expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
+  });
+
+  test("exposes Computer Use for an explicit browser interaction", () => {
+    const result = createLumeRuntimeTools({
+      ...baseInput(),
+      originalUserInstruction: "点击当前页面的提交按钮",
+      messageMetadata: { preferredCapabilityRoute: "browser" }
+    });
+    expect(result.customTools.map((tool) => tool.name)).toContain("mcp__computer_use__click");
+  });
+
+  test("keeps both automation tool families out of a coding route", () => {
+    const result = createLumeRuntimeTools({
+      ...baseInput(),
+      originalUserInstruction: "修复浏览器页面的弹窗层级问题",
+      messageMetadata: { preferredCapabilityRoute: "coding" }
+    });
+    const toolNames = result.customTools.map((tool) => tool.name);
+    expect(toolNames).toEqual([]);
+    expect(result.availableToolNames).not.toContain("automation_read");
+    expect(result.availableToolNames).not.toContain("automation_set");
+    expect(result.availableToolNames).not.toContain("automation_query");
+    expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
+    expect(toolNames.some((name) => name.startsWith("mcp__node_repl__"))).toBeFalse();
   });
 
   test("exposes only node_repl for the sky Computer Use surface", () => {
@@ -165,5 +176,25 @@ describe("create-lume-tools", () => {
     expect(toolNames).not.toContain("mcp__node_repl__js_add_node_module_dir");
     expect(toolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
     expect(result.availableToolNames.some((name) => name.startsWith("mcp__computer_use__"))).toBeFalse();
+  });
+
+  test("coding route also hides node_repl on the sky Computer Use surface", () => {
+    const result = createLumeRuntimeTools({
+      ...baseInput(),
+      computerUseSurface: "sky",
+      messageMetadata: { preferredCapabilityRoute: "coding" },
+    });
+    expect(result.customTools.some((tool) => tool.name.startsWith("mcp__node_repl__"))).toBeFalse();
+  });
+
+  test("missing route metadata does not re-enable automation for a coding request", () => {
+    const result = createLumeRuntimeTools({
+      ...baseInput(),
+      computerUseSurface: "sky",
+      originalUserInstruction: "修复浏览器页面的弹窗层级问题",
+    });
+    const toolNames = result.customTools.map((tool) => tool.name);
+    expect(toolNames.some((toolName) => toolName.startsWith("mcp__node_repl__"))).toBeFalse();
+    expect(toolNames.some((toolName) => toolName.startsWith("mcp__computer_use__"))).toBeFalse();
   });
 });

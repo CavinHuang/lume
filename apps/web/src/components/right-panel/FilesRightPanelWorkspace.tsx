@@ -9,10 +9,13 @@ import { cn } from '@/lib/utils'
 import { openFileRefInSystem, isDesktopRuntime, revealFileRefInSystem, writeClipboardText } from '@/lib/desktop-api'
 import { RightPanelFilePreview } from './RightPanelFilePreview'
 import { UnifiedFileTree } from './UnifiedFileTree'
+import { RightPanelMcpResourcePreview } from './RightPanelMcpResourcePreview'
 import {
   openFileTab,
-  fileRefKey,
+  createRightPanelFileTarget,
   removeFileRef,
+  rightPanelFileTargetKey,
+  rightPanelFileTargetRef,
   setFilePreviewScope,
   type RightPanelFileTarget,
   type ThreadFileWorkspace,
@@ -26,6 +29,7 @@ import {
 } from './right-panel-layout'
 
 export function FilesRightPanelWorkspace({
+  threadId,
   workspace,
   workspaceSlug,
   workspaceProjectPath,
@@ -33,6 +37,7 @@ export function FilesRightPanelWorkspace({
   openFunctions,
   onWorkspaceChange,
 }: {
+  threadId: string
   workspace: ThreadFileWorkspace
   workspaceSlug?: string
   workspaceProjectPath?: string
@@ -52,7 +57,8 @@ export function FilesRightPanelWorkspace({
   const activeTab = activeFileTabId
     ? workspace.openTabs.find((tab) => tab.id === activeFileTabId)
     : undefined
-  const previewRef = activeTab?.ref ?? (wide ? workspace.temporaryPreviewRef : null)
+  const previewTarget = activeTab?.target ?? (wide ? workspace.temporaryPreviewTarget : null)
+  const previewRef = previewTarget ? rightPanelFileTargetRef(previewTarget) : null
   const showTree = !treeCollapsed && (wide || workspace.activeItem?.kind !== 'file')
   const treeWidth = useMemo(
     () => clampRightPanelFileTreeWidth(preferences.treeWidth ?? FILE_TREE_DEFAULT_WIDTH, Math.max(containerWidth, 680)),
@@ -73,13 +79,15 @@ export function FilesRightPanelWorkspace({
     return () => observer.disconnect()
   }, [])
 
-  const openFile = useCallback((ref: RightPanelFileTarget) => onWorkspaceChange(openFileTab(workspaceRef.current, ref, {
-    caseInsensitive: /Win/i.test(navigator.platform),
-  })), [onWorkspaceChange])
+  const openFile = useCallback((target: RightPanelFileTarget | FileRef) => {
+    onWorkspaceChange(openFileTab(workspaceRef.current, target, {
+      caseInsensitive: /Win/i.test(navigator.platform),
+    }))
+  }, [onWorkspaceChange])
   const handleMissing = useCallback((ref: FileRef) => {
     onWorkspaceChange(removeFileRef(workspaceRef.current, ref, false, openFunctionsRef.current))
   }, [onWorkspaceChange])
-  const previewScopeKey = activeTab?.id ?? (previewRef ? `temporary:${fileRefKey(previewRef)}` : 'temporary')
+  const previewScopeKey = activeTab?.id ?? (previewTarget ? `temporary:${rightPanelFileTargetKey(previewTarget)}` : 'temporary')
   const handlePreviewScopeChange = useCallback((token: string | null) => {
     onWorkspaceChange((current) => setFilePreviewScope(current, previewScopeKey, token))
   }, [onWorkspaceChange, previewScopeKey])
@@ -126,22 +134,26 @@ export function FilesRightPanelWorkspace({
             entry={selectedEntry}
             collapsed={workspace.detailsCollapsed}
             onToggle={() => onWorkspaceChange({ ...workspace, detailsCollapsed: !workspace.detailsCollapsed })}
-            onPreview={() => openFile(workspace.selectedRef!)}
+            onPreview={() => openFile(createRightPanelFileTarget(workspace.selectedRef!))}
           />
         )}
       </div>
       {wide && !treeCollapsed && <div role="separator" aria-orientation="vertical" aria-label="调整文件树宽度" className="w-1.5 shrink-0 cursor-col-resize hover:bg-primary/10" onPointerDown={startResize} />}
       <div className={cn('min-h-0 min-w-0 flex-1', !wide && showTree && 'hidden')}>
-        <RightPanelFilePreview
+        {previewTarget?.kind === 'mcp-resource'
+          ? <RightPanelMcpResourcePreview workspaceSlug={previewTarget.workspaceSlug} resource={previewTarget.resource} />
+          : <RightPanelFilePreview
+          threadId={threadId}
           fileRef={previewRef}
           lineSelection={activeTab?.lineSelection}
           navigationRevision={activeTab?.navigationRevision}
           onOpenFile={openFile}
           onMissing={handleMissing}
           onPreviewScopeChange={handlePreviewScopeChange}
+          onEditStart={!activeTab && previewTarget ? () => openFile(previewTarget) : undefined}
           treeCollapsed={treeCollapsed}
           onToggleTree={wide ? () => setPreferences((current) => ({ ...current, treeCollapsed: !treeCollapsed })) : undefined}
-        />
+        />}
       </div>
     </div>
   )

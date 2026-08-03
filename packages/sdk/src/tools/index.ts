@@ -34,15 +34,8 @@ import { AgentTool } from './agent-tool.js'
 import { SendMessageTool } from './send-message.js'
 import { TeamCreateTool, TeamDeleteTool } from './team-tools.js'
 
-// Tasks
-import {
-  TaskCreateTool,
-  TaskListTool,
-  TaskUpdateTool,
-  TaskGetTool,
-  TaskStopTool,
-  TaskOutputTool,
-} from './task-tools.js'
+// Persistent Tasks are host-bound through createTaskTools and are not part of
+// the SDK's unscoped base tool pool.
 
 // Worktree
 import { EnterWorktreeTool, ExitWorktreeTool } from './worktree-tools.js'
@@ -65,7 +58,7 @@ import {
 } from './mcp-resource-tools.js'
 
 // LSP
-import { LSPTool } from './lsp-tool.js'
+import { LSPApplyTool, LSPTool } from './lsp-tool.js'
 
 // Config
 import { ConfigTool } from './config-tool.js'
@@ -105,13 +98,7 @@ const ALL_TOOLS: ToolDefinition[] = [
   TeamCreateTool,
   TeamDeleteTool,
 
-  // Tasks
-  TaskCreateTool,
-  TaskListTool,
-  TaskUpdateTool,
-  TaskGetTool,
-  TaskStopTool,
-  TaskOutputTool,
+  // Internal process controls are intentionally not model-visible.
 
   // Worktree
   EnterWorktreeTool,
@@ -134,6 +121,7 @@ const ALL_TOOLS: ToolDefinition[] = [
 
   // LSP
   LSPTool,
+  LSPApplyTool,
 
   // Config
   ConfigTool,
@@ -141,6 +129,13 @@ const ALL_TOOLS: ToolDefinition[] = [
   // Skill
   SkillTool,
 ]
+
+/** Schemas always sent to the provider when deferred tool loading is enabled. */
+export const CORE_TOOL_NAMES = new Set([
+  'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
+  'WebFetch', 'WebSearch', 'Agent', 'AskUserQuestion', 'Skill', 'LSP', 'LSPApply',
+  'ProcessOutput', 'ProcessStop', 'TaskOutput', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
+])
 
 /**
  * Get all built-in tools.
@@ -232,13 +227,7 @@ export {
   SendMessageTool,
   TeamCreateTool,
   TeamDeleteTool,
-  // Tasks
-  TaskCreateTool,
-  TaskListTool,
-  TaskUpdateTool,
-  TaskGetTool,
-  TaskStopTool,
-  TaskOutputTool,
+  // Persistent Tasks are host-bound; see createTaskTools.
   // Worktree
   EnterWorktreeTool,
   ExitWorktreeTool,
@@ -256,6 +245,7 @@ export {
   McpAuthTool,
   // LSP
   LSPTool,
+  LSPApplyTool,
   // Config
   ConfigTool,
   // Todo
@@ -264,6 +254,25 @@ export {
   SkillTool,
   createSkillTool,
 }
+
+export function splitDeferredTools(tools: ToolDefinition[]): {
+  core: ToolDefinition[]
+  deferred: ToolDefinition[]
+} {
+  const candidates = tools.filter((tool) => tool.name !== 'ToolSearch' && tool.name !== 'ExecuteTool')
+  return {
+    core: candidates.filter((tool) =>
+      CORE_TOOL_NAMES.has(tool.name)
+      || tool.runtimeMetadata?.requiredDuringSkillScope === true
+    ),
+    deferred: candidates.filter((tool) =>
+      !CORE_TOOL_NAMES.has(tool.name)
+      && tool.runtimeMetadata?.requiredDuringSkillScope !== true
+    ),
+  }
+}
+
+export type { LspWorkspaceEditPreview } from './lsp-tool.js'
 
 // Re-export helpers
 export { defineTool, toApiTool } from './types.js'

@@ -50,84 +50,410 @@ const agentMessageAttachmentInputSchema = z.object({
 });
 
 const agentUserMessagePartSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("text"),
+      text: z.string(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("capability_ref"),
+      occurrenceId: z.string().trim().min(1).max(128),
+      uri: z.string().min(1).max(2048),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("planning_todo_ref"),
+      schemaVersion: z.literal(1),
+      uri: z.string().regex(/^lume:\/\/planning\/todo\/[0-9a-f-]{36}$/i),
+      todoId: z.string().uuid(),
+      relation: z.enum(["mentioned", "primary"]),
+      displayText: z.string().trim().min(1).max(240),
+    })
+    .strict(),
+]);
+
+const agentDiffCommentAttachmentSchema = z.object({
+  id: z.string().trim().min(1).max(128),
+  origin: z.literal("diff"),
+  intent: z.enum(["comment", "context", "modify"]).optional(),
+  fileRef: z.object({
+    source: z.enum(["project", "session", "memory", "legacy"]),
+    scopeId: z.string().min(1).max(256),
+    relativePath: z.string().max(4096)
+  }).strict().optional(),
+  position: z.object({
+    path: z.string().trim().min(1).max(4096),
+    rootId: z.string().trim().min(1).max(128).optional(),
+    runId: z.string().trim().min(1).max(128).optional(),
+    side: z.enum(["left", "right"]),
+    line: z.number().int().min(1),
+    startLine: z.number().int().min(1).optional(),
+    startSide: z.enum(["left", "right"]).optional()
+  }).strict(),
+  body: z.string().trim().min(1).max(20_000),
+  localDiffHunk: z.string().max(100_000).optional(),
+  selectedContent: z.string().max(32 * 1024).optional()
+}).strict();
+
+const agentBrowserTabAttachmentSchema = z.object({
+  id: z.string().trim().min(1).max(256),
+  origin: z.literal("browser-tab"),
+  backend: z.enum(["iab", "extension"]).optional(),
+  browserId: z.string().trim().min(1).max(128).optional(),
+  referenceGrantId: z.string().trim().min(1).max(256).optional(),
+  access: z.literal("control").optional(),
+  tabId: z.string().trim().min(1).max(256),
+  providerTabId: z.string().trim().min(1).max(256).optional(),
+  title: z.string().max(512),
+  url: z.string().url().max(8192),
+  generation: z.number().int().min(1).optional(),
+  lastOpenedAt: z.string().datetime().optional(),
+  ownerThreadId: z.string().trim().min(1).max(256).optional()
+}).strict();
+
+const agentBrowserAnchorSchema = z.object({
+  kind: z.enum(["element", "text", "region"]),
+  url: z.string().url().max(8192),
+  generation: z.number().int().min(1),
+  framePath: z.array(z.string().max(2048)).max(16),
+  domPath: z.string().max(8192).optional(),
+  textQuote: z.object({
+    exact: z.string().max(32_000),
+    prefix: z.string().max(1000).optional(),
+    suffix: z.string().max(1000).optional()
+  }).strict().optional(),
+  selectedContent: z.string().max(20_000).optional(),
+  rect: z.object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().nonnegative(),
+    height: z.number().finite().nonnegative()
+  }).strict()
+}).strict();
+
+const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
+  agentBrowserTabAttachmentSchema,
   z.object({
-    type: z.literal("text"),
-    text: z.string()
+    id: z.string().trim().min(1).max(256),
+    origin: z.literal("browser-annotation"),
+    tab: agentBrowserTabAttachmentSchema,
+    anchor: agentBrowserAnchorSchema,
+    body: z.string().trim().min(1).max(20_000),
+    screenshotRef: z.string().max(4096).optional()
   }).strict(),
   z.object({
-    type: z.literal("capability_ref"),
-    occurrenceId: z.string().trim().min(1).max(128),
-    uri: z.string().min(1).max(2048)
+    id: z.string().trim().min(1).max(256),
+    origin: z.literal("browser-design-change"),
+    tab: agentBrowserTabAttachmentSchema,
+    anchor: agentBrowserAnchorSchema,
+    originalStyles: z.record(z.string().max(128), z.string().max(4096)),
+    proposedStyles: z.record(z.string().max(128), z.string().max(4096)),
+    body: z.string().trim().min(1).max(20_000).optional(),
+    screenshotRef: z.string().max(4096).optional()
   }).strict()
 ]);
 
-export const agentSendInputSchema = z.object({
-  threadId: z.string().min(1),
-  userMessage: z.string(),
-  messageParts: z.array(agentUserMessagePartSchema).optional(),
-  clientSubmissionId: z.string().uuid().optional(),
-  modelRef: z.string().optional(),
-  channelId: z.string().optional(),
-  modelId: z.string().optional(),
-  workspaceId: z.string().optional(),
-  chatType: z.enum(["direct", "group", "channel"]).optional(),
-  threadType: z.enum(["main", "subagent", "group", "channel"]).optional(),
-  permissionMode: z.enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]).optional(),
-  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
-  messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
-  messageMetadata: z.record(z.string(), z.unknown()).optional(),
-  resendFromMessageId: z.string().optional(),
-  editFromMessageId: z.string().optional(),
-  traceContext: z.object({
-    submissionId: z.string().uuid(),
-    clientEventId: z.string().uuid().optional(),
-    traceId: z.string().uuid().optional(),
-    origin: z.union([
-      z.enum(["main_window", "quick_input", "automation", "routine", "subagent", "resume", "task", "internal"]),
-      z.string().regex(/^im\.[a-z0-9_-]{1,64}$/)
-    ]).optional(),
-    parentTraceId: z.string().uuid().optional(),
-    parentSpanId: z.string().uuid().optional(),
-    linkedTraceId: z.string().uuid().optional()
-  }).strict().optional()
-}).superRefine((input, ctx) => {
-  if (!input.messageParts) return;
-  const visibleMessage = input.messageParts
-    .map((part) => part.type === "text" ? part.text : part.uri)
-    .join("");
-  if (visibleMessage !== input.userMessage) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["messageParts"],
-      message: "messageParts 必须逐字还原 userMessage"
-    });
-  }
-  const occurrenceIds = new Set<string>();
-  input.messageParts.forEach((part, index) => {
-    if (part.type !== "capability_ref") return;
-    if (occurrenceIds.has(part.occurrenceId)) {
+export const agentSendInputSchema = z
+  .object({
+    threadId: z.string().min(1),
+    userMessage: z.string(),
+    messageParts: z.array(agentUserMessagePartSchema).optional(),
+    clientSubmissionId: z.string().uuid().optional(),
+    modelRef: z.string().optional(),
+    channelId: z.string().optional(),
+    modelId: z.string().optional(),
+    workspaceId: z.string().optional(),
+    chatType: z.enum(["direct", "group", "channel"]).optional(),
+    threadType: z.enum(["main", "subagent", "group", "channel"]).optional(),
+    permissionMode: z
+      .enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"])
+      .optional(),
+    thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
+    messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
+    commentAttachments: z
+      .array(agentDiffCommentAttachmentSchema)
+      .max(100)
+      .optional(),
+    browserAttachments: z
+      .array(agentBrowserAttachmentSchema)
+      .max(100)
+      .optional(),
+    messageMetadata: z.record(z.string(), z.unknown()).optional(),
+    resendFromMessageId: z.string().optional(),
+    editFromMessageId: z.string().optional(),
+    traceContext: z
+      .object({
+        submissionId: z.string().uuid(),
+        clientEventId: z.string().uuid().optional(),
+        traceId: z.string().uuid().optional(),
+        origin: z
+          .union([
+            z.enum([
+              "main_window",
+              "quick_input",
+              "automation",
+              "routine",
+              "subagent",
+              "resume",
+              "task",
+              "internal",
+            ]),
+            z.string().regex(/^im\.[a-z0-9_-]{1,64}$/),
+          ])
+          .optional(),
+        parentTraceId: z.string().uuid().optional(),
+        parentSpanId: z.string().uuid().optional(),
+        linkedTraceId: z.string().uuid().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (!input.messageParts) return;
+    const visibleMessage = input.messageParts
+      .map((part) =>
+        part.type === "text"
+          ? part.text
+          : part.type === "planning_todo_ref"
+            ? `&${part.displayText}`
+            : part.uri,
+      )
+      .join("");
+    if (visibleMessage !== input.userMessage) {
       ctx.addIssue({
         code: "custom",
-        path: ["messageParts", index, "occurrenceId"],
-        message: "capability_ref occurrenceId 必须唯一"
+        path: ["messageParts"],
+        message: "messageParts 必须逐字还原 userMessage",
       });
     }
-    occurrenceIds.add(part.occurrenceId);
-    try {
-      if (!parseLumeCapabilityReference(part.uri)) {
-        throw new Error("not a Lume capability reference");
+    const occurrenceIds = new Set<string>();
+    input.messageParts.forEach((part, index) => {
+      if (part.type === "planning_todo_ref") {
+        if (part.uri !== `lume://planning/todo/${part.todoId}`) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["messageParts", index, "uri"],
+            message: "planning_todo_ref uri 必须与 todoId 一致",
+          });
+        }
+        return;
       }
-    } catch {
-      ctx.addIssue({
-        code: "custom",
-        path: ["messageParts", index, "uri"],
-        message: "capability_ref uri 必须是规范的 Lume 引用"
-      });
-    }
+      if (part.type !== "capability_ref") return;
+      if (occurrenceIds.has(part.occurrenceId)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["messageParts", index, "occurrenceId"],
+          message: "capability_ref occurrenceId 必须唯一",
+        });
+      }
+      occurrenceIds.add(part.occurrenceId);
+      try {
+        if (!parseLumeCapabilityReference(part.uri)) {
+          throw new Error("not a Lume capability reference");
+        }
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          path: ["messageParts", index, "uri"],
+          message: "capability_ref uri 必须是规范的 Lume 引用",
+        });
+      }
+    });
   });
-});
 
 export const agentAppendInputSchema = agentSendInputSchema;
+
+export const trustedAgentSendInputSchema = z
+  .object({
+    input: agentSendInputSchema,
+    trustedSurface: z
+      .object({
+        surface: z.enum(["main", "quick-input"]),
+        clientSubmissionId: z.string().uuid(),
+        threadId: z.string().min(1),
+      })
+      .strict(),
+  })
+  .strict();
+
+const planningTodoPrioritySchema = z.enum(["none", "low", "medium", "high"]);
+const planningTodoIdSchema = z.object({ todoId: z.string().uuid() }).strict();
+const planningTodoRevisionSchema = planningTodoIdSchema
+  .extend({ expectedRevision: z.number().int().nonnegative() })
+  .strict();
+const planningTodoDueSchema = z
+  .object({
+    dueDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    dueAt: z.number().int().nonnegative().optional(),
+    dueTimezone: z.string().min(1).max(128).optional(),
+  })
+  .strict();
+export const planningTodoListInputSchema = z
+  .object({
+    workspaceId: z.string().uuid().optional(),
+    scope: z.enum(["current", "all", "unassigned"]).optional(),
+    view: z
+      .enum(["open", "today", "upcoming", "completed", "trash", "all"])
+      .optional(),
+    search: z.string().max(200).optional(),
+    cursor: z.string().regex(/^\d+$/).optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+export const planningTodoGetInputSchema = planningTodoIdSchema;
+export const planningTodoCreateInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(500),
+    description: z.string().max(20_000).optional(),
+    priority: planningTodoPrioritySchema.optional(),
+    workspaceId: z.string().uuid().optional(),
+    ...planningTodoDueSchema.shape,
+  })
+  .strict();
+export const planningTodoUpdateInputSchema = planningTodoIdSchema
+  .extend({
+    expectedRevision: z.number().int().nonnegative(),
+    patch: z
+      .object({
+        title: z.string().trim().min(1).max(500).optional(),
+        description: z.string().max(20_000).nullable().optional(),
+        priority: planningTodoPrioritySchema.optional(),
+        workspaceId: z.string().uuid().nullable().optional(),
+        dueDate: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/u)
+          .nullable()
+          .optional(),
+        dueAt: z.number().int().nullable().optional(),
+        dueTimezone: z.string().min(1).nullable().optional(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const planningTodoPurgeInputSchema = planningTodoIdSchema
+  .extend({
+    expectedRevision: z.number().int().nonnegative(),
+    confirmation: z.literal(true),
+  })
+  .strict();
+export const planningTodoRevisionInputSchema = planningTodoRevisionSchema;
+export const planningTodoStartInputSchema = planningTodoRevisionSchema
+  .extend({
+    workspaceId: z.string().uuid().optional(),
+    idempotencyKey: z.string().min(1).max(200),
+    newThread: z.boolean().optional(),
+  })
+  .strict();
+const planningCalendarScopeSchema = z.enum(["current", "all", "unassigned"]);
+const planningTimestampSchema = z.number().int().positive();
+export const planningCalendarEventListInputSchema = z
+  .object({
+    from: planningTimestampSchema.optional(),
+    to: planningTimestampSchema.optional(),
+    workspaceId: z.string().uuid().optional(),
+    scope: planningCalendarScopeSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  })
+  .strict();
+export const planningCalendarEventIdSchema = z
+  .object({ eventId: z.string().uuid() })
+  .strict();
+export const planningCalendarEventCreateInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(500),
+    notes: z.string().max(20_000).optional(),
+    startAt: planningTimestampSchema,
+    endAt: planningTimestampSchema.optional(),
+    allDay: z.boolean().optional(),
+    groupId: z.string().uuid().optional(),
+    tagIds: z.array(z.string().uuid()).max(50).optional(),
+    reminderTimes: z.array(planningTimestampSchema).max(20).optional(),
+    workspaceId: z.string().uuid().optional(),
+    todoId: z.string().uuid().optional(),
+  })
+  .strict();
+export const planningCalendarEventUpdateInputSchema =
+  planningCalendarEventIdSchema
+    .extend({
+      expectedRevision: z.number().int().positive(),
+      patch: z
+        .object({
+          title: z.string().trim().min(1).max(500).optional(),
+          notes: z.string().max(20_000).nullable().optional(),
+          startAt: planningTimestampSchema.optional(),
+          endAt: planningTimestampSchema.nullable().optional(),
+          allDay: z.boolean().optional(),
+          groupId: z.string().uuid().nullable().optional(),
+          tagIds: z.array(z.string().uuid()).max(50).optional(),
+          workspaceId: z.string().uuid().nullable().optional(),
+          todoId: z.string().uuid().nullable().optional(),
+        })
+        .strict(),
+    })
+    .strict();
+export const planningCalendarEventDeleteInputSchema =
+  planningCalendarEventIdSchema
+    .extend({ expectedRevision: z.number().int().positive() })
+    .strict();
+export const planningGroupListInputSchema = z
+  .object({ scope: z.enum(["todo", "calendar"]) })
+  .strict();
+export const planningGroupCreateInputSchema = z
+  .object({
+    scope: z.enum(["todo", "calendar"]),
+    name: z.string().trim().min(1).max(100),
+    color: z.string().max(64).optional(),
+    sortOrder: z.number().int().optional(),
+  })
+  .strict();
+export const planningGroupUpdateInputSchema = z
+  .object({
+    groupId: z.string().uuid(),
+    scope: z.enum(["todo", "calendar"]),
+    name: z.string().trim().min(1).max(100).optional(),
+    color: z.string().max(64).nullable().optional(),
+    sortOrder: z.number().int().optional(),
+  })
+  .strict();
+export const planningEntityDeleteInputSchema = z
+  .object({ id: z.string().uuid() })
+  .strict();
+export const planningTagCreateInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    color: z.string().max(64).optional(),
+  })
+  .strict();
+export const planningTagUpdateInputSchema = z
+  .object({
+    tagId: z.string().uuid(),
+    name: z.string().trim().min(1).max(100).optional(),
+    color: z.string().max(64).nullable().optional(),
+  })
+  .strict();
+export const planningReminderTargetInputSchema = z
+  .object({
+    targetType: z.enum(["todo", "calendar_event"]),
+    targetId: z.string().uuid(),
+  })
+  .strict();
+export const planningReminderCreateInputSchema =
+  planningReminderTargetInputSchema
+    .extend({ triggerAt: planningTimestampSchema })
+    .strict();
+export const planningReminderIdSchema = z
+  .object({ reminderId: z.string().uuid() })
+  .strict();
+export const planningReminderSnoozeInputSchema = planningReminderIdSchema
+  .extend({ minutes: z.number().int().min(1).max(10_080) })
+  .strict();
 
 export const imAccountCreateInputSchema = z.object({
   provider: z.literal("weixin"),
@@ -585,7 +911,9 @@ export const agentUpdateQueuedMessageInputSchema = z.object({
   queueOperationId: idSchema,
   userMessage: z.string().max(1_000_000),
   messageParts: z.array(agentUserMessagePartSchema).optional(),
-  messageAttachments: z.array(agentMessageAttachmentInputSchema).optional()
+  messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
+  commentAttachments: z.array(agentDiffCommentAttachmentSchema).max(100).optional(),
+  browserAttachments: z.array(agentBrowserAttachmentSchema).max(100).optional()
 });
 
 export const agentRecentThreadMessagesInputSchema = z.object({
@@ -668,6 +996,11 @@ const lumeConfigRoutineStrategySchema = z.object({
 }).strict();
 
 const lumeConfigSimpleModelStrategySchema = z.object({
+  defaultModelRef: nonEmptyTrimmedStringSchema.optional()
+}).strict();
+
+const lumeConfigAdvisorStrategySchema = z.object({
+  enabled: z.boolean().optional(),
   defaultModelRef: nonEmptyTrimmedStringSchema.optional()
 }).strict();
 
@@ -767,6 +1100,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("models.routine"),
     value: lumeConfigRoutineStrategySchema
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("models.advisor"),
+    value: lumeConfigAdvisorStrategySchema
   }),
   ...[
     "models.background",
@@ -1236,9 +1573,144 @@ export const pathFileInputSchema = z.object({
   path: idSchema
 });
 
+const codingReviewSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.enum(["uncommitted", "unstaged", "staged"]) }).strict(),
+  z.object({
+    kind: z.literal("branch"),
+    baseRef: z.string().trim().min(1).max(255)
+  }).strict(),
+  z.object({
+    kind: z.literal("commit"),
+    commitSha: z.string().regex(/^[a-f0-9]{40}$/)
+  }).strict()
+]);
+
+export const codingFileInputSchema = z.object({
+  threadId: idSchema,
+  path: z.string().trim().min(1),
+  runId: idSchema.optional(),
+  rootId: idSchema.optional(),
+  reviewSource: codingReviewSourceSchema.optional()
+});
+
+const codingDiffActionBaseSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema.optional(),
+  rootId: idSchema.optional(),
+  stageFilter: z.enum(["uncommitted", "unstaged", "staged"]).optional(),
+  action: z.enum(["stage", "unstage"])
+});
+
+const codingDiffHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+
+export const codingDiffActionInputSchema = z.discriminatedUnion("scope", [
+  codingDiffActionBaseSchema.extend({
+    scope: z.literal("file"),
+    path: z.string().trim().min(1),
+    expectedDiffHash: codingDiffHashSchema
+  }),
+  codingDiffActionBaseSchema.extend({
+    scope: z.literal("hunk"),
+    path: z.string().trim().min(1),
+    hunkIndex: z.number().int().min(0),
+    expectedDiffHash: codingDiffHashSchema
+  }),
+  codingDiffActionBaseSchema.extend({
+    scope: z.literal("section"),
+    files: z.array(z.object({
+      path: z.string().trim().min(1),
+      expectedDiffHash: codingDiffHashSchema
+    })).min(1).max(500)
+  })
+]).superRefine((input, ctx) => {
+  if (input.scope === "section") {
+    const uniquePaths = new Set(input.files.map((file) => file.path.replace(/\\/g, "/")));
+    if (uniquePaths.size !== input.files.length) {
+      ctx.addIssue({ code: "custom", path: ["files"], message: "分区操作不能包含重复文件" });
+    }
+  }
+});
+
+export const codingDiffMediaInputSchema = codingFileInputSchema.extend({
+  side: z.enum(["before", "after"])
+});
+
+export const codingChangeSetInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema.optional(),
+  paths: z.array(z.string().trim().min(1)).optional(),
+  reviewSource: codingReviewSourceSchema.optional()
+});
+
+export const codingReviewSearchInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema.optional(),
+  reviewSource: codingReviewSourceSchema.optional(),
+  files: z.array(z.object({
+    path: z.string().trim().min(1),
+    rootId: idSchema.optional()
+  }).strict()).min(1).max(2_000),
+  query: z.string().trim().min(1).max(200),
+  limit: z.number().int().min(1).max(500).optional()
+}).strict();
+
+export const codingRepositoryInputSchema = z.object({
+  threadId: idSchema,
+  runId: idSchema.optional(),
+  rootId: idSchema.optional()
+});
+
+const codingRepositoryPublishActionBaseSchema = codingRepositoryInputSchema.extend({
+  expectedBranch: z.string().trim().min(1).max(255),
+  expectedHead: z.string().regex(/^[a-f0-9]{40}$/)
+});
+
+export const codingRepositoryPublishActionInputSchema = z.discriminatedUnion("action", [
+  codingRepositoryPublishActionBaseSchema.extend({
+    action: z.enum(["commit", "commit_and_push"]),
+    message: z.string().trim().min(1).max(5_000),
+    expectedIndexHash: z.string().regex(/^[a-f0-9]{64}$/),
+    includeUnstagedChanges: z.boolean().optional(),
+    expectedWorktreeHash: z.string().regex(/^[a-f0-9]{64}$/).optional()
+  }).superRefine((input, ctx) => {
+    if (input.includeUnstagedChanges && !input.expectedWorktreeHash) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expectedWorktreeHash"],
+        message: "包含未暂存变更时必须提供工作区指纹"
+      });
+    }
+  }),
+  codingRepositoryPublishActionBaseSchema.extend({
+    action: z.literal("push")
+  })
+]);
+
 export const fileRefSchema = rendererFileRefSchema;
 
 export const fileRefInputSchema = z.object({ ref: fileRefSchema }).strict();
+export const fileRefWriteInputSchema = z.object({
+  ref: fileRefSchema,
+  content: z.string().max(20 * 1024 * 1024),
+  expectedMtimeMs: z.number().finite().nonnegative()
+}).strict();
+export const fileSelectionEditInputSchema = z.object({
+  threadId: idSchema,
+  ref: fileRefSchema,
+  content: z.string().max(10 * 1024 * 1024),
+  startOffset: z.number().int().nonnegative(),
+  endOffset: z.number().int().nonnegative(),
+  instruction: z.string().trim().min(1).max(4_000)
+}).strict().superRefine((input, ctx) => {
+  if (input.endOffset < input.startOffset || input.endOffset > input.content.length) {
+    ctx.addIssue({ code: "custom", path: ["endOffset"], message: "选区范围无效" });
+    return;
+  }
+  if (input.endOffset - input.startOffset > 32 * 1024) {
+    ctx.addIssue({ code: "custom", path: ["endOffset"], message: "选区不能超过 32 KB" });
+  }
+});
+export const fileRefUnwatchInputSchema = z.object({ watchId: z.string().uuid() }).strict();
 export const guardedFileRefSchema = z.union([guardedProjectFileRefSchema, guardedSessionFileRefSchema]);
 export const guardedFileRefInputSchema = z.object({ guardedRef: guardedFileRefSchema }).strict();
 export const fileRefSearchInputSchema = z.object({
@@ -1341,23 +1813,6 @@ export const submitAskUserQuestionInputSchema = z.object({
   toolUseId: idSchema,
   canceled: z.boolean().optional(),
   answers: z.record(z.string(), z.string()).optional()
-});
-
-export const submitBrowserAuthInputSchema = z.object({
-  threadId: idSchema,
-  requestId: idSchema,
-  status: z.enum([
-    "submitted",
-    "declined",
-    "cancelled",
-    "unavailable",
-    "expired",
-    "origin_changed",
-    "page_changed",
-    "locator_invalid",
-    "submission_failed"
-  ]),
-  values: z.record(z.string(), z.string()).optional()
 });
 
 export const submitDesktopActionInputSchema = z.object({

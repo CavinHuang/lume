@@ -1,10 +1,12 @@
-import { clearQuestionHandler, setQuestionHandler, type CanUseToolFn, type SandboxSettings } from "@lume/agent-sdk";
+import { clearQuestionHandler, setQuestionHandler, type ApiType, type CanUseToolFn, type FileCheckpoint, type SandboxSettings } from "@lume/agent-sdk";
+import { createHash } from "node:crypto";
 import type { LumeConfigHooksInternalSection, OpenAiApiMode, SDKMessage } from "@lume/shared";
 import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import type { AgentRuntimeRunParams, AgentRuntimeRunResult, AgentRuntimeEmitter } from "./types";
 import { resolveAgentThinkingLevel } from "./model-capabilities";
 import type { resolveRuntimeCoreChannelModel } from "../runtime-core/model";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
+import { persistCodingRunCheckpoint } from "../runtime-core/coding-run-checkpoint-service";
 import {
   createRuntimeCoreSession,
   type CreateRuntimeCoreSessionInput,
@@ -46,6 +48,7 @@ import type { LumeRunState } from "./run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { createWikiProtectedSandbox, resolveWikiRuntimeCapability } from "../../wiki/wiki-runtime-capability";
 import { WIKI_CAPABILITIES } from "../../wiki/wiki-capabilities";
+import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
 
 interface PreparedRuntimeCoreAttempt {
   agentCwd: string;
@@ -60,6 +63,7 @@ interface PreparedRuntimeCoreAttempt {
   workspaceSlug?: string;
   modelResolution: NonNullable<ReturnType<typeof resolveRuntimeCoreChannelModel>>;
   openaiApiMode?: OpenAiApiMode;
+  apiType?: ApiType;
   channelProvider: string;
   apiKey: string;
 }
@@ -72,7 +76,8 @@ interface RunRuntimeCoreAttemptOptions {
 interface RuntimeSessionRunInput {
   params: AgentRuntimeRunParams;
   prepared: PreparedRuntimeCoreAttempt;
-  runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">;
+  runtimeSession: Pick<CreateRuntimeCoreSessionResult, "agent" | "session" | "tools" | "userMessageForModel" | "memoryContextUsedItems">
+    & Partial<Pick<CreateRuntimeCoreSessionResult, "getVerificationStatus" | "getVerificationReport" | "refreshCodingChangeSet" | "getLatestFileCheckpoint" | "getBaselineCommit" | "getBaselineCommits" | "getWorkspaceRoots">>;
   options: RunRuntimeCoreAttemptOptions;
   sandbox?: SandboxSettings;
   createCanUseTool: (
@@ -170,7 +175,7 @@ export class LumeRunner {
 
   async finalizeResult(result: AgentRuntimeRunResult): Promise<AgentRuntimeRunResult> {
     const lumeResult = fromAgentRuntimeRunResult(result);
-    await this.observer.finalize(lumeResult.status, lumeResult.error);
+    await this.observer.finalize(lumeResult.status, lumeResult.error, lumeResult.verificationStatus, lumeResult.codingReport);
     return result;
   }
 
@@ -179,13 +184,65 @@ export class LumeRunner {
     await this.observer.finalize("failed", error instanceof Error ? error : String(error));
   }
 
-  async runQueryStream(query: AsyncIterable<SDKMessage>): Promise<AgentRuntimeRunResult> {
+  async runQueryStream(
+    query: AsyncIterable<SDKMessage>,
+    coding?: {
+      getVerificationStatus?: () => AgentRuntimeRunResult["verificationStatus"];
+      getVerificationReport?: () => AgentRuntimeRunResult["codingReport"];
+      refreshCodingChangeSet?: () => Promise<unknown>;
+      getLatestFileCheckpoint?: () => FileCheckpoint | undefined;
+      getBaselineCommit?: () => string | undefined;
+      getBaselineCommits?: () => Record<string, string>;
+      getWorkspaceRoots?: () => string[];
+    }
+  ): Promise<AgentRuntimeRunResult> {
     const result = await consumeRuntimeCoreQueryStream({
       query,
       emit: this.emit
     });
-    if (result.status === "turn_limited") {
-      this.observer.recordTurnLimited(result.errorMessage);
+    await coding?.refreshCodingChangeSet?.();
+    const verificationReport = coding?.getVerificationReport?.();
+    const checkpoint = coding?.getLatestFileCheckpoint?.();
+    let canRewind = false;
+    if (checkpoint) {
+      try {
+        canRewind = await persistCodingRunCheckpoint({
+          sessionDir: getRuntimeCoreSessionDir(this.params.runtime.sessionId, this.prepared.agentDir),
+          runId: this.observer.getRunId(),
+          cwd: this.prepared.agentCwd,
+          roots: [
+            ...(coding?.getWorkspaceRoots?.() ?? []),
+            this.prepared.projectRoot,
+            this.prepared.lumeWorkDir,
+          ].filter((root): root is string => Boolean(root)),
+          baselineCommit: coding?.getBaselineCommit?.(),
+          baselineCommits: coding?.getBaselineCommits?.(),
+          changedPaths: verificationReport?.changedFiles ?? [],
+          checkpoint,
+        });
+      } catch {
+        // A missing rewind record must not change the agent result.
+      }
+    }
+    const resultWithCoding = {
+      ...result,
+      ...(coding?.getVerificationStatus ? { verificationStatus: coding.getVerificationStatus() } : {}),
+      ...(verificationReport ? {
+        codingReport: {
+          ...verificationReport,
+          runId: this.observer.getRunId(),
+          checkpointId: canRewind ? this.observer.getRunId() : undefined,
+          rewindState: verificationReport.gitActions?.some((action) => action.kind === "commit" && action.status === "completed")
+            ? "committed_boundary"
+            : canRewind ? "available" : "unavailable",
+          // A commit only makes the affected repository files non-rewindable.
+          // Other roots can still be restored from the same Turn checkpoint.
+          canRewind,
+        }
+      } : {})
+    } satisfies AgentRuntimeRunResult;
+    if (resultWithCoding.status === "turn_limited") {
+      this.observer.recordTurnLimited(resultWithCoding.errorMessage);
       await this.observer.flush();
       this.emit.onRuntimeEvent?.({
         id: `${this.observer.getRunId()}:run.turn_limited`,
@@ -193,11 +250,13 @@ export class LumeRunner {
         threadId: this.observer.getThreadId(),
         runId: this.observer.getRunId(),
         createdAt: new Date().toISOString(),
-        reason: result.errorMessage
+        reason: resultWithCoding.errorMessage,
+        ...(resultWithCoding.verificationStatus ? { verificationStatus: resultWithCoding.verificationStatus } : {}),
+        ...(resultWithCoding.codingReport ? { codingReport: resultWithCoding.codingReport } : {})
       });
-      return this.finalizeResult(result);
+      return this.finalizeResult(resultWithCoding);
     }
-    if (result.status !== "completed") {
+    if (resultWithCoding.status !== "completed") {
       await this.observer.flush();
       this.emit.onRuntimeEvent?.({
         id: `${this.observer.getRunId()}:run.failed`,
@@ -207,12 +266,14 @@ export class LumeRunner {
         createdAt: new Date().toISOString(),
         error: {
           code: "runtime_error",
-          message: result.errorMessage
-        }
+          message: resultWithCoding.errorMessage
+        },
+        ...(resultWithCoding.verificationStatus ? { verificationStatus: resultWithCoding.verificationStatus } : {}),
+        ...(resultWithCoding.codingReport ? { codingReport: resultWithCoding.codingReport } : {})
       });
-      return this.finalizeResult(result);
+      return this.finalizeResult(resultWithCoding);
     }
-    return result;
+    return resultWithCoding;
   }
 
   async runRuntimeSession({
@@ -254,15 +315,27 @@ export class LumeRunner {
       await applyResolvedThinkingLevel(agent, thinkingLevel);
       const maxTurns = resolveRuntimeCoreMaxTurns(input);
 
+      const canUseTool = createContinuationPermissionHandler(
+        createCanUseTool(askUserAbortController.signal, this.workflowHooks),
+        input.messageMetadata,
+      );
       const query = agent.query(runtimeSession.userMessageForModel || input.userMessage, {
-        canUseTool: createCanUseTool(askUserAbortController.signal, this.workflowHooks),
+        canUseTool,
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
         sandbox: sandbox ?? createWikiProtectedSandbox(),
         ...(maxTurns === undefined ? {} : { maxTurns })
       });
 
-      const streamResult = await this.runQueryStream(query);
+      const streamResult = await this.runQueryStream(query, {
+        getVerificationStatus: runtimeSession.getVerificationStatus,
+        getVerificationReport: runtimeSession.getVerificationReport,
+        refreshCodingChangeSet: runtimeSession.refreshCodingChangeSet,
+        getLatestFileCheckpoint: runtimeSession.getLatestFileCheckpoint,
+        getBaselineCommit: runtimeSession.getBaselineCommit,
+        getBaselineCommits: runtimeSession.getBaselineCommits,
+        getWorkspaceRoots: runtimeSession.getWorkspaceRoots
+      });
       if (streamResult.status !== "completed") {
         return streamResult;
       }
@@ -273,7 +346,11 @@ export class LumeRunner {
         sdkThreadId: session.threadId ?? session.sessionId,
         runtimeThreadId: session.threadId ?? session.sessionId
       });
-      return this.complete();
+      await runtimeSession.refreshCodingChangeSet?.();
+      return this.complete(
+        streamResult.verificationStatus ?? runtimeSession.getVerificationStatus?.(),
+        streamResult.codingReport ?? runtimeSession.getVerificationReport?.(),
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (/abort|interrupted/i.test(errorMessage)) {
@@ -315,13 +392,19 @@ export class LumeRunner {
       plansRoot: prepared.plansRoot,
       artifactsRoot: prepared.artifactsRoot,
       projectRoot: prepared.projectRoot,
+      additionalDirectories: resolveConfiguredAdditionalDirectories(
+        getEffectiveLumeConfig(prepared.workspaceSlug).permissions?.privateWriteRoots,
+        prepared.agentCwd,
+      ),
       fileContextId: prepared.fileContextId,
       fileReferenceBinding: runtime.fileReferenceBinding,
       agentDir: prepared.agentDir,
       userMessage: input.userMessage,
+      messageParts: input.messageParts,
       provider: prepared.modelResolution.provider,
       channelProvider: prepared.channelProvider,
       openaiApiMode: prepared.openaiApiMode,
+      apiType: prepared.apiType,
       modelRef: runtime.modelRef,
       resolvedModelId: prepared.modelResolution.resolvedModelId,
       resolvedModel: {
@@ -330,7 +413,8 @@ export class LumeRunner {
         baseUrl: prepared.modelResolution.model.baseUrl,
         contextWindow: prepared.modelResolution.model.contextWindow,
         maxTokens: prepared.modelResolution.model.maxTokens,
-        input: prepared.modelResolution.model.input
+        input: prepared.modelResolution.model.input,
+        reasoning: prepared.modelResolution.model.reasoning
       },
       apiKey: prepared.apiKey,
       workspaceId: runtime.workspaceId,
@@ -346,14 +430,18 @@ export class LumeRunner {
       chatType: input.chatType,
       permissionMode: input.permissionMode,
       messageAttachments: input.messageAttachments,
+      commentAttachments: input.commentAttachments,
+      browserAttachments: input.browserAttachments,
       messageMetadata: input.messageMetadata,
+      planningClientSubmissionId: input.trustedPlanningClientSubmissionId,
       emitSdkMessage: this.emit.onSdkMessage,
       emitRuntimeEvent: this.emit.onRuntimeEvent,
+      persistCodingReport: (report) => this.observer.recordCodingReport(report),
+      emitAdvisorReview: (review) => this.observer.recordAdvisorReview(review, this.emit.onRuntimeEvent),
       emitAskUserQuestion: this.emit.onAskUserQuestion,
       emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
       emitDesktopActionRequest: this.emit.onDesktopActionRequest,
       emitToolPermissionRequest: this.emit.onToolPermissionRequest,
-      emitTaskContractUpdated: this.emit.onTaskContractUpdated,
       emitTodoUpdated: this.emit.onTodoUpdated,
       runId: this.observer.getRunId(),
       workflowHooks: this.workflowHooks,
@@ -374,7 +462,7 @@ export class LumeRunner {
     });
   }
 
-  async complete(): Promise<AgentRuntimeRunResult> {
+  async complete(verificationStatus?: AgentRuntimeRunResult["verificationStatus"], codingReport?: AgentRuntimeRunResult["codingReport"]): Promise<AgentRuntimeRunResult> {
     await this.observer.flush();
     const workspaceSlug = this.observer.getWorkspaceSlug();
     const runState = await this.observer.getRunState();
@@ -428,10 +516,12 @@ export class LumeRunner {
       type: "run.completed",
       threadId: this.observer.getThreadId(),
       runId: this.observer.getRunId(),
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...(verificationStatus ? { verificationStatus } : {}),
+      ...(codingReport ? { codingReport } : {})
     });
     this.emit.onComplete();
-    return this.finalizeResult({ status: "completed" });
+    return this.finalizeResult({ status: "completed", verificationStatus, codingReport });
   }
 
   private scheduleConversationSummary(
@@ -633,6 +723,37 @@ export class LumeRunner {
       }
     }
   }
+}
+
+function createContinuationPermissionHandler(
+  base: CanUseToolFn,
+  messageMetadata: Record<string, unknown> | undefined,
+): CanUseToolFn {
+  const runtimeContinuation = messageMetadata?.runtimeContinuation;
+  if (!runtimeContinuation || typeof runtimeContinuation !== "object") return base;
+  const checkpoint = (runtimeContinuation as Record<string, unknown>).checkpoint;
+  if (!checkpoint || typeof checkpoint !== "object") return base;
+  const toolCall = (checkpoint as Record<string, unknown>).toolCall;
+  if (!toolCall || typeof toolCall !== "object") return base;
+  const call = toolCall as Record<string, unknown>;
+  if (typeof call.id !== "string" || typeof call.name !== "string" || typeof call.inputHash !== "string") return base;
+  let consumed = false;
+  return async (tool, input, metadata) => {
+    const inputHash = createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex");
+    if (
+      !consumed
+      && metadata?.toolUseId === call.id
+      && tool.name === call.name
+      && inputHash === call.inputHash
+    ) {
+      consumed = true;
+      return {
+        behavior: "allow",
+        decisionReason: "cold_start_exact_tool_continuation",
+      };
+    }
+    return base(tool, input, metadata);
+  };
 }
 
 function compactMemoryHistoryText(value: string, maxLength = 220): string {

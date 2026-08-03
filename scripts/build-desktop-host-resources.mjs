@@ -6,9 +6,13 @@ import { spawnSync } from "node:child_process";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CRATE_DIR = resolve(REPO_ROOT, "crates", "lume-desktop-host");
 const CRATE_MANIFEST = resolve(CRATE_DIR, "Cargo.toml");
-const TARGET_ID = resolveTargetId(process.platform, process.arch);
+const REQUESTED_TARGET = argumentValue("--target");
+const TARGET = resolveBuildTarget(process.platform, process.arch, REQUESTED_TARGET);
+const TARGET_ID = TARGET.id;
 const BINARY_NAME = process.platform === "win32" ? "lume_desktop_host.exe" : "lume_desktop_host";
-const BUILT_BINARY = resolve(CRATE_DIR, "target", "release", BINARY_NAME);
+const BUILT_BINARY = TARGET.rustTarget
+  ? resolve(CRATE_DIR, "target", TARGET.rustTarget, "release", BINARY_NAME)
+  : resolve(CRATE_DIR, "target", "release", BINARY_NAME);
 const CURSOR_LICENSE = resolve(CRATE_DIR, "assets", "LICENSE.open-codex-computer-use");
 const MAC_CURSOR_OVERLAY_SOURCE = resolve(CRATE_DIR, "macos", "LumeComputerUseCursorOverlay.swift");
 const MAC_CURSOR_OVERLAY_BINARY_NAME = "LumeComputerUseCursorOverlay";
@@ -38,7 +42,6 @@ const MAC_BUNDLE_ICON_ENTRIES = [
 ];
 const OUT_DIR = resolve(REPO_ROOT, "apps", "desktop", "resources", "desktop-host", TARGET_ID);
 const MAC_BUNDLE_VARIANT = process.env.LUME_COMPUTER_USE_BUNDLE_VARIANT === "dev" ? "dev" : "release";
-const REQUIRE_STABLE_SIGNING = process.argv.includes("--require-stable-signing");
 const MAC_BUNDLE_CONFIG = MAC_BUNDLE_VARIANT === "dev"
   ? {
       appBundleName: "Lume Computer Use (Dev).app",
@@ -57,13 +60,15 @@ const OUT_FILE = process.platform === "darwin"
   ? resolve(OUT_DIR, MAC_APP_BUNDLE_NAME, "Contents", "MacOS", BINARY_NAME)
   : resolve(OUT_DIR, BINARY_NAME);
 
-const result = spawnSync("cargo", [
+const cargoArgs = [
   "build",
   "--release",
   "--locked",
   "--manifest-path",
   CRATE_MANIFEST,
-], { cwd: REPO_ROOT, stdio: "inherit" });
+];
+if (TARGET.rustTarget) cargoArgs.push("--target", TARGET.rustTarget);
+const result = spawnSync("cargo", cargoArgs, { cwd: REPO_ROOT, stdio: "inherit" });
 if (result.status !== 0) process.exit(result.status ?? 1);
 if (!existsSync(BUILT_BINARY)) {
   console.error(`[desktop-host] expected output not created: ${BUILT_BINARY}`);
@@ -77,6 +82,11 @@ if (process.platform === "darwin") {
   mkdirSync(OUT_DIR, { recursive: true });
   copyIfChanged(BUILT_BINARY, OUT_FILE);
   copyIfChanged(CURSOR_LICENSE, resolve(OUT_DIR, "LICENSE.open-codex-computer-use"));
+  if (hasWindowsSigningCredentials()) {
+    signWindowsBinary(OUT_FILE);
+  } else {
+    console.error("[desktop-host] skipped Authenticode signing; Windows signing credentials are not configured");
+  }
   console.error(`[desktop-host] wrote ${OUT_FILE}`);
 }
 
@@ -85,10 +95,21 @@ function copyIfChanged(source, destination) {
   copyFileSync(source, destination);
 }
 
-function resolveTargetId(platform, arch) {
-  if (platform === "win32" && arch === "x64") return "win32-x64-msvc";
-  if (platform === "darwin" && arch === "x64") return "darwin-x64";
-  if (platform === "darwin" && arch === "arm64") return "darwin-arm64";
+function argumentValue(name) {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+function resolveBuildTarget(platform, arch, requestedTarget) {
+  if (platform === "win32" && arch === "x64" && !requestedTarget) return { id: "win32-x64-msvc" };
+  if (platform === "darwin" && requestedTarget === "aarch64-apple-darwin") {
+    return { id: "darwin-arm64", rustTarget: requestedTarget, swiftTarget: "arm64-apple-macos14.0" };
+  }
+  if (platform === "darwin" && requestedTarget === "x86_64-apple-darwin") {
+    return { id: "darwin-x64", rustTarget: requestedTarget, swiftTarget: "x86_64-apple-macos14.0" };
+  }
+  if (platform === "darwin" && arch === "x64" && !requestedTarget) return { id: "darwin-x64" };
+  if (platform === "darwin" && arch === "arm64" && !requestedTarget) return { id: "darwin-arm64" };
   throw new Error(`unsupported desktop host target: ${platform}-${arch}`);
 }
 
@@ -160,6 +181,7 @@ function buildMacCursorOverlay(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
     "-parse-as-library",
+    ...macSwiftTargetArgs(),
     MAC_CURSOR_OVERLAY_SOURCE,
     "-o",
     outputPath,
@@ -177,6 +199,7 @@ function buildMacPermissionGuide(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
     "-parse-as-library",
+    ...macSwiftTargetArgs(),
     MAC_PERMISSION_GUIDE_SOURCE,
     "-o",
     outputPath,
@@ -194,6 +217,7 @@ function buildMacScreenCapture(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
     "-parse-as-library",
+    ...macSwiftTargetArgs(),
     MAC_SCREEN_CAPTURE_SOURCE,
     "-o",
     outputPath,
@@ -213,6 +237,7 @@ function buildMacEventMonitor(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
     "-parse-as-library",
+    ...macSwiftTargetArgs(),
     MAC_EVENT_MONITOR_SOURCE,
     "-o",
     outputPath,
@@ -232,6 +257,7 @@ function buildMacAppDiscovery(outputPath) {
   const result = spawnSync("xcrun", [
     "swiftc",
     "-parse-as-library",
+    ...macSwiftTargetArgs(),
     MAC_APP_DISCOVERY_SOURCE,
     "-o",
     outputPath,
@@ -245,6 +271,10 @@ function buildMacAppDiscovery(outputPath) {
   });
   if (result.status !== 0) process.exit(result.status ?? 1);
   chmodSync(outputPath, 0o755);
+}
+
+function macSwiftTargetArgs() {
+  return TARGET.swiftTarget ? ["-target", TARGET.swiftTarget] : [];
 }
 
 function macInfoPlist() {
@@ -293,9 +323,6 @@ function signMacAppBundle(appRoot) {
     throw new Error(`unsupported LUME_COMPUTER_USE_CODESIGN_MODE: ${mode}`);
   }
   const identity = resolveMacCodesignIdentity(mode);
-  if (REQUIRE_STABLE_SIGNING && (!identity || identity === "-")) {
-    throw new Error("release packaging requires a stable macOS signing identity for Lume Computer Use.app");
-  }
   if (!identity) {
     console.error(`[desktop-host] skipped codesign for ${appRoot}`);
     return;
@@ -342,4 +369,41 @@ function findMacCodesignIdentity(prefix) {
     if (match?.[1]?.startsWith(`${prefix}:`)) return match[1];
   }
   return undefined;
+}
+
+function signWindowsBinary(binaryPath) {
+  const signTool = process.env.LUME_WINDOWS_SIGNTOOL_PATH?.trim();
+  const certificatePath = process.env.LUME_WINDOWS_CODESIGN_CERTIFICATE?.trim();
+  const certificatePassword = process.env.LUME_WINDOWS_CODESIGN_PASSWORD;
+  const sign = spawnSync(signTool, [
+    "sign",
+    "/fd",
+    "SHA256",
+    "/td",
+    "SHA256",
+    "/tr",
+    "http://timestamp.digicert.com",
+    "/f",
+    certificatePath,
+    "/p",
+    certificatePassword,
+    binaryPath,
+  ], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
+  if (sign.status !== 0) process.exit(sign.status ?? 1);
+  const verify = spawnSync(signTool, ["verify", "/pa", "/all", binaryPath], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
+  if (verify.status !== 0) process.exit(verify.status ?? 1);
+}
+
+function hasWindowsSigningCredentials() {
+  return Boolean(
+    process.env.LUME_WINDOWS_SIGNTOOL_PATH?.trim()
+    && process.env.LUME_WINDOWS_CODESIGN_CERTIFICATE?.trim()
+    && process.env.LUME_WINDOWS_CODESIGN_PASSWORD,
+  );
 }

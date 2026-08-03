@@ -4,6 +4,7 @@ export interface AgentRuntimeKernelDispatch<TInput extends { threadId: string; u
   input: TInput;
   emit: TEmit;
   onExecutionStarted?: () => void;
+  priority?: "user" | "background";
 }
 
 export interface AgentRuntimeKernelQueuedDispatch<TInput extends { threadId: string; userMessage: string }, TEmit>
@@ -54,12 +55,13 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
   dispatch(
     input: TInput,
     emit: TEmit,
-    options?: { onExecutionStarted?: () => void }
+    options?: { onExecutionStarted?: () => void; priority?: "user" | "background" }
   ): AgentRuntimeKernelDispatchResult {
     const dispatch = {
       input,
       emit,
-      onExecutionStarted: options?.onExecutionStarted
+      onExecutionStarted: options?.onExecutionStarted,
+      priority: options?.priority ?? "user"
     };
     if (this.activeThreads.has(input.threadId) || this.getQueuedCount(input.threadId) > 0) {
       const queue = this.queuedDispatches.get(input.threadId) ?? [];
@@ -211,6 +213,7 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
   ): AgentRuntimeKernelQueuedDispatch<TInput, TEmit> {
     return {
       ...dispatch,
+      priority: dispatch.priority ?? "user",
       id: this.options.createQueuedDispatchId?.() ?? randomUUID(),
       threadId: dispatch.input.threadId,
       text: dispatch.input.userMessage,
@@ -237,7 +240,10 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
   private async startNextQueued(threadId: string): Promise<void> {
     if (this.activeThreads.has(threadId)) return;
     const queue = this.queuedDispatches.get(threadId) ?? [];
-    const next = queue[0];
+    const first = queue[0];
+    const next = first?.priority === "background"
+      ? queue.find((item) => item.priority !== "background") ?? first
+      : first;
     if (!next || next.status === "blocked" || next.status === "validating") return;
     next.status = "validating";
     this.touchQueue(threadId);
@@ -253,8 +259,9 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
       return;
     }
     const latestQueue = this.queuedDispatches.get(threadId) ?? [];
-    if (latestQueue[0]?.id !== next.id) return;
-    latestQueue.shift();
+    const nextIndex = latestQueue.findIndex((item) => item.id === next.id);
+    if (nextIndex < 0) return;
+    latestQueue.splice(nextIndex, 1);
     if (latestQueue.length === 0) this.queuedDispatches.delete(threadId);
     else this.queuedDispatches.set(threadId, latestQueue);
     next.status = "queued";

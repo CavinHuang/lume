@@ -17,6 +17,7 @@ import {
 import { useAtomValue, useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import { XMarkdown } from '@ant-design/x-markdown'
+import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import { WEREAD_KEY_PAGE_URL, type ReadingAddBookInput, type ReadingLibrarySnapshot, type ReadingNoteSummary, type ReadingSearchResult, type ReadingSourceKind } from '@lume/shared'
 import { activeTabIdAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom, welcomePromptSeedAtom } from '@/atoms'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -1073,7 +1074,7 @@ function ReadingNoteActions({ onChat, onSave }: { onChat: () => void; onSave: ()
 
 function ReadingNoteBody({ body, className }: { body: string; className?: string }) {
   return (
-    <XMarkdown className={cn('reading-note-markdown x-markdown', className)}>
+    <XMarkdown components={DIFF_AWARE_MARKDOWN_COMPONENTS} className={cn('reading-note-markdown x-markdown', className)}>
       {body}
     </XMarkdown>
   )

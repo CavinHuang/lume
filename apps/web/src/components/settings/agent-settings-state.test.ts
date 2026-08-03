@@ -44,15 +44,23 @@ describe('PERMISSION_OPTIONS', () => {
 })
 
 describe('model provider settings state', () => {
-  test('buildModelProviderRows covers every supported provider from the channel contract', () => {
-    const rows = buildModelProviderRows([])
-
-    expect(rows.map((row) => row.provider)).toEqual(Object.keys(PROVIDER_LABELS))
-    expect(rows[0]).toEqual(expect.objectContaining({
+  test('buildModelProviderRows lists configured connections without provider template rows', () => {
+    expect(buildModelProviderRows([])).toEqual([])
+    const channels: Channel[] = ['work', 'personal'].map((suffix, index) => ({
+      id: `anthropic-${suffix}`,
+      name: `Anthropic ${suffix}`,
       provider: 'anthropic',
-      label: PROVIDER_LABELS.anthropic,
-      channel: null,
+      baseUrl: PROVIDER_DEFAULT_URLS.anthropic,
+      apiKey: '',
+      models: [],
+      enabled: true,
+      createdAt: index + 1,
+      updatedAt: index + 1,
     }))
+    expect(buildModelProviderRows(channels).map((row) => row.channelId)).toEqual([
+      'anthropic-work',
+      'anthropic-personal',
+    ])
   })
 
   test('getModelProviderFormInitialValue uses existing channel data with decrypted api key', () => {

@@ -107,10 +107,15 @@ const MIME_TYPES: Record<string, string> = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.webp': 'image/webp', '.bmp': 'image/bmp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
   '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf',
-  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.mp4': 'video/mp4', '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/x-m4v',
+  '.pdf': 'application/pdf',
 }
 
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
+const MEDIA_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg',
+  '.pdf', '.mp4', '.webm', '.mov', '.m4v',
+])
 
 export type PreviewProtocolResolution =
   | { kind: 'forbidden' }
@@ -163,7 +168,7 @@ export function resolvePreviewProtocolRequest(
     if (!metadata.isFile()) return { kind: 'notfound' }
 
     if (scope.kind === 'media-file') {
-      if (real !== scope.entryPath || basename(real) !== basename(requestedRelative) || !IMAGE_EXTENSIONS.has(extension)) {
+      if (real !== scope.entryPath || basename(real) !== basename(requestedRelative) || !MEDIA_EXTENSIONS.has(extension)) {
         return { kind: 'forbidden' }
       }
       if (metadata.size > PREVIEW_PROTOCOL_MAX_MEDIA_BYTES) return { kind: 'too-large' }

@@ -27,6 +27,20 @@ describe("permission classifier", () => {
     });
   });
 
+  test("classifies dependency commands and manifests as approval-required", async () => {
+    const classifier = createPermissionClassifier();
+
+    await expect(classifier.classify({ toolName: "Bash", command: "pnpm install" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
+    await expect(classifier.classify({ toolName: "Write", path: "package.json" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true,
+      reasonCode: "dependency_manifest"
+    });
+  });
+
   test("classifies sensitive file writes", async () => {
     const classifier = createPermissionClassifier();
 

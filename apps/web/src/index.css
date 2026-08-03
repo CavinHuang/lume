@@ -116,6 +116,29 @@
   }
 }
 
+/* Coding 摘要按卡片自身宽度换行，避免操作按钮把标题压成竖排。 */
+.coding-summary-card {
+  container: coding-summary / inline-size;
+}
+
+@container coding-summary (max-width: 500px) {
+  .coding-summary-header {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    align-items: center;
+    column-gap: 0.75rem;
+    row-gap: 0.5rem;
+  }
+
+  .coding-summary-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
 /* x-markdown dark mode — 变量由 dark.css 的 .x-markdown-dark 选择器提供 */
 
 /* Wiki 操作栏按内容区宽度切换，避免侧栏占用空间后仍按整个窗口宽度判断。 */
@@ -342,7 +365,23 @@
   overflow: hidden;
   margin: 18px 0 22px;
   border-radius: 10px;
-  box-shadow: 0 0 0 1px var(--lume-border-subtle);
+  box-shadow: none;
+}
+
+.agent-message-markdown table:not(pre) tr:first-child > * {
+  border-top-color: var(--lume-border-subtle);
+}
+
+.agent-message-markdown table:not(pre) tr:last-child > * {
+  border-bottom-color: var(--lume-border-subtle);
+}
+
+.agent-message-markdown table:not(pre) tr > :first-child {
+  border-left-color: var(--lume-border-subtle);
+}
+
+.agent-message-markdown table:not(pre) tr > :last-child {
+  border-right-color: var(--lume-border-subtle);
 }
 
 .agent-message-markdown th,
@@ -1143,6 +1182,42 @@
   height: 0;
 }
 
+.mention-list-scrollbar {
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+
+.mention-list-scrollbar::-webkit-scrollbar {
+  width: 7px;
+}
+
+.mention-list-scrollbar::-webkit-scrollbar-track,
+.mention-list-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.mention-list-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 28px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--app-scrollbar-thumb);
+  background-clip: content-box;
+  transition: background-color 160ms ease;
+}
+
+.mention-list-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-active);
+  background-clip: content-box;
+}
+
+.mention-list-scrollbar::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .file-tree-scrollbar {
   scrollbar-color: var(--app-scrollbar-thumb) transparent;
   scrollbar-gutter: stable;
@@ -1174,6 +1249,42 @@
 }
 
 .file-tree-scrollbar::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.coding-review-scrollbar {
+  scrollbar-color: var(--app-scrollbar-thumb) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+
+.coding-review-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.coding-review-scrollbar::-webkit-scrollbar-track,
+.coding-review-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.coding-review-scrollbar::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--app-scrollbar-thumb);
+  background-clip: content-box;
+}
+
+.coding-review-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--app-scrollbar-thumb-active);
+  background-clip: content-box;
+}
+
+.coding-review-scrollbar::-webkit-scrollbar-button {
   display: none;
   width: 0;
   height: 0;

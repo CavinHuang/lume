@@ -1,12 +1,24 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
 import type { Channel } from '@lume/shared'
-import {
+
+mock.module('sonner', () => ({
+  toast: {
+    error: () => undefined,
+    success: () => undefined,
+  },
+}))
+mock.module('@/components/ui/button', () => ({ Button: () => null }))
+mock.module('@/components/ui/label', () => ({ Label: () => null }))
+mock.module('@/components/model-selection/ModelOptionList', () => ({ ModelOptionList: () => null }))
+mock.module('@/lib/model-meta-context', () => ({ useModelMetaVersion: () => 0 }))
+
+const {
   buildFallbackOptionGroups,
   buildStrategySavePayload,
   getDefaultStrategyDraft,
   hasStrategyChanges,
   sanitizeFallbackChain,
-} from './DefaultModelStrategyPanel'
+} = await import('./DefaultModelStrategyPanel')
 
 const channels: Channel[] = [
   {
@@ -65,8 +77,11 @@ describe('getDefaultStrategyDraft', () => {
         fallbackModelRefs: ['openai/gpt-5', 'openai/gpt-5-mini', 'anthropic/claude-sonnet-4-5'],
       },
     })).toEqual({
-      defaultModelRef: 'openai/gpt-5',
-      fallbackModelRefs: ['openai/gpt-5-mini', 'anthropic/claude-sonnet-4-5'],
+      defaultModelRef: 'connection:channel-openai/gpt-5',
+      fallbackModelRefs: [
+        'connection:channel-openai/gpt-5-mini',
+        'connection:channel-openrouter/anthropic/claude-sonnet-4-5',
+      ],
       hasExplicitDefaultModel: true,
       unavailableDefaultModelRef: undefined,
       unavailableFallbackModelRefs: [],
@@ -82,8 +97,8 @@ describe('getDefaultStrategyDraft', () => {
         fallbackModelRefs: ['anthropic/claude-sonnet-4-5', 'openai/gpt-5-mini'],
       },
     })).toEqual({
-      defaultModelRef: 'anthropic/claude-sonnet-4-5',
-      fallbackModelRefs: ['openai/gpt-5-mini'],
+      defaultModelRef: 'connection:channel-openrouter/anthropic/claude-sonnet-4-5',
+      fallbackModelRefs: ['connection:channel-openai/gpt-5-mini'],
       hasExplicitDefaultModel: true,
       unavailableDefaultModelRef: undefined,
       unavailableFallbackModelRefs: [],
@@ -99,8 +114,8 @@ describe('getDefaultStrategyDraft', () => {
         fallbackModelRefs: ['missing/model', 'openai/gpt-5-mini'],
       },
     })).toEqual({
-      defaultModelRef: 'openai/gpt-5',
-      fallbackModelRefs: ['openai/gpt-5-mini'],
+      defaultModelRef: 'connection:channel-openai/gpt-5',
+      fallbackModelRefs: ['connection:channel-openai/gpt-5-mini'],
       hasExplicitDefaultModel: true,
       unavailableDefaultModelRef: 'missing/model',
       unavailableFallbackModelRefs: [],
@@ -112,7 +127,7 @@ describe('getDefaultStrategyDraft', () => {
       channels,
       strategy: {},
     })).toEqual({
-      defaultModelRef: 'openai/gpt-5',
+      defaultModelRef: 'connection:channel-openai/gpt-5',
       fallbackModelRefs: [],
       hasExplicitDefaultModel: false,
       unavailableDefaultModelRef: undefined,
@@ -132,7 +147,7 @@ describe('buildStrategySavePayload', () => {
       {
         channelId: 'channel-openai',
         provider: 'openai',
-        modelRef: 'openai/gpt-5',
+        modelRef: 'connection:channel-openai/gpt-5',
         modelId: 'gpt-5',
         label: 'GPT-5',
         channelLabel: 'OpenAI',
@@ -152,7 +167,7 @@ describe('buildStrategySavePayload', () => {
       {
         channelId: 'channel-openai',
         provider: 'openai',
-        modelRef: 'openai/gpt-5',
+        modelRef: 'connection:channel-openai/gpt-5',
         modelId: 'gpt-5',
         label: 'GPT-5',
         channelLabel: 'OpenAI',
@@ -160,14 +175,14 @@ describe('buildStrategySavePayload', () => {
       {
         channelId: 'channel-openrouter',
         provider: 'openrouter',
-        modelRef: 'anthropic/claude-sonnet-4-5',
+        modelRef: 'connection:channel-openrouter/anthropic/claude-sonnet-4-5',
         modelId: 'anthropic/claude-sonnet-4-5',
         label: 'Claude Sonnet 4.5',
         channelLabel: 'OpenRouter',
       },
     ])).toEqual({
       defaultChannelId: 'channel-openrouter',
-      defaultModelRef: 'anthropic/claude-sonnet-4-5',
+      defaultModelRef: 'connection:channel-openrouter/anthropic/claude-sonnet-4-5',
     })
   })
 })

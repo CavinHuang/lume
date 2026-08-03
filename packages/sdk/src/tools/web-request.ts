@@ -31,7 +31,6 @@ async function fetchViaCurl(input: string, init: RequestInit = {}, proxyUrl: str
   const args = [
     '--silent',
     '--show-error',
-    '--location',
     '--max-time',
     '30',
     '--connect-timeout',
@@ -42,6 +41,11 @@ async function fetchViaCurl(input: string, init: RequestInit = {}, proxyUrl: str
     init.method ?? 'GET',
     input,
   ]
+  if (init.redirect === 'manual') {
+    args.push('--max-redirs', '0', '--dump-header', '-')
+  } else {
+    args.splice(2, 0, '--location')
+  }
 
   const headers = new Headers(init.headers)
   headers.forEach((value, key) => {
@@ -56,20 +60,35 @@ async function fetchViaCurl(input: string, init: RequestInit = {}, proxyUrl: str
 
   const { stdout, stderr } = await execFileAsync(process.platform === 'win32' ? 'curl.exe' : 'curl', args, {
     maxBuffer: 1024 * 1024 * 4,
+    signal: init.signal ?? undefined,
   })
   const output = stdout.toString()
   const markerIndex = output.lastIndexOf(STATUS_SENTINEL)
   if (markerIndex < 0) {
     throw new Error(stderr?.toString().trim() || 'curl returned invalid output')
   }
-  const body = output.slice(0, markerIndex)
+  let body = output.slice(0, markerIndex)
   const statusText = output.slice(markerIndex + STATUS_SENTINEL.length).trim()
   const status = Number.parseInt(statusText, 10)
+  let responseHeaders = new Headers({
+    'content-type': headers.get('content-type') ?? 'text/plain; charset=utf-8',
+  })
+  if (init.redirect === 'manual') {
+    const headerEnd = body.search(/\r?\n\r?\n/)
+    if (headerEnd >= 0) {
+      const headerText = body.slice(0, headerEnd)
+      body = body.slice(headerEnd).replace(/^\r?\n\r?\n/, '')
+      const parsedHeaders = new Headers()
+      for (const line of headerText.split(/\r?\n/).slice(1)) {
+        const separator = line.indexOf(':')
+        if (separator > 0) parsedHeaders.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim())
+      }
+      responseHeaders = parsedHeaders
+    }
+  }
   return new Response(body, {
     status: Number.isFinite(status) ? status : 599,
-    headers: {
-      'content-type': headers.get('content-type') ?? 'text/plain; charset=utf-8',
-    },
+    headers: responseHeaders,
   })
 }
 

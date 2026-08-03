@@ -12,8 +12,8 @@ import {
   Trash2,
   BookOpen,
   Bot,
+  ListTodo,
 } from 'lucide-react'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import type {
   LumeSidebarFooterActionId,
@@ -234,7 +234,7 @@ export function LumeSidebar({
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-none">
         <div className="space-y-2 px-2.5 pb-4">
           {model.workspaces.map((workspace) => (
             <WorkspaceGroupItem
@@ -258,7 +258,7 @@ export function LumeSidebar({
             />
           ))}
         </div>
-      </ScrollArea>
+      </div>
 
       <div className="border-t border-[var(--lume-border-subtle)] px-3 pb-4 pt-3">
         <div className="space-y-1">
@@ -358,6 +358,8 @@ function renderIcon(icon: string, size: number) {
       return <Bot size={size} />
     case 'clock':
       return <Clock3 size={size} />
+    case 'list-todo':
+      return <ListTodo size={size} />
     case 'folder':
       return <Folder size={size} />
     case 'trash':

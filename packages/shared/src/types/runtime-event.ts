@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding, FileReferenceProtocolVersion } from "./agent";
+import type { AgentBrowserAttachment, AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding, FileReferenceProtocolVersion } from "./agent";
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
@@ -6,6 +6,7 @@ import type { MemoryClaim } from "./memory";
 export type RuntimeEventType =
   | "run.started"
   | "run.completed"
+  | "coding.report.updated"
   | "run.turn_limited"
   | "run.failed"
   | "run.cancelled"
@@ -13,6 +14,8 @@ export type RuntimeEventType =
   | "assistant.delta"
   | "assistant.thinking_delta"
   | "assistant.final"
+  | "model.retry"
+  | "model.retry_cleared"
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
@@ -22,6 +25,7 @@ export type RuntimeEventType =
   | "plan.preview"
   | "todo.state_updated"
   | "task.progress"
+  | "background.task.completed"
   | "im.delivery"
   | "permission.requested"
   | "permission.resolved"
@@ -30,6 +34,8 @@ export type RuntimeEventType =
   | "context.compaction.started"
   | "context.compaction.progress"
   | "context.compaction.completed"
+  | "lsp.diagnostics.updated"
+  | "advisor.reviewed"
   | "usage.updated";
 
 export interface RuntimeEventBase {
@@ -76,6 +82,8 @@ export interface UserMessageSubmittedRuntimeEvent extends RuntimeEventBase {
   type: "message.user.submitted";
   text: string;
   attachments?: AgentMessageAttachmentInput[];
+  commentAttachments?: AgentDiffCommentAttachment[];
+  browserAttachments?: AgentBrowserAttachment[];
   messageId?: string;
   versionGroupId?: string;
   versionIndex?: number;
@@ -117,12 +125,21 @@ export interface ToolCompletedRuntimeEvent extends RuntimeEventBase {
   toolCallId: string;
   toolName?: string;
   resultPreview?: string;
-  resultRef?: {
-    kind: "file";
-    path: string;
-    size: number;
-    mimeType?: string;
-  };
+  resultRef?: FileResultRef;
+  execution?: ToolExecutionMetadata;
+}
+
+export interface ModelRetryRuntimeEvent extends RuntimeEventBase {
+  type: "model.retry";
+  phase: "waiting" | "retrying";
+  attempt: number;
+  maxRetries: number;
+  retryDelayMs: number;
+  errorStatus: number | null;
+}
+
+export interface ModelRetryClearedRuntimeEvent extends RuntimeEventBase {
+  type: "model.retry_cleared";
 }
 
 export interface ToolFailedRuntimeEvent extends RuntimeEventBase {
@@ -133,6 +150,8 @@ export interface ToolFailedRuntimeEvent extends RuntimeEventBase {
     code: string;
     message: string;
   };
+  resultRef?: ToolExecutionMetadata["resultRef"];
+  execution?: ToolExecutionMetadata;
 }
 
 export interface ToolPermissionTimeoutRuntimeEvent extends RuntimeEventBase {
@@ -198,6 +217,7 @@ export interface TodoStateUpdatedRuntimeEvent extends RuntimeEventBase {
 
 export type TaskProgressRuntimeStatus =
   | "pending"
+  | "in_progress"
   | "running"
   | "waiting_for_user"
   | "waiting_for_permission"
@@ -207,6 +227,7 @@ export type TaskProgressRuntimeStatus =
 
 export type TaskProgressRuntimeTaskStatus =
   | "pending"
+  | "in_progress"
   | "running"
   | "completed"
   | "failed"
@@ -214,12 +235,13 @@ export type TaskProgressRuntimeTaskStatus =
 
 export interface TaskProgressRuntimeTask {
   id: string;
-  title: string;
+  subject?: string;
+  title?: string;
   description?: string;
   expectedTools?: string[];
   expectedFiles?: string[];
   status: TaskProgressRuntimeTaskStatus;
-  attemptCount: number;
+  attemptCount?: number;
   result?: string;
   error?: string;
   startedAt?: string;
@@ -229,8 +251,11 @@ export interface TaskProgressRuntimeTask {
 
 export interface TaskProgressRuntimeEvent extends RuntimeEventBase {
   type: "task.progress";
-  taskRunId: string;
-  contractId: string;
+  /** New Task list identity. Legacy taskRunId/contractId remain optional for replay compatibility only. */
+  taskListId?: string;
+  origin?: "agent" | "system" | "recovery";
+  taskRunId?: string;
+  contractId?: string;
   status: TaskProgressRuntimeStatus;
   currentTaskId?: string;
   tasks: TaskProgressRuntimeTask[];
@@ -255,11 +280,453 @@ export interface RunCompletedRuntimeEvent extends RuntimeEventBase {
   type: "run.completed";
   finalOutput?: string;
   finalMessageId?: string;
+  verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
+  codingReport?: RuntimeCodingReport;
+}
+
+export interface CodingReportUpdatedRuntimeEvent extends RuntimeEventBase {
+  type: "coding.report.updated";
+  codingReport: RuntimeCodingReport;
+}
+
+export interface RuntimeCodingReport {
+  /** Lume Run identity used by the review/rewind actions. */
+  runId?: string;
+  /** Stable visible Coding Turn identity. */
+  turnId?: string;
+  /** Persisted user message that started the Coding Turn. */
+  userMessageId?: string;
+  /** Visible assistant message created for this Turn, when available. */
+  assistantMessageId?: string;
+  phase?: CodingTurnPhase;
+  checkpointId?: string;
+  baselineCommit?: string;
+  rewindState?:
+    | "active"
+    | "available"
+    | "unavailable"
+    | "partial"
+    | "conflict"
+    | "committed_boundary";
+  /** Whether the Run has a persisted pre-edit file checkpoint. */
+  canRewind?: boolean;
+  status: "not_required" | "unverified" | "verified" | "failed";
+  workspaceChanged: boolean;
+  changedFiles: string[];
+  changeSet?: RuntimeCodingChangeSet;
+  fileChanges?: RuntimeCodingFileChange[];
+  totalAddedLines?: number;
+  totalRemovedLines?: number;
+  externalChangedFiles: string[];
+  pendingBackground: boolean;
+  verificationRepairAttempts?: number;
+  verificationNoEvidenceAttempts?: number;
+  approvalRequestCount?: number;
+  terminationReason?: string;
+  routeReason?: string;
+  toolSelectionReason?: string;
+  nonRewindableFiles?: string[];
+  message?: string;
+  baselineFailure?: {
+    command: string;
+    signature: string;
+  };
+  /** Verification commands observed or selected by the runtime for this Turn. */
+  verificationRecords?: CodingVerificationRecord[];
+  recommendedVerificationCommands?: string[];
+  lspDiagnostics?: {
+    files: string[];
+    total: number;
+    errors: number;
+    warnings: number;
+    updatedAt: string;
+  };
+  gitActions?: CodingGitAction[];
+  review?: CodingReviewSummary;
+}
+
+export type CodingTurnPhase =
+  | "planning"
+  | "awaiting_approval"
+  | "executing"
+  | "verifying"
+  | "ready_for_review"
+  | "completed"
+  | "failed"
+  | "rewind_conflict";
+
+export interface CodingVerificationRecord {
+  command: string;
+  status: "running" | "passed" | "failed" | "inconclusive";
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+  message?: string;
+}
+
+export type BackgroundTaskCompletedRuntimeStatus = "completed" | "failed" | "stopped" | "cancelled";
+
+export interface BackgroundTaskCompletedRuntimeEvent extends RuntimeEventBase {
+  type: "background.task.completed";
+  taskId: string;
+  status: BackgroundTaskCompletedRuntimeStatus;
+  summary?: string;
+  message?: string;
+  outputFile?: string;
+  toolUseId?: string;
+  usage?: {
+    totalTokens: number;
+    toolUses: number;
+    durationMs: number;
+  };
+  execution?: ToolExecutionMetadata;
+}
+
+export interface CodingGitAction {
+  kind: "commit" | "push" | "merge" | "rebase" | "reset" | "clean" | "checkout" | "restore" | "other";
+  command: string;
+  status: "running" | "completed" | "failed";
+  createdAt: string;
+}
+
+export interface CodingReviewFinding {
+  severity: "blocker" | "concern" | "suggestion" | "question";
+  path: string;
+  line?: number;
+  summary: string;
+  evidence?: string;
+  recommendation?: string;
+}
+
+export interface CodingReviewSummary {
+  status: "pending" | "complete";
+  findings: CodingReviewFinding[];
+}
+
+export type CodingVerificationStatus =
+  | "not_run"
+  | "passed"
+  | "failed"
+  | "baseline_failed"
+  | "exhausted";
+
+export type CodingRewindState =
+  | "active"
+  | "available"
+  | "unavailable"
+  | "partial"
+  | "conflict"
+  | "committed_boundary";
+
+export type CodingChangedFileState =
+  | "normal"
+  | "committed"
+  | "external_modified"
+  | "conflict"
+  | "unpreviewable";
+
+export interface RuntimeCodingFileChange {
+  /** Stable root identity for multi-root/multi-repository reviews. */
+  rootId?: string;
+  path: string;
+  status?: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  addedLines?: number;
+  removedLines?: number;
+  source?: "git" | "snapshot" | "tool" | "bash" | "subagent" | "external";
+  canUndo?: boolean;
+  oldContentAvailable?: boolean;
+  newContentAvailable?: boolean;
+  state?: CodingChangedFileState;
+  previousPath?: string;
+}
+
+export type CodingReviewStageFilter = "uncommitted" | "unstaged" | "staged";
+
+export type CodingReviewSource =
+  | { kind: CodingReviewStageFilter }
+  | { kind: "branch"; baseRef: string }
+  | { kind: "commit"; commitSha: string };
+
+export interface CodingReviewCommit {
+  sha: string
+  subject: string
+  authoredAt: string
+}
+
+export interface CodingReviewSourcesResult {
+  available: boolean
+  rootId?: string
+  currentBranch?: string
+  defaultBaseRef?: string
+  branches: string[]
+  commits: CodingReviewCommit[]
+  reason?: string
+}
+
+export interface CodingReviewSearchFile {
+  path: string
+  rootId?: string
+}
+
+export interface CodingReviewSearchMatch {
+  path: string
+  rootId?: string
+  kind: 'path' | 'line'
+  side?: 'additions' | 'deletions' | 'context'
+  lineNumber?: number
+  preview: string
+  matchStart: number
+  matchLength: number
+}
+
+export interface CodingReviewSearchInput {
+  threadId: string
+  runId?: string
+  reviewSource?: CodingReviewSource
+  files: CodingReviewSearchFile[]
+  query: string
+  limit?: number
+}
+
+export interface CodingReviewSearchResult {
+  matches: CodingReviewSearchMatch[]
+  truncated: boolean
+}
+
+export interface CodingDiffActions {
+  isGit: boolean
+  staged: boolean
+  unstaged: boolean
+  canStage: boolean
+  canUnstage: boolean
+  unavailableReason?: string
+}
+
+export interface CodingTextDiffPayload {
+  kind: 'text'
+  rootId?: string
+  path: string
+  status: RuntimeCodingFileChange['status']
+  oldContent: string
+  newContent: string
+  patch: string
+  diffHash: string
+  addedLines: number
+  removedLines: number
+  actions: CodingDiffActions
+}
+
+export interface CodingMediaDiffPayload {
+  kind: 'media'
+  mediaKind: 'markdown' | 'image' | 'svg' | 'pdf'
+  rootId?: string
+  path: string
+  status: RuntimeCodingFileChange['status']
+  diffHash: string
+  addedLines: number
+  removedLines: number
+  beforeAvailable: boolean
+  afterAvailable: boolean
+  actions: CodingDiffActions
+}
+
+export interface CodingBinaryDiffPayload {
+  kind: 'binary'
+  rootId?: string
+  path: string
+  status: RuntimeCodingFileChange['status']
+  diffHash: string
+  addedLines: number
+  removedLines: number
+  actions: CodingDiffActions
+}
+
+export type CodingDiffPayload = CodingTextDiffPayload | CodingMediaDiffPayload | CodingBinaryDiffPayload
+
+interface CodingDiffActionBase {
+  threadId: string
+  runId?: string
+  rootId?: string
+  stageFilter?: CodingReviewStageFilter
+  action: 'stage' | 'unstage'
+}
+
+export interface CodingFileDiffActionInput extends CodingDiffActionBase {
+  path: string
+  scope: 'file' | 'hunk'
+  hunkIndex?: number
+  expectedDiffHash: string
+}
+
+export interface CodingSectionDiffActionInput extends CodingDiffActionBase {
+  scope: 'section'
+  files: Array<{
+    path: string
+    expectedDiffHash: string
+  }>
+}
+
+export type CodingDiffActionInput = CodingFileDiffActionInput | CodingSectionDiffActionInput
+
+export interface CodingDiffActionResult {
+  ok: true
+  diff?: CodingDiffPayload
+}
+
+export interface CodingDiffMediaInput {
+  threadId: string
+  runId?: string
+  rootId?: string
+  reviewSource?: CodingReviewSource
+  path: string
+  side: 'before' | 'after'
+}
+
+export interface CodingDiffMediaResult {
+  mediaType: string
+  size: number
+  dataBase64: string
+}
+
+export interface CodingBlameLine {
+  lineNumber: number
+  commit: string
+  author: string
+  authorTime?: string
+  summary?: string
+  committed: boolean
+  commitUrl?: string
+}
+
+export interface CodingBlameResult {
+  available: boolean
+  lines: CodingBlameLine[]
+}
+
+export interface CodingFileOpenTargets {
+  absolutePath?: string
+  remoteFileUrl?: string
+  remoteProvider?: 'github' | 'gitlab'
+  revision?: string
+}
+
+export type CodingRepositoryPublishState =
+  | {
+      available: false
+      reason: string
+    }
+  | {
+      available: true
+      rootId: string
+      rootLabel: string
+      branch: string
+      upstream?: string
+      head: string
+      indexHash: string
+      worktreeHash: string
+      stagedCount: number
+      unstagedCount: number
+      untrackedCount: number
+      ahead: number
+      behind: number
+      canCommit: boolean
+      canPush: boolean
+    }
+
+interface CodingRepositoryPublishActionBase {
+  threadId: string
+  runId?: string
+  rootId?: string
+  expectedBranch: string
+  expectedHead: string
+}
+
+export interface CodingRepositoryCommitInput extends CodingRepositoryPublishActionBase {
+  action: 'commit' | 'commit_and_push'
+  message: string
+  expectedIndexHash: string
+  includeUnstagedChanges?: boolean
+  expectedWorktreeHash?: string
+}
+
+export interface CodingRepositoryPushInput extends CodingRepositoryPublishActionBase {
+  action: 'push'
+}
+
+export type CodingRepositoryPublishActionInput =
+  | CodingRepositoryCommitInput
+  | CodingRepositoryPushInput
+
+export interface CodingRepositoryPublishActionResult {
+  state: CodingRepositoryPublishState
+  commitHash?: string
+  pushCompleted: boolean
+  error?: string
+}
+
+export interface RuntimeCodingChangeSet {
+  turnId?: string;
+  repositories?: RuntimeCodingRepository[];
+  branch?: {
+    name: string;
+    upstream?: string;
+  };
+  base: "turn_checkpoint" | "git:HEAD" | "git_head" | "workspace_snapshot";
+  isGitRepo: boolean;
+  files: RuntimeCodingFileChange[];
+  totalAddedLines: number;
+  totalRemovedLines: number;
+  generatedAt: string;
+  pendingRewind?: {
+    operationId: string;
+    status: "prepared" | "files_applying" | "files_applied" | "transcript_applying" | "partial";
+    restoredFiles: string[];
+    conflicts: string[];
+    nonRewindableFiles: string[];
+    error?: string;
+  };
+}
+
+export interface RuntimeCodingRepository {
+  rootId: string;
+  rootLabel: string;
+  kind: "git" | "snapshot";
+  base: string;
+  branch?: {
+    name: string;
+    upstream?: string;
+  };
+}
+
+export interface CodingTurnRecord {
+  turnId: string;
+  threadId: string;
+  userMessageId: string;
+  assistantMessageId?: string;
+  phase?: CodingTurnPhase;
+  runIds: string[];
+  startedAt: string;
+  finishedAt?: string;
+  baselineCommit?: string;
+  checkpointId?: string;
+  changedFiles: RuntimeCodingFileChange[];
+  verificationStatus: CodingVerificationStatus;
+  verificationRepairAttempts: number;
+  approvalRequestCount: number;
+  rewindState: CodingRewindState;
+  routeReason?: string;
+  toolSelectionReason?: string;
+  terminationReason?: string;
+  verificationRecords?: CodingVerificationRecord[];
+  gitActions?: CodingGitAction[];
+  review?: CodingReviewSummary;
 }
 
 export interface RunTurnLimitedRuntimeEvent extends RuntimeEventBase {
   type: "run.turn_limited";
   reason?: string;
+  verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
+  codingReport?: RuntimeCodingReport;
 }
 
 export interface RunFailedRuntimeEvent extends RuntimeEventBase {
@@ -270,6 +737,8 @@ export interface RunFailedRuntimeEvent extends RuntimeEventBase {
     stack?: string;
     retryable?: boolean;
   };
+  verificationStatus?: "not_required" | "unverified" | "verified" | "failed";
+  codingReport?: RuntimeCodingReport;
 }
 
 export interface RunCancelledRuntimeEvent extends RuntimeEventBase {
@@ -394,12 +863,101 @@ export interface UsageUpdatedRuntimeEvent extends RuntimeEventBase {
   progress?: RuntimeNormalizedUsage;
 }
 
+export interface FileResultRef {
+  kind: "file";
+  path: string;
+  size: number;
+  mimeType?: string;
+  /** Renderer-safe identity when the result belongs to the current session artifact scope. */
+  fileRef?: FileRef;
+}
+
+export interface ToolExecutionMetadataV1 {
+  version: 1;
+  exitCode?: number | null;
+  stdoutPreview?: string;
+  stderrPreview?: string;
+  timedOut?: boolean;
+  aborted?: boolean;
+  outputLimitReached?: boolean;
+  durationMs: number;
+  command: string;
+  shell?: "bash" | "powershell";
+  semanticOutcome?: "no_matches" | "condition_false" | "files_differ";
+  purpose?: string;
+  workspaceChanged?: boolean;
+  resultRef?: FileResultRef;
+  terminationReason: "completed" | "nonzero" | "timeout" | "aborted" | "output_limit" | "spawn_error" | "running";
+}
+
+export interface ToolExecutionMetadataV2 {
+  version: 2;
+  outcome: "running" | "succeeded" | "failed" | "timed_out" | "cancelled" | "interrupted";
+  exitCode?: number | null;
+  stdoutPreview?: string;
+  stderrPreview?: string;
+  stdoutRef?: FileResultRef;
+  stderrRef?: FileResultRef;
+  timedOut?: boolean;
+  aborted?: boolean;
+  outputLimitReached?: boolean;
+  durationMs: number;
+  command: string;
+  shell: "bash" | "powershell";
+  semanticOutcome?: "no_matches" | "condition_false" | "files_differ";
+  purpose?: string;
+  workspaceChanged?: boolean;
+  resultRef?: FileResultRef;
+  terminationReason: "completed" | "nonzero" | "timeout" | "aborted" | "output_limit" | "spawn_error" | "running" | "interrupted";
+}
+
+export type ToolExecutionMetadata = ToolExecutionMetadataV1 | ToolExecutionMetadataV2;
+
+export interface AdvisorReviewedRuntimeEvent extends RuntimeEventBase {
+  type: "advisor.reviewed";
+  severity: "clear" | "suggestion" | "concern" | "blocker";
+  summary: string;
+  details?: string;
+  modelRef: string;
+  durationMs?: number;
+}
+
+export interface LspDiagnosticsUpdatedRuntimeEvent extends RuntimeEventBase {
+  type: "lsp.diagnostics.updated";
+  toolUseId?: string;
+  filePath: string;
+  mutationVersion: number;
+  sha256: string;
+  delayed: boolean;
+  diagnostics: {
+    servers: string[];
+    total: number;
+    errors: number;
+    warnings: number;
+    truncated: boolean;
+    items: Array<{
+      server?: string;
+      source?: string;
+      severity?: 1 | 2 | 3 | 4;
+      code?: string | number;
+      message: string;
+      range: {
+        start: { line: number; character: number };
+        end: { line: number; character: number };
+      };
+    }>;
+    artifact?: FileResultRef;
+  };
+}
+
 export type LumeRuntimeEvent =
   | RunStartedRuntimeEvent
   | UserMessageSubmittedRuntimeEvent
   | AssistantDeltaRuntimeEvent
   | AssistantThinkingDeltaRuntimeEvent
   | AssistantFinalRuntimeEvent
+  | ModelRetryRuntimeEvent
+  | ModelRetryClearedRuntimeEvent
   | ToolStartedRuntimeEvent
   | ToolCompletedRuntimeEvent
   | ToolFailedRuntimeEvent
@@ -410,8 +968,10 @@ export type LumeRuntimeEvent =
   | PlanPreviewRuntimeEvent
   | TodoStateUpdatedRuntimeEvent
   | TaskProgressRuntimeEvent
+  | BackgroundTaskCompletedRuntimeEvent
   | ImDeliveryRuntimeEvent
   | RunCompletedRuntimeEvent
+  | CodingReportUpdatedRuntimeEvent
   | RunTurnLimitedRuntimeEvent
   | RunFailedRuntimeEvent
   | RunCancelledRuntimeEvent
@@ -419,4 +979,6 @@ export type LumeRuntimeEvent =
   | ContextCompactionStartedRuntimeEvent
   | ContextCompactionProgressRuntimeEvent
   | ContextCompactionCompletedRuntimeEvent
+  | LspDiagnosticsUpdatedRuntimeEvent
+  | AdvisorReviewedRuntimeEvent
   | UsageUpdatedRuntimeEvent;

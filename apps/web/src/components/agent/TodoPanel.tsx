@@ -3,13 +3,13 @@ import { Check, Circle, Loader2 } from 'lucide-react'
 import type { TodoBlockData } from './runtime-message-view'
 import { cn } from '@/lib/utils'
 
-export function TodoPanel({ data }: { data: TodoBlockData | null }) {
+export function TodoPanel({ data, running }: { data: TodoBlockData | null; running: boolean }) {
   const [hovered, setHovered] = useState(false)
   if (!data || data.todos.length === 0) return null
 
   const completed = data.todos.filter((t) => t.status === 'completed').length
   const total = data.todos.length
-  const active = !!data.currentActiveForm
+  const active = running && !!data.currentActiveForm
 
   return (
     <div className="pointer-events-none absolute bottom-3 left-0 right-0 z-10 flex justify-center px-3">
@@ -25,7 +25,9 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
             {completed}/{total}
           </span>
           {data.currentActiveForm ? (
-            <span className="min-w-0 truncate">{data.currentActiveForm}</span>
+            <span className="min-w-0 truncate">
+              {running ? data.currentActiveForm : `未完成：${data.currentActiveForm}`}
+            </span>
           ) : (
             <span className="text-foreground/40">任务列表</span>
           )}
@@ -44,7 +46,11 @@ export function TodoPanel({ data }: { data: TodoBlockData | null }) {
                 {t.status === 'completed' ? (
                   <Check size={12} className="shrink-0 text-foreground/40" />
                 ) : t.status === 'in_progress' ? (
-                  <Loader2 size={12} className="shrink-0 animate-spin text-[var(--lume-accent)]" />
+                  running ? (
+                    <Loader2 size={12} className="shrink-0 animate-spin text-[var(--lume-accent)]" />
+                  ) : (
+                    <Circle size={12} className="shrink-0 text-[var(--lume-accent)]" />
+                  )
                 ) : (
                   <Circle size={12} className="shrink-0 text-foreground/30" />
                 )}

@@ -40,6 +40,8 @@ import {
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentSubmissionStore } from "../services/agent/agent-submission-store";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
+import { addPlanningAuthorizedTodo, issuePlanningScopeGrant, registerPlanningExecutionContext } from "../services/planning/planning-execution-context";
+import { getPlanningTodoStore } from "../services/planning/planning-todo-store";
 import {
   appendAgentMessage,
   sendAgentMessage,
@@ -86,6 +88,9 @@ import {
   readAgentFileData,
   readAgentPath,
   readAuthorizedFileRef,
+  writeAuthorizedFileRef,
+  watchAuthorizedFileRef,
+  unwatchAuthorizedFileRef,
   readGuardedFileRef,
   statAuthorizedFileRef,
   readProjectFileData,
@@ -113,6 +118,7 @@ import {
   showWorkspacePathInFolder,
 } from "../services/agent/agent-files-service";
 import { promoteFileToWorkspace } from "../services/agent/agent-file-promotion-service";
+import { requestFileSelectionEdit } from "../services/agent/file-selection-edit-service";
 import {
   createAgentWorkspace,
   deleteWorkspaceSkill,
@@ -169,30 +175,39 @@ import { createLogger, writeLogRecord } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runtime-core/attempt";
 import { getRuntimeCoreSessionDir } from "../services/agent-runtime/runtime-core/session-store";
+import { resolveAgentThreadWorkdir } from "../services/agent/agent-workdir-resolver";
+import {
+  applyCodingDiffAction,
+  getCodingBlame,
+  getCodingChangeSet,
+  getCodingDiffMedia,
+  getCodingFileOpenTargets,
+  searchCodingDiffLines,
+  searchCodingReview,
+  type SearchableCodingDiff,
+  getCodingReviewSources,
+  getCodingRepositoryPublishState,
+  applyCodingRepositoryPublishAction,
+  getCodingFileDiff
+} from "../services/agent-runtime/runtime-core/coding-change-service";
+import {
+  getCodingDiffMediaFromCheckpoint,
+  getCodingFileDiffFromCheckpoint,
+  getCodingRunRoots
+} from "../services/agent-runtime/runtime-core/coding-run-checkpoint-service";
 import {
   buildColdStartContinuationMessage,
   LumeResumeService,
   type ResumeRunResult
 } from "../services/agent-runtime/interruption/resume-service";
-import {
-  listPendingTaskApprovalRequests
-} from "../services/agent-runtime/plan/task-approval-service";
 import { createFileBackedRunContinuationStore } from "../services/agent-runtime/runner/run-continuation-store";
 import { createFileBackedLumeRunStateStore } from "../services/agent-runtime/runner/run-state-store";
 import { listThreadRuntimeEvents } from "../services/agent-runtime/replay/runtime-event-history";
-import {
-  createRuntimeOrchestrator,
-  type RuntimeOrchestrator
-} from "../services/agent-runtime/runtime-orchestrator";
 import { redactTraceForLevel, type TraceRedactionLevel } from "../services/agent-runtime/trace/trace-redaction";
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import { getSubagentRunRegistry } from "../services/agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../services/agent/subagents/subagent-coordinator";
 import { listPendingAskUserQuestionRequests } from "../services/agent-runtime/interruption/ask-user-question-session";
-import {
-  listPendingBrowserAuthRequests,
-  submitBrowserAuthResponse
-} from "../services/agent-runtime/interruption/browser-auth-session";
 import {
   listPendingDesktopActionRequests,
   submitDesktopActionDecision
@@ -203,6 +218,7 @@ import {
   saveAgentProxySettings
 } from "../services/system/proxy-settings-manager";
 import { readBootstrapFile, writeBootstrapFile } from "../services/system/workspace-bootstrap-service";
+import { resumeAutomationAfterInteraction } from "../services/automation/automation-runner-service";
 import {
   agentAppendInputSchema,
   agentCreateThreadInputSchema,
@@ -216,6 +232,7 @@ import {
   agentRecentThreadMessagesInputSchema,
   agentReorderMessageQueueInputSchema,
   agentSendInputSchema,
+  trustedAgentSendInputSchema,
   agentSubmissionReceiptInputSchema,
   agentThreadIdInputSchema,
   agentUpdateQueuedMessageInputSchema,
@@ -223,15 +240,24 @@ import {
   agentUpdateThreadTitleInputSchema,
   agentUpdateThreadModelSelectionInputSchema,
   applySkillImprovementInputSchema,
-  executeTaskContractInputSchema,
   getPluginAuditLogInputSchema,
   inspectMarketSourceInputSchema,
   installMarketItemInputSchema,
   attachWorkspaceResourceToThreadInputSchema,
   copyFolderToThreadInputSchema,
+  codingChangeSetInputSchema,
+  codingDiffActionInputSchema,
+  codingDiffMediaInputSchema,
+  codingFileInputSchema,
+  codingRepositoryInputSchema,
+  codingRepositoryPublishActionInputSchema,
+  codingReviewSearchInputSchema,
   deleteSkillInputSchema,
   editableSkillInputSchema,
   fileRefInputSchema,
+  fileSelectionEditInputSchema,
+  fileRefWriteInputSchema,
+  fileRefUnwatchInputSchema,
   guardedFileRefInputSchema,
   fileRefMoveInputSchema,
   fileRefRenameInputSchema,
@@ -279,9 +305,7 @@ import {
   threadRunEventsInputSchema,
   threadPathInputSchema,
   submitAskUserQuestionInputSchema,
-  submitBrowserAuthInputSchema,
   submitDesktopActionInputSchema,
-  submitTaskApprovalInputSchema,
   submitToolPermissionInputSchema,
   workspaceCreateInputSchema,
   workspaceDeleteInputSchema,
@@ -301,6 +325,7 @@ import {
 import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, asString, validateInput } from "./validation";
 import { trimSdkMessagesForTransport } from "./message-payload-trim";
+import { createAgentNotificationEmitter } from "../services/agent/agent-notification-service";
 
 const log = createLogger("agent-handlers");
 const activeFileSearches = new Map<string, AbortController>();
@@ -338,6 +363,7 @@ async function buildAgentPluginList(): Promise<{
 
 interface AgentHandlersContext {
   writeNotification: NotificationWriter;
+  notifyBrowserPluginState?: () => void;
   planModePhaseTracker: PlanModePhaseTracker;
   notifyPlanModePhaseChange: (
     threadId: string,
@@ -346,6 +372,12 @@ interface AgentHandlersContext {
   appendAgentMessage?: typeof appendAgentMessage;
   analyzeThreadWorkspaceSkillImprovements?: typeof analyzeThreadWorkspaceSkillImprovements;
 }
+
+// Only objects created by the private handler below may carry a trusted
+// renderer surface into the public send implementation. JSON-RPC callers can
+// reproduce the object shape, but cannot place their deserialized object in
+// this process-local identity set.
+const trustedPlanningSendEnvelopes = new WeakSet<object>();
 
 export function createAgentHandlers(context: AgentHandlersContext): Record<string, RpcHandler> {
   const appendAgentMessageForContext = context.appendAgentMessage ?? appendAgentMessage;
@@ -405,8 +437,10 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         },
         messageMetadata: {
           ...(state.input.messageMetadata ?? {}),
+          hiddenFromChat: true,
           runtimeContinuation: {
             sourceRunId: state.runId,
+            status: checkpoint.status,
             checkpoint: checkpoint.checkpoint,
             reason: checkpoint.reason
           }
@@ -437,9 +471,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         onAskUserQuestion: (request) => {
           context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
         },
-        onBrowserAuthRequest: (request) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
-        },
         onDesktopActionRequest: (request) => {
           context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
         },
@@ -449,13 +480,15 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }, { appendUserMessage: false });
       return { finalOutput };
     });
-    return service.resumeRun({
+    const result = await service.resumeRun({
       runId,
       interruptionId: input.interruptionId
     });
+    if (result.status === "resumed") {
+      resumeAutomationAfterInteraction(input.threadId);
+    }
+    return result;
   };
-
-  let runtimeOrchestrator: RuntimeOrchestrator;
 
   const createExecutionStartCallback = (input: AgentSendInput) => () => {
     if (!context.planModePhaseTracker.isLikelyExecutionRequest(input)) {
@@ -502,157 +535,20 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
 
   const createAgentStreamEmitter = (
     threadId: string,
-    options?: { contractId?: string; taskRunId?: string; workspaceSlug?: string }
-  ) => {
-    return {
-      onRuntimeEvent: (event: unknown) => {
-        const eventThreadId = event && typeof event === "object" && typeof (event as { threadId?: unknown }).threadId === "string"
-          ? (event as { threadId: string }).threadId
-          : threadId;
-        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-          threadId: eventThreadId,
-          event
-        });
-      },
-      onMessageAppended: (event: unknown) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
-        const appended = event as {
-          threadId?: string;
-          message?: {
-            id?: string;
-            role?: string;
-            content?: string;
-            createdAt?: number;
-            versionGroupId?: string;
-            versionIndex?: number;
-            versionCount?: number;
-            metadata?: Record<string, unknown>;
-          };
-        };
-        if (appended.message?.role === "user" && typeof appended.message.content === "string") {
-          const createdAt = new Date(appended.message.createdAt ?? Date.now()).toISOString();
-          context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-            threadId,
-            event: {
-              id: `${threadId}:${appended.message.id ?? createdAt}:message.user.submitted`,
-              type: "message.user.submitted",
-              runId: `message:${appended.message.id ?? createdAt}`,
-              threadId,
-              text: appended.message.content,
-              createdAt,
-              messageId: appended.message.id,
-              versionGroupId: appended.message.versionGroupId,
-              versionIndex: appended.message.versionIndex,
-              versionCount: appended.message.versionCount,
-              messageParts: appended.message.metadata?.messageParts,
-              capabilityReferences: appended.message.metadata?.capabilityReferenceViews
-            }
-          });
-        }
-      },
-      onComplete: (payload?: { reason?: "max_turns" }) => {
-        const turnLimited = payload?.reason === "max_turns";
-        if (options?.taskRunId) {
-          void runtimeOrchestrator.handleTaskRunCompletion({
-            threadId,
-            taskRunId: options.taskRunId,
-            contractId: options.contractId,
-            turnLimited
-          });
-          return;
-        }
-        scheduleSkillImprovementSuggestionScan(threadId, options?.workspaceSlug);
-        if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
-          context.notifyPlanModePhaseChange(threadId, "completed");
-        }
-      },
-      onError: (error: string) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-          threadId,
-          event: {
-            id: `${threadId}:${Date.now()}:run.failed`,
-            type: "run.failed",
-            threadId,
-            runId: `runtime-error:${threadId}`,
-            createdAt: new Date().toISOString(),
-            error: {
-              code: "runtime_error",
-              message: error
-            }
-          }
-        });
-        if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
-          context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
-        }
-      },
-      onTitleUpdated: (title: string) =>
-        context.writeNotification(AGENT_IPC_CHANNELS.TITLE_UPDATED, {
-          threadId,
-          title
-        }),
-      onAskUserQuestion: (request: unknown) =>
-        {
-          const message = (request as { questions?: Array<{ question?: string }> })?.questions
-            ?.map((item) => item.question)
-            .filter(Boolean)
-            .join("\n");
-          if (options?.taskRunId) {
-            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
-              threadId,
-              taskRunId: options.taskRunId,
-              waitingFor: "user",
-              reason: message || "等待用户回答"
-            });
-          }
-          context.writeNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
-        },
-      onBrowserAuthRequest: (request: unknown) =>
-        {
-          const authRequest = request as { reason?: string; origin?: string };
-          if (options?.taskRunId) {
-            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
-              threadId,
-              taskRunId: options.taskRunId,
-              waitingFor: "user",
-              reason: authRequest.reason || (authRequest.origin ? `等待 ${authRequest.origin} 安全凭证输入` : "等待浏览器安全凭证输入")
-            });
-          }
-          context.writeNotification(AGENT_IPC_CHANNELS.BROWSER_AUTH_REQUEST, request);
-        },
-      onDesktopActionRequest: (request: unknown) => {
-        context.writeNotification(AGENT_IPC_CHANNELS.DESKTOP_ACTION_REQUEST, request);
-      },
-      onToolPermissionRequest: (request: unknown) =>
-        {
-          const toolRequest = request as { toolName?: string; reason?: string };
-          if (options?.taskRunId) {
-            void runtimeOrchestrator.setTaskRunAwaitingInteraction({
-              threadId,
-              taskRunId: options.taskRunId,
-              waitingFor: "permission",
-              reason: toolRequest.reason || (toolRequest.toolName ? `等待 ${toolRequest.toolName} 权限审批` : "等待工具权限审批")
-            });
-          }
-          context.writeNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);
-        },
-      onTaskContractUpdated: (contract?: { status?: string }) => {
-        if (contract?.status === "needs_approval") {
-          context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
-        }
+    options?: { workspaceSlug?: string }
+  ) => createAgentNotificationEmitter({
+    threadId,
+    writeNotification: context.writeNotification,
+    onComplete: () => {
+      scheduleSkillImprovementSuggestionScan(threadId, options?.workspaceSlug);
+      if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
+        context.notifyPlanModePhaseChange(threadId, "completed");
       }
-    };
-  };
-
-  runtimeOrchestrator = createRuntimeOrchestrator({
-    appendAgentMessage,
-    createAgentStreamEmitter,
-    notifyPlanModePhaseChange: context.notifyPlanModePhaseChange,
-    resolveRuntimeSessionDir,
-    writeRuntimeEvent: (threadId, event) => {
-      context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-        threadId,
-        event
-      });
+    },
+    onError: () => {
+      if (context.planModePhaseTracker.getPhase(threadId) === "executing") {
+        context.notifyPlanModePhaseChange(threadId, "awaiting_approval");
+      }
     }
   });
 
@@ -858,32 +754,24 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE
       );
       const askRequests = listPendingAskUserQuestionRequests();
-      const browserAuthRequests = listPendingBrowserAuthRequests();
       const desktopActionRequests = listPendingDesktopActionRequests();
       const toolRequests = listPendingToolPermissionRequests();
-      const taskApprovalRequests = await listPendingTaskApprovalRequests();
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
-      for (const request of browserAuthRequests) threadIds.add(request.threadId);
       for (const request of desktopActionRequests) threadIds.add(request.threadId);
       for (const request of toolRequests) threadIds.add(request.threadId);
-      for (const request of taskApprovalRequests) threadIds.add(request.threadId);
 
       const result: AgentPendingInteractiveState[] = [];
       for (const threadId of threadIds) {
         if (input.threadId && input.threadId !== threadId) continue;
         const askUserQuestions = askRequests.filter((request) => request.threadId === threadId);
-        const browserAuthForThread = browserAuthRequests.filter((request) => request.threadId === threadId);
         const desktopActionsForThread = desktopActionRequests.filter((request) => request.threadId === threadId);
         const toolPermissions = toolRequests.filter((request) => request.threadId === threadId);
-        const taskApprovals = taskApprovalRequests.filter((request) => request.threadId === threadId);
         result.push({
           threadId,
           ...(askUserQuestions.length > 0 ? { askUserQuestions } : {}),
-          ...(browserAuthForThread.length > 0 ? { browserAuthRequests: browserAuthForThread } : {}),
           ...(desktopActionsForThread.length > 0 ? { desktopActionRequests: desktopActionsForThread } : {}),
-          ...(toolPermissions.length > 0 ? { toolPermissions } : {}),
-          ...(taskApprovals.length > 0 ? { taskApprovals } : {})
+          ...(toolPermissions.length > 0 ? { toolPermissions } : {})
         });
       }
       return result;
@@ -1217,7 +1105,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.INSTALL_MARKET_ITEM
       );
-      return createDefaultPluginMarketService().installMarketItem(input);
+      const result = await createDefaultPluginMarketService().installMarketItem(input);
+      if (input.itemId === "browser" || input.itemId === "lume-chrome") context.notifyBrowserPluginState?.();
+      return result;
     },
     [AGENT_IPC_CHANNELS.UPDATE_PLUGIN]: async (params) => {
       const input = validateInput(
@@ -1225,7 +1115,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.UPDATE_PLUGIN
       );
-      return createDefaultPluginMarketService().updatePlugin(input);
+      const result = await createDefaultPluginMarketService().updatePlugin(input);
+      if (input.pluginId === "browser" || input.pluginId === "lume-chrome") context.notifyBrowserPluginState?.();
+      return result;
     },
     [AGENT_IPC_CHANNELS.UNINSTALL_PLUGIN]: async (params) => {
       const input = validateInput(
@@ -1233,7 +1125,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.UNINSTALL_PLUGIN
       );
-      return createDefaultPluginMarketService().uninstallPlugin(input);
+      const result = await createDefaultPluginMarketService().uninstallPlugin(input);
+      if (input.pluginId === "browser" || input.pluginId === "lume-chrome") context.notifyBrowserPluginState?.();
+      return result;
     },
     [AGENT_IPC_CHANNELS.SET_PLUGIN_ENABLEMENT]: async (params) => {
       const input = validateInput(
@@ -1241,7 +1135,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         params,
         AGENT_IPC_CHANNELS.SET_PLUGIN_ENABLEMENT
       );
-      return createDefaultPluginMarketService().setPluginEnablement(input);
+      const result = await createDefaultPluginMarketService().setPluginEnablement(input);
+      if (input.pluginId === "browser" || input.pluginId === "lume-chrome") context.notifyBrowserPluginState?.();
+      return result;
     },
     [AGENT_IPC_CHANNELS.SET_PLUGIN_ACTIVE_VERSION]: async (params) => {
       const input = validateInput(
@@ -1474,6 +1370,225 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       const input = validateInput(workspaceRequiredPathInputSchema, params, AGENT_IPC_CHANNELS.READ_PROJECT_FILE);
       return readProjectPath(input.workspaceSlug, input.path);
     },
+    [AGENT_IPC_CHANNELS.GET_CODING_REVIEW_SOURCES]: async (params) => {
+      const input = validateInput(
+        codingRepositoryInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_CODING_REVIEW_SOURCES
+      );
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingReviewSources(workdir.agentCwd, {
+        rootId: input.rootId,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.SEARCH_CODING_REVIEW]: async (params) => {
+      const input = validateInput(
+        codingReviewSearchInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.SEARCH_CODING_REVIEW
+      );
+      if (input.runId && !input.reviewSource) {
+        const queue = input.files.map((file, index) => ({ file, index }));
+        const files: Array<SearchableCodingDiff | undefined> = new Array(input.files.length);
+        const worker = async () => {
+          while (queue.length > 0) {
+            const item = queue.shift();
+            if (!item) return;
+            const { file, index } = item;
+            const diff = await getCodingFileDiffFromCheckpoint({
+              sessionDir: getRuntimeCoreSessionDir(input.threadId),
+              runId: input.runId!,
+              path: file.path,
+              rootId: file.rootId,
+            }).catch(() => null);
+            files[index] = {
+              ...file,
+              lines: diff?.kind === "text" ? diff.lines : [],
+            };
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(6, queue.length) }, worker));
+        return searchCodingDiffLines(
+          files.filter((file): file is SearchableCodingDiff => file !== undefined),
+          input.query,
+          input.limit
+        );
+      }
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return searchCodingReview(workdir.agentCwd, {
+        query: input.query,
+        limit: input.limit,
+        files: input.files,
+        reviewSource: input.reviewSource,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET]: async (params) => {
+      const input = validateInput(codingChangeSetInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_CHANGE_SET);
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      const changeSet = await getCodingChangeSet(workdir.agentCwd, {
+        paths: input.paths,
+        reviewSource: input.reviewSource,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+      return changeSet;
+    },
+    [AGENT_IPC_CHANNELS.GET_CODING_DIFF]: async (params) => {
+      const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_DIFF);
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      const diffOptions = {
+        rootId: input.rootId,
+        reviewSource: input.reviewSource,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      };
+      if (input.runId) {
+        const checkpointDiff = await getCodingFileDiffFromCheckpoint({
+          sessionDir: getRuntimeCoreSessionDir(input.threadId),
+          runId: input.runId,
+          path: input.path,
+          rootId: input.rootId,
+        });
+        if (checkpointDiff) {
+          const currentDiff = await getCodingFileDiff(workdir.agentCwd, input.path, diffOptions).catch(() => null);
+          if (
+            currentDiff?.kind === "text"
+            && checkpointDiff.kind === "text"
+            && currentDiff.oldContent === checkpointDiff.oldContent
+            && currentDiff.newContent === checkpointDiff.newContent
+          ) {
+            return currentDiff;
+          }
+          return checkpointDiff;
+        }
+      }
+      return getCodingFileDiff(workdir.agentCwd, input.path, diffOptions);
+    },
+    [AGENT_IPC_CHANNELS.APPLY_CODING_DIFF_ACTION]: async (params) => {
+      const input = validateInput(codingDiffActionInputSchema, params, AGENT_IPC_CHANNELS.APPLY_CODING_DIFF_ACTION);
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        throw new Error("Coding Run 尚未结束，无法修改文件或 Git index");
+      }
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      const actionPaths = input.scope === "section"
+        ? input.files.map((file) => file.path)
+        : [input.path];
+      const changeSet = await getCodingChangeSet(workdir.agentCwd, {
+        paths: actionPaths,
+        reviewSource: { kind: input.stageFilter ?? "uncommitted" },
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+      const repository = input.rootId
+        ? changeSet.repositories?.find((candidate) => candidate.rootId === input.rootId)
+        : changeSet.repositories?.[0];
+      if (repository?.kind !== "git") {
+        throw new Error("非 Git 项目不支持 Git Diff 操作");
+      }
+      return applyCodingDiffAction(workdir.agentCwd, input, {
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.GET_CODING_DIFF_MEDIA]: async (params) => {
+      const input = validateInput(codingDiffMediaInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_DIFF_MEDIA);
+      if (input.runId) {
+        const checkpointMedia = await getCodingDiffMediaFromCheckpoint({
+          sessionDir: getRuntimeCoreSessionDir(input.threadId),
+          runId: input.runId,
+          path: input.path,
+          rootId: input.rootId,
+          side: input.side,
+        });
+        if (checkpointMedia) return checkpointMedia;
+      }
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingDiffMedia(workdir.agentCwd, input.path, input.side, {
+        rootId: input.rootId,
+        reviewSource: input.reviewSource,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.GET_CODING_BLAME]: async (params) => {
+      const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_BLAME);
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingBlame(workdir.agentCwd, input.path, {
+        rootId: input.rootId,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.GET_CODING_FILE_OPEN_TARGETS]: async (params) => {
+      const input = validateInput(codingFileInputSchema, params, AGENT_IPC_CHANNELS.GET_CODING_FILE_OPEN_TARGETS);
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingFileOpenTargets(workdir.agentCwd, input.path, {
+        rootId: input.rootId,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.GET_CODING_REPOSITORY_PUBLISH_STATE]: async (params) => {
+      const input = validateInput(
+        codingRepositoryInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_CODING_REPOSITORY_PUBLISH_STATE,
+      );
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return getCodingRepositoryPublishState(workdir.agentCwd, {
+        rootId: input.rootId,
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
+    [AGENT_IPC_CHANNELS.APPLY_CODING_REPOSITORY_PUBLISH_ACTION]: async (params) => {
+      const input = validateInput(
+        codingRepositoryPublishActionInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.APPLY_CODING_REPOSITORY_PUBLISH_ACTION,
+      );
+      if (isAgentRuntimeSessionActive(input.threadId)) {
+        throw new Error("Coding Run 尚未结束，无法提交或推送");
+      }
+      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      const roots = await getCodingRunRoots({
+        sessionDir: getRuntimeCoreSessionDir(input.threadId),
+        runId: input.runId,
+      });
+      return applyCodingRepositoryPublishAction(workdir.agentCwd, input, {
+        roots: roots.filter((root) => root !== workdir.agentCwd),
+      });
+    },
     [AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA]: async (params) => {
       const input = validateInput(workspaceRequiredPathInputSchema, params, AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA);
       return readProjectFileData(input.workspaceSlug, input.path);
@@ -1562,6 +1677,30 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
     [AGENT_IPC_CHANNELS.READ_FILE_REF]: async (params) => {
       const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.READ_FILE_REF);
       return readAuthorizedFileRef(input.ref);
+    },
+    [AGENT_IPC_CHANNELS.WRITE_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefWriteInputSchema, params, AGENT_IPC_CHANNELS.WRITE_FILE_REF);
+      return writeAuthorizedFileRef(input);
+    },
+    [AGENT_IPC_CHANNELS.REQUEST_FILE_SELECTION_EDIT]: async (params) => {
+      const input = validateInput(
+        fileSelectionEditInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REQUEST_FILE_SELECTION_EDIT,
+      );
+      const authorized = readAuthorizedFileRef(input.ref);
+      if (authorized.kind !== "text" || !authorized.editable) {
+        throw new Error("当前文件不可编辑，无法请求模型修改");
+      }
+      return requestFileSelectionEdit(input);
+    },
+    [AGENT_IPC_CHANNELS.WATCH_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.WATCH_FILE_REF);
+      return watchAuthorizedFileRef(input.ref, context.writeNotification);
+    },
+    [AGENT_IPC_CHANNELS.UNWATCH_FILE_REF]: async (params) => {
+      const input = validateInput(fileRefUnwatchInputSchema, params, AGENT_IPC_CHANNELS.UNWATCH_FILE_REF);
+      return unwatchAuthorizedFileRef(input.watchId);
     },
     [AGENT_IPC_CHANNELS.STAT_FILE_REF]: async (params) => {
       const input = validateInput(fileRefInputSchema, params, AGENT_IPC_CHANNELS.STAT_FILE_REF);
@@ -1700,15 +1839,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       }
       return result;
     },
-    [AGENT_IPC_CHANNELS.SUBMIT_BROWSER_AUTH]: async (params) => {
-      const input = validateInput(
-        submitBrowserAuthInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.SUBMIT_BROWSER_AUTH
-      );
-      const handled = await submitBrowserAuthResponse(input);
-      return { handled };
-    },
     [AGENT_IPC_CHANNELS.SUBMIT_DESKTOP_ACTION]: async (params) => {
       const input = validateInput(
         submitDesktopActionInputSchema,
@@ -1731,23 +1861,6 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       });
       return result;
     },
-    [AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL]: async (params) => {
-      const input = validateInput(
-        submitTaskApprovalInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL
-      );
-      return runtimeOrchestrator.submitTaskApproval(input);
-    },
-    [AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT]: async (params) => {
-      const input = validateInput(executeTaskContractInputSchema, params, AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT);
-      return runtimeOrchestrator.dispatchTaskExecution({
-        threadId: input.threadId,
-        contractId: input.contractId,
-        permissionMode: input.permissionMode,
-        intent: input.intent
-      });
-    },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
     "agent:read-bootstrap-file": async (params) => {
       const input = validateInput(readBootstrapFileInputSchema, params, "agent:read-bootstrap-file");
@@ -1759,6 +1872,9 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       return { ok: true };
     },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
+      const trustedSurface = params && typeof params === "object" && trustedPlanningSendEnvelopes.has(params) && "trustedSurface" in params
+        ? (params as { trustedSurface?: { surface: "main" | "quick-input"; clientSubmissionId: string; threadId: string } }).trustedSurface
+        : undefined;
       const validated = validateInput(agentSendInputSchema, params, AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE);
       const input: AgentSendInput = {
         ...validated,
@@ -1772,6 +1888,31 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
           ...(validated.traceContext?.linkedTraceId ? { linkedTraceId: validated.traceContext.linkedTraceId } : {})
         }
       };
+      const trustedThreadMeta = getAgentThreadMeta(input.threadId);
+      const trustedWorkspaceId = trustedThreadMeta?.workspaceId;
+      if (trustedThreadMeta) input.workspaceId = trustedWorkspaceId;
+      if (trustedSurface?.threadId === input.threadId && trustedSurface.clientSubmissionId === input.clientSubmissionId) {
+        const planningContext = registerPlanningExecutionContext({ surface: trustedSurface.surface, threadId: input.threadId, ...(trustedWorkspaceId ? { workspaceId: trustedWorkspaceId } : {}), clientSubmissionId: trustedSurface.clientSubmissionId });
+        for (const todo of getPlanningTodoStore().listPrimaryTodosForThread(input.threadId)) addPlanningAuthorizedTodo(planningContext, todo.id);
+        issuePlanningScopeGrant({
+          clientSubmissionId: trustedSurface.clientSubmissionId,
+          surface: trustedSurface.surface,
+          scope: trustedWorkspaceId ? "current" : "unassigned",
+          ...(trustedWorkspaceId ? { workspaceId: trustedWorkspaceId } : {}),
+          allowedOperations: ["list", "get"],
+          mode: "turn"
+        });
+        const referencedTodoIds = [...new Set((input.messageParts ?? []).filter((part) => part.type === "planning_todo_ref").map((part) => part.todoId))];
+        if (referencedTodoIds.length > 0) issuePlanningScopeGrant({
+          clientSubmissionId: trustedSurface.clientSubmissionId,
+          surface: trustedSurface.surface,
+          scope: "todo",
+          todoIds: referencedTodoIds,
+          allowedOperations: ["get", "update", "complete", "reopen", "delete", "restore"],
+          mode: "turn"
+        });
+        input.trustedPlanningClientSubmissionId = trustedSurface.clientSubmissionId;
+      }
       writeLogRecord({
         level: "info",
         kind: "trace",
@@ -1785,13 +1926,7 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         origin: input.traceContext?.origin,
         data: { messageLength: input.userMessage.length }
       });
-      const approvalDispatch = await runtimeOrchestrator.dispatchPlanExecutionApproval(input);
-      if (approvalDispatch) {
-        return approvalDispatch;
-      }
-      const sendInput = await prepareAgentDispatchInput(
-        await runtimeOrchestrator.resolvePlanContinuationInput(input)
-      );
+      const sendInput = await prepareAgentDispatchInput(input);
       if (sendInput.permissionMode === "plan") {
         context.notifyPlanModePhaseChange(sendInput.threadId, "planning");
       }
@@ -1814,6 +1949,15 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         data: { mode: result.mode, queuedCount: result.queuedCount, queuedMessageId: result.queuedMessage?.id }
       });
       return result;
+    },
+    "agent:send-thread-message:trusted": async (params) => {
+      const envelope = validateInput(trustedAgentSendInputSchema, params, "agent:send-thread-message:trusted");
+      const trustedParams = {
+        ...envelope.input,
+        trustedSurface: envelope.trustedSurface
+      };
+      trustedPlanningSendEnvelopes.add(trustedParams);
+      return handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!(trustedParams);
     },
     [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {
       const input = validateInput(agentAppendInputSchema, params, AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE) as AgentSendInput;

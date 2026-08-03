@@ -493,6 +493,35 @@ describe("DesktopContextService", () => {
     ]);
   });
 
+  test("retries permission launch when the desktop host is restarting", async () => {
+    let requestAttempts = 0;
+    const service = new DesktopContextService({
+      dbPath: "unused.sqlite",
+      settings: {
+        enabled: true,
+        allowedApps: [],
+        retentionHours: 24,
+        maxStorageBytes: 2_000_000,
+      },
+      invokeHost: async (method) => {
+        if (method === "request_permissions") {
+          requestAttempts += 1;
+          if (requestAttempts < 3) {
+            return { status: "unavailable", message: "desktop host connection failed: desktop host connection closed" };
+          }
+          return { status: "permission_denied", permissionTarget: { appBundleName: "Lume Computer Use.app" } };
+        }
+        return {
+          status: method === "diagnose_permissions" ? "ok" : "permission_denied",
+          permissionTarget: { appBundleName: "Lume Computer Use.app" },
+        };
+      },
+    });
+
+    await expect(service.requestPermissions()).resolves.toMatchObject({ status: "ok" });
+    expect(requestAttempts).toBe(3);
+  });
+
   test("normalizes an already-authorized computer-use app to the completed state", async () => {
     const service = new DesktopContextService({
       dbPath: "unused.sqlite",

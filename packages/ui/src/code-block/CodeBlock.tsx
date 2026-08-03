@@ -20,18 +20,22 @@
  */
 
 import * as React from 'react'
-import { highlightCode, highlightToTokens } from '../highlight/index'
+import { highlightCode, highlightToTokens, useCodeTheme } from '../highlight/index'
 import type { HighlightToken, HighlightTokensResult } from '../highlight/index'
 
 /** react-markdown 传入的 <code> 元素 props */
 interface CodeElementProps {
   className?: string
+  class?: string
+  lang?: string
   children?: React.ReactNode
 }
 
 interface CodeBlockProps {
   /** react-markdown 传入的 <pre> 子元素（内含 <code>） */
   children: React.ReactNode
+  /** 宿主环境提供的剪贴板写入实现 */
+  onCopy: (code: string) => Promise<void>
 }
 
 /** 节流间隔（ms）：流式输出时限制高亮更新频率 */
@@ -53,20 +57,19 @@ function extractText(node: React.ReactNode): string {
 
 /** 从 children 中提取语言名和代码文本 */
 function extractCodeInfo(children: React.ReactNode): { language: string; code: string } {
-  const codeElement = React.Children.toArray(children).find(
-    (child): child is React.ReactElement =>
-      React.isValidElement(child) && (child as React.ReactElement).type === 'code'
-  ) as React.ReactElement | undefined
+  const codeElement = React.Children.toArray(children).find(React.isValidElement) as React.ReactElement | undefined
 
   if (!codeElement) {
     return { language: '', code: extractText(children) }
   }
 
   const props = codeElement.props as CodeElementProps
-  const langMatch = props.className?.match(/language-(\S+)/)
+  const className = [props.className, props.class].filter(Boolean).join(' ')
+  const langMatch = className.match(/(?:^|\s)(?:language|lang)-(\S+)/)
+  const language = props.lang?.trim().split(/\s+/, 1)[0] ?? langMatch?.[1] ?? ''
 
   return {
-    language: langMatch?.[1] ?? '',
+    language,
     code: extractText(props.children),
   }
 }
@@ -154,8 +157,9 @@ const CodeLine = React.memo(function CodeLine({ tokens, rawLine }: CodeLineProps
  * - 节流 80ms：流式输出时控制重计算频率
  * - 异步兜底：首次挂载高亮器未就绪时，异步初始化后触发一次更新
  */
-export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
+export function CodeBlock({ children, onCopy }: CodeBlockProps): React.ReactElement {
   const { language, code } = React.useMemo(() => extractCodeInfo(children), [children])
+  const theme = useCodeTheme()
   const [copied, setCopied] = React.useState(false)
 
   const trimmedCode = code.replace(/\n$/, '')
@@ -164,7 +168,7 @@ export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
 
   // ---- 节流 token 高亮 ----
   const [tokenResult, setTokenResult] = React.useState<HighlightTokensResult | null>(
-    () => highlightToTokens({ code: trimmedCode, language: langOrText })
+    () => highlightToTokens({ code: trimmedCode, language: langOrText, theme: theme.name })
   )
   const pendingCodeRef = React.useRef(trimmedCode)
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -178,7 +182,7 @@ export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
 
     const doHighlight = () => {
       const currentCode = pendingCodeRef.current
-      const result = highlightToTokens({ code: currentCode, language: langOrText })
+      const result = highlightToTokens({ code: currentCode, language: langOrText, theme: theme.name })
       if (result) {
         lastUpdateRef.current = Date.now()
         setTokenResult(result)
@@ -186,7 +190,7 @@ export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
     }
 
     // 同步路径可用时
-    const syncResult = highlightToTokens({ code: trimmedCode, language: langOrText })
+    const syncResult = highlightToTokens({ code: trimmedCode, language: langOrText, theme: theme.name })
     if (syncResult) {
       if (elapsed >= THROTTLE_MS) {
         // 距上次更新已超过节流间隔，立即执行
@@ -204,7 +208,7 @@ export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
 
     // 异步兜底：高亮器尚未初始化
     let cancelled = false
-    highlightCode({ code: trimmedCode, language: langOrText })
+    highlightCode({ code: trimmedCode, language: langOrText, theme: theme.name })
       .then(() => {
         // 初始化完成，用同步路径获取最新结果
         if (!cancelled) doHighlight()
@@ -212,7 +216,7 @@ export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
       .catch((error) => console.error('[CodeBlock] 高亮失败:', error))
 
     return () => { cancelled = true }
-  }, [trimmedCode, langOrText])
+  }, [trimmedCode, langOrText, theme.name])
 
   // 清理节流定时器
   React.useEffect(() => {
@@ -224,13 +228,13 @@ export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
   // 复制到剪贴板
   const handleCopy = React.useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(trimmedCode)
+      await onCopy(trimmedCode)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (error) {
       console.error('[CodeBlock] 复制失败:', error)
     }
-  }, [trimmedCode])
+  }, [onCopy, trimmedCode])
 
   return (
     <div className="code-block-wrapper group/code rounded-lg overflow-hidden my-2 border border-border/50">
@@ -251,8 +255,8 @@ export function CodeBlock({ children }: CodeBlockProps): React.ReactElement {
       <pre
         className="shiki overflow-x-auto p-4 m-0 text-[13px] leading-[1.6]"
         style={{
-          backgroundColor: tokenResult?.bgColor ?? '#24292e',
-          color: tokenResult?.fgColor ?? '#e1e4e8',
+          backgroundColor: 'var(--lume-bg-app, var(--background))',
+          color: tokenResult?.fgColor ?? 'var(--lume-text-primary, var(--foreground))',
           borderRadius: '0 0 8px 8px',
         }}
       >

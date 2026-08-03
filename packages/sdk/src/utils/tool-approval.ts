@@ -26,6 +26,8 @@ const TOOL_ALIASES: Record<string, string | string[]> = {
   tasklist: 'TaskList',
   taskoutput: 'TaskOutput',
   taskstop: 'TaskStop',
+  processoutput: 'ProcessOutput',
+  processstop: 'ProcessStop',
   taskupdate: 'TaskUpdate',
   todo: 'TodoWrite',
   todowrite: 'TodoWrite',

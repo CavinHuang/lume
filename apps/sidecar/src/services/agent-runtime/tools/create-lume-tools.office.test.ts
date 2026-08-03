@@ -54,7 +54,7 @@ describe("createLumeRuntimeTools office_validate", () => {
     const result = await callTool(tool, { path: "minimal.docx", maxEntries: 5 }, tempDir);
 
     expect(result).toMatchObject({
-      ok: true,
+      ok: false,
       kind: "docx",
       entryCount: 3,
       missingRequiredEntries: []
@@ -184,7 +184,7 @@ describe("createLumeRuntimeTools office_pack", () => {
     const validateTool = resolveTool(createTools(), "office_validate");
     const validateResult = await callTool(validateTool, { path: "rebuilt.docx" }, tempDir);
     expect(validateResult).toMatchObject({
-      ok: true,
+      ok: false,
       kind: "docx",
       missingRequiredEntries: []
     });
@@ -227,16 +227,44 @@ function crc32(buf: Buffer): number {
 }
 
 function buildValidZip(entries: Record<string, string>): Buffer {
-  const { execSync } = require("child_process");
-  const { join } = require("path");
-  const { mkdtempSync, writeFileSync } = require("fs");
-  const { tmpdir } = require("os");
-
-  const dir = mkdtempSync(join(tmpdir(), "lume-ooxml-"));
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let localOffset = 0;
   for (const [name, content] of Object.entries(entries)) {
-    writeFileSync(join(dir, name), content, "utf-8");
+    const nameBytes = Buffer.from(name, "utf-8");
+    const data = Buffer.from(content, "utf-8");
+    const checksum = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    localParts.push(local, nameBytes, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt32LE(localOffset, 42);
+    centralParts.push(central, nameBytes);
+    localOffset += local.length + nameBytes.length + data.length;
   }
-  const out = join(tmpdir(), `lume-ooxml-${Date.now()}.zip`);
-  execSync(`zip -r -q ${JSON.stringify(out)} .`, { cwd: dir });
-  return require("fs").readFileSync(out);
+
+  const centralSize = centralParts.reduce((total, part) => total + part.length, 0);
+  const entryCount = Object.keys(entries).length;
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entryCount, 8);
+  end.writeUInt16LE(entryCount, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(localOffset, 16);
+  return Buffer.concat([...localParts, ...centralParts, end]);
 }

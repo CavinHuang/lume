@@ -65,6 +65,7 @@ describe('buildLumeSidebarViewModel', () => {
       'lume',
       'skills',
       'automations',
+      'todos',
     ])
     expect(model.topActions.find((action) => action.id === 'skills')?.label).toBe('技能 / 插件')
   })

@@ -160,6 +160,7 @@ describe("OpenAIResponsesProvider", () => {
       messages: [
         { role: "user", content: "old question" },
         { role: "assistant", content: "old answer" },
+        { role: "assistant", content: [{ type: "text", text: "structured old answer" }] },
         { role: "assistant", content: [{ type: "tool_use", id: "call_1", response_item_id: "fc_1", name: "lookup", input: { q: "x" } }] },
         { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "result" }] },
         { role: "runtime", content: "current runtime" },
@@ -173,7 +174,8 @@ describe("OpenAIResponsesProvider", () => {
     expect(requestBody?.input).toEqual([
       { role: "developer", type: "message", content: [{ type: "input_text", text: "stable system" }] },
       { role: "user", type: "message", content: [{ type: "input_text", text: "old question" }] },
-      { role: "assistant", type: "message", content: [{ type: "input_text", text: "old answer" }] },
+      { role: "assistant", type: "message", content: [{ type: "output_text", text: "old answer" }] },
+      { role: "assistant", type: "message", content: [{ type: "output_text", text: "structured old answer" }] },
       { type: "function_call", id: "fc_1", call_id: "call_1", name: "lookup", arguments: '{"q":"x"}' },
       { type: "function_call_output", call_id: "call_1", output: "result" },
       { role: "developer", type: "message", content: [{ type: "input_text", text: "current runtime" }] },
@@ -252,7 +254,7 @@ describe("OpenAIResponsesProvider", () => {
         { type: "response.completed", response: { id: "resp_memory", object: "response", status: "completed", output: [], usage: { input_tokens: 30, output_tokens: 5, total_tokens: 35, input_tokens_details: { cached_tokens: 10, cache_write_tokens: 5 } } } },
       ]
       return new Response(
-        frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(""),
+        frames.map((frame) => `data: ${JSON.stringify(frame)}\r\n\r\n`).join(""),
         { status: 200, headers: { "content-type": "text/event-stream" } },
       )
     }) as typeof fetch
@@ -521,5 +523,215 @@ describe("OpenAIResponsesProvider", () => {
       call_id: "call_empty",
       output: "",
     })
+  })
+
+  test("uses Responses structured output, reasoning summary, and abort signal options", async () => {
+    let requestBody: Record<string, any> | undefined
+    let requestSignal: AbortSignal | null | undefined
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      requestSignal = init?.signal
+      return new Response(JSON.stringify({
+        id: "resp_options",
+        object: "response",
+        status: "completed",
+        output: [{
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: '{"answer":"ok"}' }],
+        }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }), { status: 200, headers: { "content-type": "application/json" } })
+    }) as typeof fetch
+
+    const controller = new AbortController()
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      retryConfig: fastRetry,
+    })
+    await provider.createMessage({
+      model: "gpt-5",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "Return JSON" }],
+      effort: "high",
+      thinking: { type: "enabled" },
+      outputFormat: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { answer: { type: "string" } },
+          required: ["answer"],
+          additionalProperties: false,
+        },
+      },
+      abortSignal: controller.signal,
+    })
+
+    expect(requestBody?.reasoning).toEqual({ effort: "high", summary: "auto" })
+    expect(requestBody?.text).toEqual({
+      format: {
+        type: "json_schema",
+        name: "structured_output",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: { answer: { type: "string" } },
+          required: ["answer"],
+          additionalProperties: false,
+        },
+      },
+    })
+    expect(requestSignal).toBe(controller.signal)
+  })
+
+  test("returns refusal text and an opted-in reasoning summary", async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      id: "resp_refusal",
+      object: "response",
+      status: "completed",
+      output: [
+        {
+          type: "reasoning",
+          id: "rs_1",
+          summary: [{ type: "summary_text", text: "Checked the request." }],
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "refusal", refusal: "I cannot help with that." }],
+        },
+      ],
+      usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
+    }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch
+
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      retryConfig: fastRetry,
+    })
+    const result = await provider.createMessage({
+      model: "gpt-5",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "Request" }],
+      thinking: { type: "enabled" },
+    })
+
+    expect(result.content).toEqual([
+      { type: "thinking", thinking: "Checked the request." },
+      { type: "text", text: "I cannot help with that." },
+    ])
+  })
+
+  test("preserves streaming reasoning, refusal, final function arguments, and incomplete reason", async () => {
+    globalThis.fetch = (async () => {
+      const frames = [
+        { type: "response.reasoning_summary_text.delta", delta: "Checked." },
+        { type: "response.refusal.delta", delta: "Cannot comply." },
+        {
+          type: "response.output_item.added",
+          output_index: 1,
+          item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "lookup", arguments: "" },
+        },
+        {
+          type: "response.function_call_arguments.done",
+          output_index: 1,
+          arguments: '{"query":"x"}',
+        },
+        {
+          type: "response.incomplete",
+          response: {
+            id: "resp_incomplete",
+            object: "response",
+            status: "incomplete",
+            incomplete_details: { reason: "content_filter" },
+            output: [],
+            usage: { input_tokens: 5, output_tokens: 4, total_tokens: 9 },
+          },
+        },
+      ]
+      return new Response(
+        frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(""),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      )
+    }) as typeof fetch
+
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      retryConfig: fastRetry,
+    })
+    const stream = provider.createMessageStream({
+      model: "gpt-5",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "Request" }],
+      thinking: { type: "enabled" },
+    })
+
+    const deltas: unknown[] = []
+    let step = await stream.next()
+    while (!step.done) {
+      deltas.push(step.value)
+      step = await stream.next()
+    }
+
+    expect(deltas).toEqual([
+      { type: "thinking_delta", thinking: "Checked." },
+      { type: "text_delta", text: "Cannot comply." },
+    ])
+    expect(step.value.content).toEqual([
+      { type: "thinking", thinking: "Checked." },
+      { type: "text", text: "Cannot comply." },
+      {
+        type: "tool_use",
+        id: "call_1",
+        response_item_id: "fc_1",
+        name: "lookup",
+        input: { query: "x" },
+      },
+    ])
+    expect(step.value.stopReason).toBe("content_filter")
+  })
+
+  test("throws official terminal and streaming errors instead of returning error text", async () => {
+    const provider = new OpenAIResponsesProvider({
+      apiKey: "test-key",
+      retryConfig: fastRetry,
+    })
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      id: "resp_failed",
+      object: "response",
+      status: "failed",
+      output: [],
+      error: { code: "server_error", message: "Generation failed" },
+    }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch
+
+    await expect(provider.createMessage({
+      model: "gpt-5",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "Request" }],
+    })).rejects.toThrow("OpenAI Responses API error: [server_error] Generation failed")
+
+    globalThis.fetch = (async () => new Response(
+      `data: ${JSON.stringify({
+        type: "error",
+        code: "invalid_request_error",
+        message: "Bad stream",
+        param: "input",
+      })}\n\n`,
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    )) as typeof fetch
+
+    const stream = provider.createMessageStream({
+      model: "gpt-5",
+      maxTokens: 100,
+      system: "",
+      messages: [{ role: "user", content: "Request" }],
+    })
+    await expect(stream.next()).rejects.toThrow(
+      "OpenAI Responses API error: [invalid_request_error] Bad stream (param: input)",
+    )
   })
 })

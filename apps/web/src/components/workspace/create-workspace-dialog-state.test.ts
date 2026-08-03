@@ -11,7 +11,7 @@ const workspace: AgentWorkspace = {
 }
 
 describe('createWorkspaceFromDraft', () => {
-  test('does not call the backend for an empty name', async () => {
+  test('does not call the backend for an empty project path', async () => {
     const createWorkspace = mock(async () => workspace)
 
     const result = await createWorkspaceFromDraft('   ', createWorkspace)
@@ -20,17 +20,17 @@ describe('createWorkspaceFromDraft', () => {
     expect(createWorkspace).not.toHaveBeenCalled()
   })
 
-  test('trims the name before creating a workspace', async () => {
-    const createWorkspace = mock(async ({ name }: { name: string }) => ({
+  test('trims the project path before creating a workspace', async () => {
+    const createWorkspace = mock(async ({ projectPath }: { projectPath: string }) => ({
       ...workspace,
       id: 'workspace-2',
       slug: 'workspace-2',
-      name,
+      name: projectPath,
     }))
 
     const result = await createWorkspaceFromDraft('  新工作区  ', createWorkspace)
 
-    expect(createWorkspace).toHaveBeenCalledWith({ name: '新工作区' })
+    expect(createWorkspace).toHaveBeenCalledWith({ projectPath: '新工作区' })
     expect(result).toEqual({
       ...workspace,
       id: 'workspace-2',

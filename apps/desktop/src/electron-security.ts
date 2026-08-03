@@ -73,6 +73,17 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'data_export_zip',
   'data_migrate_to_dir',
   'data_apply_migration',
+  'browser_runtime',
+  'browser_settings:get',
+  'browser_settings:update',
+  'browser_import:discover',
+  'browser_import:start',
+  'browser_import:cancel',
+  'connection_vault_status',
+  'connection_vault_setup',
+  'connection_vault_unlock',
+  'connection_vault_verify',
+  'connection_vault_reveal_key',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -82,6 +93,7 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'window-state',
   'tray-action',
   'logs:live',
+  'browser:event',
 ])
 
 export function validateRendererInvokeCommand(command) {
@@ -287,11 +299,12 @@ export function createWindowOpenAction(url) {
   }
 }
 
-export function createSecureWebPreferences(options: { preload?: string } = {}) {
+export function createSecureWebPreferences(options: { preload?: string; webviewTag?: boolean } = {}) {
   return {
     contextIsolation: true,
     sandbox: true,
     nodeIntegration: false,
+    ...(options.webviewTag === true ? { webviewTag: true } : {}),
     ...(options.preload ? { preload: options.preload } : {}),
   }
 }

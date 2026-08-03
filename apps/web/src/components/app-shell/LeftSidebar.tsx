@@ -25,6 +25,7 @@ import type { Tab } from '@/atoms/tab-atoms'
 import type { AgentThreadMeta, AgentWorkspace, AgentWorkspaceRemovalImpact, AgentWorkspaceRemoveMode } from '@lume/shared'
 import { AGENT_IPC_CHANNELS } from '@lume/shared'
 import { LumeSidebar } from './LumeSidebar'
+import { countPlanningTodos, onPlanningTodoChange } from '@/lib/desktop-api/planning-todo'
 import {
   buildLumeSidebarViewModel,
   type LumeSidebarFooterActionId,
@@ -41,9 +42,18 @@ import {
 export function deriveRecentTrayThreads(threads: AgentThreadMeta[]) {
   return threads
     .filter((thread) => !thread.parentThreadId && thread.status !== 'archived' && thread.status !== 'trashed')
+    .flatMap((thread) => {
+      if (typeof thread.id !== 'string' || thread.id.length < 1 || thread.id.length > 128) return []
+      return [{
+        id: thread.id,
+        title: typeof thread.title === 'string' ? thread.title.slice(0, 256) : '',
+        updatedAt: typeof thread.updatedAt === 'number' && Number.isFinite(thread.updatedAt) && thread.updatedAt >= 0
+          ? thread.updatedAt
+          : 0,
+      }]
+    })
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 5)
-    .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }))
 }
 
 export async function confirmTrayThreadNavigation({
@@ -97,6 +107,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<string[]>([])
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false)
   const [desktopGeneration, setDesktopGeneration] = useState<number | null>(null)
+  const [planningTodoCount, setPlanningTodoCount] = useState(0)
   const [confirmState, setConfirmState] = useState<{
     open: boolean
     title: string
@@ -119,6 +130,14 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
       .then((result) => setThreads(Array.isArray(result) ? result : []))
       .catch(console.error)
   }, [setThreads])
+
+  useEffect(() => {
+    const refreshTodoCount = () => { if (!currentWorkspaceId) { setPlanningTodoCount(0); return }; void countPlanningTodos(currentWorkspaceId).then((result) => setPlanningTodoCount(result.open)).catch(() => setPlanningTodoCount(0)) }
+    refreshTodoCount()
+    let unsubscribe: (() => void) | undefined
+    void onPlanningTodoChange(() => refreshTodoCount()).then((off) => { unsubscribe = off })
+    return () => unsubscribe?.()
+  }, [currentWorkspaceId])
 
   useEffect(() => {
     getMainWindowGeneration()
@@ -150,6 +169,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
     activeTabId,
     expandedWorkspaceIds,
     pinnedWorkspaceIds: pinnedIds,
+    planningTodoCount,
   })
 
   const openResolvedThread = (thread: AgentThreadMeta) => {
@@ -248,6 +268,14 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
 
     if (!tabs.find((tab) => tab.id === lumeId)) {
       setTabs((previous) => [...previous, { id: lumeId, type: 'lume', title: 'Lume' }])
+    }
+  }
+
+  const openTodos = () => {
+    const todoId = '__todos__'
+    setActiveTabId(todoId)
+    if (!tabs.find((tab) => tab.id === todoId)) {
+      setTabs((previous) => [...previous, { id: todoId, type: 'todo', title: '待办', workspaceId: currentWorkspaceId ?? undefined }])
     }
   }
 
@@ -386,7 +414,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
 
     sidecarCall<AgentWorkspaceRemovalImpact>(AGENT_IPC_CHANNELS.GET_WORKSPACE_REMOVAL_IMPACT, { id: workspaceId })
       .then((impact) => {
-        const impactText = `${impact.threads} 个会话、${impact.automations} 个自动化、${impact.imAccounts} 个 IM 账号、${impact.imThreadBindings} 个 IM 会话绑定会受影响。真实项目目录不会被删除或修改。`
+        const impactText = `${impact.threads} 个会话、${impact.automations} 个自动化、${impact.planningTodos} 个待办、${impact.imAccounts} 个 IM 账号、${impact.imThreadBindings} 个 IM 会话绑定会受影响。真实项目目录不会被删除或修改。`
         setConfirmState({
           open: true,
           title: `移除项目「${ws.name}」？`,
@@ -424,6 +452,9 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         return
       case 'automations':
         openAutomation()
+        return
+      case 'todos':
+        openTodos()
         return
     }
   }

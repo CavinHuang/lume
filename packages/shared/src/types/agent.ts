@@ -11,6 +11,7 @@ import type { LumeConfigThinkingLevel } from "./lume-config"
 import type { WikiSearchScope } from "./wiki"
 import type { McpTransportType } from "./mcp"
 import type { PluginMarketplaceAsset } from "./plugin-market"
+import type { PlanningOperationEnvelope, PlanningTodoRefPart } from "./planning-todo"
 export type { SDKMessage } from "@lume/agent-sdk"
 export type {
   CallMcpToolDiagnosticRequest,
@@ -100,10 +101,13 @@ export interface AgentWorkspaceRemovalImpact {
   automations: number
   imAccounts: number
   imThreadBindings: number
+  planningTodos: number
+  planningTodoAction: 'unassigned' | 'trash'
 }
 
 export interface AgentWorkspaceRemoveResult extends AgentWorkspaceRemovalImpact {
   mode: AgentWorkspaceRemoveMode
+  planningOperation: PlanningOperationEnvelope
 }
 
 export type AgentThreadFileContextMode = 'newRoot' | 'inherit' | 'fork'
@@ -182,6 +186,10 @@ export interface AgentThreadMeta {
   fileContextId?: string
   /** 外部来源，用于按 IM 渠道等入口分组展示 */
   source?: AgentThreadSource
+  /** Sidecar-owned Planning start operation that created this thread. */
+  createdByPlanningOperationId?: string
+  /** Durable hint for the primary Planning Todo chip; SQLite link remains authoritative. */
+  planningTodoId?: string
   /** 父线程 ID（子任务线程归属） */
   parentThreadId?: string
   /** 是否置顶 */
@@ -814,6 +822,7 @@ export type AgentUserMessagePart =
       occurrenceId: string
       uri: string
     }
+  | PlanningTodoRefPart
 
 export interface AgentCapabilityReferenceView {
   uri: string
@@ -852,6 +861,10 @@ export interface AgentSendInput {
   thinkingLevel?: AgentThinkingLevel
   /** 已保存到线程文件区、并绑定到本轮用户消息的附件引用 */
   messageAttachments?: AgentMessageAttachmentInput[]
+  /** Diff 审阅中创建、随本轮消息发送的结构化行评论。 */
+  commentAttachments?: AgentDiffCommentAttachment[]
+  /** 用户显式添加的浏览器标签、网页批注与 Design Tweaks。 */
+  browserAttachments?: AgentBrowserAttachment[]
   /** 用户消息元数据（用于结构化流程标记） */
   messageMetadata?: Record<string, unknown>
   /** 重发目标消息 ID */
@@ -860,6 +873,10 @@ export interface AgentSendInput {
   editFromMessageId?: string
   /** End-to-end observability context. Content is correlation metadata, not authorization. */
   traceContext?: AgentTraceContext
+  /** Sidecar-only start-operation identity; renderer schemas intentionally omit it. */
+  trustedPlanningOperationId?: string
+  /** Sidecar-only execution-context binding; renderer schemas intentionally omit it. */
+  trustedPlanningClientSubmissionId?: string
 }
 
 export interface AgentUpdateThreadModelSelectionInput {
@@ -888,6 +905,8 @@ export interface AgentQueuedMessage {
   blockedReason?: string
   messageParts?: AgentUserMessagePart[]
   messageAttachments?: AgentMessageAttachmentInput[]
+  commentAttachments?: AgentDiffCommentAttachment[]
+  browserAttachments?: AgentBrowserAttachment[]
   clientSubmissionId?: string
   modelRef?: string
   channelId?: string
@@ -897,6 +916,90 @@ export interface AgentQueuedMessage {
   workspaceId?: string
   desktopContextSnapshotId?: string
   capabilityFingerprints?: Array<{ uri: string; fingerprint: string }>
+  /** Internal runtime continuation; not user-editable queue content. */
+  internal?: boolean
+}
+
+export interface AgentDiffCommentAttachment {
+  id: string
+  origin: 'diff'
+  /** comment renders as review feedback; context/modify are Files-tab selection actions. */
+  intent?: 'comment' | 'context' | 'modify'
+  /** Renderer-safe file identity when the attachment originates in the Files tab. */
+  fileRef?: FileRef
+  position: {
+    path: string
+    rootId?: string
+    runId?: string
+    side: 'left' | 'right'
+    line: number
+    startLine?: number
+    startSide?: 'left' | 'right'
+  }
+  body: string
+  localDiffHunk?: string
+  /** Bounded selected source supplied to the model; never interpreted as an executable patch. */
+  selectedContent?: string
+}
+
+export interface AgentBrowserTabAttachment {
+  id: string
+  origin: 'browser-tab'
+  backend?: 'iab' | 'extension'
+  browserId?: string
+  referenceGrantId?: string
+  access?: 'control'
+  tabId: string
+  providerTabId?: string
+  title: string
+  url: string
+  generation?: number
+  lastOpenedAt?: string
+  ownerThreadId?: string
+}
+
+export interface AgentBrowserAnchor {
+  kind: 'element' | 'text' | 'region'
+  url: string
+  generation: number
+  framePath: string[]
+  domPath?: string
+  textQuote?: { exact: string; prefix?: string; suffix?: string }
+  /** Bounded visible text captured at selection time; never treated as instructions. */
+  selectedContent?: string
+  rect: { x: number; y: number; width: number; height: number }
+}
+
+export interface AgentBrowserAnnotationAttachment {
+  id: string
+  origin: 'browser-annotation'
+  tab: AgentBrowserTabAttachment
+  anchor: AgentBrowserAnchor
+  body: string
+  screenshotRef?: string
+}
+
+export interface AgentBrowserDesignChangeAttachment {
+  id: string
+  origin: 'browser-design-change'
+  tab: AgentBrowserTabAttachment
+  anchor: AgentBrowserAnchor
+  originalStyles: Record<string, string>
+  proposedStyles: Record<string, string>
+  body?: string
+  screenshotRef?: string
+}
+
+export type AgentBrowserAttachment =
+  | AgentBrowserTabAttachment
+  | AgentBrowserAnnotationAttachment
+  | AgentBrowserDesignChangeAttachment
+
+/** Main-agent-owned persistent Task claim used by task-linked Agent/Delegate dispatch. */
+export interface AgentTaskRef {
+  taskListId: string
+  taskId: string
+  claimToken: string
 }
 
 export type AgentSubmissionReceiptStatus =
@@ -979,6 +1082,8 @@ export interface AgentUpdateQueuedMessageInput {
   userMessage: string
   messageParts?: AgentUserMessagePart[]
   messageAttachments?: AgentMessageAttachmentInput[]
+  commentAttachments?: AgentDiffCommentAttachment[]
+  browserAttachments?: AgentBrowserAttachment[]
 }
 
 export interface AgentMessageQueueOperationResult {
@@ -1072,7 +1177,6 @@ export interface AgentBrowserAuthResponseInput {
   threadId: string
   requestId: string
   status: AgentBrowserAuthStatus
-  values?: Record<string, string>
 }
 
 export type AgentToolPermissionRiskLevel = 'low' | 'medium' | 'high'
@@ -1466,6 +1570,65 @@ export interface FileRef {
   source: FileSource
   scopeId: string
   relativePath: string
+}
+
+export type FileRefTextEncoding = 'utf-8' | 'utf-16le'
+export type FileRefLineEnding = 'lf' | 'crlf' | 'mixed' | 'none'
+
+export type FileRefReadResult =
+  | {
+      kind: 'text'
+      content: string
+      size: number
+      mtimeMs: number
+      mimeType: string
+      encoding: FileRefTextEncoding
+      bom: boolean
+      lineEnding: FileRefLineEnding
+      editable: boolean
+      truncated: false
+    }
+  | {
+      kind: 'binary' | 'too-large'
+      size: number
+      mtimeMs: number
+      mimeType: string
+      editable: false
+      truncated: true
+    }
+
+export interface WriteFileRefInput {
+  ref: FileRef
+  content: string
+  expectedMtimeMs: number
+}
+
+export type WriteFileRefResult =
+  | { outcome: 'saved'; mtimeMs: number; size: number }
+  | { outcome: 'conflict'; mtimeMs: number; size: number }
+
+export interface FileSelectionEditInput {
+  threadId: string
+  ref: FileRef
+  content: string
+  startOffset: number
+  endOffset: number
+  instruction: string
+}
+
+export interface FileSelectionEditResult {
+  replacementText: string
+}
+
+export interface WatchFileRefResult {
+  watchId: string
+}
+
+export interface FileRefChangedEvent {
+  watchId: string
+  ref: FileRef
+  change: 'changed' | 'renamed' | 'deleted'
+  mtimeMs?: number
 }
 
 /** One immutable snapshot per logical Agent reply. It never contains local absolute paths. */
@@ -1981,6 +2144,26 @@ export const AGENT_IPC_CHANNELS = {
   LIST_PROJECT_DIRECTORY: 'agent:list-project-directory',
   /** 只读读取项目绑定目录文件内容 */
   READ_PROJECT_FILE: 'agent:read-project-file',
+  /** 获取当前 Coding 工作区变更集合 */
+  GET_CODING_CHANGE_SET: 'agent:get-coding-change-set',
+  /** 获取 Review 可用的分支与最近提交来源 */
+  GET_CODING_REVIEW_SOURCES: 'agent:get-coding-review-sources',
+  /** 搜索当前 Review 来源中的文件路径和 Diff hunk 内容 */
+  SEARCH_CODING_REVIEW: 'agent:search-coding-review',
+  /** 获取单个 Coding 文件的 old/new diff 内容 */
+  GET_CODING_DIFF: 'agent:get-coding-diff',
+  /** 执行经过 Sidecar 重新校验的文件或 hunk Git 操作 */
+  APPLY_CODING_DIFF_ACTION: 'agent:apply-coding-diff-action',
+  /** 按需读取 Diff before/after 富媒体内容 */
+  GET_CODING_DIFF_MEDIA: 'agent:get-coding-diff-media',
+  /** 获取源码行 Git blame 元数据 */
+  GET_CODING_BLAME: 'agent:get-coding-blame',
+  /** 获取经过项目边界校验的 Coding 文件打开目标 */
+  GET_CODING_FILE_OPEN_TARGETS: 'agent:get-coding-file-open-targets',
+  /** 获取当前 Coding 仓库可提交、可推送状态 */
+  GET_CODING_REPOSITORY_PUBLISH_STATE: 'agent:get-coding-repository-publish-state',
+  /** 提交已暂存内容或推送当前分支 */
+  APPLY_CODING_REPOSITORY_PUBLISH_ACTION: 'agent:apply-coding-repository-publish-action',
   /** 只读读取项目绑定目录二进制文件 */
   READ_PROJECT_FILE_DATA: 'agent:read-project-file-data',
   /** 将旧版资源只读导出到项目根目录，不覆盖同名内容 */
@@ -2017,6 +2200,11 @@ export const AGENT_IPC_CHANNELS = {
   LIST_FILE_REF_DIRECTORY: 'agent:list-file-ref-directory',
   STAT_FILE_REF: 'agent:stat-file-ref',
   READ_FILE_REF: 'agent:read-file-ref',
+  WRITE_FILE_REF: 'agent:write-file-ref',
+  REQUEST_FILE_SELECTION_EDIT: 'agent:request-file-selection-edit',
+  WATCH_FILE_REF: 'agent:watch-file-ref',
+  UNWATCH_FILE_REF: 'agent:unwatch-file-ref',
+  FILE_REF_CHANGED: 'agent:file-ref-changed',
   SEARCH_FILE_REFS: 'agent:search-file-refs',
   RESOLVE_FILE_REF: 'agent:resolve-file-ref',
   RENAME_FILE_REF: 'agent:rename-file-ref',

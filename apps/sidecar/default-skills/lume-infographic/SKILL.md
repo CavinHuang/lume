@@ -42,6 +42,7 @@ metadata:
 ## 输出安全 DSL
 
 - 输出一个 `infographic` fenced code block，放在必要正文之后。
+- 这是 AntV 缩进 DSL，不是 YAML：字段写成 `label 内容`，禁止写成 `label: 内容`；每深入一层固定增加两个空格，`-` 必须缩进在对应的 `items`、`children` 等列表键之下。
 - 顶层只使用 `infographic`、`data`、`theme`；不要写 `design`、`width` 或 `height`。
 - 数据只使用 `title`、`desc`、`items`、`lists`、`sequences`、`root`、`compares`、`nodes`、`relations`、`values`、`order`。
 - 数据项只使用 `id`、`label`、`desc`、`value`、`group`、`category`、`children`、`icon`。
@@ -65,6 +66,23 @@ data
     - label 发布
       desc 验证结果并逐步放量
       icon rocket
+theme light
+```
+
+层级结构必须保持 `children` 的嵌套缩进：
+
+```infographic
+infographic hierarchy-mindmap-level-gradient-compact-card
+data
+  root
+    id root
+    label 产品能力
+    children
+      - id build
+        label 构建
+        children
+          - id test
+            label 验证
 theme light
 ```
 

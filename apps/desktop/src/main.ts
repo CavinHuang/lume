@@ -30,8 +30,8 @@ import {
 import { once } from 'node:events'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import { randomBytes, randomUUID } from 'node:crypto'
-import { basename, dirname, join, resolve } from 'node:path'
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   computeQuickInputBounds,
@@ -101,6 +101,7 @@ import {
 } from './plugin-asset-registry'
 import {
   createUtilityProcessSidecarForkConfig,
+  getBundledRipgrepPath,
   getDesktopHostBinaryPath,
   getNativeBinaryPath,
   getNodeReplHostBinaryPath,
@@ -115,10 +116,19 @@ import {
   writeChromeNativeHostRegistration,
 } from './plugin-native-host-installer'
 import { loadOrCreateDesktopContextKey } from './desktop-context-key'
+import {
+  autoUnlockConnectionVault,
+  getConnectionVaultStatus,
+  setupConnectionVault,
+  unlockConnectionVaultWithPassword,
+  verifyConnectionVaultPassword,
+} from './connection-vault'
 import { LoggingService } from './logging/logging-service'
 import { DiagnosticContentStore } from './logging/diagnostic-content-store'
 import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecure } from './logging/log-digest-policy'
 import { SettingsBroker } from './settings/settings-broker'
+import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
+import { discoverChromeProfiles, importChromeProfile } from './browser-import'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
 import {
   createAsyncSingleFlight,
@@ -129,6 +139,9 @@ import {
   validateTrayStatePayload,
   waitForWindowReady,
 } from './tray-window-runtime'
+
+app.commandLine.appendSwitch('disable-quic')
+app.commandLine.appendSwitch('force-webrtc-ip-handling-policy', 'disable_non_proxied_udp')
 
 const DESKTOP_ROOT = app.getAppPath()
 const REPO_ROOT = resolve(DESKTOP_ROOT, '..', '..')
@@ -150,6 +163,7 @@ const QUIET_SIDECAR_RPC_METHODS = new Set([
   'agent:list-subagent-runs',
   'agent:get-pending-interactive',
   'agent:list-workspaces',
+  'channel:oauth-status',
   'model-meta:get',
 ])
 const SLOW_RPC_MS = 2_000
@@ -178,6 +192,17 @@ const DESKTOP_ACTION_HUD_COMPLETED_MS = 1_600
 const DESKTOP_ACTION_HUD_STALE_MS = 30_000
 
 let mainWindow = null
+let browserRuntime: BrowserRuntime | null = null
+const pendingBrowserGuestAttachments = new Map<number, {
+  ownerWebContentsId: number
+  contents: Electron.WebContents
+  timer: ReturnType<typeof setTimeout>
+}>()
+let agentBrowserPluginEnabled = false
+const browserRpcSecret = randomBytes(32)
+let browserRpcInboundSequence = 0
+let browserRpcOutboundSequence = 0
+const browserImportJobs = new Map<string, { cancelled: boolean }>()
 let pendingMacUpdatePath: string | null = null
 const mainWindowCreation = createAsyncSingleFlight<any>()
 const mainWindowLifecycle = createMainWindowLifecycleState<any>()
@@ -219,6 +244,7 @@ let loggingService: LoggingService | null = null
 let settingsBroker: SettingsBroker | null = null
 let diagnosticContentStore: DiagnosticContentStore | null = null
 let sidecarLogDigestPolicy: LumeLogDigestPolicy | null = null
+let connectionVaultKey: Buffer | null = null
 const pendingRendererDeliveries = new Map()
 const rendererLogSubscriptions = new Map()
 
@@ -406,6 +432,7 @@ const sidecarHost = createSidecarHost({
       return
     }
     showDesktopProposalNotification(method, params)
+    showPlanningReminderNotification(method, params)
     showDesktopActionHud(method, params)
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
@@ -527,6 +554,24 @@ function showDesktopProposalNotification(method, params) {
   }
 }
 
+function showPlanningReminderNotification(method, params) {
+  if (method !== 'planning-todo:reminder-due' || !Array.isArray(params) || !Notification.isSupported()) return
+  for (const reminder of params.slice(0, 5)) {
+    if (!reminder || typeof reminder.targetTitle !== 'string') continue
+    try {
+      const desktopNotification = new Notification({
+        title: reminder.targetType === 'calendar_event' ? '日程提醒' : 'Todo 提醒',
+        body: reminder.targetTitle,
+        silent: true,
+      })
+      desktopNotification.on('click', () => { void showMainWindow() })
+      desktopNotification.show()
+    } catch (error) {
+      writeMainLog('error', 'desktop.notification', 'planning_reminder.show_failed', 'planning reminder notification failed', { data: { error } })
+    }
+  }
+}
+
 function emitRendererEvent(channel, payload) {
   for (const win of [mainWindow, quickInputWindow]) {
     if (win && !win.isDestroyed()) {
@@ -584,6 +629,29 @@ function emitRendererEvent(channel, payload) {
       win.webContents.send(`lume:event:${channel}`, deliveredPayload)
     }
   }
+}
+
+function getPersistedBrowserSettings() {
+  const value = getSettingsBroker().read().browser
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+}
+
+function persistBrowserSettings(settings: unknown): void {
+  getSettingsBroker().mutate((current) => ({ ...current, browser: settings }))
+}
+
+function browserRpcMac(direction: 'sidecar->main' | 'main->sidecar', sequence: number, id: string, body: unknown): string {
+  return createHmac('sha256', browserRpcSecret)
+    .update(`${direction}|${sequence}|${id}|${JSON.stringify(body)}`)
+    .digest('base64url')
+}
+
+function verifyBrowserRpcMac(direction: 'sidecar->main' | 'main->sidecar', sequence: number, id: string, body: unknown, mac: unknown): boolean {
+  if (typeof mac !== 'string') return false
+  const expected = browserRpcMac(direction, sequence, id, body)
+  const actual = Buffer.from(mac)
+  const wanted = Buffer.from(expected)
+  return actual.length === wanted.length && timingSafeEqual(actual, wanted)
 }
 
 function getLauncherPath() {
@@ -1041,6 +1109,53 @@ async function ensureMainWindowVisible() {
   return { win, generation: mainWindowLifecycle.getGeneration() }
 }
 
+function attachBrowserGuestSecurity(win: BrowserWindow) {
+  win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const bootstrapUrl = typeof params.src === 'string' ? params.src : ''
+    const requestedPartition = typeof params.partition === 'string' ? params.partition : ''
+    const grant = browserRuntime?.authorizeGuestMount(win.webContents.id, bootstrapUrl, requestedPartition)
+    if (!grant) {
+      event.preventDefault()
+      writeMainLog('warn', 'browser.guest', 'guest.attach_rejected', 'rejected unauthorized browser guest mount', {
+        data: browserRuntime?.guestMountRejectionDetails(win.webContents.id, bootstrapUrl, requestedPartition),
+      })
+      return
+    }
+    webPreferences.preload = resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-guest-preload.cjs')
+    webPreferences.sandbox = true
+    webPreferences.contextIsolation = true
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
+    params.partition = grant.partition
+    delete params.allowpopups
+    delete params.preload
+  })
+  win.webContents.on('did-attach-webview', (_event, guestContents) => {
+    const existing = pendingBrowserGuestAttachments.get(guestContents.id)
+    if (existing) clearTimeout(existing.timer)
+    const timer = setTimeout(() => {
+      const pending = pendingBrowserGuestAttachments.get(guestContents.id)
+      if (!pending || pending.contents !== guestContents) return
+      pendingBrowserGuestAttachments.delete(guestContents.id)
+      writeMainLog('warn', 'browser.guest', 'guest.attach_timeout', 'browser guest did not report its mount token')
+      if (!guestContents.isDestroyed()) guestContents.close()
+    }, 10_000)
+    pendingBrowserGuestAttachments.set(guestContents.id, { ownerWebContentsId: win.webContents.id, contents: guestContents, timer })
+    guestContents.once('destroyed', () => {
+      const pending = pendingBrowserGuestAttachments.get(guestContents.id)
+      if (!pending || pending.contents !== guestContents) return
+      clearTimeout(pending.timer)
+      pendingBrowserGuestAttachments.delete(guestContents.id)
+    })
+  })
+}
+
+function stripBrowserGuestMountToken(url: string): string {
+  return url.startsWith('about:blank#lume-browser-mount=') ? 'about:blank#lume-browser-mount=[redacted]' : url
+}
+
 async function createMainWindowForGeneration(generation) {
   const win = new BrowserWindow({
     title: 'Lume',
@@ -1056,9 +1171,11 @@ async function createMainWindowForGeneration(generation) {
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     webPreferences: createSecureWebPreferences({
       preload: resolve(DESKTOP_ROOT, 'dist', 'preload', 'preload.cjs'),
+      webviewTag: true,
     }),
   })
   mainWindow = win
+  attachBrowserGuestSecurity(win)
 
   win.on('closed', () => {
     const closedCurrentGeneration = mainWindowLifecycle.closeGeneration(generation)
@@ -1227,6 +1344,143 @@ function resolveStagedAttachmentParams(params: unknown, ownerWebContentsId?: num
 
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
   switch (command) {
+    case 'connection_vault_status': {
+      requireMainWindowSender(context, 'connection_vault_status')
+      const status = getConnectionVaultStatus({ path: getConnectionVaultKeyPath(), safeStorage })
+      if (status.configured && status.secureStorageAvailable && !connectionVaultKey) {
+        await unlockConnectionVaultStore()
+      }
+      return {
+        ...status,
+        unlocked: connectionVaultKey !== null,
+      }
+    }
+    case 'connection_vault_setup': {
+      requireMainWindowSender(context, 'connection_vault_setup')
+      const password = typeof payload.password === 'string' ? payload.password : ''
+      const key = setupConnectionVault({ path: getConnectionVaultKeyPath(), password, safeStorage })
+      try {
+        await installConnectionVaultKeyInSidecar(key)
+        connectionVaultKey?.fill(0)
+        connectionVaultKey = Buffer.from(key)
+      } finally {
+        key.fill(0)
+      }
+      return { configured: true, secureStorageAvailable: true, unlocked: true }
+    }
+    case 'connection_vault_unlock': {
+      requireMainWindowSender(context, 'connection_vault_unlock')
+      const password = typeof payload.password === 'string' ? payload.password : ''
+      const key = unlockConnectionVaultWithPassword({ path: getConnectionVaultKeyPath(), password })
+      try {
+        await installConnectionVaultKeyInSidecar(key)
+        connectionVaultKey?.fill(0)
+        connectionVaultKey = Buffer.from(key)
+      } finally {
+        key.fill(0)
+      }
+      const status = getConnectionVaultStatus({ path: getConnectionVaultKeyPath(), safeStorage })
+      return { ...status, unlocked: true }
+    }
+    case 'connection_vault_verify': {
+      requireMainWindowSender(context, 'connection_vault_verify')
+      const password = typeof payload.password === 'string' ? payload.password : ''
+      return { valid: verifyConnectionVaultPassword({ path: getConnectionVaultKeyPath(), password }) }
+    }
+    case 'connection_vault_reveal_key': {
+      requireMainWindowSender(context, 'connection_vault_reveal_key')
+      const password = typeof payload.password === 'string' ? payload.password : ''
+      const channelId = typeof payload.channelId === 'string' ? payload.channelId : ''
+      if (!channelId || !verifyConnectionVaultPassword({ path: getConnectionVaultKeyPath(), password })) {
+        throw new Error('connection_vault_password_invalid')
+      }
+      return { apiKey: await sidecarHost.call('channel:privileged-decrypt-key', { channelId }) }
+    }
+    case 'browser_runtime': {
+      if (!browserRuntime) throw new Error('browser runtime unavailable')
+      const browserContext = payload.context && typeof payload.context === 'object'
+        ? payload.context
+        : { browserSessionId: 'renderer', browserTurnId: 'renderer', actor: 'user' }
+      if (context.ownerWebContentsId !== undefined && browserContext.actor !== 'user') {
+        throw new Error('renderer browser requests must use actor=user')
+      }
+      if (context.ownerWebContentsId !== undefined) requireMainWindowSender(context, 'browser_runtime')
+      if (browserContext.actor === 'agent' && context.ownerWebContentsId !== undefined) throw new Error('agent browser requests require sidecar ingress')
+      return browserRuntime.dispatch({
+        requestId: typeof payload.requestId === 'string' ? payload.requestId : randomUUID(),
+        context: browserContext,
+        method: String(payload.method ?? ''),
+        params: payload.params && typeof payload.params === 'object' ? payload.params : {},
+        ...(typeof payload.idempotencyKey === 'string' ? { idempotencyKey: payload.idempotencyKey } : {}),
+      })
+    }
+    case 'browser_settings:get':
+      requireMainWindowSender(context, 'browser_settings:get')
+      if (!browserRuntime) throw new Error('browser runtime unavailable')
+      return browserRuntime.getSettings()
+    case 'browser_settings:update':
+      requireMainWindowSender(context, 'browser_settings:update')
+      if (!browserRuntime) throw new Error('browser runtime unavailable')
+      {
+        if (payload.advancedCdpEnabled === true && browserRuntime.getSettings().advancedCdpEnabled !== true) {
+          if (!mainWindow || mainWindow.isDestroyed()) throw new Error('confirmation_unavailable')
+          const confirmation = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['启用隔离完整 CDP', '取消'], defaultId: 1, cancelId: 1, title: '完整 CDP 风险确认', message: '完整 CDP 只允许在新建的隔离空白浏览器会话中使用。', detail: '它不会接触保存的 Cookie、密码、外部 Chrome 或其他 target；每个来源和每次 CDP 动作仍需单独批准。' })
+          if (confirmation.response !== 0) return browserRuntime.getSettings()
+        }
+        const settings = browserRuntime.updateSettings(payload as any)
+        void sidecarHost.notifyBrowserSettings?.(settings)
+        return settings
+      }
+    case 'browser_import:discover':
+      requireMainWindowSender(context, 'browser_import:discover')
+      return discoverChromeProfiles()
+    case 'browser_import:start': {
+      requireMainWindowSender(context, 'browser_import:start')
+      if (payload.acknowledged !== true) throw new Error('import_acknowledgement_required')
+      const profileId = typeof payload.profileId === 'string' ? payload.profileId : ''
+      const jobId = randomUUID()
+      const job = { cancelled: false }
+      browserImportJobs.set(jobId, job)
+      void importChromeProfile({
+          profileId,
+          cookies: payload.cookies !== false,
+          passwords: payload.passwords !== false,
+          acknowledged: payload.acknowledged === true,
+          configDir: resolveConfigDir(),
+          safeStorage,
+          cancelled: () => job.cancelled,
+          emit: (params) => emitRendererEvent('browser:event', { method: 'browser:import-progress', params: { jobId, ...params } }),
+          onCookie: async (cookie) => {
+            const cookieStore = session.fromPartition('persist:lume-browser').cookies
+            const existing = (await cookieStore.get({ url: cookie.url, name: cookie.name })).find((entry) => entry.path === cookie.path && (cookie.domain ? entry.domain === cookie.domain : !entry.domain.startsWith('.')))
+            await cookieStore.set(cookie)
+            return async () => {
+              await cookieStore.remove(cookie.url, cookie.name)
+              if (!existing) return
+              await cookieStore.set({
+                url: `${existing.secure ? 'https' : 'http'}://${existing.domain.replace(/^\./, '')}${existing.path}`,
+                name: existing.name,
+                value: existing.value,
+                path: existing.path,
+                ...(existing.domain.startsWith('.') ? { domain: existing.domain } : {}),
+                ...(existing.expirationDate ? { expirationDate: existing.expirationDate } : {}),
+                secure: existing.secure,
+                httpOnly: existing.httpOnly,
+                sameSite: existing.sameSite,
+              })
+            }
+          },
+        }).then((report) => emitRendererEvent('browser:event', { method: 'browser:import-complete', params: { jobId, report } })).catch((error) => emitRendererEvent('browser:event', { method: 'browser:import-complete', params: { jobId, error: error instanceof Error ? error.message : 'import failed' } })).finally(() => browserImportJobs.delete(jobId))
+      return { jobId }
+    }
+    case 'browser_import:cancel': {
+      requireMainWindowSender(context, 'browser_import:cancel')
+      if (typeof payload.jobId === 'string') {
+        const job = browserImportJobs.get(payload.jobId)
+        if (job) job.cancelled = true
+      }
+      return { ok: true }
+    }
     case 'healthcheck': {
       await sidecarHost.call('healthcheck', null)
       return {
@@ -1272,7 +1526,21 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         origin,
         data: createSafeMessageLogSummary(incoming.userMessage),
       })
-      const result = await sidecarHost.call(payload.method, { ...incoming, traceContext }, traceContext)
+      const clientSubmissionId = typeof incoming.clientSubmissionId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(incoming.clientSubmissionId)
+        ? incoming.clientSubmissionId
+        : submissionId
+      const result = await sidecarHost.call('agent:send-thread-message:trusted', {
+        input: {
+          ...incoming,
+          clientSubmissionId,
+          traceContext,
+        },
+        trustedSurface: {
+          surface: origin === 'quick_input' ? 'quick-input' : 'main',
+          clientSubmissionId,
+          threadId: incoming.threadId,
+        }
+      }, traceContext)
       return { ...(result && typeof result === 'object' ? result : {}), traceId, submissionId }
     }
     case 'desktop:save-plugin-package': {
@@ -1488,8 +1756,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       const validated = validateTrayStatePayload(payload, mainWindowLifecycle.getGeneration())
       if (validated.ok === false) {
         writeRateLimitedTrayWarning('tray.sync_rejected', 'invalid tray state rejected', context.ownerWebContentsId, { reason: validated.reason })
-        if (validated.reason === 'stale_generation') return null
-        throw new Error('invalid tray state')
+        return null
       }
       recentTrayThreads = validated.value.threads
       currentTrayThreadId = validated.value.currentThreadId
@@ -1893,6 +2160,47 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
   }
 }
 
+function readChromeBridgeConfig(): { endpoint: string; pairingId: string; generation: number; hostPath: string; hostSha256: string } | null {
+  const environmentEndpoint = process.env.LUME_CHROME_BRIDGE_ENDPOINT
+  const environmentPairingId = process.env.LUME_CHROME_BRIDGE_PAIRING_ID
+  const environmentGeneration = Number(process.env.LUME_CHROME_BRIDGE_GENERATION)
+  const environmentHostPath = process.env.LUME_CHROME_BRIDGE_HOST_PATH
+  const environmentHostSha256 = process.env.LUME_CHROME_BRIDGE_HOST_SHA256
+  const fromEnvironment = environmentEndpoint && environmentPairingId && Number.isSafeInteger(environmentGeneration) && environmentGeneration > 0 && environmentHostPath && environmentHostSha256
+    ? { endpoint: environmentEndpoint, pairingId: environmentPairingId, generation: environmentGeneration, hostPath: environmentHostPath, hostSha256: environmentHostSha256 }
+    : null
+  let candidate = fromEnvironment
+
+  if (!candidate) {
+    const platformRoot = process.platform === 'win32'
+      ? process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
+      : process.platform === 'darwin'
+        ? join(homedir(), 'Library', 'Application Support')
+        : join(homedir(), '.config')
+    const configPath = join(platformRoot, 'Lume', 'ChromeNativeMessaging', 'bridge-config.json')
+    try {
+      const parsed = JSON.parse(readFileSync(configPath, 'utf8')) as { schemaVersion?: unknown; endpoint?: unknown; pairingId?: unknown; generation?: unknown; hostPath?: unknown; hostSha256?: unknown }
+      if (parsed.schemaVersion === 3 && typeof parsed.endpoint === 'string' && typeof parsed.pairingId === 'string' && typeof parsed.generation === 'number' && typeof parsed.hostPath === 'string' && typeof parsed.hostSha256 === 'string') {
+        candidate = { endpoint: parsed.endpoint, pairingId: parsed.pairingId, generation: parsed.generation, hostPath: parsed.hostPath, hostSha256: parsed.hostSha256 }
+      }
+    } catch {
+      return null
+    }
+  }
+
+  if (!candidate) return null
+  const endpointRoot = process.platform === 'darwin'
+    ? join(homedir(), 'Library', 'Application Support', 'Lume')
+    : join(homedir(), '.config', 'Lume')
+  const validEndpoint = process.platform === 'win32'
+    ? /^\\\\\.\\pipe\\lume-browser-[a-zA-Z0-9_-]{8,80}$/.test(candidate.endpoint)
+    : candidate.endpoint.startsWith(endpointRoot + sep) && candidate.endpoint.endsWith('.sock')
+  const expectedHostName = process.platform === 'win32' ? 'lume-chrome-host.exe' : 'lume-chrome-host'
+  const validHost = resolve(candidate.hostPath) === candidate.hostPath && basename(candidate.hostPath) === expectedHostName && existsSync(candidate.hostPath) && /^[a-f0-9]{64}$/i.test(candidate.hostSha256)
+  const validPairing = /^[A-Za-z0-9_-]{8,96}$/.test(candidate.pairingId) && Number.isSafeInteger(candidate.generation) && candidate.generation > 0
+  return validEndpoint && validHost && validPairing ? candidate : null
+}
+
 function createSidecarHost({ onNotification }) {
   let child = null
   let started = null
@@ -1911,10 +2219,19 @@ function createSidecarHost({ onNotification }) {
 
   function createSpawnConfig() {
     const configDir = resolveConfigDir()
+    const chromeBridge = readChromeBridgeConfig()
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       LUME_CONFIG_DIR: configDir,
       LUME_DEFAULT_SKILLS_AUTOSTART: 'true',
+      LUME_BROWSER_RPC_SECRET: browserRpcSecret.toString('base64url'),
+      ...(chromeBridge ? {
+        LUME_CHROME_BRIDGE_ENDPOINT: chromeBridge.endpoint,
+        LUME_CHROME_BRIDGE_PAIRING_ID: chromeBridge.pairingId,
+        LUME_CHROME_BRIDGE_GENERATION: String(chromeBridge.generation),
+        LUME_CHROME_BRIDGE_HOST_PATH: chromeBridge.hostPath,
+        LUME_CHROME_BRIDGE_HOST_SHA256: chromeBridge.hostSha256,
+      } : {}),
     }
 
     if (desktopHostState.available) {
@@ -1947,6 +2264,11 @@ function createSidecarHost({ onNotification }) {
       resourcesPath: process.resourcesPath,
       desktopRoot: DESKTOP_ROOT,
     })
+    const bundledRipgrepPath = getBundledRipgrepPath({
+      appIsPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      desktopRoot: DESKTOP_ROOT,
+    })
     const nodeReplRootPath = getNodeReplRootPath({
       appIsPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -1959,9 +2281,12 @@ function createSidecarHost({ onNotification }) {
     })
     ensureFile(sidecarScriptPath, 'missing sidecar bundle')
     ensureFile(nativeBinaryPath, 'missing native binary')
+    ensureFile(bundledRipgrepPath, 'missing bundled ripgrep binary')
     ensureExistingPath(nodeReplRootPath)
     ensureFile(nodeReplHostBinaryPath, 'missing node_repl host binary')
     env.LUME_NATIVES_PATH = nativeBinaryPath
+    env.LUME_RIPGREP_PATH = bundledRipgrepPath
+    prependPath(env, dirname(bundledRipgrepPath))
     env.LUME_NODE_REPL_ROOT = nodeReplRootPath
     env.LUME_NODE_REPL_HOST = nodeReplHostBinaryPath
     env.LUME_NODE_REPL_ELECTRON = process.execPath
@@ -1980,6 +2305,8 @@ function createSidecarHost({ onNotification }) {
 
     started = new Promise<void>((resolveStarted, rejectStarted) => {
       stopRequested = false
+      browserRpcInboundSequence = 0
+      browserRpcOutboundSequence = 0
       const forkConfig = createSpawnConfig()
       const runningChild = utilityProcess.fork(
         forkConfig.modulePath,
@@ -2049,6 +2376,18 @@ function createSidecarHost({ onNotification }) {
               data: { error },
             })
           }
+          if (connectionVaultKey) {
+            try {
+              runningChild.postMessage(JSON.stringify({
+                method: 'system.connection-vault-key',
+                params: { key: connectionVaultKey.toString('base64') },
+              }))
+            } catch (error) {
+              writeMainLog('error', 'desktop.connection-vault', 'key.delivery_failed', 'failed to unlock connection vault in sidecar', {
+                data: { error },
+              })
+            }
+          }
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
           return
@@ -2109,6 +2448,38 @@ function createSidecarHost({ onNotification }) {
               }
             }
           }
+          return
+        }
+
+        if (payload && payload.method === 'browser:request' && payload.id !== undefined) {
+          const requestSequence = payload.browserRpc?.sequence
+          if (typeof requestSequence !== 'number'
+            || requestSequence !== browserRpcInboundSequence + 1
+            || !verifyBrowserRpcMac('sidecar->main', requestSequence, String(payload.id), payload.params ?? null, payload.browserRpc.mac)) return
+          browserRpcInboundSequence = requestSequence
+          void dispatchCommand('browser_runtime', payload.params ?? {}, {})
+            .then((result) => {
+              const sequence = ++browserRpcOutboundSequence
+              const body = { ok: true, result }
+              runningChild.postMessage(JSON.stringify({ id: payload.id, result, browserRpc: { sequence, mac: browserRpcMac('main->sidecar', sequence, String(payload.id), body) } }))
+            })
+            .catch((error) => {
+              const sequence = ++browserRpcOutboundSequence
+              const body = { ok: false, error: typeof error?.code === 'string' ? error.code : 'browser_internal_error' }
+              runningChild.postMessage(JSON.stringify({ id: payload.id, error: { code: body.error }, browserRpc: { sequence, mac: browserRpcMac('main->sidecar', sequence, String(payload.id), body) } }))
+            })
+          return
+        }
+
+        if (payload && payload.method === 'browser:plugin-state' && payload.id === undefined) {
+          agentBrowserPluginEnabled = payload.params?.browserEnabled === true || payload.params?.enabled === true
+          browserRuntime?.setAgentPluginEnabled(agentBrowserPluginEnabled)
+          return
+        }
+
+        if (payload && payload.method === 'browser:backend-state' && payload.id === undefined) {
+          if (payload.params?.hostConnected === false) browserRuntime?.resetAgentCursor()
+          emitRendererEvent('browser:event', { method: payload.method, params: payload.params ?? {} })
           return
         }
 
@@ -2277,6 +2648,11 @@ function createSidecarHost({ onNotification }) {
     return call(method, { credential: wikiPrivilegedCredential, request })
   }
 
+  async function notifyBrowserSettings(settings) {
+    await start()
+    child.postMessage(JSON.stringify({ method: 'browser:settings', params: { extensionBackendEnabled: settings?.extensionBackendEnabled === true } }))
+  }
+
   async function stop() {
     if (!child || child.pid === undefined) return
     stopRequested = true
@@ -2303,9 +2679,33 @@ function createSidecarHost({ onNotification }) {
     call,
     callWikiPrivileged,
     callPluginPackagePrivileged,
+    notifyBrowserSettings,
     stop,
   }
 }
+
+function prependPath(env: NodeJS.ProcessEnv, directory: string): void {
+  const pathKey = Object.keys(env).find((key) => key.toLocaleLowerCase() === 'path') || (process.platform === 'win32' ? 'Path' : 'PATH')
+  const current = env[pathKey] || ''
+  const entries = current.split(process.platform === 'win32' ? ';' : ':').filter(Boolean)
+  if (!entries.some((entry) => entry.toLocaleLowerCase() === directory.toLocaleLowerCase())) {
+    env[pathKey] = [directory, ...entries].join(process.platform === 'win32' ? ';' : ':')
+  }
+}
+
+ipcMain.on('lume:browser-guest-mounted', (event, bootstrapUrl) => {
+  const pending = pendingBrowserGuestAttachments.get(event.sender.id)
+  if (!pending || pending.contents !== event.sender) return
+  clearTimeout(pending.timer)
+  pendingBrowserGuestAttachments.delete(event.sender.id)
+  const validUrl = typeof bootstrapUrl === 'string' ? bootstrapUrl : ''
+  if (!validUrl || !browserRuntime?.attachGuest(pending.ownerWebContentsId, validUrl, pending.contents)) {
+    writeMainLog('warn', 'browser.guest', 'guest.attach_invalid', 'destroyed browser guest after failed mount validation', {
+      data: { bootstrapUrl: stripBrowserGuestMountToken(validUrl) },
+    })
+    if (!pending.contents.isDestroyed()) pending.contents.close()
+  }
+})
 
 ipcMain.handle('lume:invoke', async (event, command, payload) => {
   validateIpcSender(event, getTrustedWindows())
@@ -2455,11 +2855,37 @@ ipcMain.handle('lume:update:install', async (event) => {
 // 否则任务栏会回退到承载进程 exe 的图标——dev 下即 electron.exe 的默认图标。
 app.setAppUserModelId(DESKTOP_APP_ID)
 
+app.on('child-process-gone', (_event, details) => {
+  writeMainLog('error', 'browser.guest', 'child_process.gone', 'Electron child process exited', {
+    data: { type: details.type, reason: details.reason, exitCode: details.exitCode, serviceName: details.serviceName },
+  })
+})
+
 app.whenReady().then(async () => {
   logDesktopStartup('app ready', 'app.ready')
   registerAppProtocol()
   registerFileProtocol()
   const configDir = applyLauncherConfig()
+  browserRuntime = createBrowserRuntime({
+    getWindow: () => mainWindow,
+    configDir: () => configDir,
+    emit: (event) => emitRendererEvent('browser:event', event),
+    initialSettings: getPersistedBrowserSettings() as Partial<import('../../../packages/shared/src/types/browser-runtime').BrowserSettings>,
+    persistSettings: persistBrowserSettings,
+    isAgentPluginEnabled: () => agentBrowserPluginEnabled,
+    journalEncryption: {
+      available: safeStorage.isEncryptionAvailable(),
+      encrypt: (value) => safeStorage.encryptString(value),
+      decrypt: (value) => safeStorage.decryptString(value),
+    },
+    credentialStorage: safeStorage,
+    authPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-auth-preload.cjs'),
+    onInternalError: ({ method, actor, tabId, message }) => {
+      writeMainLog('error', 'browser.runtime', 'runtime.dispatch_failed', 'browser runtime action failed', {
+        data: { method, actor, ...(tabId ? { tabId } : {}), message },
+      })
+    },
+  })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()
   logDesktopStartup('tray ready')
@@ -2469,6 +2895,8 @@ app.whenReady().then(async () => {
   }
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
+  await unlockConnectionVaultStore()
+  await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
   await unlockDesktopContextStore()
@@ -2510,12 +2938,18 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', async () => {
+  for (const pending of pendingBrowserGuestAttachments.values()) clearTimeout(pending.timer)
+  pendingBrowserGuestAttachments.clear()
+  browserRuntime?.destroy()
+  browserRuntime = null
   desktopHostSupervisor?.stop()
   await sidecarHost.stop()
   writeMainLog('info', 'desktop.lifecycle', 'app.stopping', 'app stopping')
   await loggingService?.close()
   settingsBroker?.close()
   globalShortcut.unregisterAll()
+  connectionVaultKey?.fill(0)
+  connectionVaultKey = null
 })
 
 async function startDesktopHost(): Promise<DesktopHostState> {
@@ -2559,6 +2993,30 @@ async function unlockDesktopContextStore() {
     logDesktopStartup('desktop context store unlocked')
   } catch (error) {
     logDesktopStartup(`desktop context store unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    key?.fill(0)
+  }
+}
+
+function getConnectionVaultKeyPath(): string {
+  return join(resolveConfigDir(), 'connection-vault-key.json')
+}
+
+async function installConnectionVaultKeyInSidecar(key: Buffer): Promise<void> {
+  await sidecarHost.call('system.connection-vault-key', { key: key.toString('base64') })
+}
+
+async function unlockConnectionVaultStore(): Promise<void> {
+  let key: Buffer | undefined
+  try {
+    key = autoUnlockConnectionVault({ path: getConnectionVaultKeyPath(), safeStorage })
+    if (!key) return
+    await installConnectionVaultKeyInSidecar(key)
+    connectionVaultKey?.fill(0)
+    connectionVaultKey = Buffer.from(key)
+    logDesktopStartup('connection vault unlocked')
+  } catch (error) {
+    logDesktopStartup(`connection vault unavailable: ${error instanceof Error ? error.message : String(error)}`)
   } finally {
     key?.fill(0)
   }

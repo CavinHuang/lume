@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, Copy, Download, Loader2, TriangleAlert } from 'lucide-react'
+import { ChevronDown, Copy, Download, Loader2, Maximize2, Minimize2, TriangleAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,7 +57,7 @@ interface RenderInfographicInput {
   previous?: InfographicInstance | null
 }
 
-const RENDER_DEBOUNCE_MS = 150
+const STREAM_RENDER_INTERVAL_MS = 150
 const INFOGRAPHIC_BROWSER_RUNTIME_URL = new URL(
   '../../../node_modules/@antv/infographic/dist/infographic.min.js',
   import.meta.url,
@@ -120,6 +121,8 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const instanceRef = useRef<InfographicInstance | null>(null)
   const generationRef = useRef(0)
+  const previewRequestRef = useRef(0)
+  const lastRenderAtRef = useRef(0)
   const hasSuccessfulRenderRef = useRef(false)
   const preparedRef = useRef<PreparedInfographic | null>(null)
   const [status, setStatus] = useState<'rendering' | 'ready' | 'error'>('rendering')
@@ -128,17 +131,25 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
   const [copying, setCopying] = useState<'dsl' | 'svg' | 'png' | null>(null)
   const [copyMenuOpen, setCopyMenuOpen] = useState(false)
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewOriginalSize, setPreviewOriginalSize] = useState(false)
 
   useEffect(() => {
     const generation = ++generationRef.current
     setStatus('rendering')
     setErrorMessage(null)
 
+    const elapsed = Date.now() - lastRenderAtRef.current
+    // Keep rendering during a continuous token stream. A trailing debounce
+    // would never fire while chunks arrive faster than the debounce window.
+    const delay = streaming ? Math.max(0, STREAM_RENDER_INTERVAL_MS - elapsed) : 0
     const timeoutId = window.setTimeout(() => {
       void loadInfographicRuntime()
         .then((runtime) => {
           if (generation !== generationRef.current || !containerRef.current) return
-          const { instance: nextInstance, prepared } = renderInfographic({
+          const { instance: nextInstance, prepared, rendered, created } = renderInfographic({
             runtime,
             code,
             streaming,
@@ -146,14 +157,17 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
             previous: instanceRef.current,
           })
           if (generation !== generationRef.current) {
-            nextInstance.destroy()
+            if (created && nextInstance !== instanceRef.current) nextInstance.destroy()
             return
           }
 
           instanceRef.current = nextInstance
-          preparedRef.current = prepared
-          hasSuccessfulRenderRef.current = true
-          setStatus('ready')
+          lastRenderAtRef.current = Date.now()
+          if (rendered && prepared) {
+            preparedRef.current = prepared
+            hasSuccessfulRenderRef.current = true
+            setStatus('ready')
+          }
         })
         .catch((error) => {
           if (generation !== generationRef.current) return
@@ -165,7 +179,7 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
           setStatus('error')
           setErrorMessage(message)
         })
-    }, RENDER_DEBOUNCE_MS)
+    }, delay)
 
     return () => {
       window.clearTimeout(timeoutId)
@@ -248,13 +262,41 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
     }
   }
 
+  const closePreview = () => {
+    previewRequestRef.current += 1
+    setPreviewOpen(false)
+    setPreviewSrc(null)
+    setPreviewLoading(false)
+    setPreviewOriginalSize(false)
+  }
+
+  const handleOpenPreview = async () => {
+    const instance = instanceRef.current
+    if (!instance || status !== 'ready' || previewLoading) return
+    const request = ++previewRequestRef.current
+    setPreviewOpen(true)
+    setPreviewLoading(true)
+    try {
+      const src = await instance.toDataURL({ type: 'svg', embedResources: true })
+      if (request === previewRequestRef.current) setPreviewSrc(src)
+    } catch (error) {
+      if (request !== previewRequestRef.current) return
+      closePreview()
+      console.error('[InfographicBlock] 打开大图预览失败:', error)
+      toast.error('无法打开信息图预览', { description: error instanceof Error ? error.message : String(error) })
+    } finally {
+      if (request === previewRequestRef.current) setPreviewLoading(false)
+    }
+  }
+
   const hasRendered = hasSuccessfulRenderRef.current
-  const showSource = !hasRendered && status === 'error' && !streaming
+  const showSource = status === 'error' && !streaming
   const canExport = hasRendered && status === 'ready'
 
   return (
     <section className="group/infographic relative my-3 overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)]">
       <div
+        onClick={(event) => event.stopPropagation()}
         className={cn(
           'absolute right-2 top-2 z-10 flex items-center gap-1 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] p-1 shadow-sm transition-opacity',
           copyMenuOpen || downloadMenuOpen
@@ -299,7 +341,21 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
         </DropdownMenu>
       </div>
 
-      <div className="relative min-h-32 bg-white p-3 dark:bg-neutral-950">
+      <div
+        className={cn(
+          'relative min-h-32 bg-white p-3 dark:bg-neutral-950',
+          canExport && 'cursor-zoom-in',
+        )}
+        role={canExport ? 'button' : undefined}
+        tabIndex={canExport ? 0 : undefined}
+        aria-label={canExport ? '打开信息图大图预览' : undefined}
+        onClick={() => { if (canExport) void handleOpenPreview() }}
+        onKeyDown={(event) => {
+          if (!canExport || (event.key !== 'Enter' && event.key !== ' ')) return
+          event.preventDefault()
+          void handleOpenPreview()
+        }}
+      >
         <div
           ref={containerRef}
           aria-hidden={showSource}
@@ -322,36 +378,99 @@ export function InfographicBlock({ code, streaming }: InfographicBlockProps) {
           <span>信息图渲染失败：{errorMessage}</span>
         </div>
       )}
+
+      <Dialog open={previewOpen} onOpenChange={(open) => { if (!open) closePreview() }}>
+        <DialogContent
+          showCloseButton={false}
+          className="inset-0 left-0 top-0 z-[151] block h-dvh w-dvw max-w-none translate-x-0 translate-y-0 overflow-auto rounded-none bg-black/92 p-4 ring-0 sm:max-w-none"
+          onClick={closePreview}
+        >
+          <DialogTitle className="sr-only">查看信息图 {preparedRef.current?.title ?? ''}</DialogTitle>
+          <div className="fixed right-4 top-4 z-10 flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+            {previewSrc && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="bg-black/35 text-white hover:bg-white/15 hover:text-white"
+                onClick={() => setPreviewOriginalSize((value) => !value)}
+              >
+                {previewOriginalSize ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                {previewOriginalSize ? '适应窗口' : '原始尺寸'}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="bg-black/35 text-white hover:bg-white/15 hover:text-white"
+              onClick={closePreview}
+              aria-label="关闭信息图预览"
+            >
+              <X size={18} />
+            </Button>
+          </div>
+          {previewLoading && !previewSrc && (
+            <div className="flex h-full w-full items-center justify-center text-white" role="status" aria-label="正在加载信息图预览">
+              <Loader2 className="size-6 animate-spin" />
+            </div>
+          )}
+          {previewSrc && (
+            <div className={previewOriginalSize ? 'min-h-full min-w-full' : 'flex h-full w-full items-center justify-center'}>
+              <img
+                src={previewSrc}
+                alt={preparedRef.current?.title ?? '信息图'}
+                className={previewOriginalSize ? 'max-w-none' : 'max-h-full max-w-full object-contain'}
+                onClick={(event) => event.stopPropagation()}
+                onDoubleClick={() => setPreviewOriginalSize((value) => !value)}
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }
 
 export function renderInfographic(input: RenderInfographicInput): {
   instance: InfographicInstance
-  prepared: PreparedInfographic
+  prepared: PreparedInfographic | null
+  rendered: boolean
+  created: boolean
 } {
-  const prepared = prepareInfographic(input.code, input.runtime, { enableIcons: !input.streaming })
+  const created = !input.previous
+  const instance = input.previous ?? new input.runtime.Infographic({
+    container: input.container,
+    editable: false,
+  })
+  let prepared: PreparedInfographic
+  try {
+    prepared = prepareInfographic(input.code, input.runtime, {
+      enableIcons: !input.streaming,
+      allowIncomplete: input.streaming,
+    })
+  } catch (error) {
+    if (input.streaming && error instanceof InfographicSyntaxError) {
+      return { instance, prepared: null, rendered: instance.rendered, created }
+    }
+    if (created) instance.destroy()
+    throw error
+  }
   const renderOptions = {
     ...prepared.options,
     container: input.container,
   }
 
-  if (input.previous) {
-    // Reuse AntV's render(options) streaming path so the last successful SVG
-    // remains mounted while an incomplete chunk is being parsed.
-    input.previous.render(renderOptions)
-    return { instance: input.previous, prepared }
-  }
-
-  const instance = new input.runtime.Infographic({
-    ...renderOptions,
-  })
-  instance.render()
+  // AntV's streaming API repeatedly renders the accumulated syntax on one
+  // instance. Lume uses the same lifecycle with sanitized options so partial
+  // model output cannot bypass the DSL security boundary.
+  instance.render(renderOptions)
   if (!instance.rendered) {
-    instance.destroy()
+    if (input.streaming) return { instance, prepared: null, rendered: false, created }
+    if (created) instance.destroy()
     throw new InfographicSyntaxError('信息图数据不完整，暂时无法渲染')
   }
-  return { instance, prepared }
+  return { instance, prepared, rendered: true, created }
 }
 
 export async function copyInfographicDsl(

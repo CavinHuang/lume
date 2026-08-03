@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { AGENT_IPC_CHANNELS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, buildConnectionModelRef } from "@lume/shared";
 import {
   isMockRuntimeModelFallbackRetryable,
   resolveMockRuntimeModelAttemptParams
@@ -16,6 +16,7 @@ import {
   resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
 } from "./model-selection";
+import { installConnectionVaultKey } from "./connection-credential-store";
 
 const capturedRuntimeCalls: Array<{
   input?: { channelId?: string; modelId?: string };
@@ -53,6 +54,7 @@ describe("model-selection", () => {
     tempConfigDir = mkdtempSync(join(tmpdir(), "lume-model-selection-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
     process.env.LUME_SECRET_SEED = "model-selection-test-seed";
+    installConnectionVaultKey(Buffer.alloc(32, 23).toString("base64"));
     capturedRuntimeCalls.length = 0;
   });
 
@@ -77,7 +79,8 @@ describe("model-selection", () => {
     expect(normalizeProviderId("z.ai")).toBe("zai");
     expect(normalizeProviderId("z-ai")).toBe("zai");
     expect(normalizeProviderId("zhipu")).toBe("zai");
-    expect(normalizeProviderId("qwen")).toBe("qwen-portal");
+    expect(normalizeProviderId("qwen")).toBe("qwen");
+    expect(normalizeProviderId("qwen-portal")).toBe("qwen-portal");
     expect(normalizeProviderId("kimi-code")).toBe("kimi-coding");
   });
 
@@ -154,13 +157,49 @@ describe("model-selection", () => {
       fallbackModelIds: ["zai/glm-5"]
     };
     expect(resolveRequestedModelIdForChannel(channel, "mini")).toBe("openai/gpt-4.1-mini");
-    expect(resolveRequestedModelIdForChannel(channel, "GLM 5")).toBe("zai/glm-5");
+    expect(resolveRequestedModelIdForChannel(channel, "GLM 5")).toBe("openai/gpt-4.1-mini");
     expect(resolveRequestedModelIdForChannel(channel, undefined)).toBe("openai/gpt-4.1-mini");
     expect(resolveChannelDefaultModelId(channel)).toBe("openai/gpt-4.1-mini");
     expect(resolveModelCandidatesForChannel(channel, "mini")).toEqual([
-      "openai/gpt-4.1-mini",
-      "zai/glm-5"
+      "openai/gpt-4.1-mini"
     ]);
+  });
+
+  test("disabled default models fall through to the first enabled model", () => {
+    const channel = {
+      models: [
+        { id: "disabled-default", name: "Disabled", enabled: false },
+        { id: "enabled-fallback", name: "Enabled", enabled: true },
+      ],
+      defaultModelId: "disabled-default",
+      fallbackModelIds: [],
+    };
+
+    expect(resolveChannelDefaultModelId(channel)).toBe("enabled-fallback");
+    expect(resolveRequestedModelIdForChannel(channel, "disabled-default")).toBe("enabled-fallback");
+  });
+
+  test("Moonshot and Qwen API connections keep their explicit provider identities", async () => {
+    const { createChannel } = await import("./channel-manager");
+    const moonshot = createChannel({
+      name: "Moonshot API",
+      provider: "moonshot",
+      baseUrl: "https://api.moonshot.cn/v1",
+      apiKey: "moonshot-key",
+      models: [],
+      enabled: true,
+    });
+    const qwen = createChannel({
+      name: "Qwen API",
+      provider: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "qwen-key",
+      models: [],
+      enabled: true,
+    });
+
+    expect(moonshot.provider).toBe("moonshot");
+    expect(qwen.provider).toBe("qwen");
   });
 
   test("resolveAgentDefaultStrategy 应优先使用 thread override", () => {
@@ -471,7 +510,7 @@ describe("model-selection", () => {
     expect(capturedRuntimeCalls).toHaveLength(1);
     expect(capturedRuntimeCalls[0]?.input?.channelId).toBe(newChannel.id);
     expect(capturedRuntimeCalls[0]?.input?.modelId).toBe("gpt-5-mini");
-    expect(capturedRuntimeCalls[0]?.runtime?.modelRef).toBe("openai/gpt-5-mini");
+    expect(capturedRuntimeCalls[0]?.runtime?.modelRef).toBe(`connection:${newChannel.id}/gpt-5-mini`);
     expect(capturedRuntimeCalls[0]?.runtime?.channelId).toBe(newChannel.id);
     expect(persisted?.modelRef).toBe("openai/gpt-5");
     expect(persisted?.channelId).toBe(oldChannel.id);
@@ -517,14 +556,127 @@ describe("model-selection", () => {
 
     expect(capturedRuntimeCalls.at(-1)?.input?.channelId).toBe(channel.id);
     expect(capturedRuntimeCalls.at(-1)?.input?.modelId).toBe("gpt-5-mini");
-    expect(capturedRuntimeCalls.at(-1)?.runtime?.modelRef).toBe("openai/gpt-5-mini");
+    expect(capturedRuntimeCalls.at(-1)?.runtime?.modelRef).toBe(`connection:${channel.id}/gpt-5-mini`);
     expect(capturedRuntimeCalls.at(-1)?.runtime?.channelId).toBe(channel.id);
 
     const persisted = getAgentThreadMeta(thread.id);
-    expect(persisted?.modelRef).toBe("openai/gpt-5-mini");
+    expect(persisted?.modelRef).toBe(`connection:${channel.id}/gpt-5-mini`);
     expect(persisted?.channelId).toBe(channel.id);
     expect(persisted?.modelId).toBe("gpt-5-mini");
     expect(persisted?.modelSelectionSource).toBe("thread-override");
+  });
+
+  test("默认连接被删除后应直接使用仍可用的回退连接", async () => {
+    const { updateLumeConfigSection } = await import("../system/lume-config-service");
+    const { createChannel, deleteChannel } = await import("./channel-manager");
+    const { createAgentThread } = await import("../agent/agent-thread-manager");
+    const { sendAgentMessage } = await import("../agent/agent-service");
+
+    const primary = createChannel({
+      name: "Primary",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "primary-key",
+      enabled: true,
+      models: [{ id: "gpt-primary", name: "Primary", enabled: true, capabilities: { chat: true } }],
+    });
+    const fallback = createChannel({
+      name: "Fallback",
+      provider: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "fallback-key",
+      enabled: true,
+      models: [{
+        id: "anthropic/claude-fallback",
+        name: "Fallback",
+        enabled: true,
+        capabilities: { chat: true },
+      }],
+    });
+    updateLumeConfigSection({
+      source: "user",
+      path: "models.agent",
+      value: {
+        defaultChannelId: primary.id,
+        defaultModelRef: buildConnectionModelRef(primary.id, "gpt-primary"),
+        fallbackModelRefs: [buildConnectionModelRef(fallback.id, "anthropic/claude-fallback")],
+      },
+    });
+    const thread = createAgentThread("deleted primary");
+    deleteChannel(primary.id);
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "use fallback",
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined,
+    });
+
+    expect(capturedRuntimeCalls.at(-1)?.runtime).toMatchObject({
+      channelId: fallback.id,
+      modelRef: buildConnectionModelRef(fallback.id, "anthropic/claude-fallback"),
+    });
+    expect(capturedRuntimeCalls.at(-1)?.input?.modelId).toBe("anthropic/claude-fallback");
+  });
+
+  test("默认 OAuth 凭据丢失后应在运行前切换到可用回退连接", async () => {
+    const { updateLumeConfigSection } = await import("../system/lume-config-service");
+    const { createChannel } = await import("./channel-manager");
+    const { createAgentThread } = await import("../agent/agent-thread-manager");
+    const { sendAgentMessage } = await import("../agent/agent-service");
+
+    const primary = createChannel({
+      name: "OAuth Primary",
+      provider: "openrouter",
+      authType: "oauth",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "",
+      enabled: true,
+      models: [{ id: "openai/gpt-primary", name: "Primary", enabled: true, capabilities: { chat: true } }],
+    });
+    const fallback = createChannel({
+      name: "API Fallback",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "fallback-key",
+      enabled: true,
+      models: [{ id: "gpt-fallback", name: "Fallback", enabled: true, capabilities: { chat: true } }],
+    });
+    updateLumeConfigSection({
+      source: "user",
+      path: "models.agent",
+      value: {
+        defaultChannelId: primary.id,
+        defaultModelRef: buildConnectionModelRef(primary.id, "openai/gpt-primary"),
+        fallbackModelRefs: [buildConnectionModelRef(fallback.id, "gpt-fallback")],
+      },
+    });
+    const thread = createAgentThread("missing oauth primary");
+
+    await sendAgentMessage({
+      threadId: thread.id,
+      userMessage: "use credential fallback",
+    }, {
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined,
+    });
+
+    expect(capturedRuntimeCalls.at(-1)?.runtime).toMatchObject({
+      channelId: fallback.id,
+      modelRef: buildConnectionModelRef(fallback.id, "gpt-fallback"),
+    });
+    expect(capturedRuntimeCalls.at(-1)?.input?.modelId).toBe("gpt-fallback");
   });
 
   test("resolveAgentDefaultStrategy 应在无可用值时返回 empty", () => {

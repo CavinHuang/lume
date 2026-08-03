@@ -6,6 +6,7 @@
 export type ToolResultContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source?: any; data?: string; mimeType?: string; _meta?: Record<string, unknown> }
+  | { type: 'document'; source: any; _meta?: Record<string, unknown> }
 
 export type ContentBlockParam =
   | { type: 'text'; text: string }
@@ -68,6 +69,7 @@ export type SDKMessage =
   | SDKCompactBoundaryMessage
   | SDKStatusMessage
   | SDKTaskNotificationMessage
+  | SDKLspDiagnosticsMessage
   | SDKRateLimitEvent
   | SDKHookStartedMessage
   | SDKHookProgressMessage
@@ -123,6 +125,7 @@ export interface SDKToolResultMessage {
     output: string
     content?: string | ToolResultContentBlock[]
     is_error?: boolean
+    _meta?: Record<string, unknown>
   }
 }
 
@@ -220,6 +223,46 @@ export interface SDKSystemMessage {
   plugins?: Array<{ name: string; path: string; source?: string }>
   output_style?: string
   claude_code_version?: string
+}
+
+export interface SDKLspDiagnosticsMessage {
+  type: 'system'
+  subtype: 'lsp_diagnostics'
+  session_id?: string
+  tool_use_id?: string
+  file_path: string
+  mutation_version: number
+  sha256: string
+  delayed: boolean
+  diagnostics: LspDiagnosticBatch
+}
+
+export interface LspDiagnosticBatch {
+  servers: string[]
+  total: number
+  errors: number
+  warnings: number
+  truncated: boolean
+  items: Array<{
+    server?: string
+    source?: string
+    severity?: 1 | 2 | 3 | 4
+    code?: string | number
+    message: string
+    range: {
+      start: { line: number; character: number }
+      end: { line: number; character: number }
+    }
+  }>
+  artifact?: FileResultRef
+}
+
+export interface LspWritethroughResult {
+  servers: string[]
+  formatted: boolean
+  diagnostics?: LspDiagnosticBatch
+  diagnosticsDelayed: boolean
+  mutationVersion: number
 }
 
 export type AgentContextCompactionTrigger = 'auto' | 'manual' | 'prompt_too_long'
@@ -403,6 +446,7 @@ export interface SDKTaskNotificationMessage {
   tool_use_id?: string
   output_file?: string
   summary?: string
+  execution?: ToolExecutionMetadata
   usage?: {
     total_tokens: number
     tool_uses: number
@@ -513,6 +557,7 @@ export interface SDKTaskStartedMessage {
   task_type?: string
   workflow_name?: string
   prompt?: string
+  output_file?: string
   uuid?: string
   session_id: string
 }
@@ -550,6 +595,7 @@ export interface SDKApiRetryMessage {
   retry_delay_ms: number
   error_status: number | null
   error: SDKAssistantMessageError
+  phase?: 'waiting' | 'retrying' | 'cleared'
   uuid?: string
   session_id: string
 }
@@ -743,8 +789,14 @@ export interface ToolDefinition {
   description: string
   inputSchema: ToolInputSchema
   call: (input: any, context: ToolContext) => Promise<ToolResult>
-  isReadOnly?: () => boolean
-  isConcurrencySafe?: () => boolean
+  /** Validate the permission-adjusted input before hooks and side effects. */
+  validateInput?: (input: any, context: ToolContext) => void | string | Promise<void | string>
+  /** Optional provider-independent output description for hosts and inspectors. */
+  outputSchema?: Record<string, unknown>
+  /** Resolve the primary path for permission metadata and diagnostics. */
+  getPath?: (input: any, context: ToolContext) => string | undefined | Promise<string | undefined>
+  isReadOnly?: (input?: unknown, context?: ToolContext) => boolean
+  isConcurrencySafe?: (input?: unknown, context?: ToolContext) => boolean
   isEnabled?: () => boolean
   prompt?: (context: ToolContext) => Promise<string>
   runtimeMetadata?: Record<string, unknown>
@@ -767,18 +819,104 @@ export interface ToolContext {
   /** Parent agent's API type */
   apiType?: import('./providers/types.js').ApiType
   sessionId?: string
+  /** Host Run identity used to correlate durable process jobs. */
+  runId?: string
+  /** Current user message used to group file checkpoints. */
+  currentUserMessageId?: string
+  /** Update the active working directory for subsequent tool calls in this session. */
+  setWorkingDirectory?: (cwd: string) => void
   toolUseId?: string
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
+  fileStateCache?: import('./utils/fileCache.js').FileStateCache
   permissionMode?: PermissionMode
   emitEvent?: (event: SDKMessage) => void
   /** Hook registry for firing lifecycle hooks (e.g. SubagentStart/Stop). */
   hookRegistry?: import('./hooks.js').HookRegistry
   onSubagentStart?: (params: { runId: string; parentThreadId: string; agentType: string; task: string }) => void
   onSubagentEnd?: (params: { runId: string; status: 'completed' | 'errored' | 'aborted'; output?: string; error?: string }) => Promise<void> | void
+  /** Called by a background tool when its process reaches a terminal state. */
+  onBackgroundTaskCompleted?: () => void
   skillRegistry?: import('./skills/registry.js').SkillRegistry
+  /** Session-owned directory for private, large tool result artifacts. */
+  artifactsRoot?: string
+  /** Host runtime observation hook; never included in provider-facing messages. */
+  onToolExecution?: (observation: {
+    toolName: string
+    input: unknown
+    result: ToolResult
+  }) => void
+  /** Called immediately before a tool executes, before filesystem side effects. */
+  onBeforeToolExecution?: (observation: {
+    toolName: string
+    input: unknown
+    userMessageId?: string
+    cwd: string
+  }) => Promise<void> | void
+  /** Internal bridge used by ExecuteTool to run a discovered deferred tool. */
+  executeDeferredTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
+  /** Runs a registered core or deferred tool through the normal permission and event chain. */
+  executeNestedTool?: (input: { toolName: string; params: unknown }) => Promise<ToolResult>
 }
+
+export interface PersistedToolContinuation {
+  toolCall: {
+    id: string
+    name: string
+    input: unknown
+  }
+  /** Omit when the approved original tool still needs to execute once. */
+  toolResult?: ToolResult
+}
+
+export interface FileResultRef {
+  kind: 'file'
+  path: string
+  size: number
+  mimeType?: string
+}
+
+export interface ToolExecutionMetadataV1 {
+  version: 1
+  exitCode?: number | null
+  stdoutPreview?: string
+  stderrPreview?: string
+  timedOut?: boolean
+  aborted?: boolean
+  outputLimitReached?: boolean
+  durationMs: number
+  command: string
+  shell?: 'bash' | 'powershell'
+  semanticOutcome?: 'no_matches' | 'condition_false' | 'files_differ'
+  purpose?: string
+  workspaceChanged?: boolean
+  resultRef?: FileResultRef
+  terminationReason: 'completed' | 'nonzero' | 'timeout' | 'aborted' | 'output_limit' | 'spawn_error' | 'running'
+}
+
+export interface ToolExecutionMetadataV2 {
+  version: 2
+  outcome: 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled' | 'interrupted'
+  exitCode?: number | null
+  stdoutPreview?: string
+  stderrPreview?: string
+  stdoutRef?: FileResultRef
+  stderrRef?: FileResultRef
+  timedOut?: boolean
+  aborted?: boolean
+  outputLimitReached?: boolean
+  durationMs: number
+  command: string
+  shell: 'bash' | 'powershell'
+  semanticOutcome?: 'no_matches' | 'condition_false' | 'files_differ'
+  purpose?: string
+  workspaceChanged?: boolean
+  resultRef?: FileResultRef
+  terminationReason: 'completed' | 'nonzero' | 'timeout' | 'aborted' | 'output_limit' | 'spawn_error' | 'running' | 'interrupted'
+}
+
+export type ToolExecutionMetadata = ToolExecutionMetadataV1 | ToolExecutionMetadataV2
 
 export interface ToolResult {
   type: 'tool_result'
@@ -1223,6 +1361,8 @@ export interface Query {
 }
 
 export interface AgentOptions {
+  /** Host thread identity used for tool assembly authorization. */
+  threadType?: 'main' | 'subagent' | 'group' | 'channel'
   /** LLM model ID */
   model?: string
   /**
@@ -1230,6 +1370,8 @@ export interface AgentOptions {
    * Falls back to CODEANY_API_TYPE env var. Default: 'anthropic-messages'.
    */
   apiType?: import('./providers/types.js').ApiType
+  /** Host-owned provider implementation. When set, protocol and credentials are not resolved by the SDK. */
+  provider?: import('./providers/types.js').LLMProvider
   /** API key. Falls back to CODEANY_API_KEY env var. */
   apiKey?: string
   /** API base URL override */
@@ -1253,13 +1395,14 @@ export interface AgentOptions {
       cwd: string
       sessionId: string
       permissionMode?: PermissionMode
+      threadType?: 'main' | 'subagent' | 'group' | 'channel'
     }
   ) => ToolDefinition[] | Promise<ToolDefinition[]>
   /**
    * Host-owned completion policy. Returning feedback keeps the agent loop alive
    * and presents that feedback to the model as an internal user message.
    */
-  completionGuard?: () => Promise<string | undefined>
+  completionGuard?: () => Promise<CompletionGuardResult>
   /** Explicit skill definitions provided by the host runtime */
   skills?: import('./skills/types.js').SkillDefinition[]
   /** Explicit filesystem roots to scan for skills */
@@ -1331,6 +1474,10 @@ export interface AgentOptions {
   persistSession?: boolean
   /** Explicit session ID */
   sessionId?: string
+  /** Host Run identity for durable tool recovery. */
+  runId?: string
+  /** Host-owned exact tool continuation restored after a cold start. */
+  toolContinuation?: PersistedToolContinuation
   /** Enable file checkpointing (for rewindFiles) */
   enableFileCheckpointing?: boolean
   /** Sandbox configuration */
@@ -1349,6 +1496,11 @@ export interface AgentOptions {
   debugFile?: string
   /** Tool-specific configuration */
   toolConfig?: Record<string, unknown>
+  artifactsRoot?: string
+  onToolExecution?: ToolContext['onToolExecution']
+  onBeforeToolExecution?: ToolContext['onBeforeToolExecution']
+  /** Receives tool events emitted after the originating tool call has returned. */
+  onAsyncEvent?: (event: SDKMessage) => void
   /** Enable prompt suggestions */
   promptSuggestions?: boolean
   /** Event output style */
@@ -1394,6 +1546,8 @@ export interface QueryEngineConfig {
   /** LLM provider instance (created from apiType) */
   provider: import('./providers/types.js').LLMProvider
   tools: ToolDefinition[]
+  /** Tools omitted from the provider schema and reachable only through ExecuteTool. */
+  deferredTools?: ToolDefinition[]
   systemPrompt?: string
   runtimeContext?: string
   promptCache?: import('./providers/types.js').PromptCachePolicy
@@ -1413,11 +1567,22 @@ export interface QueryEngineConfig {
   hookRegistry?: import('./hooks.js').HookRegistry
   /** Session ID for hook context */
   sessionId?: string
+  /** Host Run identity for durable tool recovery. */
+  runId?: string
+  /** Execute or inject one persisted tool call before the next model request. */
+  toolContinuation?: PersistedToolContinuation
   permissionMode?: PermissionMode
   promptSuggestions?: boolean
   additionalDirectories?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
+  artifactsRoot?: string
+  onToolExecution?: ToolContext['onToolExecution']
+  onBeforeToolExecution?: ToolContext['onBeforeToolExecution']
+  /** Receives terminal background events after the tool call has returned. */
+  onAsyncEvent?: (event: SDKMessage) => void
+  /** Capture a workspace baseline before each Coding Turn. */
+  enableFileCheckpointing?: boolean
   skillRegistry?: import('./skills/registry.js').SkillRegistry
   currentUserMessageId?: string
   fileCheckpointState?: import('./utils/file-checkpoints.js').FileCheckpointState
@@ -1433,8 +1598,14 @@ export interface QueryEngineConfig {
   /** Optional host-owned context policy bridge. Defaults preserve SDK compaction behavior. */
   contextController?: AgentContextController
   /** Optional host-owned policy that can prevent natural completion. */
-  completionGuard?: () => Promise<string | undefined>
+  completionGuard?: () => Promise<CompletionGuardResult>
 }
+
+export type CompletionGuardResult =
+  | string
+  | { type: 'continue'; message: string }
+  | { type: 'stop'; message: string; errorCode?: string }
+  | undefined
 
 // --------------------------------------------------------------------------
 // Slash Command & Agent Info (compatible with official Claude Agent SDK)

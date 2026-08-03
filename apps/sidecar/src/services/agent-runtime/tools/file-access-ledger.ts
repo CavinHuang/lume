@@ -1,4 +1,5 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 export type FileAccessLedgerRejectReason = "not_read" | "partial_read" | "stale";
@@ -12,7 +13,9 @@ export interface FileReadRecordInput {
   cwd: string;
   filePath: string;
   mtimeMs: number;
+  contentHash?: string;
   fullRead: boolean;
+  readRange?: { offset: number; limit: number; totalLines?: number };
 }
 
 export interface FileWriteCheckInput {
@@ -29,7 +32,9 @@ export interface FileAccessLedger {
 
 interface FileReadRecord {
   mtimeMs: number;
+  contentHash?: string;
   fullRead: boolean;
+  readRange?: { offset: number; limit: number; totalLines?: number };
 }
 
 export function createFileAccessLedger(): FileAccessLedger {
@@ -39,7 +44,9 @@ export function createFileAccessLedger(): FileAccessLedger {
     recordRead(input) {
       reads.set(fileLedgerKey(input), {
         mtimeMs: input.mtimeMs,
-        fullRead: input.fullRead
+        ...(input.contentHash ? { contentHash: input.contentHash } : {}),
+        fullRead: input.fullRead,
+        ...(input.readRange ? { readRange: input.readRange } : {})
       });
     },
 
@@ -61,7 +68,7 @@ export function createFileAccessLedger(): FileAccessLedger {
         };
       }
       const current = await stat(resolve(input.cwd, input.filePath));
-      if (current.mtimeMs !== record.mtimeMs) {
+      if (current.mtimeMs !== record.mtimeMs || (record.contentHash && await hashFile(resolve(input.cwd, input.filePath)) !== record.contentHash)) {
         return {
           ok: false,
           reason: "stale",
@@ -79,6 +86,10 @@ export function createFileAccessLedger(): FileAccessLedger {
       }
     }
   };
+}
+
+async function hashFile(path: string): Promise<string> {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
 }
 
 const runtimeFileAccessLedger = createFileAccessLedger();

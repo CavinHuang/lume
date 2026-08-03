@@ -9,10 +9,6 @@ import type {
   AgentListRunStatesResult,
   AgentPendingInteractiveInput,
   AgentPendingInteractiveState,
-  AgentTaskApprovalResponseInput,
-  AgentTaskApprovalResponseResult,
-  AgentExecuteTaskContractInput,
-  AgentExecuteTaskContractResult,
   AgentRunTraceInput,
   AgentRunTraceResult,
   AgentSendInput,
@@ -81,6 +77,8 @@ export const agentSend = async (input: AgentSendInput) => {
               status: 'queued' as const,
               ...(input.messageParts ? { messageParts: input.messageParts } : {}),
               ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
+              ...(input.commentAttachments ? { commentAttachments: input.commentAttachments } : {}),
+              ...(input.browserAttachments ? { browserAttachments: input.browserAttachments } : {}),
             },
           }
         : {}),
@@ -193,18 +191,6 @@ export const resumeAgentRun = (input: AgentResumeRunInput) =>
 export const listAgentRunStates = (input: AgentListRunStatesInput) =>
   invoke<AgentListRunStatesResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.LIST_RUN_STATES,
-    params: input,
-  })
-
-export const submitTaskApproval = (input: AgentTaskApprovalResponseInput) =>
-  invoke<AgentTaskApprovalResponseResult>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.SUBMIT_TASK_APPROVAL,
-    params: input,
-  })
-
-export const executeTaskContract = (input: AgentExecuteTaskContractInput) =>
-  invoke<AgentExecuteTaskContractResult>('sidecar_call', {
-    method: AGENT_IPC_CHANNELS.EXECUTE_TASK_CONTRACT,
     params: input,
   })
 

@@ -26,6 +26,8 @@
 // --------------------------------------------------------------------------
 
 export { Agent, createAgent, query } from './agent.js'
+export { rewindCheckpoint } from './utils/file-checkpoints.js'
+export type { FileCheckpoint, FileCheckpointState, FileSnapshot } from './utils/file-checkpoints.js'
 export { QueryController } from './query-controller.js'
 export {
   LumeCapabilityReferenceError,
@@ -63,6 +65,8 @@ export type { McpSdkServerConfig } from './sdk-mcp-server.js'
 
 export { QueryEngine } from './engine.js'
 export { resolveShellInvocation } from './utils/shell-invocation.js'
+export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
+export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
 export {
   buildCommandLine,
   getProcessSandboxSupport,
@@ -91,6 +95,7 @@ export type {
   PromptCachePolicy,
   CreateMessageParams,
   CreateMessageResponse,
+  CreateMessageStreamEvent,
   NormalizedMessageParam,
   NormalizedContentBlock,
   NormalizedTool,
@@ -137,13 +142,7 @@ export {
   TeamCreateTool,
   TeamDeleteTool,
 
-  // Tasks
-  TaskCreateTool,
-  TaskListTool,
-  TaskUpdateTool,
-  TaskGetTool,
-  TaskStopTool,
-  TaskOutputTool,
+  // Persistent Tasks are host-bound through createTaskTools.
 
   // Worktree
   EnterWorktreeTool,
@@ -154,6 +153,8 @@ export {
 
   // Discovery
   ToolSearchTool,
+  CORE_TOOL_NAMES,
+  splitDeferredTools,
 
   // MCP Resources
   ListMcpResourcesTool,
@@ -166,6 +167,7 @@ export {
 
   // LSP
   LSPTool,
+  LSPApplyTool,
 
   // Config
   ConfigTool,
@@ -176,6 +178,61 @@ export {
   // Skill
   SkillTool,
 } from './tools/index.js'
+
+export {
+  ProcessOutputTool,
+  ProcessStopTool,
+  loadProcessJobs,
+  markProcessJobContinuationConsumed,
+  markProcessJobNotified,
+  updateProcessJob,
+  waitForProcessJobTerminal,
+  type ProcessJob,
+} from './tools/process-job-registry.js'
+
+// LSP protocol and client manager
+export {
+  collectLspDiagnostics,
+  encodeLspMessage,
+  getLspClient,
+  getLspClientsForFile,
+  notifyLspFileChanged,
+  notifyLspFileClosed,
+  notifyLspWatchedFiles,
+  requestLspClients,
+  resolveLspServerConfig,
+  resolveLspServerConfigsForFile,
+  setLspIdleTimeout,
+  shutdownLspClients,
+  warmupLspClients,
+} from './lsp/client.js'
+export type {
+  LspAggregatedDiagnostic,
+  LspClient,
+  LspClientState,
+  LspCreateFile,
+  LspDeleteFile,
+  LspDiagnostic,
+  LspLocation,
+  LspLocationLink,
+  LspPosition,
+  LspRange,
+  LspRenameFile,
+  LspServerCapabilities,
+  LspServerConfig,
+  LspServerStatus,
+  LspTextDocumentEdit,
+  LspTextEdit,
+  LspWatchedFileChange,
+  LspWorkspaceEdit,
+} from './lsp/client.js'
+export {
+  DEFAULT_LSP_SERVERS,
+  findLspWorkspaceRoot,
+  resolveLspExecutable,
+  supportsLspFile,
+} from './lsp/registry.js'
+export type { LspRegistryServer, LspServerRole } from './lsp/registry.js'
 
 // --------------------------------------------------------------------------
 // MCP Client
@@ -434,15 +491,20 @@ export {
 export type { FileState } from './utils/fileCache.js'
 
 // --------------------------------------------------------------------------
-// Task & Team State (for advanced usage)
+// Task & Team contracts (state is owned by the host)
 // --------------------------------------------------------------------------
 
-export {
-  getAllTasks,
-  getTask,
-  clearTasks,
+export { createTaskTools } from './tools/task-tools.js'
+export type {
+  Task,
+  TaskStatus,
+  TaskRef,
+  TaskMetadata,
+  TaskStoreAdapter,
+  TaskStoreContext,
+  TaskMutationResult,
+  TaskToolName,
 } from './tools/task-tools.js'
-export type { Task, TaskStatus } from './tools/task-tools.js'
 
 export {
   getAllTeams,
@@ -481,6 +543,8 @@ export {
 export {
   setDeferredTools,
   getDeferredTools,
+  createToolSearchTool,
+  createExecuteTool,
   getToolSearchMode,
   getDeferredToolTokenCount,
   shouldEnableAutomaticToolSearch,
@@ -570,6 +634,7 @@ export type {
   ToolInputSchema,
   ToolContext,
   ToolResult,
+  PersistedToolContinuation,
 
   // Permission types
   PermissionMode,
@@ -626,6 +691,7 @@ export type {
 
   // Engine types
   QueryEngineConfig,
+  CompletionGuardResult,
 
   // Content block types
   ContentBlockParam,

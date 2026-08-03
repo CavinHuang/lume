@@ -5,6 +5,7 @@ import { join, extname } from "node:path";
 import { JSDOM } from "jsdom";
 import { ensureNetworkAllowed } from "../utils/pathing.js";
 import type { SandboxSettings } from "../types.js";
+import { loadBinary } from "./web-fetch-http.js";
 
 export type ImageMode = "download" | "keep" | "off";
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
@@ -28,12 +29,18 @@ export function fetchIdFromUrl(url: string): string {
 /** Resolve a usable image source, accounting for common lazy-load attrs. */
 export function resolveImgSrc(el: HTMLImageElement): string | null {
   const ds = (el as HTMLImageElement & Record<string, string>).dataset;
+  const pictureSource = el.closest("picture")?.querySelector("source[srcset], source[data-srcset]");
   const candidates = [
     el.getAttribute("src") || undefined,
     ds.src,
     ds.original,
     ds.lazySrc,
+    el.getAttribute("data-src") || undefined,
+    el.getAttribute("data-original") || undefined,
+    el.getAttribute("data-lazy-src") || undefined,
     firstOfSrcset(el.getAttribute("srcset") || undefined),
+    firstOfSrcset(el.getAttribute("data-srcset") || undefined),
+    firstOfSrcset(pictureSource?.getAttribute("srcset") || pictureSource?.getAttribute("data-srcset") || undefined),
   ];
   for (const c of candidates) {
     if (c && c.trim() && !isPlaceholder(c.trim())) return c.trim();
@@ -136,16 +143,19 @@ export async function downloadAndLocalizeImages(
       continue;
     }
     try {
-      const res = await fetchImpl(absUrl, {
+      const res = await loadBinary(absUrl, {
+        fetchImpl,
+        maxBytes: 20 * 1024 * 1024,
+        timeoutMs: 15000,
+        sandbox: ALLOWED_IMAGE_HOSTS.has(new URL(absUrl).hostname.toLowerCase()) ? undefined : sandbox,
         headers: {
           ...(origin ? { Referer: `${origin}/` } : {}),
           "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         },
-        signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const buf = Buffer.from(await res.arrayBuffer());
-      const ext = sniffExt(res.headers.get("content-type") || "", absUrl);
+      if (!res.ok || res.error) throw new Error(res.error || `HTTP ${res.status}`);
+      const buf = Buffer.from(res.bytes);
+      const ext = sniffExt(res.contentType, absUrl);
       const name = createHash("sha256").update(buf).digest("hex").slice(0, 16) + ext;
       await writeFile(join(imagesDir, name), buf);
       img.setAttribute("src", lumeFileUrl(join(imagesDir, name)));

@@ -12,6 +12,8 @@ import {
   setThemePalette,
 } from './lib/theme-mode'
 import './index.css'
+import { PierreDiffProvider } from './components/diff/PierreDiffProvider'
+import { BrowserWebviewPoolProvider } from './components/browser/BrowserWebviewPool'
 
 // Release 构建无 DevTools：尽早注册全局未处理拒绝监听，让被静默吞掉的 sidecar/异步错误以 toast 可见。
 installGlobalErrorToast()
@@ -39,7 +41,11 @@ async function bootstrap() {
 
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-      <App />
+      <PierreDiffProvider>
+        <BrowserWebviewPoolProvider>
+          <App />
+        </BrowserWebviewPoolProvider>
+      </PierreDiffProvider>
     </React.StrictMode>
   )
 }

@@ -81,13 +81,26 @@ function stripProviderPrefix(id: string): string {
   return id
 }
 
+function stripConnectionPrefix(id: string): string {
+  if (!id.startsWith('connection:')) return id
+  const slashIndex = id.indexOf('/')
+  return slashIndex > 'connection:'.length && slashIndex < id.length - 1
+    ? id.slice(slashIndex + 1)
+    : id
+}
+
 /**
  * Find model metadata by model ID.
  * Handles: exact match, alias match, case-insensitive, provider-prefixed IDs, prefix match.
  * Returns undefined for unknown models.
  */
 export function findModelMeta(modelId: string): ModelMeta | undefined {
-  const candidates = [modelId, stripProviderPrefix(modelId)]
+  const connectionModelId = stripConnectionPrefix(modelId)
+  const candidates = [...new Set([
+    modelId,
+    connectionModelId,
+    stripProviderPrefix(connectionModelId),
+  ])]
 
   for (const candidate of candidates) {
     const exact = lookupMap.get(candidate)

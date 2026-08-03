@@ -29,12 +29,12 @@ export function createSdkOfficeTools(): ToolDefinition[] {
         const autoRepair = args.autoRepair === true;
         const author = typeof args.author === "string" && args.author.trim().length > 0 ? args.author.trim() : "Claude";
         const result = await executor.runPythonScript("validate.py", [path, "--original", original, "--auto-repair", "--author", author]);
-        if (!result.ok) {
-          return { ok: false, error: result.stderr ?? result.stdout ?? "office_validate failed" };
-        }
         const data = safeParseJson(result.stdout ?? "");
         if (!data || typeof data !== "object") {
-          return { ok: false, error: "Invalid office_validate output" };
+          return {
+            ok: false,
+            error: result.stderr?.trim() || result.stdout?.trim() || "Invalid office_validate output"
+          };
         }
         const d = data as Record<string, unknown>;
         return {
@@ -721,6 +721,14 @@ function safeParseJson(payload: string): unknown {
   try {
     return JSON.parse(payload);
   } catch {
+    const lines = payload.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      try {
+        return JSON.parse(lines[index]!);
+      } catch {
+        // Validator diagnostics may precede the final structured result.
+      }
+    }
     return null;
   }
 }

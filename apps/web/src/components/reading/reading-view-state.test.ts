@@ -270,7 +270,7 @@ describe('reading view state', () => {
       addBookInput: {
         title: '我在北京送快递',
         author: '胡安焉',
-        track: 'co_read',
+        track: 'lume',
         status: 'reading',
         coverUrl: 'https://cover.example.com/wr-1.jpg',
         source: {
@@ -288,7 +288,7 @@ describe('reading view state', () => {
       alreadyAdded: false,
       addBookInput: {
         title: '置身事内',
-        track: 'co_read',
+        track: 'lume',
         source: {
           kind: 'weread',
           externalId: 'wr-3'

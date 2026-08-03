@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import {
   projectAssistantMessageFinalRuntimeEvent,
+  projectRunItemToRuntimeEvents,
   projectRunStateToRuntimeEvents
 } from "./run-item-events";
 import type { LumeRunState } from "./run-state";
+import { getAgentFileContextArtifactsPath } from "../../infra/config-paths";
 
 function baseRun(overrides: Partial<LumeRunState> = {}): LumeRunState {
   return {
@@ -27,6 +30,91 @@ function baseRun(overrides: Partial<LumeRunState> = {}): LumeRunState {
 }
 
 describe("projectRunStateToRuntimeEvents", () => {
+  test("projects a parent background task completion as a dedicated runtime event", () => {
+    const events = projectRunItemToRuntimeEvents(baseRun(), {
+      type: "system_event",
+      id: "task-notification-1",
+      name: "task_notification",
+      payload: {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-1",
+        status: "completed",
+        summary: "检查已完成",
+        usage: { total_tokens: 12, tool_uses: 2, duration_ms: 80 }
+      },
+      createdAt: "2026-04-30T00:00:02.000Z"
+    }, {
+      includeAssistantText: true,
+      includeAssistantThinking: true,
+      includeModelStreamText: true
+    });
+
+    expect(events).toEqual([expect.objectContaining({
+      id: "background-task:thread-1:task-1:completed",
+      type: "background.task.completed",
+      runId: "background-task:task-1",
+      taskId: "task-1",
+      status: "completed",
+      summary: "检查已完成",
+      usage: { totalTokens: 12, toolUses: 2, durationMs: 80 }
+    })]);
+  });
+
+  test("does not duplicate subagent completion as a parent background event", () => {
+    const events = projectRunItemToRuntimeEvents(baseRun(), {
+      type: "system_event",
+      id: "task-notification-subagent-1",
+      name: "task_notification",
+      payload: {
+        task_id: "task-1",
+        subagent_run_id: "subagent-1",
+        status: "completed"
+      },
+      createdAt: "2026-04-30T00:00:02.000Z"
+    }, {
+      includeAssistantText: true,
+      includeAssistantThinking: true,
+      includeModelStreamText: true
+    });
+
+    expect(events).toEqual([]);
+  });
+
+  test("projects delayed LSP diagnostics without a chat status item", () => {
+    const events = projectRunItemToRuntimeEvents(baseRun(), {
+      type: "system_event",
+      id: "lsp-1",
+      name: "lsp_diagnostics",
+      payload: {
+        tool_use_id: "edit-1",
+        file_path: "src/index.ts",
+        mutation_version: 2,
+        sha256: "abc",
+        delayed: true,
+        diagnostics: {
+          servers: ["typescript-language-server"],
+          total: 1,
+          errors: 1,
+          warnings: 0,
+          truncated: false,
+          items: []
+        }
+      },
+      createdAt: "2026-04-30T00:00:02.000Z"
+    }, {
+      includeAssistantText: true,
+      includeAssistantThinking: true,
+      includeModelStreamText: true
+    });
+    expect(events).toEqual([expect.objectContaining({
+      type: "lsp.diagnostics.updated",
+      toolUseId: "edit-1",
+      mutationVersion: 2,
+      delayed: true
+    })]);
+  });
+
   test("projects kernel run facts into product runtime events", () => {
     const run = baseRun({
       runId: "run-runtime-1",
@@ -591,6 +679,122 @@ describe("projectRunStateToRuntimeEvents", () => {
         ],
         totalCostUSD: 0.01
       }
+    }));
+  });
+
+  test("signs tool result artifacts with a renderer-safe session FileRef", () => {
+    const fileContextId = "runtime-result-ref";
+    const artifactPath = join(getAgentFileContextArtifactsPath(fileContextId), "jobs", "output.log");
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      fileReferenceBinding: { fileContextId },
+      generatedItems: [{
+        type: "tool_result",
+        id: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        output: "done",
+        execution: {
+          version: 2,
+          outcome: "succeeded",
+          durationMs: 10,
+          command: "echo done",
+          shell: "powershell",
+          resultRef: { kind: "file", path: artifactPath, size: 4, mimeType: "text/plain" },
+          terminationReason: "completed",
+        },
+        createdAt: "2026-04-30T00:00:02.000Z",
+      }],
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool.completed",
+      resultRef: expect.objectContaining({
+        path: artifactPath,
+        fileRef: {
+          source: "session",
+          scopeId: fileContextId,
+          relativePath: "artifacts/jobs/output.log",
+        },
+      }),
+    }));
+  });
+
+  test("does not sign result files outside the bound artifact directory", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      fileReferenceBinding: { fileContextId: "runtime-result-ref-outside" },
+      generatedItems: [{
+        type: "tool_result",
+        id: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        output: "done",
+        execution: {
+          version: 2,
+          outcome: "succeeded",
+          durationMs: 10,
+          command: "echo done",
+          shell: "powershell",
+          resultRef: { kind: "file", path: join(process.cwd(), "outside.log"), size: 4 },
+          terminationReason: "completed",
+        },
+        createdAt: "2026-04-30T00:00:02.000Z",
+      }],
+    }));
+    const completed = events.find((event) => event.type === "tool.completed");
+
+    expect(completed?.type === "tool.completed" ? completed.resultRef?.fileRef : undefined).toBeUndefined();
+  });
+
+  test("fails closed for malformed historical file bindings", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      fileReferenceBinding: { fileContextId: "../invalid" },
+      generatedItems: [{
+        type: "tool_result",
+        id: "tool-result",
+        toolCallId: "tool-1",
+        toolName: "Bash",
+        output: "done",
+        execution: {
+          version: 2,
+          outcome: "succeeded",
+          durationMs: 10,
+          command: "echo done",
+          shell: "powershell",
+          resultRef: { kind: "file", path: join(process.cwd(), "outside.log"), size: 4 },
+          terminationReason: "completed",
+        },
+        createdAt: "2026-04-30T00:00:02.000Z",
+      }],
+    }));
+    const completed = events.find((event) => event.type === "tool.completed");
+
+    expect(completed?.type === "tool.completed" ? completed.resultRef?.fileRef : undefined).toBeUndefined();
+  });
+
+  test("projects persisted Advisor reviews into product runtime events", () => {
+    const events = projectRunStateToRuntimeEvents(baseRun({
+      generatedItems: [{
+        type: "system_event",
+        id: "advisor-1",
+        name: "advisor_reviewed",
+        payload: {
+          severity: "concern",
+          summary: "可能遗漏边界条件",
+          details: "建议补充空输入检查",
+          modelRef: "openai/gpt-5-mini",
+          durationMs: 1234
+        },
+        createdAt: "2026-04-30T00:00:01.000Z"
+      }]
+    }));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "advisor.reviewed",
+      severity: "concern",
+      summary: "可能遗漏边界条件",
+      details: "建议补充空输入检查",
+      modelRef: "openai/gpt-5-mini",
+      durationMs: 1234
     }));
   });
 

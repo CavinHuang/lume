@@ -14,6 +14,9 @@
     "build:bundle": "bun ../../scripts/build-sidecar-bundle.mjs",
     "build:resources": "bun ../../scripts/build-default-skills-archive.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun scripts/run-unit-tests.mjs",
+    "test:smoke": "bun run smoke:restart-restore",
     "smoke:rpc": "bun scripts/smoke-rpc.mjs",
     "smoke:agent-new-runtime": "bun scripts/smoke-agent-new-runtime.mjs",
     "smoke:agent-new-runtime:interactions": "bun scripts/smoke-agent-new-runtime-interactions.mjs",
@@ -25,11 +28,12 @@
     "smoke:restart-restore": "bun scripts/smoke-restart-restore.mjs"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "0.83.0",
+    "@huggingface/transformers": "^3.8.1",
     "@lume/agent-sdk": "workspace:*",
     "@lume/natives": "workspace:*",
     "@lume/shared": "workspace:*",
     "@sinclair/typebox": "^0.34.41",
-    "@huggingface/transformers": "^3.8.1",
     "css-tree": "^3.2.1",
     "qrcode": "^1.5.4",
     "undici": "^7.16.0",

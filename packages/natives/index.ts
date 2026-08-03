@@ -105,6 +105,19 @@ export interface NativeListWorkspaceResult {
   truncated: boolean;
 }
 
+export interface NativeBashCommand {
+  argv: string[];
+}
+
+export interface NativeBashAnalysis {
+  status: "simple" | "too-complex" | "parse-unavailable";
+  commands: NativeBashCommand[];
+  has_pipeline?: boolean;
+  has_redirection?: boolean;
+  hasPipeline?: boolean;
+  hasRedirection?: boolean;
+}
+
 // ── Native loader ──────────────────────────────────────
 
 type NativeModule = {
@@ -125,6 +138,7 @@ type NativeModule = {
   fuzzyFind(options: Record<string, unknown>): Promise<Record<string, unknown>>;
   invalidateFsScanCache(path?: string): void;
   summarize(options: NativeSummarizeOptions): NativeSummaryResult;
+  analyzeBash?(command: string): NativeBashAnalysis;
 };
 
 let _native: NativeModule | null = null;
@@ -141,6 +155,7 @@ export const NATIVE_CAPABILITIES = [
   "workspace",
   "summarize",
   "fsCache",
+  "bashAnalysis",
 ] as const;
 
 type NativeCapability = typeof NATIVE_CAPABILITIES[number];
@@ -382,7 +397,7 @@ export function getNativeDiagnostics(): NativeDiagnostics {
     available: native !== null,
     binaryPath: _binaryPath,
     error: _loadError,
-    capabilities: native ? [...NATIVE_CAPABILITIES] : [],
+    capabilities: native ? NATIVE_CAPABILITIES.filter((capability) => capability !== "bashAnalysis" || typeof native.analyzeBash === "function") : [],
   };
 }
 
@@ -460,6 +475,17 @@ export function nativeHasMatch(
       options?.ignore_case,
       options?.multiline,
     );
+  } catch {
+    return null;
+  }
+}
+
+/** Analyze a shell command only when the bundled native module supports it. */
+export function nativeAnalyzeBash(command: string): NativeBashAnalysis | null {
+  const native = loadNative();
+  if (!native?.analyzeBash) return null;
+  try {
+    return native.analyzeBash(command);
   } catch {
     return null;
   }

@@ -245,7 +245,7 @@ describe("ToolExecutionGateway", () => {
     });
   });
 
-  test("requires approval when guardrail asks for approval even in bypass mode", async () => {
+  test("bypasses confirmation guardrails while preserving hard rejects", async () => {
     const gateway = new ToolExecutionGateway({
       guardrails: guardrail({ behavior: "require_approval", reason: "secret memory" })
     });
@@ -270,9 +270,8 @@ describe("ToolExecutionGateway", () => {
       permissionMode: "bypassPermissions",
       context: { threadId: "thread-1" }
     })).resolves.toMatchObject({
-      status: "approval_required",
-      reason: "secret memory",
-      reasonCode: "guardrail_approval",
+      status: "allow",
+      reasonCode: "bypass_guardrail_confirmation",
       risk: "medium"
     });
   });

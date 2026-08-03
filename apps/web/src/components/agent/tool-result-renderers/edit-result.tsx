@@ -1,54 +1,51 @@
-interface Props { input: Record<string, unknown>; result: unknown }
+import { useMemo } from 'react'
+import { PierreDiffView, createPierreFileDiff } from '@/components/diff/PierreDiffView'
 
-export function EditResult({ input, result }: Props) {
-  const filePath = String(input.file_path ?? '')
-  const oldStr = String(input.old_string ?? '')
-  const newStr = String(input.new_string ?? '')
-
-  // 如果后端返回了 patch，直接用 patch
-  const patch = (result as Record<string, unknown>)?.patch as string | undefined
-
-  return (
-    <div className="rounded-lg overflow-hidden border border-border/40">
-      <div className="px-3 py-1.5 text-[11px] text-foreground/50 bg-muted/40 font-mono truncate">
-        {filePath}
-      </div>
-      {patch ? (
-        <DiffView lines={patch.split('\n')} />
-      ) : (
-        <div className="divide-y divide-border/30">
-          {oldStr && (
-            <div className="bg-red-500/5">
-              <div className="px-3 py-1 text-[10px] font-medium text-red-500/60">删除</div>
-              <pre className="px-3 pb-2 text-[12px] font-mono leading-relaxed text-red-600 dark:text-red-400 whitespace-pre-wrap">{oldStr}</pre>
-            </div>
-          )}
-          {newStr && (
-            <div className="bg-green-500/5">
-              <div className="px-3 py-1 text-[10px] font-medium text-green-500/60">添加</div>
-              <pre className="px-3 pb-2 text-[12px] font-mono leading-relaxed text-green-600 dark:text-green-400 whitespace-pre-wrap">{newStr}</pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
+interface Props {
+  input: Record<string, unknown>
+  result: unknown
 }
 
-function DiffView({ lines }: { lines: string[] }) {
+export function EditResult({ input, result }: Props) {
+  const filePath = String(input.file_path ?? 'edited-file')
+  const oldContent = String(input.old_string ?? '')
+  const newContent = String(input.new_string ?? '')
+  const resultPatch = (result as Record<string, unknown> | null)?.patch
+  const patch = typeof resultPatch === 'string' && resultPatch.trim() ? resultPatch : undefined
+  const diff = useMemo(() => {
+    try {
+      const files = createPierreFileDiff({ patch, oldContent, newContent, filePath })
+      return {
+        patch,
+        addedLines: files.reduce((sum, file) => sum + file.hunks.reduce((count, hunk) => count + hunk.additionLines, 0), 0),
+        removedLines: files.reduce((sum, file) => sum + file.hunks.reduce((count, hunk) => count + hunk.deletionLines, 0), 0),
+      }
+    } catch {
+      const files = createPierreFileDiff({ oldContent, newContent, filePath })
+      return {
+        patch: undefined,
+        addedLines: files.reduce((sum, file) => sum + file.hunks.reduce((count, hunk) => count + hunk.additionLines, 0), 0),
+        removedLines: files.reduce((sum, file) => sum + file.hunks.reduce((count, hunk) => count + hunk.deletionLines, 0), 0),
+      }
+    }
+  }, [filePath, newContent, oldContent, patch])
+
   return (
-    <pre className="p-3 text-[12px] font-mono leading-relaxed overflow-x-auto" style={{ backgroundColor: '#24292e' }}>
-      {lines.map((line, i) => (
-        <div
-          key={i}
-          className={
-            line.startsWith('+') ? 'text-green-400 bg-green-500/10' :
-            line.startsWith('-') ? 'text-red-400 bg-red-500/10' :
-            line.startsWith('@@') ? 'text-blue-400' :
-            'text-zinc-400'
-          }
-        >{line}</div>
-      ))}
-    </pre>
+    <div className="overflow-hidden rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-app)]">
+      <div className="flex items-center gap-3 border-b border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-3 py-2 text-xs">
+        <span className="min-w-0 flex-1 truncate font-mono text-[var(--lume-text-secondary)]">{filePath}</span>
+        <span className="shrink-0 tabular-nums text-[var(--lume-success)]">+{diff.addedLines}</span>
+        <span className="shrink-0 tabular-nums text-[var(--lume-danger)]">-{diff.removedLines}</span>
+      </div>
+      <PierreDiffView
+        patch={diff.patch}
+        oldContent={oldContent}
+        newContent={newContent}
+        filePath={filePath}
+        compact
+        disableHeader
+        className="max-h-96"
+      />
+    </div>
   )
 }

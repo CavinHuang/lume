@@ -7,7 +7,7 @@ import { LoggingService, normalizeLogValue } from '../src/logging/logging-servic
 
 test('normalizes cyclic and sensitive data without invoking getters', () => {
   let getterCalled = false
-  const input = { apiKey: 'secret', ok: true }
+  const input = { apiKey: 'secret', referenceGrantId: 'grant-capability', ok: true }
   Object.defineProperty(input, 'danger', {
     enumerable: true,
     get() {
@@ -19,6 +19,7 @@ test('normalizes cyclic and sensitive data without invoking getters', () => {
 
   assert.deepEqual(normalizeLogValue(input), {
     apiKey: '[redacted]',
+    referenceGrantId: '[redacted]',
     ok: true,
     danger: '[Accessor]',
     self: '[Circular]',

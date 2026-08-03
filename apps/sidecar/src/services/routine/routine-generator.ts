@@ -4,6 +4,7 @@ import { getApplicableActivities } from "./routine-activities"
 import { writeRoutine, readRoutine } from "./routine-store"
 import { generateRoutinePlanWithLlm, type LlmRoutinePlan } from "./routine-llm-adapter"
 import { createLogger } from "../infra/logger"
+import { getPlanningTodoStore } from "../planning/planning-todo-store"
 
 const log = createLogger("routine")
 
@@ -23,7 +24,7 @@ function collectRoutineContext(): RoutineContext {
   return {
     activeBooks,
     queuedBooks,
-    unfinishedTodos: 0,
+    unfinishedTodos: getPlanningTodoStore().count(),
     lastSyncAt: settings.weread.lastSyncAt,
     dayOfWeek: new Date().getDay(),
     recentNotes,

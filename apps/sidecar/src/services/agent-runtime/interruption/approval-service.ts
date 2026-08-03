@@ -2,6 +2,7 @@ import type {
   AgentToolPermissionDecision,
   AgentToolPermissionRequest
 } from "@lume/shared";
+import { createHash } from "node:crypto";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
 import type { LumeInterruption } from "./interruption";
 import { listPendingRuntimeCoreInterruptionRecords } from "./interruption-index";
@@ -45,15 +46,23 @@ export async function persistToolApprovalInterruption(request: AgentToolPermissi
   ];
   if (request.runId) {
     writes.push(createFileBackedRunContinuationStore(sessionDir).upsert({
-      version: 1,
+      version: 2,
       runId: request.runId,
       threadId: request.threadId,
       status: "waiting_for_interruption",
       checkpoint: {
-        step: "before_model_call",
+        step: "before_tool_execution",
         interruptionId: interruption.id,
         toolCallId: request.toolUseId,
-        toolName: request.toolName
+        toolName: request.toolName,
+        toolKind: classifyToolKind(request.toolName),
+        toolCall: {
+          id: request.toolUseId,
+          name: request.toolName,
+          input: request.input,
+          inputHash: hashToolInput(request.input),
+          kind: classifyToolKind(request.toolName)
+        }
       },
       reason: "等待工具审批。",
       createdAt: now,
@@ -86,22 +95,30 @@ export async function resolveToolApprovalInterruption(input: {
   if (current?.runId) {
     const payload = current.payload as AgentToolPermissionRequest;
     await createFileBackedRunContinuationStore(sessionDir).update(current.runId, {
-      status: "not_resumable",
+      status: approved ? "ready_to_execute" : "ready_to_resume",
       checkpoint: {
-        step: "before_model_call",
+        step: approved ? "before_tool_execution" : "after_tool_result",
         interruptionId: current.id,
         toolCallId: payload.toolUseId,
         toolName: payload.toolName,
+        toolKind: classifyToolKind(payload.toolName),
+        toolCall: {
+          id: payload.toolUseId,
+          name: payload.toolName,
+          input: payload.input,
+          inputHash: hashToolInput(payload.input),
+          kind: classifyToolKind(payload.toolName)
+        },
         syntheticToolResult: {
           status: approved ? "approved" : "rejected",
           decision: input.decision ?? "deny",
           rememberDecision: input.decision === "allow_always",
-          note: "工具审批已解决，但原工具调用尚未在冷启动恢复路径中执行。"
+          note: approved ? "工具审批已通过，原工具调用尚未执行。" : "工具审批已拒绝，原工具调用不会执行。"
         }
       },
       reason: approved
-        ? "工具审批已解决；当前进程内 live resolver 会继续执行，冷启动不重新发起模型调用。"
-        : "工具审批已拒绝；当前进程内 live resolver 会返回拒绝结果，冷启动不重新发起模型调用。"
+        ? "工具审批已解决；冷启动恢复必须使用保存的输入执行原工具调用一次。"
+        : "工具审批已拒绝；冷启动恢复将注入拒绝结果。"
     });
   }
 }
@@ -155,23 +172,43 @@ export function resolvePersistedToolApprovalInterruption(input: {
     const payload = matched.interruption.payload as AgentToolPermissionRequest;
     const approved = input.decision === "allow_once" || input.decision === "allow_always";
     void createFileBackedRunContinuationStore(matched.sessionDir).update(matched.interruption.runId, {
-      status: "not_resumable",
+      status: approved ? "ready_to_execute" : "ready_to_resume",
       checkpoint: {
-        step: "before_model_call",
+        step: approved ? "before_tool_execution" : "after_tool_result",
         interruptionId: matched.interruption.id,
         toolCallId: payload.toolUseId,
         toolName: payload.toolName,
+        toolKind: classifyToolKind(payload.toolName),
+        toolCall: {
+          id: payload.toolUseId,
+          name: payload.toolName,
+          input: payload.input,
+          inputHash: hashToolInput(payload.input),
+          kind: classifyToolKind(payload.toolName)
+        },
         syntheticToolResult: {
           status: approved ? "approved" : "rejected",
           decision: input.decision,
           rememberDecision: input.decision === "allow_always",
-          note: "工具审批已解决，但原工具调用尚未在冷启动恢复路径中执行。"
+          note: approved ? "工具审批已通过，原工具调用尚未执行。" : "工具审批已拒绝，原工具调用不会执行。"
         }
       },
       reason: approved
-        ? "工具审批已解决；不通过 cold-start resume 伪造重新规划。"
-        : "工具审批已拒绝；不通过 cold-start resume 伪造重新规划。"
+        ? "工具审批已解决；冷启动恢复必须使用保存的输入执行原工具调用一次。"
+        : "工具审批已拒绝；冷启动恢复将注入拒绝结果。"
     });
   }
   return resolved;
+}
+
+function hashToolInput(input: unknown): string {
+  return createHash("sha256").update(JSON.stringify(input ?? null)).digest("hex");
+}
+
+function classifyToolKind(toolName: string): "read" | "write" | "execute" | "control" {
+  const normalized = toolName.toLowerCase();
+  if (normalized === "read" || normalized === "glob" || normalized === "grep" || normalized === "processoutput" || normalized === "taskoutput") return "read";
+  if (normalized === "write" || normalized === "edit" || normalized === "notebookedit") return "write";
+  if (normalized === "askuserquestion") return "control";
+  return "execute";
 }

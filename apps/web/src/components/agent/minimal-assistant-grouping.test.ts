@@ -8,6 +8,17 @@ const tool = (id: string): RuntimeAssistantBlock => ({
   id,
   toolCall: { id, toolName: 'Bash', input: {}, status: 'completed' },
 })
+const askUserQuestion = (id: string): RuntimeAssistantBlock => ({
+  type: 'tool_call',
+  id,
+  toolCall: {
+    id,
+    toolName: 'AskUserQuestion',
+    input: { questions: [{ header: '范围', question: '先做什么？', options: [{ label: 'A' }, { label: 'B' }] }] },
+    status: 'completed',
+    output: { answers: { '先做什么？': 'A' } },
+  },
+})
 const imageTool = (id: string): RuntimeAssistantBlock => ({
   type: 'tool_call',
   id,
@@ -100,6 +111,12 @@ describe('groupAssistantBlocksForMinimal', () => {
     expect(result.map((segment) => segment.kind)).toEqual(['process', 'wiki_proposal', 'process'])
   })
 
+  test('AskUserQuestion leaves the collapsible process as a standalone result', () => {
+    const result = groupAssistantBlocksForMinimal([tool('1'), askUserQuestion('2'), tool('3')])
+
+    expect(result.map((segment) => segment.kind)).toEqual(['process', 'ask_user_question', 'process'])
+  })
+
   test('keeps a running Wiki proposal in the process group', () => {
     expect(groupAssistantBlocksForMinimal([wikiProposal('1', 'running')])[0]?.kind).toBe('process')
   })
@@ -129,5 +146,11 @@ describe('groupAssistantBlocksForStandard', () => {
     const result = groupAssistantBlocksForStandard([tool('1'), wikiProposal('2')])
 
     expect(result.map((segment) => segment.kind)).toEqual(['inline', 'wiki_proposal'])
+  })
+
+  test('renders AskUserQuestion as a standalone standard segment', () => {
+    const result = groupAssistantBlocksForStandard([tool('1'), askUserQuestion('2')])
+
+    expect(result.map((segment) => segment.kind)).toEqual(['inline', 'ask_user_question'])
   })
 })

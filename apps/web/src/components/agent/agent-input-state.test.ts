@@ -141,6 +141,19 @@ describe('syncPermissionModeWithDefaultConfig', () => {
       autoSelectedPlan: false,
     })
   })
+
+  test('keeps the thread override while a stale plan phase is active', () => {
+    expect(syncPermissionModeWithDefaultConfig({
+      currentPermissionMode: 'bypassPermissions',
+      nextDefaultPermissionMode: 'default',
+      threadPermissionMode: 'bypassPermissions',
+      planPhase: 'planning',
+      autoSelectedPlan: false,
+    })).toEqual({
+      permissionMode: 'bypassPermissions',
+      autoSelectedPlan: false,
+    })
+  })
 })
 
 describe('resolveAgentInputConfigWorkspaceSlug', () => {

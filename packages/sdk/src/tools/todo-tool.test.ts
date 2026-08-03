@@ -38,6 +38,12 @@ describe('createTodoTool', () => {
     expect(tool.isConcurrencySafe()).toBe(false)
   })
 
+  test('prompt requires reconciling todos before the final answer', async () => {
+    const tool = createTodoTool({ threadId: 't1' })
+    expect(await tool.prompt({} as any)).toContain('Before any final answer')
+    expect(tool.description).toContain('no task remains unfinished')
+  })
+
   test('allDone clears the list', async () => {
     const tool = createTodoTool({ threadId: 't1' })
     const res = await tool.call({ todos: [item('T1', 'completed')] })
@@ -178,13 +184,20 @@ describe('createTodoTool', () => {
     expect(captured!.currentActiveForm).toBe('Running tests')
   })
 
-  test('onTodoUpdated currentActiveForm is null when nothing in_progress', async () => {
+  test('rejects unfinished lists without exactly one in_progress item', async () => {
     let captured: { todos: TodoItem[]; currentActiveForm: string | null } | null = null
     const tool = createTodoTool({
       threadId: 't1',
       onTodoUpdated: (state) => { captured = state },
     })
-    await tool.call({ todos: [item('A', 'pending', 'Doing A')] })
-    expect(captured!.currentActiveForm).toBeNull()
+    const noneActive = await tool.call({ todos: [item('A', 'pending', 'Doing A')] })
+    const multipleActive = await tool.call({
+      todos: [item('A', 'in_progress', 'Doing A'), item('B', 'in_progress', 'Doing B')],
+    })
+
+    expect(noneActive.is_error).toBe(true)
+    expect(noneActive.content).toContain('exactly one in_progress')
+    expect(multipleActive.is_error).toBe(true)
+    expect(captured).toBeNull()
   })
 })

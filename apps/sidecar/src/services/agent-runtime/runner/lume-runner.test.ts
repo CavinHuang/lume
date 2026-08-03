@@ -999,6 +999,14 @@ describe("LumeRunner", () => {
       createRuntimeSession: async (input) => {
         expect(input.trace?.traceId).toBeString();
         expect(input.openaiApiMode).toBe("responses");
+        expect(input.persistCodingReport).toBeFunction();
+        input.persistCodingReport?.({
+          status: "verified",
+          workspaceChanged: true,
+          changedFiles: ["src/background.ts"],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        });
         input.emitSdkMessage?.({
           type: "assistant",
           message: {
@@ -1032,5 +1040,10 @@ describe("LumeRunner", () => {
     expect(result).toEqual({ status: "completed" });
     expect(events).toEqual(["sdk:assistant", "sdk:assistant", "complete"]);
     expect(readRunItems(agentDir)).toHaveLength(2);
+    expect(readOnlyRunState(agentDir).codingReport).toMatchObject({
+      status: "verified",
+      pendingBackground: false,
+      changedFiles: ["src/background.ts"],
+    });
   });
 });

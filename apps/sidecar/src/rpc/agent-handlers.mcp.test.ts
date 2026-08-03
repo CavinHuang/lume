@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
@@ -153,7 +153,12 @@ describe("agent-handlers MCP RPC", () => {
   test("delete-workspace disposes the workspace MCP manager", async () => {
     restoreEnv = withTempConfigDir();
     const handlers = await createHandlers();
-    const workspace = await handlers[AGENT_IPC_CHANNELS.CREATE_WORKSPACE]!({ name: "Demo Workspace" }) as { id: string; slug: string };
+    const projectPath = join(process.env.LUME_CONFIG_DIR!, "project");
+    mkdirSync(projectPath, { recursive: true });
+    const workspace = await handlers[AGENT_IPC_CHANNELS.CREATE_WORKSPACE]!({
+      name: "Demo Workspace",
+      projectPath
+    }) as { id: string; slug: string };
 
     await handlers[AGENT_IPC_CHANNELS.DELETE_WORKSPACE]!({ id: workspace.id, mode: "keepHistory" });
 

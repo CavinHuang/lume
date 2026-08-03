@@ -9,7 +9,7 @@ export interface ResumeRunInput {
 }
 
 export interface ResumeRunResult {
-  status: "resumed" | "waiting_for_approval" | "waiting_for_user" | "not_resumable" | "failed";
+  status: "resumed" | "waiting_for_approval" | "waiting_for_user" | "waiting_background" | "not_resumable" | "failed";
   finalOutput?: string;
   error?: string;
 }
@@ -58,13 +58,13 @@ export class LumeResumeService {
       };
     }
 
-    if (
+    if (continuation.version === 1 && (
       continuation.status === "tool_running"
       || (
         continuation.checkpoint.step === "waiting_for_tool_result"
         && continuation.checkpoint.toolKind === "execute"
       )
-    ) {
+    )) {
       await this.stores.continuationStore.update(input.runId, {
         status: "not_resumable",
         reason: "正在执行或已中断的执行型工具不可冷启动恢复。"
@@ -75,7 +75,7 @@ export class LumeResumeService {
       };
     }
 
-    if (continuation.checkpoint.step === "before_model_call") {
+    if (continuation.version === 1 && continuation.checkpoint.step === "before_model_call") {
       await this.stores.continuationStore.update(input.runId, {
         status: "not_resumable",
         reason: "工具审批 checkpoint 不支持冷启动恢复；审批只用于唤醒当前 live resolver。"
@@ -86,7 +86,58 @@ export class LumeResumeService {
       };
     }
 
-    if (continuation.status !== "ready_to_resume") {
+    if (continuation.version === 2 && continuation.status === "waiting_background") {
+      if (continuation.checkpoint.syntheticToolResult === undefined) {
+        return {
+          status: "waiting_background",
+          error: continuation.reason ?? "后台任务仍在运行，已重新附着且不会重复执行命令。"
+        };
+      }
+      await this.stores.continuationStore.update(input.runId, { status: "ready_to_resume" });
+      continuation.status = "ready_to_resume";
+    }
+
+    if (
+      continuation.version === 2
+      && continuation.status === "tool_running"
+      && continuation.checkpoint.syntheticToolResult === undefined
+    ) {
+      if (continuation.checkpoint.processJobId) {
+        await this.stores.continuationStore.update(input.runId, {
+          status: "waiting_background",
+          reason: "后台任务已重新附着，等待持久化终态结果。"
+        });
+        return { status: "waiting_background" };
+      }
+      if (continuation.checkpoint.toolKind === "read" && continuation.checkpoint.toolCall) {
+        await this.stores.continuationStore.update(input.runId, {
+          status: "ready_to_execute",
+          checkpoint: { ...continuation.checkpoint, step: "before_tool_execution" },
+          reason: "只读工具结果未知，允许使用相同输入安全重放。"
+        });
+        continuation.status = "ready_to_execute";
+        continuation.checkpoint.step = "before_tool_execution";
+      } else {
+        await this.stores.continuationStore.update(input.runId, {
+          status: "interrupted",
+          reason: "副作用工具执行结果未知，禁止自动重放；Agent 必须先读取实际状态。"
+        });
+        return {
+          status: "not_resumable",
+          error: "interrupted_unknown：副作用工具执行结果未知，已阻止自动重放。"
+        };
+      }
+    }
+
+    if (continuation.version === 2 && continuation.status === "ready_to_execute" && !continuation.checkpoint.toolCall) {
+      await this.stores.continuationStore.update(input.runId, {
+        status: "failed",
+        reason: "V2 checkpoint 缺少原工具调用输入。"
+      });
+      return { status: "not_resumable", error: "V2 checkpoint 缺少原工具调用输入。" };
+    }
+
+    if (continuation.status !== "ready_to_resume" && continuation.status !== "ready_to_execute") {
       return {
         status: "not_resumable",
         error: continuation.reason ?? "当前 checkpoint 不可恢复。"
@@ -94,7 +145,8 @@ export class LumeResumeService {
     }
 
     if (
-      continuation.checkpoint.step === "waiting_for_tool_result"
+      continuation.status === "ready_to_resume"
+      && continuation.checkpoint.step === "waiting_for_tool_result"
       && continuation.checkpoint.syntheticToolResult === undefined
     ) {
       await this.stores.continuationStore.update(input.runId, {
@@ -142,6 +194,19 @@ export class LumeResumeService {
 export function buildColdStartContinuationMessage(checkpoint: RunContinuationState): string {
   const toolName = checkpoint.checkpoint.toolName ?? "unknown tool";
   const result = checkpoint.checkpoint.syntheticToolResult;
+  const toolCall = checkpoint.checkpoint.toolCall;
+  if (checkpoint.version === 2 && checkpoint.status === "ready_to_execute" && toolCall) {
+    return [
+      "继续执行之前因人工审批暂停的任务。",
+      "恢复边界：原工具尚未执行。",
+      `工具调用 ID: ${toolCall.id}`,
+      `工具: ${toolCall.name}`,
+      `输入哈希: ${toolCall.inputHash}`,
+      "保存的原始输入:",
+      stringifyContinuationResult(toolCall.input),
+      "仅执行上述原工具调用一次；不要改写输入，不要先发起新的规划轮次。执行后读取实际结果并继续原始用户任务。"
+    ].join("\n");
+  }
   return [
     "继续执行之前因人工交互暂停的任务。",
     `恢复点: ${checkpoint.checkpoint.step}`,
@@ -149,7 +214,7 @@ export function buildColdStartContinuationMessage(checkpoint: RunContinuationSta
     checkpoint.checkpoint.toolCallId ? `工具调用 ID: ${checkpoint.checkpoint.toolCallId}` : "",
     "已解决的交互结果:",
     stringifyContinuationResult(result),
-    checkpoint.checkpoint.step === "before_model_call"
+    checkpoint.version === 1 && checkpoint.checkpoint.step === "before_model_call"
       ? "注意：如果这是工具审批结果，原工具调用尚未在冷启动恢复路径中执行；如仍需要该动作，请重新发起工具调用或调整计划。"
       : "",
     "请基于以上结果继续完成原始用户任务，不要声称恢复了不可恢复的进程内工具执行。"

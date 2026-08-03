@@ -68,7 +68,7 @@ export function resolveAgentRuntimeRoutingTrace(input: {
     loadedSkills
   });
   return {
-    capabilityLanes: inferCapabilityLanes(availableTools),
+    capabilityLanes: inferCapabilityLanes(availableTools, input.userMessage),
     preferredCapabilityRoute: decision.preferredLane,
     reason: decision.reason
   };

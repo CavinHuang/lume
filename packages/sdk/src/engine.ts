@@ -72,12 +72,27 @@ import {
 } from './utils/messages.js'
 import type { HookRegistry, HookInput, HookExecutionResult } from './hooks.js'
 import { buildStructuredOutputInstruction, parseStructuredOutput } from './utils/structured-output.js'
-import { captureFileSnapshots, collectCheckpointPaths } from './utils/file-checkpoints.js'
+import { captureFileSnapshots, captureWorkspaceFileSnapshots, collectCheckpointPaths } from './utils/file-checkpoints.js'
 import { generatePromptSuggestion } from './utils/prompt-suggestions.js'
 import { resolve } from 'path'
 import { getUserInvocableSkills } from './skills/index.js'
-import { getDeferredTools } from './tools/tool-search.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
+import { FileStateCache } from './utils/fileCache.js'
+
+function renderLspDiagnosticsForModel(
+  event: Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>,
+): string {
+  const header = `Delayed LSP diagnostics for ${event.file_path} (mutation ${event.mutation_version})`
+  if (event.diagnostics.items.length === 0) return `${header}: no new diagnostics`
+  return [
+    header,
+    ...event.diagnostics.items.map((diagnostic) => {
+      const position = `${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}`
+      const severity = diagnostic.severity === 1 ? 'error' : diagnostic.severity === 2 ? 'warning' : 'info'
+      return `- ${position} ${severity}${diagnostic.code !== undefined ? ` [${diagnostic.code}]` : ''}: ${diagnostic.message}`
+    }),
+  ].join('\n')
+}
 
 // ============================================================================
 // Tool format conversion
@@ -260,14 +275,17 @@ function compactionStageMessage(stage: AgentContextCompactionStage): string {
 // ============================================================================
 
 async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
+  const deferredToolGuide = config.deferredTools?.length
+    ? '\n\nSome tools are deferred to keep your context focused. Use ToolSearch to discover them, then call ExecuteTool with the selected tool name and parameters. Do not claim a capability is unavailable before searching when the visible tools do not cover the task.'
+    : ''
   if (config.systemPrompt) {
     const structuredOutputInstruction = buildStructuredOutputInstruction(
       config.jsonSchema,
       config.outputFormat,
     )
-    const base = structuredOutputInstruction
+    const base = (structuredOutputInstruction
       ? `${config.systemPrompt}\n\n${structuredOutputInstruction}`
-      : config.systemPrompt
+      : config.systemPrompt) + deferredToolGuide
     return config.appendSystemPrompt
       ? base + '\n\n' + config.appendSystemPrompt
       : base
@@ -279,6 +297,7 @@ async function buildSystemPrompt(config: QueryEngineConfig): Promise<string> {
     'You are an AI assistant with access to tools. Use the tools provided to help the user accomplish their tasks.',
     'You should use tools when they would help you complete the task more accurately or efficiently.',
   )
+  if (deferredToolGuide) parts.push(deferredToolGuide.trim())
 
   // List available tools with descriptions
   parts.push('\n# Available Tools\n')
@@ -364,6 +383,9 @@ export class QueryEngine {
     tool_use_id: string
     tool_input: Record<string, unknown>
   }> = []
+  private fileStateCache = new FileStateCache()
+  private workingDirectory: string
+  private pendingLspDiagnostics: Array<Extract<SDKMessage, { type: 'system'; subtype: 'lsp_diagnostics' }>> = []
 
   constructor(config: QueryEngineConfig) {
     this.config = config
@@ -371,6 +393,7 @@ export class QueryEngine {
     this.compactState = createAutoCompactState()
     this.sessionId = config.sessionId || crypto.randomUUID()
     this.hookRegistry = config.hookRegistry
+    this.workingDirectory = config.cwd
   }
 
   private recordProviderUsage(
@@ -761,16 +784,18 @@ export class QueryEngine {
     return defaultMicroCompactMessages(messages as any[]) as NormalizedMessageParam[]
   }
 
-  private buildPermissionMetadata(
+  private async buildPermissionMetadata(
     block: ToolUseBlock,
     tool: ToolDefinition,
+    context: ToolContext,
   ) {
     const payload =
       block.input && typeof block.input === 'object'
         ? (block.input as Record<string, unknown>)
         : {}
-    const filePath =
-      typeof payload.file_path === 'string'
+    const filePath = tool.getPath
+      ? await tool.getPath(block.input, context)
+      : typeof payload.file_path === 'string'
         ? resolve(this.config.cwd, payload.file_path)
         : undefined
 
@@ -782,7 +807,7 @@ export class QueryEngine {
       description: tool.description,
       decisionReason: `Tool "${tool.name}" requires permission review`,
       permissionSuggestions:
-        filePath && !tool.isReadOnly?.()
+        filePath && !tool.isReadOnly?.(block.input, context)
           ? [{
               type: 'addRules' as const,
               rules: [{ toolName: tool.name }],
@@ -808,9 +833,9 @@ export class QueryEngine {
     for (const event of sessionStartHooks.events) yield event
 
     // Hook: UserPromptSubmit
-    const userHookResults = await this.executeHooks('UserPromptSubmit', {
-      toolInput: prompt,
-    })
+    const userHookResults = this.config.toolContinuation
+      ? { events: [], outputs: [] }
+      : await this.executeHooks('UserPromptSubmit', { toolInput: prompt })
     for (const event of userHookResults.events) yield event
     // Check if any hook blocks the submission
     if (userHookResults.outputs.some((r) => r.block)) {
@@ -824,6 +849,14 @@ export class QueryEngine {
         errors: ['Blocked by UserPromptSubmit hook'],
       }
       return
+    }
+
+    if (this.config.enableFileCheckpointing && this.config.fileCheckpointState && this.config.currentUserMessageId) {
+      await captureWorkspaceFileSnapshots(
+        this.config.fileCheckpointState,
+        this.config.currentUserMessageId,
+        [this.config.cwd, ...(this.config.additionalDirectories ?? [])],
+      )
     }
 
     yield {
@@ -862,8 +895,11 @@ export class QueryEngine {
       this.messages.push({ role: 'runtime', content: this.config.runtimeContext.trim() })
     }
 
-    // Add user message
-    this.messages.push({ role: 'user', content: prompt as any })
+    // Exact cold-start continuation resumes at the persisted tool boundary,
+    // so it must not add a second model-facing user prompt.
+    if (!this.config.toolContinuation) {
+      this.messages.push({ role: 'user', content: prompt as any })
+    }
 
     // Build system prompt
     const systemPrompt = await buildSystemPrompt(this.config)
@@ -875,7 +911,7 @@ export class QueryEngine {
       session_id: this.sessionId,
       tools: this.config.tools.map(t => t.name),
       model: this.config.model,
-      cwd: this.config.cwd,
+      cwd: this.workingDirectory,
       mcp_servers: this.config.mcpServerStatuses || [],
       permission_mode: this.config.permissionMode || 'bypassPermissions',
       permissionMode: this.config.permissionMode || 'bypassPermissions',
@@ -888,11 +924,56 @@ export class QueryEngine {
       claude_code_version: this.config.initialization?.claudeCodeVersion || 'open-agent-sdk/0.2.0',
     } as SDKMessage
 
+    if (this.config.toolContinuation) {
+      const persisted = this.config.toolContinuation
+      const block: ToolUseBlock = {
+        type: 'tool_use',
+        id: persisted.toolCall.id,
+        name: persisted.toolCall.name,
+        input: persisted.toolCall.input,
+      }
+      if (!this.messages.some((message) => (
+        message.role === 'assistant'
+        && Array.isArray(message.content)
+        && message.content.some((content) => content.type === 'tool_use' && content.id === block.id)
+      ))) {
+        this.messages.push({ role: 'assistant', content: [block] })
+      }
+      const execution = persisted.toolResult
+        ? { results: [{ ...persisted.toolResult, tool_use_id: block.id, tool_name: block.name }], events: [], toolsUsed: [block.name] }
+        : await this.executeTools([block])
+      for (const event of execution.events) yield event
+      for (const result of execution.results) {
+        yield {
+          type: 'tool_result',
+          result: {
+            tool_use_id: result.tool_use_id,
+            tool_name: result.tool_name || block.name,
+            output: formatToolResultOutput(result.content),
+            content: result.content,
+            is_error: result.is_error === true,
+            ...(result._meta ? { _meta: result._meta } : {}),
+          },
+        }
+      }
+      this.messages.push({
+        role: 'user',
+        content: execution.results.map((result) => ({
+          type: 'tool_result' as const,
+          tool_use_id: result.tool_use_id,
+          content: result.content,
+          is_error: result.is_error,
+          ...(result._meta ? { _meta: result._meta } : {}),
+        })),
+      })
+    }
+
     // Agentic loop
     let turnsRemaining = this.config.maxTurns
     let budgetExceeded = false
     let structuredOutputRetriesExceeded = false
     let completedNaturally = false
+    let completionGuardStop: { message: string; errorCode?: string } | undefined
     let maxOutputRecoveryAttempts = 0
     const MAX_OUTPUT_RECOVERY = 3
     let structuredOutputRetryAttempts = 0
@@ -928,6 +1009,15 @@ export class QueryEngine {
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
       )
+      const delayedLspDiagnostics = this.pendingLspDiagnostics.splice(0)
+      if (delayedLspDiagnostics.length > 0) {
+        apiMessages.push({
+          role: 'runtime',
+          content: `<internal_context type="lsp_diagnostics">\n${delayedLspDiagnostics
+            .map((event) => renderLspDiagnosticsForModel(event))
+            .join('\n\n')}\n</internal_context>`,
+        })
+      }
       const transientRuntimeContext = [
         internalContextBlocks.length > 0
           ? `<internal_context type="compaction">\n${internalContextBlocks.join('\n\n')}\n</internal_context>`
@@ -983,8 +1073,8 @@ export class QueryEngine {
             }
 
             const chunk = next.value as CreateMessageStreamEvent
-            firstResponseAt ??= performance.now()
             if (chunk.type === 'text_delta' && chunk.text) {
+              firstResponseAt ??= performance.now()
               // Official Claude Agent SDK format (stream_event)
               yield {
                 type: 'stream_event',
@@ -1006,6 +1096,7 @@ export class QueryEngine {
               }
             }
             if (chunk.type === 'thinking_delta' && chunk.thinking) {
+              firstResponseAt ??= performance.now()
               yield {
                 type: 'stream_event',
                 event: {
@@ -1015,6 +1106,29 @@ export class QueryEngine {
                 },
                 parent_tool_use_id: null,
                 session_id: this.config.sessionId,
+              }
+            }
+            if (chunk.type === 'retry_state') {
+              const status = chunk.errorStatus
+              const errorType = status === 429
+                ? 'rate_limit'
+                : status === 400
+                  ? 'invalid_request'
+                  : status === 401 || status === 403
+                    ? 'authentication_failed'
+                    : status === 500 || status === 502 || status === 503 || status === 529
+                      ? 'server_error'
+                      : 'unknown'
+              yield {
+                type: 'system',
+                subtype: 'api_retry',
+                phase: chunk.phase,
+                attempt: chunk.attempt,
+                max_retries: chunk.maxRetries,
+                retry_delay_ms: chunk.retryDelayMs,
+                error_status: status,
+                error: errorType,
+                session_id: this.sessionId,
               }
             }
           }
@@ -1196,9 +1310,14 @@ export class QueryEngine {
       if (toolUseBlocks.length === 0) {
         const feedback = await this.config.completionGuard?.()
         if (feedback) {
+          if (typeof feedback !== 'string' && feedback.type === 'stop') {
+            completionGuardStop = feedback
+            break
+          }
+          const feedbackText = typeof feedback === 'string' ? feedback : feedback.message
           this.messages.push({
             role: 'user',
-            content: feedback,
+            content: feedbackText,
           })
           continue
         }
@@ -1226,6 +1345,7 @@ export class QueryEngine {
             output: formatToolResultOutput(result.content),
             content: result.content,
             is_error: result.is_error === true,
+            ...(result._meta ? { _meta: result._meta } : {}),
           },
         }
       }
@@ -1255,7 +1375,11 @@ export class QueryEngine {
     }
 
     // Hook: Stop (end of agentic loop)
-    const stopHooks = await this.executeHooks('Stop')
+    const stopHooks = await this.executeHooks('Stop', {
+      // Expose the bounded, normalized conversation to host-owned post-turn
+      // reviewers without changing the model-visible prompt.
+      messages: this.messages,
+    })
     for (const event of stopHooks.events) yield event
 
     // Hook: SessionEnd
@@ -1267,6 +1391,8 @@ export class QueryEngine {
       ? 'error_max_budget_usd'
       : structuredOutputRetriesExceeded
         ? 'error_max_structured_output_retries'
+      : completionGuardStop
+        ? 'error_completion_guard'
       : turnsRemaining <= 0 && !completedNaturally
         ? 'error_max_turns'
         : 'success'
@@ -1298,8 +1424,10 @@ export class QueryEngine {
       cost: this.totalCost,
       permission_denials: this.permissionDenials,
       structured_output: structuredOutput,
-      errors: structuredOutputRetriesExceeded
-        ? ['Structured output validation failed after retry attempts.']
+      errors: completionGuardStop
+        ? [completionGuardStop.message]
+        : structuredOutputRetriesExceeded
+          ? ['Structured output validation failed after retry attempts.']
         : undefined,
     }
 
@@ -1344,9 +1472,18 @@ export class QueryEngine {
       model: this.config.model,
       apiType: this.provider.apiType,
       sessionId: this.sessionId,
+      runId: this.config.runId,
+      currentUserMessageId: this.config.currentUserMessageId,
+      setWorkingDirectory: (cwd) => {
+        this.workingDirectory = resolve(cwd)
+      },
       additionalDirectories: this.config.additionalDirectories,
       sandbox: this.config.sandbox,
       toolConfig: this.config.toolConfig,
+      fileStateCache: this.fileStateCache,
+      artifactsRoot: this.config.artifactsRoot,
+      onToolExecution: this.config.onToolExecution,
+      onBeforeToolExecution: this.config.onBeforeToolExecution,
       permissionMode: this.config.permissionMode,
       hookRegistry: this.hookRegistry,
       skillRegistry: this.config.skillRegistry,
@@ -1388,7 +1525,7 @@ export class QueryEngine {
 
     for (const [index, block] of toolUseBlocks.entries()) {
       const tool = this.config.tools.find((t) => t.name === block.name)
-      if (tool?.isReadOnly?.() || tool?.isConcurrencySafe?.()) {
+      if (tool?.isReadOnly?.(block.input, context) || tool?.isConcurrencySafe?.(block.input, context)) {
         concurrent.push({ index, block, tool })
       } else {
         serial.push({ index, block, tool })
@@ -1457,6 +1594,43 @@ export class QueryEngine {
       ...context,
       toolUseId: block.id,
     }
+    let toolCallActive = true
+    toolContext.emitEvent = (event) => {
+      if (toolCallActive) {
+        context.emitEvent?.(event)
+        return
+      }
+      if (event.type === 'system' && (event.subtype === 'task_notification' || event.subtype === 'lsp_diagnostics')) {
+        if (event.subtype === 'lsp_diagnostics') this.pendingLspDiagnostics.push(event)
+        try {
+          this.config.onAsyncEvent?.(event)
+        } catch {
+          // Host event delivery must not break terminal process cleanup.
+        }
+      }
+    }
+    toolContext.executeNestedTool = async ({ toolName, params }) => {
+      const target = this.config.tools.find((candidate) => candidate.name === toolName)
+        ?? this.config.deferredTools?.find((candidate) => candidate.name === toolName)
+      if (!target) {
+        return {
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: `Error: Nested tool "${toolName}" is not available.`,
+          is_error: true,
+        }
+      }
+      const delegated = await this.executeSingleTool({
+        type: 'tool_use',
+        id: `${block.id}:${toolName}`,
+        name: target.name,
+        input: params,
+      }, target, context)
+      events.push(...delegated.events)
+      toolsUsed.push(...delegated.toolsUsed)
+      return delegated.result
+    }
+    toolContext.executeDeferredTool = toolContext.executeNestedTool
     if (!tool) {
       return {
         result: {
@@ -1487,7 +1661,7 @@ export class QueryEngine {
     }
 
     // Check permissions
-    if (this.config.canUseTool) {
+    if (this.config.canUseTool && !tool.runtimeMetadata?.delegatesPermission) {
       const permissionRequestHooks = await this.executeHooks('PermissionRequest', {
         toolName: block.name,
         toolInput: block.input,
@@ -1498,7 +1672,7 @@ export class QueryEngine {
         const permission = await this.config.canUseTool(
           tool,
           block.input,
-          this.buildPermissionMetadata(block, tool),
+          await this.buildPermissionMetadata(block, tool, toolContext),
         )
         if (permission.behavior === 'deny') {
           this.permissionDenials.push({
@@ -1546,6 +1720,39 @@ export class QueryEngine {
       }
     }
 
+    // Validate the permission-adjusted input immediately before hooks and
+    // execution so malformed model output cannot reach tool side effects.
+    if (tool.validateInput) {
+      try {
+        const validationError = await tool.validateInput(block.input, toolContext)
+        if (typeof validationError === 'string' && validationError.trim()) {
+          return {
+            result: {
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: `Invalid input for tool "${block.name}": ${validationError}`,
+              is_error: true,
+              tool_name: block.name,
+            },
+            events,
+            toolsUsed,
+          }
+        }
+      } catch (err: any) {
+        return {
+          result: {
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: `Input validation error for tool "${block.name}": ${err.message}`,
+            is_error: true,
+            tool_name: block.name,
+          },
+          events,
+          toolsUsed,
+        }
+      }
+    }
+
     // Hook: PreToolUse
     const preHookResults = await this.executeHooks('PreToolUse', {
       toolName: block.name,
@@ -1571,6 +1778,12 @@ export class QueryEngine {
 
     // Execute the tool
     try {
+      await this.config.onBeforeToolExecution?.({
+        toolName: block.name,
+        input: block.input,
+        userMessageId: this.config.currentUserMessageId,
+        cwd: toolContext.cwd,
+      })
       if (this.config.fileCheckpointState && this.config.currentUserMessageId) {
         const checkpointPaths = collectCheckpointPaths(block.name, block.input)
           .map((path) => resolve(toolContext.cwd, path))
@@ -1584,6 +1797,12 @@ export class QueryEngine {
       const startedAt = performance.now()
       const eventStartIndex = events.length
       const result = await tool.call(block.input, toolContext)
+      toolCallActive = false
+      toolContext.onToolExecution?.({
+        toolName: block.name,
+        input: block.input,
+        result,
+      })
       applySkillAllowedTools(block.name, result, this.config)
       const elapsedTimeSeconds = Math.max(0, (performance.now() - startedAt) / 1000)
       toolsUsed.push(block.name)
@@ -1643,6 +1862,7 @@ export class QueryEngine {
         toolsUsed,
       }
     } catch (err: any) {
+      toolCallActive = false
       // Hook: PostToolUseFailure
       const postFailureHooks = await this.executeHooks('PostToolUseFailure', {
         toolName: block.name,
@@ -1791,7 +2011,7 @@ export class QueryEngine {
             isLoaded: server.status === 'connected',
           })),
       ),
-      deferredBuiltinTools: getDeferredTools().map((tool) => ({
+      deferredBuiltinTools: (this.config.deferredTools ?? []).map((tool) => ({
         name: tool.name,
         tokens: Math.ceil((tool.description.length + tool.name.length) / 4),
         isLoaded: false,

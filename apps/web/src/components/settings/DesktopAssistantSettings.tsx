@@ -16,6 +16,11 @@ import { onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import {
+  desktopPermissionRequestCompleted,
+  desktopPermissionRequestMessage,
+  desktopPermissionRequestToastMessage,
+} from '@/components/agent/agent-input-desktop-context'
 import { buildDesktopAssistantDiagnostics, toggleAllowedDesktopApp } from './desktop-assistant-settings-state'
 import { buildDesktopProposalWelcomeState } from './desktop-assistant-proposals-state'
 
@@ -31,6 +36,7 @@ export function DesktopAssistantSettings() {
   const [appDiscovery, setAppDiscovery] = useState<DesktopAppDiscoveryResult>({ status: 'unavailable', apps: [] })
   const [appsDraft, setAppsDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  const [permissionRequestLoading, setPermissionRequestLoading] = useState(false)
 
   const refresh = async () => {
     const [nextSettings, nextStatus, nextActivity, nextProposals, nextAppDiscovery] = await Promise.all([
@@ -88,6 +94,23 @@ export function DesktopAssistantSettings() {
   const setAppAllowed = async (appId: string, allowed: boolean) => {
     if (!settings) return
     await save({ allowedApps: toggleAllowedDesktopApp(settings.allowedApps, appId, allowed) })
+  }
+
+  const handleRequestPermissions = async () => {
+    setPermissionRequestLoading(true)
+    try {
+      const result = await sidecarCall(DESKTOP_CONTEXT_IPC_CHANNELS.REQUEST_PERMISSIONS, {})
+      if (desktopPermissionRequestCompleted(result)) {
+        toast.success(desktopPermissionRequestToastMessage(result))
+      } else {
+        toast.info(desktopPermissionRequestMessage(result))
+      }
+      await refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '启动授权引导失败')
+    } finally {
+      setPermissionRequestLoading(false)
+    }
   }
 
   const openProposal = async (proposal: DesktopProactiveProposal) => {
@@ -191,7 +214,22 @@ export function DesktopAssistantSettings() {
         </div>
         {diagnostics && (
           <div className={`mt-3 rounded-xl border px-3 py-2.5 ${diagnosticToneClassName(diagnostics.tone)}`}>
-            <p className="text-sm font-medium">{diagnostics.title}</p>
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-sm font-medium">{diagnostics.title}</p>
+              {status?.host.status === 'permission_denied' && status.host.permissionTarget && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={permissionRequestLoading}
+                  onClick={() => void handleRequestPermissions()}
+                  className="shrink-0 border-current/30 bg-background/40"
+                >
+                  {permissionRequestLoading && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+                  {permissionRequestLoading ? '正在打开授权' : '去授权'}
+                </Button>
+              )}
+            </div>
             <ul className="mt-1 space-y-1 text-xs leading-5">
               {diagnostics.details.map((detail) => (
                 <li key={detail}>{detail}</li>

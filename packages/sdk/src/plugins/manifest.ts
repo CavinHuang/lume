@@ -140,6 +140,7 @@ export interface LumePluginManifest {
   skills?: string[];
   hooks?: string;
   mcpServers?: string;
+  lspServers?: string;
   commandTools?: Array<Record<string, unknown>>;
   permissions?: PluginPermissions;
   marketplace?: PluginMarketplaceManifest;
@@ -193,6 +194,9 @@ export function parseManifest(raw: Record<string, unknown>): LumePluginManifest 
   if (typeof raw.mcpServers === "string") {
     validatePluginPath(raw.mcpServers, "mcpServers");
   }
+  if (typeof raw.lspServers === "string") {
+    validatePluginPath(raw.lspServers, "lspServers");
+  }
 
   const marketplace = normalizeMarketplace(raw.marketplace);
 
@@ -211,6 +215,7 @@ export function parseManifest(raw: Record<string, unknown>): LumePluginManifest 
         : undefined,
     hooks: raw.hooks as string | undefined,
     mcpServers: raw.mcpServers as string | undefined,
+    lspServers: raw.lspServers as string | undefined,
     commandTools: Array.isArray(raw.commandTools)
       ? raw.commandTools.filter(
           (tool): tool is Record<string, unknown> =>
@@ -331,7 +336,7 @@ function parseInstaller(raw: unknown): PluginSetupInstaller | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const v = raw as Record<string, unknown>;
   if (v.kind !== "chrome-native-host") return undefined;
-  if (typeof v.hostName !== "string" || !/^[a-z0-9._-]{1,128}$/.test(v.hostName)) return undefined;
+  if (typeof v.hostName !== "string" || !/^(?=.{1,128}$)[a-z0-9_]+(?:\.[a-z0-9_]+)*$/.test(v.hostName)) return undefined;
   if (typeof v.extensionId !== "string" || !/^[a-p]{32}$/.test(v.extensionId)) return undefined;
   if (typeof v.appServerUrl !== "string" || !isLoopbackWebSocketUrl(v.appServerUrl)) return undefined;
   return {

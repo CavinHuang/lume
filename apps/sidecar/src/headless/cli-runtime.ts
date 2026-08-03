@@ -197,7 +197,7 @@ function toCliFileEntry(entry: FileEntry, rootPath: string): CliRuntimeFileEntry
 
 function resolveFilesRoot(input: ListCliFilesInput): { entries: FileEntry[]; rootPath: string } {
   if (input.threadId) {
-    const rootPath = resolveAgentThreadWorkdir(input.threadId).lumeWorkDir;
+    const rootPath = resolveAgentThreadWorkdir(input.threadId).filesRoot;
     const entries = listAgentDirectory(undefined, input.threadId, rootPath);
     return { entries, rootPath };
   }

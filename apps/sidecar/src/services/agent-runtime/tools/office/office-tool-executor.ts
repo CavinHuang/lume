@@ -118,15 +118,21 @@ ${code}
     const commands = ["python3", "python3.11", "python"];
     for (const command of commands) {
       try {
-        const result = await this.runCommand(command, args, options);
-        if (!result.timedOut) {
-          return result;
-        }
+        const probe = await this.runCommand(command, ["--version"], {
+          timeoutMs: Math.min(options.timeoutMs, 5_000),
+          outputEncoding: options.outputEncoding
+        });
+        if (!probe.ok) continue;
+        return await this.runCommand(command, args, options);
       } catch {
         // try next python candidate
       }
     }
-    return this.runCommand(commands[commands.length - 1] ?? "python", args, options);
+    return {
+      ok: false,
+      exitCode: 127,
+      stderr: "Python runtime not found"
+    };
   }
 
   async runCommand(command: string, args: string[], options: { timeoutMs: number; outputEncoding?: BufferEncoding; env?: Record<string, string | undefined> } = { timeoutMs: 10 * 60 * 1000, outputEncoding: "utf-8" }): Promise<OfficeToolExecutorResult> {

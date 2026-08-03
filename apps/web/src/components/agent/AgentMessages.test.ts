@@ -416,6 +416,42 @@ describe('reconcileUserMessageVersions', () => {
     })
   })
 
+  test('restores persisted assistant text when compaction left only tool blocks in the runtime projection', () => {
+    const messages: RuntimeMessageView[] = [{
+      id: 'assistant:run-1',
+      type: 'assistant',
+      text: '',
+      thinking: '',
+      messageId: 'assistant-message-1',
+      blocks: [{
+        type: 'tool_call',
+        id: 'tool:1',
+        toolCall: {
+          id: 'tool-1',
+          toolName: 'Read',
+          input: { file_path: 'src/app.ts' },
+          status: 'completed',
+        },
+      }],
+      status: 'completed',
+      toolCalls: [],
+    }]
+    const visibleThreadMessages = [{
+      id: 'assistant-message-1',
+      role: 'assistant',
+      content: '已读取并完成检查。',
+      createdAt: Date.parse('2026-05-01T07:23:00.000Z'),
+    }] as AgentMessage[]
+
+    expect(reconcileUserMessageVersions(messages, visibleThreadMessages)[0]).toMatchObject({
+      text: '已读取并完成检查。',
+      blocks: [
+        { type: 'text', text: '已读取并完成检查。' },
+        { type: 'tool_call' },
+      ],
+    })
+  })
+
   test('reuses the previous result when projected and visible references are unchanged', () => {
     const messages: RuntimeMessageView[] = [{
       id: 'user:1',
@@ -513,6 +549,7 @@ describe('projectVisibleThreadMessages', () => {
             trigger: 'auto',
             pre_tokens: 900,
             post_tokens: 280,
+            summary: '保留了已完成的文件修改与验证结果',
           },
         },
       ],
@@ -523,24 +560,9 @@ describe('projectVisibleThreadMessages', () => {
         id: 'assistant-compact:0:context_compaction_started',
         type: 'system',
         variant: 'context_compaction',
-        status: 'active',
-        text: '正在自动压缩上下文',
-        createdAt: '2026-05-01T07:23:00.000Z',
-      },
-      {
-        id: 'assistant-compact:1:context_compaction_progress',
-        type: 'system',
-        variant: 'context_compaction',
-        status: 'active',
-        text: '正在生成上下文摘要',
-        createdAt: '2026-05-01T07:23:00.000Z',
-      },
-      {
-        id: 'assistant-compact:2:compact_boundary',
-        type: 'system',
-        variant: 'context_compaction',
         status: 'completed',
         text: '上下文已自动压缩',
+        summary: '保留了已完成的文件修改与验证结果',
         createdAt: '2026-05-01T07:23:00.000Z',
       },
       {

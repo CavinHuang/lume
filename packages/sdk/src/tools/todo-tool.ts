@@ -42,6 +42,8 @@ const PROMPT = `Use this tool to manage a structured task list for the current s
 - States: pending | in_progress | completed
 - Keep EXACTLY ONE task in_progress at a time
 - Mark a task completed the moment it is done — do not batch
+- Before any final answer, reconcile the list with actual work and call TodoWrite again; no task may remain pending or in_progress
+- Do not mark work completed unless it was actually performed and, when applicable, verified
 - Each item needs BOTH forms:
   - content: imperative ("Run tests")
   - activeForm: present continuous ("Running tests")
@@ -59,7 +61,7 @@ function renderTodos(todos: TodoItem[]): string {
 }
 
 const VERIFICATION_NUDGE =
-  '\n\n[verification needed] 多个任务被一次性标记为完成。在结束本轮前，请派 code-reviewer 子代理验证这些任务的实现是否真正达成，避免虚假完成。'
+  '\n\n[verification needed] 多个任务被一次性标记为完成。请回到当前 Run 执行相关验证并检查最终 Diff，再结束本轮。'
 
 function countNewlyCompleted(prev: TodoItem[], next: TodoItem[]): number {
   const prevCompleted = new Set(prev.filter((t) => t.status === 'completed').map((t) => t.content))
@@ -114,7 +116,7 @@ export function createTodoTool(opts: {
   return defineTool({
     name: 'TodoWrite',
     description:
-      'Update the session todo list. Always provide content (imperative) and activeForm (present continuous) for each task, and keep exactly one task in_progress at a time.',
+      'Update the complete session todo list. Keep exactly one task in_progress, mark each completed immediately after actual completion, and call TodoWrite again before the final answer so no task remains unfinished.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -162,6 +164,14 @@ export function createTodoTool(opts: {
         const status = coerceStatus(t.status)
         if (status !== 'completed') allDone = false
         next.push({ content, activeForm, status })
+      }
+
+      const inProgressCount = next.filter((todo) => todo.status === 'in_progress').length
+      if (!allDone && inProgressCount !== 1) {
+        return {
+          data: `Error: unfinished todo lists require exactly one in_progress task; received ${inProgressCount}`,
+          is_error: true,
+        }
       }
 
       store.set(allDone ? [] : next)

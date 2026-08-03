@@ -56,6 +56,28 @@ function usageEvent(outputTokens: number, scope: 'main' | 'subagent' | 'backgrou
 }
 
 describe('runtime-event-message-projection', () => {
+  test('retracts a failed partial model attempt and keeps retry state temporary', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'message.user.submitted', text: 'hello' }),
+      event({ type: 'assistant.delta', delta: 'failed partial' }),
+      event({
+        type: 'model.retry',
+        phase: 'waiting',
+        attempt: 1,
+        maxRetries: 5,
+        retryDelayMs: 1_000,
+        errorStatus: 503,
+      }),
+      event({ type: 'model.retry_cleared' }),
+      event({ type: 'assistant.delta', delta: 'successful response' }),
+    ])
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant).toMatchObject({
+      type: 'assistant',
+      text: 'successful response',
+    })
+    if (assistant?.type === 'assistant') expect(assistant.retry).toBeUndefined()
+  })
   test('projects RuntimeEvents into user, assistant, thinking, and tool blocks', () => {
     const messages = projectRuntimeEventMessages([
       event({ type: 'run.started' }),
@@ -374,7 +396,7 @@ describe('runtime-event-message-projection', () => {
     expect(assistantIds[0]).not.toBe(assistantIds[1])
   })
 
-  test('keeps context compaction start and completion visible as a status timeline', () => {
+  test('keeps all context compaction stages in one stable status message', () => {
     expect(projectRuntimeEventMessages([
       event({ type: 'message.user.submitted', text: '继续', messageId: 'user-1' }),
       event({
@@ -415,22 +437,6 @@ describe('runtime-event-message-projection', () => {
       },
       {
         id: 'compact-start',
-        type: 'system',
-        variant: 'context_compaction',
-        status: 'active',
-        text: '正在自动压缩上下文',
-        createdAt: '2026-05-11T00:00:00.000Z',
-      },
-      {
-        id: 'compact-progress',
-        type: 'system',
-        variant: 'context_compaction',
-        status: 'active',
-        text: '正在生成上下文摘要',
-        createdAt: '2026-05-11T00:00:00.000Z',
-      },
-      {
-        id: 'compact-complete',
         type: 'system',
         variant: 'context_compaction',
         status: 'completed',
@@ -1043,5 +1049,129 @@ describe('todo_update block 稳定性', () => {
     const idsAfterFallback = assistantBlockIds(fallbackResult.messages)
 
     expect(idsAfterFallback).toEqual(idsBeforeFallback)
+  })
+
+  test('projects coding execution metadata and completion report for the existing UI', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started' }),
+      event({ type: 'message.user.submitted', text: '修复测试', messageId: 'user-1' }),
+      event({
+        type: 'tool.started',
+        toolCallId: 'tool-1',
+        toolName: 'Bash',
+        inputPreview: { command: 'bun test' },
+        riskLevel: 'medium',
+      }),
+      event({
+        type: 'tool.completed',
+        toolCallId: 'tool-1',
+        toolName: 'Bash',
+        resultPreview: '1 pass',
+        execution: {
+          version: 1,
+          durationMs: 25,
+          command: 'bun test',
+          purpose: 'verification',
+          terminationReason: 'completed',
+        },
+      }),
+      event({
+        type: 'run.completed',
+        codingReport: {
+          status: 'verified',
+          workspaceChanged: true,
+          changedFiles: ['src/fix.ts'],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        },
+      }),
+    ])
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant?.type).toBe('assistant')
+    if (assistant?.type !== 'assistant') return
+    expect(assistant.codingReport?.status).toBe('verified')
+    expect(assistant.codingReport?.changedFiles).toEqual(['src/fix.ts'])
+    expect(assistant.toolCalls[0]).toMatchObject({
+      riskLevel: 'medium',
+      execution: { command: 'bun test', purpose: 'verification' },
+    })
+  })
+
+  test('updates the completed assistant when a background verification finishes later', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started', runId: 'run-background' }),
+      event({ type: 'assistant.delta', runId: 'run-background', delta: '已在后台验证' }),
+      event({
+        type: 'run.completed',
+        runId: 'run-background',
+        codingReport: {
+          status: 'unverified',
+          workspaceChanged: true,
+          changedFiles: ['src/fix.ts'],
+          externalChangedFiles: [],
+          pendingBackground: true,
+        },
+      }),
+      event({
+        type: 'coding.report.updated',
+        runId: 'run-background',
+        codingReport: {
+          status: 'verified',
+          workspaceChanged: true,
+          changedFiles: ['src/fix.ts'],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        },
+      }),
+    ])
+
+    const assistant = messages.find((message) => message.type === 'assistant')
+    expect(assistant?.type).toBe('assistant')
+    if (assistant?.type !== 'assistant') return
+    expect(assistant.codingReport).toMatchObject({
+      status: 'verified',
+      pendingBackground: false,
+      changedFiles: ['src/fix.ts'],
+    })
+  })
+
+  test('does not attach an older background result to the active assistant', () => {
+    const messages = projectRuntimeEventMessages([
+      event({ type: 'run.started', runId: 'run-old' }),
+      event({ type: 'assistant.delta', runId: 'run-old', delta: '旧任务' }),
+      event({
+        type: 'run.completed',
+        runId: 'run-old',
+        codingReport: {
+          status: 'unverified',
+          workspaceChanged: true,
+          changedFiles: ['src/old.ts'],
+          externalChangedFiles: [],
+          pendingBackground: true,
+        },
+      }),
+      event({ type: 'message.user.submitted', runId: 'run-new', text: '新任务', messageId: 'user-new' }),
+      event({ type: 'run.started', runId: 'run-new' }),
+      event({ type: 'assistant.delta', runId: 'run-new', delta: '处理中' }),
+      event({
+        type: 'coding.report.updated',
+        runId: 'run-old',
+        codingReport: {
+          status: 'verified',
+          workspaceChanged: true,
+          changedFiles: ['src/old.ts'],
+          externalChangedFiles: [],
+          pendingBackground: false,
+        },
+      }),
+    ])
+
+    const assistants = messages.filter((message) => message.type === 'assistant')
+    expect(assistants).toHaveLength(2)
+    expect(assistants[0]?.type === 'assistant' ? assistants[0].codingReport : undefined).toMatchObject({
+      status: 'verified',
+      pendingBackground: false,
+    })
+    expect(assistants[1]?.type === 'assistant' ? assistants[1].codingReport : undefined).toBeUndefined()
   })
 })

@@ -9,10 +9,12 @@
  * - edit_mode
  */
 
-import { readFile, writeFile } from 'fs/promises'
-import { resolve } from 'path'
+import { readFile, writeFile, rename, rm, stat } from 'fs/promises'
+import { resolve, dirname, basename, join } from 'path'
 import { defineTool } from './types.js'
 import { ensurePathAllowed } from '../utils/pathing.js'
+import { prepareLspWritethrough } from '../lsp/writethrough.js'
+import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
 type NotebookCell = {
   id?: string
@@ -110,6 +112,18 @@ export const NotebookEditTool = defineTool({
   },
   isReadOnly: false,
   isConcurrencySafe: false,
+  validateInput(input) {
+    if (!input || typeof input !== 'object') return 'Input must be an object.'
+    const filePath = input.notebook_path || input.file_path
+    if (typeof filePath !== 'string' || !filePath.trim()) return 'notebook_path is required.'
+    if (!filePath.toLowerCase().endsWith('.ipynb')) return 'notebook_path must point to an .ipynb file.'
+    if (input.new_source === undefined && input.source === undefined && input.edit_mode !== 'delete' && input.command !== 'delete') {
+      return 'new_source is required for insert and replace.'
+    }
+  },
+  getPath(input, context) {
+    return resolve(context.cwd, input.notebook_path || input.file_path)
+  },
   async call(input, context) {
     const notebookPath = resolveNotebookPath(input, context.cwd)
     const sandboxError = ensurePathAllowed(
@@ -123,7 +137,18 @@ export const NotebookEditTool = defineTool({
     }
 
     try {
-      const originalFile = await readFile(notebookPath, 'utf-8')
+      if (!notebookPath.toLowerCase().endsWith('.ipynb')) {
+        return { data: 'Error: NotebookEdit only supports .ipynb files', is_error: true }
+      }
+      const decoded = decodeTextFile(await readFile(notebookPath))
+      const originalFile = decoded.content
+      const previousRead = context.fileStateCache?.get(notebookPath)
+      if (previousRead && !previousRead.isPartialView && previousRead.content !== originalFile) {
+        return {
+          data: 'Error: Notebook has been modified since it was read. Read it again before attempting to edit it.',
+          is_error: true,
+        }
+      }
       const notebook = JSON.parse(originalFile)
 
       if (!Array.isArray(notebook.cells)) {
@@ -179,21 +204,47 @@ export const NotebookEditTool = defineTool({
 
       ensureCellIds(cells)
       const targetCell = cells[targetIndex]
-      const updatedFile = JSON.stringify(notebook, null, 1)
-      await writeFile(notebookPath, updatedFile, 'utf-8')
-
-      return JSON.stringify({
-        new_source: editMode === 'delete' ? '' : (targetCell ? readCellSource(targetCell) : newSource),
-        cell_id: targetCell?.id || input.cell_id,
-        cell_type: targetCell?.cell_type || input.cell_type || 'code',
-        language: inferLanguage(notebook),
-        edit_mode: editMode,
-        notebook_path: notebookPath,
-        original_file: originalFile,
-        updated_file: updatedFile,
+      let updatedFile = JSON.stringify(notebook, null, 1)
+      const lsp = await prepareLspWritethrough({ filePath: notebookPath, content: updatedFile, context, existedBefore: true })
+      updatedFile = lsp.content
+      await writeFileAtomic(notebookPath, encodeTextFile(updatedFile, decoded))
+      const lspResult = await lsp.commit()
+      const updatedStat = await stat(notebookPath)
+      context.fileStateCache?.set(notebookPath, {
+        content: updatedFile,
+        timestamp: updatedStat.mtimeMs,
+        isPartialView: false,
       })
+
+      return {
+        data: JSON.stringify({
+          new_source: editMode === 'delete' ? '' : (targetCell ? readCellSource(targetCell) : newSource),
+          cell_id: targetCell?.id || input.cell_id,
+          cell_type: targetCell?.cell_type || input.cell_type || 'code',
+          language: inferLanguage(notebook),
+          edit_mode: editMode,
+          notebook_path: notebookPath,
+          original_file: originalFile,
+          updated_file: updatedFile,
+        }),
+        _meta: {
+          file: { path: notebookPath, overwritten: true, checkpointable: true, checkpointId: context.currentUserMessageId },
+          lsp: lspResult,
+        },
+      }
     } catch (err: any) {
       return { data: `Error: ${err.message}`, is_error: true }
     }
   },
 })
+
+async function writeFileAtomic(filePath: string, content: Uint8Array): Promise<void> {
+  const tempPath = join(dirname(filePath), `.${basename(filePath)}.${crypto.randomUUID()}.tmp`)
+  try {
+    await writeFile(tempPath, content)
+    await rename(tempPath, filePath)
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined)
+    throw error
+  }
+}

@@ -41,7 +41,7 @@ describe('system-tools-state', () => {
     expect(rows.find((row) => row.id === 'office')).toMatchObject({
       label: 'Office 文档',
       description: 'Office/PDF 文档结构校验、解包与打包',
-      count: 3,
+      count: 17,
       enabled: false,
       locked: false,
       policyEntry: 'group:office',
@@ -54,14 +54,14 @@ describe('system-tools-state', () => {
     expect(rows.find((row) => row.id === 'task')).toMatchObject({
       label: '任务',
       description: '会话任务列表管理',
-      count: 1,
+      count: 5,
       enabled: true,
       locked: true,
     })
     expect(rows.find((row) => row.id === 'automation')).toMatchObject({
       label: '定时任务',
       description: 'AI 创建和管理定时执行的任务',
-      count: 1,
+      count: 2,
       enabled: false,
       locked: false,
       policyEntry: 'group:automation',
@@ -102,7 +102,7 @@ describe('system-tools-state', () => {
     expect(rows.find((row) => row.id === 'agent')).toMatchObject({
       label: 'Agent',
       description: '子 Agent 调度与技能调用',
-      count: 2,
+      count: 5,
       enabled: true,
       locked: true,
     })

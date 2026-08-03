@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createNodeReplMcpTools, createNodeReplTools } from "./create-node-repl-tools";
 import { createNodeReplRuntimeRegistry } from "./node-repl-runtime-registry";
 import type { NodeReplRuntimeClient } from "./node-repl-types";
-import { submitBrowserAuthResponse } from "../../interruption/browser-auth-session";
+import { setActiveBrowserBroker } from "../../../browser/browser-broker-holder";
 
 function createFakeClient(): NodeReplRuntimeClient {
   return {
@@ -144,22 +144,28 @@ describe("createNodeReplTools", () => {
     expect((result as any)._meta).toEqual({ traceId: "t-1" });
   });
 
-  test("js resolves browserAuth through pending interactive without returning secrets", async () => {
-    const emitted: any[] = [];
+  test("js resolves browserAuth through the broker without returning secrets", async () => {
+    const dispatched: any[] = [];
     let runtimeAuthResult: unknown;
+    setActiveBrowserBroker({
+      async dispatch(request: unknown) {
+        dispatched.push(request);
+        return { status: "submitted", selected_option: "password" };
+      }
+    } as any);
     const tools = createNodeReplTools({
       sessionId: "thread-1",
       cwd: "D:/repo",
-      emitBrowserAuthRequest: (request) => emitted.push(request),
       registry: {
         async exec(_threadId, _input, options) {
           runtimeAuthResult = await options?.emitBrowserAuthRequest?.({
             context: { threadId: "thread-1", browserSessionId: "browser-session", browserTurnId: "turn-1" },
             tabId: "tab-1",
+            generation: 4,
             origin: "https://accounts.example.test",
             reason: "Sign in.",
             expires_at: new Date(Date.now() + 60_000).toISOString(),
-            fields: [{ id: "password", label: "Password", type: "password", required: true }]
+            fields: [{ id: "password", label: "Password", type: "password", required: true, locator: { version: 1, steps: [{ kind: "label", text: "Password" }] } }]
           }, new AbortController().signal);
           return { content: [{ type: "text", text: JSON.stringify({ status: (runtimeAuthResult as any)?.status }) }] };
         },
@@ -175,27 +181,13 @@ describe("createNodeReplTools", () => {
     });
     const js = tools.find((tool) => tool.name === "js");
 
-    const pending = js!.call({ code: "await nodeRepl.browserAuth.request({})" }, makeToolContext());
-    await waitFor(() => emitted.length > 0);
-    await submitBrowserAuthResponse({
-      threadId: emitted[0].threadId,
-      requestId: emitted[0].requestId,
-      status: "submitted",
-      values: { password: "password-value" }
-    });
-    const result = await pending;
+    const result = await js!.call({ code: "await nodeRepl.browserAuth.request({})" }, makeToolContext());
 
-    expect(runtimeAuthResult).toEqual({ status: "approved", values: { password: "password-value" } });
-    expect(result.content).toEqual([{ type: "text", text: JSON.stringify({ status: "approved" }) }]);
+    expect(runtimeAuthResult).toEqual({ status: "submitted", selected_option: "password" });
+    expect(result.content).toEqual([{ type: "text", text: JSON.stringify({ status: "submitted" }) }]);
+    expect(dispatched[0]).toMatchObject({ method: "tab_browser_auth_request", tabId: "tab-1" });
     expect(JSON.stringify(result)).not.toContain("password-value");
-    expect(JSON.stringify(emitted)).not.toContain("password-value");
+    expect(JSON.stringify(dispatched)).not.toContain("password-value");
+    setActiveBrowserBroker(null);
   });
 });
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 50; i += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("condition timed out");
-}

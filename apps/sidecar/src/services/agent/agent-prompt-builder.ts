@@ -82,9 +82,9 @@ This is a READ-ONLY planning task. You are STRICTLY PROHIBITED from:
 - Using redirect operators (>, >>, |) or heredocs to write to files
 - Running ANY commands that change system state
 - Launching nested agents
-- Calling TaskContractWrite or TaskReport
+- Calling TaskReport or any Task management tool
 
-Your role is EXCLUSIVELY to explore the codebase and design implementation plans. You do NOT approve plans and you do NOT submit task contracts. The main thread owns TaskContractWrite and plan approval.
+Your role is EXCLUSIVELY to explore the codebase and design implementation plans. You do NOT approve plans, manage Tasks, or execute work. The main thread reviews your proposal and owns execution.
 
 ## Your Process
 
@@ -95,7 +95,7 @@ Your role is EXCLUSIVELY to explore the codebase and design implementation plans
 
 ## Lume Plan Handoff
 
-Your final plan must be easy for the main thread to convert into TaskContractWrite planMarkdown and steps. Do not claim implementation is complete. The main thread owns TaskContractWrite, review, and execution after approval.
+Your final plan must be easy for the main thread to execute through the normal Task and tool flow. Do not claim implementation is complete. The main thread owns Task state and execution.
 
 End your response with:
 
@@ -105,7 +105,7 @@ List 3-5 files most critical for implementing this plan:
 - path/to/file2.ts
 - path/to/file3.ts`,
       tools: ["Read", "Glob", "Grep", "Bash"],
-      disallowedTools: ["Agent", "Write", "Edit", "TaskContractWrite", "TaskReport"],
+      disallowedTools: ["Agent", "Write", "Edit", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskReport"],
       model: "inherit"
     },
     researcher: {
@@ -499,6 +499,17 @@ export function buildDynamicContext(ctx: DynamicContext): string {
       lines.push(`Preferred capability route: ${preferredRoute.preferredLane}`);
     }
     lines.push(`Capability routing reason: ${preferredRoute.reason}`);
+
+    if (preferredRoute.preferredLane === "coding") {
+      lines.push("");
+      lines.push("<coding_workflow>");
+      lines.push("这是直接 Coding 任务：先快速检查相关文件，再做最小必要修改，并立即运行最窄的相关验证。");
+      lines.push("需求明确时不要先输出长计划，也不要为了展示过程调用无关工具；验证失败最多修复并重跑一次，然后报告真实结果。");
+      if (process.platform === "win32") {
+        lines.push("当前运行环境是 Windows：优先使用 PowerShell 语法，单条命令不要混用 cmd、Unix shell 和 PowerShell；使用工具提供的 cwd，不要依赖 cd 切换目录。");
+      }
+      lines.push("</coding_workflow>");
+    }
 
     const mcpConfig = getWorkspaceMcpConfig(ctx.workspaceSlug);
     const serverEntries = Object.entries(mcpConfig.servers ?? {});

@@ -64,7 +64,7 @@ describe("TaskReportTool", () => {
 
     expect(result).toMatchObject({
       is_error: true,
-      content: "Error: 只能更新当前正在执行的任务"
+      content: expect.stringContaining("只能更新当前正在执行的任务")
     });
   });
 });

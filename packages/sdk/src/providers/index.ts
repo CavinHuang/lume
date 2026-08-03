@@ -4,7 +4,7 @@
  * Creates the appropriate provider based on API type configuration.
  */
 
-export type { ApiType, LLMProvider, PromptCachePolicy, CreateMessageParams, CreateMessageResponse, NormalizedMessageParam, NormalizedContentBlock, NormalizedTool, NormalizedResponseBlock } from './types.js'
+export type { ApiType, LLMProvider, PromptCachePolicy, CreateMessageParams, CreateMessageResponse, CreateMessageStreamEvent, NormalizedMessageParam, NormalizedContentBlock, NormalizedTool, NormalizedResponseBlock } from './types.js'
 
 export { AnthropicProvider } from './anthropic.js'
 export { OpenAIProvider } from './openai.js'
@@ -36,7 +36,11 @@ export function createProvider(
       return new DeepSeekProvider(opts)
     case 'openai-responses':
       return new OpenAIResponsesProvider(opts)
+    case 'google-generative-ai':
+      throw new Error('Google Generative AI requires a host-provided LLMProvider.')
+    case 'openai-codex-responses':
+      throw new Error('OpenAI Codex Responses requires a host-provided LLMProvider.')
     default:
-      throw new Error(`Unsupported API type: ${apiType}. Use 'anthropic-messages', 'openai-completions', 'deepseek-chat-completions', or 'openai-responses'.`)
+      throw new Error(`Unsupported API type: ${apiType}.`)
   }
 }

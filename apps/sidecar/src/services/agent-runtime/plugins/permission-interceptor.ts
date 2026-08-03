@@ -41,6 +41,17 @@ export function createPluginPermissionInterceptor(
     const { toolName, input: toolInput } = input;
     const perms = ctx.permissions;
 
+    // Plugin permissions are source-bound. Built-in Agent tools such as Bash must
+    // not inherit the permissions of an unrelated enabled plugin.
+    if (input.context.sourcePluginId !== ctx.pluginName) {
+      log.debug("Tool source does not match plugin, passing through", {
+        pluginName: ctx.pluginName,
+        toolName,
+        sourcePluginId: input.context.sourcePluginId,
+      });
+      return undefined;
+    }
+
     // If no permissions declared at all, pass through to global engine
     const hasAnyPermission =
       (perms.tools && Object.keys(perms.tools).length > 0) ||

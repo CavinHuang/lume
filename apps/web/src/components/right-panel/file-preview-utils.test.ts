@@ -13,6 +13,7 @@ import {
   parseHtmlPreviewMessage,
   resolveHtmlPreviewLocalRef,
 } from "./file-preview-utils"
+import { parsePdbStats } from "./RightPanelPdbPreview"
 
 describe("isImageFile", () => {
   test.each(["a.png", "photo.JPG", "x.jpeg", "g.gif", "w.webp", "b.bmp", "s.svg"])(
@@ -46,6 +47,25 @@ describe("lumeFileUrl", () => {
 })
 
 describe('preview classification and race guard', () => {
+  test('summarizes PDB models, chains, atoms, and residues', () => {
+    const source = [
+      'MODEL        1',
+      'ATOM      1  CA  ALA A   1      11.000  12.000  13.000  1.00 90.00           C',
+      'ATOM      2  CA  GLY B   2      14.000  15.000  16.000  1.00 70.00           C',
+      'ENDMDL',
+    ].join('\n')
+    expect(parsePdbStats(source)).toEqual({
+      atoms: 2,
+      residues: 2,
+      models: 1,
+      chains: ['A', 'B'],
+      residueEntries: [
+        { chain: 'A', number: 1, name: 'ALA', code: 'A' },
+        { chain: 'B', number: 2, name: 'GLY', code: 'G' },
+      ],
+    })
+  })
+
   test('maps source files to Shiki languages and uses the highlighted source renderer', () => {
     const getLanguage = (filePreviewUtils as typeof filePreviewUtils & {
       getSourcePreviewLanguage?: (path: string) => string
@@ -62,9 +82,9 @@ describe('preview classification and race guard', () => {
     const previewSource = readFileSync(resolve(import.meta.dir, 'RightPanelFilePreview.tsx'), 'utf8')
     const sourceRenderer = readFileSync(resolve(import.meta.dir, 'RightPanelSourcePreview.tsx'), 'utf8')
     expect(previewSource).toContain('RightPanelSourcePreview')
-    expect(previewSource).toContain("kind === 'text' || sourceMode ? 'h-full' : 'h-full p-4'")
-    expect(sourceRenderer).toContain('{lineIndex + 1}')
-    expect(sourceRenderer).toContain('select-none')
+    expect(previewSource).toContain("kind === 'text' || kind === 'unsupported' || sourceMode ? 'h-full' : 'h-full overflow-auto p-4'")
+    expect(sourceRenderer).toContain('PierreEditableFileView')
+    expect(sourceRenderer).toContain('PierreFileView')
     expect(sourceRenderer).not.toContain('rounded-md p-4')
   })
 
@@ -74,8 +94,9 @@ describe('preview classification and race guard', () => {
     ['photo.png', 'image'],
     ['main.ts', 'text'],
     ['archive.zip', 'unsupported'],
-    ['manual.pdf', 'unsupported'],
-    ['movie.mp4', 'unsupported'],
+    ['manual.pdf', 'pdf'],
+    ['movie.mp4', 'video'],
+    ['protein.pdb', 'pdb'],
   ] as const)('%s uses %s preview', (path, expected) => {
     expect(classifyFilePreview(path)).toBe(expected)
   })

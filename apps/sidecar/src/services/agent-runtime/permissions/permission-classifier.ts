@@ -31,7 +31,10 @@ const MEDIUM_PATTERNS = [
   /echo\s.*>>/,
   /npm\s+install/i,
   /pip\s+install/i,
-  /git\s+(commit|merge|rebase|checkout)/i
+  /git\s+(commit|merge|rebase|checkout)/i,
+  /(?:npm|pnpm|yarn|bun)\s+(?:install|add|remove|update|upgrade|link|exec)/i,
+  /(?:npx|pnpx|yarn\s+dlx|bunx|corepack)\b/i,
+  /(?:package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)/i
 ];
 
 export interface PermissionClassifier {
@@ -122,6 +125,14 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
   }
 
   if (tool === "write" || tool === "edit" || tool === "write_file" || tool === "edit_file") {
+    if (input.path && isDependencyManifest(input.path)) {
+      return {
+        riskLevel: "medium",
+        reasonCode: "dependency_manifest",
+        explanation: "修改依赖清单或锁文件，可能改变项目依赖和外部访问范围",
+        shouldAsk: true
+      };
+    }
     if (input.path && isSensitivePath(input.path)) {
       return {
         riskLevel: "high",
@@ -156,10 +167,15 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
 }
 
 function isSensitivePath(path: string): boolean {
-  return path.includes("/etc/")
-    || path.includes("/.ssh/")
-    || path.includes("/.env")
-    || path.endsWith(".env");
+  const normalized = path.replaceAll("\\", "/");
+  return normalized.includes("/etc/")
+    || normalized.includes("/.ssh/")
+    || normalized.includes("/.env")
+    || normalized.endsWith(".env");
+}
+
+function isDependencyManifest(path: string): boolean {
+  return /(^|[\\/])(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)(?:$|[\\/])/i.test(path);
 }
 
 function buildClassifierPrompt(input: PermissionClassifierInput): string {

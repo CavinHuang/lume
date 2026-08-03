@@ -1,10 +1,25 @@
 import { parentPort, workerData } from "node:worker_threads";
+import {
+  getLocalOnnxModelFilePath,
+  isCorruptLocalOnnxModelError,
+  LOCAL_ONNX_MODEL_FILENAME,
+  removeCorruptLocalOnnxModel
+} from "./local-embedding-cache";
+
+type TransformersProgress = {
+  status: "initiate" | "download" | "progress" | "done" | "ready";
+  file?: string;
+};
 
 type TransformersModule = {
   pipeline: (
     task: "feature-extraction",
     model: string,
-    options: { dtype: "q8"; revision: string }
+    options: {
+      dtype: "q8";
+      revision: string;
+      progress_callback: (progress: TransformersProgress) => void;
+    }
   ) => Promise<(
     texts: string | string[],
     options: { pooling: "mean"; normalize: boolean }
@@ -32,10 +47,40 @@ async function initialize(): Promise<void> {
   if (data.cacheDir) env.cacheDir = data.cacheDir;
   env.allowLocalModels = true;
   env.allowRemoteModels = true;
-  embedder = await pipeline("feature-extraction", data.modelId ?? "Xenova/bge-small-zh-v1.5", {
+  const modelId = data.modelId ?? "Xenova/bge-small-zh-v1.5";
+  const load = () => pipeline("feature-extraction", modelId, {
     dtype: "q8",
-    revision: "main"
+    revision: "main",
+    progress_callback: (progress) => {
+      if (progress.status !== "done") return;
+      const normalizedFile = progress.file?.replaceAll("\\", "/");
+      if (normalizedFile?.endsWith(LOCAL_ONNX_MODEL_FILENAME)) {
+        parentPort?.postMessage({ type: "status", status: "initializing" });
+      }
+    }
   });
+
+  try {
+    embedder = await load();
+  } catch (error) {
+    if (!data.cacheDir || !isCorruptLocalOnnxModelError(error)) throw error;
+
+    const modelFile = getLocalOnnxModelFilePath(data.cacheDir);
+    parentPort?.postMessage({ type: "status", status: "downloading" });
+    try {
+      removeCorruptLocalOnnxModel(data.cacheDir);
+    } catch (removeError) {
+      const reason = removeError instanceof Error ? removeError.message : String(removeError);
+      throw new Error(`检测到损坏的本地 ONNX 模型，但无法删除 ${modelFile}：${reason}`);
+    }
+
+    try {
+      embedder = await load();
+    } catch (retryError) {
+      const reason = retryError instanceof Error ? retryError.message : String(retryError);
+      throw new Error(`检测到损坏的本地 ONNX 模型，自动清理并重新下载后仍加载失败：${reason}`);
+    }
+  }
 }
 
 parentPort?.on("message", async (message: WorkerRequest) => {

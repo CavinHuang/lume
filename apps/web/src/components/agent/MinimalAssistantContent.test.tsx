@@ -6,8 +6,14 @@ import { GENERAL_SETTINGS_DEFAULTS } from '@lume/shared'
 import type { RuntimeMessageView } from './runtime-message-view'
 
 mock.module('@lume/ui', () => ({
+  CodeBlock: ({ children }: { children: React.ReactNode }) => <section data-code-block="true">{children}</section>,
   useSmoothStream: ({ content }: { content: string }) => ({ displayedContent: content }),
   MermaidBlock: ({ code }: { code: string }) => <section data-mermaid-block="true">{code}</section>,
+  CODEX_LIGHT_THEME_NAME: 'lume-codex-light',
+  CODEX_DARK_THEME_NAME: 'lume-codex-dark',
+  CODEX_LIGHT_THEME: { name: 'lume-codex-light', type: 'light', colors: {}, tokenColors: [] },
+  CODEX_DARK_THEME: { name: 'lume-codex-dark', type: 'dark', colors: {}, tokenColors: [] },
+  useCodeTheme: () => ({ name: 'lume-codex-light', type: 'light' }),
 }))
 
 mock.module('@ant-design/x-markdown', () => ({
@@ -19,13 +25,17 @@ mock.module('@ant-design/x-markdown', () => ({
 mock.module('@/lib/desktop-api', () => ({
   agentSend: async () => undefined,
   getThreadMessageVersions: async () => ({ messages: [] }),
+  createFilePreviewScope: async () => ({ token: 'preview', url: 'lume-file://preview', expiresAt: 0 }),
+  createGuardedFilePreviewScope: async () => ({ token: 'guarded-preview', url: 'lume-file://preview', expiresAt: 0 }),
   localFilePreviewUrl: (path: string) => `asset://${path}`,
+  openFileRefInSystem: async () => undefined,
   openGuardedFileRefInSystem: async () => undefined,
   openInSystem: async () => undefined,
   openExternal: async () => undefined,
   openFileDialog: async () => undefined,
   openFolderDialog: async () => undefined,
   revealPathInSystem: async () => undefined,
+  revealFileRefInSystem: async () => undefined,
   revealGuardedFileRefInSystem: async () => undefined,
   readTextFile: async () => '',
   saveFilePathDialog: async () => undefined,
@@ -34,6 +44,8 @@ mock.module('@/lib/desktop-api', () => ({
   sidecarCall: async () => undefined,
   sidecarHealthcheck: async () => undefined,
   statFilePaths: async () => ({ files: [] }),
+  revokeFilePreviewScope: async () => undefined,
+  writeClipboardImage: async () => undefined,
   writeClipboardText: async () => undefined,
   writeBinaryFile: async () => undefined,
   copyFile: async () => undefined,
@@ -46,6 +58,7 @@ mock.module('@/lib/desktop-api', () => ({
   submitTaskApproval: async () => undefined,
   getThreadMessages: async () => [],
   getThreadRuntimeEvents: async () => [],
+  isDesktopRuntime: () => true,
 }))
 
 mock.module('./tool-result-renderers', () => ({

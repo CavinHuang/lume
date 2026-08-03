@@ -13,12 +13,14 @@ import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 import { Button } from '@/components/ui/button'
+import { PlanningReminderRail } from '@/components/todo/PlanningReminderRail'
+import { ConnectionVaultSetupDialog } from '@/components/security/ConnectionVaultSetupDialog'
 function AppInner() {
   useGlobalAgentListeners()
   useReadingListeners()
   useSkillListeners()
   useWorkspaceBootstrap()
-  return <AppShell />
+  return <><AppShell /><PlanningReminderRail /></>
 }
 
 // 安全网：兜底上限。Rust 的 `healthcheck` 命令会在 sidecar 就绪或其自身响应超时
@@ -96,6 +98,7 @@ export function App() {
       <ModelMetaProvider>
         <TooltipProvider>
           <AppInner />
+          <ConnectionVaultSetupDialog />
           <Toaster position="bottom-right" />
         </TooltipProvider>
       </ModelMetaProvider>

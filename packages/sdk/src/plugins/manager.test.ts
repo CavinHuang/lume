@@ -26,7 +26,7 @@ describe("PluginManager", () => {
     const result = await manager.install({ source: src, pluginName: "demo" });
 
     expect(result.installedPath).toBeDefined();
-    expect(result.installedPath).toContain("cache/demo/local");
+    expect(result.installedPath?.replace(/\\/g, "/")).toContain("cache/demo/local");
     expect(result.version).toBe("local");
   });
 

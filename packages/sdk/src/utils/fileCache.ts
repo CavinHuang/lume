@@ -14,6 +14,8 @@ import { normalize, resolve } from 'path'
 export interface FileState {
   content: string
   timestamp: number
+  /** File size at read/write time, used to reject stale overwrites. */
+  size?: number
   offset?: number
   limit?: number
   isPartialView?: boolean

@@ -1,4 +1,4 @@
-import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent } from '@lume/shared'
+import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent, RuntimeCodingReport } from '@lume/shared'
 import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
@@ -17,6 +17,8 @@ export interface ProjectionState {
   // 重建的 assistant 必须用唯一 id（见 assistantIdFor），避免与已 flush 的同 runId 消息
   // id 冲突 → AgentMessages 列表 React key 撞车（duplicate/omit + 跳变）。
   assistantSegmentByRun: Map<string, number>
+  /** One stable divider per run; compaction progress updates it in place. */
+  compactionMessageByRun: Map<string, string>
   fileReferenceBinding?: FileReferenceBinding
   fileReferenceProtocolVersion?: FileReferenceProtocolVersion
 }
@@ -39,6 +41,7 @@ export function projectRuntimeEventMessages(events: LumeRuntimeEvent[]): Runtime
     currentAssistant: null,
     terminalClosed: false,
     assistantSegmentByRun: new Map(),
+    compactionMessageByRun: new Map(),
   }
   for (const event of kept) {
     applyRuntimeEvent(state, event)
@@ -71,6 +74,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       text: event.text,
       createdAt: event.createdAt,
       ...(event.attachments && event.attachments.length > 0 ? { attachments: event.attachments } : {}),
+      ...(event.commentAttachments?.length ? { commentAttachments: event.commentAttachments } : {}),
       ...(event.messageParts ? { messageParts: event.messageParts } : {}),
       ...(event.capabilityReferences ? { capabilityReferences: event.capabilityReferences } : {}),
       ...(event.messageId ? { messageId: event.messageId } : {}),
@@ -110,6 +114,16 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'advisor.reviewed') {
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
+    state.currentAssistant.blocks.push({
+      type: 'advisor_review',
+      id: `advisor:${event.runId}:${event.createdAt}`,
+      event,
+    })
+    return
+  }
+
   if (
     event.type === 'context.compaction.started'
     || event.type === 'context.compaction.progress'
@@ -125,7 +139,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       )
     }
     state.currentAssistant = null
-    appendContextCompactionNotice(messages, event)
+    appendContextCompactionNotice(state, event)
     state.terminalClosed = false
     return
   }
@@ -150,7 +164,56 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     return
   }
 
+  if (event.type === 'coding.report.updated') {
+    if (state.currentAssistant?.id.startsWith(`assistant:${event.runId}`)) {
+      state.currentAssistant.codingReport = {
+        ...state.currentAssistant.codingReport,
+        ...event.codingReport,
+      }
+      return
+    }
+    for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+      const message = state.messages[index]
+      if (message?.type !== 'assistant' || !message.id.startsWith(`assistant:${event.runId}`)) continue
+      state.messages[index] = {
+        ...message,
+        codingReport: {
+          ...message.codingReport,
+          ...event.codingReport,
+        },
+      }
+      break
+    }
+    return
+  }
+
   if (state.terminalClosed) {
+    return
+  }
+
+  if (event.type === 'model.retry') {
+    state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
+    if (event.phase === 'waiting') {
+      const segmentStart = Math.min(
+        state.currentAssistant.currentContentSegmentStart,
+        state.currentAssistant.blocks.length,
+      )
+      state.currentAssistant.blocks = state.currentAssistant.blocks.filter((block, index) => (
+        index < segmentStart || (block.type !== 'text' && block.type !== 'thinking')
+      ))
+      recomputeAssistantContent(state.currentAssistant)
+    }
+    state.currentAssistant.retry = {
+      phase: event.phase,
+      attempt: event.attempt,
+      maxRetries: event.maxRetries,
+      retryDelayMs: event.retryDelayMs,
+    }
+    return
+  }
+
+  if (event.type === 'model.retry_cleared') {
+    if (state.currentAssistant) state.currentAssistant.retry = undefined
     return
   }
 
@@ -229,6 +292,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       input: event.inputPreview ?? {},
       status: 'running',
       startedAt: event.createdAt,
+      ...(event.riskLevel ? { riskLevel: event.riskLevel } : {}),
     }
     state.currentAssistant.toolCalls.set(event.toolCallId, toolCall)
     state.currentAssistant.toolBlockIds.set(event.toolCallId, state.currentAssistant.blocks.length)
@@ -254,6 +318,9 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       output: isError ? event.error.message : event.resultPreview,
       isError,
       ...(permissionState ? { permissionState } : {}),
+      ...(existing?.riskLevel ? { riskLevel: existing.riskLevel } : {}),
+      ...(event.execution ? { execution: event.execution } : {}),
+      ...(event.resultRef ? { resultRef: event.resultRef } : {}),
       ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
       ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
         ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }
@@ -290,8 +357,15 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     if (event.type === 'run.completed') {
       state.currentAssistant.messageId = event.finalMessageId
       state.currentAssistant.completedAt = event.createdAt
+      if (event.codingReport) {
+        state.currentAssistant.codingReport = {
+          ...state.currentAssistant.codingReport,
+          ...event.codingReport,
+        }
+      }
     }
     state.currentAssistant.status = 'completed'
+    state.currentAssistant.retry = undefined
     flushAssistant(state.messages, state.currentAssistant)
     state.currentAssistant = null
     state.terminalClosed = true
@@ -301,6 +375,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   if (event.type === 'run.failed' || event.type === 'run.cancelled') {
     state.currentAssistant ??= createBoundAssistant(state, assistantIdFor(state, event.runId))
     state.currentAssistant.status = 'failed'
+    state.currentAssistant.retry = undefined
     state.currentAssistant.error = event.type === 'run.failed' ? event.error.message : (event.reason ?? 'Run cancelled')
     flushAssistant(state.messages, state.currentAssistant)
     state.currentAssistant = null
@@ -350,36 +425,28 @@ function applyAssistantImDelivery(
 }
 
 function appendContextCompactionNotice(
-  messages: RuntimeMessageView[],
+  state: ProjectionState,
   event: Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>,
 ): void {
-  if (event.type === 'context.compaction.completed') {
-    const activeNotice = [...messages]
-      .reverse()
-      .find((m): m is Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }> =>
-        m.type === 'system' && m.variant === 'context_compaction' && m.status === 'active',
-      )
-    if (activeNotice) {
-      activeNotice.status = 'completed'
-      activeNotice.text = formatContextCompactionNoticeText(event)
-      if (event.summary) activeNotice.summary = event.summary
-      return
-    }
-  }
-  const existing = messages.at(-1)
-  if (existing?.type === 'system' && existing.variant === 'context_compaction' && existing.status === 'active') {
-    existing.text = formatContextCompactionNoticeText(event)
-    return
-  }
-  messages.push({
-    id: event.id,
-    type: 'system',
-    variant: 'context_compaction',
-    status: event.type === 'context.compaction.completed' ? 'completed' : 'active',
+  const existingId = state.compactionMessageByRun.get(event.runId)
+  const existingIndex = existingId
+    ? state.messages.findIndex((message) => message.id === existingId)
+    : -1
+  const next = {
+    id: existingId ?? event.id,
+    type: 'system' as const,
+    variant: 'context_compaction' as const,
+    status: event.type === 'context.compaction.completed' ? 'completed' as const : 'active' as const,
     text: formatContextCompactionNoticeText(event),
     ...(event.type === 'context.compaction.completed' && event.summary ? { summary: event.summary } : {}),
     createdAt: event.createdAt,
-  })
+  }
+  if (existingIndex >= 0) {
+    state.messages[existingIndex] = next
+    return
+  }
+  state.compactionMessageByRun.set(event.runId, next.id)
+  state.messages.push(next)
 }
 
 function formatContextCompactionNoticeText(
@@ -470,8 +537,10 @@ interface MutableAssistantMessage {
   completedAt?: string
   status: RuntimeAssistantMessageView['status']
   error?: string
+  retry?: RuntimeAssistantMessageView['retry']
   providerTokenCount?: number
   providerTokenUsage?: RuntimeAssistantTokenUsageView
+  codingReport?: RuntimeCodingReport
   imDelivery?: RuntimeAssistantMessageView['imDelivery']
   toolCalls: Map<string, RuntimeToolCallView>
   toolBlockIds: Map<string, number>
@@ -586,6 +655,7 @@ function assistantHasContent(assistant: MutableAssistantMessage): boolean {
     || assistant.thinking.trim()
     || assistant.toolCalls.size > 0
     || assistant.blocks.some((block) => block.type === 'memory_context_used')
+    || assistant.codingReport
     || assistant.error
   )
 }
@@ -608,10 +678,12 @@ function snapshotAssistant(assistant: MutableAssistantMessage | null): RuntimeMe
     blocks: assistant.blocks,
     status: assistant.status,
     ...(assistant.error ? { error: assistant.error } : {}),
+    ...(assistant.retry ? { retry: assistant.retry } : {}),
     ...(assistant.imDelivery ? { imDelivery: assistant.imDelivery } : {}),
     tokenCount: assistant.providerTokenCount ?? estimateAssistantTokenCount(assistant),
     ...(assistant.providerTokenCount !== undefined ? { tokenCountSource: 'provider' as const } : {}),
     ...(assistant.providerTokenUsage ? { tokenUsage: assistant.providerTokenUsage } : {}),
+    ...(assistant.codingReport ? { codingReport: assistant.codingReport } : {}),
     toolCalls: [...assistant.toolCalls.values()],
   }
 }
@@ -706,6 +778,7 @@ function estimateAssistantBlockTokens(block: RuntimeAssistantBlock): number {
   if (block.type === 'text' || block.type === 'thinking') return estimateTextTokens(block.text)
   if (block.type === 'plan_preview') return estimateTextTokens(block.preview.markdown)
   if (block.type === 'task_progress') return estimateTextTokens(block.event.message ?? '')
+  if (block.type === 'advisor_review') return estimateTextTokens(`${block.event.summary} ${block.event.details ?? ''}`)
   if (block.type === 'tool_call') {
     return estimateValueTokens(block.toolCall.input) + estimateValueTokens(block.toolCall.output)
   }
@@ -776,7 +849,13 @@ export function applyRuntimeEventsIncremental(
     return { messages: buildMessagesView(state), ref: { state, events } }
   }
   // fallback：全量重投影
-  const state: ProjectionState = { messages: [], currentAssistant: null, terminalClosed: false, assistantSegmentByRun: new Map() }
+  const state: ProjectionState = {
+    messages: [],
+    currentAssistant: null,
+    terminalClosed: false,
+    assistantSegmentByRun: new Map(),
+    compactionMessageByRun: new Map(),
+  }
   const kept = keepLatestVersionTurns(events)
   for (const event of kept) {
     applyRuntimeEvent(state, event)

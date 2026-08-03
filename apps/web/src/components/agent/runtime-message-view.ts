@@ -1,4 +1,4 @@
-import type { AgentCapabilityReferenceView, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LumeRuntimeEvent } from '@lume/shared'
+import type { AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileReferenceBinding, FileReferenceProtocolVersion, ImPeerKind, ImProvider, LumeRuntimeEvent, RuntimeCodingReport, ToolExecutionMetadata } from '@lume/shared'
 
 export interface RuntimeToolCallView {
   id: string
@@ -12,10 +12,14 @@ export interface RuntimeToolCallView {
   subagentStatus?: 'running' | 'completed' | 'errored'
   startedAt?: string
   durationMs?: number
+  riskLevel?: 'low' | 'medium' | 'high'
+  execution?: ToolExecutionMetadata
+  resultRef?: ToolExecutionMetadata['resultRef']
 }
 
 export type TaskProgressViewEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>
 export type MemoryContextUsedViewEvent = Extract<LumeRuntimeEvent, { type: 'memory.context.used' }>
+export type AdvisorReviewedViewEvent = Extract<LumeRuntimeEvent, { type: 'advisor.reviewed' }>
 export type ContextCompactionViewEvent = Extract<LumeRuntimeEvent, { type: 'context.compaction.started' | 'context.compaction.progress' | 'context.compaction.completed' }>
 export type PlanPreviewView = Pick<
   Extract<LumeRuntimeEvent, { type: 'plan.preview' }>,
@@ -33,6 +37,7 @@ export type RuntimeAssistantBlock =
   | { type: 'tool_call'; id: string; toolCall: RuntimeToolCallView }
   | { type: 'task_progress'; id: string; event: TaskProgressViewEvent }
   | { type: 'memory_context_used'; id: string; event: MemoryContextUsedViewEvent }
+  | { type: 'advisor_review'; id: string; event: AdvisorReviewedViewEvent }
   | { type: 'plan_preview'; id: string; preview: PlanPreviewView }
   | { type: 'todo_update'; id: string; data: TodoBlockData }
 
@@ -59,9 +64,16 @@ export interface RuntimeAssistantMessageView {
   blocks: RuntimeAssistantBlock[]
   status: 'streaming' | 'completed' | 'failed'
   error?: string
+  retry?: {
+    phase: 'waiting' | 'retrying'
+    attempt: number
+    maxRetries: number
+    retryDelayMs: number
+  }
   tokenCount?: number
   tokenCountSource?: 'provider'
   tokenUsage?: RuntimeAssistantTokenUsageView
+  codingReport?: RuntimeCodingReport
   imDelivery?: {
     status: 'pending' | 'sent' | 'failed'
     provider: ImProvider
@@ -78,6 +90,7 @@ export interface RuntimeUserMessageView {
   text: string
   createdAt: string
   attachments?: AgentMessageAttachmentInput[]
+  commentAttachments?: AgentDiffCommentAttachment[]
   messageParts?: AgentUserMessagePart[]
   capabilityReferences?: AgentCapabilityReferenceView[]
   messageId?: string

@@ -1,5 +1,5 @@
 import type { DailyRoutine, RoutineEntryStatus, RoutineResult } from "@lume/shared"
-import { createAutomationJob } from "../automation/automation-manager"
+import { createAutomationJob, setAutomationJobProvenance } from "../automation/automation-manager"
 import { listAutomationJobs } from "../automation/automation-manager"
 import { startAutomationRunner, refreshAutomationRunnerJobs } from "../automation/automation-runner-service"
 import { getActivityExecutor } from "./routine-activities"
@@ -28,6 +28,7 @@ export async function scheduleRoutineEntries(routine: DailyRoutine): Promise<Dai
       try {
         const jobInput = executor.buildJobInput(entry, routine.context)
         const job = createAutomationJob({ ...jobInput, source: "system", systemAction: "routine" })
+        if (entry.activity === "todo_review") setAutomationJobProvenance(job.id, { kind: "routine_todo_review", routineId: routine.id, activityId: entry.id })
         entry.automationJobId = job.id
         scheduled++
       } catch (error) {
@@ -89,6 +90,7 @@ export async function triggerRoutineEntry(entryId: string): Promise<DailyRoutine
   if (executor) {
     const jobInput = executor.buildJobInput({ ...entry, scheduledAt: Date.now() }, routine.context)
     const job = createAutomationJob({ ...jobInput, source: "system", systemAction: "routine" })
+    if (entry.activity === "todo_review") setAutomationJobProvenance(job.id, { kind: "routine_todo_review", routineId: routine.id, activityId: entry.id })
     entry.automationJobId = job.id
   } else if (entry.customPrompt) {
     // Custom activity: use customPrompt

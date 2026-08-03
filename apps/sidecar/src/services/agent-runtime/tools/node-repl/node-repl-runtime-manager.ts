@@ -267,6 +267,21 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       }
       return;
     }
+    if (message.method === "browser.request") {
+      if (!active?.options?.browserRequest) {
+        this.writeHostResult(message.id, false, undefined, "Browser Broker is unavailable");
+        return;
+      }
+      try {
+        const args = isRecord(message.args) ? message.args : {};
+        if (typeof args.method !== "string" || !isRecord(args.params)) throw new Error("invalid browser request");
+        const value = await active.options.browserRequest({ method: args.method, params: args.params as Record<string, unknown> }, active.abortController.signal);
+        this.writeHostResult(message.id, true, value);
+      } catch (error) {
+        this.writeHostResult(message.id, false, undefined, error instanceof Error ? error.message : "Browser Broker request failed");
+      }
+      return;
+    }
     if (message.method !== "browserAuth.request" || !active?.options?.emitBrowserAuthRequest) {
       this.writeHostResult(message.id, true, { status: "unavailable" });
       return;
@@ -298,6 +313,10 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       }
     })}\n`, "utf8");
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function extendNodeReplSandbox(options: JsonlNodeReplRuntimeClientOptions): SandboxSettings | undefined {
@@ -419,8 +438,4 @@ function callTimeoutMs(timeoutMs: number | undefined): number {
 
 function truncate(value: string, maxChars: number): string {
   return value.length > maxChars ? value.slice(-maxChars) : value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value);
 }

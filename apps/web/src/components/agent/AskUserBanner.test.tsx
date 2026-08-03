@@ -24,18 +24,19 @@ const request: AgentAskUserQuestionRequest = {
 }
 
 describe('AskUserBanner', () => {
-  test('renders ask user questions with the same overlay frame language as plan approval', () => {
+  test('renders ask user questions with the redesigned decision frame', () => {
     const markup = renderToStaticMarkup(
       <AskUserBanner threadId="thread-1" request={request} />,
     )
 
     expect(markup).toContain('data-interactive-overlay="ask-user"')
-    expect(markup).toContain('需要你的输入')
+    expect(markup).toContain('1 of 1')
     expect(markup).toContain('要先修哪部分?')
     expect(markup).toContain('前端')
     expect(markup).toContain('后端')
-    expect(markup).toContain('忽略')
+    expect(markup).toContain('都不合适，告诉 Lume 应该如何做得不同')
+    expect(markup).toContain('跳过')
     expect(markup).toContain('ESC')
-    expect(markup).toContain('提交')
+    expect(markup).not.toContain('提交回答')
   })
 })

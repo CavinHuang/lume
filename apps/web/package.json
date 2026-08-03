@@ -1,15 +1,19 @@
 {
   "name": "@lume/web",
   "private": true,
-  "version": "0.1.13",
+  "version": "0.1.20",
   "type": "module",
   "scripts": {
     "dev": "vite --port 3000 --host",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun scripts/run-unit-tests.mjs",
+    "test:smoke": "bun test src/components/right-panel/CodingReviewPanel.test.ts src/components/agent/runtime-event-message-projection.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
+    "3dmol": "2.5.5",
     "@ant-design/x-markdown": "^2.5.0",
     "@antv/infographic": "0.2.19",
     "@base-ui/react": "^1.4.0",
@@ -18,6 +22,7 @@
     "@lobehub/icons": "^5.4.0",
     "@lume/shared": "workspace:*",
     "@lume/ui": "workspace:*",
+    "@pierre/diffs": "1.3.0-rc.3",
     "@radix-ui/react-select": "^2.2.6",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-mention": "^3.22.3",

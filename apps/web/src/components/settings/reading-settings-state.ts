@@ -1,4 +1,4 @@
-import type { Channel, ReadingAdvancedModelSettings, ReadingSettings, ReadingUpdateSettingsInput } from '@lume/shared'
+import { buildConnectionModelRef, isChannelViewReady, type Channel, type ReadingAdvancedModelSettings, type ReadingSettings, type ReadingUpdateSettingsInput } from '@lume/shared'
 
 export interface ReadingSettingsDraft {
   cadence: ReadingSettings['cadence']
@@ -68,6 +68,7 @@ function trimOrUndefined(value: string | undefined): string | undefined {
 
 export interface ReadingModelOption {
   modelRef: string
+  legacyModelRefs?: string[]
   label: string
 }
 
@@ -76,18 +77,19 @@ const INHERIT_OPTION: ReadingModelOption = {
   label: '继承默认模型',
 }
 
-function buildChannelModelRef(channel: Channel, modelId: string): string {
-  return modelId.startsWith(`${channel.provider}/`) ? modelId : `${channel.provider}/${modelId}`
-}
-
 export function buildReadingChatModelOptions(channels: Channel[]): ReadingModelOption[] {
   const models = channels
-    .filter((channel) => channel.enabled)
+    .filter(isChannelViewReady)
     .flatMap((channel) =>
       channel.models
         .filter((model) => model.enabled && model.capabilities?.chat !== false)
         .map((model) => ({
-          modelRef: buildChannelModelRef(channel, model.id),
+          modelRef: buildConnectionModelRef(channel.id, model.id),
+          legacyModelRefs: [
+            model.id,
+            `${channel.providerId || channel.provider}/${model.id}`,
+            `${channel.id}/${model.id}`,
+          ],
           label: `${model.name || model.id} · ${channel.name}`,
         }))
     )

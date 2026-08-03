@@ -250,6 +250,25 @@ describe("WorkspaceMcpManager", () => {
       .rejects.toMatchObject({ code: "connection_failed", message: expect.not.stringContaining("secret-token") });
   });
 
+  test("readResource rejects oversized structured resource content", async () => {
+    const fake = createFakeSdkManager();
+    fake.readResource = async (_serverId: string, uri: string) => ({
+      contents: [{ uri, metadata: { value: "x".repeat(10 * 1024 * 1024) } }]
+    });
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        local: { enabled: true, transport: "stdio", command: "node" }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    await expect(manager.readResource({
+      workspaceSlug: "demo",
+      serverId: "local",
+      uri: "file://large"
+    })).rejects.toMatchObject({ code: "resource_too_large" });
+  });
+
   test("callToolDiagnostic forwards tool calls and redacts failures", async () => {
     const fake = createFakeSdkManager();
     const manager = new WorkspaceMcpManager({

@@ -10,6 +10,8 @@ import {
 } from '@/atoms'
 import { cn } from '@/lib/utils'
 import type { AgentThreadMeta, AgentWorkspace } from '@lume/shared'
+import type { PlanningTodo } from '@lume/shared'
+import { listPlanningTodos } from '@/lib/desktop-api'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -37,6 +39,7 @@ export function CommandPalette() {
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [closing, setClosing] = useState(false)
+  const [todoResults, setTodoResults] = useState<PlanningTodo[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const previousFocusRef = useRef<HTMLElement | null>(null)
@@ -57,6 +60,11 @@ export function CommandPalette() {
         return b.updatedAt - a.updatedAt
       })
   }, [debouncedQuery, threads])
+
+  useEffect(() => {
+    if (!debouncedQuery.trim()) { setTodoResults([]); return }
+    void listPlanningTodos({ scope: 'all', view: 'open', search: debouncedQuery, limit: 8 }).then((result) => setTodoResults(result.items)).catch(() => setTodoResults([]))
+  }, [debouncedQuery])
 
   const wsMap = useMemo(() => {
     const m = new Map<string, AgentWorkspace>()
@@ -82,6 +90,15 @@ export function CommandPalette() {
         { id: thread.id, type: 'agent' as const, title: thread.title, threadId: thread.id, ...(thread.parentThreadId ? { readOnly: true } : {}) },
       ])
     }
+    closePalette()
+  }
+
+  const openTodos = (prefill?: string, todo?: PlanningTodo) => {
+    const id = '__todos__'
+    setActiveTabId(id)
+    setTabs((previous) => previous.some((tab) => tab.id === id)
+      ? previous.map((tab) => tab.id === id ? { ...tab, ...(todo ? { todoId: todo.id, workspaceId: todo.workspaceId } : { todoPrefill: prefill, todoId: undefined }) } : tab)
+      : [...previous, { id, type: 'todo', title: '待办', ...(todo ? { todoId: todo.id, workspaceId: todo.workspaceId } : { todoPrefill: prefill }) }])
     closePalette()
   }
 
@@ -189,6 +206,8 @@ export function CommandPalette() {
             ))
           )}
         </div>
+        {todoResults.length > 0 && <div className="border-t border-border/50 p-1"><div className="px-3 py-1 text-[11px] text-muted-foreground">待办</div>{todoResults.map((todo) => <Button key={todo.id} variant="ghost" className="w-full justify-start rounded-lg px-3 py-2 text-left" onClick={() => openTodos(undefined, todo)}><span className="truncate">{todo.title}</span></Button>)}</div>}
+        {query.trim() && <div className="border-t border-border/50 p-2"><Button variant="outline" className="w-full" onClick={() => openTodos(query.trim())}>以“{query.trim()}”创建待办</Button></div>}
 
         {/* 底部快捷键提示 */}
         <div className="flex items-center gap-4 px-4 py-2 border-t border-border text-[11px] text-muted-foreground">

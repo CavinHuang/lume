@@ -8,19 +8,29 @@ import type {
 } from "@lume/shared";
 import { createAgentThreadWithModelRef, getAgentThreadMeta, updateAgentThreadMeta } from "../agent/agent-thread-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { listAutomationJobs, recordAutomationJobRun, updateAutomationJob } from "./automation-manager";
+import { advanceAutomationJobSchedule, listAutomationJobs, recordAutomationJobRun, updateAutomationJob } from "./automation-manager";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { getAutomationRunsPath } from "../infra/config-paths";
 import { getEffectiveSystemConfig } from "../system/system-config-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
-import { matchCronExpression } from "./automation-schedule";
+import { getNextAutomationRunAt } from "./automation-schedule";
 import { writeLogRecord } from "../infra/logger";
+import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
+import { readRoutine } from "../routine/routine-store";
+import {
+  consumeLatestAutomationTrigger,
+  finishAutomationLease,
+  heartbeatAutomationLease,
+  mergeLatestAutomationTrigger,
+  readAutomationRuntimeState,
+  recoverAutomationRuntimeStates,
+  tryAcquireAutomationLease
+} from "./automation-runtime-store";
 
 type JobDisposer = () => void;
 
 const jobDisposers = new Map<string, JobDisposer>();
 const runningJobs = new Set<string>();
-const lastCronMinuteKeyByJob = new Map<string, string>();
 let runnerStarted = false;
 
 type NotificationWriter = (method: string, params: unknown) => void;
@@ -28,15 +38,6 @@ let notificationWriter: NotificationWriter | null = null;
 
 export function setAutomationNotificationWriter(writer: NotificationWriter): void {
   notificationWriter = writer;
-}
-
-function minuteKey(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mm = String(date.getMinutes()).padStart(2, "0");
-  return `${y}-${m}-${d}T${hh}:${mm}`;
 }
 
 function appendRun(run: AutomationRun): void {
@@ -52,7 +53,6 @@ function clearSchedules(): void {
     }
   }
   jobDisposers.clear();
-  lastCronMinuteKeyByJob.clear();
 }
 
 /**
@@ -90,16 +90,19 @@ function pickExecutionChannel(job: AutomationJob): { channelId: string; modelId:
   };
 }
 
-async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): Promise<AutomationRun> {
+async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", scheduledAt = Date.now()): Promise<AutomationRun> {
   const startedAt = Date.now();
-  if (runningJobs.has(job.id)) {
+  const runId = randomUUID();
+  const lease = tryAcquireAutomationLease({ jobId: job.id, scheduledAt, runId });
+  if (!lease || runningJobs.has(job.id)) {
+    mergeLatestAutomationTrigger(job.id, scheduledAt);
     const skipped: AutomationRun = {
-      id: randomUUID(),
+      id: runId,
       jobId: job.id,
       jobName: job.name,
       trigger,
       status: "skipped",
-      message: "任务仍在运行，已跳过本次触发",
+      message: "任务仍在运行或等待交互，本次触发已合并为最新待执行触发",
       startedAt,
       finishedAt: Date.now()
     };
@@ -108,6 +111,10 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
   }
 
   runningJobs.add(job.id);
+  const heartbeat = setInterval(() => {
+    heartbeatAutomationLease(lease, threadId);
+  }, 5_000);
+  heartbeat.unref?.();
   let threadId: string | undefined;
   const traceContext = {
     submissionId: randomUUID(),
@@ -119,6 +126,15 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
 
   try {
     const { channelId, modelId, modelRef } = pickExecutionChannel(job);
+    const executionKind = resolveAutomationModelKind(job);
+    const provenance = job.provenance;
+    const privilegedRoutineTodoReview = executionKind === "routine" && provenance?.kind === "routine_todo_review";
+    if (privilegedRoutineTodoReview) {
+      const date = provenance.routineId.replace(/^routine-/u, "");
+      const routine = readRoutine(date);
+      const entry = routine?.entries.find((item) => item.id === provenance.activityId);
+      if (!routine || !entry || entry.activity !== "todo_review") throw new Error("routine provenance is no longer valid");
+    }
     const boundThreadId = job.threadId?.trim();
     if (boundThreadId && getAgentThreadMeta(boundThreadId)) {
       threadId = boundThreadId;
@@ -138,13 +154,32 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
       throw new Error("自动化执行缺少可用线程");
     }
 
+    const executionSurface = executionKind === "routine" ? "routine" : "automation";
+    registerPlanningExecutionContext({
+      surface: executionSurface,
+      threadId,
+      clientSubmissionId: traceContext.submissionId,
+      ...(privilegedRoutineTodoReview ? { globalPlanningRead: true } : {}),
+      ...(job.workspaceId ? { workspaceId: job.workspaceId } : {})
+    });
+    issuePlanningScopeGrant({
+      clientSubmissionId: traceContext.submissionId,
+      surface: executionSurface,
+      scope: privilegedRoutineTodoReview ? "all" : job.workspaceId ? "current" : "unassigned",
+      ...(job.workspaceId ? { workspaceId: job.workspaceId } : {}),
+      allowedOperations: ["list", "get"],
+      mode: "turn"
+    });
+
     let runtimeError: string | null = null;
     let waitingForApproval = false;
+    let waitingForUser = false;
     await sendAgentMessage(
       {
         threadId,
         userMessage: job.prompt,
         workspaceId: job.workspaceId,
+        trustedPlanningClientSubmissionId: traceContext.submissionId,
         modelRef,
         channelId,
         modelId,
@@ -162,10 +197,10 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
         },
         onTitleUpdated: () => {},
         onAskUserQuestion: () => {
-          runtimeError = "任务执行需要用户交互，自动化模式当前不支持";
+          waitingForUser = true;
         },
         onBrowserAuthRequest: () => {
-          runtimeError = "任务执行需要浏览器安全凭证交互，自动化模式当前不支持";
+          waitingForUser = true;
         },
         onToolPermissionRequest: () => {
           waitingForApproval = true;
@@ -178,7 +213,10 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
       throw new Error(runtimeError);
     }
 
-    if (waitingForApproval) {
+    if (waitingForUser) {
+      runStatus = "waiting_for_user";
+      runMessage = `任务暂停：需要用户处理交互或浏览器凭证，线程: ${threadId}`;
+    } else if (waitingForApproval) {
       runStatus = "waiting_for_approval";
       runMessage = `任务暂停：等待工具权限确认，线程: ${threadId}`;
     } else {
@@ -188,9 +226,17 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
     runStatus = "failed";
     runMessage = error instanceof Error ? error.message : String(error);
   } finally {
+    clearInterval(heartbeat);
     runningJobs.delete(job.id);
-    // Archive the automation thread so it does not appear in the sidebar
-    if (threadId) {
+    const waitingForInteraction = runStatus === "waiting_for_user" || runStatus === "waiting_for_approval";
+    finishAutomationLease(lease, {
+      status: runStatus,
+      ...(threadId ? { threadId } : {}),
+      message: runMessage,
+      keepForInteraction: waitingForInteraction
+    });
+    // Keep interactive runs visible so the user can resolve their checkpoint.
+    if (threadId && !waitingForInteraction) {
       try { updateAgentThreadMeta(threadId, { status: "archived" }); } catch { /* ignore */ }
     }
   }
@@ -242,60 +288,54 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual"): P
       jobEnabled: latestJob.enabled
     });
   }
+  if (run.status !== "waiting_for_user" && run.status !== "waiting_for_approval" && job.schedule.type !== "once") {
+    const pendingScheduledAt = consumeLatestAutomationTrigger(job.id);
+    if (pendingScheduledAt !== undefined) {
+      const latest = listAutomationJobs().find((item) => item.id === job.id);
+      if (latest?.enabled) void executeJob(latest, "schedule", pendingScheduledAt);
+    }
+  }
   return run;
 }
 
 function scheduleJob(job: AutomationJob): void {
   if (!job.enabled) return;
-  if (job.schedule.type === "once") {
-    // 已在执行中的 once 任务不重排：卡在 runningJobs 时，其它任务完成触发的 refresh
-    // 会以 delay=0（runAt 已过期）反复 arm → 立即触发 → skip，形成「跨 job」skip 风暴
-    // （线上整点单 job 数百条 skip、单日数千条）。once 至多触发一次，在飞期间的重排
-    // 毫无意义——其完成后的 disable / .then 自会处理后续。
-    if (runningJobs.has(job.id)) return;
-    const delay = Math.max(0, (job.schedule.runAt ?? 0) - Date.now());
-    const timer = setTimeout(() => {
-      const latest = listAutomationJobs().find((item) => item.id === job.id);
-      if (!latest || !latest.enabled) return;
-      // 跳过的触发（任务仍在运行）不得重排调度：过期 once 任务 delay=0，
-      // 若 skip 后 refresh 会重新 setTimeout(0) → 再次 skip → refresh，
-      // 形成以事件循环速率自转的死循环（线上实测 ~360 次/秒、单任务数万条 skip）。
-      void executeJob(latest, "schedule").then((run) => {
-        if (run.status !== "skipped") {
-          void refreshAutomationRunnerJobs();
-        }
-      });
-    }, delay);
-    jobDisposers.set(job.id, () => clearTimeout(timer));
+  const runtimeState = readAutomationRuntimeState(job.id);
+  if (runningJobs.has(job.id)
+    || runtimeState?.status === "running"
+    || runtimeState?.status === "waiting_for_user"
+    || runtimeState?.status === "waiting_for_approval") {
     return;
   }
-
-  if (job.schedule.type === "interval") {
-    const intervalMs = Math.max(1_000, job.schedule.intervalMs ?? 1_000);
-    const timer = setInterval(() => {
-      const latest = listAutomationJobs().find((item) => item.id === job.id);
-      if (!latest || !latest.enabled) return;
-      void executeJob(latest, "schedule");
-    }, intervalMs);
-    jobDisposers.set(job.id, () => clearInterval(timer));
+  if (job.schedule.type === "manual") return;
+  const now = Date.now();
+  const scheduledAt = job.nextRunAt ?? getNextAutomationRunAt(
+    job.schedule,
+    job.lastRunAt ?? job.updatedAt,
+    job.scheduleAnchorAt ?? job.createdAt
+  );
+  if (scheduledAt === null) return;
+  if (scheduledAt <= now && job.schedule.misfirePolicy === "skip") {
+    if (job.schedule.type === "once") {
+      updateAutomationJob({ id: job.id, enabled: false, disabledReason: "错过计划时间，按 skip 策略跳过" });
+    } else {
+      advanceAutomationJobSchedule({ id: job.id, fromAt: now });
+    }
     return;
   }
-
-  if (job.schedule.type === "cron") {
-    const expr = job.schedule.cronExpr?.trim();
-    if (!expr) return;
-    const timer = setInterval(() => {
-      const latest = listAutomationJobs().find((item) => item.id === job.id);
-      if (!latest || !latest.enabled) return;
-      const now = new Date();
-      const key = minuteKey(now);
-      if (lastCronMinuteKeyByJob.get(job.id) === key) return;
-      if (!matchCronExpression(expr, now)) return;
-      lastCronMinuteKeyByJob.set(job.id, key);
-      void executeJob(latest, "schedule");
-    }, 15_000);
-    jobDisposers.set(job.id, () => clearInterval(timer));
-  }
+  const delay = Math.max(0, Math.min(scheduledAt - now, 2_147_000_000));
+  const timer = setTimeout(() => {
+    const latest = listAutomationJobs().find((item) => item.id === job.id);
+    if (!latest?.enabled) return;
+    if (scheduledAt - Date.now() > 2_147_000_000) {
+      void refreshAutomationRunnerJobs();
+      return;
+    }
+    void executeJob(latest, "schedule", scheduledAt).then((run) => {
+      if (run.status !== "skipped") void refreshAutomationRunnerJobs();
+    });
+  }, delay);
+  jobDisposers.set(job.id, () => clearTimeout(timer));
 }
 
 export async function refreshAutomationRunnerJobs(): Promise<void> {
@@ -310,6 +350,7 @@ export async function refreshAutomationRunnerJobs(): Promise<void> {
 export async function startAutomationRunner(): Promise<void> {
   if (runnerStarted) return;
   runnerStarted = true;
+  recoverAutomationRuntimeStates();
   await refreshAutomationRunnerJobs();
 }
 
@@ -327,6 +368,32 @@ export async function runAutomationJobNow(input: AutomationRunNowInput): Promise
     throw new Error("任务已禁用，无法执行");
   }
   return executeJob(job, "manual");
+}
+
+export function resumeAutomationAfterInteraction(threadId: string): void {
+  const state = recoverAutomationRuntimeStates().find((candidate) =>
+    candidate.threadId === threadId
+    && (candidate.status === "waiting_for_user" || candidate.status === "waiting_for_approval")
+    && candidate.lease
+  );
+  if (!state?.lease) return;
+  finishAutomationLease({
+    jobId: state.jobId,
+    leaseId: state.lease.id,
+    runId: state.lease.runId,
+    scheduledAt: state.lease.scheduledAt
+  }, {
+    status: "success",
+    threadId,
+    message: "用户交互已解决，自动化 Run 已恢复完成。"
+  });
+  const pendingScheduledAt = consumeLatestAutomationTrigger(state.jobId);
+  const latest = listAutomationJobs().find((job) => job.id === state.jobId);
+  if (pendingScheduledAt !== undefined && latest?.enabled && latest.schedule.type !== "once") {
+    void executeJob(latest, "schedule", pendingScheduledAt);
+  } else {
+    void refreshAutomationRunnerJobs();
+  }
 }
 
 function parseRunLine(line: string): AutomationRun | null {

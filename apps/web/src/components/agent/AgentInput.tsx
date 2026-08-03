@@ -1,25 +1,29 @@
 import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import { cn } from '@/lib/utils'
-import { Send, Square, FileText, Plus, LoaderCircle, MonitorOff } from 'lucide-react'
+import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   agentSend,
+  createBrowserReferenceGrant,
   getThreadMessages,
   isTerminalAgentSubmissionError,
   listAgentMessageQueue,
+  listBrowserReferenceCandidates,
+  onBrowserEvent,
   onSidecarEvent,
   openFileDialog,
   promoteQueuedAgentMessageToGuidance,
   removeQueuedAgentMessage,
   reorderAgentMessageQueue,
+  revokeBrowserReferenceGrant,
   sidecarCall,
   updateQueuedAgentMessage,
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { activeTabIdAtom, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { debounce } from 'throttle-debounce'
 import {
@@ -27,7 +31,10 @@ import {
   DESKTOP_CONTEXT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
   type AgentMessage,
+  type AgentBrowserAttachment,
+  type AgentBrowserTabAttachment,
   type AgentMessageAttachmentInput,
+  type AgentDiffCommentAttachment,
   type AgentSavedFile,
   type Channel,
   type DesktopContextTarget,
@@ -36,10 +43,17 @@ import {
   type LumeConfigThinkingLevel,
   type LumeRuntimeEvent,
   type AgentQueuedMessage,
+  type BrowserTabDescriptor,
+  type BrowserReferenceCandidate,
+  type FileEntry,
+  type FileIndexEntry,
+  type FileRef,
+  type FileSearchResult,
 } from '@lume/shared'
 import { appendRuntimeEvent } from '@/hooks/runtime-event-state'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { MentionList } from './MentionList'
+import { formatFileRefMention, parseFileRefDragData } from './file-ref-drag'
 import { serializeAgentEditorMessage } from './agent-editor-message-parts'
 import { ModelPicker } from './ModelPicker'
 import { PermissionModePicker } from './PermissionModePicker'
@@ -121,48 +135,207 @@ export interface PendingMessageAttachment {
   previewUrl?: string
 }
 
-/** 占位：AgentInput 中 @ 文件 + @agent 的建议逻辑仍保留在此 */
+type MentionFileSource = 'project' | 'session'
+
+const browserSuggestionCache = new Map<string, { expiresAt: number; value: Promise<BrowserReferenceCandidate[]> }>()
+
+function invalidateBrowserSuggestionCache(threadId?: string): void {
+  if (threadId) browserSuggestionCache.delete(threadId)
+  else browserSuggestionCache.clear()
+}
+
+function getBrowserSuggestionCandidates(threadId: string): Promise<BrowserReferenceCandidate[]> {
+  for (const [key, entry] of browserSuggestionCache) if (entry.expiresAt <= Date.now()) browserSuggestionCache.delete(key)
+  const cached = browserSuggestionCache.get(threadId)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+  const value = listBrowserReferenceCandidates(threadId).catch(() => [])
+  browserSuggestionCache.set(threadId, { expiresAt: Date.now() + 3_000, value })
+  return value
+}
+
+/** 获取 @ 面板中的 Agent、项目文件和当前会话文件。 */
 async function fetchAgentAndFileSuggestions(
   query: string,
   threadId: string,
+  workspaceSlug: string | null,
 ): Promise<MentionItem[]> {
   const agentItems = buildAgentRoleMentionItems(query)
+  const normalizedQuery = query.trim().toLowerCase()
   try {
-    const result = await sidecarCall(AGENT_IPC_CHANNELS.LIST_DIRECTORY, { threadId, path: '.' }) as {
-      entries: Array<{ name: string; type: string }>
-    }
-    const entries = result?.entries ?? []
-    const fileItems = entries
-      .filter((e) => e.name.toLowerCase().includes(query.toLowerCase()))
-      .slice(0, 10)
-      .map((e) => ({
-        id: e.name,
-        label: e.name,
-        type: 'file' as const,
-        section: 'file' as const,
-      }))
-    return [...agentItems, ...fileItems]
+    const [browserCandidates, projectResult, sessionResult] = await Promise.all([
+      getBrowserSuggestionCandidates(threadId),
+      workspaceSlug
+        ? sidecarCall<{ entries: FileEntry[] }>(AGENT_IPC_CHANNELS.LIST_PROJECT_DIRECTORY, { workspaceSlug, path: '.' })
+            .catch(() => ({ entries: [] as FileEntry[] }))
+        : Promise.resolve({ entries: [] as FileEntry[] }),
+      sidecarCall<{ entries: FileEntry[] }>(AGENT_IPC_CHANNELS.LIST_DIRECTORY, {
+        ...(workspaceSlug ? { workspaceSlug } : {}),
+        threadId,
+        path: '.',
+      }).catch(() => ({ entries: [] as FileEntry[] })),
+    ])
+
+    const roots: Array<{ source: MentionFileSource; entries: FileEntry[]; ref?: FileRef }> = [
+      {
+        source: 'project',
+        entries: projectResult.entries ?? [],
+        ref: workspaceSlug ? { source: 'project', scopeId: workspaceSlug, relativePath: '' } : undefined,
+      },
+      {
+        source: 'session',
+        entries: sessionResult.entries ?? [],
+        ref: getSessionRootRef(sessionResult.entries ?? []),
+      },
+    ]
+
+    const results = normalizedQuery
+      ? await Promise.all(roots.map(async (root) => {
+          if (!root.ref) return { source: root.source, entries: root.entries.map(toFileIndexEntry) }
+          try {
+            const result = await sidecarCall<FileSearchResult>(AGENT_IPC_CHANNELS.SEARCH_FILE_REFS, {
+              ref: root.ref,
+              query: normalizedQuery,
+              limit: 40,
+              includeExcluded: false,
+            })
+            return { source: root.source, entries: result.entries ?? [] }
+          } catch {
+            return { source: root.source, entries: root.entries.map(toFileIndexEntry) }
+          }
+        }))
+      : roots.map((root) => ({ source: root.source, entries: root.entries.map(toFileIndexEntry) }))
+
+    const browserItems = buildBrowserMentionItems(browserCandidates, normalizedQuery)
+    const fileItems = results.flatMap(({ source, entries }) => buildFileMentionItems(entries, source, normalizedQuery))
+    return [...agentItems, ...browserItems, ...fileItems]
   } catch {
     return agentItems
   }
 }
 
-/** AgentInput 专用的 @ suggestion renderer（包含 agent + 文件） */
+function buildBrowserMentionItems(candidates: BrowserReferenceCandidate[], query: string): MentionItem[] {
+  return candidates
+    .filter((candidate) => !query || `${candidate.title}\n${candidate.url}`.toLowerCase().includes(query))
+    .map((candidate) => ({
+      id: `${candidate.backend}:${candidate.tabId}`,
+      label: candidate.title,
+      title: candidate.title,
+      subtitle: formatBrowserCandidateUrl(candidate.url),
+      type: 'browser' as const,
+      section: candidate.backend === 'iab' ? 'browser-tab' as const : 'chrome-page' as const,
+      meta: candidate.backend === 'iab' ? '内置' : 'Chrome',
+      browserCandidate: candidate,
+    }))
+}
+
+function formatBrowserCandidateUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    return `${url.hostname}${url.pathname === '/' ? '' : url.pathname}` || value
+  } catch { return value }
+}
+
+function browserTabFromAttachment(attachment: AgentBrowserAttachment): AgentBrowserTabAttachment {
+  return attachment.origin === 'browser-tab' ? attachment : attachment.tab
+}
+
+type BrowserAnnotationAttachment = Extract<AgentBrowserAttachment, { origin: 'browser-annotation' }>
+
+function browserAnnotationTargetLabel(attachment: BrowserAnnotationAttachment): string {
+  if (attachment.anchor.kind === 'text') return 'text'
+  if (attachment.anchor.kind === 'region') return 'region'
+  const segment = attachment.anchor.domPath?.split('>').at(-1)?.trim()
+  return segment?.replace(/:.*/, '').toLowerCase() || 'element'
+}
+
+function browserAnnotationPreview(attachment: BrowserAnnotationAttachment): string {
+  return attachment.anchor.textQuote?.exact
+    || attachment.anchor.selectedContent
+    || attachment.body
+}
+
+function sameBrowserTab(attachment: AgentBrowserAttachment, backend: 'iab' | 'extension', tabId: string): boolean {
+  const tab = browserTabFromAttachment(attachment)
+  return (tab.backend ?? 'iab') === backend && tab.tabId === tabId
+}
+
+function getSessionRootRef(entries: FileEntry[]): FileRef | undefined {
+  const ref = entries.find((entry) => entry.ref?.source === 'session')?.ref
+  return ref ? { ...ref, relativePath: '' } : undefined
+}
+
+function toFileIndexEntry(entry: FileEntry): FileIndexEntry {
+  return {
+    name: entry.name,
+    path: entry.ref?.relativePath ?? entry.name,
+    type: entry.isDirectory ? 'dir' : 'file',
+    ref: entry.ref,
+  }
+}
+
+function buildFileMentionItems(
+  entries: FileIndexEntry[],
+  source: MentionFileSource,
+  query: string,
+): MentionItem[] {
+  const section = source === 'project' ? 'project-file' : 'session-file'
+  const sourceLabel = source === 'project' ? '项目' : '会话'
+  return entries
+    .filter((entry) => entry.type === 'file')
+    .filter((entry) => !query || `${entry.name}\n${entry.path}`.toLowerCase().includes(query))
+    .sort((left, right) => {
+      const leftStarts = left.name.toLowerCase().startsWith(query) ? 0 : 1
+      const rightStarts = right.name.toLowerCase().startsWith(query) ? 0 : 1
+      return leftStarts - rightStarts || left.path.length - right.path.length
+    })
+    .slice(0, 12)
+    .map((entry) => ({
+      id: `${source}:${entry.path}`,
+      label: `${source}/${entry.path}`,
+      title: entry.name,
+      subtitle: entry.path,
+      type: 'file' as const,
+      section,
+      meta: sourceLabel,
+    }))
+}
+
+/** AgentInput 专用的 @ suggestion renderer（包含 Agent、浏览器和文件）。 */
 function createAgentSuggestionRenderer(
   threadId: string,
-  _getWorkspaceSlug: () => string | null,
+  getWorkspaceSlug: () => string | null,
   setSuggestionOpen: (open: boolean) => void,
+  onBrowserReferenceSelect: (item: MentionItem) => Promise<boolean>,
   onEscape?: () => void,
 ) {
+  let itemsRequestSequence = 0
+  let latestItems: MentionItem[] = []
   return {
     char: '@',
-    items: ({ query }: { query: string }) => fetchAgentAndFileSuggestions(query, threadId),
+    items: async ({ query }: { query: string }) => {
+      const requestSequence = ++itemsRequestSequence
+      const items = await fetchAgentAndFileSuggestions(query, threadId, getWorkspaceSlug())
+      if (requestSequence !== itemsRequestSequence) return latestItems
+      latestItems = items
+      return items
+    },
     render: () => {
       let component: ReactRenderer<MentionListRef> | null = null
       let wrapper: HTMLDivElement | null = null
+      let currentProps: SuggestionProps | null = null
+
+      const selectBrowserReference = (item: MentionItem) => {
+        const props = currentProps
+        if (!props) return
+        void onBrowserReferenceSelect(item).then((selected) => {
+          if (!selected) return
+          props.editor.chain().focus().deleteRange(props.range).run()
+        })
+      }
 
       return {
         onStart: (props: SuggestionProps) => {
+          currentProps = props
           setSuggestionOpen(true)
           wrapper = document.createElement('div')
           wrapper.style.position = 'fixed'
@@ -170,7 +343,7 @@ function createAgentSuggestionRenderer(
           document.body.appendChild(wrapper)
 
           component = new ReactRenderer(MentionList, {
-            props: { ...props, trigger: '@' as const },
+            props: { ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference },
             editor: props.editor,
           })
           wrapper.appendChild(component.element)
@@ -179,7 +352,8 @@ function createAgentSuggestionRenderer(
         },
 
         onUpdate: (props: SuggestionProps) => {
-          component?.updateProps(props)
+          currentProps = props
+          component?.updateProps({ ...props, trigger: '@' as const, onBrowserReferenceSelect: selectBrowserReference })
           if (wrapper) updateMentionPosition(wrapper, props)
         },
 
@@ -194,6 +368,7 @@ function createAgentSuggestionRenderer(
         },
 
         onExit: () => {
+          currentProps = null
           setSuggestionOpen(false)
           component?.destroy()
           wrapper?.remove()
@@ -252,6 +427,10 @@ export function AgentInput({
   const [defaultStrategy, setDefaultStrategy] = useState<LumeConfigAgentDefaultStrategy>({})
   const [editorText, setEditorText] = useState('')
   const draft = useAtomValue(agentInputDraftFamily(threadId))
+  const commentAttachments: AgentDiffCommentAttachment[] = useAtomValue(agentDiffCommentDraftsFamily(threadId)) ?? []
+  const setCommentDrafts = useSetAtom(agentDiffCommentDraftsAtom)
+  const browserAttachments: AgentBrowserAttachment[] = useAtomValue(agentBrowserAttachmentsFamily(threadId)) ?? []
+  const setBrowserAttachments = useSetAtom(agentBrowserAttachmentsAtom)
   const setDraftState = useSetAtom(agentInputDraftAtom)
   const isNavigatingHistoryRef = useRef(false) // true = 当前编辑器内容由程序填充（恢复/回溯），不应存为草稿
   const historyIndexRef = useRef(-1) // -1 = 未回溯（显示草稿）；0..n = 回溯到 history[index]
@@ -263,6 +442,66 @@ export function AgentInput({
   const setHistoryState = useSetAtom(agentInputHistoryAtom)
   const historyRef = useRef(history)
   historyRef.current = history
+
+  useEffect(() => {
+    const addBrowserTab = (event: Event) => {
+      const descriptor = (event as CustomEvent<BrowserTabDescriptor>).detail
+      if (!descriptor?.tabId || !descriptor.providerTabId || !descriptor.url) return
+      if (descriptor.ownerThreadId && descriptor.ownerThreadId !== threadId) return
+      const attachment: AgentBrowserTabAttachment = {
+        id: `browser-tab:${descriptor.providerTabId}:${descriptor.generation}`,
+        origin: 'browser-tab',
+        tabId: descriptor.tabId,
+        providerTabId: descriptor.providerTabId,
+        title: descriptor.title || descriptor.url,
+        url: descriptor.url,
+        generation: descriptor.generation,
+        ...(descriptor.ownerThreadId ? { ownerThreadId: descriptor.ownerThreadId } : {}),
+      }
+      setBrowserAttachments((current) => {
+        const existing = current[threadId] ?? []
+        return {
+          ...current,
+          [threadId]: [...existing.filter((item) => item.id !== attachment.id && !(item.origin === 'browser-tab' && item.tabId === attachment.tabId)), attachment],
+        }
+      })
+    }
+    window.addEventListener('lume:add-browser-tab-to-chat', addBrowserTab)
+    const addBrowserAttachment = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string; attachment?: AgentBrowserAttachment }>).detail
+      if (!detail?.attachment || (detail.threadId && detail.threadId !== threadId)) return
+      setBrowserAttachments((current) => ({
+        ...current,
+        [threadId]: [...(current[threadId] ?? []).filter((item) => item.id !== detail.attachment!.id), detail.attachment!],
+      }))
+    }
+    window.addEventListener('lume:add-browser-attachment-to-chat', addBrowserAttachment)
+    return () => {
+      window.removeEventListener('lume:add-browser-tab-to-chat', addBrowserTab)
+      window.removeEventListener('lume:add-browser-attachment-to-chat', addBrowserAttachment)
+    }
+  }, [setBrowserAttachments, threadId])
+
+  useEffect(() => {
+    let disposed = false
+    let stop: (() => void) | undefined
+    void onBrowserEvent((event) => {
+      if (event.method === 'browser:backend-state' || event.method === 'browser:backend-changed') {
+        invalidateBrowserSuggestionCache()
+        return
+      }
+      if (event.method !== 'browser:tab-changed' && event.method !== 'browser:workspace-changed') return
+      const ownerThreadId = typeof event.params.ownerThreadId === 'string' ? event.params.ownerThreadId : undefined
+      invalidateBrowserSuggestionCache(ownerThreadId ?? threadId)
+    }).then((unlisten) => {
+      if (disposed) unlisten()
+      else stop = unlisten
+    })
+    return () => {
+      disposed = true
+      stop?.()
+    }
+  }, [threadId])
   const [confirmState, setConfirmState] = useState<{
     open: boolean
     title: string
@@ -284,6 +523,7 @@ export function AgentInput({
   const [historyMessages, setHistoryMessages] = useState<AgentMessage[]>([])
   const mentionSuggestionOpenRef = useRef(false)
   const [plusPanelOpen, setPlusPanelOpen] = useState(false)
+  const [isFileRefDragOver, setIsFileRefDragOver] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [capturedDesktopContextTarget, setCapturedDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const [desktopContextCaptureMessage, setDesktopContextCaptureMessage] = useState<string | undefined>()
@@ -417,6 +657,11 @@ export function AgentInput({
 
   useEffect(() => {
     setPermissionMode((current) => {
+      const threadPermissionMode = threadPermissionModes[threadId]
+      if (threadPermissionMode) {
+        autoSelectedPlanModeRef.current = false
+        return threadPermissionMode
+      }
       const next = syncPermissionModeWithPlanModePhase({
         permissionMode: current,
         defaultPermissionMode: defaultPermissionModeRef.current,
@@ -426,7 +671,7 @@ export function AgentInput({
       autoSelectedPlanModeRef.current = next.autoSelectedPlan
       return next.permissionMode
     })
-  }, [planModePhase?.phase, threadId])
+  }, [planModePhase?.phase, threadId, threadPermissionModes])
 
   useEffect(() => {
     const targetId = thread?.workspaceId ?? currentWorkspaceId
@@ -471,14 +716,64 @@ export function AgentInput({
   }, [setMessageQueues, threadId])
 
   const getWorkspaceSlug = () => workspaceSlugRef.current
+  const getWorkspaceId = () => workspaceIdRef.current
   const setMentionSuggestionOpen = useCallback((open: boolean) => {
     mentionSuggestionOpenRef.current = open
   }, [])
 
   const slashCommandExecuteRef = useRef<(id: string) => void>(() => {})
+  const browserReferenceSelectRef = useRef<(item: MentionItem) => Promise<boolean>>(async () => false)
+  const browserReferenceSelectionSequenceRef = useRef(0)
   const handleSlashCommandExecuteStable = useCallback((id: string) => {
     slashCommandExecuteRef.current(id)
   }, [])
+  const handleBrowserReferenceSelectStable = useCallback((item: MentionItem) => browserReferenceSelectRef.current(item), [])
+  browserReferenceSelectRef.current = async (item) => {
+    const candidate = item.browserCandidate
+    if (!candidate) return false
+    const selectionSequence = ++browserReferenceSelectionSequenceRef.current
+    try {
+      const grant = await createBrowserReferenceGrant({ ...candidate, threadId, access: 'control' })
+      if (selectionSequence !== browserReferenceSelectionSequenceRef.current) {
+        void revokeBrowserReferenceGrant({ backend: candidate.backend, threadId, referenceGrantId: grant.referenceGrantId }).catch(() => undefined)
+        return false
+      }
+      const previous = browserAttachments
+        .map(browserTabFromAttachment)
+        .find((tab) => (tab.backend ?? 'iab') === candidate.backend && tab.tabId === candidate.tabId)
+      if (previous?.referenceGrantId) {
+        void revokeBrowserReferenceGrant({
+          backend: previous.backend ?? 'iab',
+          threadId,
+          referenceGrantId: previous.referenceGrantId,
+        }).catch(() => undefined)
+      }
+      const attachment: AgentBrowserTabAttachment = {
+        id: `browser-tab:${candidate.backend}:${candidate.providerTabId ?? candidate.tabId}:${candidate.generation ?? 'current'}`,
+        origin: 'browser-tab',
+        backend: candidate.backend,
+        browserId: candidate.browserId,
+        referenceGrantId: grant.referenceGrantId,
+        access: 'control',
+        tabId: candidate.tabId,
+        ...(candidate.providerTabId ? { providerTabId: candidate.providerTabId } : {}),
+        title: candidate.title,
+        url: candidate.url,
+        ...(candidate.generation ? { generation: candidate.generation } : {}),
+        ...(candidate.lastOpenedAt ? { lastOpenedAt: candidate.lastOpenedAt } : {}),
+        ...(candidate.ownerThreadId ? { ownerThreadId: candidate.ownerThreadId } : {}),
+      }
+      setBrowserAttachments((current) => ({
+        ...current,
+        [threadId]: [...(current[threadId] ?? []).filter((existing) => !sameBrowserTab(existing, candidate.backend, candidate.tabId)), attachment],
+      }))
+      return true
+    } catch (error) {
+      console.error('[AgentInput] 创建浏览器引用授权失败:', error)
+      toast.error('网页引用失败，页面可能已变化或浏览器连接已断开')
+      return false
+    }
+  }
   const handleLocalSuggestionEscape = useCallback(() => {
     if (!streamingRef.current) return
     lastEscapeAtRef.current = Date.now()
@@ -488,9 +783,10 @@ export function AgentInput({
 
   const editor = useEditor({
     extensions: createPromptEditorExtensions({
-      placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent 或文件',
-      agentSuggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen, handleLocalSuggestionEscape),
+      placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent、网页或文件',
+      agentSuggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen, handleBrowserReferenceSelectStable, handleLocalSuggestionEscape),
       capabilitySuggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable, handleLocalSuggestionEscape),
+      planningTodoSuggestion: createSuggestionRenderer('&', threadId, '&', getWorkspaceSlug, setMentionSuggestionOpen, undefined, handleLocalSuggestionEscape, getWorkspaceId),
     }),
     editorProps: {
       attributes: {
@@ -591,6 +887,33 @@ export function AgentInput({
     },
   })
 
+  const handleFileRefDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!parseFileRefDragData(event.dataTransfer)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setIsFileRefDragOver(true)
+  }, [])
+
+  const handleFileRefDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget
+    if (relatedTarget instanceof Node && event.currentTarget.contains(relatedTarget)) return
+    setIsFileRefDragOver(false)
+  }, [])
+
+  const handleFileRefDrop = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    const ref = parseFileRefDragData(event.dataTransfer)
+    if (!ref) return
+    event.preventDefault()
+    event.stopPropagation()
+    setIsFileRefDragOver(false)
+    if (!editor) return
+
+    const position = editor.state.selection.from
+    const previousCharacter = editor.state.doc.textBetween(Math.max(0, position - 1), position)
+    const prefix = previousCharacter && !/\s/u.test(previousCharacter) ? ' ' : ''
+    editor.chain().focus().insertContent(`${prefix}${formatFileRefMention(ref)} `).run()
+  }, [editor])
+
   const finishQueueEdit = useCallback((restoreDraft: boolean) => {
     const editing = editingQueuedMessageRef.current
     if (!editor || !editing) return
@@ -627,7 +950,10 @@ export function AgentInput({
     })
   }, [threadId, editor])
 
-  const hasComposerPayload = editorText.trim().length > 0 || pendingAttachments.length > 0
+  const hasComposerPayload = editorText.trim().length > 0
+    || pendingAttachments.length > 0
+    || commentAttachments.length > 0
+    || browserAttachments.length > 0
   const submitState = deriveAgentInputSubmitState({
     hasText: hasComposerPayload,
     streaming,
@@ -663,17 +989,29 @@ export function AgentInput({
         delete next[threadId]
         return next
       })
+      setCommentDrafts((prev) => {
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
+      setBrowserAttachments((prev) => {
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
       toast.success('已清空对话')
     } catch (error) {
       console.error('[AgentInput] 清空对话失败:', error)
       toast.error('清空失败')
     }
-  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues])
+  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues, setCommentDrafts, setBrowserAttachments])
 
   const handleSlashCommandExecute = useCallback((id: string) => {
     if (!editor) return
     const actionHasConflictingPayload = editor.getText().trim() !== `/${id}`
       || pendingAttachments.length > 0
+      || commentAttachments.length > 0
+      || browserAttachments.length > 0
       || Boolean(selectedDesktopContextTarget)
     if (actionHasConflictingPayload) {
       toast.error('请先清空正文、附件和当前应用上下文，再执行该动作')
@@ -753,7 +1091,7 @@ export function AgentInput({
       })()
       return
     }
-  }, [editor, threadId, threads, doClear, pendingAttachments.length, selectedDesktopContextTarget, streaming])
+  }, [editor, threadId, threads, doClear, pendingAttachments.length, commentAttachments.length, browserAttachments.length, selectedDesktopContextTarget, streaming])
 
   slashCommandExecuteRef.current = handleSlashCommandExecute
 
@@ -765,7 +1103,7 @@ export function AgentInput({
     }
     const serialized = serializeAgentEditorMessage(editor.getJSON(), applyAgentRoleMentions)
     const rawText = serialized.userMessage
-    if (!rawText && pendingAttachments.length === 0) return
+    if (!rawText && pendingAttachments.length === 0 && commentAttachments.length === 0 && browserAttachments.length === 0) return
 
     const queueEdit = editingQueuedMessageRef.current
     if (queueEdit) {
@@ -803,7 +1141,11 @@ export function AgentInput({
     }
 
     setLocalSending(true)
-    const text = rawText || '请解读这些附件。'
+    const text = rawText || (commentAttachments.length > 0
+      ? '请处理这些代码审阅意见。'
+      : browserAttachments.length > 0
+        ? '请处理这些浏览器标签与网页批注。'
+        : '请解读这些附件。')
     let sendMessageMetadata = effectiveMessageMetadata
     if (selectedDesktopContextTarget) {
       const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
@@ -829,6 +1171,8 @@ export function AgentInput({
       userMessage: text,
       messageParts: serialized.messageParts,
       attachments: pendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
+      commentAttachments,
+      browserAttachments,
       thinkingLevel,
       permissionMode,
       workspaceId: workspaceIdRef.current,
@@ -886,12 +1230,14 @@ export function AgentInput({
         threadId,
         userMessage: text,
         clientSubmissionId,
-        ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
+        ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
           ? { messageParts: serialized.messageParts }
           : {}),
         thinkingLevel,
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+        ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
+        ...(browserAttachments.length > 0 ? { browserAttachments } : {}),
         ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
         ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
       })
@@ -900,6 +1246,18 @@ export function AgentInput({
       setEditorText('')
       pushHistoryEntry(sentJson)
       clearDraftState()
+      setCommentDrafts((prev) => {
+        if (!prev[threadId]) return prev
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
+      setBrowserAttachments((prev) => {
+        if (!prev[threadId]) return prev
+        const next = { ...prev }
+        delete next[threadId]
+        return next
+      })
       ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
       editor.commands.focus('end')
       onMessageMetadataConsumed()
@@ -915,7 +1273,9 @@ export function AgentInput({
           createdAt,
           text,
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-          ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
+          ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
+          ...(browserAttachments.length > 0 ? { browserAttachments } : {}),
+          ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
             ? { messageParts: serialized.messageParts }
             : {}),
         }))
@@ -947,6 +1307,8 @@ export function AgentInput({
     onClearPendingAttachments,
     onMessageMetadataConsumed,
     pendingAttachments,
+    commentAttachments,
+    browserAttachments,
     effectiveMessageMetadata,
     messageMetadata,
     desktopContextTarget,
@@ -955,6 +1317,8 @@ export function AgentInput({
     setRuntimeEvents,
     setStreamingStates,
     setMessageQueues,
+    setCommentDrafts,
+    setBrowserAttachments,
     streaming,
     thinkingLevel,
     threadId,
@@ -963,6 +1327,16 @@ export function AgentInput({
     pushHistoryEntry,
   ])
   sendNowRef.current = () => { void handleSend() }
+
+  useEffect(() => {
+    const submitAgentInput = (event: Event) => {
+      const detail = (event as CustomEvent<{ threadId?: string }>).detail
+      if (detail?.threadId && detail.threadId !== threadId) return
+      window.requestAnimationFrame(() => sendNowRef.current())
+    }
+    window.addEventListener('lume:submit-agent-input', submitAgentInput)
+    return () => window.removeEventListener('lume:submit-agent-input', submitAgentInput)
+  }, [threadId])
 
   const applyContent = (json: AgentInputDraftJSON | undefined) => {
     if (!editor) return
@@ -1100,6 +1474,21 @@ export function AgentInput({
       toast.error('保存思考等级失败')
     })
   }
+
+  const handleRemoveBrowserAttachment = useCallback((attachment: AgentBrowserAttachment) => {
+    const tab = browserTabFromAttachment(attachment)
+    if (tab.referenceGrantId) {
+      void revokeBrowserReferenceGrant({
+        backend: tab.backend ?? 'iab',
+        threadId,
+        referenceGrantId: tab.referenceGrantId,
+      }).catch(() => undefined)
+    }
+    setBrowserAttachments((prev) => ({
+      ...prev,
+      [threadId]: (prev[threadId] ?? []).filter((item) => item.id !== attachment.id),
+    }))
+  }, [setBrowserAttachments, threadId])
 
   const handlePermissionModeChange = (value: PermissionModeValue) => {
     autoSelectedPlanModeRef.current = false
@@ -1267,6 +1656,9 @@ export function AgentInput({
         ? 'bg-[var(--lume-accent-soft)]'
         : 'hover:bg-[var(--surface-3)]',
     )
+  const displayedBrowserAttachments = editingQueuedMessage?.item.browserAttachments ?? browserAttachments
+  const displayedBrowserAnnotations = displayedBrowserAttachments.filter((attachment) => attachment.origin === 'browser-annotation')
+  const displayedOtherBrowserAttachments = displayedBrowserAttachments.filter((attachment) => attachment.origin !== 'browser-annotation')
 
   return (
     <div className="px-3 pb-4 pt-2">
@@ -1292,29 +1684,137 @@ export function AgentInput({
                   onEdit={handleEditQueuedMessage}
                   onPromoteToGuidance={handlePromoteQueuedMessageToGuidance}
                 />
-                <EditorContent
-                  editor={editor}
-                  className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
-                />
+                <div
+                  className={cn(
+                    'relative rounded-lg transition-colors',
+                    isFileRefDragOver && 'bg-[color:color-mix(in_oklab,var(--lume-accent)_8%,transparent)] ring-1 ring-inset ring-[color:color-mix(in_oklab,var(--lume-accent)_42%,transparent)]',
+                  )}
+                  onDragOver={handleFileRefDragOver}
+                  onDragLeave={handleFileRefDragLeave}
+                  onDrop={handleFileRefDrop}
+                >
+                  <EditorContent
+                    editor={editor}
+                    className="[&_.ProseMirror]:min-h-[72px] [&_.ProseMirror]:text-[14px] [&_.ProseMirror]:leading-7 [&_.ProseMirror]:text-[var(--text-1)] [&_.ProseMirror]:outline-none"
+                  />
+                  {isFileRefDragOver && (
+                    <div className="pointer-events-none absolute inset-1 flex items-center justify-center rounded-md border border-dashed border-[color:color-mix(in_oklab,var(--lume-accent)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--lume-bg-panel)_72%,transparent)] text-[12px] font-medium text-[var(--lume-accent)]">
+                      松开以引用文件
+                    </div>
+                  )}
+                </div>
               </>
             }
             topContent={
-              editingQueuedMessage?.item.messageAttachments?.length ? (
-                <div className="px-3 pb-2 pt-3">
-                  <PendingAttachmentList
-                    attachments={editingQueuedMessage.item.messageAttachments}
-                    hideRemove
-                    onRemove={() => undefined}
-                  />
-                </div>
-              ) : !editingQueuedMessage && pendingAttachments.length > 0 ? (
-                <div className="px-3 pb-2 pt-3">
-                  <PendingAttachmentList
-                    attachments={pendingAttachments}
-                    onRemove={onRemovePendingAttachment}
-                  />
-                </div>
-              ) : undefined
+              editingQueuedMessage?.item.messageAttachments?.length
+              || editingQueuedMessage?.item.commentAttachments?.length
+              || editingQueuedMessage?.item.browserAttachments?.length
+              || (!editingQueuedMessage && (pendingAttachments.length > 0 || commentAttachments.length > 0 || browserAttachments.length > 0))
+                ? (
+                    <div className="space-y-2 px-3 pb-2 pt-3">
+                      {editingQueuedMessage?.item.messageAttachments?.length ? (
+                        <PendingAttachmentList
+                          attachments={editingQueuedMessage.item.messageAttachments}
+                          hideRemove
+                          onRemove={() => undefined}
+                        />
+                      ) : !editingQueuedMessage && pendingAttachments.length > 0 ? (
+                        <PendingAttachmentList
+                          attachments={pendingAttachments}
+                          onRemove={onRemovePendingAttachment}
+                        />
+                      ) : null}
+                      {(editingQueuedMessage?.item.commentAttachments ?? commentAttachments).map((comment) => (
+                        <div key={comment.id} className="flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2.5 py-1.5 text-xs">
+                          <MessageSquareText size={13} className="shrink-0 text-[var(--lume-accent)]" />
+                          <span className="min-w-0 flex-1 truncate">
+                            {comment.intent === 'modify' ? '修改请求 · ' : comment.intent === 'context' ? '代码上下文 · ' : ''}
+                            {comment.position.path}:L{comment.position.startLine ?? comment.position.line}
+                            {(comment.position.startLine ?? comment.position.line) !== comment.position.line ? `–L${comment.position.line}` : ''}
+                            {' · '}{comment.body}
+                          </span>
+                          {!editingQueuedMessage && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label="移除审阅意见"
+                              onClick={() => setCommentDrafts((prev) => ({
+                                ...prev,
+                                [threadId]: (prev[threadId] ?? []).filter((item) => item.id !== comment.id),
+                              }))}
+                            >
+                              <X size={12} />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                      {displayedBrowserAnnotations.length > 0 && (
+                        <div tabIndex={0} aria-label={`${displayedBrowserAnnotations.length} 条网页注释`} className="group/browser-annotations relative flex w-fit max-w-full items-center gap-2 rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-3 py-2 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
+                          <div className="invisible absolute bottom-full left-0 z-50 w-[min(480px,calc(100vw-32px))] pb-2 opacity-0 transition-[opacity,visibility] group-hover/browser-annotations:visible group-hover/browser-annotations:opacity-100 group-focus-within/browser-annotations:visible group-focus-within/browser-annotations:opacity-100">
+                            <div className="overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-24px_hsl(var(--lume-shadow-panel)/0.72)]">
+                              {displayedBrowserAnnotations.map((annotation, index) => (
+                                <div key={annotation.id} className={cn('px-4 py-3', index > 0 && 'border-t border-[var(--lume-border-subtle)]')}>
+                                  <div className="flex items-center gap-2">
+                                    <div aria-hidden="true" className="flex h-6 w-8 shrink-0 items-center overflow-hidden rounded-md border border-[var(--lume-border-subtle)] bg-background px-1 text-[4px] leading-[5px] text-muted-foreground">
+                                      <span className="line-clamp-3 break-all">{browserAnnotationPreview(annotation)}</span>
+                                    </div>
+                                    <code className="rounded-md border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2 py-0.5 text-[11px] font-normal text-muted-foreground">
+                                      {browserAnnotationTargetLabel(annotation)}
+                                    </code>
+                                  </div>
+                                  <p className="mt-2 whitespace-pre-wrap break-words text-sm font-normal leading-5 text-foreground">{annotation.body}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <MessageSquareText size={13} className="shrink-0 text-[var(--lume-accent)]" />
+                          <span>{displayedBrowserAnnotations.length} 条注释</span>
+                          {!editingQueuedMessage && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              className="-mr-1 opacity-0 transition-opacity group-hover/browser-annotations:opacity-100 group-focus-within/browser-annotations:opacity-100"
+                              aria-label="移除全部网页批注"
+                              onClick={() => displayedBrowserAnnotations.forEach(handleRemoveBrowserAttachment)}
+                            >
+                              <X size={12} />
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                      {displayedOtherBrowserAttachments.map((attachment) => {
+                        const tab = attachment.origin === 'browser-tab' ? attachment : attachment.tab
+                        return (
+                          <div key={attachment.id} className="flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2.5 py-1.5 text-xs">
+                            <Globe size={13} className="shrink-0 text-[var(--lume-accent)]" />
+                            <span className="min-w-0 flex-1 truncate">
+                              {attachment.origin === 'browser-design-change'
+                                ? 'Design Tweaks · '
+                                : tab.backend === 'extension'
+                                  ? 'Chrome · '
+                                  : '内置浏览器 · '}
+                              {tab.title || tab.url}
+                              {attachment.origin === 'browser-design-change' && attachment.body && ` · ${attachment.body}`}
+                            </span>
+                            {!editingQueuedMessage && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label="移除浏览器附件"
+                                onClick={() => handleRemoveBrowserAttachment(attachment)}
+                              >
+                                <X size={12} />
+                              </Button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                : undefined
             }
             supportingContent={
               !editingQueuedMessage && selectedDesktopContextTarget ? (
@@ -1512,6 +2012,13 @@ function setEditorMessageParts(
             ? 'plugin'
             : part.uri.slice('lume-skill://'.length).includes(':') ? 'plugin-skill' : 'skill',
         },
+      })
+      continue
+    }
+    if (part.type === 'planning_todo_ref') {
+      activeContent().push({
+        type: 'planningTodoMention',
+        attrs: { schemaVersion: part.schemaVersion, uri: part.uri, todoId: part.todoId, relation: part.relation, displayText: part.displayText },
       })
       continue
     }

@@ -1,6 +1,6 @@
-import { createProvider, type ApiType, type LLMProvider } from "@lume/agent-sdk"
 import type { RoutineContext } from "@lume/shared"
-import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager"
+import { resolveChannelModelBinding } from "../channel/channel-manager"
+import { createConnectionLlmProvider } from "../model-runtime/connection-provider"
 import { getEffectiveLumeConfig } from "../system/lume-config-service"
 import { createLogger } from "../infra/logger"
 
@@ -29,9 +29,9 @@ export async function generateRoutinePlanWithLlm(
   const binding = resolveChannelModelBinding(modelRef, "chat")
   if (!binding) return undefined
 
-  const provider = createProvider(resolveApiType(binding.channel.provider), {
-    apiKey: decryptApiKey(binding.channel.id),
-    baseURL: binding.channel.baseUrl,
+  const provider = await createConnectionLlmProvider({
+    channel: binding.channel,
+    modelId: binding.modelId,
   })
 
   log.debug("generating routine plan with LLM", { provider: binding.channel.provider, modelId: binding.modelId })
@@ -84,13 +84,6 @@ function parseJsonResponse(text: string): LlmRoutinePlan | undefined {
   } catch {
     return undefined
   }
-}
-
-function resolveApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase()
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages"
-  if (normalized === "deepseek") return "deepseek-chat-completions"
-  return "openai-completions"
 }
 
 const SYSTEM_PROMPT = `你是用户的个人日程规划助手。根据用户当前的上下文，决定今天应该安排哪些活动以及什么时间执行。

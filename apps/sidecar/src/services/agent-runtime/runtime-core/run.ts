@@ -11,11 +11,18 @@ import {
   GrepTool,
   LSPTool,
   NotebookEditTool,
+  LSPApplyTool,
+  ProcessOutputTool,
+  ProcessStopTool,
+  EnterWorktreeTool,
+  ExitWorktreeTool,
   registerAgents,
   type SDKMessage,
   type Agent,
+  type FileCheckpoint,
   type AgentDefinition,
   type AgentOptions,
+  type CompletionGuardResult,
   type ApiType,
   type PromptCachePolicy,
   type ContentBlockParam,
@@ -29,7 +36,10 @@ import {
   defineTool,
   finalizeSubagentOutputFromState,
   summarizeSubagentAssistantEvent,
-  type ToolDefinition
+  type ToolDefinition,
+  type PersistedToolContinuation,
+  warmupLspClients,
+  setLspIdleTimeout
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
@@ -39,10 +49,13 @@ import type {
   AgentToolPermissionRequest,
   OpenAiApiMode,
   LumeRuntimeEvent,
+  RuntimeCodingReport,
   FileReferenceBinding,
   SubagentTaskReport,
   SubagentTask,
-  SubagentTaskFeedback
+  SubagentTaskFeedback,
+  AgentTaskRef,
+  PlanningTodo
 } from "@lume/shared";
 import { readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -59,15 +72,18 @@ import {
   getWorkspaceSkillsDir
 } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
+import { createRoutingPiAiProvider, type PiAiProviderRoute } from "../../model-runtime/pi-ai-provider";
+import { createConnectionPiAiRoute, resolveConfiguredConnectionApiType } from "../../model-runtime/connection-provider";
 import { getWorkspaceMcpManager, WorkspaceMcpManager } from "../../mcp/workspace-mcp-manager";
 import { resolveMemoryRuntimeConfig, shouldIncludeCitations } from "../../memory-v2/policy";
 import type { MemoryV2RecallItem } from "../../memory-v2/types";
-import { decryptApiKey, resolveChannelModelBinding } from "../../channel/channel-manager";
+import { getChannelById, resolveChannelModelBinding } from "../../channel/channel-manager";
 import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig } from "../../system/lume-config-service";
 import { createLumeRuntimeTools } from "../tools/create-lume-tools";
 import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { resolveSubagentSpawnPolicy } from "../../agent/subagents/subagent-policy";
+import { hasCodingIntent } from "../../agent/capability-routing";
 import { getSubagentRunRegistry } from "../../agent/subagents/subagent-run-registry";
 import { getSubagentCoordinator } from "../../agent/subagents/subagent-coordinator";
 import { buildSubagentWorkContext, resolveSubagentDispatchPolicy } from "../../agent/subagents/subagent-dispatch-policy";
@@ -84,15 +100,18 @@ import type { ContextAssemblyInput } from "../context/context-assembler";
 import { resolveDesktopContextProjection } from "../../desktop-context/desktop-context-runtime";
 import { createKernelContextController } from "../context/context-controller";
 import { buildRuntimeUserMessageInput } from "./message-attachment-input";
-import { createTaskContractWriteTool } from "../plan/task-contract-write-tool";
-import { createTaskReportTool } from "../task-run/task-report-tool";
+import { createMainTaskTools } from "../task/task-tools";
+import { FileBackedTaskStore } from "../task/task-store";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
+import { bindPlanningExecutionRun, resolvePlanningExecutionContext } from "../../planning/planning-execution-context";
+import { getPlanningTodoStore } from "../../planning/planning-todo-store";
 import { SidecarPluginManager } from "../plugins/plugin-manager.js";
 import { assemblePluginRuntime, type PluginRuntimeAssembly } from "../plugins/runtime-bridge.js";
 import type { RegisteredPlugin } from "../plugins/plugin-registry.js";
 import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
 import { DEFAULT_PLUGIN_STATE_PATH, FilePluginStateStore } from "../plugins/plugin-state-store.js";
 import { buildPluginAgentHooks } from "../plugins/plugin-hooks-bridge.js";
+import { resolveRuntimeLspConfig } from "../lsp/lsp-config.js";
 import {
   buildPluginMcpManager,
   buildPluginIdIndex,
@@ -102,6 +121,12 @@ import {
   clearRuntimeToolDescriptors,
 } from "../tools/tool-descriptor-session";
 import { clearRuntimeFileAccessLedger } from "../tools/file-access-ledger";
+import {
+  createCodingRunTracker,
+  type CodingVerificationReport,
+  type CodingVerificationStatus,
+} from "./coding-run-tracker";
+import { runAdvisor } from "../advisor/advisor-service";
 import { getNodeReplRuntimeRegistry } from "../tools/node-repl/node-repl-runtime-registry";
 import { getComputerUseSessionRegistry } from "../tools/computer-use/computer-use-session";
 import {
@@ -115,8 +140,12 @@ import {
   replaceMcpResourceTools,
 } from "./mcp-resource-router.js";
 import type { LumeToolDescriptor } from "../tools/tool-types";
-import type { TaskContractRecord } from "../plan/task-contract-record-types";
-import { readLatestTodoState } from "../runner/todo-state";
+import {
+  cloneTodoState,
+  getTodoCompletionBlocker,
+  readLatestTodoState
+} from "../runner/todo-state";
+import { createFileBackedRunContinuationStore } from "../runner/run-continuation-store";
 import {
   collectAppendContextEffects,
   type LumeWorkflowHookExecutionResult
@@ -126,6 +155,7 @@ import type { LumeWorkflowHookEvent } from "../../workflow-hooks/hook-events";
 
 const log = createLogger("runtime-core-prompt");
 const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+const taskExecutorStopHandlers = new Map<string, () => void>();
 
 interface RuntimeCoreResolvedModel {
   id: string;
@@ -135,6 +165,7 @@ interface RuntimeCoreResolvedModel {
   contextWindow?: number;
   maxTokens?: number;
   input?: string[];
+  reasoning?: boolean;
 }
 
 export interface CreateRuntimeCoreSessionInput {
@@ -145,13 +176,16 @@ export interface CreateRuntimeCoreSessionInput {
   plansRoot?: string;
   artifactsRoot?: string;
   projectRoot?: string;
+  additionalDirectories?: string[];
   fileContextId?: string;
   fileReferenceBinding?: FileReferenceBinding;
   agentDir: string;
   userMessage?: string;
+  messageParts?: AgentSendInput["messageParts"];
   provider: string;
   channelProvider?: string;
   openaiApiMode?: OpenAiApiMode;
+  apiType?: ApiType;
   modelRef?: string;
   resolvedModelId: string;
   resolvedModel?: RuntimeCoreResolvedModel;
@@ -169,14 +203,24 @@ export interface CreateRuntimeCoreSessionInput {
   chatType?: AgentSendInput["chatType"];
   permissionMode?: AgentSendInput["permissionMode"];
   messageAttachments?: AgentSendInput["messageAttachments"];
+  commentAttachments?: AgentSendInput["commentAttachments"];
+  browserAttachments?: AgentSendInput["browserAttachments"];
   messageMetadata?: Record<string, unknown>;
+  planningClientSubmissionId?: string;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
+  persistCodingReport?: (report: RuntimeCodingReport) => void;
+  emitAdvisorReview?: (review: {
+    severity: "clear" | "suggestion" | "concern" | "blocker";
+    summary: string;
+    details?: string;
+    modelRef: string;
+    durationMs: number;
+  }) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  emitTaskContractUpdated?: Parameters<typeof createTaskContractWriteTool>[0]["onTaskContractUpdated"];
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
   runId?: string;
   workflowHooks?: LumeWorkflowHookRuntimeLike;
@@ -184,6 +228,7 @@ export interface CreateRuntimeCoreSessionInput {
   trace?: ContextAssemblyInput["trace"];
   wikiProposalEnabled?: boolean;
   processSandbox?: SandboxSettings;
+  toolConfig?: Record<string, unknown>;
 }
 
 interface BoundSubagentIdentity {
@@ -228,6 +273,14 @@ export interface CreateRuntimeCoreSessionResult {
   userMessageForModel: string | ContentBlockParam[];
   memoryContextUsedItems: MemoryV2RecallItem[];
   tools: ToolDefinition[];
+  getVerificationStatus: () => CodingVerificationStatus;
+  beforeToolExecution: NonNullable<AgentOptions["onBeforeToolExecution"]>;
+  getBaselineCommit: () => string | undefined;
+  getBaselineCommits: () => Record<string, string>;
+  getVerificationReport: () => import("./coding-run-tracker").CodingVerificationReport;
+  refreshCodingChangeSet: () => Promise<unknown>;
+  getLatestFileCheckpoint: () => FileCheckpoint | undefined;
+  getWorkspaceRoots: () => string[];
 }
 
 interface RuntimeCoreToolset {
@@ -244,8 +297,6 @@ interface ResolvedSubagentModelOverride {
   channelId?: string;
   resolvedModelId?: string;
   apiType?: ApiType;
-  baseUrl?: string;
-  apiKey?: string;
 }
 
 function normalizeSubagentModelValue(value: unknown): string | undefined {
@@ -289,13 +340,7 @@ export function resolveSubagentModelOverride(input: {
     modelRef: candidate,
     channelId: binding.channel.id,
     resolvedModelId: binding.modelId,
-    apiType: binding.family === "anthropic"
-      ? "anthropic-messages"
-      : binding.channel.openaiApiMode === "responses"
-        ? "openai-responses"
-        : "openai-completions",
-    baseUrl: binding.channel.baseUrl,
-    apiKey: decryptApiKey(binding.channel.id)
+    apiType: resolveConfiguredConnectionApiType(binding.channel, binding.modelId),
   };
 }
 
@@ -391,6 +436,7 @@ async function runSidecarSubagent(input: {
   workspaceId?: string;
   chatType?: AgentSendInput["chatType"];
   messageMetadata?: Record<string, unknown>;
+  planningClientSubmissionId?: string;
   fileReferenceBinding?: FileReferenceBinding;
   permissionMode?: AgentSendInput["permissionMode"];
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -721,8 +767,10 @@ function createBaseSdkAlignedTools(
   permissionMode: AgentSendInput["permissionMode"],
   options: {
     includeAskUserQuestion: boolean;
+    includeWebTools: boolean;
     workspaceSlug?: string;
     renderClient?: RenderClient;
+    originalUserInstruction?: string;
   }
 ): ToolDefinition[] {
   const readOnlyTools: ToolDefinition[] = [
@@ -730,7 +778,9 @@ function createBaseSdkAlignedTools(
     GlobTool,
     GrepTool,
     ListDirectoryTool,
-    ...createSdkWebTools({ workspaceSlug: options.workspaceSlug, renderClient: options.renderClient })
+    ...(options.includeWebTools
+      ? createSdkWebTools({ workspaceSlug: options.workspaceSlug, renderClient: options.renderClient })
+      : [])
   ];
 
   if (permissionMode === "plan") {
@@ -741,16 +791,40 @@ function createBaseSdkAlignedTools(
     ];
   }
 
+  const worktreeTools = shouldExposeWorktreeTools(options.originalUserInstruction)
+    ? [EnterWorktreeTool, ExitWorktreeTool]
+    : [];
+
   return [
     ...readOnlyTools,
     ...(options.includeAskUserQuestion ? [AskUserQuestionTool] : []),
     FileWriteTool,
     FileEditTool,
     BashTool,
+    ProcessOutputTool,
+    ProcessStopTool,
     NotebookEditTool,
     SkillTool,
-    LSPTool
+    LSPTool,
+    LSPApplyTool,
+    ...worktreeTools
   ];
+}
+
+function shouldExposeWorktreeTools(instruction?: string): boolean {
+  const normalized = (instruction ?? "").trim().toLowerCase();
+  return [
+    "worktree",
+    "git worktree",
+    "isolation",
+    "isolated workspace",
+    "parallel agent",
+    "parallel coding",
+    "并行开发",
+    "并行修改",
+    "隔离工作区",
+    "独立工作区",
+  ].some((marker) => normalized.includes(marker));
 }
 
 function buildRuntimeCoreTools(input: {
@@ -771,6 +845,7 @@ function buildRuntimeCoreTools(input: {
   subagentDefinition?: AgentDefinition;
   boundSubagentReportTool?: ToolDefinition;
   messageMetadata?: Record<string, unknown>;
+  planningClientSubmissionId?: string;
   fileReferenceBinding?: FileReferenceBinding;
   originalUserInstruction?: string;
   emitSdkMessage?: (message: SDKMessage) => void;
@@ -779,7 +854,6 @@ function buildRuntimeCoreTools(input: {
   emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
-  emitTaskContractUpdated?: (contract: TaskContractRecord) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
   initialTodoState?: TodoState | null;
   runId?: string;
@@ -800,31 +874,32 @@ function buildRuntimeCoreTools(input: {
     input.chatType ?? "direct"
   );
   const automationExecution = isAutomationExecution(input.messageMetadata);
+  const directRepositoryRoute = isDirectRepositoryRuntimeRoute(
+    input.messageMetadata,
+    input.originalUserInstruction
+  );
   const baseTools = createBaseSdkAlignedTools(permissionMode, {
     includeAskUserQuestion: automationExecution !== true,
+    includeWebTools: !directRepositoryRoute,
     workspaceSlug: input.workspaceSlug,
-    renderClient: input.renderClient
+    renderClient: input.renderClient,
+    originalUserInstruction: input.originalUserInstruction
   }).map((tool) => tool.name === "Bash" && input.computerUseSurface === "sky"
     ? withDesktopAutomationFallbackGuard(tool, {
       computerUseActive: () => getComputerUseSessionRegistry().isActive(input.sessionId),
       originalUserInstruction: input.originalUserInstruction,
     })
     : tool);
-  const planWriteTool = createTaskContractWriteTool({
-    sessionDir: getRuntimeCoreSessionDir(input.sessionId),
-    threadId: input.sessionId,
-    runId: input.runId ?? input.sessionId,
-    ...(input.workspaceSlug ? { threadWorkspaceDir: input.cwd } : {}),
-    onTaskContractUpdated: input.emitTaskContractUpdated
-  });
-  const taskReportTool = input.boundSubagentReportTool
-    ? input.boundSubagentReportTool
-    : createTaskReportTool({ sessionDir: getRuntimeCoreSessionDir(input.sessionId), threadId: input.sessionId });
   const todoTool = createTodoTool({
     threadId: input.sessionId,
     initialTodos: input.initialTodoState?.todos,
     onTodoUpdated: input.emitTodoUpdated,
   });
+  const planningClientSubmissionId = input.planningClientSubmissionId;
+  if (input.runId && planningClientSubmissionId && resolvePlanningExecutionContext({ clientSubmissionId: planningClientSubmissionId })) {
+    bindPlanningExecutionRun(planningClientSubmissionId, input.runId);
+  }
+  const planningExecutionContext = resolvePlanningExecutionContext({ runId: input.runId, clientSubmissionId: planningClientSubmissionId });
   const lumeTools = createLumeRuntimeTools({
     threadId: input.sessionId,
     cwd: input.cwd,
@@ -849,7 +924,8 @@ function buildRuntimeCoreTools(input: {
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {}),
-    wikiProposalEnabled: input.wikiProposalEnabled
+    wikiProposalEnabled: input.wikiProposalEnabled,
+    planningExecutionContext
   });
   const askWikiOnly = getAgentThreadMeta(input.sessionId)?.wikiProfile?.kind === "ask-wiki";
 
@@ -861,9 +937,23 @@ function buildRuntimeCoreTools(input: {
     messageMetadata: input.messageMetadata
   };
 
+  const isMainTaskThread = input.threadType === "main" || input.threadType === undefined;
+  const mainTaskRuntime = isMainTaskThread
+    ? createMainTaskTools({
+      sessionDir: getRuntimeCoreSessionDir(input.sessionId),
+      threadId: input.sessionId,
+      runId: input.runId,
+      emitRuntimeEvent: input.emitRuntimeEvent,
+      onCancellationRequested: ({ executorRef }) => {
+        if (executorRef) taskExecutorStopHandlers.get(executorRef)?.();
+      },
+    })
+    : undefined;
+
   const sidecarAgentTool: ToolDefinition = {
     ...AgentTool,
-    isConcurrencySafe: () => true,
+    description: "Launch an independent subagent. For a persistent Task, first claim it with TaskUpdate and then pass task_ref; Task itself never creates or schedules the subagent.",
+    isConcurrencySafe: () => false,
     async call(toolInput: any, context: any) {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
@@ -878,6 +968,31 @@ function buildRuntimeCoreTools(input: {
         workspaceSlug: input.workspaceSlug
       });
       try {
+        if (toolInput.task_ref !== undefined) {
+          if (!mainTaskRuntime) throw new Error("Task-linked Agent calls are main-agent only");
+          assertTaskRefDiscriminant(toolInput);
+          const taskRef = parseTaskRef(toolInput.task_ref, parentThreadId);
+          return await runTaskLinkedSubagent({
+            toolInput,
+            context,
+            taskStore: mainTaskRuntime.store,
+            taskRef,
+            parentThreadId,
+            modelOverride,
+            workspaceId: input.workspaceId,
+            workspaceSlug: input.workspaceSlug,
+            channelId: input.channelId,
+            chatType: input.chatType,
+            messageMetadata: input.messageMetadata,
+            fileReferenceBinding: input.fileReferenceBinding,
+            permissionMode,
+            emitRuntimeEvent: input.emitRuntimeEvent,
+            emitAskUserQuestion: input.emitAskUserQuestion,
+            emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+            emitDesktopActionRequest: input.emitDesktopActionRequest,
+            emitToolPermissionRequest: input.emitToolPermissionRequest,
+          });
+        }
         const coordinator = getSubagentCoordinator();
         const taskId = typeof toolInput.task_id === "string" ? toolInput.task_id.trim() : undefined;
         const subagentId = typeof toolInput.subagent_id === "string" ? toolInput.subagent_id.trim() : undefined;
@@ -1004,9 +1119,12 @@ function buildRuntimeCoreTools(input: {
     }
   })
 
-  const taskLoopTools = input.threadType === "subagent"
-    ? [taskReportTool, todoTool]
-    : [taskReportTool, sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
+  const mainTaskTools = mainTaskRuntime?.tools ?? [];
+  const taskLoopTools = directRepositoryRoute && isMainTaskThread
+    ? []
+    : input.threadType === "subagent"
+      ? (input.boundSubagentReportTool ? [input.boundSubagentReportTool, todoTool] : [todoTool])
+      : [...(isMainTaskThread ? mainTaskTools : []), sidecarAgentTool, finishAgentTaskTool, retireSubagentTool, todoTool]
 
   const delegateTool: ToolDefinition = {
     ...AgentTool,
@@ -1022,11 +1140,17 @@ function buildRuntimeCoreTools(input: {
         subagent_type: { type: "string" },
         model: { type: "string" },
         mode: { type: "string", enum: ["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk", "auto"] },
+        task_ref: {
+          type: "object",
+          required: ["taskListId", "taskId", "claimToken"],
+          properties: { taskListId: { type: "string" }, taskId: { type: "string" }, claimToken: { type: "string" } },
+          description: "Associate this independently-created executor with a claimed main-agent Task.",
+        },
         run_in_background: { type: "boolean", description: "If true, start the child session asynchronously and return immediately with a delegationId. Use WaitForDelegations to collect results later." }
       },
       required: ["prompt", "description"]
     },
-    isConcurrencySafe: () => true,
+    isConcurrencySafe: () => false,
     async call(toolInput: any, context: any) {
       const parentThreadId = context.sessionId ?? "";
       const policy = resolveSubagentSpawnPolicy({
@@ -1035,6 +1159,37 @@ function buildRuntimeCoreTools(input: {
       });
       if (!policy.ok) {
         return { type: "tool_result" as const, tool_use_id: "", content: policy.error ?? "spawn policy rejected", is_error: true };
+      }
+      if (toolInput.task_ref !== undefined) {
+        if (!mainTaskRuntime) return { type: "tool_result" as const, tool_use_id: "", content: "Task-linked Delegate calls are main-agent only", is_error: true };
+        try {
+          assertTaskRefDiscriminant(toolInput);
+          if (toolInput.run_in_background === true) throw new Error("Task-linked Delegate calls are serialized and cannot run in background");
+          const taskRef = parseTaskRef(toolInput.task_ref, parentThreadId);
+          const modelOverride = resolveSubagentModelOverride({ toolInput, workspaceSlug: input.workspaceSlug });
+          return await runTaskLinkedSubagent({
+            toolInput,
+            context,
+            taskStore: mainTaskRuntime.store,
+            taskRef,
+            parentThreadId,
+            modelOverride,
+            workspaceId: input.workspaceId,
+            workspaceSlug: input.workspaceSlug,
+            channelId: input.channelId,
+            chatType: input.chatType,
+            messageMetadata: input.messageMetadata,
+            fileReferenceBinding: input.fileReferenceBinding,
+            permissionMode,
+            emitRuntimeEvent: input.emitRuntimeEvent,
+            emitAskUserQuestion: input.emitAskUserQuestion,
+            emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+            emitDesktopActionRequest: input.emitDesktopActionRequest,
+            emitToolPermissionRequest: input.emitToolPermissionRequest,
+          });
+        } catch (error) {
+          return { type: "tool_result" as const, tool_use_id: "", content: error instanceof Error ? error.message : String(error), is_error: true };
+        }
       }
       // D7: 仅允许一级 delegate —— 当前父 thread 若已是某 subagent run 的 child，拒绝
       const depthGuard = canDelegateFromThread(parentThreadId);
@@ -1207,20 +1362,56 @@ function buildRuntimeCoreTools(input: {
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] }
     ] : [
       { source: "sdk", tools: baseTools },
-      ...(permissionMode === "plan" ? [{ source: "plan" as const, tools: [planWriteTool] }] : []),
       { source: "task", tools: taskLoopTools },
       { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
-      ...(input.mcpTools?.length
+      ...(!directRepositoryRoute && input.mcpTools?.length
         ? [{ source: "mcp" as const, tools: sortDiscoveredTools(input.mcpTools) }]
         : []),
-      ...(input.pluginCommandTools?.length
+      ...(!directRepositoryRoute && input.pluginCommandTools?.length
         ? [{ source: "plugin" as const, tools: sortDiscoveredTools(input.pluginCommandTools) }]
         : []),
-      ...(input.pluginMcpTools?.length
+      ...(!directRepositoryRoute && input.pluginMcpTools?.length
         ? [{ source: "plugin" as const, tools: sortDiscoveredTools(input.pluginMcpTools) }]
         : [])
     ]
   });
+}
+
+function isDirectRepositoryRuntimeRoute(
+  messageMetadata?: Record<string, unknown>,
+  originalUserInstruction?: string
+): boolean {
+  const preferredRoute = typeof messageMetadata?.preferredCapabilityRoute === "string"
+    ? messageMetadata.preferredCapabilityRoute
+    : undefined;
+  return preferredRoute === "coding"
+    || preferredRoute === "raw-tools"
+    || hasCodingIntent(originalUserInstruction);
+}
+
+function resolvePlanningTodoContext(
+  input: Pick<CreateRuntimeCoreSessionInput, "lumeSessionId" | "messageParts" | "messageMetadata">,
+  executionContext: ReturnType<typeof resolvePlanningExecutionContext>
+): Array<Pick<PlanningTodo, "id" | "title" | "description" | "status" | "priority" | "workspaceId" | "dueDate" | "dueAt" | "dueTimezone" | "revision">> {
+  if (!executionContext) return [];
+  const parts = input.messageParts
+    ?? (Array.isArray(input.messageMetadata?.messageParts) ? input.messageMetadata.messageParts as AgentSendInput["messageParts"] : undefined)
+    ?? [];
+  const ids = new Set(executionContext.authorizedTodoIds);
+  if (executionContext.surface === "main" || executionContext.surface === "quick-input") {
+    for (const todo of getPlanningTodoStore().listPrimaryTodosForThread(input.lumeSessionId)) {
+      if (ids.has(todo.id)) parts.push({ type: "planning_todo_ref", schemaVersion: 1, uri: `lume://planning/todo/${todo.id}`, todoId: todo.id, relation: "primary", displayText: todo.title });
+    }
+  }
+  const snapshots = new Map<string, PlanningTodo>();
+  for (const part of parts) {
+    if (part?.type !== "planning_todo_ref" || !ids.has(part.todoId)) continue;
+    try {
+      const todo = getPlanningTodoStore().get(part.todoId);
+      if (todo.status === "open" && !todo.deletedAt) snapshots.set(todo.id, todo);
+    } catch { /* historical/deleted refs remain unavailable in the editor */ }
+  }
+  return [...snapshots.values()].map(({ id, title, description, status, priority, workspaceId, dueDate, dueAt, dueTimezone, revision }) => ({ id, title, ...(description ? { description } : {}), status, priority, ...(workspaceId ? { workspaceId } : {}), ...(dueDate ? { dueDate } : {}), ...(dueAt !== undefined ? { dueAt } : {}), ...(dueTimezone ? { dueTimezone } : {}), revision }));
 }
 
 function sortDiscoveredTools(tools: ToolDefinition[]): ToolDefinition[] {
@@ -1229,6 +1420,9 @@ function sortDiscoveredTools(tools: ToolDefinition[]): ToolDefinition[] {
 
 function resolveSdkApiType(provider: string, openaiApiMode?: OpenAiApiMode): ApiType {
   const normalized = provider.trim().toLowerCase();
+  if (normalized === "google") {
+    return "google-generative-ai";
+  }
   if (normalized === "anthropic" || normalized === "anthropic-compatible") {
     return "anthropic-messages";
   }
@@ -1489,14 +1683,157 @@ export async function createRuntimeCoreSession(
   input: CreateRuntimeCoreSessionInput
 ): Promise<CreateRuntimeCoreSessionResult> {
   const boundSubagentIdentity = resolveBoundSubagentIdentity(input);
+  const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
+  const runId = input.runId ?? input.lumeSessionId;
+  const codingRunTracker = createCodingRunTracker({
+    workspaceRoot: input.cwd,
+    additionalRoots: input.additionalDirectories,
+    statePath: join(sessionDir, `coding-state-${(input.runId ?? "session").replace(/[^a-zA-Z0-9_-]/g, "_")}.v1.json`),
+    turnId: typeof input.messageMetadata?.turnId === "string" ? input.messageMetadata.turnId : undefined,
+    userMessageId: typeof input.messageMetadata?.messageId === "string" ? input.messageMetadata.messageId : undefined,
+    routeReason: typeof input.messageMetadata?.routeReason === "string" ? input.messageMetadata.routeReason : undefined,
+    toolSelectionReason: typeof input.messageMetadata?.toolSelectionReason === "string" ? input.messageMetadata.toolSelectionReason : undefined
+  });
+  await codingRunTracker.initialize();
+  let approvalRequestCount = 0;
+  const getCodingReport = (): CodingVerificationReport & RuntimeCodingReport => {
+    const report: CodingVerificationReport & RuntimeCodingReport = {
+      ...codingRunTracker.getVerificationReport(),
+      runId,
+      approvalRequestCount,
+    };
+    return report;
+  };
+  const publishCodingReport = (): void => {
+    const codingReport = getCodingReport();
+    if (
+      !codingReport.workspaceChanged
+      && !codingReport.pendingBackground
+      && (codingReport.gitActions?.length ?? 0) === 0
+    ) return;
+    input.persistCodingReport?.(codingReport);
+    try {
+      input.emitRuntimeEvent?.({
+        id: `${runId}:coding-report:${Date.now()}`,
+        type: "coding.report.updated",
+        threadId: input.lumeSessionId,
+        runId,
+        createdAt: new Date().toISOString(),
+        codingReport,
+      });
+    } catch (error) {
+      log.warn("Failed to emit Coding report update", {
+        sessionId: input.lumeSessionId,
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const handleToolExecution = (toolInput: Parameters<typeof codingRunTracker.observe>[0]): void => {
+    codingRunTracker.observe(toolInput);
+    const task = toolInput.result._meta?.task as { id?: string; status?: string } | undefined;
+    if (input.runId && task?.id && task.status === "running") {
+      const toolName = toolInput.toolName;
+      const toolKind = toolName.toLowerCase() === "processoutput" ? "read" : "execute";
+      const toolUseId = toolInput.result.tool_use_id || task.id;
+      const now = new Date().toISOString();
+      void createFileBackedRunContinuationStore(sessionDir).upsert({
+        version: 2,
+        runId: input.runId,
+        threadId: input.lumeSessionId,
+        status: "waiting_background",
+        checkpoint: {
+          step: "waiting_for_tool_result",
+          toolCallId: toolUseId,
+          toolName,
+          toolKind,
+          processJobId: task.id,
+          toolCall: {
+            id: toolUseId,
+            name: toolName,
+            input: toolInput.input,
+            inputHash: createHash("sha256").update(JSON.stringify(toolInput.input ?? null)).digest("hex"),
+            kind: toolKind
+          }
+        },
+        reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+    publishCodingReport();
+  };
+  const handleAsyncEvent = (event: SDKMessage): void => {
+    const updatesCodingReport = codingRunTracker.observeAsyncEvent(event);
+    if (input.runId && event.type === "system" && event.subtype === "task_notification" && event.status !== "attention") {
+      const continuationStore = createFileBackedRunContinuationStore(sessionDir);
+      void continuationStore.get(input.runId).then((continuation) => {
+        if (!continuation || continuation.version !== 2 || continuation.checkpoint.processJobId !== event.task_id) return;
+        return continuationStore.update(input.runId!, {
+          status: "ready_to_resume",
+          checkpoint: {
+            ...continuation.checkpoint,
+            step: "after_tool_result",
+            syntheticToolResult: {
+              type: "tool_result",
+              tool_use_id: event.tool_use_id ?? continuation.checkpoint.toolCallId ?? "",
+              content: event.message ?? event.summary ?? "",
+              ...(event.status === "failed" || event.status === "stopped" || event.status === "interrupted"
+                ? { is_error: true }
+                : {}),
+              ...(event.execution ? { _meta: { execution: event.execution } } : {})
+            }
+          },
+          reason: `后台命令已进入终态：${event.status}。`
+        });
+      }).catch((error) => {
+        log.warn("Failed to persist background continuation result", {
+          sessionId: input.lumeSessionId,
+          runId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
+    try {
+      input.emitSdkMessage?.(event);
+    } catch (error) {
+      log.warn("Failed to emit asynchronous SDK event", {
+        sessionId: input.lumeSessionId,
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (!updatesCodingReport) return;
+    void codingRunTracker.refreshChangeSet()
+      .catch((error) => {
+        log.warn("Failed to refresh Coding changes after background task completion", {
+          sessionId: input.lumeSessionId,
+          runId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => {
+        publishCodingReport();
+      });
+  };
+  const emitToolPermissionRequest = input.emitToolPermissionRequest
+    ? (request: AgentToolPermissionRequest) => {
+      approvalRequestCount += 1;
+      input.emitToolPermissionRequest?.(request);
+    }
+    : undefined;
   const boundSubagentReportTool = boundSubagentIdentity
     ? createBoundSubagentTaskReportTool(boundSubagentIdentity)
     : undefined;
-  const sessionDir = getRuntimeCoreSessionDir(input.lumeSessionId, input.agentDir);
   const initialTodoState = await readLatestTodoState({
     sessionDir,
     threadId: input.lumeSessionId
   });
+  let currentTodoState = cloneTodoState(initialTodoState);
+  const handleTodoUpdated: Parameters<typeof createTodoTool>[0]["onTodoUpdated"] = async (state) => {
+    currentTodoState = cloneTodoState(state);
+    await input.emitTodoUpdated?.(state);
+  };
   const sessionManager = createOrResumeRuntimeCoreSessionManager(input.cwd, input.lumeSessionId, input.agentDir);
   const agents = { ...buildBuiltinAgents(), ...loadCustomAgents(input.workspaceSlug) };
   const subagentDefinition = input.subagentType ? agents[input.subagentType] : undefined;
@@ -1520,9 +1857,33 @@ export async function createRuntimeCoreSession(
     // Do not auto-load project-local .lume/plugins just because the Agent cwd is a real project.
     directories: pluginConfig.directories,
   });
+  const discoveredLspConfig = await resolveRuntimeLspConfig({
+    cwd: input.cwd,
+    user: getEffectiveLumeConfig(input.workspaceSlug).lsp,
+    plugins: registeredPlugins,
+  });
+  const runLspConfig = input.toolConfig?.lsp && typeof input.toolConfig.lsp === "object" && !Array.isArray(input.toolConfig.lsp)
+    ? input.toolConfig.lsp as Record<string, unknown>
+    : undefined;
+  const lspConfig = {
+    ...discoveredLspConfig,
+    ...(runLspConfig ?? {}),
+    ...(discoveredLspConfig.servers || (runLspConfig?.servers && typeof runLspConfig.servers === "object")
+      ? {
+        servers: {
+          ...(discoveredLspConfig.servers ?? {}),
+          ...(runLspConfig?.servers && typeof runLspConfig.servers === "object"
+            ? runLspConfig.servers as Record<string, unknown>
+            : {}),
+        },
+      }
+      : {}),
+  };
+  setLspIdleTimeout(lspConfig.idleTimeoutMs);
   const computerUsePlugin = registeredPlugins.find((plugin) => plugin.pluginId === "computer-use");
   log.info("Computer Use capability selected", {
     sessionId: input.lumeSessionId,
+    runId: input.runId,
     computerUseSurface,
     pluginVersion: computerUsePlugin?.version,
     modelRef: input.modelRef,
@@ -1544,6 +1905,33 @@ export async function createRuntimeCoreSession(
     workspaceSlug: input.workspaceSlug,
     sandbox: input.processSandbox,
   });
+  const agentHooks = { ...pluginAgentHooks };
+  const advisorConfig = getEffectiveLumeConfig(input.workspaceSlug).models?.advisor;
+  if (input.threadType !== "subagent" && advisorConfig?.defaultModelRef && advisorConfig.enabled !== false) {
+    agentHooks.Stop = [
+      ...(agentHooks.Stop ?? []),
+      {
+        hooks: [async (hookInput: Record<string, unknown>) => {
+          try {
+            const review = await runAdvisor({
+              workspaceSlug: input.workspaceSlug,
+              cwd: input.cwd,
+              userMessage: input.userMessage,
+              messages: hookInput.messages,
+            });
+            if (!review) return undefined;
+            input.emitAdvisorReview?.(review);
+          } catch (error) {
+            log.warn("Advisor review failed", {
+              sessionId: input.lumeSessionId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          return undefined;
+        }],
+      },
+    ];
+  }
 
   // Phase MCP Merge-A/B: plugin-declared MCP servers via a TRANSIENT WorkspaceMcpManager
   // (independent of the workspace singleton — zero pollution, §16.7 lifecycle via dispose).
@@ -1620,15 +2008,15 @@ export async function createRuntimeCoreSession(
     boundSubagentReportTool,
     fileReferenceBinding: input.fileReferenceBinding,
     messageMetadata: input.messageMetadata,
+    planningClientSubmissionId: input.planningClientSubmissionId,
     originalUserInstruction: input.userMessage,
     emitSdkMessage: input.emitSdkMessage,
     emitRuntimeEvent: input.emitRuntimeEvent,
     emitAskUserQuestion: input.emitAskUserQuestion,
     emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
-    emitToolPermissionRequest: input.emitToolPermissionRequest,
-    emitTaskContractUpdated: input.emitTaskContractUpdated,
-    emitTodoUpdated: input.emitTodoUpdated,
+    emitToolPermissionRequest,
+    emitTodoUpdated: handleTodoUpdated,
     initialTodoState,
     runId: input.runId,
     renderClient: getSidecarRenderClient(),
@@ -1649,7 +2037,6 @@ export async function createRuntimeCoreSession(
     ]
   });
   const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
-  const runId = input.runId ?? input.lumeSessionId;
   const beforeContextResult = await executeWorkflowHookSafely(input.workflowHooks, {
     event: "context.beforeAssemble",
     runId,
@@ -1669,6 +2056,11 @@ export async function createRuntimeCoreSession(
     ? { appendContext: collectAppendContextEffects(beforeContextResult.effects) }
     : undefined;
   const desktopContext = await resolveDesktopContextProjection(input.messageMetadata);
+  const planningExecutionContext = resolvePlanningExecutionContext({
+    runId,
+    clientSubmissionId: input.planningClientSubmissionId
+  });
+  const planningTodoContext = resolvePlanningTodoContext(input, planningExecutionContext);
   const modelId = input.resolvedModel?.id ?? input.resolvedModelId;
   const promptCache = resolvePromptCachePolicy({
     channelProvider: input.channelProvider,
@@ -1703,6 +2095,8 @@ export async function createRuntimeCoreSession(
       : subagentDefinition?.prompt,
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
+    commentAttachments: input.commentAttachments,
+    browserAttachments: input.browserAttachments,
     availableTools: toolset.availableToolNames,
     enabledPlugins,
     tokenBudget: contextTokenBudget,
@@ -1712,6 +2106,7 @@ export async function createRuntimeCoreSession(
     workflowContext,
     desktopContext,
     todoState: initialTodoState,
+    planningTodoContext,
     trace: input.trace
   });
   const afterContextResult = await executeWorkflowHookSafely(input.workflowHooks, {
@@ -1740,33 +2135,115 @@ export async function createRuntimeCoreSession(
     buildSubagentWorkContext(unresolvedSubagentTasks)
   ].filter(Boolean).join("\n\n");
   const context = sessionManager.buildSessionContext();
+  const existingCompletionGuard = boundSubagentIdentity
+    ? () => getSubagentCoordinator().getRunCompletionBlocker(boundSubagentIdentity.runId)
+    : input.runId
+      ? () => getSubagentCoordinator().getCompletionBlocker(input.lumeSessionId, input.runId!)
+      : undefined;
+  const completionGuard = async (): Promise<CompletionGuardResult> => {
+    const existing = await existingCompletionGuard?.();
+    if (existing) return existing;
+    const coding = await codingRunTracker.completionGuard();
+    return coding ?? getTodoCompletionBlocker(currentTodoState);
+  };
+  const codingCompletionEnabled = !(
+    input.subagentRunId
+    && input.subagentTaskId
+    && !input.runId
+    && !boundSubagentIdentity
+  );
+  const preferredCapabilityRoute = typeof input.messageMetadata?.preferredCapabilityRoute === "string"
+    ? input.messageMetadata.preferredCapabilityRoute
+    : undefined;
+  const enableFileCheckpointing = preferredCapabilityRoute === "coding"
+    || preferredCapabilityRoute === "raw-tools";
+  const additionalDirectories = [...new Set([
+    ...(input.additionalDirectories ?? []),
+    input.lumeWorkDir,
+    input.artifactsRoot,
+  ].filter((directory): directory is string => Boolean(directory))
+    .map((directory) => resolve(directory))
+    .filter((directory) => directory !== resolve(input.cwd)))];
+  const toolContinuation = resolvePersistedToolContinuation(input.messageMetadata);
+  const runtimeToolConfig = {
+    ...(input.toolConfig ?? {}),
+    ...(Object.keys(lspConfig).length > 0 ? { lsp: lspConfig } : {}),
+  };
 
+  const apiType = input.apiType ?? resolveSdkApiType(input.provider, input.openaiApiMode);
+  const primaryChannel = input.channelId ? getChannelById(input.channelId) : undefined;
+  const providerRoutes: PiAiProviderRoute[] = [primaryChannel
+    ? await createConnectionPiAiRoute({
+      channel: primaryChannel,
+      modelId: input.resolvedModel?.id ?? input.resolvedModelId,
+      sessionId: input.lumeSessionId,
+    })
+    : {
+      modelId: input.resolvedModel?.id ?? input.resolvedModelId,
+      apiType,
+      providerId: input.channelProvider ?? input.provider,
+      baseUrl: input.resolvedModel?.baseUrl ?? "",
+      apiKey: input.apiKey,
+      contextWindow: input.resolvedModel?.contextWindow,
+      maxTokens: input.resolvedModel?.maxTokens,
+      supportsImages: input.resolvedModel?.input?.includes("image"),
+      supportsReasoning: input.resolvedModel?.reasoning,
+      sessionId: input.lumeSessionId,
+    }];
+  const configuredFallbackRefs = getEffectiveLumeConfig(input.workspaceSlug).models?.agent?.fallbackModelRefs ?? [];
+  for (const fallbackRef of configuredFallbackRefs) {
+    const binding = resolveChannelModelBinding(fallbackRef, "chat");
+    if (!binding) continue;
+    if (binding.channel.id === input.channelId && binding.modelId === providerRoutes[0]?.modelId) continue;
+    try {
+      providerRoutes.push(await createConnectionPiAiRoute({
+        channel: binding.channel,
+        modelId: binding.modelId,
+        sessionId: input.lumeSessionId,
+      }));
+    } catch (error) {
+      log.warn("skipping unavailable fallback model route", {
+        connectionId: binding.channel.id,
+        modelId: binding.modelId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   const agentOptions: AgentOptions = {
-    apiType: resolveSdkApiType(input.provider, input.openaiApiMode),
+    apiType,
+    provider: createRoutingPiAiProvider(providerRoutes),
     apiKey: input.apiKey,
     ...(input.resolvedModel?.baseUrl ? { baseURL: input.resolvedModel.baseUrl } : {}),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
     cwd: input.cwd,
+    threadType: input.threadType,
+    artifactsRoot: input.artifactsRoot,
+    ...(Object.keys(runtimeToolConfig).length > 0 ? { toolConfig: runtimeToolConfig } : {}),
+    onAsyncEvent: handleAsyncEvent,
+    onToolExecution: handleToolExecution,
+    onBeforeToolExecution: codingRunTracker.beforeToolExecution,
     systemPrompt,
     runtimeContext,
     promptCache,
     tools: toolset.tools,
     sessionId: input.lumeSessionId,
+    ...(toolContinuation ? { toolContinuation } : {}),
     ...(hasRuntimeCoreSessionTranscript(input.lumeSessionId, input.agentDir)
       ? { resume: input.lumeSessionId }
       : {}),
-    ...(Object.keys(pluginAgentHooks).length > 0 ? { hooks: pluginAgentHooks } : {}),
+    ...(Object.keys(agentHooks).length > 0 ? { hooks: agentHooks } : {}),
     agents,
     permissionMode: input.permissionMode === "bypassPermissions" ? "bypassPermissions" : "default",
     includePartialMessages: true,
     skillsDirectories: resolveSkillDirectories(input.cwd, input.workspaceSlug),
     shouldLoadFilesystemSkill: createRuntimeSkillFilter(input.workspaceSlug),
     skills: runtimePluginAssembly.skills,
-    resolveRuntimeTools: (tools) => ToolRuntime.resolveDynamicTools({
+    resolveRuntimeTools: (tools, runtimeContext) => ToolRuntime.resolveDynamicTools({
       tools,
       requiredTools: boundSubagentReportTool ? [boundSubagentReportTool] : undefined,
       cwd: input.cwd,
       sessionId: input.lumeSessionId,
+      threadType: runtimeContext.threadType ?? input.threadType,
       permissionMode: input.permissionMode,
       messageMetadata: input.messageMetadata,
       policyInput: {
@@ -1777,12 +2254,10 @@ export async function createRuntimeCoreSession(
         messageMetadata: input.messageMetadata
       }
     }),
-    ...(boundSubagentIdentity
-      ? { completionGuard: async () => getSubagentCoordinator().getRunCompletionBlocker(boundSubagentIdentity.runId) }
-      : input.runId
-        ? { completionGuard: async () => getSubagentCoordinator().getCompletionBlocker(input.lumeSessionId, input.runId!) }
-        : {}),
-    additionalDirectories: input.lumeWorkDir && input.lumeWorkDir !== input.cwd ? [input.lumeWorkDir] : undefined,
+    ...(codingCompletionEnabled && (input.userMessage?.trim() || existingCompletionGuard)
+      ? { completionGuard }
+      : {}),
+    additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,
@@ -1793,10 +2268,18 @@ export async function createRuntimeCoreSession(
       sessionMessages: context.messages,
       toolSchemaTokens: estimateToolSchemaTokens(toolset.tools)
     }),
-    persistSession: true
+    persistSession: true,
+    enableFileCheckpointing
   };
 
   const agent = createAgent(agentOptions);
+  if (
+    (preferredCapabilityRoute === "coding" || preferredCapabilityRoute === "raw-tools")
+    && lspConfig?.enabled !== false
+    && lspConfig?.lazy !== true
+  ) {
+    void warmupLspClients(input.cwd, agentOptions.toolConfig, 5_000).catch(() => undefined);
+  }
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 
@@ -1861,7 +2344,185 @@ export async function createRuntimeCoreSession(
     runtimeContext,
     userMessageForModel,
     memoryContextUsedItems: contextAssembly.memoryContextUsedItems,
-    tools: resolvedTools
+    tools: resolvedTools,
+    getVerificationStatus: codingRunTracker.getVerificationStatus,
+    beforeToolExecution: codingRunTracker.beforeToolExecution,
+    getBaselineCommit: codingRunTracker.getBaselineCommit,
+    getBaselineCommits: codingRunTracker.getBaselineCommits,
+    getWorkspaceRoots: () => [resolve(input.cwd), ...additionalDirectories],
+    refreshCodingChangeSet: codingRunTracker.refreshChangeSet,
+    getLatestFileCheckpoint: () => agent.getLatestFileCheckpoint(),
+    getVerificationReport: getCodingReport
+  };
+}
+
+function resolvePersistedToolContinuation(
+  metadata: Record<string, unknown> | undefined,
+): PersistedToolContinuation | undefined {
+  const runtimeContinuation = metadata?.runtimeContinuation;
+  if (!runtimeContinuation || typeof runtimeContinuation !== "object") return undefined;
+  const record = runtimeContinuation as Record<string, unknown>;
+  const checkpoint = record.checkpoint;
+  if (!checkpoint || typeof checkpoint !== "object") return undefined;
+  const checkpointRecord = checkpoint as Record<string, unknown>;
+  const toolCall = checkpointRecord.toolCall;
+  if (!toolCall || typeof toolCall !== "object") return undefined;
+  const call = toolCall as Record<string, unknown>;
+  if (typeof call.id !== "string" || typeof call.name !== "string") return undefined;
+  const inputHash = createHash("sha256").update(JSON.stringify(call.input ?? null)).digest("hex");
+  if (typeof call.inputHash === "string" && call.inputHash !== inputHash) {
+    throw new Error("cold-start continuation 的工具输入指纹不匹配");
+  }
+  const synthetic = checkpointRecord.syntheticToolResult;
+  const toolResult = synthetic && typeof synthetic === "object"
+    ? synthetic as ToolResult
+    : synthetic === undefined ? undefined : {
+      type: "tool_result" as const,
+      tool_use_id: call.id,
+      content: typeof synthetic === "string" ? synthetic : JSON.stringify(synthetic),
+    };
+  return {
+    toolCall: {
+      id: call.id,
+      name: call.name,
+      input: call.input,
+    },
+    ...(toolResult ? {
+      toolResult: {
+        ...toolResult,
+        type: "tool_result",
+        tool_use_id: call.id,
+      },
+    } : {}),
+  };
+}
+
+function parseTaskRef(value: unknown, parentThreadId: string): AgentTaskRef {
+  if (!value || typeof value !== "object") throw new Error("task_ref must be { taskListId, taskId, claimToken }");
+  const ref = value as Record<string, unknown>;
+  if (typeof ref.taskListId !== "string" || typeof ref.taskId !== "string" || typeof ref.claimToken !== "string") {
+    throw new Error("task_ref must contain taskListId, taskId, and claimToken");
+  }
+  if (ref.taskListId !== parentThreadId) throw new Error("task_ref.taskListId must match the parent main thread");
+  return { taskListId: ref.taskListId, taskId: ref.taskId, claimToken: ref.claimToken };
+}
+
+function assertTaskRefDiscriminant(toolInput: Record<string, unknown>): void {
+  const forbidden = ["task_id", "new_task", "acceptance_criteria", "expected_artifacts", "subagent_id", "team_name", "isolation"];
+  const present = forbidden.filter((name) => toolInput[name] !== undefined);
+  if (present.length > 0) throw new Error(`task_ref cannot be combined with legacy coordinator fields: ${present.join(", ")}`);
+}
+
+async function runTaskLinkedSubagent(input: {
+  toolInput: Record<string, unknown>;
+  context: ToolContext;
+  taskStore: FileBackedTaskStore;
+  taskRef: AgentTaskRef;
+  parentThreadId: string;
+  modelOverride: ResolvedSubagentModelOverride;
+  workspaceId?: string;
+  workspaceSlug?: string;
+  channelId?: string;
+  chatType?: AgentSendInput["chatType"];
+  messageMetadata?: Record<string, unknown>;
+  fileReferenceBinding?: FileReferenceBinding;
+  permissionMode?: AgentSendInput["permissionMode"];
+  emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
+  emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
+  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
+  emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
+  emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+}): Promise<ToolResult> {
+  const actor = { threadId: input.parentThreadId, threadType: "main" as const, actorId: `main:${input.parentThreadId}` };
+  const current = await input.taskStore.get(input.taskRef.taskId, actor);
+  if (!current || current.claimToken !== input.taskRef.claimToken) throw new Error("task_ref claim is missing or expired");
+  const executorRef = crypto.randomUUID();
+  await input.taskStore.bindExecutor({
+    taskId: input.taskRef.taskId,
+    claimToken: input.taskRef.claimToken,
+    expectedRevision: current.revision,
+    executorRef,
+  }, actor);
+  let childThreadId: string | undefined;
+  let execution: Awaited<ReturnType<typeof runSidecarSubagent>>;
+  try {
+    const childMeta = createAgentThreadWithModelRef(
+      typeof input.toolInput.description === "string" ? input.toolInput.description : "Task executor",
+      input.modelOverride.modelRef,
+      input.modelOverride.channelId ?? input.channelId,
+      input.workspaceId,
+      input.parentThreadId,
+      input.modelOverride.resolvedModelId ?? input.context.model,
+      { fileContextMode: "inherit" }
+    );
+    childThreadId = childMeta.id;
+    taskExecutorStopHandlers.set(executorRef, () => {
+      void import("./attempt").then((module) => module.stopAgentRuntime(childMeta.id)).catch(() => undefined);
+    });
+    const forwardedInput = { ...input.toolInput };
+    delete forwardedInput.task_ref;
+    execution = await runSidecarSubagent({
+      toolInput: forwardedInput,
+      context: input.context,
+      runId: executorRef,
+      childThreadId: childMeta.id,
+      parentThreadId: input.parentThreadId,
+      deliveryThreadId: input.parentThreadId,
+      parentToolUseId: input.context.toolUseId,
+      subagentType: typeof input.toolInput.subagent_type === "string" ? input.toolInput.subagent_type : undefined,
+      modelOverride: input.modelOverride,
+      channelId: input.channelId,
+      workspaceId: input.workspaceId,
+      chatType: input.chatType,
+      messageMetadata: input.messageMetadata,
+      fileReferenceBinding: input.fileReferenceBinding,
+      onRuntimeEvent: input.emitRuntimeEvent,
+      permissionMode: input.permissionMode,
+      emitAskUserQuestion: input.emitAskUserQuestion,
+      emitBrowserAuthRequest: input.emitBrowserAuthRequest,
+      emitDesktopActionRequest: input.emitDesktopActionRequest,
+      emitToolPermissionRequest: input.emitToolPermissionRequest,
+    });
+  } catch (error) {
+    execution = {
+      status: "errored",
+      error: error instanceof Error ? error.message : String(error),
+      result: { type: "tool_result", tool_use_id: "", content: error instanceof Error ? error.message : String(error), is_error: true },
+    };
+  } finally {
+    taskExecutorStopHandlers.delete(executorRef);
+  }
+  const ack = await input.taskStore.acknowledgeExecutor({
+    taskId: input.taskRef.taskId,
+    claimToken: input.taskRef.claimToken,
+    executorRef,
+    terminal: true,
+    error: execution.error,
+    resultSummary: execution.completionSummary ?? execution.output,
+    resultStatus: execution.status,
+  }, actor);
+  if (execution.status !== "completed") {
+    const latest = await input.taskStore.get(input.taskRef.taskId, actor);
+    if (latest?.task.status === "in_progress") {
+      await input.taskStore.update({
+        taskId: input.taskRef.taskId,
+        status: "pending",
+        expectedRevision: latest.revision,
+        claimToken: input.taskRef.claimToken,
+      }, actor);
+    }
+  }
+  return {
+    ...execution.result,
+    content: JSON.stringify({
+      taskRef: input.taskRef,
+      executorRef,
+      ...(childThreadId ? { childThreadId } : {}),
+      status: execution.status,
+      output: execution.output,
+      ...(execution.error ? { error: execution.error } : {}),
+      taskRevision: ack.revision,
+    }),
   };
 }
 

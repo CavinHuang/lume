@@ -54,4 +54,27 @@ describe("normalizeAgentUserMessage", () => {
       ]
     })).toThrow(AgentUserMessagePartsError);
   });
+
+  test("keeps Planning Todo references out of capability projection and restores visible text with ampersand", () => {
+    const todoId = "11111111-1111-4111-8111-111111111111";
+    const result = normalizeAgentUserMessage({
+      userMessage: "请跟进 &发布版本",
+      messageParts: [{ type: "text", text: "请跟进 " }, { type: "planning_todo_ref", schemaVersion: 1, uri: `lume://planning/todo/${todoId}`, todoId, relation: "mentioned", displayText: "发布版本" }]
+    });
+    expect(result.visibleMessage).toBe("请跟进 &发布版本");
+    expect(result.modelMessage).toContain(`<planning_todo_ref todoId="${todoId}"`);
+    expect(result.capabilityReferences).toEqual([]);
+  });
+
+  test("rejects a primary Planning Todo reference on an ordinary send", () => {
+    const todoId = "11111111-1111-4111-8111-111111111111";
+    expect(() => normalizeAgentUserMessage({
+      userMessage: "&发布版本",
+      messageParts: [{ type: "planning_todo_ref", schemaVersion: 1, uri: `lume://planning/todo/${todoId}`, todoId, relation: "primary", displayText: "发布版本" }]
+    })).toThrow("primary");
+    expect(() => normalizeAgentUserMessage({
+      userMessage: "&发布版本",
+      messageParts: [{ type: "planning_todo_ref", schemaVersion: 1, uri: `lume://planning/todo/${todoId}`, todoId, relation: "primary", displayText: "发布版本" }]
+    }, { allowPrimaryPlanningTodo: true })).not.toThrow();
+  });
 });

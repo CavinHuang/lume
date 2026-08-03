@@ -197,14 +197,6 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
-  name: "TaskContractWrite",
-  category: "control",
-  riskLevel: "low",
-  description: "写入待审阅计划",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
   name: "TaskReport",
   category: "control",
   riskLevel: "low",
@@ -473,6 +465,27 @@ registerToolMetadata({
   description: "读取或更新 Lume 支持的界面状态",
   allowedInPlanMode: false
 });
+
+// Persistent Task tools (main-agent only; subagent assembly applies a deny set)
+for (const name of ["TaskCreate", "TaskUpdate", "TaskStop"]) {
+  registerToolMetadata({
+    name,
+    category: "control",
+    riskLevel: "medium",
+    description: "管理主 Agent 的持久化 Task",
+    allowedInPlanMode: false,
+  });
+}
+
+for (const name of ["TaskList", "TaskGet"]) {
+  registerToolMetadata({
+    name,
+    category: "read",
+    riskLevel: "low",
+    description: "读取主 Agent 的持久化 Task",
+    allowedInPlanMode: true,
+  });
+}
 
 // TodoWrite 工具
 registerToolMetadata({

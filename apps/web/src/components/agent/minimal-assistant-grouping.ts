@@ -7,6 +7,7 @@ import type { RuntimeAssistantBlock } from './runtime-message-view'
 export type AssistantSegment =
   | { kind: 'inline'; block: RuntimeAssistantBlock }
   | { kind: 'process'; blocks: RuntimeAssistantBlock[] }
+  | { kind: 'ask_user_question'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'image_tools'; blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>> }
   | { kind: 'wiki_proposal'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
 
@@ -30,6 +31,12 @@ export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]):
   }
 
   for (const block of blocks) {
+    if (block.type === 'tool_call' && isAskUserQuestion(block)) {
+      flushProcess()
+      flushImages()
+      segments.push({ kind: 'ask_user_question', block })
+      continue
+    }
     if (block.type === 'tool_call' && isCompletedWikiProposal(block)) {
       flushProcess()
       flushImages()
@@ -56,6 +63,7 @@ export function groupAssistantBlocksForMinimal(blocks: RuntimeAssistantBlock[]):
 
 export type StandardAssistantSegment =
   | { kind: 'inline'; block: RuntimeAssistantBlock }
+  | { kind: 'ask_user_question'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
   | { kind: 'image_tools'; blocks: Array<Extract<RuntimeAssistantBlock, { type: 'tool_call' }>> }
   | { kind: 'wiki_proposal'; block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }> }
 
@@ -72,6 +80,11 @@ export function groupAssistantBlocksForStandard(blocks: RuntimeAssistantBlock[])
   }
 
   for (const block of blocks) {
+    if (block.type === 'tool_call' && isAskUserQuestion(block)) {
+      flushImages()
+      segments.push({ kind: 'ask_user_question', block })
+      continue
+    }
     if (block.type === 'tool_call' && isCompletedWikiProposal(block)) {
       flushImages()
       segments.push({ kind: 'wiki_proposal', block })
@@ -86,6 +99,12 @@ export function groupAssistantBlocksForStandard(blocks: RuntimeAssistantBlock[])
   }
   flushImages()
   return segments
+}
+
+export function isAskUserQuestion(
+  block: Extract<RuntimeAssistantBlock, { type: 'tool_call' }>,
+): boolean {
+  return block.toolCall.toolName === 'AskUserQuestion'
 }
 
 function isCompletedWikiProposal(

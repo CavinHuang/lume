@@ -71,6 +71,8 @@ describe('reading settings state', () => {
         provider: 'zai',
         baseUrl: 'https://api.zai.com',
         apiKey: '',
+        authType: 'api-key',
+        hasApiKey: true,
         enabled: true,
         models: [
           { id: 'glm-5.1', name: 'GLM-5.1', enabled: true, capabilities: { chat: true } },
@@ -97,8 +99,16 @@ describe('reading settings state', () => {
     const options = buildReadingChatModelOptions(channels)
     expect(options).toHaveLength(3)
     expect(options[0]).toEqual({ modelRef: '', label: '继承默认模型' })
-    expect(options[1]).toEqual({ modelRef: 'zai/glm-5.1', label: 'GLM-5.1 · ZAI' })
-    expect(options[2]).toEqual({ modelRef: 'zai/glm-5-mini', label: 'GLM-5-mini · ZAI' })
+    expect(options[1]).toEqual({
+      modelRef: 'connection:ch-1/glm-5.1',
+      legacyModelRefs: ['glm-5.1', 'zai/glm-5.1', 'ch-1/glm-5.1'],
+      label: 'GLM-5.1 · ZAI',
+    })
+    expect(options[2]).toEqual({
+      modelRef: 'connection:ch-1/glm-5-mini',
+      legacyModelRefs: ['glm-5-mini', 'zai/glm-5-mini', 'ch-1/glm-5-mini'],
+      label: 'GLM-5-mini · ZAI',
+    })
   })
 
   test('resolves dropdown value from draft mode', () => {

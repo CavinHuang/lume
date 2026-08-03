@@ -1,5 +1,5 @@
 export const NODE_REPL_MCP_INSTRUCTIONS =
-  "Use `js` to run JavaScript in the persistent Node-backed kernel. Top-level bindings persist across calls until `js_reset`. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values.";
+  "Use `js` only for browser JavaScript automation or an explicitly requested persistent JS session. Do not use it as a terminal, shell, git, file search, or file editing tool; use Read, Write, Edit, Bash, Glob, or Grep for repository work. Top-level bindings persist across calls until `js_reset`. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values.";
 
 export interface JsExecInput {
   title?: string;
@@ -23,6 +23,8 @@ export interface NodeReplExecutionResult {
   _meta?: Record<string, unknown>;
 }
 
+import type { BrowserAuthOption, BrowserLocator } from "@lume/shared";
+
 export interface NodeReplBrowserAuthRequest {
   context?: {
     threadId?: string;
@@ -30,6 +32,7 @@ export interface NodeReplBrowserAuthRequest {
     browserTurnId?: string;
   };
   tabId?: string;
+  generation?: number;
   origin?: string;
   reason?: string;
   expires_at?: string;
@@ -39,12 +42,19 @@ export interface NodeReplBrowserAuthRequest {
     type?: string;
     autocomplete?: string;
     required?: boolean;
+    locator?: BrowserLocator;
+    frameLocator?: BrowserLocator;
   }>;
+  options?: BrowserAuthOption[];
+  submit?:
+    | { kind: "click"; locator: BrowserLocator; frameLocator?: BrowserLocator }
+    | { kind: "press_enter"; fieldId?: string }
+    | { kind: "none" };
 }
 
 export interface NodeReplBrowserAuthResult {
-  status: "approved" | "declined" | "cancelled" | "unavailable" | "expired" | "origin_changed" | "page_changed" | "locator_invalid" | "submission_failed";
-  values?: Record<string, string>;
+  status: "submitted" | "declined" | "cancelled" | "unavailable" | "expired" | "origin_changed" | "page_changed" | "locator_invalid" | "submission_failed";
+  selected_option?: string;
 }
 
 export interface NodeReplComputerUseRequest {
@@ -62,6 +72,7 @@ export interface NodeReplRuntimeExecOptions {
   sandbox?: SandboxSettings;
   emitBrowserAuthRequest?: (request: NodeReplBrowserAuthRequest, signal: AbortSignal) => Promise<NodeReplBrowserAuthResult>;
   emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
+  browserRequest?: (request: { method: string; params: Record<string, unknown> }, signal: AbortSignal) => Promise<unknown>;
 }
 
 export interface NodeReplRuntimeClient {

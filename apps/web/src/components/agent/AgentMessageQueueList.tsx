@@ -24,7 +24,8 @@ export function AgentMessageQueueList({
   const draggedIdRef = useRef<string | null>(null)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
-  const hasQueue = snapshot.queuedMessages.length > 0
+  const visibleQueuedMessages = snapshot.queuedMessages.filter((item) => !item.internal)
+  const hasQueue = visibleQueuedMessages.length > 0
   const hasGuidance = snapshot.pendingGuidance.length > 0
   if (!hasQueue && !hasGuidance) return null
 
@@ -38,7 +39,7 @@ export function AgentMessageQueueList({
         aria-expanded={expanded}
       >
         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        {snapshot.queuedMessages.length} 条排队消息
+        {visibleQueuedMessages.length} 条排队消息
         {hasGuidance ? ` · ${snapshot.pendingGuidance.length} 条引导` : ''}
       </Button>
       {expanded && hasGuidance && (
@@ -55,7 +56,7 @@ export function AgentMessageQueueList({
           ))}
         </div>
       )}
-      {expanded && snapshot.queuedMessages.map((item) => (
+      {expanded && visibleQueuedMessages.map((item) => (
         <QueuedMessageRow
           key={item.id}
           item={item}

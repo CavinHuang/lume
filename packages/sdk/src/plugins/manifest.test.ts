@@ -69,6 +69,21 @@ describe("LumePluginManifest", () => {
     expect(() => parseManifest(raw)).toThrow("hooks");
   });
 
+  test("validates plugin LSP config as a package-relative path", () => {
+    expect(parseManifest({
+      schema: "lume-plugin/v1",
+      name: "my-plugin",
+      version: "1.0.0",
+      lspServers: "./lsp.yaml",
+    }).lspServers).toBe("./lsp.yaml");
+    expect(() => parseManifest({
+      schema: "lume-plugin/v1",
+      name: "my-plugin",
+      version: "1.0.0",
+      lspServers: "../lsp.yaml",
+    })).toThrow("lspServers");
+  });
+
   test("validates version is semver-like", () => {
     const raw = {
       schema: "lume-plugin/v1",
@@ -279,6 +294,31 @@ describe("PluginMarketplaceSetupStep bridge fields", () => {
       },
     });
     expect(parsed.marketplace?.setup?.length ?? 0).toBe(0);
+  });
+
+  test("拒绝非法 Native Host 名称", () => {
+    for (const hostName of ["com.lume-browser", ".", "..", ".com.lume", "com..lume", "com.lume."]) {
+      const parsed = parseManifest({
+        schema: "lume-plugin/v1",
+        name: "browser",
+        version: "1.0.0",
+        marketplace: {
+          setup: [{
+            id: "install-host",
+            title: "安装 Host",
+            description: "invalid",
+            artifact: { path: "./host", kind: "native-binary" },
+            installer: {
+              kind: "chrome-native-host",
+              hostName,
+              extensionId: "abcdefghijklmnopabcdefghijklmnop",
+              appServerUrl: "ws://127.0.0.1:43127/browser",
+            },
+          }],
+        },
+      });
+      expect(parsed.marketplace?.setup?.length ?? 0).toBe(0);
+    }
   });
 
   test("拒绝含 .. 的 artifact.path（整步丢弃）", () => {

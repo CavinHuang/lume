@@ -30,7 +30,7 @@ export function LumeView() {
         {items.map((item) => {
           const Icon = item.icon
           return (
-            <Button key={item.id} variant="ghost" size="sm" onClick={() => setFeature(item.id)} className={cn('gap-2', feature === item.id && 'bg-[var(--surface-2)] text-[var(--text-1)]')}>
+            <Button key={item.id} variant="ghost" size="sm" onClick={() => setFeature(item.id)} className={cn('gap-2', feature === item.id && 'bg-muted text-[var(--text-1)]')}>
               <Icon size={15} />{item.label}
             </Button>
           )

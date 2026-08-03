@@ -1,7 +1,10 @@
 import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
-import type { LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
+import type { FileReferenceBinding, LumeRuntimeEvent, RuntimeNormalizedUsage } from "@lume/shared";
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import { getAgentFileContextRootPath } from "../../infra/config-paths";
 import type { LumeRunItem } from "./run-items";
 import type { LumeRunState } from "./run-state";
+import { inferToolMetadata } from "../tools/tool-metadata";
 
 export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEvent[] {
   if (isRuntimeContinuationRun(run)) {
@@ -25,6 +28,16 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
       : Array.isArray(metadata?.messageAttachments)
         ? metadata.messageAttachments
         : undefined;
+    const commentAttachments = Array.isArray(run.input.commentAttachments)
+      ? run.input.commentAttachments
+      : Array.isArray(metadata?.commentAttachments)
+        ? metadata.commentAttachments
+        : undefined;
+    const browserAttachments = Array.isArray(run.input.browserAttachments)
+      ? run.input.browserAttachments
+      : Array.isArray(metadata?.browserAttachments)
+        ? metadata.browserAttachments
+        : undefined;
     events.push({
       id: `${run.runId}:message.user.submitted`,
       type: "message.user.submitted",
@@ -33,6 +46,8 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
       createdAt: run.createdAt,
       text: userMessage,
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      ...(commentAttachments?.length ? { commentAttachments } : {}),
+      ...(browserAttachments?.length ? { browserAttachments } : {}),
       ...(typeof metadata?.messageId === "string" ? { messageId: metadata.messageId } : {}),
       ...(typeof metadata?.versionGroupId === "string" ? { versionGroupId: metadata.versionGroupId } : {}),
       ...(typeof metadata?.versionIndex === "number" ? { versionIndex: metadata.versionIndex } : {}),
@@ -60,7 +75,9 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
       threadId: run.threadId,
       runId: run.runId,
       createdAt: run.completedAt ?? run.updatedAt,
-      finalOutput: extractFinalOutput(run.generatedItems)
+      finalOutput: extractFinalOutput(run.generatedItems),
+      ...(run.verificationStatus ? { verificationStatus: run.verificationStatus } : {}),
+      ...(run.codingReport ? { codingReport: run.codingReport } : {})
     });
   }
 
@@ -76,7 +93,9 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
         message: run.error?.message ?? "Run failed",
         stack: run.error?.stack,
         retryable: run.error?.retryable
-      }
+      },
+      ...(run.verificationStatus ? { verificationStatus: run.verificationStatus } : {}),
+      ...(run.codingReport ? { codingReport: run.codingReport } : {})
     });
   }
 
@@ -92,8 +111,12 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
 
   return events.map((event) => ({
     ...event,
-    fileReferenceBinding: run.fileReferenceBinding,
-    fileReferenceProtocolVersion: run.fileReferenceProtocolVersion ?? FILE_REFERENCE_PROTOCOL_VERSION
+    ...(run.fileReferenceBinding
+      ? {
+          fileReferenceBinding: run.fileReferenceBinding,
+          fileReferenceProtocolVersion: run.fileReferenceProtocolVersion ?? FILE_REFERENCE_PROTOCOL_VERSION
+        }
+      : {})
   }));
 }
 
@@ -188,12 +211,15 @@ export function projectRunItemToRuntimeEvents(
       toolCallId: item.id,
       toolName: item.toolName,
       inputPreview: item.input,
+      riskLevel: inferToolMetadata(item.toolName).riskLevel,
       ...subagentFields
     }];
   }
 
   if (item.type === "tool_result") {
     const isError = item.isError === true;
+    const execution = normalizeToolExecutionMetadata(item.execution, run.fileReferenceBinding);
+    const resultRef = execution?.resultRef;
     if (isError) {
       return [{
         id: `${run.runId}:${item.id}:tool.failed`,
@@ -207,6 +233,8 @@ export function projectRunItemToRuntimeEvents(
           code: "tool_error",
           message: previewRuntimePayload(item.output)
         },
+        ...(execution ? { execution } : {}),
+        ...(resultRef ? { resultRef } : {}),
         ...subagentFields
       }];
     }
@@ -219,6 +247,8 @@ export function projectRunItemToRuntimeEvents(
       toolCallId: item.toolCallId,
       toolName: item.toolName,
       resultPreview: previewRuntimePayload(item.output),
+      ...(execution ? { execution } : {}),
+      ...(resultRef ? { resultRef } : {}),
       ...subagentFields
     }];
   }
@@ -259,6 +289,100 @@ export function projectRunItemToRuntimeEvents(
   return [];
 }
 
+function normalizeToolExecutionMetadata(
+  value: unknown,
+  binding?: FileReferenceBinding,
+): import("@lume/shared").ToolExecutionMetadata | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const terminationReason = record.terminationReason;
+  if ((record.version !== 1 && record.version !== 2) || typeof record.command !== "string" || typeof record.durationMs !== "number") return undefined;
+  if (terminationReason !== "completed" && terminationReason !== "nonzero" && terminationReason !== "timeout" && terminationReason !== "aborted" && terminationReason !== "output_limit" && terminationReason !== "spawn_error" && terminationReason !== "running" && terminationReason !== "interrupted") return undefined;
+  const resultRef = normalizeFileResultRef(record.resultRef, binding);
+  const stdoutRef = normalizeFileResultRef(record.stdoutRef, binding);
+  const stderrRef = normalizeFileResultRef(record.stderrRef, binding);
+  if (record.version === 2) {
+    const outcome = record.outcome;
+    if (outcome !== "running" && outcome !== "succeeded" && outcome !== "failed" && outcome !== "timed_out" && outcome !== "cancelled" && outcome !== "interrupted") return undefined;
+    if (record.shell !== "bash" && record.shell !== "powershell") return undefined;
+    return {
+      version: 2,
+      outcome,
+      ...(typeof record.exitCode === "number" || record.exitCode === null ? { exitCode: record.exitCode } : {}),
+      ...(typeof record.stdoutPreview === "string" ? { stdoutPreview: record.stdoutPreview } : {}),
+      ...(typeof record.stderrPreview === "string" ? { stderrPreview: record.stderrPreview } : {}),
+      ...(stdoutRef ? { stdoutRef } : {}),
+      ...(stderrRef ? { stderrRef } : {}),
+      ...(typeof record.timedOut === "boolean" ? { timedOut: record.timedOut } : {}),
+      ...(typeof record.aborted === "boolean" ? { aborted: record.aborted } : {}),
+      ...(typeof record.outputLimitReached === "boolean" ? { outputLimitReached: record.outputLimitReached } : {}),
+      durationMs: record.durationMs,
+      command: record.command,
+      shell: record.shell,
+      ...(record.semanticOutcome === "no_matches" || record.semanticOutcome === "condition_false" || record.semanticOutcome === "files_differ"
+        ? { semanticOutcome: record.semanticOutcome } : {}),
+      ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),
+      ...(typeof record.workspaceChanged === "boolean" ? { workspaceChanged: record.workspaceChanged } : {}),
+      ...(resultRef ? { resultRef } : {}),
+      terminationReason,
+    };
+  }
+  if (terminationReason === "interrupted") return undefined;
+  return {
+    version: 1,
+    ...(typeof record.exitCode === "number" || record.exitCode === null ? { exitCode: record.exitCode } : {}),
+    ...(typeof record.stdoutPreview === "string" ? { stdoutPreview: record.stdoutPreview } : {}),
+    ...(typeof record.stderrPreview === "string" ? { stderrPreview: record.stderrPreview } : {}),
+    ...(typeof record.timedOut === "boolean" ? { timedOut: record.timedOut } : {}),
+    ...(typeof record.aborted === "boolean" ? { aborted: record.aborted } : {}),
+    ...(typeof record.outputLimitReached === "boolean" ? { outputLimitReached: record.outputLimitReached } : {}),
+    durationMs: record.durationMs,
+    command: record.command,
+    ...(record.shell === "bash" || record.shell === "powershell" ? { shell: record.shell } : {}),
+    ...(record.semanticOutcome === "no_matches" || record.semanticOutcome === "condition_false" || record.semanticOutcome === "files_differ"
+      ? { semanticOutcome: record.semanticOutcome } : {}),
+    ...(typeof record.purpose === "string" ? { purpose: record.purpose } : {}),
+    ...(typeof record.workspaceChanged === "boolean" ? { workspaceChanged: record.workspaceChanged } : {}),
+    ...(resultRef ? { resultRef } : {}),
+    terminationReason,
+  };
+}
+
+function normalizeFileResultRef(
+  value: unknown,
+  binding?: FileReferenceBinding,
+): import("@lume/shared").FileResultRef | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.kind !== "file" || typeof record.path !== "string" || typeof record.size !== "number") return undefined;
+  const fileRef = binding ? sessionArtifactFileRef(record.path, binding) : undefined;
+  return {
+    kind: "file",
+    path: record.path,
+    size: record.size,
+    ...(typeof record.mimeType === "string" ? { mimeType: record.mimeType } : {}),
+    ...(fileRef ? { fileRef } : {}),
+  };
+}
+
+function sessionArtifactFileRef(path: string, binding: FileReferenceBinding): import("@lume/shared").FileRef | undefined {
+  if (!isAbsolute(path)) return undefined;
+  try {
+    const root = resolve(getAgentFileContextRootPath(binding.fileContextId));
+    const relativePath = relative(root, resolve(path));
+    if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) return undefined;
+    const normalized = relativePath.split(sep).join("/");
+    if (!normalized.startsWith("artifacts/")) return undefined;
+    return {
+      source: "session",
+      scopeId: binding.fileContextId,
+      relativePath: normalized,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function subagentRuntimeFields(item: LumeRunItem): Pick<LumeRuntimeEvent, "subagentRunId" | "parentToolUseId"> {
   const source = item as LumeRunItem & {
     subagentRunId?: string;
@@ -293,6 +417,57 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
       createdAt: item.createdAt,
       items,
       hidden: payload.hidden !== false
+    }];
+  }
+  if (item.name === "advisor_reviewed") {
+    const severity = stringValue(payload.severity, "suggestion");
+    if (severity !== "clear" && severity !== "suggestion" && severity !== "concern" && severity !== "blocker") return [];
+    const modelRef = stringValue(payload.modelRef, "unknown");
+    const summary = stringValue(payload.summary, "Advisor review completed");
+    return [{
+      id: `${run.runId}:${item.id}:advisor.reviewed`,
+      type: "advisor.reviewed",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      severity,
+      summary,
+      ...(stringValue(payload.details, "") ? { details: stringValue(payload.details, "") } : {}),
+      modelRef,
+      ...(typeof payload.durationMs === "number" ? { durationMs: payload.durationMs } : {})
+    }];
+  }
+  if (item.name === "task_notification") {
+    const event = projectBackgroundTaskNotificationRuntimeEvent(run.threadId, payload, item.createdAt);
+    return event ? [event] : [];
+  }
+  if (item.name === "lsp_diagnostics") {
+    const diagnostics = asRecord(payload.diagnostics);
+    const filePath = stringValue(payload.file_path, "");
+    const sha256 = stringValue(payload.sha256, "");
+    if (!filePath || !sha256) return [];
+    return [{
+      id: `${run.runId}:${item.id}:lsp.diagnostics.updated`,
+      type: "lsp.diagnostics.updated",
+      threadId: run.threadId,
+      runId: run.runId,
+      createdAt: item.createdAt,
+      ...(typeof payload.tool_use_id === "string" ? { toolUseId: payload.tool_use_id } : {}),
+      filePath,
+      mutationVersion: numberValue(payload.mutation_version),
+      sha256,
+      delayed: payload.delayed === true,
+      diagnostics: {
+        servers: Array.isArray(diagnostics.servers) ? diagnostics.servers.filter((value): value is string => typeof value === "string") : [],
+        total: numberValue(diagnostics.total),
+        errors: numberValue(diagnostics.errors),
+        warnings: numberValue(diagnostics.warnings),
+        truncated: diagnostics.truncated === true,
+        items: Array.isArray(diagnostics.items) ? diagnostics.items as Extract<LumeRuntimeEvent, { type: "lsp.diagnostics.updated" }>["diagnostics"]["items"] : [],
+        ...(diagnostics.artifact && typeof diagnostics.artifact === "object"
+          ? { artifact: diagnostics.artifact as Extract<LumeRuntimeEvent, { type: "lsp.diagnostics.updated" }>["diagnostics"]["artifact"] }
+          : {})
+      }
     }];
   }
   if (item.name === "context_compaction_started") {
@@ -363,6 +538,44 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
     }];
   }
   return [];
+}
+
+export function projectBackgroundTaskNotificationRuntimeEvent(
+  threadId: string,
+  payload: unknown,
+  createdAt: string
+): Extract<LumeRuntimeEvent, { type: "background.task.completed" }> | null {
+  const record = asRecord(payload);
+  const taskId = stringField(record.task_id);
+  const status = normalizeBackgroundTaskStatus(record.status);
+  if (!taskId || !status || stringField(record.subagent_run_id)) return null;
+  const usage = asRecord(record.usage);
+  const execution = normalizeToolExecutionMetadata(record.execution);
+  return {
+    id: `background-task:${threadId}:${taskId}:completed`,
+    type: "background.task.completed",
+    threadId,
+    runId: `background-task:${taskId}`,
+    createdAt,
+    taskId,
+    status,
+    ...(stringField(record.summary) ? { summary: stringField(record.summary) } : {}),
+    ...(stringField(record.message) ? { message: stringField(record.message) } : {}),
+    ...(stringField(record.output_file) ? { outputFile: stringField(record.output_file) } : {}),
+    ...(stringField(record.tool_use_id) ? { toolUseId: stringField(record.tool_use_id) } : {}),
+    ...(typeof usage.total_tokens === "number" && typeof usage.tool_uses === "number" && typeof usage.duration_ms === "number"
+      ? { usage: { totalTokens: usage.total_tokens, toolUses: usage.tool_uses, durationMs: usage.duration_ms } }
+      : {}),
+    ...(execution ? { execution } : {})
+  };
+}
+
+function normalizeBackgroundTaskStatus(value: unknown): Extract<LumeRuntimeEvent, { type: "background.task.completed" }>['status'] | undefined {
+  if (value === "completed") return "completed";
+  if (value === "failed") return "failed";
+  if (value === "stopped" || value === "killed") return "stopped";
+  if (value === "cancelled" || value === "canceled") return "cancelled";
+  return undefined;
 }
 
 type MemoryContextUsedItem = Extract<LumeRuntimeEvent, { type: "memory.context.used" }>["items"][number];

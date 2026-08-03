@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Eye, EyeOff, Loader2, Plus } from 'lucide-react'
 import type { ChannelCreateInput, ProviderType, ChannelModel, ProviderApiFamily, OpenAiApiMode } from '@lume/shared'
 import { PROVIDER_LABELS, PROVIDER_DEFAULT_URLS, normalizeChannelModel } from '@lume/shared'
-import { fetchChannelModels } from '@/lib/desktop-api'
+import { decryptChannelKey, fetchChannelModels, syncChannelModels, testChannelConnection } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -10,6 +10,8 @@ import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ConnectionOAuthLogin } from './ConnectionOAuthLogin'
 
 export interface ChannelFormValue extends ChannelCreateInput {}
 
@@ -18,12 +20,22 @@ interface Props {
   initialValue?: ChannelFormValue
   providerLocked?: boolean
   disabled?: boolean
+  connectionId?: string
   onSubmit: (input: ChannelFormValue) => Promise<void>
+  onSynced?: () => void
   onCancel?: () => void
 }
 
 const PROVIDERS = Object.entries(PROVIDER_LABELS) as [ProviderType, string][]
 const LOCAL_API_KEY_OPTIONAL_PROVIDERS = new Set<ProviderType>(['ollama', 'lmstudio'])
+const OAUTH_PROVIDERS = new Set<ProviderType>([
+  'anthropic',
+  'openai-codex',
+  'github-copilot',
+  'openrouter',
+  'kimi-coding',
+  'xai',
+])
 
 export function isChannelApiKeyRequired(provider: ProviderType): boolean {
   return !LOCAL_API_KEY_OPTIONAL_PROVIDERS.has(provider)
@@ -35,8 +47,24 @@ function normalizeModelSearch(value: string): string {
 
 export function mergeChannelModels(existing: ChannelModel[], fetched: ChannelModel[]): ChannelModel[] {
   const fetchedIds = new Set(fetched.map((m) => m.id))
-  const preserved = existing.filter((m) => !fetchedIds.has(m.id))
-  return [...fetched, ...preserved]
+  const existingById = new Map(existing.map((model) => [model.id, model]))
+  const preserved = existing.filter((model) =>
+    !fetchedIds.has(model.id) && model.source !== 'discovered'
+  )
+  return [
+    ...fetched.map((model) => {
+      const previous = existingById.get(model.id)
+      if (previous?.source !== 'discovered' && previous) {
+        return { ...previous, source: 'manual' as const }
+      }
+      return {
+        ...model,
+        source: 'discovered' as const,
+        enabled: previous?.enabled ?? true,
+      }
+    }),
+    ...preserved.map((model) => ({ ...model, source: model.source ?? 'manual' as const })),
+  ]
 }
 
 export function filterChannelModels(models: ChannelModel[], query: string): ChannelModel[] {
@@ -72,8 +100,10 @@ export function ChannelForm({
   initialValue,
   providerLocked = false,
   disabled = false,
+  connectionId,
   onSubmit,
   onCancel,
+  onSynced,
 }: Props) {
   const [provider, setProvider] = useState<ProviderType>(initialValue?.provider ?? 'anthropic')
   const [name, setName] = useState(initialValue?.name ?? '')
@@ -82,6 +112,8 @@ export function ChannelForm({
   const [models, setModels] = useState<ChannelModel[]>(initialValue?.models ?? [])
   const [modelSearch, setModelSearch] = useState('')
   const [fetching, setFetching] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testMessage, setTestMessage] = useState('')
   const [saving, setSaving] = useState(false)
   const [fetchMsg, setFetchMsg] = useState('')
   const [apiFamily, setApiFamily] = useState<ProviderApiFamily>(
@@ -92,6 +124,10 @@ export function ChannelForm({
   )
   const [providerId, setProviderId] = useState(initialValue?.providerId ?? '')
   const [showApiKey, setShowApiKey] = useState(false)
+  const [revealOpen, setRevealOpen] = useState(false)
+  const [revealPassword, setRevealPassword] = useState('')
+  const [revealError, setRevealError] = useState('')
+  const [revealing, setRevealing] = useState(false)
   const [showAddModel, setShowAddModel] = useState(false)
   const [newModelId, setNewModelId] = useState('')
   const [newModelName, setNewModelName] = useState('')
@@ -146,7 +182,22 @@ export function ChannelForm({
     setFetching(true)
     setFetchMsg('')
     try {
-      const r = await fetchChannelModels({ provider, baseUrl, apiKey })
+      if (mode === 'edit' && connectionId) {
+        const result = await syncChannelModels(connectionId)
+        setModels(result.channel.models)
+        setFetchMsg(result.success
+          ? `同步完成：新增 ${result.added}，移除 ${result.removed}，手工保留 ${result.preservedManual}`
+          : result.message)
+        onSynced?.()
+        return
+      }
+      const r = await fetchChannelModels({
+        provider,
+        baseUrl,
+        apiKey,
+        ...(provider === 'custom' ? { apiFamily } : {}),
+        ...((provider === 'openai' || (provider === 'custom' && apiFamily === 'openai')) ? { openaiApiMode } : {}),
+      })
       if (r.success) {
         setModels((prev) => mergeChannelModels(prev, r.models))
         setFetchMsg(`获取到 ${r.models.length} 个模型`)
@@ -157,6 +208,38 @@ export function ChannelForm({
       setFetchMsg(e?.message ?? '请求失败')
     } finally {
       setFetching(false)
+    }
+  }
+
+  const handleRevealApiKey = async () => {
+    if (!connectionId) return
+    setRevealError('')
+    setRevealing(true)
+    try {
+      const value = await decryptChannelKey(connectionId, revealPassword)
+      setApiKey(value)
+      setShowApiKey(true)
+      setRevealPassword('')
+      setRevealOpen(false)
+    } catch {
+      setRevealError('密码不正确，或凭据保险库当前不可用。')
+    } finally {
+      setRevealing(false)
+    }
+  }
+
+  const handleTestConnection = async () => {
+    if (!connectionId) return
+    setTesting(true)
+    setTestMessage('')
+    try {
+      const result = await testChannelConnection(connectionId)
+      setTestMessage(result.message)
+      onSynced?.()
+    } catch (error) {
+      setTestMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -171,7 +254,7 @@ export function ChannelForm({
       return
     }
     const name = newModelName.trim() || id
-    const normalized = normalizeChannelModel({ id, name, enabled: true, provider })
+    const normalized = normalizeChannelModel({ id, name, enabled: true, provider, source: 'manual' })
     setModels((prev) => [...prev, normalized])
     setNewModelId('')
     setNewModelName('')
@@ -188,6 +271,7 @@ export function ChannelForm({
         provider,
         baseUrl,
         apiKey,
+        authType: apiKey.trim() ? 'api-key' : initialValue?.authType,
         apiFamily: provider === 'custom' ? apiFamily : undefined,
         openaiApiMode: (provider === 'openai' || (provider === 'custom' && apiFamily === 'openai')) ? openaiApiMode : undefined,
         providerId: provider === 'custom' ? providerId || undefined : undefined,
@@ -202,6 +286,9 @@ export function ChannelForm({
   const visibleModels = filterChannelModels(models, modelSearch)
   const visibleModelIds = visibleModels.map((model) => model.id)
   const apiKeyRequired = isChannelApiKeyRequired(provider)
+  const canRevealStoredApiKey = mode === 'edit'
+    && Boolean(connectionId)
+    && initialValue?.authType === 'api-key'
   const fieldClass = 'border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] text-[var(--text-1)] placeholder:text-[var(--text-3)] focus-visible:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))] focus-visible:ring-0'
   const selectClass = 'w-full border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] text-[var(--text-1)] focus-visible:border-[color:color-mix(in_oklab,var(--brand)_42%,var(--border-strong))] focus-visible:ring-0'
   const outlineButtonClass = 'h-8 rounded-[7px] border-[color:color-mix(in_oklab,var(--border)_72%,transparent)] bg-[var(--surface-2)] text-[12px] font-medium text-[var(--text-2)] shadow-none hover:bg-[var(--surface-3)] hover:text-[var(--text-1)] focus-visible:ring-0'
@@ -240,6 +327,7 @@ export function ChannelForm({
               <SelectItem value="openai-chat-completions">OpenAI Compatible (Chat Completions)</SelectItem>
               <SelectItem value="openai-responses">OpenAI Compatible (Responses)</SelectItem>
               <SelectItem value="anthropic">Anthropic</SelectItem>
+              <SelectItem value="google">Google Gen AI</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -305,26 +393,38 @@ export function ChannelForm({
       </div>
 
       <div className="space-y-1.5">
-        <Label>API Key</Label>
+        <Label>{initialValue?.authType === 'oauth' && !apiKey ? 'API Key（填写后切换）' : 'API Key'}</Label>
         <div className="relative">
           <Input
             type={showApiKey ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder={apiKeyRequired ? 'sk-...' : '本地服务通常可留空'}
-            className={cn(fieldClass, 'pr-9 font-mono text-[12px]')}
+            placeholder={mode === 'edit' ? '留空保持当前凭据' : apiKeyRequired ? 'sk-...' : '本地服务通常可留空'}
+            className={cn(fieldClass, (apiKey || canRevealStoredApiKey) && 'pr-9', 'font-mono text-[12px]')}
             disabled={disabled}
           />
-          <Button
+          {(apiKey || canRevealStoredApiKey) && <Button
                 variant="ghost"
             type="button"
-            onClick={() => setShowApiKey((v) => !v)}
+            onClick={() => {
+              if (canRevealStoredApiKey && connectionId && !apiKey) {
+                setRevealOpen(true)
+                return
+              }
+              setShowApiKey((value) => !value)
+            }}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-3)] hover:text-[var(--text-1)]"
             tabIndex={-1}
           >
             {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-          </Button>
+          </Button>}
         </div>
+        {mode === 'edit' && connectionId && OAUTH_PROVIDERS.has(provider) && (
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <p className="text-[11px] text-[var(--text-3)]">也可以使用供应商订阅账号登录。</p>
+            <ConnectionOAuthLogin connectionId={connectionId} onCompleted={() => void handleFetchModels()} />
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -342,9 +442,9 @@ export function ChannelForm({
               <Plus size={11} className="mr-1" />
               手动添加
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={disabled || fetching || (apiKeyRequired && !apiKey)} className={outlineButtonClass}>
+            <Button type="button" variant="outline" size="sm" onClick={handleFetchModels} disabled={disabled || fetching || (mode === 'create' && apiKeyRequired && !apiKey)} className={outlineButtonClass}>
               {fetching && <Loader2 size={11} className="animate-spin mr-1" />}
-              拉取模型列表
+              {mode === 'edit' ? '同步模型' : '拉取模型列表'}
             </Button>
           </div>
         </div>
@@ -450,7 +550,46 @@ export function ChannelForm({
           {mode === 'edit' ? '保存修改' : '保存'}
         </Button>
         {onCancel && <Button type="button" variant="ghost" onClick={onCancel} className="h-8 rounded-[7px] text-[12px] text-[var(--text-2)] hover:bg-[var(--surface-3)] hover:text-[var(--text-1)] focus-visible:ring-0">取消</Button>}
+        {mode === 'edit' && connectionId && (
+          <Button type="button" variant="outline" onClick={() => void handleTestConnection()} disabled={disabled || testing} className={outlineButtonClass}>
+            {testing && <Loader2 size={13} className="mr-1 animate-spin" />}
+            测试连接
+          </Button>
+        )}
       </div>
+      {testMessage && <p className="text-[11px] text-[var(--text-3)]">{testMessage}</p>}
+
+      <Dialog open={revealOpen} onOpenChange={setRevealOpen}>
+        <DialogContent showCloseButton={!revealing}>
+          <DialogHeader>
+            <DialogTitle>查看连接凭据</DialogTitle>
+            <DialogDescription>请输入初始化 Lume 时设置的本地密码。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reveal-connection-password">本地密码</Label>
+            <Input
+              id="reveal-connection-password"
+              type="password"
+              autoComplete="current-password"
+              value={revealPassword}
+              disabled={revealing}
+              onChange={(event) => setRevealPassword(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void handleRevealApiKey()
+                }
+              }}
+            />
+            {revealError && <p className="text-sm text-destructive">{revealError}</p>}
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => void handleRevealApiKey()} disabled={revealing || !revealPassword}>
+              {revealing ? '正在验证…' : '查看'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   )
 }

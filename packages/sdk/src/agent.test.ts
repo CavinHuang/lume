@@ -67,6 +67,7 @@ const tempDirs: string[] = []
 const originalLumeConfigDir = process.env.LUME_CONFIG_DIR
 const originalAliceConfigDir = process.env.ALICE_CONFIG_DIR
 const originalOpenAgentSdkHome = process.env.OPEN_AGENT_SDK_HOME
+const originalToolSearch = process.env.ENABLE_TOOL_SEARCH
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -87,10 +88,33 @@ afterEach(() => {
   } else {
     process.env.OPEN_AGENT_SDK_HOME = originalOpenAgentSdkHome
   }
+  if (originalToolSearch === undefined) {
+    delete process.env.ENABLE_TOOL_SEARCH
+  } else {
+    process.env.ENABLE_TOOL_SEARCH = originalToolSearch
+  }
   clearSkills()
 })
 
 describe("Agent runtime tool resolver", () => {
+  test("keeps a host-provided provider when initialization and model changes refresh config", async () => {
+    const provider = new CapturingProvider()
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      model: "host/model-a",
+    })
+
+    await agent.getInitializationResult()
+    expect((agent as any).provider).toBe(provider)
+
+    await agent.setModel("host/model-b")
+    expect((agent as any).provider).toBe(provider)
+
+    await agent.close()
+  })
+
   test("applies resolveRuntimeTools after base tools are assembled", async () => {
     const agent = createAgent({
       persistSession: false,
@@ -129,6 +153,99 @@ describe("Agent runtime tool resolver", () => {
 
     expect(result.is_error).toBeUndefined()
     expect(result.content).toContain("Ingest into wiki: draft")
+    await agent.close()
+  })
+
+  test("defers non-core schemas and executes selected tools through the normal permission path", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    let targetCalls = 0
+    const target: ToolDefinition = {
+      ...tool("CustomResearch"),
+      description: "Search a private research index.",
+      async call() {
+        targetCalls += 1
+        return { type: "tool_result", tool_use_id: "", content: "research result" }
+      },
+    }
+    const provider = new class implements LLMProvider {
+      readonly apiType = "anthropic-messages" as const
+      requests: CreateMessageParams[] = []
+      async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
+        this.requests.push(params)
+        const turn = this.requests.length
+        if (turn === 1) {
+          return { content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "research" } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+        if (turn === 2) {
+          return { content: [{ type: "tool_use", id: "execute-1", name: "ExecuteTool", input: { tool_name: "CustomResearch", params: {} } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+        return { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }
+      }
+    }()
+    const permissionNames: string[] = []
+    const agent = createAgent({
+      persistSession: false,
+      tools: [tool("Read"), target],
+      canUseTool: async (selected) => {
+        permissionNames.push(selected.name)
+        return { behavior: "allow" }
+      },
+    })
+    await agent.getInitializationResult()
+    ;(agent as any).provider = provider
+
+    for await (const _event of agent.query("find research")) {
+      // drain query
+    }
+
+    expect(provider.requests[0]?.tools.map((item) => item.name)).toEqual(["Read", "ToolSearch", "ExecuteTool"])
+    expect(targetCalls).toBe(1)
+    expect(permissionNames).toContain("CustomResearch")
+    expect(permissionNames).not.toContain("ExecuteTool")
+    await agent.close()
+  })
+
+  test("keeps host-required runtime tools in the active schema", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    const required = {
+      ...tool("TaskReport"),
+      runtimeMetadata: { requiredDuringSkillScope: true },
+    }
+    const agent = createAgent({
+      persistSession: false,
+      tools: [tool("Read"), required],
+    })
+    await agent.getInitializationResult()
+
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toEqual(["Read", "TaskReport"])
+    expect((agent as any).deferredToolPool).toEqual([])
+    await agent.close()
+  })
+
+  test("keeps deferred tool discovery isolated between agent sessions", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "tst"
+    const first = createAgent({ persistSession: false, tools: [tool("Read"), tool("PrivateAlpha")] })
+    const second = createAgent({ persistSession: false, tools: [tool("Read"), tool("PrivateBeta")] })
+    await Promise.all([first.getInitializationResult(), second.getInitializationResult()])
+
+    const firstSearch = (first as any).toolPool.find((item: ToolDefinition) => item.name === "ToolSearch") as ToolDefinition
+    const secondSearch = (second as any).toolPool.find((item: ToolDefinition) => item.name === "ToolSearch") as ToolDefinition
+    const [firstResult, secondResult] = await Promise.all([
+      firstSearch.call({ query: "select:PrivateAlpha" }, { cwd: process.cwd() }),
+      secondSearch.call({ query: "select:PrivateAlpha" }, { cwd: process.cwd() }),
+    ])
+
+    expect(firstResult.content).toContain("PrivateAlpha")
+    expect(secondResult.content).toContain("No tools found")
+    await Promise.all([first.close(), second.close()])
+  })
+
+  test("keeps the complete tool list when deferred loading is explicitly disabled", async () => {
+    process.env.ENABLE_TOOL_SEARCH = "standard"
+    const agent = createAgent({ persistSession: false, tools: [tool("Read"), tool("PrivateResearch")] })
+    await agent.getInitializationResult()
+
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toEqual(["Read", "PrivateResearch"])
     await agent.close()
   })
 })

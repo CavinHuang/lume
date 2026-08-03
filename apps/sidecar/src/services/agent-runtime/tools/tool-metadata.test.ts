@@ -79,15 +79,6 @@ describe("tool-metadata", () => {
     });
   });
 
-  test("allows TaskContractWrite in plan mode without treating it as a risky write", () => {
-    expect(getToolMetadata("TaskContractWrite")).toMatchObject({
-      category: "control",
-      riskLevel: "low",
-      allowedInPlanMode: true
-    });
-    expect(isToolAllowedInPlanMode("TaskContractWrite")).toBeTrue();
-  });
-
   test("allows AskUserQuestion in plan mode for clarification before approval", () => {
     expect(getToolMetadata("AskUserQuestion")).toMatchObject({
       category: "control",

@@ -5,12 +5,12 @@ import type {
   LumeRuntimeEvent,
   RuntimeBillingUsageSummary,
   RuntimeNormalizedUsage,
+  RuntimeCodingReport,
   RuntimeUsageContextSnapshot,
   SDKMessage
 } from "@lume/shared";
 import { FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
 import type { LumeInterruption } from "../interruption/interruption";
-import type { TaskContractPlanPreview } from "../plan/task-contract-write-tool";
 import type { ContextAssemblyInput } from "../context/context-assembler";
 import { TraceRecorder, type TraceRecorderEvent } from "../trace/trace-recorder";
 import { redactTracePayload, summarizeTraceOutput } from "../trace/trace-redaction";
@@ -226,6 +226,50 @@ export class LumeRunObserver {
     message: SDKMessage,
     emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
   ): void {
+    if (message.type === "system" && message.subtype === "api_retry") {
+      this.enqueue(async () => {
+        if (message.phase === "waiting") {
+          const latest = await this.stateStore.get(this.state.runId);
+          if (latest) {
+            let keepThrough = latest.generatedItems.length;
+            while (keepThrough > 0 && latest.generatedItems[keepThrough - 1]?.type === "model_stream") {
+              keepThrough -= 1;
+            }
+            if (keepThrough < latest.generatedItems.length) {
+              await this.stateStore.update(this.state.runId, {
+                generatedItems: latest.generatedItems.slice(0, keepThrough),
+              });
+            }
+          }
+          this.emittedModelStreamText = false;
+          this.emittedModelStreamThinking = false;
+        }
+        const createdAt = new Date().toISOString();
+        if (message.phase === "cleared") {
+          this.emitRuntimeEvent(emitRuntimeEvent, {
+            id: `${this.state.runId}:model.retry_cleared:${createdAt}`,
+            type: "model.retry_cleared",
+            threadId: this.state.threadId,
+            runId: this.state.runId,
+            createdAt,
+          });
+          return;
+        }
+        this.emitRuntimeEvent(emitRuntimeEvent, {
+          id: `${this.state.runId}:model.retry:${message.attempt}:${message.phase ?? "waiting"}:${randomUUID()}`,
+          type: "model.retry",
+          threadId: this.state.threadId,
+          runId: this.state.runId,
+          createdAt,
+          phase: message.phase === "retrying" ? "retrying" : "waiting",
+          attempt: message.attempt,
+          maxRetries: message.max_retries,
+          retryDelayMs: message.retry_delay_ms,
+          errorStatus: message.error_status,
+        });
+      });
+      return;
+    }
     this.enqueue(async () => {
       this.rememberSubagentParentToolCall(message as SDKMessage & Record<string, unknown>);
       const items = mapSdkMessageToRunItems(message, {
@@ -274,34 +318,6 @@ export class LumeRunObserver {
     });
   }
 
-  recordPlanPreview(
-    preview: TaskContractPlanPreview,
-    emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
-  ): void {
-    this.enqueue(async () => {
-      const item: LumeRunItem = {
-        type: "plan_preview",
-        id: `plan:${preview.contractId}`,
-        contractId: preview.contractId,
-        title: preview.title,
-        summary: preview.summary,
-        markdown: preview.markdown,
-        planFilePath: preview.planFilePath,
-        planVerified: preview.planVerified,
-        stepCount: preview.stepCount,
-        createdAt: new Date().toISOString()
-      };
-      await this.stateStore.appendItem(this.state.runId, item);
-      for (const event of projectRunItemToRuntimeEvents(this.state, item, {
-        includeAssistantText: true,
-        includeAssistantThinking: true,
-        includeModelStreamText: true
-      })) {
-        this.emitRuntimeEvent(emitRuntimeEvent, event);
-      }
-    });
-  }
-
   recordTodoState(
     state: { todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[]; currentActiveForm: string | null },
     emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
@@ -323,6 +339,15 @@ export class LumeRunObserver {
       })) {
         this.emitRuntimeEvent(emitRuntimeEvent, event);
       }
+    });
+  }
+
+  recordCodingReport(report: RuntimeCodingReport): void {
+    this.enqueue(async () => {
+      await this.stateStore.update(this.state.runId, {
+        codingReport: report,
+        verificationStatus: report.status,
+      });
     });
   }
 
@@ -409,6 +434,35 @@ export class LumeRunObserver {
     return this.state.workspaceSlug;
   }
 
+  recordAdvisorReview(
+    review: {
+      severity: "clear" | "suggestion" | "concern" | "blocker";
+      summary: string;
+      details?: string;
+      modelRef: string;
+      durationMs: number;
+    },
+    emitRuntimeEvent?: (event: LumeRuntimeEvent) => void
+  ): void {
+    this.enqueue(async () => {
+      const item: LumeRunItem = {
+        type: "system_event",
+        id: `advisor:${this.state.runId}:${randomUUID()}`,
+        name: "advisor_reviewed",
+        payload: review,
+        createdAt: new Date().toISOString()
+      };
+      await this.stateStore.appendItem(this.state.runId, item);
+      for (const event of projectRunItemToRuntimeEvents(this.state, item, {
+        includeAssistantText: true,
+        includeAssistantThinking: true,
+        includeModelStreamText: true
+      })) {
+        this.emitRuntimeEvent(emitRuntimeEvent, event);
+      }
+    });
+  }
+
   getFileReferenceBinding(): FileReferenceBinding | undefined {
     return this.state.fileReferenceBinding;
   }
@@ -446,7 +500,7 @@ export class LumeRunObserver {
     }, async () => ({ status: input.record.status }));
   }
 
-  async finalize(status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">, error?: Error | string): Promise<void> {
+  async finalize(status: Extract<LumeRunStatus, "completed" | "failed" | "cancelled">, error?: Error | string, verificationStatus?: LumeRunState["verificationStatus"], codingReport?: LumeRunState["codingReport"]): Promise<void> {
     await this.flush();
     const completedAt = new Date().toISOString();
     const patch: Partial<LumeRunState> = {
@@ -462,6 +516,8 @@ export class LumeRunObserver {
       completedAt,
       pendingInterruptions: []
     };
+    if (verificationStatus) patch.verificationStatus = verificationStatus;
+    if (codingReport) patch.codingReport = codingReport;
     if (error) {
       patch.error = {
         code: "runtime_error",
@@ -700,7 +756,11 @@ function mapSdkMessageToRunItems(
       id,
       toolCallId: message.result.tool_use_id,
       toolName: message.result.tool_name,
-      output: message.result.output,
+      output: message.result.content ?? message.result.output,
+      isError: message.result.is_error === true,
+      ...((message.result._meta?.execution && typeof message.result._meta.execution === "object")
+        ? { execution: message.result._meta.execution as Record<string, unknown> }
+        : {}),
       parentToolCallId: metadata.parent_tool_use_id ?? undefined,
       subagentRunId: typeof metadata.subagent_run_id === "string" ? metadata.subagent_run_id : undefined,
       createdAt

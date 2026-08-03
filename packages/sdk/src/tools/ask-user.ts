@@ -148,6 +148,14 @@ function formatFallbackAnswer(request: AskUserQuestionRequest): AskUserQuestionR
 async function invokeHandler(
   request: AskUserQuestionRequest,
 ): Promise<AskUserQuestionResponse> {
+  if (request.answers && Object.keys(request.answers).length > 0) {
+    return {
+      questions: request.questions,
+      answers: request.answers,
+      ...(request.annotations ? { annotations: request.annotations } : {}),
+    }
+  }
+
   if (!questionHandler) {
     return formatFallbackAnswer(request)
   }
@@ -284,7 +292,13 @@ export const AskUserQuestionTool: ToolDefinition = {
       return {
         type: 'tool_result',
         tool_use_id: '',
-        content: `User has answered your questions: ${answerText}. You can now continue with the user's answers in mind.`,
+        content: JSON.stringify({
+          status: 'answered',
+          questions: response.questions,
+          answers: response.answers,
+          ...(response.annotations ? { annotations: response.annotations } : {}),
+          message: `User has answered your questions: ${answerText}. You can now continue with the user's answers in mind.`,
+        }),
       }
     } catch (err: any) {
       return {

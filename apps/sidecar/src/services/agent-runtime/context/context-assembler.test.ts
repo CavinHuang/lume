@@ -273,6 +273,96 @@ describe("ContextAssembler", () => {
     expect(result.userMessageForModel).toContain("brief.md (text/markdown, 2 KB): docs/brief.md");
   });
 
+  test("adds structured diff comments to the model-facing user message", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-comments",
+      runId: "run-comments",
+      userMessage: "please review",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["Read"],
+      tokenBudget: 1000,
+      commentAttachments: [{
+        id: "comment-1",
+        origin: "diff",
+        intent: "modify",
+        fileRef: { source: "project", scopeId: "demo", relativePath: "src/app.ts" },
+        position: { path: "src/app.ts", side: "right", line: 12, startLine: 10 },
+        body: "这里需要处理空值",
+        localDiffHunk: "@@ -10,3 +10,3 @@",
+        selectedContent: "const value = maybeValue;"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain("<diff_comments trust=\"user\">");
+    expect(result.userMessageForModel).toContain("src/app.ts");
+    expect(result.userMessageForModel).toContain("这里需要处理空值");
+    expect(result.userMessageForModel).toContain("\"intent\":\"modify\"");
+    expect(result.userMessageForModel).toContain("const value = maybeValue;");
+  });
+
+  test("adds trusted browser claim instructions without page content", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-browser",
+      runId: "run-browser",
+      userMessage: "summarize the referenced page",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["node_repl"],
+      tokenBudget: 1000,
+      browserAttachments: [{
+        id: "browser-tab:iab:provider-1:3",
+        origin: "browser-tab",
+        backend: "iab",
+        browserId: "lume-iab",
+        referenceGrantId: "grant-1",
+        access: "control",
+        tabId: "tab-1",
+        providerTabId: "provider-1",
+        title: "<script>untrusted</script>",
+        url: "https://example.com/",
+        generation: 3,
+        ownerThreadId: "thread-browser"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain('<browser_attachment_instructions trust="trusted">');
+    expect(result.userMessageForModel).toContain("In one node_repl invocation");
+    expect(result.userMessageForModel).toContain('"browserId":"lume-iab"');
+    expect(result.userMessageForModel).not.toContain('"referenceGrantId"');
+    expect(result.userMessageForModel).toContain("opaque claim handle");
+    expect(result.userMessageForModel).toContain("\\u003cscript>untrusted\\u003c/script>");
+    expect(result.userMessageForModel).not.toContain("<script>untrusted</script>");
+  });
+
+  test("includes selected browser annotation context with mixed-trust guidance", async () => {
+    const result = await new ContextAssembler().assemble({
+      threadId: "thread-browser-annotation",
+      runId: "run-browser-annotation",
+      userMessage: "fix this page",
+      resolvedModelId: "gpt-5.4-mini",
+      availableTools: ["node_repl"],
+      tokenBudget: 1000,
+      browserAttachments: [{
+        id: "browser-annotation:1",
+        origin: "browser-annotation",
+        tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 2 },
+        anchor: {
+          kind: "element",
+          url: "https://example.com/",
+          generation: 2,
+          framePath: [],
+          domPath: "html > body > main",
+          selectedContent: "Primary heading",
+          rect: { x: 10, y: 20, width: 200, height: 100 }
+        },
+        body: "Use a stronger visual hierarchy"
+      }]
+    });
+
+    expect(result.userMessageForModel).toContain("<browser_annotation_instructions trust=\"mixed\">");
+    expect(result.userMessageForModel).toContain("Primary heading");
+    expect(result.userMessageForModel).toContain("Use a stronger visual hierarchy");
+  });
+
   test("records context assembly and memory retrieval spans when trace context is provided", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lume-context-trace-"));
     try {

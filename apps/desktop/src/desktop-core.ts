@@ -424,6 +424,7 @@ export function redactValue(value, seen = new WeakSet()) {
         || normalized.includes('password')
         || normalized.includes('apikey')
         || normalized.includes('authorization')
+        || normalized.includes('grant')
       )
         ? '[REDACTED]'
         : redactValue(child, seen)

@@ -104,6 +104,14 @@ describe("capability-routing", () => {
     expect(decision.preferredLane).toBe("browser");
   });
 
+  test("浏览器交互中仅提到页面或弹窗时不应误判为 coding", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "打开当前页面并点击登录弹窗",
+      availableTools: ["browser", "read", "write", "edit", "bash"]
+    });
+    expect(decision.preferredLane).toBe("browser");
+  });
+
   test("历史连续性请求应优先 memory", () => {
     const decision = resolvePreferredCapabilityRoute({
       userMessage: "回忆一下我们之前确认过的偏好",
@@ -136,6 +144,31 @@ describe("capability-routing", () => {
       availableTools: ["web_search", "read"]
     });
     expect(decision.preferredLane).toBe("web");
+  });
+
+  test("代码修改请求应优先 coding lane", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "修复这个 TypeScript 报错并补一个最小测试",
+      availableTools: ["read", "write", "edit", "bash"]
+    });
+    expect(decision.preferredLane).toBe("coding");
+    expect(decision.reason).toContain("coding workflow");
+  });
+
+  test("编码请求优先 coding，即使同时提到浏览器页面", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "修复浏览器页面的弹窗层级问题",
+      availableTools: ["browser", "read", "write", "edit", "bash"]
+    });
+    expect(decision.preferredLane).toBe("coding");
+  });
+
+  test("浏览器 UI 遮挡问题也优先 coding，避免误启用桌面自动化", () => {
+    const decision = resolvePreferredCapabilityRoute({
+      userMessage: "浏览器弹窗层级被网页遮住了，看看界面问题",
+      availableTools: ["browser", "read", "write", "edit", "bash"]
+    });
+    expect(decision.preferredLane).toBe("coding");
   });
 
   test("没有明确 skill 匹配时默认使用 raw-tools 而不是 skills-first", () => {
@@ -180,6 +213,22 @@ describe("capability-routing", () => {
     });
     expect(resolveSoftToolPolicyForPreferredRoute("web")).toEqual({
       deny: ["browser"]
+    });
+    expect(resolveSoftToolPolicyForPreferredRoute("coding")).toEqual({
+      deny: [
+        "web_search",
+        "web_fetch",
+        "mcp__node_repl__*",
+        "mcp__computer_use__*"
+      ]
+    });
+    expect(resolveSoftToolPolicyForPreferredRoute("raw-tools")).toEqual({
+      deny: [
+        "web_search",
+        "web_fetch",
+        "mcp__node_repl__*",
+        "mcp__computer_use__*"
+      ]
     });
     expect(resolveSoftToolPolicyForPreferredRoute("skills")).toBeUndefined();
   });

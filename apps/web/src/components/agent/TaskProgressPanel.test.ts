@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { LumeRuntimeEvent } from '@lume/shared'
-import { canContinueTaskProgress, canRetryTaskProgress, canSkipTaskProgress, formatProgressItemTitle, getTaskProgressItems, shouldShowTaskEmptyState } from './TaskProgressPanel'
+import { formatProgressItemTitle, getTaskProgressItems, shouldShowTaskEmptyState } from './TaskProgressPanel'
 
 type TaskProgressEvent = Extract<LumeRuntimeEvent, { type: 'task.progress' }>
 
@@ -27,33 +27,9 @@ function progress(input: Partial<TaskProgressEvent> = {}): TaskProgressEvent {
 }
 
 describe('TaskProgressPanel', () => {
-  test('detects whether runtime task progress can be continued', () => {
-    expect(canContinueTaskProgress(progress({ status: 'running' }))).toBe(true)
-    expect(canContinueTaskProgress(progress({ status: 'pending' }))).toBe(true)
-    expect(canContinueTaskProgress(progress({ status: 'failed' }))).toBe(true)
-    expect(canContinueTaskProgress(progress({ status: 'completed' }))).toBe(false)
-  })
-
   test('shows empty state when no task progress event exists', () => {
     expect(shouldShowTaskEmptyState(undefined)).toBe(true)
     expect(getTaskProgressItems(undefined)).toEqual([])
-  })
-
-  test('detects retry and skip controls from failed task progress', () => {
-    const failed = progress({
-      status: 'failed',
-      tasks: [{
-        id: 'step-1',
-        title: '失败任务',
-        description: '失败任务',
-        status: 'failed',
-        attemptCount: 1,
-        error: 'boom',
-      }],
-    })
-
-    expect(canRetryTaskProgress(failed)).toBe(true)
-    expect(canSkipTaskProgress(failed)).toBe(true)
   })
 
   test('uses runtime progress tasks as the only task item source', () => {

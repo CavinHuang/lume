@@ -107,12 +107,14 @@ export function reconcileUserMessageVersions(
 
   const visibleUsersById = new Map<string, AgentMessage>()
   const visibleUsersByContent = new Map<string, AgentMessage[]>()
+  const visibleAssistantsById = new Map<string, AgentMessage>()
   const visibleAssistantsByContent = new Map<string, AgentMessage[]>()
   for (const visible of visibleThreadMessages) {
     if (visible.role === 'user') {
       visibleUsersById.set(visible.id, visible)
       pushGroup(visibleUsersByContent, visible.content, visible)
     } else if (visible.role === 'assistant') {
+      visibleAssistantsById.set(visible.id, visible)
       pushGroup(visibleAssistantsByContent, visible.content, visible)
     }
   }
@@ -131,6 +133,7 @@ export function reconcileUserMessageVersions(
       message,
       visibleUsersById,
       visibleUsersByContent,
+      visibleAssistantsById,
       visibleAssistantsByContent,
       usedVisibleIds,
       usedVisibleAssistantIds,
@@ -155,6 +158,7 @@ function matchVisibleMessage(
   message: RuntimeMessageView,
   visibleUsersById: Map<string, AgentMessage>,
   visibleUsersByContent: Map<string, AgentMessage[]>,
+  visibleAssistantsById: Map<string, AgentMessage>,
   visibleAssistantsByContent: Map<string, AgentMessage[]>,
   usedVisibleIds: Set<string>,
   usedVisibleAssistantIds: Set<string>,
@@ -180,6 +184,13 @@ function matchVisibleMessage(
     return undefined
   }
   if (message.type === 'assistant') {
+    if (message.messageId) {
+      const byId = visibleAssistantsById.get(message.messageId)
+      if (byId) {
+        usedVisibleAssistantIds.add(byId.id)
+        return byId
+      }
+    }
     const group = visibleAssistantsByContent.get(message.text) ?? []
     const visible = group.find((item) => !usedVisibleAssistantIds.has(item.id))
     if (visible) {
@@ -202,8 +213,20 @@ function applyReconciledMessage(
   if (message.type === 'assistant') {
     const providerTokenUsage = readPersistedAssistantTokenUsage(visible.metadata)
     const providerOutputTokens = providerTokenUsage?.outputTokens
+    const shouldRestoreContent = !message.text.trim() && visible.content.trim().length > 0
+    const persistedBlocks = shouldRestoreContent ? projectVisibleAssistantBlocks(visible) : []
     return {
       ...message,
+      ...(shouldRestoreContent
+        ? {
+            text: visible.content,
+            thinking: message.thinking || visible.reasoning || '',
+            blocks: [
+              ...persistedBlocks.filter((block) => block.type === 'text' || block.type === 'thinking'),
+              ...message.blocks,
+            ],
+          }
+        : {}),
       messageId: visible.id,
       completedAt: new Date(visible.createdAt).toISOString(),
       ...(message.tokenCountSource === 'provider' || providerOutputTokens === undefined
@@ -330,6 +353,12 @@ function readPersistedMessageParts(metadata: Record<string, unknown> | undefined
       || (part.type === 'capability_ref'
         && typeof part.occurrenceId === 'string'
         && typeof part.uri === 'string')
+      || (part.type === 'planning_todo_ref'
+        && part.schemaVersion === 1
+        && typeof part.uri === 'string'
+        && typeof part.todoId === 'string'
+        && (part.relation === 'mentioned' || part.relation === 'primary')
+        && typeof part.displayText === 'string')
   })
 }
 
@@ -404,9 +433,17 @@ function projectPersistedCompactionMessages(
   fallbackCreatedAt: string,
 ): RuntimeMessageView[] {
   if (!Array.isArray(message.sdkMessages)) return []
-  return message.sdkMessages
-    .map((sdkMessage, index) => projectPersistedCompactionMessage(message.id, index, sdkMessage, fallbackCreatedAt))
-    .filter((item): item is Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }> => item !== null)
+  const projectedByRun = new Map<string, Extract<RuntimeMessageView, { type: 'system'; variant: 'context_compaction' }>>()
+  for (const [index, sdkMessage] of message.sdkMessages.entries()) {
+    const projected = projectPersistedCompactionMessage(message.id, index, sdkMessage, fallbackCreatedAt)
+    if (!projected) continue
+    const runId = typeof (sdkMessage as SDKMessage & { session_id?: unknown }).session_id === 'string'
+      ? (sdkMessage as SDKMessage & { session_id: string }).session_id
+      : message.id
+    const existing = projectedByRun.get(runId)
+    projectedByRun.set(runId, existing ? { ...projected, id: existing.id } : projected)
+  }
+  return [...projectedByRun.values()]
 }
 
 function projectPersistedCompactionMessage(
@@ -424,6 +461,11 @@ function projectPersistedCompactionMessage(
   const metadata = asRecord((sdkMessage as SDKMessage & { compact_metadata?: unknown }).compact_metadata)
   const mode = metadata?.trigger === 'manual' ? '手动' : '自动'
   const progressMessage = typeof metadata?.message === 'string' ? metadata.message : undefined
+  const summary = typeof metadata?.summary === 'string'
+    ? metadata.summary
+    : typeof (sdkMessage as SDKMessage & { summary?: unknown }).summary === 'string'
+      ? (sdkMessage as SDKMessage & { summary: string }).summary
+      : undefined
   const createdAt = typeof (sdkMessage as SDKMessage & { timestamp?: unknown }).timestamp === 'string'
     ? (sdkMessage as SDKMessage & { timestamp: string }).timestamp
     : fallbackCreatedAt
@@ -437,6 +479,7 @@ function projectPersistedCompactionMessage(
       : sdkMessage.subtype === 'context_compaction_started'
       ? `正在${mode}压缩上下文`
       : `上下文已${mode}压缩`,
+    ...(sdkMessage.subtype === 'compact_boundary' && summary ? { summary } : {}),
     createdAt,
   }
 }

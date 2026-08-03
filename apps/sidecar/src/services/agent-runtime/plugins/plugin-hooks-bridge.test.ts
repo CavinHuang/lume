@@ -135,7 +135,16 @@ describe("buildPluginAgentHooks — real spawner integration", () => {
   test("allow-ed shell hook with non-JSON output returns {message}", async () => {
     const result = buildPluginAgentHooks({
       capabilities: [
-        { pluginId: "acme", hooks: { Stop: [{ command: "echo plain text" }] } },
+        {
+          pluginId: "acme",
+          hooks: {
+            Stop: [{
+              command: process.platform === "win32"
+                ? "Write-Output 'plain text'"
+                : "printf 'plain text'"
+            }]
+          }
+        },
       ],
       runtime: fakeRuntime("allow"),
       workspaceSlug: "ws",

@@ -24,6 +24,8 @@ type GenerateDesktopProposalResult = (input: {
 
 const PERMISSION_POLL_INTERVAL_MS = 250;
 const PERMISSION_POLL_ATTEMPTS = 240;
+const PERMISSION_HOST_RECONNECT_ATTEMPTS = 4;
+const PERMISSION_HOST_RECONNECT_INTERVAL_MS = 250;
 const CONTEXT_EVENT_SETTLE_MS = 150;
 const CONTEXT_RECONCILE_INTERVAL_MS = 30_000;
 const CONTEXT_CHANGE_EVENT_TYPES = new Set([
@@ -242,6 +244,11 @@ export class DesktopContextService {
 
   async requestPermissions(): Promise<unknown> {
     let latest = asRecord(await this.#input.invokeHost("request_permissions", {}));
+    for (let attempt = 0; attempt < PERMISSION_HOST_RECONNECT_ATTEMPTS; attempt += 1) {
+      if (!isTransientHostUnavailable(latest)) break;
+      await wait(PERMISSION_HOST_RECONNECT_INTERVAL_MS);
+      latest = asRecord(await this.#input.invokeHost("request_permissions", {}));
+    }
     if (latest.status === "ok") return completedPermissionDiagnostics(latest);
     if (latest.status !== "permission_denied") return latest;
 
@@ -565,6 +572,12 @@ function completedPermissionDiagnostics(value: Record<string, unknown>): Record<
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function isTransientHostUnavailable(value: Record<string, unknown>): boolean {
+  if (value.status !== "unavailable") return false;
+  const message = typeof value.message === "string" ? value.message : "";
+  return /desktop host connection (failed|closed)|desktop host is not connected/i.test(message);
 }
 
 const LUME_SELF_CONTEXT_MESSAGE = "当前前台窗口是 Lume，请切回目标应用后再唤起或附加上下文。";

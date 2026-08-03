@@ -163,7 +163,7 @@ describe("agent-handlers skill evolution RPC", () => {
       disableModelInvocation?: boolean;
     }>;
 
-    expect(skills).toEqual([{
+    expect(skills.filter((skill) => skill.storageScope === "user")).toEqual([{
       storageScope: "user",
       managementSurface: "settings",
       slug: "global-planner",

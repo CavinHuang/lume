@@ -25,7 +25,9 @@ export function createChromeNativeHostInstallPlan(input: {
   const paths = platform === 'win32' ? win32 : posix
   const { installer } = input
   if (installer.kind !== 'chrome-native-host') throw new Error('unsupported plugin package installer')
-  if (!/^[a-z0-9._-]{1,128}$/.test(installer.hostName)) throw new Error('invalid native host name')
+  if (!/^(?=.{1,128}$)[a-z0-9_]+(?:\.[a-z0-9_]+)*$/.test(installer.hostName)) {
+    throw new Error('invalid native host name')
+  }
   if (!/^[a-p]{32}$/.test(installer.extensionId)) throw new Error('invalid Chrome extension id')
   if (!isLoopbackWebSocketUrl(installer.appServerUrl)) throw new Error('native host app server must use a loopback WebSocket URL')
   if (!/^[0-9A-Za-z._-]{1,64}$/.test(input.version)) throw new Error('invalid native host version')

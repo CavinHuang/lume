@@ -58,7 +58,7 @@ describe('LumeWelcomeSurface', () => {
     expect(html).toContain('data-welcome-lock="composer"')
     expect(html).toContain('inert=""')
     expect(html).toMatch(/<button(?=[^>]*aria-label="添加")(?=[^>]*disabled="")[^>]*>/)
-    expect(html).toMatch(/<button(?=[^>]*title="移除附件")(?=[^>]*disabled="")[^>]*>/)
+    expect(html).toMatch(/<button(?=[^>]*aria-label="移除 spec\.md")(?=[^>]*disabled="")[^>]*>/)
   })
 
   test('renders welcome suggestions', () => {

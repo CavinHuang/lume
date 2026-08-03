@@ -27,6 +27,7 @@ import {
   scopePluginAssetUrls,
 } from "../src/plugin-asset-registry.ts";
 import * as sharedIpc from "../../../packages/shared/src/types/index.ts";
+import { BROWSER_IPC_CHANNELS } from "../../../packages/shared/src/types/browser-runtime.ts";
 import {
   createPreviewProtocolResponse,
   createPreviewScopeRegistry,
@@ -95,9 +96,18 @@ test("preview scopes bind unguessable tokens to one webContents owner and expire
 test("renderer sidecar allowlist tracks public shared IPC channels", () => {
   const sharedMethods = Object.entries(sharedIpc)
     .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && value && typeof value === "object")
-    .flatMap(([, value]) => Object.values(value))
-    .filter((value) => typeof value === "string" && !value.includes(":privileged-"));
+    .flatMap(([, value]) => Object.entries(value))
+    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value))
+    .map(([, value]) => value);
   for (const method of sharedMethods) assert.equal(PUBLIC_RENDERER_SIDECAR_METHODS.has(method), true, method);
+});
+
+test("renderer may inspect browser backend availability without invoking browser actions", () => {
+  assert.equal(validateRendererSidecarMethod("browser:backends"), "browser:backends");
+  assert.equal(validateRendererSidecarMethod("browser:reference-candidates"), "browser:reference-candidates");
+  assert.equal(validateRendererSidecarMethod("browser:create-reference-grant"), "browser:create-reference-grant");
+  assert.equal(validateRendererSidecarMethod("browser:revoke-reference-grant"), "browser:revoke-reference-grant");
+  assert.throws(() => validateRendererSidecarMethod("browser:broker"), /unsupported renderer sidecar method/);
 });
 
 test("Wiki formal mutations use a main-process credential and reject generic RPC", () => {
@@ -229,17 +239,25 @@ test("preview subframes may stay on the entry URL or its fragment only", () => {
   assert.equal(isAllowedPreviewFrameNavigation(registry, "https://example.com", 9), false);
 });
 
-test("media scopes authorize one image file and validate single byte ranges", () => {
+test("media scopes authorize one image, PDF, or video file and validate single byte ranges", () => {
   const root = mkdtempSync(join(tmpdir(), "lume-preview-media-"));
   const image = join(root, "image.png");
   const other = join(root, "other.png");
+  const pdf = join(root, "manual.pdf");
+  const video = join(root, "movie.mp4");
   writeFileSync(image, Buffer.alloc(20));
   writeFileSync(other, Buffer.alloc(20));
+  writeFileSync(pdf, Buffer.alloc(20));
+  writeFileSync(video, Buffer.alloc(20));
   const registry = createPreviewScopeRegistry();
   const scope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: image });
 
   assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/image.png`, "HEAD").kind, "ok");
   assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/other.png`, "GET").kind, "forbidden");
+  const pdfScope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: pdf });
+  const videoScope = registry.create({ kind: "media-file", ownerWebContentsId: 4, absolutePath: video });
+  assert.equal(resolvePreviewProtocolRequest(registry, previewScopeUrl(pdfScope), "GET").mimeType, "application/pdf");
+  assert.equal(resolvePreviewProtocolRequest(registry, previewScopeUrl(videoScope), "GET").mimeType, "video/mp4");
   assert.deepEqual(parseSingleRange("bytes=3-8", 20), { start: 3, end: 8 });
   assert.deepEqual(parseSingleRange("bytes=-5", 20), { start: 15, end: 19 });
   assert.equal(parseSingleRange("bytes=1-2,4-5", 20), null);
@@ -412,6 +430,43 @@ test("desktop windows use secure sandboxed web preferences", () => {
     sandbox: true,
     nodeIntegration: false,
   });
+  assert.deepEqual(createSecureWebPreferences({ preload: "preload.cjs", webviewTag: true }), {
+    contextIsolation: true,
+    sandbox: true,
+    nodeIntegration: false,
+    webviewTag: true,
+    preload: "preload.cjs",
+  });
+});
+
+test("connection credential reveal remains main-process privileged", () => {
+  assert.throws(() => validateRendererSidecarMethod("channel:privileged-decrypt-key"), /unsupported renderer sidecar method/);
+});
+
+test("browser webview guests are one-time authorized and receive no host bridge", () => {
+  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
+  const guestPreloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-guest-preload.ts"), "utf8");
+  assert.match(mainSource, /will-attach-webview/);
+  assert.match(mainSource, /authorizeGuestMount/);
+  assert.match(mainSource, /did-attach-webview/);
+  assert.match(mainSource, /browser-guest-preload\.cjs/);
+  assert.match(mainSource, /ipcMain\.on\('lume:browser-guest-mounted'/);
+  assert.equal(guestPreloadSource.includes("contextBridge"), false);
+  assert.match(guestPreloadSource, /ipcRenderer\.send\('lume:browser-guest-mounted'/);
+});
+
+test("renderer browser guest pool never reparents an attached webview", () => {
+  const poolSource = readFileSync(resolve(DESKTOP_ROOT, "..", "web", "src", "components", "browser", "BrowserWebviewPool.tsx"), "utf8");
+  assert.match(poolSource, /BROWSER_GUEST_HOST_ID = 'lume-browser-webview-pool'/);
+  assert.match(poolSource, /document\.body\.append\(host\)/);
+  assert.match(poolSource, /lumePendingMounts/);
+  assert.match(poolSource, /await pending/);
+  assert.match(poolSource, /api\.recover\(tabId/);
+  assert.match(poolSource, /wrapper\.style\.position = 'fixed'/);
+  assert.match(poolSource, /wrapper\.style\.visibility = 'hidden'/);
+  assert.doesNotMatch(poolSource, /wrapper\.style\.display = 'none'/);
+  assert.doesNotMatch(poolSource, /append\(existing\.wrapper\)/);
+  assert.doesNotMatch(poolSource, /append\(entry\.wrapper\)/);
 });
 
 test("main process does not opt BrowserWindow renderers out of sandbox", () => {
@@ -457,6 +512,15 @@ test("preload bridge is compatible with Electron sandbox require limits", () => 
   const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "preload.ts"), "utf8");
   assert.match(preloadSource, /from ['"]electron['"]/);
   assert.equal(preloadSource.includes("node:"), false);
+});
+
+test("browser auth preload sends secrets only through its dedicated main-process channel", () => {
+  const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-auth-preload.ts"), "utf8");
+  assert.match(preloadSource, /from ['"]electron['"]/);
+  assert.match(preloadSource, /ipcRenderer\.send\(['"]lume:browser-auth['"]/);
+  assert.equal(preloadSource.includes("ipcRenderer.invoke"), false);
+  assert.equal(preloadSource.includes("node:"), false);
+  assert.equal(preloadSource.includes("navigator.clipboard"), false);
 });
 
 test("app protocol resolves only lume app URLs within the web root", () => {

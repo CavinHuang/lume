@@ -54,6 +54,17 @@ export interface ToolRuntimeBuildResult {
 
 const log = createLogger("plugin-tool-runtime");
 
+export const TASK_MANAGEMENT_DENY_SET = new Set([
+  "TaskCreate",
+  "TaskUpdate",
+  "TaskList",
+  "TaskGet",
+  "TaskStop",
+  "TaskOutput",
+  "ProcessOutput",
+  "ProcessStop",
+]);
+
 export class ToolRuntime {
   static build(input: ToolRuntimeBuildInput): ToolRuntimeBuildResult {
     const descriptors = resolveDescriptors(input);
@@ -81,6 +92,7 @@ export class ToolRuntime {
     requiredTools?: ToolDefinition[];
     cwd: string;
     sessionId: string;
+    threadType?: AgentSendInput["threadType"];
     permissionMode?: AgentSendInput["permissionMode"];
     messageMetadata?: Record<string, unknown>;
     policyInput: ResolveEffectiveToolPolicyInput;
@@ -88,6 +100,7 @@ export class ToolRuntime {
     const descriptors = resolveDescriptors({
       cwd: input.cwd,
       sessionId: input.sessionId,
+      threadType: input.threadType,
       permissionMode: input.permissionMode,
       messageMetadata: input.messageMetadata,
       policyInput: input.policyInput,
@@ -110,6 +123,10 @@ export class ToolRuntime {
       }
     }
     const resolvedDescriptors = Array.from(descriptorsByCanonicalName.values());
+    if (input.threadType === "subagent") {
+      const residual = resolvedDescriptors.filter((descriptor) => TASK_MANAGEMENT_DENY_SET.has(descriptor.name));
+      if (residual.length > 0) throw new Error(`Subagent task-management deny set violated: ${residual.map((item) => item.name).join(", ")}`);
+    }
     setRuntimeToolDescriptors(input.sessionId, resolvedDescriptors);
     return materializeRuntimeTools({
       descriptors: resolvedDescriptors,
@@ -139,7 +156,9 @@ function resolveDescriptors(input: ToolRuntimeBuildInput): LumeToolDescriptor[] 
     });
 
   if (input.threadType === "subagent") {
-    descriptors = descriptors.filter((descriptor) => descriptor.name !== "Agent");
+    descriptors = descriptors.filter((descriptor) => descriptor.name !== "Agent" && !TASK_MANAGEMENT_DENY_SET.has(descriptor.name));
+    const residual = descriptors.filter((descriptor) => TASK_MANAGEMENT_DENY_SET.has(descriptor.name));
+    if (residual.length > 0) throw new Error(`Subagent task-management deny set violated: ${residual.map((item) => item.name).join(", ")}`);
   }
 
   if (input.subagentDefinition) {
@@ -169,6 +188,7 @@ function materializeRuntimeTools(input: {
             cwd: input.cwd,
             fileLedger: getRuntimeFileAccessLedger()
           });
+    if (descriptor.canonicalName === "askuserquestion") return runtimeTool;
     return wrapToolWithProtectedRootPolicy({
       descriptor,
       tool: runtimeTool,

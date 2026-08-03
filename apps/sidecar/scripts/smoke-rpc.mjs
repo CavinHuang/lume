@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -73,8 +73,13 @@ async function run() {
     const health = await sidecar.call("healthcheck");
     assert(health?.ok === true, "healthcheck failed");
 
-    const workspace = await sidecar.call("agent:ensure-default-workspace");
-    assert(workspace?.slug === "default", "default workspace not ready");
+    const projectRoot = join(configHome, "smoke-project");
+    mkdirSync(projectRoot, { recursive: true });
+    const workspace = await sidecar.call("agent:create-workspace", {
+      name: "Smoke Project",
+      projectPath: projectRoot
+    });
+    assert(typeof workspace?.slug === "string", "project workspace not ready");
 
     const session = await sidecar.call("agent:create-thread", {
       title: "smoke-session",

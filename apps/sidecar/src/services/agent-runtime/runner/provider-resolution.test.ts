@@ -52,6 +52,17 @@ describe("provider-resolution", () => {
     expect(resolved.candidates[0]).toBe("zai");
   });
 
+  test("连接目录中的模型 ID 应保持斜杠并优先使用连接 provider", () => {
+    const resolved = resolveRuntimeProviderCandidates({
+      channelProvider: "openrouter",
+      modelId: "anthropic/claude-sonnet-4-5",
+      baseUrl: "https://openrouter.ai/api/v1",
+      modelIdIsOpaque: true,
+    });
+    expect(resolved.modelId).toBe("anthropic/claude-sonnet-4-5");
+    expect(resolved.candidates[0]).toBe("openrouter");
+  });
+
   test("应映射全部 coding-plan/国内供应商到 runtime provider（避免发送完整 ref）", () => {
     // 这些 provider 已在 coerceKnownProvider/PROVIDER_API_FAMILIES 中登记，
     // PROVIDER_ALIAS 必须同步覆盖，否则 parseProviderModelRef 无法拆分，

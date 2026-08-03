@@ -103,8 +103,9 @@ export function resolveRuntimeProviderCandidates(params: {
   channelProvider?: ProviderType | string;
   modelId: string;
   baseUrl?: string;
+  modelIdIsOpaque?: boolean;
 }): { modelId: string; candidates: KnownProvider[] } {
-  const parsedRef = parseProviderModelRef(params.modelId);
+  const parsedRef = params.modelIdIsOpaque ? null : parseProviderModelRef(params.modelId);
   const normalizedModelId = parsedRef?.model ?? params.modelId.trim();
   const candidates: KnownProvider[] = [];
   const channelProviderToken = normalizeProviderToken(params.channelProvider);

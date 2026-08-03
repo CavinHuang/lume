@@ -25,6 +25,6 @@ describe('WindowButtonGroup', () => {
     const markup = renderToStaticMarkup(
       <WindowButtonGroup maximized={false} focused={false} />,
     )
-    expect(markup).toContain('text-foreground/30')
+    expect(markup).toContain('var(--lume-text-muted)_56%')
   })
 })

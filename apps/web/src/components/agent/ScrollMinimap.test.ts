@@ -24,11 +24,11 @@ describe('ScrollMinimap hook order', () => {
     expect(source).toContain('onMouseLeave={handlePanelMouseLeave}')
   })
 
-  test('rips width from the focus index while keeping height uniform', () => {
+  test('ripples width from the focus index while keeping height uniform', () => {
     const source = readFileSync(resolve(import.meta.dir, 'ScrollMinimap.tsx'), 'utf-8')
 
     expect(source).toContain('const BAR_HEIGHT')
-    expect(source).toContain('const BAR_ROW_HEIGHT')
+    expect(source).toContain('flex h-2.5 w-full shrink-0 items-center justify-end')
     expect(source).toContain('const BAR_WIDTH_FOCUS')
     expect(source).toContain('const BAR_WIDTH_BASE')
     expect(source).toContain('barWidthForDistance')

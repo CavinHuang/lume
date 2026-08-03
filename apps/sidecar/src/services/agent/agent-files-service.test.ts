@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -23,10 +23,12 @@ import {
   renameAgentFile,
   renameWorkspaceFile,
   readAgentPath,
+  readAuthorizedFileRef,
   readGuardedFileRef,
   readWorkspaceRootPath,
   renameAuthorizedFileRef,
   resolveAuthorizedFileRef,
+  resolveAuthorizedBrowserUploadPaths,
   validateGuardedFileRef,
   resolveThreadAttachmentPath,
   resolveWorkspaceSlugBySessionId,
@@ -37,6 +39,9 @@ import {
   searchAgentWorkspaceFiles,
   searchAuthorizedFiles,
   statAuthorizedFileRef,
+  writeAuthorizedFileRef,
+  watchAuthorizedFileRef,
+  unwatchAuthorizedFileRef,
   toThreadRelativePath
 } from "./agent-files-service";
 import { createAgentWorkspace, relocateUnavailableAgentWorkspace } from "./agent-workspace-manager";
@@ -210,6 +215,96 @@ describe("agent-files-service file ops", () => {
 
     expect(converted).toEqual({ source: "session", scopeId: workdir.fileContextId, relativePath: "files/brief.md" });
     expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(join(workdir.filesRoot, "brief.md"));
+  });
+
+  test("browser uploads resolve only current thread project and session files", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "browser-upload-project");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("browser-upload", { projectPath });
+    const thread = createAgentThread("browser upload", undefined, workspace.id);
+    const workdir = resolveAgentThreadWorkdir(thread.id);
+    const projectFile = join(projectPath, "project.txt");
+    const sessionFile = join(workdir.filesRoot, "session.txt");
+    writeFileSync(projectFile, "project", "utf8");
+    writeFileSync(sessionFile, "session", "utf8");
+    const encodedRef = `lume-file-ref:${Buffer.from(JSON.stringify({
+      source: "session",
+      scopeId: workdir.fileContextId,
+      relativePath: "files/session.txt",
+    })).toString("base64url")}`;
+
+    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([projectFile, sessionFile]);
+    const outside = join(configDir, "outside-upload.txt");
+    writeFileSync(outside, "outside", "utf8");
+    expect(() => resolveAuthorizedBrowserUploadPaths(thread.id, [outside])).toThrow("不属于当前任务");
+  });
+
+  test("reads and atomically writes editable FileRefs with encoding and mtime conflict protection", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-edit");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("project-edit", { projectPath });
+    const ref = { source: "project" as const, scopeId: workspace.slug, relativePath: "sample.txt" };
+    writeFileSync(join(projectPath, "sample.txt"), Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from("one\r\ntwo\r\n", "utf16le"),
+    ]));
+
+    const document = readAuthorizedFileRef(ref);
+    expect(document).toMatchObject({
+      kind: "text",
+      content: "one\r\ntwo\r\n",
+      encoding: "utf-16le",
+      bom: true,
+      lineEnding: "crlf",
+      editable: true,
+    });
+    if (document.kind !== "text") throw new Error("expected text document");
+
+    const saved = writeAuthorizedFileRef({
+      ref,
+      content: "three\nfour\n",
+      expectedMtimeMs: document.mtimeMs,
+    });
+    expect(saved.outcome).toBe("saved");
+    expect(readFileSync(join(projectPath, "sample.txt")).subarray(0, 2)).toEqual(Buffer.from([0xff, 0xfe]));
+    const current = readAuthorizedFileRef(ref);
+    expect(current).toMatchObject({ kind: "text", content: "three\r\nfour\r\n" });
+    expect(() => writeAuthorizedFileRef({
+      ref,
+      content: "x".repeat(5 * 1024 * 1024 + 1),
+      expectedMtimeMs: current.mtimeMs,
+    })).toThrow("超过 10 MB");
+
+    expect(writeAuthorizedFileRef({ ref, content: "stale", expectedMtimeMs: 0 }).outcome).toBe("conflict");
+    expect(() => writeAuthorizedFileRef({
+      ref: { source: "memory", scopeId: "global", relativePath: "MEMORY.md" },
+      content: "forbidden",
+      expectedMtimeMs: 0,
+    })).toThrow("只读");
+  });
+
+  test("deduplicates FileRef watchers and emits external file changes", async () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project-watch");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("project-watch", { projectPath });
+    const ref = { source: "project" as const, scopeId: workspace.slug, relativePath: "watch.txt" };
+    writeFileSync(join(projectPath, "watch.txt"), "before", "utf-8");
+    let resolveChanged!: () => void;
+    const changed = new Promise<void>((resolve) => { resolveChanged = resolve; });
+    const first = watchAuthorizedFileRef(ref, (method) => {
+      if (method === "agent:file-ref-changed") resolveChanged();
+    });
+    const second = watchAuthorizedFileRef(ref, () => undefined);
+    writeFileSync(join(projectPath, "watch.txt"), "after", "utf-8");
+    expect(await Promise.race([
+      changed.then(() => "changed" as const),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 3_000)),
+    ])).toBe("changed");
+    expect(unwatchAuthorizedFileRef(first.watchId)).toEqual({ ok: true });
+    expect(unwatchAuthorizedFileRef(second.watchId)).toEqual({ ok: true });
   });
 
   test("guarded project references revalidate the root fingerprint on every operation", () => {

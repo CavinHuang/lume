@@ -1,7 +1,7 @@
 {
   "name": "lume",
   "private": true,
-  "version": "0.1.13",
+  "version": "0.1.20",
   "packageManager": "bun@1.3.13",
   "workspaces": [
     "apps/*",
@@ -16,7 +16,12 @@
     "build:desktop": "bun run --filter @lume/shared build && bun run --filter @lume/ui build && bun run --filter @lume/sidecar build && bun run --filter @lume/web build && bun run --filter @lume/desktop build",
     "package:desktop": "bun run --filter @lume/shared build && bun run --filter @lume/ui build && bun run --filter @lume/sidecar build && bun run --filter @lume/web build && bun run --filter @lume/desktop package",
     "release:desktop": "bun run package:desktop",
-    "typecheck": "bun run --filter @lume/shared typecheck && bun run --filter @lume/ui typecheck && bun run --filter @lume/sidecar typecheck && bun run --filter @lume/cli typecheck && bun run --filter @lume/web typecheck && bun run --filter @lume/desktop typecheck",
+    "typecheck": "bun run --filter @lume/shared typecheck && bun run --filter @lume/ui typecheck && bun run --filter @lume/agent-sdk typecheck && bun run --filter @lume/sidecar typecheck && bun run --filter @lume/cli typecheck && bun run --filter @lume/web typecheck && bun run --filter @lume/desktop typecheck",
+    "test": "bun run test:core",
+    "test:core": "bun run --filter @lume/shared test:unit && bun run --filter @lume/agent-sdk test:unit && bun run --filter @lume/sidecar test:unit && bun run --filter @lume/web test:unit && bun run --filter @lume/ui test:unit && bun run --filter @lume/cli test",
+    "test:windows": "bun test packages/sdk/src/tools/bash.test.ts apps/sidecar/src/services/agent-runtime/runtime-core/coding-change-service.test.ts apps/sidecar/src/services/automation/automation-schedule.test.ts",
+    "test:smoke": "bun run smoke:core",
+    "verify:pr": "bun run typecheck && bun run test:core && bun run test:smoke",
     "test:web": "bun run --filter @lume/web test",
     "smoke:web": "bun run --filter @lume/web test:smoke",
     "smoke:core": "bun scripts/smoke-core.mjs",

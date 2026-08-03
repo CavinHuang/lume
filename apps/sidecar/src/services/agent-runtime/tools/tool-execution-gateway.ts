@@ -104,7 +104,10 @@ export class ToolExecutionGateway {
     const inputSafety = await this.deps.guardrails.runToolInputGuardrails({
       toolName: input.toolName,
       input: input.input,
-      context: input.context
+      context: {
+        ...input.context,
+        permissionMode: input.permissionMode
+      }
     });
     if (inputSafety.behavior === "reject") {
       return {
@@ -118,12 +121,25 @@ export class ToolExecutionGateway {
       };
     }
 
-    if (inputSafety.behavior === "require_approval") {
+    const bypassesConfirmation = input.permissionMode === "bypassPermissions"
+      || permissionDecision.reasonCode === "session_bypass";
+    if (inputSafety.behavior === "require_approval" && !bypassesConfirmation) {
       return {
         status: "approval_required",
         reason: inputSafety.reason ?? permissionDecision.explanation,
         risk: toToolPermissionRisk(permissionDecision.riskLevel),
         reasonCode: "guardrail_approval",
+        ...(permissionDecision.classification ? { classification: permissionDecision.classification } : {}),
+        ...(permissionDecision.grantSuggestion ? { grantSuggestion: permissionDecision.grantSuggestion } : {}),
+        ...(permissionDecision.matchedRuleId ? { matchedRuleId: permissionDecision.matchedRuleId } : {})
+      };
+    }
+
+    if (inputSafety.behavior === "require_approval" && bypassesConfirmation) {
+      return {
+        status: "allow",
+        reasonCode: "bypass_guardrail_confirmation",
+        risk: toToolPermissionRisk(permissionDecision.riskLevel),
         ...(permissionDecision.classification ? { classification: permissionDecision.classification } : {}),
         ...(permissionDecision.grantSuggestion ? { grantSuggestion: permissionDecision.grantSuggestion } : {}),
         ...(permissionDecision.matchedRuleId ? { matchedRuleId: permissionDecision.matchedRuleId } : {})

@@ -6,6 +6,7 @@
 
 /** 调度类型 */
 export type AutomationScheduleType = 'cron' | 'once' | 'interval' | 'manual'
+export type AutomationMisfirePolicy = 'run_latest' | 'skip'
 
 /** 自动化任务触发入口 */
 export type AutomationTriggerMode = 'manual' | 'schedule' | 'webhook' | 'chat'
@@ -15,6 +16,11 @@ export type AutomationJobSource = 'manual' | 'system'
 
 /** 系统自动化动作标识 */
 export type AutomationSystemAction = 'routine' | 'memory_distill_workspace'
+export interface AutomationJobProvenance {
+  kind: 'routine_todo_review'
+  routineId: string
+  activityId: string
+}
 
 /** 任务调度配置 */
 export interface AutomationSchedule {
@@ -28,6 +34,8 @@ export interface AutomationSchedule {
   intervalMs?: number
   /** 可选时区（仅 cron 使用） */
   timezone?: string
+  /** 应用停机错过触发时的处理策略，默认仅补跑最新一次。 */
+  misfirePolicy?: AutomationMisfirePolicy
 }
 
 /** 自动化任务定义 */
@@ -50,6 +58,8 @@ export interface AutomationJob {
   source?: AutomationJobSource
   /** 系统自动创建任务的动作标识 */
   systemAction?: AutomationSystemAction
+  /** Sidecar-owned immutable provenance for privileged system jobs. */
+  provenance?: AutomationJobProvenance
   /** 简短说明 */
   description?: string
   /** 默认模型展示值 */
@@ -64,6 +74,8 @@ export interface AutomationJob {
   threadId?: string
   /** 最近一次实际触发时间戳 */
   lastRunAt?: number
+  /** interval 的稳定计划锚点。 */
+  scheduleAnchorAt?: number
   /** 下一次预计触发时间戳；手动或禁用任务为 null */
   nextRunAt?: number | null
   /** 创建时间戳 */
@@ -124,7 +136,16 @@ export interface AutomationDeleteJobInput {
 export type AutomationRunTrigger = 'schedule' | 'manual'
 
 /** 运行状态 */
-export type AutomationRunStatus = 'success' | 'failed' | 'skipped' | 'waiting_for_approval'
+export type AutomationRunStatus =
+  | 'queued'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'skipped'
+  | 'waiting_for_user'
+  | 'waiting_for_approval'
+  | 'interrupted'
+  | 'cancelled'
 
 /** 自动化任务运行记录 */
 export interface AutomationRun {
