@@ -17,7 +17,7 @@ const call = <T>(method: string, params: unknown) =>
 export type SuggestionsChangedSignal = { type: 'suggestions_changed' }
 
 /** 列出建议（可按 status 过滤） */
-export const listSuggestions = (status?: SuggestionFeedback) =>
+export const listSuggestions = (status?: SuggestionRecord['status']) =>
   call<SuggestionRecord[]>(
     SUGGESTION_IPC_CHANNELS.LIST,
     status ? { status } : {},
