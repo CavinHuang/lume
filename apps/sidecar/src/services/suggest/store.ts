@@ -121,8 +121,8 @@ function readIndex(): SuggestionsIndex {
 }
 
 function writeIndex(index: SuggestionsIndex): void {
-  cache = index;
   writeJsonAtomic(getSuggestionIndexPath(), JSON.stringify(index, null, 2));
+  cache = index;
 }
 
 export function persistSuggestion(
