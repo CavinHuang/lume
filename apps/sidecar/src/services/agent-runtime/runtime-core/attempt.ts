@@ -767,12 +767,15 @@ export function createCanUseToolHandler(
 }
 
 function buildPendingGuidanceToolMessage(guidance: ConsumedRunGuidance): string {
-  return [
+  const sections = [
     "用户在工具执行前追加了引导：",
     guidance.text,
-    "",
-    "原工具调用尚未执行。请根据这条引导重新决定下一步；如果仍需要工具，请重新发起工具调用。"
-  ].join("\n");
+  ];
+  if (guidance.attachmentsBrief && guidance.attachmentsBrief.trim().length > 0) {
+    sections.push("", "附带上下文：", guidance.attachmentsBrief);
+  }
+  sections.push("", "原工具调用尚未执行。请根据这条引导重新决定下一步；如果仍需要工具，请重新发起工具调用。");
+  return sections.join("\n");
 }
 
 function isAutomationExecution(messageMetadata?: Record<string, unknown>): boolean {

@@ -80,4 +80,17 @@ describe("RunGuidanceStore", () => {
     expect(store.listPending("thread-a")).toEqual([]);
     expect(store.drainUnconsumedDispatches<TestDispatch>("thread-a")).toEqual([]);
   });
+
+  test("addQueuedDispatch 应保留附件摘要并在 consume 时输出", () => {
+    const store = new RunGuidanceStore({ now: () => 3000 });
+    const dispatch = createDispatch("queued-rich", "改用方案 B");
+    (dispatch as TestDispatch & { attachmentsBrief?: string }).attachmentsBrief = "<browser_attachments>方案 B 截图</browser_attachments>";
+
+    const guidance = store.addQueuedDispatch(dispatch as never);
+    expect(guidance.attachmentsBrief).toContain("方案 B 截图");
+
+    const consumed = store.consumePendingGuidance("thread-a");
+    expect(consumed!.attachmentsBrief).toContain("方案 B 截图");
+    expect(consumed!.text).toBe("1. 改用方案 B");
+  });
 });
