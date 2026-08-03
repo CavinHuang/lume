@@ -155,6 +155,48 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('在 Lume 授权弹窗里确认 Chrome 请求。')
   })
 
+  test('renders a direct Native Host install action for precompiled runtimes', () => {
+    const html = renderToStaticMarkup(
+      <PluginDetailPage
+        detail={detail(plugin({
+          marketplace: {
+            setup: [{
+              id: 'install-host',
+              title: '安装 Native Host',
+              description: '无需本地构建。',
+              kind: 'install',
+              artifacts: [{
+                path: './runtime/win32-x64/lume-chrome-host.exe',
+                kind: 'native-binary',
+                platform: 'win32',
+                arch: 'x64',
+              }],
+              installer: {
+                kind: 'chrome-native-host',
+                hostName: 'com.lume.browser',
+                extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+                appServerUrl: 'ws://127.0.0.1:43127/browser',
+              },
+            }],
+          },
+        }))}
+        loading={false}
+        error={null}
+        busy={false}
+        onBack={() => {}}
+        onInstall={() => {}}
+        onUninstall={() => {}}
+        onToggleEnable={() => {}}
+        onTryInChat={() => {}}
+        onPreparePackage={() => {}}
+        onInstallPackage={() => {}}
+      />,
+    )
+
+    expect(html).toContain('安装 Native Host')
+    expect(html).not.toContain('保存配套包')
+  })
+
   test('marks loading and error-only states for assistive tech', () => {
     const loadingHtml = renderToStaticMarkup(
       <PluginDetailPage

@@ -47,6 +47,7 @@ import {
 test("renderer IPC commands are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("sidecar_call"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop:save-plugin-package"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop:install-plugin-package"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_apply_draft"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_resolve_pending"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("desktop_wiki_undo_batch"), true);
@@ -128,6 +129,8 @@ test("plugin package writes are main-owned and unavailable through generic RPC",
   assert.equal(validateRendererSidecarMethod("agent:get-market-catalog"), "agent:get-market-catalog");
   assert.throws(() => validateRendererSidecarMethod("future:unreviewed-method"), /unsupported renderer sidecar method/);
   assert.match(mainSource, /desktop:save-plugin-package/);
+  assert.match(mainSource, /desktop:install-plugin-package/);
+  assert.match(mainSource, /createChromeNativeHostInstallPlan/);
   assert.match(mainSource, /showSaveDialog/);
   assert.match(mainSource, /plugin-package:privileged-finalize/);
 });

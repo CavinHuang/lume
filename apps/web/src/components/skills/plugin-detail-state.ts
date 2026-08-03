@@ -3,6 +3,7 @@ import type {
   PluginMarketplaceSetupKind,
   PluginReadmePreview,
   PluginSetupArtifact,
+  PluginSetupInstaller,
   PluginSetupDownload,
   PluginSetupBuild,
   PluginSetupTargetApp,
@@ -20,8 +21,10 @@ export interface PluginSetupItem {
   description: string
   status: 'done' | 'attention' | 'idle'
   artifact?: PluginSetupArtifact
+  artifacts?: PluginSetupArtifact[]
   download?: PluginSetupDownload
   build?: PluginSetupBuild
+  installer?: PluginSetupInstaller
   targetApp?: PluginSetupTargetApp
   verify?: PluginSetupVerify
 }
@@ -171,8 +174,10 @@ function buildExplicitSetupItems(
     description: step.description,
     status: setupStepStatus(step.kind, currentVersionInstalled, enabled),
     ...(step.artifact ? { artifact: step.artifact } : {}),
+    ...(step.artifacts?.length ? { artifacts: step.artifacts } : {}),
     ...(step.download ? { download: step.download } : {}),
     ...(step.build ? { build: step.build } : {}),
+    ...(step.installer ? { installer: step.installer } : {}),
     ...(step.targetApp ? { targetApp: step.targetApp } : {}),
     ...(step.verify ? { verify: step.verify } : {}),
   }))

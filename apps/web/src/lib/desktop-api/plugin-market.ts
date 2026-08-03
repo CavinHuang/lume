@@ -20,6 +20,7 @@ import {
   type CheckBridgeStatusResult,
   type PreparePluginPackageInput,
   type SavePluginPackageResult,
+  type InstallPluginPackageResult,
 } from '@lume/shared'
 import { sidecarCall } from './system'
 import { invoke } from '@/lib/desktop-runtime/core'
@@ -53,3 +54,6 @@ export const checkBridgeStatus = (input: CheckBridgeStatusInput) =>
 
 export const savePluginPackage = (input: PreparePluginPackageInput) =>
   invoke<SavePluginPackageResult>('desktop:save-plugin-package', input)
+
+export const installPluginPackage = (input: PreparePluginPackageInput) =>
+  invoke<InstallPluginPackageResult>('desktop:install-plugin-package', input)

@@ -27,10 +27,17 @@ const installMarketItemMock = mock(
     diagnostics: [],
   }),
 )
+const installPluginPackageMock = mock(async () => ({
+  status: 'installed' as const,
+  hostName: 'com.lume.browser',
+  hostPath: '/tmp/lume-chrome-host',
+  manifestPath: '/tmp/com.lume.browser.json',
+}))
 
 mock.module('@/lib/desktop-api', () => ({
   checkBridgeStatus: async () => ({ ok: true, detail: 'ok' }),
   savePluginPackage: async () => ({ status: 'saved', savedPath: '/tmp/x' }),
+  installPluginPackage: installPluginPackageMock,
   writeClipboardText: async () => undefined,
   getMarketDetail: async (): Promise<GetMarketDetailResult> => mockMarketDetailResult(),
   installMarketItem: installMarketItemMock,
@@ -328,11 +335,23 @@ function bridgePlugin(): PluginMarketItem {
     capabilities: { skillCount: 0, hookEvents: [], mcpServerNames: [], commandToolNames: [] },
     permissions: { filesystemRead: [], filesystemWrite: [], networkOutbound: [], mcpRegister: false, shellAllow: false, toolAllow: [], toolAsk: [], toolDeny: [], hookEvents: [], riskLabels: [] },
     marketplace: {
-      setup: [{
-        id: 'install-ext', title: '安装扩展', description: '加载已解包', kind: 'install',
-        artifact: { path: './ext.zip', kind: 'chrome-extension' },
-        targetApp: { kind: 'chrome', installHint: 'chrome://extensions' },
-      }],
+      setup: [
+        {
+          id: 'install-ext', title: '安装扩展', description: '加载已解包', kind: 'install',
+          artifact: { path: './ext.zip', kind: 'chrome-extension' },
+          targetApp: { kind: 'chrome', installHint: 'chrome://extensions' },
+        },
+        {
+          id: 'install-host', title: '安装 Host', description: '自动安装', kind: 'install',
+          artifact: { path: './host.exe', kind: 'native-binary' },
+          installer: {
+            kind: 'chrome-native-host',
+            hostName: 'com.lume.browser',
+            extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+            appServerUrl: 'ws://127.0.0.1:43127/browser',
+          },
+        },
+      ],
     },
   }
 }
@@ -484,6 +503,7 @@ describe('BridgeInstallWizard', () => {
   test('第 0 步点击「确认权限并安装」调用 installMarketItem 并推进到下一步', async () => {
     resetBody()
     installMarketItemMock.mockClear()
+    installPluginPackageMock.mockClear()
     const container = fakeDocument.createElement('div')
     const store = createStore()
     store.set(bridgeWizardOpenAtom, true)
@@ -512,6 +532,11 @@ describe('BridgeInstallWizard', () => {
 
       // installMarketItem 被调用一次，且向导推进到第 1 步（桥接扩展安装）
       expect(installMarketItemMock.mock.calls.length).toBe(1)
+      expect(installPluginPackageMock).toHaveBeenCalledWith({
+        workspaceSlug: 'default',
+        catalogItemKey: 'catalog-demo',
+        setupStepId: 'install-host',
+      })
       expect(bodyText()).toContain('安装扩展')
     } finally {
       await act(async () => {

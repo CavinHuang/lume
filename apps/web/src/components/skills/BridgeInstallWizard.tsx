@@ -8,11 +8,13 @@ import {
   checkBridgeStatus,
   getMarketDetail,
   installMarketItem,
+  installPluginPackage,
   savePluginPackage,
   writeClipboardText,
 } from '@/lib/desktop-api'
 import type { PluginSetupArtifact, PluginSetupVerify } from '@lume/shared'
 import { formatRiskLabel } from './plugin-detail-state'
+import { installPluginSetupPackages } from './plugin-setup-installer'
 
 interface BridgeInstallWizardProps {
   workspaceSlug: string | null
@@ -52,31 +54,38 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
       toast.error('未选择工作区，无法安装')
       return
     }
-    if (plugin.installState === 'installed') {
-      setIndex(1)
-      return
-    }
     setInstalling(true)
     try {
-      const detail = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: plugin.id })
-      const inspect = detail.inspect?.kind === 'plugin' ? detail.inspect : null
-      if (!inspect) {
-        toast.error('无法获取插件权限信息')
-        return
+      if (plugin.installState !== 'installed') {
+        const detail = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: plugin.id })
+        const inspect = detail.inspect?.kind === 'plugin' ? detail.inspect : null
+        if (!inspect) {
+          toast.error('无法获取插件权限信息')
+          return
+        }
+        await installMarketItem({
+          workspaceSlug,
+          kind: 'plugin',
+          itemId: plugin.id,
+          acceptedPermissionsHash: inspect.permissionsHash,
+          enableScope: 'workspace',
+          overwrite: false,
+        })
       }
-      await installMarketItem({
+
+      const installedPackages = await installPluginSetupPackages({
         workspaceSlug,
-        kind: 'plugin',
-        itemId: plugin.id,
-        acceptedPermissionsHash: inspect.permissionsHash,
-        enableScope: 'workspace',
-        overwrite: false,
+        catalogItemKey: plugin.catalogItemKey,
+        setup: plugin.marketplace?.setup,
       })
+      for (const step of plugin.marketplace?.setup ?? []) {
+        if (step.installer) markDone(step.id)
+      }
       const refreshed = await getMarketDetail({ workspaceSlug, kind: 'plugin', itemId: plugin.id })
       if (refreshed.item.kind === 'plugin') {
         setBridgeWizardPlugin({ ...refreshed.item.plugin, catalogItemKey: plugin.catalogItemKey })
       }
-      toast.success('安装成功')
+      toast.success(installedPackages.length > 0 ? '插件与 Native Host 已安装' : '安装成功')
       setIndex(1)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -93,6 +102,20 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
     try {
       const result = await savePluginPackage({ workspaceSlug, catalogItemKey: plugin.catalogItemKey, setupStepId })
       if (result.status === 'saved') toast.success(`已保存到 ${result.savedPath}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const handleInstallPackage = async (setupStepId: string) => {
+    if (!workspaceSlug || !plugin.catalogItemKey) {
+      toast.error('插件目录快照已失效，请刷新市场后重试')
+      return
+    }
+    try {
+      const result = await installPluginPackage({ workspaceSlug, catalogItemKey: plugin.catalogItemKey, setupStepId })
+      toast.success(`Native Host 已安装：${result.hostName}`)
+      markDone(setupStepId)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
@@ -185,11 +208,15 @@ export function BridgeInstallWizard({ workspaceSlug }: BridgeInstallWizardProps)
               </div>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
-              {(current.artifact || current.download) && (
+              {current.installer ? (
+                <Button onClick={() => handleInstallPackage(current.id)}>
+                  安装 Native Host
+                </Button>
+              ) : (current.artifact || current.artifacts?.length || current.download) ? (
                 <Button onClick={() => handleSavePackage(current.id)}>
                   保存 {current.artifact ? artifactLabel(current.artifact.kind) : current.download?.filename ?? '配套包'}
                 </Button>
-              )}
+              ) : null}
               {current.verify && current.verify.method !== 'none' && (
                 <Button variant="ghost" disabled={steps[current.id]?.checking} onClick={() => handleVerify(current.id, current.verify!)}>
                   {steps[current.id]?.checking ? '检测中…' : '检测'}

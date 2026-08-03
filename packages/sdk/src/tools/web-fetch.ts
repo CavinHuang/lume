@@ -374,7 +374,7 @@ export async function runWebFetch(
     let renderNote = "";
     if (shouldRender(rawContent, renderMode)) {
       const rendered = await renderClient.renderUrl(finalUrl, { timeoutMs: Math.min(45000, timeoutMs) });
-      if (rendered.ok) {
+      if (rendered.ok === true) {
         if (!ensureNetworkAllowed(rendered.finalUrl, context.sandbox)) {
           finalHtml = rendered.html.slice(0, MAX_RAW_HTML_CHARS);
           finalUrl = rendered.finalUrl || finalUrl;
