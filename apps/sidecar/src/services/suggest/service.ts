@@ -164,6 +164,7 @@ export async function handleSuggestionFeedback(
 ): Promise<void> {
   try {
     recordFeedback(id, feedback);
+    notifySuggestionsChanged();
     if (feedback !== "accepted") return;
 
     const record = listSuggestions().find((r) => r.id === id);
