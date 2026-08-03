@@ -81,6 +81,7 @@ import {
   syncPermissionModeWithPlanModePhase,
 } from './agent-input-state'
 import { AgentMessageQueueList } from './AgentMessageQueueList'
+import { SuggestionBanner } from './SuggestionBanner'
 import {
   createEmptyAgentMessageQueueSnapshot,
   reorderQueuedMessages,
@@ -1811,6 +1812,7 @@ export function AgentInput({
 
   return (
     <div className="px-3 pb-4 pt-2">
+      <SuggestionBanner threadId={threadId} workspaceSlug={configWorkspaceSlug} />
       <div className="mx-auto w-full max-w-[980px] px-4">
         <div>
           <LumeComposer
