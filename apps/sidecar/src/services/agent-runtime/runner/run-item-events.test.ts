@@ -481,6 +481,9 @@ describe("projectRunStateToRuntimeEvents", () => {
               summary: "kept the important decisions",
               policy: "kernel-v1",
               source: "agent-runtime-kernel",
+              outcome: "succeeded",
+              retained_tokens: 20_000,
+              retained_message_count: 4,
               source_message_ids: ["msg-1"],
               context_window: 1000,
               budget: {
@@ -618,7 +621,10 @@ describe("projectRunStateToRuntimeEvents", () => {
         totalTokens: 1000,
         sections: expect.objectContaining({ session: 650 })
       }),
-      summary: "kept the important decisions"
+      summary: "kept the important decisions",
+      outcome: "succeeded",
+      retainedTokens: 20_000,
+      retainedMessageCount: 4
     }));
     expect(events).toContainEqual(expect.objectContaining({
       id: "run-1:result:usage.updated",

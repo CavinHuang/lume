@@ -446,6 +446,38 @@ describe('runtime-event-message-projection', () => {
     ])
   })
 
+  test('shows compaction failure without exposing a rejected summary', () => {
+    expect(projectRuntimeEventMessages([
+      event({
+        type: 'context.compaction.started',
+        id: 'compact-failed',
+        trigger: 'auto',
+        preTokens: 240_000,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+      }),
+      event({
+        type: 'context.compaction.completed',
+        id: 'compact-failed-boundary',
+        trigger: 'auto',
+        preTokens: 240_000,
+        postTokens: 240_000,
+        policy: 'kernel-v1',
+        source: 'agent-runtime-kernel',
+        outcome: 'failed',
+        failureReason: 'max_tokens',
+        summary: 'rejected summary',
+      }),
+    ])).toEqual([{
+      id: 'compact-failed',
+      type: 'system',
+      variant: 'context_compaction',
+      status: 'completed',
+      text: '上下文压缩失败，已保留原上下文',
+      createdAt: '2026-05-11T00:00:00.000Z',
+    }])
+  })
+
   test('projects user message attachments', () => {
     expect(projectRuntimeEventMessages([
       event({

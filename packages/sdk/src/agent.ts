@@ -973,6 +973,7 @@ export class Agent {
       maxTurns: opts.maxTurns ?? 10,
       maxBudgetUsd: opts.maxBudgetUsd,
       maxTokens: opts.maxTokens ?? 16384,
+      contextWindow: opts.contextWindow,
       thinking: opts.thinking,
       jsonSchema: opts.jsonSchema,
       outputFormat: opts.outputFormat,

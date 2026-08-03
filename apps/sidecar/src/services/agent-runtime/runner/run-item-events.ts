@@ -517,7 +517,19 @@ function projectSystemEventRuntimeEvents(run: LumeRunState, item: LumeRunItem): 
       ...optionalBudget(metadata),
       policy: stringValue(metadata.policy, "sdk-default"),
       source: stringValue(metadata.source, "agent-sdk"),
-      ...(typeof metadata.summary === "string" ? { summary: metadata.summary } : {})
+      ...(typeof metadata.summary === "string" ? { summary: metadata.summary } : {}),
+      ...(metadata.outcome === "succeeded" || metadata.outcome === "failed"
+        ? { outcome: metadata.outcome }
+        : {}),
+      ...(typeof metadata.failure_reason === "string"
+        ? { failureReason: metadata.failure_reason }
+        : {}),
+      ...(typeof metadata.retained_tokens === "number"
+        ? { retainedTokens: metadata.retained_tokens }
+        : {}),
+      ...(typeof metadata.retained_message_count === "number"
+        ? { retainedMessageCount: metadata.retained_message_count }
+        : {})
     }];
   }
   if (item.name === "result") {

@@ -126,6 +126,31 @@ describe("Kernel context controller", () => {
     }))).resolves.toBe(false);
   });
 
+  test("uses the resolved 256K window instead of the SDK 200K fallback", async () => {
+    const controller = createKernelContextController({
+      threadId: "thread-256k",
+      model: "step-3.7-flash",
+      contextWindow: 256_000,
+      maxOutputTokens: 32_768,
+      systemPrompt: "system",
+      sessionMessages: [{ role: "user", content: "existing context" }]
+    });
+    const base = {
+      messages: [{ role: "user", content: "existing context" }] as any[],
+      model: "step-3.7-flash",
+      state: { compacted: false, turnCounter: 0, consecutiveFailures: 0 }
+    };
+
+    await expect(Promise.resolve(controller.shouldAutoCompact?.({
+      ...base,
+      estimatedTokens: 175_000
+    }))).resolves.toBe(false);
+    await expect(Promise.resolve(controller.shouldAutoCompact?.({
+      ...base,
+      estimatedTokens: 240_000
+    }))).resolves.toBe(true);
+  });
+
   test("emits source message ids and preserved segment metadata for compaction evidence", async () => {
     const controller = createKernelContextController({
       threadId: "thread-1",
