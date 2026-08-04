@@ -436,14 +436,11 @@ describe('PersonaCard', () => {
     }
   })
 
-  test('updatePersona contract: invoked with workspaceSlug + new markdown', async () => {
-    // 验证保存路径的调用契约（绕开 fake DOM 受控输入限制）
-    await updatePersonaMock({ workspaceSlug: 'workspace', markdown: '# Updated\n\n新的画像。' })
-    expect(updatePersonaMock).toHaveBeenCalledWith({
-      workspaceSlug: 'workspace',
-      markdown: '# Updated\n\n新的画像。',
-    })
-  })
+  // NOTE: 保存路径（textarea onChange → handleSave → updatePersona）未做单测。
+  // fake DOM 下 React 受控 textarea 的 onChange 依赖原生 value tracker，
+  // 无法可靠触发；改由上方「编辑模式渲染 + 保存按钮 disabled 态」测试间接覆盖，
+  // 真实输入交互留给 e2e。曾有一个直接调用 updatePersonaMock 再断言被调用的测试，
+  // 但那是自引用（永远通过），不能验证组件逻辑，已移除。
 
   test('regenerate button calls regeneratePersona and emits loading + success toast', async () => {
     const { container, cleanup } = installFakeDom()

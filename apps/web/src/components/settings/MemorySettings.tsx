@@ -36,7 +36,7 @@ import type {
   MemorySettingsFileSummary,
   MemorySettingsPendingSummary,
   MemorySettingsSnapshot,
-  type PersonaGetResult,
+  PersonaGetResult,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -179,7 +179,11 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
   const [expanded, setExpanded] = React.useState(false)
 
   const refreshPersona = React.useCallback(async () => {
-    if (!workspaceSlug) return
+    if (!workspaceSlug) {
+      setPersona(null)
+      setLoading(false)
+      return
+    }
     try {
       const result = await getPersona(workspaceSlug)
       setPersona(result)
