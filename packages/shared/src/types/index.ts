@@ -32,3 +32,4 @@ export * from "./logging";
 export * from "./wiki";
 export * from "./browser-runtime";
 export * from "./suggestion";
+export * from "./persona";
