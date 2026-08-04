@@ -1514,7 +1514,10 @@ export function AgentInput({
     setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, optimisticSnapshot))
     reorderAgentMessageQueue({
       threadId,
-      orderedMessageIds: orderedIds,
+      // 传完整顺序(含 internal),否则 kernel reorderQueued 会把未列出的 id 追加到末尾,
+      // 覆盖乐观更新中 internal 原位保留的语义。optimisticSnapshot 已是 applyOrderByIds
+      // 处理后的完整顺序(visible 重排 + internal 原位)。
+      orderedMessageIds: optimisticSnapshot.queuedMessages.map((m) => m.id),
       expectedRevision: previousSnapshot.revision,
       queueOperationId: crypto.randomUUID(),
     })
