@@ -1,13 +1,35 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { LLMProvider } from "@lume/agent-sdk";
+import type { PersonaProfile } from "@lume/shared";
 import {
   ALLOWED_KINDS,
   MAX_CANDIDATES,
+  buildAnalysisInput,
   parseAnalystResponse,
   runAnalysis,
   validateAnalystCandidate,
   validateAnalystCandidates,
 } from "./analyst";
+
+// ===== buildAnalysisInput: persona 注入 mock（周期 3 Task 1） =====
+// 通过 mock.module 替换 ../memory-v2/persona 的读取/解析，控制 readPersonaRaw/parsePersonaProfile 行为。
+let personaRaw: string | null;
+let personaProfile: PersonaProfile;
+let personaReadThrows: boolean;
+
+mock.module("../memory-v2/persona", () => ({
+  readPersonaRaw: () => {
+    if (personaReadThrows) throw new Error("persona read fail");
+    return personaRaw;
+  },
+  parsePersonaProfile: () => personaProfile,
+}));
+
+beforeEach(() => {
+  personaRaw = null;
+  personaProfile = { preferences: [], interactionRules: [], evolution: [] };
+  personaReadThrows = false;
+});
 
 // ===== Brief 契约：常量 =====
 
@@ -582,5 +604,58 @@ describe("runAnalysis", () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.kind).toBe("skill");
     expect(out[0]!.rawConfidence).toBe(0.65);
+  });
+});
+
+// ===== buildAnalysisInput：persona 注入（周期 3 Task 1） =====
+
+describe("buildAnalysisInput: persona 注入", () => {
+  test("persona 存在 → 注入 summary + preferences", () => {
+    personaRaw = "# 用户画像\n## 一句话定位\n独立开发者";
+    personaProfile = {
+      summary: "独立开发者，偏好 TypeScript",
+      preferences: ["用 TypeScript", "简洁代码", "夜间工作"],
+      interactionRules: [],
+      evolution: [],
+    };
+    const input = buildAnalysisInput({ workspaceSlug: undefined });
+    expect(input).toContain("用户画像（persona）");
+    expect(input).toContain("独立开发者，偏好 TypeScript");
+    expect(input).toContain("用 TypeScript");
+    expect(input).toContain("简洁代码");
+  });
+
+  test("persona preferences 超过 8 条 → 仅注入前 8 条", () => {
+    personaRaw = "# 用户画像";
+    personaProfile = {
+      summary: "s",
+      preferences: Array.from({ length: 12 }, (_, i) => `偏好项${i}`),
+      interactionRules: [],
+      evolution: [],
+    };
+    const input = buildAnalysisInput({ workspaceSlug: undefined });
+    expect(input).toContain("偏好项0");
+    expect(input).toContain("偏好项7");
+    expect(input).not.toContain("偏好项8");
+    expect(input).not.toContain("偏好项11");
+  });
+
+  test("persona 不存在 → 跳过（无「用户画像（persona）」段，周期 1 行为）", () => {
+    personaRaw = null;
+    const input = buildAnalysisInput({ workspaceSlug: undefined });
+    expect(input).not.toContain("用户画像（persona）");
+  });
+
+  test("persona 读取抛错 → fail-open（无 persona 段，不中断）", () => {
+    personaReadThrows = true;
+    const input = buildAnalysisInput({ workspaceSlug: undefined });
+    expect(input).not.toContain("用户画像（persona）");
+  });
+
+  test("persona 存在但 summary 与 preferences 均空 → 跳过该段", () => {
+    personaRaw = "# 用户画像";
+    personaProfile = { preferences: [], interactionRules: [], evolution: [] };
+    const input = buildAnalysisInput({ workspaceSlug: undefined });
+    expect(input).not.toContain("用户画像（persona）");
   });
 });
