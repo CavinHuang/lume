@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   deletePersona,
   getPersonaPath,
+  parsePersonaProfile,
   readPersonaRaw,
   resetPersonaStoreForTest,
   writePersona
@@ -52,5 +53,44 @@ describe("persona store", () => {
     writePersona("global", undefined, "old");
     writePersona("global", undefined, "new");
     expect(readPersonaRaw("global")).toBe("new");
+  });
+});
+
+describe("parsePersonaProfile", () => {
+  test("解析 5 段", () => {
+    const md = `# 用户画像
+## 用户（称呼）
+Alice
+## 一句话定位
+独立开发者
+## 长期偏好
+- 用 TypeScript
+- 简洁代码
+## 交互协议
+- 不要用 var
+## 演进轨迹
+- 2026-08 偏好 TS`;
+    const p = parsePersonaProfile(md);
+    expect(p.name).toBe("Alice");
+    expect(p.summary).toBe("独立开发者");
+    expect(p.preferences).toEqual(["用 TypeScript", "简洁代码"]);
+    expect(p.interactionRules).toEqual(["不要用 var"]);
+    expect(p.evolution.length).toBeGreaterThan(0);
+  });
+
+  test("缺段返回空数组", () => {
+    const p = parsePersonaProfile("# 用户画像\n## 一句话定位\nx");
+    expect(p.preferences).toEqual([]);
+    expect(p.interactionRules).toEqual([]);
+    expect(p.evolution).toEqual([]);
+    expect(p.summary).toBe("x");
+    expect(p.name).toBeUndefined();
+  });
+
+  test("空字符串所有字段空", () => {
+    const p = parsePersonaProfile("");
+    expect(p.preferences).toEqual([]);
+    expect(p.interactionRules).toEqual([]);
+    expect(p.evolution).toEqual([]);
   });
 });
