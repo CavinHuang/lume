@@ -72,6 +72,7 @@ import {
   validateWereadUrl,
   writeLauncherConfigAt,
 } from './desktop-core'
+import { createIslandWindow } from './agent-island-window'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -223,6 +224,8 @@ let windowBehavior = {
 
 // 快速输入子窗口（Alt+L）；Task 5 之前始终为 null，此处仅占位以便 IPC 信任集合与事件广播先行就绪。
 let quickInputWindow = null
+// Agent 灵动岛悬浮窗：由 ensureIslandWindow() 按需创建，destroyIslandWindow() 销毁。
+let islandWindow: BrowserWindow | null = null
 let actionHudWindow = null
 let actionHudHideTimer: ReturnType<typeof setTimeout> | null = null
 let actionHudGeneration = 0
@@ -1274,6 +1277,36 @@ async function createQuickInputWindow() {
     win.focus()
   })
   return win
+}
+
+/** 获取当前岛屿窗口（可能为 null/已销毁）。 */
+export function getIslandWindow() {
+  return islandWindow
+}
+
+/** 按需创建岛屿悬浮窗：已存在且未销毁则直接复用。窗口注册在 loadURL 之前，保证首个 IPC 可被信任。 */
+export function ensureIslandWindow() {
+  if (islandWindow && !islandWindow.isDestroyed()) return islandWindow
+  const win = createIslandWindow({
+    appIsPackaged: app.isPackaged,
+    appProtocolOrigin: APP_PROTOCOL_ORIGIN,
+    devServerUrl: getDevServerUrl(),
+    desktopRoot: DESKTOP_ROOT,
+  })
+  islandWindow = win
+  win.on('closed', () => {
+    if (islandWindow === win) islandWindow = null
+  })
+  win.once('ready-to-show', () => {
+    if (islandWindow === win && !win.isDestroyed()) win.showInactive()
+  })
+  return win
+}
+
+/** 销毁岛屿窗口并清空模块级引用。 */
+export function destroyIslandWindow() {
+  if (islandWindow && !islandWindow.isDestroyed()) islandWindow.destroy()
+  islandWindow = null
 }
 
 async function toggleQuickInput() {
