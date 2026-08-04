@@ -1,5 +1,6 @@
-import { ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import type { AgentBrowserDesignDeclaration } from '../../../packages/shared/src/types/agent'
+import { createWebMcpShim } from './webmcp-shim'
 
 type AnnotationMessage = {
   type: 'sync' | 'prepare-screenshot' | 'restore' | 'close'
@@ -31,9 +32,50 @@ type Rect = { x: number; y: number; width: number; height: number }
 const bootstrapUrl = window.location.href
 if (bootstrapUrl.startsWith('about:blank#lume-browser-mount=')) ipcRenderer.send('lume:browser-guest-mounted', bootstrapUrl)
 
+// DOM 加载前注入 Web MCP（additive：不影响下方 GuestAnnotationRuntime 注释 overlay）。
+qe()
+
 const start = () => new GuestAnnotationRuntime().start()
 if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', start, { once: true })
 else start()
+
+// Web MCP 注入（移植自 Codex comment-preload.js qe()）。
+//
+// 设计要点（对齐 Codex qe()，键名 __lumeWebMcpModelContext 替代 __codexWebMcpModelContext）：
+// - 开关：主进程 sync IPC `lume:get-browser-webmcp-enabled`（Task 83 main.ts 处理；
+//   未配置/返回非 true 时默认关闭）。
+// - shim：createWebMcpShim({locationLike: location, onToolsChanged → ipcRenderer.send
+//   'lume:browser-page-event' {type:'webmcp_changed', version:1})}）。
+// - 暴露：contextBridge.exposeInMainWorld('__lumeWebMcpModelContext', shim) +
+//   Object.defineProperty(document/navigator, 'modelContext', {configurable:false,
+//   enumerable:false, writable:false})。
+// - 容错：每步 try/catch，已存在或失败均忽略（不破坏第三方页面加载）。
+export function qe(): void {
+  let enabled = false
+  try {
+    enabled = ipcRenderer.sendSync('lume:get-browser-webmcp-enabled') === true
+  } catch {
+    enabled = false
+  }
+  if (!enabled) return
+
+  const shim = createWebMcpShim({
+    locationLike: { origin: window.location.origin, href: window.location.href },
+    onToolsChanged: () => {
+      ipcRenderer.send('lume:browser-page-event', { type: 'webmcp_changed', version: 1 })
+    },
+  })
+
+  try {
+    contextBridge.exposeInMainWorld('__lumeWebMcpModelContext', shim)
+  } catch {
+    // 已存在或不可用则忽略（不破坏页面加载）
+  }
+
+  const descriptor: PropertyDescriptor = { value: shim, configurable: false, enumerable: false, writable: false }
+  try { Object.defineProperty(document, 'modelContext', descriptor) } catch { /* 已存在则保留既有定义 */ }
+  try { Object.defineProperty(navigator, 'modelContext', descriptor) } catch { /* 已存在则保留既有定义 */ }
+}
 
 class GuestAnnotationRuntime {
   private state: GuestState | null = null

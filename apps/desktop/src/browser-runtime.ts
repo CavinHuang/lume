@@ -169,6 +169,7 @@ const GUEST_OPTIONAL_METHODS = new Set([
   "screenshot:attachment:delete", "clipboard:read", "clipboard:readText", "clipboard:write", "clipboard:writeText",
   "annotation:session", "annotation:mode", "annotation:clear", "annotation:delete",
   "annotation:preview", "annotation:screenshot:prepare", "annotation:submit", "annotation:screenshot:read",
+  "annotation:resolve", "annotation:mark-read",
 ])
 const REGISTERED_BROWSER_RUNTIME_METHODS = new Set(BROWSER_API_REGISTRY.map((entry) => entry.runtimeMethod))
 
@@ -320,6 +321,12 @@ export class BrowserRuntime {
   }
 
   isAnnotationPopupSender(senderId: number): boolean { return this.annotations.isPopupSender(senderId) }
+
+  // main.ts lume:browser-page-event handler 的转发目标。
+  // 通过 tabForContents 反查 sender 对应的 tab，再委托给模块级 handleBrowserPageEvent。
+  handlePageEvent(sender: Electron.WebContents, payload: unknown): void {
+    handleBrowserPageEvent(this.tabForContents(sender), payload, this.options.emit)
+  }
 
   authorizeGuestMount(ownerWebContentsId: number, bootstrapUrl: string, requestedPartition: string): { token: string; partition: string } | null {
     const token = guestMountTokenFromUrl(bootstrapUrl)
@@ -872,6 +879,21 @@ export class BrowserRuntime {
       if (context.actor !== "user") throw browserError("action_denied")
       const threadId = annotationThreadId(tab, params)
       return this.annotations.requestBatchSubmit(tab, threadId)
+    }
+    if (method === "annotation:resolve") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      const threadId = annotationThreadId(tab, params)
+      const annotationId = String(params.annotationId ?? '').trim().slice(0, 256)
+      if (!threadId || !annotationId) throw browserError("invalid_browser_request")
+      const resolvedBy = params.resolvedBy === 'agent' ? 'agent' : 'user'
+      return this.annotations.resolve(tab, threadId, annotationId, resolvedBy)
+    }
+    if (method === "annotation:mark-read") {
+      if (context.actor !== "user") throw browserError("action_denied")
+      const threadId = annotationThreadId(tab, params)
+      const annotationId = String(params.annotationId ?? '').trim().slice(0, 256)
+      if (!threadId || !annotationId) throw browserError("invalid_browser_request")
+      return this.annotations.markRead(tab, threadId, annotationId)
     }
     if (method === "annotation:screenshot:read") {
       if (context.actor !== "user") throw browserError("action_denied")
@@ -3579,10 +3601,10 @@ function normalizeBrowserMethod(method: string): string {
   return ({ goto: "navigate", dblclick: "doubleClick", selectOption: "select", setChecked: "check" } as Record<string, string>)[method] ?? method
 }
 
-async function listWebMcpTools(tab: BrowserTab): Promise<{ tools: Array<Record<string, unknown>> }> {
+export async function listWebMcpTools(tab: BrowserTab): Promise<{ tools: Array<Record<string, unknown>> }> {
   const generation = tab.generation
   const value = await browserContents(tab).executeJavaScript(`(async () => {
-    const modelContext = document.modelContext ?? navigator.modelContext;
+    const modelContext = window.__lumeWebMcpModelContext ?? document.modelContext ?? navigator.modelContext;
     if (!modelContext || typeof modelContext.getTools !== "function") return [];
     return (await Promise.resolve(modelContext.getTools())).map((tool) => ({
       name: tool.name,
@@ -3603,7 +3625,7 @@ async function listWebMcpTools(tab: BrowserTab): Promise<{ tools: Array<Record<s
   return { tools: value.slice(0, 100).map(sanitizeWebMcpTool) }
 }
 
-async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, unknown>): Promise<{ result: unknown }> {
+export async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, unknown>): Promise<{ result: unknown }> {
   const toolName = String(params.toolName ?? params.tool_name ?? "").trim()
   if (!toolName || toolName.length > 256) throw browserError("invalid_browser_request")
   const encodedInput = JSON.stringify(params.input ?? null)
@@ -3612,7 +3634,7 @@ async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, unknown>
   const timeoutMs = timeoutValue === undefined ? 10_000 : boundedNumber(timeoutValue, 1, 30_000)
   const generation = tab.generation
   const script = `(() => {
-    const modelContext = document.modelContext ?? navigator.modelContext;
+    const modelContext = window.__lumeWebMcpModelContext ?? document.modelContext ?? navigator.modelContext;
     if (!modelContext || typeof modelContext.getTools !== "function" || typeof modelContext.executeTool !== "function") {
       throw new Error("WebMCP modelContext is unavailable in the current page.");
     }
@@ -3632,6 +3654,26 @@ async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, unknown>
   const encodedResult = JSON.stringify(value)
   if (encodedResult && encodedResult.length > 1_000_000) throw browserError("browser_internal_error")
   return { result: value ?? null }
+}
+
+// 处理 guest-preload 经 main.ts 转发的 page-event（lume:browser-page-event 通道）。
+//
+// 当前仅处理 webmcp_changed（Task 83）：guest-preload qe() 在 shim onToolsChanged 回调中
+// ipcRenderer.send('lume:browser-page-event', { type:'webmcp_changed', version:1 })。main.ts
+// 监听该通道并调用 BrowserRuntime.handlePageEvent，最终委托到这里。命中后 emit
+// browser:webmcp-changed（含 tabId + generation），agent 端可据此知道需要刷新 webmcp:list。
+//
+// tab 为 undefined（sender 未匹配到任何运行时 tab）时静默忽略——guest 可能在 tab 关闭后
+// 仍发出最后一次通知。非 webmcp_changed 类型一并忽略（向前兼容未来新增 page-event 类型）。
+export function handleBrowserPageEvent(
+  tab: { tabId: string; generation: number } | undefined,
+  payload: unknown,
+  emit: (event: { method: string; params: Record<string, unknown> }) => void,
+): void {
+  if (!isRecord(payload) || typeof payload.type !== "string") return
+  if (payload.type !== "webmcp_changed") return
+  if (!tab) return
+  emit({ method: "browser:webmcp-changed", params: { tabId: tab.tabId, generation: tab.generation } })
 }
 
 function sanitizeWebMcpTool(value: unknown): Record<string, unknown> {

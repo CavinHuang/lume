@@ -657,6 +657,149 @@ describe('BrowserAnnotationManager design 交互命令（Task 71）', () => {
   })
 })
 
+// Task 94：manager 公共 resolve/markRead 方法 + onGuestMessage resolve/mark-read 处理。
+// host 评审面板 CommentList 的回调 → IPC → browser-runtime dispatch → this.resolve/markRead；
+// overlay guest → onGuestMessage {type:'resolve'|'mark-read'} → 同样落 store。两条路径对称。
+describe('BrowserAnnotationManager resolve / mark-read', () => {
+  test('resolve：store.resolveComment 翻 isResolved + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: '请解决',
+      })
+
+      const send = mock(() => {})
+      const snapshot = manager.resolve(newTab(send), 'thread-1', commentId, 'user')
+
+      // store 翻字段
+      const after = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      const target = after.comments.find((c) => c.id === commentId)!
+      expect(target.isResolved).toBe(true)
+      expect(target.resolvedBy).toBe('user')
+      expect(typeof target.resolvedAt).toBe('string')
+      // 返回值是同一 snapshot
+      expect(snapshot.comments.find((c) => c.id === commentId)?.isResolved).toBe(true)
+      // syncGuest + emitSnapshot 各一次
+      expect(send).toHaveBeenCalledTimes(1)
+      const states = calls.filter((c) => c.method === 'browser:annotation-state')
+      expect(states).toHaveLength(1)
+    })
+  })
+
+  test('markRead：store.markRead 写 readAt + syncGuest + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: '请已读',
+      })
+
+      const send = mock(() => {})
+      manager.markRead(newTab(send), 'thread-1', commentId)
+
+      const target = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.find((c) => c.id === commentId)!
+      expect(typeof target.readAt).toBe('string')
+      expect(send).toHaveBeenCalledTimes(1)
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(true)
+    })
+  })
+
+  test('resolve 默认 resolvedBy=user（host 面板触发场景）', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: '默认',
+      })
+
+      manager.resolve(newTab(), 'thread-1', commentId)
+
+      const target = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.find((c) => c.id === commentId)!
+      expect(target.resolvedBy).toBe('user')
+    })
+  })
+
+  test('onGuestMessage resolve：调 this.resolve + resolvedBy 收敛 user', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: 'guest resolve',
+      })
+
+      manager.onGuestMessage(newTab(), {
+        type: 'resolve', annotationId: commentId,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      const target = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.find((c) => c.id === commentId)!
+      expect(target.isResolved).toBe(true)
+      expect(target.resolvedBy).toBe('user') // overlay 触发也收敛 user
+    })
+  })
+
+  test('onGuestMessage mark-read：调 this.markRead', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const commentId = 'browser-annotation:r1'
+      manager.store.saveComment({
+        id: commentId,
+        origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR,
+        body: 'guest mark-read',
+      })
+
+      manager.onGuestMessage(newTab(), {
+        type: 'mark-read', annotationId: commentId,
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+
+      const target = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).comments.find((c) => c.id === commentId)!
+      expect(typeof target.readAt).toBe('string')
+    })
+  })
+
+  test('onGuestMessage resolve 无 annotationId：no-op（不调 this.resolve，不 emit）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'resolve',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+      })
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+
+  test('onGuestMessage L121 守卫对 resolve 同样生效（tabId mismatch → 早 return）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      manager.onGuestMessage(newTab(), {
+        type: 'resolve', annotationId: 'any',
+        tabId: 'other-tab', generation: 1, threadId: 'thread-1',
+      })
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
+})
+
 describe('sanitizeDeclarations', () => {
   test('过滤非法 property + 缺 previousValue，保留合法项', () => {
     expect(sanitizeDeclarations([

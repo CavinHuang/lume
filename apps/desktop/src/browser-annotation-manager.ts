@@ -94,6 +94,24 @@ export class BrowserAnnotationManager {
     return snapshot
   }
 
+  // Task 94：host 评审面板「解决」回调 → store.resolveComment + syncGuest + emitSnapshot。
+  // resolvedBy 由 host 传入（host 面板触发恒为 'user'；agent 路径走 onGuestMessage 也收敛到 'user'，
+  // 因 agent resolve 经由 sidecar→host IPC 而非直接写 store——保留入参为未来 agent 主动 resolve 留口）。
+  resolve(tab: AnnotationRuntimeTab, threadId: string, annotationId: string, resolvedBy: 'user' | 'agent' = 'user'): BrowserAnnotationSessionSnapshot {
+    const snapshot = this.store.resolveComment(threadId, tab.tabId, tab.url, tab.generation, annotationId, resolvedBy)
+    this.syncGuest(tab, snapshot)
+    this.emitSnapshot(snapshot)
+    return snapshot
+  }
+
+  // Task 94：host 评审面板「标记已读」回调 → store.markRead + syncGuest + emitSnapshot。
+  markRead(tab: AnnotationRuntimeTab, threadId: string, annotationId: string): BrowserAnnotationSessionSnapshot {
+    const snapshot = this.store.markRead(threadId, tab.tabId, tab.url, tab.generation, annotationId)
+    this.syncGuest(tab, snapshot)
+    this.emitSnapshot(snapshot)
+    return snapshot
+  }
+
   clear(tab: AnnotationRuntimeTab, threadId: string): BrowserAnnotationSessionSnapshot {
     const current = this.store.get(threadId, tab.tabId, tab.url, tab.generation)
     const snapshot = this.store.clearComments(threadId, tab.tabId, tab.url, tab.generation)
@@ -194,6 +212,20 @@ export class BrowserAnnotationManager {
       const session = this.store.get(payload.threadId, tab.tabId, tab.url, tab.generation)
       const id = session.activeDraft?.id
       if (id) this.delete(tab, payload.threadId, id)
+      return
+    }
+    // Task 94：overlay guest 推送的 resolve / mark-read。host 面板的同名 IPC 走 browser-runtime
+    // dispatch 调用 this.resolve / this.markRead（公共方法），与此处对称；resolvedBy 收敛到 'user'
+    // （overlay 是用户驱动；agent resolve 走 sidecar→host 路径，不经 onGuestMessage）。
+    // annotationId 必填且截断到 256（与 delete 同策略）；mark-read 无 annotationId 时 no-op。
+    if (payload.type === 'resolve') {
+      const annotationId = text(payload.annotationId, 256)
+      if (annotationId) this.resolve(tab, payload.threadId, annotationId, 'user')
+      return
+    }
+    if (payload.type === 'mark-read') {
+      const annotationId = text(payload.annotationId, 256)
+      if (annotationId) this.markRead(tab, payload.threadId, annotationId)
       return
     }
     // Task 54：design overlay 更新/删除/提交。与 editor 分支对称：anchor/declarations 从

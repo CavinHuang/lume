@@ -15,6 +15,17 @@
 
 export const ipcRendererHandlers = new Map<string, (...args: unknown[]) => void>()
 
+// 测试可观测：ipcRenderer.send 调用记录（push-on-send，清空由测试在 beforeEach 负责）。
+export const ipcRendererSentMessages: Array<{ channel: string; args: unknown[] }> = []
+
+// 测试可观测：ipcRenderer.sendSync 返回值映射（key=channel，未配置返回 undefined）。
+// 测试在调用前赋值；建议在 beforeEach 清空（delete 已设 key）。
+export const ipcRendererSendSyncReturns: Record<string, unknown> = {}
+
+// 测试可观测：contextBridge.exposeInMainWorld 暴露记录（key=暴露键名，value=暴露对象）。
+// 后写胜出（同键覆盖）；测试在 beforeEach 清空。
+export const contextBridgeExposures = new Map<string, unknown>()
+
 // tray-manager 测试通过 latestTray.current.throwOnDestroy 控制析构失败。
 export const latestTray: {
   current: {
@@ -26,7 +37,31 @@ export const latestTray: {
   } | null
 } = { current: null }
 
+// 测试可观测：ipcMain.on/handle 注册的 handler（key=channel）。
+// main.ts / browser-runtime.ts 构造期注册的 handler 可据此取出并模拟主进程事件。
+export const ipcMainHandlers = new Map<string, (...args: unknown[]) => void>()
+export const ipcMainSyncHandlers = new Map<string, (...args: unknown[]) => unknown>()
+export const ipcMainInvokers = new Map<string, (...args: unknown[]) => unknown>()
+
 export const electronMockStub = {
+  ipcMain: {
+    on(channel: string, handler: (...args: unknown[]) => void): void {
+      ipcMainHandlers.set(channel, handler)
+    },
+    handle(channel: string, handler: (...args: unknown[]) => unknown): void {
+      ipcMainInvokers.set(channel, handler)
+    },
+    once(channel: string, handler: (...args: unknown[]) => void): void {
+      // 仅注册到 on 表（测试侧无需区分 once 语义）。
+      ipcMainHandlers.set(channel, handler)
+    },
+    off(channel: string): void {
+      ipcMainHandlers.delete(channel)
+    },
+    removeHandler(channel: string): void {
+      ipcMainInvokers.delete(channel)
+    },
+  },
   ipcRenderer: {
     on(channel: string, handler: (...args: unknown[]) => void): void {
       ipcRendererHandlers.set(channel, handler)
@@ -34,7 +69,14 @@ export const electronMockStub = {
     off(channel: string): void {
       ipcRendererHandlers.delete(channel)
     },
-    send(): void {},
+    send(channel: string, ...args: unknown[]): void {
+      // 仅记录副作用，无真实 IPC 行为（保留无返回值语义）。
+      ipcRendererSentMessages.push({ channel, args })
+    },
+    sendSync(channel: string, ..._args: unknown[]): unknown {
+      // 默认返回 undefined；测试通过 ipcRendererSendSyncReturns[channel] 配置期望值。
+      return ipcRendererSendSyncReturns[channel]
+    },
     invoke(): Promise<unknown> {
       return Promise.resolve(undefined)
     },
@@ -71,8 +113,42 @@ export const electronMockStub = {
       return { workArea: { x: 0, y: 0, width: 1920, height: 1080 } }
     },
   },
-  contextBridge: { exposeInMainWorld() {} },
+  contextBridge: {
+    exposeInMainWorld(key: string, value: unknown): void {
+      // 记录暴露（后写胜出）；无真实 contextBridge 行为。
+      contextBridgeExposures.set(key, value)
+    },
+  },
   webUtils: {},
+  // browser-runtime.ts 命名导入（clipboard/dialog/session/shell）仅在类方法内部使用，
+  // 模块加载期不可达；提供 no-op stub 以满足 import 绑定。
+  clipboard: {
+    readText() { return '' },
+    writeText() {},
+    readHTML() { return '' },
+    writeHTML() {},
+    availableFormats() { return [] },
+  },
+  dialog: {
+    showMessageBox() { return Promise.resolve({ response: 0 }) },
+    showOpenDialog() { return Promise.resolve({ canceled: true, filePaths: [] }) },
+    showSaveDialog() { return Promise.resolve({ canceled: true, filePath: undefined }) },
+    showErrorBox() {},
+  },
+  session: {
+    fromPartition() { return { setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, on() {}, off() {} } },
+    defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, on() {}, off() {} },
+  },
+  shell: {
+    openExternal() { return Promise.resolve() },
+    openPath() { return '' },
+    showItemInFolder() {},
+    trashItem() { return Promise.resolve() },
+  },
+  ipcMainEvent: class {
+    returnValue: unknown = undefined
+    sender = { id: 0, isDestroyed() { return false }, send() {} }
+  },
   app: { isPackaged: false, getPath() { return '' } },
   safeStorage: {
     encryptString() { return Buffer.alloc(0) },

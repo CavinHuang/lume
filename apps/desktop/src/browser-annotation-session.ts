@@ -236,6 +236,50 @@ export class BrowserAnnotationSessionStore {
     return next
   }
 
+  // Task 92：翻目标评论的 isResolved + 写 resolvedAt/resolvedBy。
+  // 翻 boolean 的语义：存在则置 true（resolveComment 仅做「解决」，不做 toggle——
+  // unresolve 由 host 用 saveComment 直接覆盖 isResolved=false 处理，与 Codex 一致）。
+  // 目标评论不存在时 no-op 返回当前 snapshot（不写盘），与 removeAnnotationSelection 越界策略一致。
+  resolveComment(threadId: string, tabId: string, url: string, generation: number, annotationId: string, resolvedBy: 'user' | 'agent'): BrowserAnnotationSessionSnapshot {
+    const snapshot = this.get(threadId, tabId, url, generation)
+    let touched = false
+    const comments = snapshot.comments.map((comment) => {
+      if (comment.id !== annotationId) return comment
+      touched = true
+      return { ...comment, isResolved: true, resolvedAt: new Date().toISOString(), resolvedBy }
+    })
+    if (!touched) return snapshot
+    const next = { ...snapshot, comments, updatedAt: new Date().toISOString() }
+    this.write(next)
+    return next
+  }
+
+  // Task 92：复用 saveComment 落盘 reply，并补线程字段：reviewThreadId 派生为
+  // parent.reviewThreadId ?? parent.id（reply-of-reply 时继承根线程 id），inReplyToId = parent.id。
+  // parent 形状用最小局部类型（仅取线程派生所需字段，避免耦合 Attachment 全部必填字段）。
+  addReply(threadId: string, tabId: string, url: string, generation: number, parent: { reviewThreadId?: string; id: string }, reply: AgentBrowserAnnotationAttachment): BrowserAnnotationSessionSnapshot {
+    return this.saveComment({
+      ...reply,
+      reviewThreadId: parent.reviewThreadId ?? parent.id,
+      inReplyToId: parent.id,
+    })
+  }
+
+  // Task 92：写 readAt = ISO 时间戳。与 resolveComment 同策略：目标评论不存在时 no-op。
+  markRead(threadId: string, tabId: string, url: string, generation: number, annotationId: string): BrowserAnnotationSessionSnapshot {
+    const snapshot = this.get(threadId, tabId, url, generation)
+    let touched = false
+    const comments = snapshot.comments.map((comment) => {
+      if (comment.id !== annotationId) return comment
+      touched = true
+      return { ...comment, readAt: new Date().toISOString() }
+    })
+    if (!touched) return snapshot
+    const next = { ...snapshot, comments, updatedAt: new Date().toISOString() }
+    this.write(next)
+    return next
+  }
+
   clearComments(threadId: string, tabId: string, url: string, generation: number): BrowserAnnotationSessionSnapshot {
     const snapshot = this.get(threadId, tabId, url, generation)
     const comments = snapshot.comments.filter((comment) => comment.tab.url !== url)

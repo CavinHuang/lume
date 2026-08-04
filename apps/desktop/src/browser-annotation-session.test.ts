@@ -278,4 +278,92 @@ describe('BrowserAnnotationSessionStore', () => {
       }
     })
   })
+
+  // Task 92：宿主面板对齐（Plan 7）——resolveComment / addReply / markRead 三方法。
+  // resolveComment 翻 isResolved + 写 resolvedAt/resolvedBy；addReply 复用 saveComment
+  // 并派生 reviewThreadId/inReplyToId；markRead 写 readAt = ISO 时间戳。
+  describe('review threading', () => {
+    test('resolveComment 翻 isResolved=true + 写 resolvedAt/resolvedBy', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'lume-annotation-'))
+      try {
+        const store = new BrowserAnnotationSessionStore(() => directory)
+        store.saveComment(attachment('comment-1'))
+        const snap = store.resolveComment('thread-1', 'tab-1', anchor.url, 1, 'comment-1', 'user')
+        const resolved = snap.comments.find((c) => c.id === 'comment-1')
+        expect(resolved?.isResolved).toBe(true)
+        expect(resolved?.resolvedAt).toBeTruthy()
+        expect(resolved?.resolvedBy).toBe('user')
+        // resolvedAt 是 ISO 时间戳
+        expect(() => Number.isFinite(new Date(resolved!.resolvedAt!).getTime())).not.toThrow()
+        expect(Number.isFinite(new Date(resolved!.resolvedAt!).getTime())).toBe(true)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+
+    test('addReply 复用 saveComment 并派生 reviewThreadId/inReplyToId（parent 无 reviewThreadId）', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'lume-annotation-'))
+      try {
+        const store = new BrowserAnnotationSessionStore(() => directory)
+        store.saveComment(attachment('parent'))
+        const snap = store.addReply(
+          'thread-1', 'tab-1', anchor.url, 1,
+          { id: 'parent' },
+          attachment('child', 'Reply body'),
+        )
+        const parent = snap.comments.find((c) => c.id === 'parent')
+        const child = snap.comments.find((c) => c.id === 'child')
+        // parent.reviewThreadId 缺省 → child.reviewThreadId = parent.id
+        expect(child?.reviewThreadId).toBe('parent')
+        expect(child?.inReplyToId).toBe('parent')
+        // parent 自身不应被新增线程字段（addReply 只动 child）
+        expect(parent?.reviewThreadId).toBeUndefined()
+        expect(parent?.inReplyToId).toBeUndefined()
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+
+    test('addReply 优先继承 parent.reviewThreadId（reply-of-reply）', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'lume-annotation-'))
+      try {
+        const store = new BrowserAnnotationSessionStore(() => directory)
+        store.saveComment(attachment('parent'))
+        const r1 = store.addReply(
+          'thread-1', 'tab-1', anchor.url, 1,
+          { id: 'parent' },
+          attachment('child', 'Reply 1'),
+        )
+        const child = r1.comments.find((c) => c.id === 'child')!
+        // 第二层回复：parent 携带 reviewThreadId
+        const r2 = store.addReply(
+          'thread-1', 'tab-1', anchor.url, 1,
+          { id: 'child', reviewThreadId: child.reviewThreadId },
+          attachment('grandchild', 'Reply 2'),
+        )
+        const grand = r2.comments.find((c) => c.id === 'grandchild')
+        // 继承 parent.reviewThreadId 而非用 parent.id
+        expect(grand?.reviewThreadId).toBe('parent')
+        expect(grand?.inReplyToId).toBe('child')
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+
+    test('markRead 写 readAt = ISO 时间戳（先前未读）', () => {
+      const directory = mkdtempSync(join(tmpdir(), 'lume-annotation-'))
+      try {
+        const store = new BrowserAnnotationSessionStore(() => directory)
+        store.saveComment(attachment('comment-1'))
+        const before = store.get('thread-1', 'tab-1', anchor.url, 1).comments[0]
+        expect(before?.readAt).toBeUndefined()
+        const snap = store.markRead('thread-1', 'tab-1', anchor.url, 1, 'comment-1')
+        const after = snap.comments.find((c) => c.id === 'comment-1')
+        expect(after?.readAt).toBeTruthy()
+        expect(Number.isFinite(new Date(after!.readAt!).getTime())).toBe(true)
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+  })
 })
