@@ -9,8 +9,9 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import type { PersonaProfile } from "@lume/shared";
+import { MEMORY_CLAIM_PREFERRED_NAME, claimFromEntry } from "./claim";
 import { getPersonaPath } from "./paths";
-import type { MemoryV2Scope } from "./types";
+import type { MemoryV2Entry, MemoryV2Scope } from "./types";
 
 export { getPersonaPath };
 
@@ -76,6 +77,53 @@ export function parsePersonaProfile(md: string): PersonaProfile {
   }
 
   return profile;
+}
+
+/**
+ * 无 LLM 时的规则兜底：从记忆条目直接拼装最小 persona Markdown。
+ * - name：首个 preferred_name claim 的 object
+ * - preferences：kind=preference 的前 5 条 statement
+ * - interactionRules：带 correction 标签的前 3 条 statement
+ * 不输出 summary/evolution（仅 LLM 可生成）。
+ * 标题关键词与 parsePersonaProfile 对齐以保证 round-trip。
+ */
+export function buildPersonaFromRules(entries: MemoryV2Entry[]): string {
+  let name: string | undefined;
+  for (const entry of entries) {
+    const claim = claimFromEntry(entry);
+    if (claim?.predicate === MEMORY_CLAIM_PREFERRED_NAME) {
+      name = claim.object;
+      break;
+    }
+  }
+
+  const preferences: string[] = [];
+  for (const entry of entries) {
+    if (entry.frontmatter.kind !== "preference") continue;
+    preferences.push(entry.statement);
+    if (preferences.length >= 5) break;
+  }
+
+  const interactionRules: string[] = [];
+  for (const entry of entries) {
+    if (!entry.frontmatter.tags.includes("correction")) continue;
+    interactionRules.push(entry.statement);
+    if (interactionRules.length >= 3) break;
+  }
+
+  const lines: string[] = ["# 用户画像"];
+  if (name !== undefined) {
+    lines.push("", "## 用户（称呼）", name);
+  }
+  if (preferences.length > 0) {
+    lines.push("", "## 长期偏好");
+    for (const stmt of preferences) lines.push(`- ${stmt}`);
+  }
+  if (interactionRules.length > 0) {
+    lines.push("", "## 交互协议");
+    for (const stmt of interactionRules) lines.push(`- ${stmt}`);
+  }
+  return lines.join("\n");
 }
 
 function firstNonEmptyLine(body: string): string | undefined {
