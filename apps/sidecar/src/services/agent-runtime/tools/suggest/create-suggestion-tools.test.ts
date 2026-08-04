@@ -5,6 +5,7 @@
  * 验证工厂产出工具（无参数 + 非只读）+ handler 调用 runAnalysisAndPersist({})
  * 并返回 { added, summary }。service 自身的 fail-open / 去重逻辑由 service.test.ts 覆盖。
  */
+import type { ToolDefinition } from "@lume/agent-sdk";
 import { describe, expect, mock, test } from "bun:test";
 
 // ===== mock.module 依赖 =====
@@ -17,18 +18,17 @@ mock.module("../../../suggest/service", () => ({
 const { createSuggestionTools } = await import("./create-suggestion-tools");
 
 // ===== helpers =====
-function resolveAnalyze() {
+function resolveAnalyze(): ToolDefinition {
   const tools = createSuggestionTools();
   const analyze = tools.find((t) => t.name === "suggestion_analyze");
   if (!analyze) throw new Error("suggestion_analyze 工具未注册");
   return analyze;
 }
 
-async function callTool(tool: { call: (input: Record<string, unknown>, ctx: unknown) => Promise<unknown> }) {
+async function callTool(tool: ToolDefinition) {
   const result = await tool.call({}, { cwd: process.cwd() });
-  const payload = result as { data?: unknown; content?: unknown };
-  if (payload.data !== undefined) return payload.data as Record<string, unknown>;
-  return JSON.parse(String(payload.content)) as Record<string, unknown>;
+  const parsed = JSON.parse(result.content as string) as Record<string, unknown>;
+  return (parsed.data ?? parsed) as Record<string, unknown>;
 }
 
 describe("createSuggestionTools", () => {
