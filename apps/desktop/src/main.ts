@@ -443,6 +443,9 @@ const sidecarHost = createSidecarHost({
     showDesktopProposalNotification(method, params)
     showPlanningReminderNotification(method, params)
     showDesktopActionHud(method, params)
+    // Agent 灵动岛 service（Task 7）：先于 renderer 转发处理 sidecar 通知，
+    // 确保即便主窗口隐藏也能触发 intent 刷新。
+    getAgentIslandService().handleSidecarNotification(method, params)
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
 })
@@ -2992,6 +2995,8 @@ app.whenReady().then(async () => {
   registerDesktopContextPowerEvents()
   await captureQuickInputContext()
   await createMainWindow()
+  // Agent 灵动岛 service（Task 7）：主窗口就绪后启动，开始响应 sidecar intent。
+  await getAgentIslandService().start()
   logDesktopStartup('main window ready')
   // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
   const quickInputShortcutRegistered = globalShortcut.register('Alt+L', () => {
@@ -3039,6 +3044,10 @@ app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
   connectionVaultKey?.fill(0)
   connectionVaultKey = null
+  // Agent 灵动岛 service（Task 7）：销毁 service 与悬浮窗，释放资源。
+  agentIslandService?.destroy()
+  agentIslandService = null
+  destroyIslandWindow()
 })
 
 async function startDesktopHost(): Promise<DesktopHostState> {
