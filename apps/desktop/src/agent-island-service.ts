@@ -26,6 +26,7 @@ import {
   buildVisibilityKey,
   mapRuntimePhaseToIslandPhase,
   projectPlanning,
+  selectPrimarySession,
 } from '../../../packages/shared/src/agent-island-projections'
 import type { IslandSessionInput } from '../../../packages/shared/src/agent-island-projections'
 
@@ -48,6 +49,8 @@ export interface AgentIslandServiceDeps {
   openMain: () => void
   /** 把主窗口切换到指定 thread（best-effort，使用与 tray 相同的导航路径）。 */
   openSession: (threadId: string) => void
+  /** 测得的展开内容高度回写：main 调 clampIslandHeight 调整 BrowserWindow 高度。 */
+  setExpandedHeight: (height: number) => void
 }
 
 /** sidecar runtime-status 通知中 status 字段的宽松形状。 */
@@ -122,6 +125,12 @@ export class AgentIslandService {
           this.deps.openSession(intent.threadId)
         }
         break
+      case 'set-expanded-height': {
+        // 高度反馈环（spec §3.2）：仅调整窗口尺寸，不触发 push（否则 renderer↔main 形成回环）。
+        const h = typeof intent.expandedHeight === 'number' ? intent.expandedHeight : 32
+        this.deps.setExpandedHeight(h)
+        return
+      }
     }
     this.push(true)
   }
@@ -183,7 +192,11 @@ export class AgentIslandService {
   }
 
   private primaryInput(): IslandSessionInput | null {
-    return [...this.sessions.values()].sort((a, b) => b.lastActivityAt - a.lastActivityAt)[0] ?? null
+    // 复用 selectPrimarySession（phase 优先级 + lastActivityAt），保证 dismiss 构造的
+    // visibilityKey 与 buildSnapshot 显示的主导会话一致；否则二者可能选出不同 session。
+    const { primarySessionId } = selectPrimarySession([...this.sessions.values()])
+    if (!primarySessionId) return null
+    return this.sessions.get(primarySessionId) ?? null
   }
 
   private planningKeys(): string[] {

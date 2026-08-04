@@ -72,7 +72,7 @@ import {
   validateWereadUrl,
   writeLauncherConfigAt,
 } from './desktop-core'
-import { createIslandWindow } from './agent-island-window'
+import { clampIslandHeight, createIslandWindow } from './agent-island-window'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -1350,6 +1350,11 @@ function getAgentIslandService(): AgentIslandService {
           )
         })
       },
+      // 高度反馈环（spec §3.2）：renderer 测得展开高度后回传，main 调整 BrowserWindow 高度。
+      setExpandedHeight: (height) => {
+        const w = islandWindow
+        if (w && !w.isDestroyed()) clampIslandHeight(w, height)
+      },
     })
   }
   return agentIslandService
@@ -2509,6 +2514,14 @@ function createSidecarHost({ onNotification }) {
             const settings = getSettingsBroker().replace(mutationId ? payload.params.settings : payload.params)
             const logging = (settings.generalSettings as { logging?: unknown } | undefined)?.logging
             if (logging && typeof logging === 'object') getLoggingService().updateSettings(logging)
+            // Agent 灵动岛 §5.3：设置开关"关闭后立即生效"。settings-replace 是所有设置写入
+            // （含 renderer toggle → sidecar general-settings:update）的唯一汇聚点，故在此处
+            // 检测 agentIsland.enabled 翻为 false 即立即销毁窗口；重新开启由下次 push 懒重建。
+            const agentIslandEnabled = (settings.generalSettings as { agentIsland?: { enabled?: boolean } } | undefined)
+              ?.agentIsland?.enabled
+            if (agentIslandEnabled === false) {
+              destroyIslandWindow()
+            }
             if (mutationId) {
               runningChild.postMessage(JSON.stringify({
                 method: 'system.settings-ack',

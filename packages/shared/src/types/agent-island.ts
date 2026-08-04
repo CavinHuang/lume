@@ -62,11 +62,14 @@ export type AgentIslandIntentName =
   | 'dismiss'
   | 'open-main'
   | 'open-session'
+  | 'set-expanded-height'
 
 export interface AgentIslandIntent {
   name: AgentIslandIntentName
   value?: boolean
   threadId?: string
+  /** 用于 'set-expanded-height'：展开内容真实高度（px），main 据此调用 clampIslandHeight。 */
+  expandedHeight?: number
 }
 
 export const AGENT_ISLAND_IPC_CHANNELS = {

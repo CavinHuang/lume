@@ -9,7 +9,7 @@
 .island-surface {
   position: relative;
   width: 420px;
-  height: 32px;
+  height: var(--island-expanded-height, 32px);
   background: #09090a;
   color: #fff;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.32);
