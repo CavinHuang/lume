@@ -1,5 +1,5 @@
 // TDD tests for styleSnapshotDeclarations (Task 52).
-// browser-guest-preload.ts imports 'electron' at module load。
+// browser-guest-preload.tsx imports 'electron' at module load。
 // 注册共享 superset stub（bun:test 默认共享模式下 mock.module 首写胜出，所有
 // desktop 测试必须注册同一 stub，详见 scripts/test-electron-mock.ts）。
 import { describe, expect, test, mock } from 'bun:test'

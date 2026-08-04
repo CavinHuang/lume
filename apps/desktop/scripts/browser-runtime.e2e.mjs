@@ -17,7 +17,7 @@ try {
   if (!build.success) throw new Error(build.logs.map(String).join('\n'))
   const builtModule = build.outputs[0]?.path
   if (!builtModule) throw new Error('browser runtime module was not built')
-  const guestSource = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'browser-guest-preload.ts')
+  const guestSource = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'browser-guest-preload.tsx')
   const guestBuild = await Bun.build({ entrypoints: [guestSource], target: 'node', format: 'cjs', external: ['electron'] })
   if (!guestBuild.success || !guestBuild.outputs[0]) throw new Error(guestBuild.logs.map(String).join('\n'))
   const guestPreloadPath = join(appRoot, 'browser-guest-preload.cjs')
@@ -252,7 +252,9 @@ app.whenReady().then(async () => {
     check(annotationSession.version === 2 && annotationSession.threadId === 'fixture-thread', 'annotation session did not use the bounded v2 contract')
     const commentMode = await userCall('annotation:mode', { tabId: 'fixture-tab', threadId: 'fixture-thread', mode: 'comment' })
     check(commentMode.mode === 'comment', 'annotation comment mode did not persist in the main-process session')
-    await waitUntil(() => view.executeJavaScript("document.querySelector('[data-lume-annotation-host]') !== null"))
+    // Task 102：DOM 渲染层退役，注释 overlay 改由 React AnnotationOverlay 渲染
+    // （host 标记 data-lume-annotation-overlay，区别于已删除的 data-lume-annotation-host）。
+    await waitUntil(() => view.executeJavaScript("document.querySelector('[data-lume-annotation-overlay]') !== null"))
     await view.executeJavaScript("document.querySelector('#annotation-target').click()")
     check(await view.executeJavaScript("document.querySelector('#annotation-result').textContent") === '', 'comment mode did not intercept the fixture click')
     check(await view.executeJavaScript("document.querySelector('[id^=__lume_review_]') === null") === true, 'legacy DOM annotation overlay is still present')

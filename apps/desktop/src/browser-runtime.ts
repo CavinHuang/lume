@@ -52,8 +52,6 @@ type BrowserRuntimeOptions = {
   journalEncryption?: { available: boolean; encrypt: (value: string) => Buffer; decrypt?: (value: Buffer) => string }
   credentialStorage: { isEncryptionAvailable(): boolean; encryptString(value: string): Buffer; decryptString(value: Buffer): string }
   authPreloadPath?: string
-  annotationPopupPreloadPath?: string
-  rendererUrl?: () => string
   onInternalError?: (details: { method: string; actor: BrowserRequestContext["actor"]; tabId?: string; message: string }) => void
 }
 
@@ -254,9 +252,6 @@ export class BrowserRuntime {
     this.workspaces = new BrowserWorkspaceStore(options.configDir)
     this.annotations = new BrowserAnnotationManager({
       configDir: options.configDir,
-      getParentWindow: options.getWindow,
-      annotationPopupPreloadPath: options.annotationPopupPreloadPath ?? options.authPreloadPath ?? '',
-      rendererUrl: options.rendererUrl ?? (() => 'about:blank'),
       emit: (method, params) => this.options.emit({ method, params }),
       getScreenshotMode: () => this.settings.annotationScreenshots === 'always' ? 'always' : this.settings.annotationScreenshots === 'off' ? 'off' : 'necessary',
       captureScreenshot: async (tab) => {
@@ -265,7 +260,6 @@ export class BrowserRuntime {
         const size = image.getSize()
         return { data, width: size.width, height: size.height, deviceScaleFactor: tab.zoomFactor ?? 1 }
       },
-      resolveTab: (tabId) => this.tabs.get(tabId),
     })
     void this.restoreBrowserExtensions()
     app.on("login", this.loginHandler)
@@ -315,12 +309,6 @@ export class BrowserRuntime {
   }
 
   getSettings(): BrowserSettings { return { ...this.settings } }
-
-  handleAnnotationPopupCommand(senderId: number, payload: unknown): { ok: true } {
-    return this.annotations.handlePopupCommand(senderId, payload)
-  }
-
-  isAnnotationPopupSender(senderId: number): boolean { return this.annotations.isPopupSender(senderId) }
 
   // main.ts lume:browser-page-event handler 的转发目标。
   // 通过 tabForContents 反查 sender 对应的 tab，再委托给模块级 handleBrowserPageEvent。
@@ -873,7 +861,7 @@ export class BrowserRuntime {
     if (method === "annotation:screenshot:prepare") {
       if (context.actor !== "user") throw browserError("action_denied")
       const threadId = annotationThreadId(tab, params)
-      return this.annotations.prepareScreenshot(tab, threadId, params.restorePopup !== false)
+      return this.annotations.prepareScreenshot(tab, threadId)
     }
     if (method === "annotation:submit") {
       if (context.actor !== "user") throw browserError("action_denied")
@@ -2971,7 +2959,6 @@ export class BrowserRuntime {
     if (tab.visible) tab.lastOpenedAt = new Date().toISOString()
     tab.webContents?.setBackgroundThrottling(!tab.visible)
     if (tab.visible) void this.setTabSuspended(tab, false)
-    this.annotations.reposition(tab)
     this.enforceBackgroundLimit()
     return publicTab(tab)
   }

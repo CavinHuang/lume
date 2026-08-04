@@ -44,9 +44,6 @@ function newManager(directory: string) {
   const emit = (method: string, params: Record<string, unknown>) => { calls.push({ method, params }) }
   const manager = new BrowserAnnotationManager({
     configDir: () => directory,
-    getParentWindow: () => null,
-    annotationPopupPreloadPath: join(directory, 'preload.js'),
-    rendererUrl: () => 'http://localhost:8080',
     emit,
     getScreenshotMode: () => 'off',
     captureScreenshot: () => Promise.resolve({ data: Buffer.alloc(0) }),
@@ -218,6 +215,83 @@ describe('BrowserAnnotationManager editor 命令', () => {
       })
     })
   }
+})
+
+// Task 103：open-editor annotation 路径切换为 overlay EditorCard（B 变体，对齐 Plan 4 editor-*
+// 模式）：setDraft 写 activeDraft → syncGuest 推 overlay 渲染 EditorCard → emitSnapshot 通知 host；
+// 不再 openPopup。tweaks 模式不变（emit browser:annotation-selection）。
+describe('BrowserAnnotationManager open-editor（Task 103）', () => {
+  test('annotation 模式：setDraft + syncGuest 推 activeDraft + emitSnapshot', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'open-editor',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        anchor: ANCHOR,
+      })
+
+      // setDraft 写入 activeDraft（overlay EditorCard 的数据源）
+      const after = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1)
+      expect(after.activeDraft).toBeDefined()
+      expect(after.activeDraft?.anchor).toEqual(ANCHOR)
+      // syncGuest：webContents.send 推送 sync，payload.activeDraft 即 store activeDraft
+      expect(send).toHaveBeenCalledTimes(1)
+      const syncCall = send.mock.calls[0]!
+      expect(syncCall[0]).toBe('lume:browser-annotation-guest')
+      const sentPayload = syncCall[1] as { activeDraft?: { anchor: typeof ANCHOR } }
+      expect(sentPayload.activeDraft?.anchor).toEqual(ANCHOR)
+      // emitSnapshot：annotation-state 带 activeDraft
+      const states = calls.filter((c) => c.method === 'browser:annotation-state')
+      expect(states).toHaveLength(1)
+      expect((states[0]!.params as { activeDraft?: { anchor: typeof ANCHOR } }).activeDraft?.anchor).toEqual(ANCHOR)
+    })
+  })
+
+  test('annotation 编辑模式（带 annotationId）：setDraft body/id 取自现有 comment', () => {
+    withDirectory((directory) => {
+      const { manager } = newManager(directory)
+      const existingId = 'browser-annotation:existing-edit'
+      manager.store.saveComment({
+        id: existingId, origin: 'browser-annotation',
+        tab: { id: 'browser-tab:tab-1:1', origin: 'browser-tab', backend: 'iab', browserId: 'lume-iab', tabId: 'tab-1', title: 'Example', url: ANCHOR.url, generation: 1, ownerThreadId: 'thread-1' },
+        anchor: ANCHOR, body: '旧文字',
+      })
+      manager.onGuestMessage(newTab(), {
+        type: 'open-editor',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        anchor: ANCHOR, annotationId: existingId,
+      })
+
+      const draft = manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).activeDraft
+      expect(draft?.id).toBe(existingId)
+      expect(draft?.body).toBe('旧文字')
+    })
+  })
+
+  test('tweaks 模式：emit browser:annotation-selection（不变；不 setDraft/不 syncGuest/不 emitSnapshot）', () => {
+    withDirectory((directory) => {
+      const { manager, calls } = newManager(directory)
+      const send = mock(() => {})
+      manager.onGuestMessage(newTab(send), {
+        type: 'open-editor',
+        tabId: 'tab-1', generation: 1, threadId: 'thread-1',
+        anchor: ANCHOR, purpose: 'tweaks',
+        originalStyles: { color: 'red' },
+      })
+
+      const selection = calls.filter((c) => c.method === 'browser:annotation-selection')
+      expect(selection).toHaveLength(1)
+      const params = selection[0]!.params as { purpose: string; anchor: typeof ANCHOR; originalStyles: Record<string, string> }
+      expect(params.purpose).toBe('tweaks')
+      expect(params.anchor).toEqual(ANCHOR)
+      expect(params.originalStyles).toEqual({ color: 'red' })
+      // tweaks 分支早 return：不写 activeDraft、不 syncGuest、不 emitSnapshot
+      expect(manager.store.get('thread-1', 'tab-1', ANCHOR.url, 1).activeDraft).toBeUndefined()
+      expect(send).toHaveBeenCalledTimes(0)
+      expect(calls.some((c) => c.method === 'browser:annotation-state')).toBe(false)
+    })
+  })
 })
 
 // Task 54：manager onGuestMessage design 分支（design-overlay-update/delete/submit）+

@@ -25,8 +25,6 @@ test('desktop package uses Vite-built TypeScript runtime files', () => {
     'dist/preload/preload.cjs',
     'dist/preload/browser-auth-preload.cjs',
     'dist/preload/browser-guest-preload.cjs',
-    'dist/preload/browser-annotation-preload.cjs',
-    'dist/preload/browser-overlay-preload.cjs',
     'assets',
   ])
   assert.equal(pkg.dependencies?.['electron-updater'], undefined)

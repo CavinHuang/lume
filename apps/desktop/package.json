@@ -52,8 +52,6 @@
       "dist/preload/preload.cjs",
       "dist/preload/browser-auth-preload.cjs",
       "dist/preload/browser-guest-preload.cjs",
-      "dist/preload/browser-annotation-preload.cjs",
-      "dist/preload/browser-overlay-preload.cjs",
       "assets"
     ],
     "extraResources": [

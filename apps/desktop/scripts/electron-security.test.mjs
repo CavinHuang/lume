@@ -445,7 +445,7 @@ test("connection credential reveal remains main-process privileged", () => {
 
 test("browser webview guests are one-time authorized and receive no host bridge", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
-  const guestPreloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-guest-preload.ts"), "utf8");
+  const guestPreloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-guest-preload.tsx"), "utf8");
   assert.match(mainSource, /will-attach-webview/);
   assert.match(mainSource, /authorizeGuestMount/);
   assert.match(mainSource, /did-attach-webview/);

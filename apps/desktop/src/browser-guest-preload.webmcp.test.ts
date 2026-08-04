@@ -1,6 +1,6 @@
 // TDD tests for qe() Web MCP 注入（Task 82，移植自 Codex comment-preload.js qe()）。
 //
-// browser-guest-preload.ts 顶层 import 'electron'；与其它 desktop 测试一致，
+// browser-guest-preload.tsx 顶层 import 'electron'；与其它 desktop 测试一致，
 // 注册共享 superset stub（mock.module 首写胜出）。本测试通过 stub 新增的可观测字段
 // （ipcRendererSentMessages / ipcRendererSendSyncReturns / contextBridgeExposures）
 // 验证 qe() 的副作用。

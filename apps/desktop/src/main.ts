@@ -2737,10 +2737,6 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
   }
   return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId })
 })
-ipcMain.handle('lume:browser-annotation-popup', async (event, payload) => {
-  if (!browserRuntime?.isAnnotationPopupSender(event.sender.id)) throw new Error('untrusted ipc sender')
-  return browserRuntime.handleAnnotationPopupCommand(event.sender.id, payload)
-})
 ipcMain.handle('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。
   // 子窗口 close 会命中 createQuickInputWindow 的 close 拦截 → hide（除非退出中）。
@@ -2901,8 +2897,6 @@ app.whenReady().then(async () => {
     },
     credentialStorage: safeStorage,
     authPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-auth-preload.cjs'),
-    annotationPopupPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-annotation-preload.cjs'),
-    rendererUrl: () => app.isPackaged ? getPackagedAppUrl() : getDevServerUrl(),
     onInternalError: ({ method, actor, tabId, message }) => {
       writeMainLog('error', 'browser.runtime', 'runtime.dispatch_failed', 'browser runtime action failed', {
         data: { method, actor, ...(tabId ? { tabId } : {}), message },
