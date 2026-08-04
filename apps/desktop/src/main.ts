@@ -130,6 +130,7 @@ import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile } from './browser-import'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
+import type { AgentIslandIntent } from '../../../packages/shared/src/types/agent-island'
 import {
   createAsyncSingleFlight,
   createEventRateLimiter,
@@ -335,9 +336,11 @@ function requireMainWindowSender(context, command) {
   throw new Error('main window sender required')
 }
 
-/** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow 存在时纳入。 */
+/** 当前受信任的渲染窗口集合：mainWindow 总在列；quickInputWindow / islandWindow 存在时纳入。 */
 function getTrustedWindows() {
-  return [mainWindow, quickInputWindow].filter(Boolean)
+  return [mainWindow, quickInputWindow, islandWindow].filter(
+    (w): w is BrowserWindow => !!w && !w.isDestroyed(),
+  )
 }
 
 function resolveRendererTraceOrigin(ownerWebContentsId) {
@@ -1492,6 +1495,10 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     }
     case 'sidecar_healthcheck':
       return sidecarHost.call('healthcheck', null)
+    case 'agent_island_intent': {
+      await agentIslandService?.handleIntent(payload as AgentIslandIntent)
+      return null
+    }
     case 'sidecar_call': {
       validateRendererSidecarMethod(payload.method)
       if (payload.method !== 'agent:send-thread-message') {

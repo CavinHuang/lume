@@ -75,6 +75,7 @@ const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'connection_vault_unlock',
   'connection_vault_verify',
   'connection_vault_reveal_key',
+  'agent_island_intent',
 ])
 
 const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -85,6 +86,7 @@ const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'tray-action',
   'logs:live',
   'browser:event',
+  'agent:island:state',
 ])
 
 function validateRendererInvokeCommand(command) {
