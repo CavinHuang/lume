@@ -36,6 +36,10 @@ export interface GeneralSettingsWindowBehavior {
   showTray: boolean
 }
 
+export interface GeneralSettingsAgentIsland {
+  enabled: boolean
+}
+
 export interface GeneralSettingsUpdateSettings {
   autoCheckUpdates: boolean
   notifyAfterDownload: boolean
@@ -52,6 +56,7 @@ export interface GeneralSettings {
   agentMessageDisplayMode: AgentMessageDisplayMode
   agentMessageListDisplayMode: AgentMessageListDisplayMode
   agentMessageAvatarMode: AgentMessageAvatarMode
+  agentIsland: GeneralSettingsAgentIsland
   logging: LumeLoggingSettings
 }
 
@@ -64,6 +69,7 @@ export interface UpdateGeneralSettingsInput {
   agentMessageDisplayMode?: AgentMessageDisplayMode
   agentMessageListDisplayMode?: AgentMessageListDisplayMode
   agentMessageAvatarMode?: AgentMessageAvatarMode
+  agentIsland?: Partial<GeneralSettingsAgentIsland>
   logging?: Partial<LumeLoggingSettings>
 }
 
@@ -155,6 +161,9 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
     minimizeToTray: false,
     closeToTray: false,
     showTray: true
+  },
+  agentIsland: {
+    enabled: true
   },
   updateSettings: {
     autoCheckUpdates: true,

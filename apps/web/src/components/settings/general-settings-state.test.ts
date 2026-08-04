@@ -47,6 +47,7 @@ describe('general settings state', () => {
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
       agentMessageAvatarMode: 'visible',
+      agentIsland: { enabled: true },
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: false,
@@ -74,6 +75,7 @@ describe('general settings state', () => {
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
       agentMessageAvatarMode: 'visible',
+      agentIsland: { enabled: true },
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: false,
@@ -97,6 +99,7 @@ describe('general settings state', () => {
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
       agentMessageAvatarMode: 'visible',
+      agentIsland: { enabled: true },
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: true,
@@ -118,6 +121,7 @@ describe('general settings state', () => {
       agentMessageDisplayMode: 'minimal',
       agentMessageListDisplayMode: 'conversation',
       agentMessageAvatarMode: 'visible',
+      agentIsland: { enabled: true },
       logging: GENERAL_SETTINGS_DEFAULTS.logging,
       windowBehavior: {
         minimizeToTray: true,
@@ -184,5 +188,18 @@ describe('general settings state', () => {
       httpProxy: 'http://127.0.0.1:7890',
       noProxy: 'localhost',
     })
+  })
+})
+
+describe('agentIsland 设置合并', () => {
+  test('默认开启', () => {
+    expect(GENERAL_SETTINGS_DEFAULTS.agentIsland.enabled).toBe(true)
+  })
+
+  test('部分更新 agentIsland', () => {
+    const merged = mergeGeneralSettings(GENERAL_SETTINGS_DEFAULTS, {
+      agentIsland: { enabled: false },
+    })
+    expect(merged.agentIsland.enabled).toBe(false)
   })
 })
