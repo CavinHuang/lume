@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   buildPersonaFromRules,
   deletePersona,
+  generatePersona,
   getPersonaPath,
   parsePersonaProfile,
   readPersonaRaw,
@@ -194,5 +195,106 @@ describe("buildPersonaFromRules", () => {
     const parsed = parsePersonaProfile(md);
     expect(parsed.name).toBe("Alice");
     expect(parsed.interactionRules).toEqual(["不要用 var"]);
+  });
+});
+
+describe("generatePersona", () => {
+  test("用注入 provider 生成 Markdown（brief 契约）", async () => {
+    const fake = async () => "# 用户画像\n## 一句话定位\n开发者";
+    const md = await generatePersona({ entries: [], providerFactory: fake });
+    expect(md).toContain("# 用户画像");
+  });
+
+  test("existing 注入 prompt（增量合并段）", async () => {
+    let captured = "";
+    const fake = async (prompt: string) => {
+      captured = prompt;
+      return "# x";
+    };
+    await generatePersona({
+      entries: [],
+      existing: "旧画像",
+      providerFactory: fake
+    });
+    expect(captured).toContain("旧画像");
+    expect(captured).toContain("已有画像");
+  });
+
+  test("entries 格式化为 [kind] statement 进入 prompt", async () => {
+    let captured = "";
+    const fake = async (prompt: string) => {
+      captured = prompt;
+      return "# x";
+    };
+    await generatePersona({
+      entries: [
+        mkEntry({ statement: "用 TypeScript", kind: "preference" }),
+        mkEntry({ statement: "Lume 用 Markdown", kind: "fact" })
+      ],
+      providerFactory: fake
+    });
+    expect(captured).toContain("[preference]");
+    expect(captured).toContain("用 TypeScript");
+    expect(captured).toContain("[fact]");
+    expect(captured).toContain("Lume 用 Markdown");
+  });
+
+  test("entry 含 claim 时附加到 prompt", async () => {
+    let captured = "";
+    const fake = async (prompt: string) => {
+      captured = prompt;
+      return "# x";
+    };
+    await generatePersona({
+      entries: [
+        mkEntry({
+          statement: "叫我 Alice",
+          kind: "preference",
+          claim: { subject: "user/self", predicate: "preferred_name", object: "Alice" }
+        })
+      ],
+      providerFactory: fake
+    });
+    expect(captured).toContain("preferred_name");
+    expect(captured).toContain("Alice");
+  });
+
+  test("entries 截断为 40 条", async () => {
+    let captured = "";
+    const fake = async (prompt: string) => {
+      captured = prompt;
+      return "# x";
+    };
+    const entries: MemoryV2Entry[] = [];
+    for (let i = 0; i < 60; i++) {
+      entries.push(mkEntry({ statement: `pref-${i}`, kind: "preference" }));
+    }
+    await generatePersona({ entries, providerFactory: fake });
+    expect(captured).toContain("pref-39");
+    expect(captured).not.toContain("pref-40");
+  });
+
+  test("剥离 markdown 围栏 + 定位首个 #", async () => {
+    const fake = async () =>
+      "```markdown\n# 用户画像\n## 一句话定位\n开发者\n```";
+    const md = await generatePersona({ entries: [], providerFactory: fake });
+    expect(md).toContain("# 用户画像");
+    expect(md).not.toContain("```");
+  });
+
+  test("LLM 前置噪声文本仍能定位首个 #", async () => {
+    const fake = async () => "好的，这是画像：\n```md\n# 用户画像\n## 一句话定位\n开发者\n```";
+    const md = await generatePersona({ entries: [], providerFactory: fake });
+    expect(md.startsWith("# 用户画像")).toBe(true);
+    expect(md).not.toContain("```");
+  });
+
+  test("provider 抛错 → 传播（caller 捕获）", async () => {
+    const fake = async () => {
+      throw new Error("network down");
+    };
+    await expect(
+      generatePersona({ entries: [], providerFactory: fake })
+    ).rejects.toThrow("network down");
   });
 });
