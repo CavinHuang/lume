@@ -187,7 +187,18 @@ const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
       width: z.number().int().positive().optional(),
       height: z.number().int().positive().optional(),
       deviceScaleFactor: z.number().finite().positive().optional()
-    }).strict().optional()
+    }).strict().optional(),
+    // Task 91：PR diff 评审字段（对齐 Codex resolved/thread/unread/author）。全可选，向后兼容。
+    reviewThreadId: z.string().max(256).optional(),
+    inReplyToId: z.string().max(256).optional(),
+    isResolved: z.boolean().optional(),
+    resolvedAt: z.string().max(64).optional(),
+    resolvedBy: z.enum(["user", "agent"]).optional(),
+    author: z.object({
+      kind: z.enum(["user", "agent"]),
+      name: z.string().max(256).optional()
+    }).strict().optional(),
+    readAt: z.string().max(64).optional()
   }).strict(),
   z.object({
     id: z.string().trim().min(1).max(256),

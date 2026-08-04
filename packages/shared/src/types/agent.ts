@@ -1005,6 +1005,14 @@ export interface AgentBrowserAnnotationAttachment {
     height?: number
     deviceScaleFactor?: number
   }
+  // Task 91：PR diff 评审模型字段（对齐 Codex resolved/thread/unread/author）。全可选，向后兼容。
+  reviewThreadId?: string                                // 线程组 id（同一锚点多条评论归属同一线程）
+  inReplyToId?: string                                   // 父评论 id（构成回复链）
+  isResolved?: boolean                                   // 该线程是否已解决
+  resolvedAt?: string                                    // 解决时间（ISO 8601）
+  resolvedBy?: 'user' | 'agent'                          // 解决者
+  author?: { kind: 'user' | 'agent'; name?: string }     // 评论作者
+  readAt?: string                                        // 已读时间（ISO 8601；undefined = 未读）
 }
 
 export interface BrowserAnnotationSessionSnapshot {

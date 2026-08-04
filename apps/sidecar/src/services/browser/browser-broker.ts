@@ -37,7 +37,7 @@ export class BrowserBroker {
     const id = backend === "iab" ? "lume-iab" : "lume-extension"
     const browserCapabilities = backend === "iab"
       ? (runtime?.capabilities ?? [{ id: "tabs", description: "In-app tab lifecycle" }, { id: "navigation", description: "Policy-checked navigation" }, { id: "locator-actions", description: "Constrained snapshot and locator actions" }, { id: "screenshot", description: "Screenshot evidence" }, { id: "guardedUpload", description: "Confirmed task-bound file-ref upload" }, { id: "agentDownload", description: "Confirmed quota-bound Agent downloads" }])
-        .filter((capability) => !["advancedCdp", "browserAuth", "pageAssets", "webmcp"].includes(capability.id))
+        .filter((capability) => !["advancedCdp", "browserAuth", "pageAssets"].includes(capability.id))
       : [{ id: "tabs", description: "Explicit external Chrome tab lifecycle" }, { id: "navigation", description: "Explicit external Chrome navigation" }, { id: "input", description: "Explicit external Chrome click and input control" }, { id: "locator", description: "Strict locator resolution and actionability" }, { id: "screenshot", description: "External Chrome screenshot evidence" }, { id: "visibility", description: "Show or hide the external Chrome window" }, { id: "viewport", description: "Set or reset the external Chrome viewport" }]
     const tabCapabilities = backend === "iab" && Array.isArray(runtime?.capabilities)
       ? [

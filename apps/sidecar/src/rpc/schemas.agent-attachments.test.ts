@@ -273,3 +273,123 @@ describe("agentSendInputSchema browserAttachments", () => {
     })).toThrow();
   });
 });
+
+// Task 91：浏览器批注 PR diff 评审字段（reviewThreadId/inReplyToId/isResolved/resolvedAt/resolvedBy/author/readAt）
+describe("agentSendInputSchema browser-annotation review fields", () => {
+  const validAnnotation = {
+    id: "annotation-1",
+    origin: "browser-annotation",
+    tab: { id: "browser-tab:1", origin: "browser-tab", tabId: "tab-1", title: "Example", url: "https://example.com/", generation: 1 },
+    anchor: { kind: "element", url: "https://example.com/", generation: 1, framePath: [], rect: { x: 0, y: 0, width: 1, height: 1 } },
+    body: "Review this"
+  };
+
+  const reviewFields = {
+    reviewThreadId: "thread-abc",
+    inReplyToId: "comment-parent",
+    isResolved: true,
+    resolvedAt: "2026-08-03T12:00:00.000Z",
+    resolvedBy: "user",
+    author: { kind: "user", name: "Alice" },
+    readAt: "2026-08-03T12:05:00.000Z"
+  };
+
+  test("accepts all seven optional review fields", () => {
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review this",
+      browserAttachments: [{ ...validAnnotation, ...reviewFields }]
+    });
+    expect(parsed.browserAttachments?.[0]).toMatchObject(reviewFields);
+  });
+
+  test("accepts agent-authored annotation with minimal author", () => {
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review this",
+      browserAttachments: [{ ...validAnnotation, author: { kind: "agent" }, isResolved: false }]
+    });
+    expect(parsed.browserAttachments?.[0]).toMatchObject({ author: { kind: "agent" }, isResolved: false });
+  });
+
+  test("accepts legacy payload without review fields (backward compat)", () => {
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review this",
+      browserAttachments: [validAnnotation]
+    });
+    expect(parsed.browserAttachments?.[0]).toMatchObject({ body: "Review this" });
+  });
+
+  test("rejects reviewThreadId exceeding 256 chars", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, reviewThreadId: "x".repeat(257) }]
+    })).toThrow();
+  });
+
+  test("rejects inReplyToId exceeding 256 chars", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, inReplyToId: "y".repeat(257) }]
+    })).toThrow();
+  });
+
+  test("rejects non-boolean isResolved", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, isResolved: "yes" }]
+    })).toThrow();
+  });
+
+  test("rejects resolvedAt exceeding 64 chars", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, resolvedAt: "z".repeat(65) }]
+    })).toThrow();
+  });
+
+  test("rejects readAt exceeding 64 chars", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, readAt: "z".repeat(65) }]
+    })).toThrow();
+  });
+
+  test("rejects resolvedBy outside user|agent enum", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, resolvedBy: "system" }]
+    })).toThrow();
+  });
+
+  test("rejects author.kind outside user|agent enum", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, author: { kind: "bot" } }]
+    })).toThrow();
+  });
+
+  test("rejects author.name exceeding 256 chars", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, author: { kind: "user", name: "n".repeat(257) } }]
+    })).toThrow();
+  });
+
+  test("rejects author with unexpected extra field (strict)", () => {
+    expect(() => agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: "review",
+      browserAttachments: [{ ...validAnnotation, author: { kind: "user", email: "a@b.c" } }]
+    })).toThrow();
+  });
+});
