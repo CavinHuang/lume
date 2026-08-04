@@ -18,7 +18,7 @@ export function buildAnchor(kind: 'element' | 'text' | 'region', rect: Rect, ele
 }
 
 export function locateAnchor(anchor: Record<string, unknown>, doc: Document, win: Window): Located | undefined {
-  if (typeof anchor.url !== 'string' || anchor.url !== topWindow(win).location.href) return undefined
+  if (typeof anchor.url !== 'string' || !urlsMatch(anchor.url, topWindow(win).location.href)) return undefined
   if (Array.isArray(anchor.framePath) && anchor.framePath.length > 0 && typeof anchor.frameUrl === 'string' && anchor.frameUrl !== win.location.href) return undefined
   let element: Element | null = null
   for (const query of [anchor.selector, anchor.domPath]) {
@@ -92,3 +92,15 @@ export function boundedOffset(value: unknown, node: Node): number { const max = 
 export function boundedText(value: unknown, max: number): string { return typeof value === 'string' ? value.trim().slice(0, max) : '' }
 export function cssEscape(value: string): string { return typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, '\\$&') }
 export function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value && typeof value === 'object' && !Array.isArray(value)) }
+
+// 语义 URL 比较：HTTP(S) 仅比较 origin+pathname+search，忽略 hash（对齐 Codex hs）。
+// 避免 SPA hash 路由/锚点跳转导致 marker 降级；非 HTTP(S) 退化为精确字符串比较。
+export function urlsMatch(a: string, b: string): boolean {
+  try {
+    const ua = new URL(a), ub = new URL(b)
+    if (ua.protocol === 'http:' || ua.protocol === 'https:') {
+      return ua.origin === ub.origin && ua.pathname === ub.pathname && ua.search === ub.search
+    }
+    return a === b
+  } catch { return a === b }
+}

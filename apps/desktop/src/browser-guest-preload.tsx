@@ -30,6 +30,30 @@ type GuestState = {
   activeDraft?: Record<string, unknown>
 }
 
+// 顶层 IPC 缓冲：did-navigate 在 DOMContentLoaded 之前触发，sync/restore 消息会在
+// bridge / GuestAnnotationRuntime 注册 listener 之前到达 → 永久丢失 → 导航回来注释消失。
+// preload 加载时立即注册 listener 缓冲早期 sync/restore；start() 一次性取出交付两个消费者。
+let pendingGuestMessage: unknown = null
+let guestBridgeReady = false
+
+ipcRenderer.on('lume:browser-annotation-guest', (_event, raw: unknown) => {
+  if (!raw || typeof raw !== 'object') return
+  const m = raw as Record<string, unknown>
+  if (m.type === 'close') { pendingGuestMessage = null; return }
+  if (m.type === 'sync' || m.type === 'restore') {
+    if (guestBridgeReady) return // bridge 已就绪，由消费者自身 listener 处理
+    pendingGuestMessage = raw
+  }
+})
+
+// start() 调用：取出缓冲消息并标记就绪（此后新消息直交消费者 listener）
+function takePendingGuestMessage(): unknown {
+  const msg = pendingGuestMessage
+  pendingGuestMessage = null
+  guestBridgeReady = true
+  return msg
+}
+
 const bootstrapUrl = window.location.href
 if (bootstrapUrl.startsWith('about:blank#lume-browser-mount=')) ipcRenderer.send('lume:browser-guest-mounted', bootstrapUrl)
 
@@ -37,8 +61,9 @@ if (bootstrapUrl.startsWith('about:blank#lume-browser-mount=')) ipcRenderer.send
 qe()
 
 const start = () => {
-  new GuestAnnotationRuntime().start()
-  startReactOverlay()
+  const pending = takePendingGuestMessage()
+  new GuestAnnotationRuntime().start(pending)
+  startReactOverlay(pending)
 }
 if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', start, { once: true })
 else start()
@@ -48,7 +73,7 @@ else start()
 // host 标记 data-lume-annotation-overlay；Task 102 已退役原生 DOM 渲染层，
 // 本 overlay 独占注释渲染（marker/preview/editor/interaction/hover/cursor），
 // GuestAnnotationRuntime 仅保留 IPC dispatch + syncFrames iframe 骨架。
-function startReactOverlay(): void {
+function startReactOverlay(pendingMessage?: unknown): void {
   if (document.querySelector('div[data-lume-annotation-overlay]')) return
   const host = document.createElement('div')
   host.setAttribute('data-lume-annotation-overlay', '')
@@ -58,7 +83,7 @@ function startReactOverlay(): void {
   style.textContent = overlayStyles
   shadow.append(style)
   document.documentElement.append(host)
-  const bridge = createGuestBridge()
+  const bridge = createGuestBridge(pendingMessage)
   createRoot(shadow).render(<AnnotationOverlay bridge={bridge} host={host} />)
 }
 
@@ -114,11 +139,13 @@ class GuestAnnotationRuntime {
   private top: AnnotationDocumentRuntime | null = null
   private frameRefreshTimer = 0
 
-  start(): void {
+  start(pendingMessage?: unknown): void {
     if (this.top) return
     this.top = new AnnotationDocumentRuntime(document, window, [])
     this.top.start()
     ipcRenderer.on('lume:browser-annotation-guest', (_event, raw: unknown) => this.receive(raw))
+    // 交付 preload 顶层缓冲的早期 sync/restore（did-navigate 早于 DOMContentLoaded）
+    if (pendingMessage !== undefined && pendingMessage !== null) this.receive(pendingMessage)
     const refresh = () => {
       if (this.frameRefreshTimer) return
       this.frameRefreshTimer = window.setTimeout(() => { this.frameRefreshTimer = 0; this.top?.syncFrames() }, 50)

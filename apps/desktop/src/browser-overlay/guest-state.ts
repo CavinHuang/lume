@@ -52,13 +52,16 @@ export function sanitizeSync(raw: unknown): GuestState | null {
   }
 }
 
-// 封装 ipcRenderer：监听 lume:browser-annotation-guest，清洗后通知 listener；提供 send 回发主进程
-export function createGuestBridge(initialListener?: (state: GuestState | null) => void): GuestBridge {
+// 封装 ipcRenderer：监听 lume:browser-annotation-guest，清洗后通知 listener；提供 send 回发主进程。
+// pendingMessage：preload 顶层缓冲的早期 sync/restore（did-navigate 早于 DOMContentLoaded），
+// 创建时同步交付 handler，使 bridge 在 React 订阅前即持有正确状态。
+export function createGuestBridge(pendingMessage?: unknown, initialListener?: (state: GuestState | null) => void): GuestBridge {
   let state: GuestState | null = null
   const listeners = new Set<(state: GuestState | null) => void>()
   if (initialListener) listeners.add(initialListener)
 
-  const handler = (_e: Electron.IpcRendererEvent, raw: unknown): void => {
+  // 消息处理（与 IPC handler 共用）：close 清空，sync/restore 清洗后应用
+  const processMessage = (raw: unknown): void => {
     if (!raw || typeof raw !== 'object') return
     const m = raw as Record<string, unknown>
     if (m.type === 'close') { state = null; listeners.forEach((l) => l(null)); return }
@@ -67,7 +70,10 @@ export function createGuestBridge(initialListener?: (state: GuestState | null) =
     state = next
     listeners.forEach((l) => l(next))
   }
+  const handler = (_e: Electron.IpcRendererEvent, raw: unknown): void => processMessage(raw)
   ipcRenderer.on('lume:browser-annotation-guest', handler)
+  // 交付 preload 顶层缓冲的早期 sync/restore（did-navigate 早于 DOMContentLoaded）
+  if (pendingMessage !== undefined && pendingMessage !== null) processMessage(pendingMessage)
 
   return {
     getState: () => state,

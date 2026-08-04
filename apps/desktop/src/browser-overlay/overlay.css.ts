@@ -9,6 +9,7 @@ export const overlayStyles = `
 .marker-label{color:#fff;font-weight:700}
 .saved-marker{width:var(--browser-sidebar-saved-marker-size);height:var(--browser-sidebar-saved-marker-size)}
 .draft-marker{width:var(--browser-sidebar-draft-marker-size);height:var(--browser-sidebar-draft-marker-size);border-style:dashed}
+.annotation-box{position:fixed;border:2px solid var(--annotation-accent);border-radius:3px;background:color-mix(in srgb,var(--annotation-accent) 9%,transparent);box-shadow:0 0 0 1px #fff6 inset;pointer-events:none}
 .interaction-layer{position:fixed;inset:0;z-index:1;pointer-events:none}
 .selection{position:fixed;border:2px solid var(--annotation-accent);border-radius:3px;background:color-mix(in srgb,var(--annotation-accent) 9%,transparent);box-shadow:0 0 0 1px #fff6 inset;pointer-events:none}
 .cursor-badge{position:fixed;display:flex;width:28px;height:28px;align-items:center;justify-content:center;border:2px solid #fff;border-radius:999px;background:var(--annotation-accent);color:#fff;box-shadow:0 5px 15px #0004;pointer-events:none}
