@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { AgentMessageQueueSnapshot } from '@lume/shared'
 import {
+  applyOrderByIds,
   createEmptyAgentMessageQueueSnapshot,
   reorderQueuedMessages,
   startEditingQueuedMessage,
@@ -88,5 +89,34 @@ describe('agent message queue state', () => {
 
   test('returns null when starting edit for a missing queued message', () => {
     expect(startEditingQueuedMessage(createSnapshot(), 'missing')).toBeNull()
+  })
+})
+
+describe('applyOrderByIds', () => {
+  const snap = (items: Array<{ id: string; internal?: boolean }>): AgentMessageQueueSnapshot => ({
+    threadId: 't1', revision: 1,
+    queuedMessages: items.map((it) => ({ id: it.id, threadId: 't1', text: '', createdAt: 1, revision: 0, status: 'queued', internal: it.internal } as never)),
+    pendingGuidance: [],
+  })
+
+  test('按 orderedIds 重排 visible 项', () => {
+    const out = applyOrderByIds(snap([{ id: 'a' }, { id: 'b' }, { id: 'c' }]), ['c', 'a', 'b'])
+    expect(out.queuedMessages.map((m) => m.id)).toEqual(['c', 'a', 'b'])
+  })
+
+  test('保留 internal 项原相对位置', () => {
+    const out = applyOrderByIds(snap([{ id: 'a' }, { id: 'i1', internal: true }, { id: 'b' }]), ['b', 'a'])
+    expect(out.queuedMessages.map((m) => m.id)).toEqual(['b', 'i1', 'a'])
+  })
+
+  test('orderedIds 不变时返回等价顺序', () => {
+    const s = snap([{ id: 'a' }, { id: 'b' }])
+    const out = applyOrderByIds(s, ['a', 'b'])
+    expect(out.queuedMessages.map((m) => m.id)).toEqual(['a', 'b'])
+  })
+
+  test('未知 id 安全忽略', () => {
+    const out = applyOrderByIds(snap([{ id: 'a' }, { id: 'b' }]), ['a', 'x', 'b'])
+    expect(out.queuedMessages.map((m) => m.id)).toEqual(['a', 'b'])
   })
 })

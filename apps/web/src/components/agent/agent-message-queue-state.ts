@@ -44,6 +44,28 @@ export function reorderQueuedMessages(
   }
 }
 
+/**
+ * 按 orderedIds 重排 queuedMessages 中的 visible(非 internal)项;
+ * internal 项保留原相对位置。orderedIds 中不存在于快照的 id 被忽略。
+ * 供 @dnd-kit onDragEnd 产出新顺序后做乐观更新。
+ */
+export function applyOrderByIds(
+  snapshot: AgentMessageQueueSnapshot,
+  orderedIds: string[],
+): AgentMessageQueueSnapshot {
+  const orderedSet = new Set(orderedIds)
+  const byId = new Map(snapshot.queuedMessages.map((m) => [m.id, m]))
+  let visIdx = 0
+  const queuedMessages = snapshot.queuedMessages.map((m) => {
+    if (!orderedSet.has(m.id)) return m // internal 或未参与拖拽：原位
+    const next = byId.get(orderedIds[visIdx])
+    visIdx += 1
+    return next ?? m
+  })
+  if (queuedMessages.every((m, i) => m.id === snapshot.queuedMessages[i]?.id)) return snapshot
+  return { ...snapshot, queuedMessages }
+}
+
 export function startEditingQueuedMessage(
   snapshot: AgentMessageQueueSnapshot,
   queuedMessageId: string,
