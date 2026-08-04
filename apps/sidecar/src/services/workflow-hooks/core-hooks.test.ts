@@ -17,6 +17,7 @@ function createContext(
       },
       security: { evaluatePermissionDecision: async () => ({}) },
       suggestion: { evaluateSessionSuggestions: async () => {} },
+      persona: { ensurePersona: async () => {} },
       runtimeEvents: { buildDiagnosticEvent: (input) => ({ type: "workflow_hook.diagnostic", ...input }) },
       trace: { buildHookTrace: (input) => ({ type: "workflow_hook", ...input }) },
       clock: { now: () => new Date("2026-05-26T00:00:00.000Z") },
@@ -37,6 +38,7 @@ describe("core workflow hooks", () => {
     expect(contributions.map((item) => item.id)).toEqual([
       "core.plugin.skill-activation",
       "core.suggestion.completion",
+      "core.persona.completion",
       "core.security.permission",
     ]);
   });

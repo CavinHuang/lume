@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { smartAddMemoryV2Candidate } from "./smart-add";
 import { buildMemoryV2UserMessageContext, buildMemoryUserMessagePrefix, stripMemoryUserMessagePrefix } from "./user-message-prefix";
 import { createMemoryV2Store } from "./markdown-store";
+import { writePersona } from "./persona";
 import type { MemoryV2RecallItem } from "./types";
 
 let root: string;
@@ -465,5 +466,75 @@ describe("memory-v2 user message prefix", () => {
 
     expect(context.userMessageForModel).toContain("<user_voice>");
     expect(context.userMessageForModel).toContain("用户写作时偏好短句、少用感叹号");
+  });
+
+  test("persona present → renders <persona_profile> after <user_profile> with summary/prefs/rules", () => {
+    writePersona("workspace", "demo",
+      "# 用户画像\n" +
+      "## 一句话定位\n独立开发者\n" +
+      "## 长期偏好\n- 用 TypeScript\n- 简洁代码\n- 测试先行\n" +
+      "## 交互协议\n- 不要用 var\n- 回复用中文\n" +
+      "## 演进轨迹\n- 2026-08 偏好 TS");
+
+    // 加入一个会进入 <user_profile> 的 profile 项以验证段顺序
+    const prefix = buildMemoryUserMessagePrefix([{
+      ...recallItem,
+      id: "mem_profile",
+      statement: "用户希望被称呼为 Alice"
+    }], { workspaceSlug: "demo" });
+
+    const section = prefix.match(/<persona_profile>[\s\S]*?<\/persona_profile>/)?.[0] ?? "";
+    expect(section).toContain("独立开发者");
+    expect(section).toContain("- 用 TypeScript");
+    expect(section).toContain("- 简洁代码");
+    expect(section).toContain("- 不要用 var");
+    // persona_profile 位于 user_profile 之后
+    const userProfileIdx = prefix.indexOf("<user_profile>");
+    const personaProfileIdx = prefix.indexOf("  <persona_profile>");
+    expect(userProfileIdx).toBeGreaterThan(-1);
+    expect(personaProfileIdx).toBeGreaterThan(userProfileIdx);
+    // 头部指令含 persona_profile 规则
+    expect(prefix).toContain("Treat <persona_profile> as a synthesized overview");
+    // 演进轨迹不应注入（仅 summary + preferences + interactionRules）
+    expect(section).not.toContain("2026-08 偏好 TS");
+  });
+
+  test("persona absent → <persona_profile> section omitted (no empty tags)", () => {
+    const prefix = buildMemoryUserMessagePrefix([recallItem], { workspaceSlug: "demo" });
+    expect(prefix).not.toContain("  <persona_profile>");
+    expect(prefix).not.toContain("</persona_profile>");
+  });
+
+  test("persona with only empty fields → section omitted", () => {
+    writePersona("workspace", "demo", "# 用户画像\n（无内容）");
+    const prefix = buildMemoryUserMessagePrefix([recallItem], { workspaceSlug: "demo" });
+    expect(prefix).not.toContain("  <persona_profile>");
+    expect(prefix).not.toContain("</persona_profile>");
+  });
+
+  test("persona section renders even when no memory items exist", () => {
+    writePersona("global", undefined,
+      "# 用户画像\n## 一句话定位\n仅 persona 存在\n## 长期偏好\n- 偏好简洁");
+
+    const prefix = buildMemoryUserMessagePrefix([], {});
+    expect(prefix).toContain("  <persona_profile>");
+    expect(prefix).toContain("仅 persona 存在");
+    expect(prefix).toContain("- 偏好简洁");
+  });
+
+  test("persona preferences truncated to 5 and interactionRules to 3", () => {
+    const prefs = Array.from({ length: 7 }, (_, i) => `- 偏好${i}`).join("\n");
+    const rules = Array.from({ length: 5 }, (_, i) => `- 规则${i}`).join("\n");
+    writePersona("workspace", "demo",
+      `# 用户画像\n## 一句话定位\n开发者\n## 长期偏好\n${prefs}\n## 交互协议\n${rules}`);
+
+    const prefix = buildMemoryUserMessagePrefix([recallItem], { workspaceSlug: "demo" });
+    const section = prefix.match(/<persona_profile>[\s\S]*?<\/persona_profile>/)?.[0] ?? "";
+    expect(section).toContain("偏好0");
+    expect(section).toContain("偏好4");
+    expect(section).not.toContain("偏好5");
+    expect(section).toContain("规则0");
+    expect(section).toContain("规则2");
+    expect(section).not.toContain("规则3");
   });
 });

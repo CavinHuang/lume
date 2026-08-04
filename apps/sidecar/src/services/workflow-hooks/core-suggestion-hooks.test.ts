@@ -16,6 +16,7 @@ function createContext(
       },
       security: { evaluatePermissionDecision: async () => ({}) },
       suggestion,
+      persona: { ensurePersona: async () => {} },
       runtimeEvents: { buildDiagnosticEvent: (input) => ({ type: "workflow_hook.diagnostic", ...input }) },
       trace: { buildHookTrace: (input) => ({ type: "workflow_hook", ...input }) },
       clock: { now: () => new Date("2026-08-03T00:00:00.000Z") }

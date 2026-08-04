@@ -90,6 +90,9 @@ function createNoopHookContext(): LumeWorkflowHookHandlerContext {
       suggestion: {
         evaluateSessionSuggestions: async () => {}
       },
+      persona: {
+        ensurePersona: async () => {}
+      },
       runtimeEvents: {
         buildDiagnosticEvent: (input) => ({
           type: "workflow_hook.diagnostic",
