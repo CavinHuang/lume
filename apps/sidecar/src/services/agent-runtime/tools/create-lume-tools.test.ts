@@ -106,6 +106,13 @@ describe("create-lume-tools", () => {
     expect(result.availableToolNames).toContain("send_im_message");
   });
 
+  test("includes the suggestion_analyze builtin tool for runtime threads", () => {
+    const result = createLumeRuntimeTools(baseInput());
+
+    expect(result.customTools.map((tool) => tool.name)).toContain("suggestion_analyze");
+    expect(result.availableToolNames).toContain("suggestion_analyze");
+  });
+
   test("includes Alice-style WeRead reading workflow tools", () => {
     const result = createLumeRuntimeTools(baseInput());
     const toolNames = result.customTools.map((tool) => tool.name);

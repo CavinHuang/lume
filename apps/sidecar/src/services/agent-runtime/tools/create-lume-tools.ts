@@ -26,6 +26,7 @@ import { createWikiProposalTool, createWikiReadTools } from "./wiki/create-wiki-
 import { resolveTrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import type { TrustedWikiRuntimeProfile } from "../../wiki/runtime-profile";
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
+import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
 
 const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
@@ -146,6 +147,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const routineTools = createRoutineTools({
     workspaceId: input.workspaceId,
   });
+  const suggestionTools = createSuggestionTools();
   const imageGenTools = createImageGenTools({
     threadId: input.threadId,
     workspaceSlug: input.workspaceSlug,
@@ -209,6 +211,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...uiTools,
     ...officeTools,
     ...routineTools,
+    ...suggestionTools,
     ...imageGenTools,
     ...nodeReplTools,
     ...ordinaryWikiTools,
