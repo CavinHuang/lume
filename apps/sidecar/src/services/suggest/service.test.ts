@@ -63,6 +63,7 @@ const spies = {
   smartAdd: mock(async (_input: { workspaceSlug?: string; candidate: object }) => ({
     action: "added",
   })),
+  ensurePersona: mock(async (_input: { workspaceSlug?: string }) => {}),
   broadcaster: mock(() => {}),
 };
 
@@ -120,6 +121,10 @@ mock.module("../memory-v2/smart-add", () => ({
   smartAddMemoryV2Candidate: spies.smartAdd,
 }));
 
+mock.module("../memory-v2/persona", () => ({
+  ensurePersona: spies.ensurePersona,
+}));
+
 mock.module("../infra/logger", () => ({
   createLogger: () => ({
     trace: () => {},
@@ -152,6 +157,7 @@ function resetState(): void {
   spies.recordFeedback.mockClear();
   spies.createAutomationJob.mockClear();
   spies.smartAdd.mockClear();
+  spies.ensurePersona.mockClear();
   spies.broadcaster.mockClear();
 }
 
@@ -301,6 +307,50 @@ describe("handleSuggestionFeedback", () => {
     });
     await expect(handleSuggestionFeedback(5, "accepted")).resolves.toBeUndefined();
     spies.smartAdd.mockImplementation(async () => ({ action: "added" }));
+  });
+
+  test("accepted + memory_correction → ensurePersona 回流（fire-and-forget）", async () => {
+    state.records = [
+      { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
+    ];
+    await handleSuggestionFeedback(5, "accepted");
+    expect(spies.ensurePersona).toHaveBeenCalledTimes(1);
+    expect(spies.ensurePersona).toHaveBeenCalledWith({ workspaceSlug: "ws" });
+  });
+
+  test("ignored → ensurePersona 不回流", async () => {
+    state.records = [
+      { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
+    ];
+    await handleSuggestionFeedback(5, "ignored");
+    expect(spies.ensurePersona).not.toHaveBeenCalled();
+  });
+
+  test("never → ensurePersona 不回流", async () => {
+    state.records = [
+      { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
+    ];
+    await handleSuggestionFeedback(5, "never");
+    expect(spies.ensurePersona).not.toHaveBeenCalled();
+  });
+
+  test("accepted + open_automation_create → ensurePersona 不回流（仅 memory_correction 回流）", async () => {
+    state.records = [
+      { ...automationCandidate, id: 7, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
+    ];
+    await handleSuggestionFeedback(7, "accepted");
+    expect(spies.ensurePersona).not.toHaveBeenCalled();
+  });
+
+  test("ensurePersona 抛错 → fail-open（不阻塞反馈流）", async () => {
+    state.records = [
+      { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
+    ];
+    spies.ensurePersona.mockImplementation(async () => {
+      throw new Error("persona boom");
+    });
+    await expect(handleSuggestionFeedback(5, "accepted")).resolves.toBeUndefined();
+    spies.ensurePersona.mockImplementation(async () => {});
   });
 });
 
