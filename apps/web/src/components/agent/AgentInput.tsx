@@ -82,8 +82,8 @@ import {
 } from './agent-input-state'
 import { AgentMessageQueueList } from './AgentMessageQueueList'
 import {
+  applyOrderByIds,
   createEmptyAgentMessageQueueSnapshot,
-  reorderQueuedMessages,
   startEditingQueuedMessage,
   upsertAgentMessageQueueSnapshot,
 } from './agent-message-queue-state'
@@ -1507,14 +1507,14 @@ export function AgentInput({
     }
   }
 
-  const handleQueueReorder = useCallback((draggedId: string, targetId: string, placement: 'before' | 'after') => {
+  const handleQueueReorder = useCallback((orderedIds: string[]) => {
     const previousSnapshot = messageQueueSnapshot
-    const optimisticSnapshot = reorderQueuedMessages(previousSnapshot, draggedId, targetId, placement)
+    const optimisticSnapshot = applyOrderByIds(previousSnapshot, orderedIds)
     if (optimisticSnapshot === previousSnapshot) return
     setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, optimisticSnapshot))
     reorderAgentMessageQueue({
       threadId,
-      orderedMessageIds: optimisticSnapshot.queuedMessages.map((item) => item.id),
+      orderedMessageIds: orderedIds,
       expectedRevision: previousSnapshot.revision,
       queueOperationId: crypto.randomUUID(),
     })
