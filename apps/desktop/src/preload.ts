@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
+// 注入平台类到 <html>，供岛屿 CSS 键控形态（mac 圆角 vs 默认浮动矩形）。
+// renderer 无 Node 访问，preload 才能读到 process.platform。仅影响 island CSS，全局注入无副作用。
+if (typeof document !== 'undefined' && typeof process !== 'undefined' && process.platform) {
+  document.documentElement.classList.add(process.platform)
+}
+
 const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'healthcheck',
   'sidecar_healthcheck',
