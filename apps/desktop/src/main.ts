@@ -117,6 +117,7 @@ import {
   writeChromeNativeHostRegistration,
 } from './plugin-native-host-installer'
 import { loadOrCreateDesktopContextKey } from './desktop-context-key'
+import { AgentIslandService } from './agent-island-service'
 import {
   autoUnlockConnectionVault,
   getConnectionVaultStatus,
@@ -226,6 +227,8 @@ let windowBehavior = {
 let quickInputWindow = null
 // Agent 灵动岛悬浮窗：由 ensureIslandWindow() 按需创建，destroyIslandWindow() 销毁。
 let islandWindow: BrowserWindow | null = null
+// Agent 灵动岛 service（Task 6）：lazy 构造于 getAgentIslandService()；onNotification/start/quit 接线在 Task 7。
+let agentIslandService: AgentIslandService | null = null
 let actionHudWindow = null
 let actionHudHideTimer: ReturnType<typeof setTimeout> | null = null
 let actionHudGeneration = 0
@@ -1307,6 +1310,46 @@ export function ensureIslandWindow() {
 export function destroyIslandWindow() {
   if (islandWindow && !islandWindow.isDestroyed()) islandWindow.destroy()
   islandWindow = null
+}
+
+/**
+ * Lazy 构造 Agent 灵动岛 service（Task 6）。onNotification 路由、whenReady 启动、will-quit 销毁
+ * 在 Task 7 接线；此处仅保证 `agentIslandService` 符号存在，让 dispatchCommand 的
+ * `agent_island_intent` 处理与 tsc 通过。
+ */
+function getAgentIslandService(): AgentIslandService {
+  if (!agentIslandService) {
+    agentIslandService = new AgentIslandService({
+      isEnabled: () => {
+        const s = getSettingsBroker().read()
+        const enabled = (s.generalSettings as { agentIsland?: { enabled?: boolean } } | undefined)
+          ?.agentIsland?.enabled
+        return enabled !== false
+      },
+      getIslandWindow: () => islandWindow,
+      ensureIslandWindow: () => ensureIslandWindow(),
+      callSidecar: <T,>(method: string, params?: unknown) => sidecarHost.call(method, params ?? null) as Promise<T>,
+      openMain: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show()
+          mainWindow.focus()
+        }
+      },
+      // 复用 tray 的导航路径（showMainWindowThenSend({action:'open-thread',threadId})）。
+      openSession: (threadId) => {
+        showMainWindowThenSend({ action: 'open-thread', threadId }).catch((error) => {
+          writeMainLog(
+            'warn',
+            'desktop.agent_island',
+            'agent_island.open_session_failed',
+            'agent island open-session failed',
+            { data: { error } },
+          )
+        })
+      },
+    })
+  }
+  return agentIslandService
 }
 
 async function toggleQuickInput() {
