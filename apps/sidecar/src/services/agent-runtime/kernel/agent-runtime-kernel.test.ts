@@ -19,6 +19,33 @@ async function waitFor(condition: () => boolean): Promise<void> {
 }
 
 describe("AgentRuntimeKernel", () => {
+  test("cancelActive 应立即中止当前 dispatch 的共享信号", async () => {
+    let aborted = false;
+    const errors: string[] = [];
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      execute: async (dispatch) => {
+        await new Promise<void>((resolve) => {
+          dispatch.abortSignal?.addEventListener("abort", () => {
+            aborted = true;
+            resolve();
+          }, { once: true });
+        });
+      },
+      onDispatchError: (_dispatch, error) => {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    });
+
+    kernel.dispatch({ threadId: "thread-a", userMessage: "run" }, { onError: () => undefined });
+
+    expect(kernel.cancelActive("thread-a")).toBeTrue();
+    await kernel.waitForIdleForTest();
+
+    expect(aborted).toBeTrue();
+    expect(errors).toEqual([]);
+    expect(kernel.cancelActive("thread-a")).toBeFalse();
+  });
+
   test("同一 thread 的 dispatch 应串行执行并报告 queuedCount", async () => {
     const started: string[] = [];
     const queuedCounts: number[] = [];

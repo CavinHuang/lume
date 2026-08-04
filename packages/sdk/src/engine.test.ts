@@ -77,6 +77,45 @@ function wait(ms: number): Promise<null> {
   return new Promise((resolve) => setTimeout(() => resolve(null), ms))
 }
 
+describe("QueryEngine cancellation", () => {
+  test("propagates aborts from an active tool instead of continuing the turn", async () => {
+    const controller = new AbortController()
+    const started = deferred<void>()
+    const provider = new StaticProvider([{
+      content: [{ type: "tool_use", id: "tool-1", name: "Wait", input: {} }],
+      stopReason: "tool_use",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Wait",
+        description: "wait",
+        inputSchema: { type: "object", properties: {} },
+        async call(_input, context) {
+          started.resolve(undefined)
+          return new Promise<never>((_resolve, reject) => {
+            context.abortSignal?.addEventListener("abort", () => reject(new Error("tool aborted")), { once: true })
+          })
+        },
+      }],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      abortSignal: controller.signal,
+    })
+
+    const running = collectEvents(engine)
+    await started.promise
+    controller.abort()
+
+    await expect(running).rejects.toThrow("aborted")
+    expect(provider.requests).toHaveLength(1)
+  })
+})
+
 describe("QueryEngine turn limits", () => {
   test("executes a persisted approved tool exactly once before the resumed model request", async () => {
     let calls = 0

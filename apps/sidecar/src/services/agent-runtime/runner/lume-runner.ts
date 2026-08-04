@@ -287,13 +287,25 @@ export class LumeRunner {
     const { input, runtime } = params;
     const { agent, session } = runtimeSession;
     const askUserAbortController = new AbortController();
+    let abortPromise: Promise<void> | undefined;
+    const abortRuntime = () => {
+      abortPromise ??= (async () => {
+        askUserAbortController.abort();
+        await agent.interrupt();
+      })();
+      return abortPromise;
+    };
+    const onParentAbort = () => {
+      void abortRuntime().catch(() => undefined);
+    };
 
-    options.registerAbort(runtime.sessionId, async () => {
-      askUserAbortController.abort();
-      await agent.interrupt();
-    });
+    options.registerAbort(runtime.sessionId, abortRuntime);
+    runtime.abortSignal?.addEventListener("abort", onParentAbort, { once: true });
 
     try {
+      if (runtime.abortSignal?.aborted) {
+        await abortRuntime();
+      }
       setQuestionHandler((async (request: {
         questions: AgentAskUserQuestionQuestion[];
         answers?: Record<string, string>;
@@ -324,6 +336,7 @@ export class LumeRunner {
         permissionMode: normalizeRuntimeCoreQueryPermissionMode(input.permissionMode),
         includePartialMessages: true,
         sandbox: sandbox ?? createWikiProtectedSandbox(),
+        ...(runtime.abortSignal ? { abortSignal: runtime.abortSignal } : {}),
         ...(maxTurns === undefined ? {} : { maxTurns })
       });
 
@@ -360,6 +373,7 @@ export class LumeRunner {
     } finally {
       clearQuestionHandler();
       askUserAbortController.abort();
+      runtime.abortSignal?.removeEventListener("abort", onParentAbort);
       await session.dispose();
       options.unregisterAbort(runtime.sessionId);
     }
@@ -373,6 +387,7 @@ export class LumeRunner {
     createRuntimeSession = createRuntimeCoreSession
   }: PreparedRuntimeCoreRunInput): Promise<AgentRuntimeRunResult> {
     const { input, runtime } = params;
+    if (runtime.abortSignal?.aborted) return this.abort();
     const wikiCapability = await resolveWikiRuntimeCapability({
       threadId: runtime.sessionId,
       cwd: prepared.agentCwd,
@@ -384,6 +399,7 @@ export class LumeRunner {
       threadType: runtime.threadType,
       chatType: input.chatType
     });
+    if (runtime.abortSignal?.aborted) return this.abort();
     const runtimeSession = await createRuntimeSession({
       lumeSessionId: runtime.sessionId,
       cwd: prepared.agentCwd,

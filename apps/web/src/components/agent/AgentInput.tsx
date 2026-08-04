@@ -1488,10 +1488,12 @@ export function AgentInput({
   }, [threadId])
 
   const handleStop = async () => {
+    setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
     try {
       await sidecarCall(AGENT_IPC_CHANNELS.STOP_THREAD, { threadId })
     } catch (error) {
       console.error('[AgentInput] 停止失败:', error)
+      setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
       toast.error('停止失败，请重试')
     }
   }

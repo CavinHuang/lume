@@ -1436,9 +1436,7 @@ describe("stopAgent cascade (D6)", () => {
       status: "completed"
     });
 
-    stopAgent(parent.id);
-    // 给异步 stopAgentRuntime 一点时间
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await stopAgent(parent.id);
 
     const running = getSubagentRunRegistry().get("r-cascade-1");
     const accepted = getSubagentRunRegistry().get("r-cascade-accepted");

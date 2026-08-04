@@ -90,8 +90,7 @@ async function stopAndDrainThreads(threadIds: string[], timeoutMs = DEFAULT_DRAI
   const { stopAgent } = await import("./agent-service");
   const runtime = await import("../agent-runtime/runtime-core/attempt");
   for (const threadId of threadIds) {
-    stopAgent(threadId);
-    await runtime.stopAgentRuntime(threadId).catch(() => false);
+    await stopAgent(threadId);
   }
 
   const startedAt = Date.now();

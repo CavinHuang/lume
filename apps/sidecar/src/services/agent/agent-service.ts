@@ -246,7 +246,9 @@ const agentRuntimeKernel = new AgentRuntimeKernel<AgentSendInput, AgentStreamEmi
   validateQueued: validateQueuedAgentDispatch,
   execute: async (dispatch) => {
     try {
-      await sendAgentMessage(dispatch.input, dispatch.emit);
+      await sendAgentMessage(dispatch.input, dispatch.emit, {
+        ...(dispatch.abortSignal ? { abortSignal: dispatch.abortSignal } : {})
+      });
     } finally {
       restoreUnconsumedGuidanceToQueue(dispatch.input.threadId);
     }
@@ -870,10 +872,16 @@ function projectAssistantMessageFromSdkMessages(input: {
 export async function sendAgentMessage(
   input: AgentSendInput,
   emit: AgentStreamEmitter,
-  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean } = {}
+  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal } = {}
 ): Promise<void> {
   const { threadId, userMessage } = input;
   streamEmitters.set(threadId, emit);
+  const completeIfAborted = () => {
+    if (!options.abortSignal?.aborted) return false;
+    emit.onComplete();
+    return true;
+  };
+  if (completeIfAborted()) return;
   const messageHistoryBeforeSend = getAgentThreadMessages(threadId);
   const assistantTurnCountBeforeSend = messageHistoryBeforeSend.filter((item) => item.role === "assistant").length;
   const threadMeta = getAgentThreadMeta(threadId);
@@ -886,6 +894,7 @@ export async function sendAgentMessage(
   registerPlanningTodoReferences(input.trustedPlanningClientSubmissionId, normalizedUserMessage.parts);
   const isManualCompactCommand = input.messageMetadata?.manualCommand === "compact";
   let modelFacingUserMessage = await resolveModelFacingUserMessage(threadId, normalizedUserMessage.modelMessage);
+  if (completeIfAborted()) return;
   if (!isManualCompactCommand && normalizedUserMessage.modelMessage.trim() === "/compact") {
     modelFacingUserMessage = `The user entered the literal text /compact without selecting the compact action. Respond to it as ordinary text.`;
   }
@@ -895,6 +904,7 @@ export async function sendAgentMessage(
     references: normalizedUserMessage.capabilityReferences,
     modelMessage: normalizedUserMessage.modelMessage,
   });
+  if (completeIfAborted()) return;
   const expectedFingerprints = input.messageMetadata?.capabilityFingerprints;
   if (
     Array.isArray(expectedFingerprints)
@@ -1073,6 +1083,7 @@ export async function sendAgentMessage(
         routeReason: routingTrace.reason,
         toolSelectionReason: "Coding 请求优先使用基础文件工具；仅在明确浏览器或桌面自动化需求时启用插件工具。"
       });
+      if (completeIfAborted()) return;
     }
     if (sourceMessageId) {
       replaceAgentThreadTranscript(threadId, getLatestVisibleMessagesForThread(threadId));
@@ -1152,6 +1163,7 @@ export async function sendAgentMessage(
     return;
   }
   const { runAgentRuntime } = await import("../agent-runtime/runtime-core/attempt");
+  if (completeIfAborted()) return;
   const fileReferenceBinding = createFileReferenceBinding(threadId);
   const configThinkingLevel = effectiveLumeConfig.agent?.thinkingLevel;
   const configPermissionMode = effectiveLumeConfig.agent?.permissionMode;
@@ -1178,7 +1190,8 @@ export async function sendAgentMessage(
       resolvedModelId,
       workspaceId: effectiveWorkspaceId,
       threadType: input.threadType,
-      fileReferenceBinding
+      fileReferenceBinding,
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {})
     }
   }, {
     onSdkMessage: (message) => {
@@ -1749,13 +1762,11 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
   };
 }
 
-export function stopAgent(threadId: string): void {
+export async function stopAgent(threadId: string): Promise<boolean> {
+  const dispatchStopped = agentRuntimeKernel.cancelActive(threadId);
   backgroundWakeController.clearThread(threadId);
   streamEmitters.delete(threadId);
   scheduledBackgroundWakes.delete(threadId);
-  void import("./subagents/subagent-coordinator")
-    .then((module) => module.getSubagentCoordinator().cancelByParentThread(threadId))
-    .catch(() => undefined);
   const sessionStateManager = getSessionStateManager();
   sessionStateManager.delete(threadId);
   getAgentRuntimeStatusManager().markIdle(threadId);
@@ -1764,13 +1775,19 @@ export function stopAgent(threadId: string): void {
   const activeChildren = registry.listActiveByParentSession(threadId);
   for (const child of activeChildren) {
     registry.update(child.runId, { status: "aborted" });
-    void import("../agent-runtime/runtime-core/attempt")
-      .then((module) => module.stopAgentRuntime(child.childThreadId))
-      .catch(() => undefined);
   }
-  void import("../agent-runtime/runtime-core/attempt")
-    .then((module) => module.stopAgentRuntime(threadId))
-    .catch(() => undefined);
+  const [runtime, subagents] = await Promise.all([
+    import("../agent-runtime/runtime-core/attempt"),
+    import("./subagents/subagent-coordinator")
+  ]);
+  const [stopped] = await Promise.all([
+    Promise.all([
+      runtime.stopAgentRuntime(threadId),
+      ...activeChildren.map((child) => runtime.stopAgentRuntime(child.childThreadId))
+    ]),
+    subagents.getSubagentCoordinator().cancelByParentThread(threadId)
+  ]);
+  return dispatchStopped || stopped.some(Boolean);
 }
 
 export function stopAllAgents(): void {

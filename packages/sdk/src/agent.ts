@@ -894,9 +894,18 @@ export class Agent {
     })
     this.registerExplicitSkills()
 
-    this.abortCtrl = opts.abortController || new AbortController()
+    const abortCtrl = opts.abortController || new AbortController()
+    this.abortCtrl = abortCtrl
     if (opts.abortSignal) {
-      opts.abortSignal.addEventListener('abort', () => this.abortCtrl?.abort(), { once: true })
+      if (opts.abortSignal.aborted) {
+        abortCtrl.abort(opts.abortSignal.reason)
+      } else {
+        opts.abortSignal.addEventListener(
+          'abort',
+          () => abortCtrl.abort(opts.abortSignal?.reason),
+          { once: true },
+        )
+      }
     }
 
     let systemPrompt: string | undefined

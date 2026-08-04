@@ -1810,11 +1810,11 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
       generateWelcomeSuggestions(params as AgentWelcomeSuggestionInput),
     [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
       const input = validateInput(agentThreadIdInputSchema, params, AGENT_IPC_CHANNELS.STOP_THREAD);
-      stopAgent(input.threadId);
+      const stopped = await stopAgent(input.threadId);
       if (context.planModePhaseTracker.getPhase(input.threadId) === "executing") {
         context.notifyPlanModePhaseChange(input.threadId, "awaiting_approval");
       }
-      return { ok: true };
+      return { ok: true, stopped };
     },
     [AGENT_IPC_CHANNELS.SUBMIT_ASK_USER_QUESTION]: async (params) => {
       const input = validateInput(

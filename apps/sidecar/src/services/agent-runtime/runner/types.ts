@@ -45,5 +45,6 @@ export interface AgentRuntimeRunParams {
     workspaceId?: string;
     threadType?: AgentSendInput["threadType"];
     fileReferenceBinding?: FileReferenceBinding;
+    abortSignal?: AbortSignal;
   };
 }
