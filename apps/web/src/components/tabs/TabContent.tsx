@@ -1,8 +1,9 @@
 import { useAtomValue, useSetAtom } from 'jotai'
-import { tabsAtom, activeTabIdAtom, clearTabDesktopContextTarget, setTabDesktopContextTarget } from '@/atoms'
+import { activeTabIdAtom, clearTabDesktopContextTarget, setTabDesktopContextTarget, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { AgentView } from '@/components/agent/AgentView'
 import { AutomationManagementView } from '@/components/automation/AutomationManagementView'
 import { LumeView } from '@/components/lume/LumeView'
+import { ProactiveHub } from '@/components/proactive/ProactiveHub'
 import { ReadingView } from '@/components/reading/ReadingView'
 import { SettingsView } from '@/components/settings/SettingsView'
 import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
@@ -14,7 +15,17 @@ export function TabContent() {
   const tabs = useAtomValue(tabsAtom)
   const setTabs = useSetAtom(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
   const activeTab = tabs.find((t) => t.id === activeTabId)
+
+  const openMemorySettings = () => {
+    setSettingsInitialTab('memory')
+    setTabs((previous) => previous.some((tab) => tab.id === '__settings__')
+      ? previous
+      : [...previous, { id: '__settings__', type: 'settings', title: '设置' }])
+    setActiveTabId('__settings__')
+  }
 
   if (!activeTab) {
     return (
@@ -69,6 +80,10 @@ export function TabContent() {
   }
 
   if (activeTab.type === 'todo') return <TodoView workspaceId={activeTab.workspaceId} todoId={activeTab.todoId} initialTitle={activeTab.todoPrefill} />
+
+  if (activeTab.type === 'proactive') {
+    return <ProactiveHub onOpenMemorySettings={openMemorySettings} />
+  }
 
   return null
 }

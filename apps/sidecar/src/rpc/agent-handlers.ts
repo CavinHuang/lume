@@ -53,6 +53,7 @@ import {
   prepareAgentDispatchInput,
   removeQueuedAgentMessage,
   reorderAgentMessageQueue,
+  retryQueuedAgentMessage,
   updateQueuedAgentMessage,
   stopAgent,
   submitAgentToolPermission,
@@ -228,6 +229,7 @@ import {
   agentListSubagentRunsInputSchema,
   agentMoveThreadInputSchema,
   agentQueuedMessageInputSchema,
+  agentRetryQueuedMessageInputSchema,
   agentRetireSubagentInputSchema,
   agentRecentThreadMessagesInputSchema,
   agentReorderMessageQueueInputSchema,
@@ -1987,6 +1989,14 @@ export function createAgentHandlers(context: AgentHandlersContext): Record<strin
         AGENT_IPC_CHANNELS.REMOVE_QUEUED_MESSAGE
       );
       return removeQueuedAgentMessage(input);
+    },
+    [AGENT_IPC_CHANNELS.RETRY_QUEUED_MESSAGE]: async (params) => {
+      const input = validateInput(
+        agentRetryQueuedMessageInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.RETRY_QUEUED_MESSAGE
+      );
+      return retryQueuedAgentMessage(input);
     },
     [AGENT_IPC_CHANNELS.GET_SUBMISSION_RECEIPT]: async (params) => {
       const input = validateInput(

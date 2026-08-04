@@ -17,13 +17,14 @@ import {
   promoteQueuedAgentMessageToGuidance,
   removeQueuedAgentMessage,
   reorderAgentMessageQueue,
+  retryQueuedAgentMessage,
   revokeBrowserReferenceGrant,
   sidecarCall,
   updateQueuedAgentMessage,
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { debounce } from 'throttle-debounce'
 import {
@@ -43,6 +44,7 @@ import {
   type LumeEffectiveConfig,
   type LumeConfigThinkingLevel,
   type LumeRuntimeEvent,
+  type AgentFollowUpMode,
   type AgentQueuedMessage,
   type BrowserTabDescriptor,
   type BrowserReferenceCandidate,
@@ -63,7 +65,7 @@ import { PermissionModePicker } from './PermissionModePicker'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
 import type { MentionListRef } from './MentionList'
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion'
-import { getEffectiveLumeConfig, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
+import { getEffectiveLumeConfig, updateAgentFollowUpQueueMode, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import type { PermissionModeValue } from '@/components/settings/agent-settings-state'
@@ -79,6 +81,7 @@ import {
   syncPermissionModeWithPlanModePhase,
 } from './agent-input-state'
 import { AgentMessageQueueList } from './AgentMessageQueueList'
+import { SuggestionBanner } from './SuggestionBanner'
 import {
   createEmptyAgentMessageQueueSnapshot,
   reorderQueuedMessages,
@@ -424,6 +427,7 @@ export function AgentInput({
   const threadPermissionModesRef = useRef(threadPermissionModes)
   const autoSelectedPlanModeRef = useRef(false)
   const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
+  const [followUpQueueMode, setFollowUpQueueMode] = useState<AgentFollowUpMode>('queue')
   const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
   const [channels, setChannels] = useState<Channel[]>([])
   const [channelsLoaded, setChannelsLoaded] = useState(false)
@@ -611,6 +615,8 @@ export function AgentInput({
     workspaces,
   }), [currentWorkspaceId, thread?.workspaceId, workspaces])
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
+  const queueInterrupted = useAtomValue(agentQueueInterruptedFamily(threadId)) ?? false
+  const setQueueInterruptedStates = useSetAtom(agentQueueInterruptedAtom)
   const desktopContextView = resolveAgentInputDesktopContextView({
     propTarget: desktopContextTarget,
     capturedTarget: capturedDesktopContextTarget,
@@ -666,6 +672,7 @@ export function AgentInput({
     if (config.agent?.thinkingLevel) {
       setThinkingLevel(config.agent.thinkingLevel)
     }
+    setFollowUpQueueMode(config.agent?.followUpQueueMode ?? 'queue')
     setDefaultStrategy(config.models?.agent ?? {})
   }, [planModePhase?.phase, threadId])
 
@@ -1019,6 +1026,7 @@ export function AgentInput({
     hasText: hasComposerPayload,
     streaming,
     localSending,
+    followUpMode: followUpQueueMode,
   })
   const composerState = deriveLumeComposerState({
     hasText: hasComposerPayload,
@@ -1331,6 +1339,7 @@ export function AgentInput({
             clientSubmissionId,
             ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref') ? { messageParts: serialized.messageParts } : {}),
             thinkingLevel,
+            followUpQueueMode,
             permissionMode,
             ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
             ...(effectiveCommentAttachments.length > 0 ? { commentAttachments: effectiveCommentAttachments } : {}),
@@ -1373,6 +1382,7 @@ export function AgentInput({
         setLocalSending(false)
       }
       if (result.mode === 'sent') {
+        setQueueInterruptedStates((prev) => (prev[threadId] ? { ...prev, [threadId]: false } : prev))
         setRuntimeEvents((prev) => appendRuntimeEvent(prev, {
           id: `optimistic:${threadId}:${createdAt}`,
           type: 'message.user.submitted',
@@ -1430,6 +1440,8 @@ export function AgentInput({
     setBrowserAttachments,
     streaming,
     thinkingLevel,
+    followUpQueueMode,
+    setQueueInterruptedStates,
     threadId,
     selectedDesktopContextTarget,
     clearDraftState,
@@ -1569,6 +1581,33 @@ export function AgentInput({
       })
   }, [messageQueueSnapshot.revision, setMessageQueues, threadId])
 
+  const handleRetryQueuedMessage = useCallback((queuedMessageId: string) => {
+    retryQueuedAgentMessage({
+      threadId,
+      queuedMessageId,
+      expectedRevision: messageQueueSnapshot.revision,
+      queueOperationId: crypto.randomUUID(),
+    })
+      .then((result) => {
+        setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
+        setQueueInterruptedStates((prev) => (prev[threadId] ? { ...prev, [threadId]: false } : prev))
+        if (!result.ok) toast.error('队列已发生变化，重试未执行')
+      })
+      .catch((error) => {
+        console.error('[AgentInput] 重试排队消息失败:', error)
+        toast.error('重试排队消息失败')
+      })
+  }, [messageQueueSnapshot.revision, setMessageQueues, setQueueInterruptedStates, threadId])
+
+  const handleResumeFromInterrupt = useCallback(() => {
+    // Lume 的 STOP/interrupt 后 kernel(processDispatch.finally → startNextQueued)自动派发队列,
+    // 无"中断后队列暂停"语义(与 Codex 不同)。retryQueued 仅对 status==='blocked' 生效,
+    // 对 STOP 后通常为 'queued' 的首项会 conflict 报错("队列已发生变化")。
+    // 故 Resume 当前为 dismiss 横幅语义:仅清 agentQueueInterruptedAtom,不调 retry。
+    // 真正 pause/resume 需先实现 kernel 暂停队列语义(follow-up,超出本计划范围)。
+    setQueueInterruptedStates((prev) => (prev[threadId] ? { ...prev, [threadId]: false } : prev))
+  }, [setQueueInterruptedStates, threadId])
+
   const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
     setThinkingLevel(value)
     updateAgentThinkingLevel(value).catch((error) => {
@@ -1576,6 +1615,14 @@ export function AgentInput({
       toast.error('保存思考等级失败')
     })
   }
+
+  const handleFollowUpQueueModeChange = useCallback((mode: AgentFollowUpMode) => {
+    setFollowUpQueueMode(mode)
+    updateAgentFollowUpQueueMode(mode, configWorkspaceSlug).catch((error) => {
+      console.error('[AgentInput] 保存队列模式失败:', error)
+      toast.error('保存队列模式失败')
+    })
+  }, [configWorkspaceSlug])
 
   const handleRemoveBrowserAttachment = useCallback((attachment: AgentBrowserAttachment) => {
     const tab = browserTabFromAttachment(attachment)
@@ -1767,6 +1814,7 @@ export function AgentInput({
 
   return (
     <div className="px-3 pb-4 pt-2">
+      <SuggestionBanner threadId={threadId} workspaceSlug={configWorkspaceSlug} />
       <div className="mx-auto w-full max-w-[980px] px-4">
         <div>
           <LumeComposer
@@ -1788,6 +1836,11 @@ export function AgentInput({
                   onRemove={handleRemoveQueuedMessage}
                   onEdit={handleEditQueuedMessage}
                   onPromoteToGuidance={handlePromoteQueuedMessageToGuidance}
+                  onRetry={handleRetryQueuedMessage}
+                  interrupted={queueInterrupted}
+                  onResume={handleResumeFromInterrupt}
+                  followUpMode={followUpQueueMode}
+                  onFollowUpModeChange={handleFollowUpQueueModeChange}
                 />
                 <div
                   className={cn(

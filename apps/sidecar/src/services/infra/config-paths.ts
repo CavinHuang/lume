@@ -391,3 +391,11 @@ export function getGlobalVectorIndexDir(): string {
 export function getWorkspaceVectorIndexDir(workspaceSlug: string): string {
   return ensureDir(join(getWorkspaceMemoryDir(workspaceSlug), "index"), "工作区向量索引目录");
 }
+
+export function getSuggestionConfigDir(): string {
+  return ensureDir(join(getConfigDir(), "suggestions"), "建议配置目录");
+}
+
+export function getSuggestionIndexPath(): string {
+  return join(getSuggestionConfigDir(), "suggestions.json");
+}

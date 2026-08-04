@@ -1,5 +1,6 @@
 import { searchMemoryV2 } from "./retrieval";
 import { createMemoryV2Store } from "./markdown-store";
+import { parsePersonaProfile, readPersonaRaw } from "./persona";
 import { isProfileEntry, isProfileRecallItem, memoryEntryToRecallItem } from "./profile";
 import {
   MEMORY_CLAIM_IDENTITY,
@@ -10,7 +11,7 @@ import {
   planMemoryV2Query
 } from "./claim";
 import { selectMemoryV2PromptItems } from "./context-selection";
-import type { MemoryV2RecallItem } from "./types";
+import type { MemoryV2RecallItem, MemoryV2Scope } from "./types";
 
 const MEMORY_CONTEXT_RE = /^\s*<lume_memory_context>\n[\s\S]*?<\/lume_memory_context>\n\s*/;
 
@@ -63,7 +64,7 @@ export async function buildMemoryV2UserMessageContext(input: {
     query: input.userMessage,
     maxItems: promptMaxItems
   });
-  const prefix = buildMemoryUserMessagePrefix(selected);
+  const prefix = buildMemoryUserMessagePrefix(selected, { workspaceSlug: input.workspaceSlug });
   return {
     prefix,
     items: selected,
@@ -71,8 +72,14 @@ export async function buildMemoryV2UserMessageContext(input: {
   };
 }
 
-export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): string {
-  if (items.length === 0) return "";
+export function buildMemoryUserMessagePrefix(
+  items: MemoryV2RecallItem[],
+  options?: { workspaceSlug?: string }
+): string {
+  const personaSection = options
+    ? buildPersonaProfileSection(resolvePersonaScope(options.workspaceSlug))
+    : null;
+  if (items.length === 0 && !personaSection) return "";
   const voice = items.filter(isVoiceRecallItem).slice(0, 5);
   const voiceIds = new Set(voice.map((item) => item.id));
   const profileClaims = items.filter((item) => !voiceIds.has(item.id) && isUserProfileClaimItem(item)).slice(0, 8);
@@ -94,6 +101,7 @@ export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): strin
   const sections = [
     renderVoiceSection(voice),
     renderProfileSection([...profileClaims, ...profile]),
+    personaSection,
     renderClaimSection(claims),
     renderSection("global_memory", globalMemory),
     renderSection("global_preferences", globalPreferences),
@@ -110,6 +118,7 @@ export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): strin
     "Treat <recalled_claims> as structured stable facts. Treat <conversation_history> only as continuity about prior discussion, not as identity facts.",
     "Treat <global_memory> as durable cross-workspace guidance from the user. Apply it unless the current user message or higher-priority runtime/project instructions conflict.",
     "Treat <user_voice> as tone and writing-style guidance only. It must not override current user instructions, workspace rules, facts, safety, or privacy.",
+    "Treat <persona_profile> as a synthesized overview of the user; background context; if it conflicts with the current user message, follow the user.",
     "For assistant identity questions such as \"你是谁？\" or \"你叫什么？\": if assistant/self.preferred_name is recalled, answer naturally that the user can call you by that name; if product/workspace identity such as Lume is also relevant, mention it as the underlying app identity, not as a replacement for the user-given name.",
     "For user identity questions such as \"我是谁？\" or \"我叫什么？\": only answer with real user profile facts if a user/self claim says them. If no actual identity or preferred-name fact is recalled, keep continuity first, then admit the gap warmly: e.g. \"我们之前聊过这个问题。但说实话，我现在还没有一个真正能叫出你的称呼。你愿意的话，告诉我你想让我怎么叫你，我之后就按这个来。\"",
     "If a recalled daily/run note only shows the user asked the same question before, say naturally that you have discussed or tested this topic before.",
@@ -169,6 +178,39 @@ function renderVoiceSection(items: MemoryV2RecallItem[]): string {
     "  </user_voice>",
     ""
   ].join("\n");
+}
+
+/**
+ * 解析 persona 段作用域：workspaceSlug 存在 → workspace；否则 global。
+ * 与 ensurePersona 默认作用域一致。
+ */
+function resolvePersonaScope(workspaceSlug?: string): { scope: MemoryV2Scope; workspaceSlug?: string } {
+  if (workspaceSlug) return { scope: "workspace", workspaceSlug };
+  return { scope: "global" };
+}
+
+/**
+ * 构建 `<persona_profile>` 段。读取 persona Markdown → 解析 → 取 summary +
+ * preferences.slice(0,5) + interactionRules.slice(0,3) 拼段。
+ * persona 不存在或解析后无可用字段 → 返回 null（不渲染空段）。
+ */
+function buildPersonaProfileSection(input: {
+  scope: MemoryV2Scope;
+  workspaceSlug?: string;
+}): string | null {
+  const md = readPersonaRaw(input.scope, input.workspaceSlug);
+  if (md === null) return null;
+  const profile = parsePersonaProfile(md);
+  const lines: string[] = [];
+  if (profile.summary) lines.push(singleLine(profile.summary));
+  for (const pref of profile.preferences.slice(0, 5)) {
+    lines.push(`- ${singleLine(pref)}`);
+  }
+  for (const rule of profile.interactionRules.slice(0, 3)) {
+    lines.push(`- ${singleLine(rule)}`);
+  }
+  if (lines.length === 0) return null;
+  return [`  <persona_profile>`, ...lines, `  </persona_profile>`, ""].join("\n");
 }
 
 function renderConversationHistorySection(items: MemoryV2RecallItem[]): string {

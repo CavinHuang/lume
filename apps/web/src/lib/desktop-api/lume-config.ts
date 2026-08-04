@@ -1,4 +1,5 @@
 import type {
+  AgentFollowUpMode,
   LumeConfigAgentDefaultStrategy,
   LumeConfigAdvisorStrategy,
   LumeConfigPermissionApprovalRoutes,
@@ -139,6 +140,15 @@ export const updateAgentThinkingLevel = (value: LumeConfigThinkingLevel, workspa
     path: 'agent.thinkingLevel',
     value,
     summary: 'update agent thinking level',
+  })
+
+export const updateAgentFollowUpQueueMode = (value: AgentFollowUpMode, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'agent.followUpQueueMode',
+    value,
+    summary: 'update agent follow-up queue mode',
   })
 
 export const updateAgentPermissionMode = (value: LumeConfigPermissionMode, workspaceSlug?: string) =>

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { acknowledgeRendererDelivery, listSubagentWork, onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
+import { acknowledgeRendererDelivery, listSubagentWork, onSidecarEvent, onSuggestionsChanged, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
   agentRuntimeStatusAtom,
   agentRuntimeEventsAtom,
   agentPendingInteractiveAtom,
   agentMessageQueueAtom,
+  agentQueueInterruptedAtom,
   agentSubagentRunsAtom,
   agentSubagentWorkAtom,
   agentPlanModePhaseAtom,
@@ -18,6 +19,7 @@ import {
   currentWorkspaceIdAtom,
   tabsAtom,
   welcomePromptSeedAtom,
+  suggestionsVersionAtom,
 } from '@/atoms'
 import { buildDesktopProposalOpenRequestState } from '@/components/settings/desktop-assistant-proposals-state'
 import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
@@ -74,6 +76,10 @@ export function useGlobalAgentListeners() {
   const setRuntimeEvents = useSetAtom(agentRuntimeEventsAtom)
   const setPendingInteractive = useSetAtom(agentPendingInteractiveAtom)
   const setMessageQueues = useSetAtom(agentMessageQueueAtom)
+  const messageQueues = useAtomValue(agentMessageQueueAtom)
+  const messageQueuesRef = useRef(messageQueues)
+  messageQueuesRef.current = messageQueues
+  const setQueueInterrupted = useSetAtom(agentQueueInterruptedAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const setSubagentWork = useSetAtom(agentSubagentWorkAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
@@ -86,6 +92,7 @@ export function useGlobalAgentListeners() {
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
+  const setSuggestionsVersion = useSetAtom(suggestionsVersionAtom)
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const runtimeEventsRafRef = useRef<number | null>(null)
@@ -197,6 +204,13 @@ export function useGlobalAgentListeners() {
           }
           if (event.type === 'run.completed' || event.type === 'run.turn_limited' || event.type === 'run.cancelled') {
             setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
+            // 队列因中断(STOP)暂停:run.cancelled 且队列非空时置 interrupted,驱动 Resume 横幅。
+            if (event.type === 'run.cancelled') {
+              const queue = messageQueuesRef.current[threadId]
+              if (queue && queue.queuedMessages.some((item) => !item.internal)) {
+                setQueueInterrupted((prev) => (prev[threadId] ? prev : { ...prev, [threadId]: true }))
+              }
+            }
             break
           }
           if (event.type === 'run.failed') {
@@ -213,6 +227,10 @@ export function useGlobalAgentListeners() {
         case AGENT_IPC_CHANNELS.MESSAGE_QUEUE_CHANGED: {
           const snapshot = params as AgentMessageQueueSnapshot
           setMessageQueues((prev) => ({ ...prev, [snapshot.threadId]: snapshot }))
+          // 队列已空(无非 internal 消息)时清除中断标记:Resume 后或全部处理完。
+          if (!snapshot.queuedMessages.some((item) => !item.internal)) {
+            setQueueInterrupted((prev) => (prev[snapshot.threadId] ? { ...prev, [snapshot.threadId]: false } : prev))
+          }
           break
         }
         case AGENT_IPC_CHANNELS.THREAD_LIST_CHANGED: {
@@ -362,8 +380,14 @@ export function useGlobalAgentListeners() {
         }
       }
     })
+    // sidecar 推送的建议变更信号 → bump 版本号 → 消费方（建议列表 / Banner，
+    // Task 14+）订阅 suggestionsVersionAtom 触发 suggestion:list 重拉。
+    const unlistenSuggestions = onSuggestionsChanged(() => {
+      setSuggestionsVersion((v) => v + 1)
+    })
     return () => {
       unlisten.then((fn) => fn())
+      unlistenSuggestions.then((fn) => fn())
       if (runtimeEventsRafRef.current !== null) {
         cancelAnimationFrame(runtimeEventsRafRef.current)
         runtimeEventsRafRef.current = null
@@ -379,5 +403,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, enqueueRuntimeEvent])
 }

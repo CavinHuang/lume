@@ -80,4 +80,28 @@ describe("runtime-core attempt guidance", () => {
       text: "1. 先对照 Alice 的实现"
     }));
   });
+
+  test("富 guidance 的附件摘要应出现在 tool denial 文本中", async () => {
+    const threadId = "thread-rich-guidance";
+    runGuidanceStore.addQueuedDispatch({
+      id: "queued-rich-1",
+      threadId,
+      text: "参考这张注释",
+      createdAt: 200,
+      attachmentsBrief: "<browser_attachments>注释: 按钮颜色改为红色</browser_attachments>"
+    });
+
+    const handler = createCanUseToolHandler(
+      { input: { threadId, userMessage: "任务" }, runtime: { sessionId: threadId } } as never,
+      { workspaceSlug: undefined, agentCwd: "/tmp" } as never,
+      { onRuntimeEvent: () => undefined } as never,
+      new AbortController().signal,
+      "run-rich",
+    );
+
+    const result = await handler({ name: "Bash" } as never, { command: "echo" }, { toolUseId: "tool-rich" });
+    expect(result.behavior).toBe("deny");
+    expect(result.message).toContain("参考这张注释");
+    expect(result.message).toContain("按钮颜色改为红色");
+  });
 });

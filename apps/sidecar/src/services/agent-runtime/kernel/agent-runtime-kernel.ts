@@ -173,6 +173,24 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     return item;
   }
 
+  retryQueued(
+    threadId: string,
+    queuedDispatchId: string,
+    expectedRevision = this.getQueueRevision(threadId)
+  ): AgentRuntimeKernelQueuedDispatch<TInput, TEmit> | null {
+    this.assertExpectedRevision(threadId, expectedRevision);
+    const queue = this.queuedDispatches.get(threadId) ?? [];
+    const item = queue.find((candidate) => candidate.id === queuedDispatchId);
+    // 仅对 status==='blocked' 的项生效:清空 blockedReason、状态回 queued、重新派发
+    if (!item || item.status !== "blocked") return null;
+    item.status = "queued";
+    delete item.blockedReason;
+    this.touchQueue(threadId);
+    this.syncQueuedCount(threadId);
+    if (!this.activeThreads.has(threadId)) this.scheduleStartNext(threadId);
+    return item;
+  }
+
   async waitForIdleForTest(): Promise<void> {
     while (this.running.size > 0) {
       await Promise.allSettled(Array.from(this.running));

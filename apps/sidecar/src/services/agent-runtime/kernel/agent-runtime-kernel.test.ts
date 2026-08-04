@@ -314,4 +314,61 @@ describe("AgentRuntimeKernel", () => {
     await kernel.waitForIdleForTest();
     expect(started).toEqual(["first", "recovered", "later"]);
   });
+
+  test("retryQueued 应将 blocked 队首重置为 queued 并重新派发", async () => {
+    const started: string[] = [];
+    const releases = new Map<string, () => void>();
+    let blockedOnce = false;
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      createQueuedDispatchId: () => `queue-${Math.random().toString(36).slice(2)}`,
+      now: () => 200,
+      execute: async (dispatch) => {
+        started.push(dispatch.input.userMessage);
+        await new Promise<void>((resolve) => {
+          releases.set(dispatch.input.userMessage, resolve);
+        });
+      },
+      validateQueued: async (dispatch) => {
+        // 首次校验失败以触发 blocked;retry 后放行,模拟用户已修复阻塞条件
+        if (dispatch.input.userMessage === "blocked-one" && !blockedOnce) {
+          blockedOnce = true;
+          throw new Error("校验失败");
+        }
+      },
+      onQueuedCountChange: () => undefined,
+      onDispatchError: () => undefined,
+    });
+
+    // 占据 active,让第二条进入队列
+    kernel.dispatch({ threadId: "t-retry", userMessage: "running" }, { onError: () => undefined });
+    const queued = kernel.dispatch({ threadId: "t-retry", userMessage: "blocked-one" }, { onError: () => undefined });
+    expect(queued.mode).toBe("queued");
+
+    // 释放 running,触发 blocked-one 校验失败 -> blocked
+    releases.get("running")!();
+    await waitFor(() => kernel.listQueued("t-retry").some((item) => item.status === "blocked"));
+    const blocked = kernel.listQueued("t-retry").find((item) => item.status === "blocked")!;
+    expect(blocked.blockedReason).toContain("校验失败");
+
+    // retry 重置(scheduleStartNext 会同步推进至 validating,故只断言稳定的可观测效果)
+    const retried = kernel.retryQueued("t-retry", blocked.id, kernel.getQueueRevision("t-retry"));
+    expect(retried).toBeTruthy();
+    expect(retried?.blockedReason).toBeUndefined();
+
+    await waitFor(() => started.includes("blocked-one"));
+    expect(started).toContain("blocked-one");
+    releases.get("blocked-one")!();
+    await kernel.waitForIdleForTest();
+  });
+
+  test("retryQueued 对非 blocked 项返回 null", () => {
+    const kernel = new AgentRuntimeKernel<TestInput, TestEmitter>({
+      execute: async () => undefined,
+      onDispatchError: () => undefined,
+    });
+    const sent = kernel.dispatch({ threadId: "t-null", userMessage: "first" }, { onError: () => undefined });
+    // first 已 sent(active 中,不在队列)
+    expect(kernel.retryQueued("t-null", "not-queued", 0)).toBeNull();
+    void sent;
+  });
 });

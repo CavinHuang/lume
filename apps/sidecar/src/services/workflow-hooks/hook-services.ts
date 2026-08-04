@@ -4,6 +4,8 @@ import {
   buildMemoryV2UserMessageContext,
   type MemoryV2UserMessageContext
 } from "../memory-v2/user-message-prefix";
+import { ensurePersona } from "../memory-v2/persona";
+import { evaluateSessionSuggestions, type SessionSuggestContext } from "../suggest/service";
 import type { LumeWorkflowHookEventName } from "./hook-events";
 import type {
   LumeWorkflowRuntimeEventDraft,
@@ -42,6 +44,30 @@ export interface LumeWorkflowSecurityService {
   }): Promise<{ decision?: "allow" | "ask" | "deny"; reason?: string }>;
 }
 
+/**
+ * Proactive Suggestion 服务接口 —— hook handler 通过此抽象调用建议评估，
+ * 便于测试注入 mock（与 memory/security 等服务同构）。
+ *
+ * `evaluateSessionSuggestions` 是 fire-and-forget 入口（service.ts:95），
+ * service 内部已 fail-open；本接口仅做类型契约。
+ */
+export interface LumeWorkflowSuggestionService {
+  evaluateSessionSuggestions(input: SessionSuggestContext): Promise<void>;
+}
+
+/**
+ * Persona 服务接口 —— hook handler 通过此抽象调用 persona 合成，
+ * 便于测试注入 mock（与 memory/suggestion 等服务同构）。
+ *
+ * `ensurePersona` 是 fail-open 入口（persona.ts），service 内部已 try/catch；
+ * 本接口仅做类型契约。输入类型直接取自 ensurePersona 签名，保持忠实。
+ */
+export type LumeWorkflowPersonaInput = Parameters<typeof ensurePersona>[0];
+
+export interface LumeWorkflowPersonaService {
+  ensurePersona(input: LumeWorkflowPersonaInput): Promise<void>;
+}
+
 export interface LumeWorkflowRuntimeEventService {
   buildDiagnosticEvent(input: {
     runId: string;
@@ -66,6 +92,8 @@ export interface LumeWorkflowTraceService {
 export interface LumeWorkflowHookServices {
   memory: LumeWorkflowMemoryService;
   security: LumeWorkflowSecurityService;
+  suggestion: LumeWorkflowSuggestionService;
+  persona: LumeWorkflowPersonaService;
   runtimeEvents: LumeWorkflowRuntimeEventService;
   trace: LumeWorkflowTraceService;
   clock: { now(): Date };
@@ -92,6 +120,32 @@ export function createMemoryWorkflowHookService(input: {
       text: candidateInput.userMessage,
       workspaceSlug: candidateInput.workspaceSlug
     })
+  };
+}
+
+/**
+ * 创建 Proactive Suggestion hook 服务。默认绑定 `evaluateSessionSuggestions`
+ * （service.ts:95）；测试可注入 mock 以隔离 LLM / store 依赖。
+ */
+export function createSuggestionWorkflowHookService(input: {
+  evaluate?: typeof evaluateSessionSuggestions;
+} = {}): LumeWorkflowSuggestionService {
+  const evaluate = input.evaluate ?? evaluateSessionSuggestions;
+  return {
+    evaluateSessionSuggestions: async (ctx) => evaluate(ctx)
+  };
+}
+
+/**
+ * 创建 Persona hook 服务。默认绑定 `ensurePersona`（persona.ts）；
+ * 测试可注入 mock 以隔离 LLM / store 依赖。
+ */
+export function createPersonaWorkflowHookService(input: {
+  ensure?: typeof ensurePersona;
+} = {}): LumeWorkflowPersonaService {
+  const ensure = input.ensure ?? ensurePersona;
+  return {
+    ensurePersona: async (ctx) => ensure(ctx)
   };
 }
 

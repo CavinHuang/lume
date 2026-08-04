@@ -34,8 +34,10 @@ import {
 } from "../../workflow-hooks/hook-runtime";
 import {
   createMemoryWorkflowHookService,
+  createPersonaWorkflowHookService,
   createRuntimeEventWorkflowHookService,
   createSecurityWorkflowHookService,
+  createSuggestionWorkflowHookService,
   createTraceWorkflowHookService
 } from "../../workflow-hooks/hook-services";
 import {
@@ -797,6 +799,8 @@ function resolveWorkflowHooks(input: {
     services: {
       memory: createMemoryWorkflowHookService(),
       security: createSecurityWorkflowHookService(),
+      suggestion: createSuggestionWorkflowHookService(),
+      persona: createPersonaWorkflowHookService(),
       runtimeEvents: createRuntimeEventWorkflowHookService(),
       trace: createTraceWorkflowHookService(),
       clock: { now: () => new Date() }

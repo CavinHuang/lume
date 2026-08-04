@@ -2,6 +2,8 @@ import * as React from 'react'
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
+  ChevronUp,
   Clock3,
   Download,
   FileText,
@@ -12,6 +14,7 @@ import {
   Save,
   SearchCheck,
   ShieldCheck,
+  Sparkles,
   Trash2,
   XCircle,
 } from 'lucide-react'
@@ -33,6 +36,7 @@ import type {
   MemorySettingsFileSummary,
   MemorySettingsPendingSummary,
   MemorySettingsSnapshot,
+  PersonaGetResult,
 } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -56,6 +60,9 @@ import {
   resolveMemoryPending,
   updateMemoryEntry,
   updateMemoryRuntimeConfig,
+  getPersona,
+  updatePersona,
+  regeneratePersona,
 } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import {
@@ -153,6 +160,190 @@ function manualMemoryTags(category: MemoryUserCategory): string[] {
 
 function isUserMemoryCategory(view: MemorySettingsView): view is MemoryUserCategory {
   return view === 'profile' || view === 'workflow' || view === 'voice' || view === 'instruction'
+}
+
+/**
+ * Persona 卡片：展示 Lume 基于记忆自动生成的用户画像（persona.md）。
+ * - 状态：已生成（emerald + updatedAt）/ 未生成（muted 提示）。
+ * - 预览：可展开的 Markdown 文本。
+ * - 编辑：textarea → updatePersona。
+ * - 重新生成：regeneratePersona + toast + loading。
+ * 自包含组件；通过 workspaceSlug 拉取/写入。
+ */
+export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
+  const [persona, setPersona] = React.useState<PersonaGetResult | null>(null)
+  const [loading, setLoading] = React.useState(true)
+  const [busy, setBusy] = React.useState<'save' | 'regenerate' | null>(null)
+  const [editMode, setEditMode] = React.useState(false)
+  const [draft, setDraft] = React.useState('')
+  const [expanded, setExpanded] = React.useState(false)
+
+  const refreshPersona = React.useCallback(async () => {
+    if (!workspaceSlug) {
+      setPersona(null)
+      setLoading(false)
+      return
+    }
+    try {
+      const result = await getPersona(workspaceSlug)
+      setPersona(result)
+      setDraft(result.markdown)
+    } catch (error) {
+      console.error('[PersonaCard] getPersona FAILED:', error)
+      toast.error(memorySettingsErrorMessage(error, '读取用户画像失败'))
+    } finally {
+      setLoading(false)
+    }
+  }, [workspaceSlug])
+
+  React.useEffect(() => {
+    void refreshPersona()
+  }, [refreshPersona])
+
+  const isGenerated = Boolean(persona?.updatedAt && persona.markdown.trim().length > 0)
+  const isDirty = draft.trim() !== (persona?.markdown ?? '')
+
+  const handleSave = async () => {
+    if (!workspaceSlug) return
+    if (draft.trim().length === 0) {
+      toast.error('用户画像内容不能为空')
+      return
+    }
+    setBusy('save')
+    try {
+      await updatePersona({ workspaceSlug, markdown: draft })
+      await refreshPersona()
+      setEditMode(false)
+      toast.success('用户画像已保存')
+    } catch (error) {
+      console.error('[PersonaCard] updatePersona FAILED:', error)
+      toast.error(memorySettingsErrorMessage(error, '保存用户画像失败'))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleRegenerate = async () => {
+    if (!workspaceSlug) return
+    setBusy('regenerate')
+    const toastId = toast.loading('正在重新生成用户画像...')
+    try {
+      await regeneratePersona(workspaceSlug)
+      await refreshPersona()
+      toast.success('用户画像已重新生成', { id: toastId })
+    } catch (error) {
+      console.error('[PersonaCard] regeneratePersona FAILED:', error)
+      toast.error(memorySettingsErrorMessage(error, '重新生成用户画像失败'), { id: toastId })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const resetDraft = () => {
+    setDraft(persona?.markdown ?? '')
+    setEditMode(false)
+  }
+
+  return (
+    <section className="lume-panel p-4" data-persona-card>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
+            <Sparkles size={16} />
+            用户画像
+            {loading ? (
+              <StatusBadge tone="neutral">读取中</StatusBadge>
+            ) : isGenerated ? (
+              <StatusBadge tone="good">已生成</StatusBadge>
+            ) : (
+              <StatusBadge tone="neutral">未生成</StatusBadge>
+            )}
+          </div>
+          <p className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">
+            {isGenerated
+              ? `Lume 基于记忆自动生成的稳定画像；最近更新于 ${formatDate(persona?.updatedAt)}。可手动编辑或重新生成。`
+              : 'Lume 会基于你的长期记忆自动生成用户画像；也可点击「重新生成」立即创建。'}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {isGenerated && !editMode && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy !== null}
+              onClick={() => setEditMode(true)}
+            >
+              <Pencil size={14} />
+              编辑
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy !== null || loading}
+            onClick={() => void handleRegenerate()}
+          >
+            <RefreshCw size={14} className={busy === 'regenerate' ? 'animate-spin' : undefined} />
+            {busy === 'regenerate' ? '生成中' : '重新生成'}
+          </Button>
+        </div>
+      </div>
+
+      {editMode ? (
+        <div className="space-y-2">
+          <Textarea
+            className="min-h-[180px] w-full resize-y rounded-[8px] border border-border bg-[var(--surface-1)] p-2 text-[12px] leading-5 text-[var(--text-1)] outline-none placeholder:text-[var(--text-3)] focus:border-[var(--brand)]"
+            value={draft}
+            disabled={busy !== null}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder="# 用户画像&#10;例如：称呼、稳定偏好、沟通风格、长期目标..."
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy !== null || !isDirty || draft.trim().length === 0}
+              onClick={() => void handleSave()}
+            >
+              <Save size={14} />
+              {busy === 'save' ? '保存中' : '保存'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy !== null}
+              onClick={resetDraft}
+            >
+              <XCircle size={14} />
+              取消
+            </Button>
+          </div>
+        </div>
+      ) : (
+        isGenerated && (
+          <div className="rounded-[8px] border border-border bg-[var(--surface-2)] p-3">
+            <pre
+              className={cn(
+                'whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--text-1)] overflow-auto',
+                expanded ? 'max-h-[480px]' : 'max-h-[120px]',
+              )}
+            >
+              {persona?.markdown}
+            </pre>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2 h-7 px-2 text-[12px]"
+              onClick={() => setExpanded((value) => !value)}
+            >
+              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              {expanded ? '收起' : '展开'}
+            </Button>
+          </div>
+        )
+      )}
+    </section>
+  )
 }
 
 export function MemorySettings() {
@@ -582,6 +773,8 @@ export function MemorySettings() {
           </Button>
         ))}
       </div>
+
+      <PersonaCard workspaceSlug={workspaceSlug} />
 
       {userCategory && (
         <UserMemoryPanel

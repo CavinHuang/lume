@@ -13,6 +13,7 @@ import type {
   AgentQueuedMessage,
   AgentRemoveQueuedMessageInput,
   AgentReorderMessageQueueInput,
+  AgentRetryQueuedMessageInput,
   AgentUpdateQueuedMessageInput,
   AgentThreadMessageDispatchResult,
   AgentMessageAppendedEvent,
@@ -70,6 +71,7 @@ import { getServiceRuntime } from "../agent-runtime/service-runtime/service-runt
 import { AgentRuntimeKernel, AgentRuntimeKernelQueueConflictError, type AgentRuntimeKernelQueuedDispatch } from "../agent-runtime/kernel/agent-runtime-kernel";
 import { runGuidanceStore } from "../agent-runtime/guidance/run-guidance-store";
 import { getRuntimeCoreSessionDir, hasRuntimeCoreSessionTranscript } from "../agent-runtime/runtime-core/session-store";
+import { isAgentRuntimeSessionActive } from "../agent-runtime/runtime-core/attempt";
 import { createCodingTurnRecord, updateCodingTurnRecord } from "../agent-runtime/runtime-core/coding-turn-store";
 import { createFileBackedLumeRunStateStore } from "../agent-runtime/runner/run-state-store";
 import { projectBackgroundTaskNotificationRuntimeEvent } from "../agent-runtime/runner/run-item-events";
@@ -1503,6 +1505,36 @@ export function appendAgentMessage(
       traceContext,
       ...(options?.trustedPlanningOperationId ? { trustedPlanningOperationId: options.trustedPlanningOperationId } : {})
     };
+    // 运行中提交时按 followUpQueueMode 路由:steer 直接入 guidance;interrupt 中止当前 turn 后正常派发
+    const isSessionActive = isAgentRuntimeSessionActive(input.threadId);
+    if (isSessionActive && input.followUpQueueMode === "steer" && !isBackgroundWakeInput(dispatchInput)) {
+      // 携带完整 dispatch 字段(与 promote 路径对齐):steer 未被当前 turn 消费时,drain 回 queue 作为下一条 queued 消息跑(消息不丢,startNextQueued/validateQueued/execute 读 input/emit/priority/status/revision)
+      runGuidanceStore.addQueuedDispatch({
+        input: dispatchInput,
+        emit: trackedEmit,
+        priority: "user",
+        id: dispatchInput.clientSubmissionId ?? randomUUID(),
+        threadId: input.threadId,
+        text: input.userMessage,
+        createdAt: Date.now(),
+        revision: agentRuntimeKernel.getQueueRevision(input.threadId),
+        status: "queued",
+        attachmentsBrief: summarizeGuidanceAttachments(dispatchInput)
+      });
+      return {
+        ok: true,
+        mode: "queued",
+        queuedCount: agentRuntimeKernel.listQueued(input.threadId).length,
+        queuedMessage: undefined,
+        submissionId: clientSubmissionId
+      };
+    }
+    if (isSessionActive && input.followUpQueueMode === "interrupt") {
+      // fire-and-forget 中止当前 turn;当前 turn 收尾后,新 dispatch(下方)会在 FIFO 中被 startNextQueued 派发
+      void import("../agent-runtime/runtime-core/attempt")
+        .then((module) => module.stopAgentRuntime(input.threadId))
+        .catch(() => undefined);
+    }
     const result = agentRuntimeKernel.dispatch(dispatchInput, trackedEmit, {
       priority: options?.priority,
       onExecutionStarted: () => {
@@ -1543,6 +1575,25 @@ export function removeQueuedAgentMessage(input: AgentRemoveQueuedMessageInput): 
   return runQueueOperation(input.queueOperationId, input.threadId, () => removeQueuedAgentMessageUnchecked(input));
 }
 
+export function retryQueuedAgentMessage(input: AgentRetryQueuedMessageInput): AgentMessageQueueOperationResult {
+  return runQueueOperation(input.queueOperationId, input.threadId, () => {
+    const retried = agentRuntimeKernel.retryQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
+    if (!retried) {
+      throw new AgentRuntimeKernelQueueConflictError(agentRuntimeKernel.getQueueRevision(input.threadId));
+    }
+    writeLogRecord({
+      level: "info",
+      kind: "trace",
+      context: "agent.queue",
+      event: "agent.queue.retried",
+      message: "blocked queued message retried",
+      status: "ok",
+      threadId: input.threadId,
+      data: { queuedMessageId: input.queuedMessageId }
+    });
+  });
+}
+
 function removeQueuedAgentMessageUnchecked(input: AgentRemoveQueuedMessageInput): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
   const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
   if (removed) {
@@ -1571,16 +1622,7 @@ export function promoteQueuedAgentMessageToGuidance(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): AgentMessageQueueOperationResult {
   const candidate = agentRuntimeKernel.listQueued(input.threadId).find((item) => item.id === input.queuedMessageId);
-  if (
-    !candidate
-    || isBackgroundWakeInput(candidate.input)
-    || candidate.input.messageAttachments?.length
-    || candidate.input.commentAttachments?.length
-    || candidate.input.browserAttachments?.length
-    || candidate.input.messageParts?.some((part) => part.type === "capability_ref")
-    || typeof candidate.input.messageMetadata?.desktopContextSnapshotId === "string"
-    || !candidate.input.userMessage.trim()
-  ) {
+  if (!candidate || isBackgroundWakeInput(candidate.input) || !candidate.input.userMessage.trim()) {
     return { ok: false, snapshot: listAgentMessageQueue(input.threadId) };
   }
   return runQueueOperation(input.queueOperationId, input.threadId, () => promoteQueuedAgentMessageToGuidanceUnchecked(input));
@@ -1590,7 +1632,10 @@ function promoteQueuedAgentMessageToGuidanceUnchecked(
   input: AgentPromoteQueuedMessageToGuidanceInput
 ): Omit<AgentMessageQueueOperationResult, "ok" | "snapshot"> {
   const removed = agentRuntimeKernel.removeQueued(input.threadId, input.queuedMessageId, input.expectedRevision);
-  const promotedGuidance = removed ? runGuidanceStore.addQueuedDispatch(removed) : undefined;
+  const attachmentsBrief = removed ? summarizeGuidanceAttachments(removed.input) : undefined;
+  const promotedGuidance = removed
+    ? runGuidanceStore.addQueuedDispatch({ ...removed, ...(attachmentsBrief ? { attachmentsBrief } : {}) })
+    : undefined;
   if (removed) {
     writeLogRecord({
       level: "info",
@@ -1730,6 +1775,21 @@ function releaseBackgroundWakeInput(input: AgentSendInput): void {
   const taskId = input.messageMetadata?.backgroundTaskId;
   scheduledBackgroundWakes.delete(input.threadId);
   if (typeof taskId === "string") backgroundWakeController.release(input.threadId, taskId);
+}
+
+// 富 steer 附件摘要:以"摘要信封"注入 guidance 文本(模型可见、不可执行),与 ContextAssembler 的 <browser_attachments> 风格一致。
+function summarizeGuidanceAttachments(input: AgentSendInput): string | undefined {
+  const parts: string[] = [];
+  if (input.commentAttachments?.length) {
+    parts.push(`<diff_comments count="${input.commentAttachments.length}">`);
+  }
+  if (input.browserAttachments?.length) {
+    parts.push(`<browser_attachments count="${input.browserAttachments.length}">${JSON.stringify(input.browserAttachments)}</browser_attachments>`);
+  }
+  if (input.messageAttachments?.length) {
+    parts.push(`<file_attachments count="${input.messageAttachments.length}">`);
+  }
+  return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
 function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInput, AgentStreamEmitter>): AgentQueuedMessage {

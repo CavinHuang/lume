@@ -1,8 +1,10 @@
 import type { LumeConfigHooksInternalSection } from "@lume/shared";
 import { createCoreMemoryHookHandlers } from "./core-memory-hooks";
 import { createCoreObservabilityHookHandlers } from "./core-observability-hooks";
+import { createCorePersonaHookHandlers } from "./core-persona-hooks";
 import { createCorePluginHookHandlers } from "./core-plugin-hooks";
 import { createCoreSecurityHookHandlers } from "./core-security-hooks";
+import { createCoreSuggestionHookHandlers } from "./core-suggestion-hooks";
 import { createCoreWorkflowHookContributions } from "./contributions";
 import { LumeWorkflowHookBus } from "./hook-bus";
 import type { LumeWorkflowHookEvent } from "./hook-events";
@@ -31,7 +33,9 @@ export function createLumeWorkflowHookRuntime(input: {
       ...createCoreMemoryHookHandlers(),
       ...createCorePluginHookHandlers(),
       ...createCoreSecurityHookHandlers(),
-      ...createCoreObservabilityHookHandlers()
+      ...createCoreObservabilityHookHandlers(),
+      ...createCoreSuggestionHookHandlers(),
+      ...createCorePersonaHookHandlers()
     },
     context: { services: input.services }
   }));

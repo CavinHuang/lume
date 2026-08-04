@@ -10,6 +10,8 @@ import {
 
 const heldRunResolvers = new Map<string, () => void>();
 const runAgentRuntimeCalls: unknown[] = [];
+// 模拟 attempt.ts 的 activePiSessions,供 isAgentRuntimeSessionActive mock 读取
+const activeMockSessions = new Set<string>();
 
 function emitSuccessfulRun(emit: {
   onSdkMessage: (message: SDKMessage) => void;
@@ -244,6 +246,15 @@ async function waitForQueuedRunRelease(userMessage: string): Promise<void> {
   throw new Error(`queued run resolver not found: ${userMessage}`);
 }
 
+// 等待 mock runtime session 进入 active 状态(模拟 isAgentRuntimeSessionActive 为 true 的窗口)
+async function waitForMockSessionActive(threadId: string): Promise<void> {
+  for (let i = 0; i < 50; i += 1) {
+    if (activeMockSessions.has(threadId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`mock runtime session never became active: ${threadId}`);
+}
+
 mock.module("../agent-runtime/runtime-core/attempt", () => ({
   runAgentRuntime: async (
     params: unknown,
@@ -257,6 +268,8 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
     runAgentRuntimeCalls.push(params);
     const userMessage = (params as { input?: { userMessage?: string } })?.input?.userMessage ?? "";
     const threadId = (params as { runtime?: { sessionId?: string } })?.runtime?.sessionId ?? "";
+    activeMockSessions.add(threadId);
+    try {
     if (userMessage === "subagent-projection") {
       emitRunWithSubagentTranscript(emit);
       return { status: "completed" as const };
@@ -334,11 +347,14 @@ mock.module("../agent-runtime/runtime-core/attempt", () => ({
     }
     emitSuccessfulRun(emit);
     return { status: "completed" as const };
+  } finally {
+    activeMockSessions.delete(threadId);
+  }
   },
   isRuntimeModelFallbackRetryable: isMockRuntimeModelFallbackRetryable,
   resolveRuntimeModelAttemptParams: resolveMockRuntimeModelAttemptParams,
   stopAgentRuntime: () => undefined,
-  isAgentRuntimeSessionActive: () => false
+  isAgentRuntimeSessionActive: (threadId: string) => activeMockSessions.has(threadId)
 }));
 
 const createConnectionLlmProviderSpy = mock(async () => ({
@@ -376,6 +392,7 @@ describe("agent-service", () => {
     resetAgentRuntimeKernelForTest();
     resetServiceRuntimeForTest();
     heldRunResolvers.clear();
+    activeMockSessions.clear();
     runAgentRuntimeCalls.length = 0;
     createConnectionLlmProviderSpy.mockClear();
     if (previousConfigDir === undefined) {
@@ -1229,6 +1246,46 @@ describe("agent-service", () => {
     ]);
   });
 
+  test("retryQueuedAgentMessage 对不存在的队列项应返回 conflict", async () => {
+    // 退化路径:runAgentRuntime mock 控制 execute 而非 validateQueued,
+    // 无法稳定注入 blocked,故此处只断言 not-found 分支(runQueueOperation 捕获
+    // AgentRuntimeKernelQueueConflictError 后返回 ok:false+conflict:true)。
+    // blocked→retry 的端到端行为已由 kernel 测试覆盖。
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { appendAgentMessage, retryQueuedAgentMessage, listAgentMessageQueue, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
+    const thread = createAgentThread("retry not found", "channel-test");
+    const createEmit = () => ({
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:first",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+
+    const snapshot = listAgentMessageQueue(thread.id);
+    const result = retryQueuedAgentMessage({
+      threadId: thread.id,
+      queuedMessageId: "non-existent",
+      expectedRevision: snapshot.revision,
+      queueOperationId: "retry-not-found-test"
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.conflict).toBe(true);
+
+    await waitForQueuedRunRelease("hold:first");
+    await waitForAgentRuntimeKernelIdleForTest();
+  });
+
   test("提升为引导后若未在工具调用前消费，应恢复到普通队列队首", async () => {
     const { createAgentThread } = await import("./agent-thread-manager");
     const {
@@ -1296,6 +1353,62 @@ describe("agent-service", () => {
       "guidance",
       "normal-next"
     ]);
+  });
+
+  test("带浏览器附件的排队消息可被 promote 为富 guidance", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const {
+      appendAgentMessage,
+      listAgentMessageQueue,
+      promoteQueuedAgentMessageToGuidance,
+      waitForAgentRuntimeKernelIdleForTest
+    } = await import("./agent-service");
+    const thread = createAgentThread("rich-steer", "channel-test");
+    const createEmit = () => ({
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:active",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    const queued = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "按这张注释改",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      browserAttachments: [{
+        id: "ba-1",
+        origin: "browser-annotation",
+        tab: { id: "tab-1", origin: "browser-tab", title: "T", url: "https://x" } as never,
+        anchor: { kind: "text", url: "https://x", generation: 1, framePath: [], rect: { x: 0, y: 0, width: 1, height: 1 } },
+        body: "按钮改红",
+      } as never],
+    }, createEmit());
+    expect(queued.mode).toBe("queued");
+
+    const snapshot = listAgentMessageQueue(thread.id);
+    const target = snapshot.queuedMessages[0];
+    expect(target).toBeDefined();
+    const result = promoteQueuedAgentMessageToGuidance({
+      threadId: thread.id,
+      queuedMessageId: target!.id,
+      expectedRevision: snapshot.revision,
+      queueOperationId: "op-rich",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.promotedGuidance?.attachmentsBrief).toContain("browser_attachments");
+
+    await waitForQueuedRunRelease("hold:active");
+    await waitForAgentRuntimeKernelIdleForTest();
   });
 
   test("sendAgentMessage 不应把 subagent assistant 正文投影进主 assistant 可见消息", async () => {
@@ -1444,5 +1557,123 @@ describe("stopAgent cascade (D6)", () => {
     expect(running?.status).toBe("aborted");
     expect(accepted?.status).toBe("aborted");
     expect(done?.status).toBe("completed");
+  });
+
+  test("steer 模式运行中提交应直接进 guidance 而非 FIFO 队列", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { appendAgentMessage, listAgentMessageQueue } = await import("./agent-service");
+    const thread = createAgentThread("steer-route", "channel-test");
+    const createEmit = () => ({
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:active",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    // 等 mock runtime session 进入 active,模拟"运行中提交"窗口
+    await waitForMockSessionActive(thread.id);
+
+    const result = appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "直接引导",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      followUpQueueMode: "steer"
+    }, createEmit());
+
+    // steer 不在 FIFO 留存:queuedMessages 为空,pendingGuidance 含该文本
+    const snapshot = listAgentMessageQueue(thread.id);
+    expect(snapshot.queuedMessages.length).toBe(0);
+    expect(snapshot.pendingGuidance.some((g) => g.text === "直接引导")).toBe(true);
+    expect(result.mode).toBe("queued");
+    expect(result.queuedMessage).toBeUndefined();
+
+    await waitForQueuedRunRelease("hold:active");
+  });
+
+  test("steer 未被消费时 drain 回 queue 作为下一条消息跑(不崩)", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { appendAgentMessage, waitForAgentRuntimeKernelIdleForTest } = await import("./agent-service");
+    const thread = createAgentThread("steer-drain", "channel-test");
+    const createEmit = () => ({
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+    const runCallsBefore = runAgentRuntimeCalls.length;
+
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:active",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    await waitForMockSessionActive(thread.id);
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "steer-drain-msg",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      followUpQueueMode: "steer"
+    }, createEmit());
+    // 不 consume:steer guidance 残留到 turn 结束 → execute.finally → restoreUnconsumedGuidanceToQueue → drain 回 queue
+
+    await waitForQueuedRunRelease("hold:active");
+    await waitForAgentRuntimeKernelIdleForTest();
+    // drain 把 steer 放回 queue → startNextQueued 调度执行(证明完整 dispatch 链路不崩)
+    const steerRan = runAgentRuntimeCalls
+      .slice(runCallsBefore)
+      .some((p) => (p as { input?: { userMessage?: string } })?.input?.userMessage === "steer-drain-msg");
+    expect(steerRan).toBe(true);
+  });
+
+  test("interrupt 模式运行中提交应中止当前 turn 且不进入 errored", async () => {
+    const { createAgentThread } = await import("./agent-thread-manager");
+    const { appendAgentMessage } = await import("./agent-service");
+    const { getAgentRuntimeStatusManager } = await import("./agent-runtime-status-manager");
+    const thread = createAgentThread("interrupt-route", "channel-test");
+    const createEmit = () => ({
+      onMessageAppended: () => undefined,
+      onComplete: () => undefined,
+      onError: () => undefined,
+      onTitleUpdated: () => undefined,
+      onAskUserQuestion: () => undefined,
+      onBrowserAuthRequest: () => undefined,
+      onToolPermissionRequest: () => undefined
+    });
+
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "hold:active",
+      channelId: "channel-test",
+      modelId: "provider/model-test"
+    }, createEmit());
+    // 等 mock runtime session 进入 active,模拟"运行中提交"窗口
+    await waitForMockSessionActive(thread.id);
+
+    appendAgentMessage({
+      threadId: thread.id,
+      userMessage: "中断后重发",
+      channelId: "channel-test",
+      modelId: "provider/model-test",
+      followUpQueueMode: "interrupt"
+    }, createEmit());
+
+    await waitForQueuedRunRelease("hold:active");
+    // interrupt 触发的中止是正常路径,不应让线程进入 errored
+    expect(getAgentRuntimeStatusManager().get(thread.id)?.phase).not.toBe("errored");
   });
 });

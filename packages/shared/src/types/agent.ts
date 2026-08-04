@@ -112,6 +112,8 @@ export interface AgentWorkspaceRemoveResult extends AgentWorkspaceRemovalImpact 
 
 export type AgentThreadFileContextMode = 'newRoot' | 'inherit' | 'fork'
 
+export type AgentFollowUpMode = 'steer' | 'queue' | 'interrupt'
+
 export type AgentRuntimePhase =
   | 'idle'
   | 'streaming'
@@ -877,6 +879,8 @@ export interface AgentSendInput {
   trustedPlanningOperationId?: string
   /** Sidecar-only execution-context binding; renderer schemas intentionally omit it. */
   trustedPlanningClientSubmissionId?: string
+  /** 运行中提交时的跟进意图;未提供时按线程/全局 followUpQueueMode 默认值处理。 */
+  followUpQueueMode?: AgentFollowUpMode
 }
 
 export interface AgentUpdateThreadModelSelectionInput {
@@ -916,6 +920,7 @@ export interface AgentQueuedMessage {
   workspaceId?: string
   desktopContextSnapshotId?: string
   capabilityFingerprints?: Array<{ uri: string; fingerprint: string }>
+  followUpQueueMode?: AgentFollowUpMode
   /** Internal runtime continuation; not user-editable queue content. */
   internal?: boolean
 }
@@ -1121,6 +1126,7 @@ export interface AgentPendingGuidance {
   text: string
   createdAt: number
   promotedAt: number
+  attachmentsBrief?: string
 }
 
 export interface AgentMessageQueueSnapshot {
@@ -1142,6 +1148,13 @@ export interface AgentReorderMessageQueueInput {
 }
 
 export interface AgentRemoveQueuedMessageInput {
+  threadId: string
+  queuedMessageId: string
+  expectedRevision: number
+  queueOperationId: string
+}
+
+export interface AgentRetryQueuedMessageInput {
   threadId: string
   queuedMessageId: string
   expectedRevision: number
@@ -2035,6 +2048,8 @@ export const AGENT_IPC_CHANNELS = {
   REORDER_MESSAGE_QUEUE: 'agent:reorder-message-queue',
   /** 删除一条排队消息 */
   REMOVE_QUEUED_MESSAGE: 'agent:remove-queued-message',
+  /** 重试一条排队消息 */
+  RETRY_QUEUED_MESSAGE: 'agent:retry-queued-message',
   /** 以 revision/CAS 更新一条排队消息 */
   UPDATE_QUEUED_MESSAGE: 'agent:update-queued-message',
   /** 将排队消息提升为下一次工具调用前的引导 */

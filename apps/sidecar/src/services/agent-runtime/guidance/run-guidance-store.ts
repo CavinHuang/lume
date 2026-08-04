@@ -5,6 +5,7 @@ interface RestorableQueuedDispatch {
   threadId: string;
   text: string;
   createdAt: number;
+  attachmentsBrief?: string;
 }
 
 interface RunGuidanceRecord {
@@ -16,6 +17,7 @@ export interface ConsumedRunGuidance {
   guidanceIds: string[];
   text: string;
   items: AgentPendingGuidance[];
+  attachmentsBrief?: string;
 }
 
 export interface RunGuidanceStoreOptions {
@@ -33,7 +35,8 @@ export class RunGuidanceStore {
       threadId: dispatch.threadId,
       text: dispatch.text,
       createdAt: dispatch.createdAt,
-      promotedAt: this.options.now?.() ?? Date.now()
+      promotedAt: this.options.now?.() ?? Date.now(),
+      ...(dispatch.attachmentsBrief ? { attachmentsBrief: dispatch.attachmentsBrief } : {})
     };
     const pending = this.pendingByThread.get(dispatch.threadId) ?? [];
     pending.push({ guidance, dispatch });
@@ -52,10 +55,14 @@ export class RunGuidanceStore {
     }
     this.pendingByThread.delete(threadId);
     const items = pending.map((record) => record.guidance);
+    const briefs = items
+      .map((item) => item.attachmentsBrief)
+      .filter((value): value is string => Boolean(value));
     return {
       guidanceIds: items.map((item) => item.id),
       text: items.map((item, index) => `${index + 1}. ${item.text}`).join("\n"),
-      items
+      items,
+      ...(briefs.length > 0 ? { attachmentsBrief: briefs.join("\n") } : {})
     };
   }
 

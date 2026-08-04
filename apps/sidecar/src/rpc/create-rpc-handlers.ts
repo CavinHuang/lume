@@ -10,6 +10,7 @@ import { createMemoryHandlers } from "./memory-handlers";
 import { createModelMetaHandlers } from "./model-meta-handlers";
 import { createReadingHandlers } from "./reading-handlers";
 import { createRoutineHandlers } from "./routine-handlers";
+import { createSuggestionHandlers } from "./suggestion-handlers";
 import { createSystemHandlers } from "./system-handlers";
 import { createDesktopContextHandlers } from "./desktop-context-handlers";
 import { createWikiHandlers } from "./wiki-handlers";
@@ -17,6 +18,7 @@ import { desktopContextRpcService } from "../services/desktop-context/desktop-co
 import type { NotificationWriter, RpcHandler } from "./types";
 import type { BrowserBroker } from "../services/browser/browser-broker";
 import { getEffectivePluginRuntimeConfig } from "../services/system/lume-config-service";
+import { createPersonaHandlers } from "./persona-handlers";
 import { createPlanningTodoHandlers } from "./planning-todo-handlers";
 
 export interface CreateRpcHandlersContext {
@@ -71,6 +73,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     }),
     createAutomationHandlers(),
     createRoutineHandlers(),
+    createSuggestionHandlers({ writeNotification: context.writeNotification }),
     createDesktopContextHandlers(desktopContextRpcService),
     createWikiHandlers(),
     createAgentHandlers({
@@ -79,7 +82,8 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       planModePhaseTracker,
       notifyPlanModePhaseChange
     }),
-    createPlanningTodoHandlers({ writeNotification: context.writeNotification })
+    createPlanningTodoHandlers({ writeNotification: context.writeNotification }),
+    createPersonaHandlers()
   );
   if (context.renderClient) {
     handlers["render:result"] = async (params: unknown) => {

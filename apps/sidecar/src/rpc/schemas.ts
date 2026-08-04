@@ -234,6 +234,8 @@ export const agentSendInputSchema = z
       .enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"])
       .optional(),
     thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
+    // 三态路由字段:经 validateInput 入口时必须保留,否则 agent-service 三态路由恒走 queue
+    followUpQueueMode: z.enum(["steer", "queue", "interrupt"]).optional(),
     messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
     commentAttachments: z
       .array(agentDiffCommentAttachmentSchema)
@@ -976,6 +978,9 @@ export const agentQueuedMessageInputSchema = z.object({
   expectedRevision: z.number().int().min(0),
   queueOperationId: idSchema
 });
+
+// retry 与 remove/promote 共用同一组字段,直接复用 agentQueuedMessageInputSchema
+export const agentRetryQueuedMessageInputSchema = agentQueuedMessageInputSchema;
 
 export const agentUpdateQueuedMessageInputSchema = z.object({
   threadId: idSchema,

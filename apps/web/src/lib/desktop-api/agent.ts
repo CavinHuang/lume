@@ -25,6 +25,7 @@ import type {
   AgentPromoteQueuedMessageToGuidanceInput,
   AgentRemoveQueuedMessageInput,
   AgentReorderMessageQueueInput,
+  AgentRetryQueuedMessageInput,
   AgentThreadMessageDispatchResult,
   AgentUpdateQueuedMessageInput,
   AgentGetSubmissionReceiptInput,
@@ -215,6 +216,12 @@ export const reorderAgentMessageQueue = (input: AgentReorderMessageQueueInput) =
 export const removeQueuedAgentMessage = (input: AgentRemoveQueuedMessageInput) =>
   invoke<AgentMessageQueueOperationResult>('sidecar_call', {
     method: AGENT_IPC_CHANNELS.REMOVE_QUEUED_MESSAGE,
+    params: input,
+  })
+
+export const retryQueuedAgentMessage = (input: AgentRetryQueuedMessageInput) =>
+  invoke<AgentMessageQueueOperationResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.RETRY_QUEUED_MESSAGE,
     params: input,
   })
 
