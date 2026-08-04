@@ -2054,6 +2054,9 @@ export const updateGeneralSettingsInputSchema = z.object({
     closeToTray: z.boolean().optional(),
     showTray: z.boolean().optional()
   }).optional(),
+  agentIsland: z.object({
+    enabled: z.boolean().optional()
+  }).optional(),
   updateSettings: z.object({
     autoCheckUpdates: z.boolean().optional(),
     notifyAfterDownload: z.boolean().optional(),
