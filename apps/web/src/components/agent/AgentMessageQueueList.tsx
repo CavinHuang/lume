@@ -145,17 +145,18 @@ function QueuedMessageRow({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       initial={{ height: 0, opacity: 0 }}
-      animate={{ height: 'auto', opacity: 1 }}
+      animate={{ height: 'auto', opacity: isDragging ? 0.6 : 1 }}
       exit={{ height: 0, opacity: 0 }}
       transition={{ duration: 0.18 }}
       className={cn(
         'group relative flex h-11 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_28%,transparent)] px-4 text-[14px] text-[var(--text-2)] transition-colors last:border-b-0 hover:bg-[color:color-mix(in_oklab,var(--surface-2)_62%,transparent)]',
-        isDragging && 'z-10 opacity-60',
+        isDragging && 'z-10',
       )}
     >
       <button
         ref={setActivatorNodeRef}
         type="button"
+        disabled={item.status === 'validating'}
         aria-label="拖拽排序"
         {...attributes}
         {...listeners}
