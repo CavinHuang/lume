@@ -161,17 +161,20 @@ export class AgentIslandService {
 
   private async refreshPlanning(): Promise<void> {
     try {
-      const [todosRes, remindersRes] = await Promise.all([
+      const [todosRes, remindersRaw] = await Promise.all([
         this.deps.callSidecar<PlanningTodoListResult>('planning-todo:list', { view: 'open' }),
-        this.deps.callSidecar<{ items: ActivePlanningReminder[] }>(
-          'planning-todo:list-active-reminders',
-          {},
-        ),
+        this.deps.callSidecar<unknown>('planning-todo:list-active-reminders', {}),
       ])
+      // sidecar handler 直接 return calendar.listActiveReminders()，返回裸数组
+      // (planning-calendar-store.ts:584 `listActiveReminders(...): ActivePlanningReminder[]`)。
+      // 这里同时兼容 { items: [...] } 包装以防将来 drift；todos 路径则真用 PlanningTodoListResult.items。
+      const reminders = Array.isArray(remindersRaw)
+        ? (remindersRaw as ActivePlanningReminder[])
+        : ((remindersRaw as { items?: ActivePlanningReminder[] })?.items ?? [])
       const now = Date.now()
       this.planning = {
         todos: (todosRes?.items ?? []).map((t) => mapPlanningTodo(t, now)),
-        reminders: (remindersRes?.items ?? []).map((r) => mapActiveReminder(r, now)),
+        reminders: reminders.map((r) => mapActiveReminder(r, now)),
       }
     } catch {
       // 静默失败：planning 不可用时岛屿仅反映 agent 运行态。
