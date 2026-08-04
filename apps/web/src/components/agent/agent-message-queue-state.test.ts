@@ -119,4 +119,9 @@ describe('applyOrderByIds', () => {
     const out = applyOrderByIds(snap([{ id: 'a' }, { id: 'b' }]), ['a', 'x', 'b'])
     expect(out.queuedMessages.map((m) => m.id)).toEqual(['a', 'b'])
   })
+
+  test('未知 id 在非末位被跳过(不产生重复)', () => {
+    const out = applyOrderByIds(snap([{ id: 'a' }, { id: 'b' }]), ['b', 'x', 'a'])
+    expect(out.queuedMessages.map((m) => m.id)).toEqual(['b', 'a'])
+  })
 })
