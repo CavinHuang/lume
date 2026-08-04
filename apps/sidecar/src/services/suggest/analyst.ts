@@ -21,7 +21,7 @@
  *    `CreateMessageParams` 暴露，已丢弃（见 task-7-report concerns）。timeout 用
  *    `AbortSignal.timeout(60_000)` 实现。
  * 2. 输入构建：`runAnalysis` 接收预构建 `context`（`buildAnalysisInput` 产出），
- *    便于测试注入；persona 段跳过（Lume persona 未完整）。
+ *    便于测试注入；persona 段注入（周期 2 完成，readPersonaRaw→parsePersonaProfile）。
  * 3. 长度上限：Proma 超长直接 reject；Lume 改为**截断后接受**（更宽容，少丢候选）。
  * 4. memory entries：Lume 用 `listEntries`（kind 来自 frontmatter.kind，statement 字段），
  *    包含所有 kind（Lume 无 todo_context；state 亦有模式发现价值，全部包含）。
@@ -33,8 +33,10 @@ import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-ma
 import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { listEntries, listPending } from "../memory-v2/markdown-store";
+import { parsePersonaProfile, readPersonaRaw } from "../memory-v2/persona";
 import { resolveMemoryExtractionModelRefs } from "../memory-v2/extraction";
 import { listAutomationJobs } from "../automation/automation-manager";
+import type { MemoryV2Scope } from "../memory-v2/types";
 
 /** 分析器允许产出的建议类型（保守：只产出规则引擎也能处理、有明确动作的类型） */
 export const ALLOWED_KINDS: SuggestionKind[] = ["automation", "skill", "todo"];
@@ -143,7 +145,8 @@ export interface BuildAnalysisInputOptions {
  * - recent memory-v2 entries：listEntries(active)，slice 60→40，statement slice(0,100)，`[kind]` 前缀
  * - active corrections：tag 含 "correction" 的 entries + pending，top 5
  * - automation names：listAutomationJobs().name
- * - persona：跳过（Lume persona 未完整；spec "persona 为空时跳过"）
+ * - persona：readPersonaRaw → parsePersonaProfile → 注入 summary + preferences.slice(0,8)
+ *   （周期 2 完成；persona 不存在/读取失败 → fail-open 跳过该段）
  */
 export function buildAnalysisInput(opts: BuildAnalysisInputOptions = {}): string {
   const sections: string[] = [];
@@ -198,6 +201,30 @@ export function buildAnalysisInput(opts: BuildAnalysisInputOptions = {}): string
     }
   } catch {
     // fail-open：automation 段省略
+  }
+
+  // 用户画像（persona）：周期 2 完成，readPersonaRaw → parsePersonaProfile → 注入 summary + preferences
+  try {
+    const scope: MemoryV2Scope = opts.workspaceSlug ? "workspace" : "global";
+    const raw = readPersonaRaw(scope, opts.workspaceSlug);
+    if (raw !== null) {
+      const profile = parsePersonaProfile(raw);
+      const personaLines: string[] = [];
+      if (profile.summary && profile.summary.trim().length > 0) {
+        personaLines.push(`定位：${profile.summary.trim()}`);
+      }
+      const prefs = profile.preferences.slice(0, 8).filter((p) => p.trim().length > 0);
+      if (prefs.length > 0) {
+        personaLines.push("长期偏好：");
+        for (const p of prefs) personaLines.push(`- ${p.trim()}`);
+      }
+      if (personaLines.length > 0) {
+        sections.push("\n用户画像（persona）：");
+        sections.push(...personaLines);
+      }
+    }
+  } catch {
+    // fail-open：persona 段省略（不得阻塞分析）
   }
 
   return sections.length > 0 ? sections.join("\n") : "（暂无记忆）";
