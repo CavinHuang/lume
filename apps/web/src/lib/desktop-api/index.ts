@@ -16,6 +16,7 @@ export * from './reading'
 export * from './wiki'
 export * from './planning-todo'
 export * from './browser'
+export * from './suggestion'
 export { localFilePreviewUrl, openInSystem } from './native'
 export { sidecarCall } from './system'
 export type {

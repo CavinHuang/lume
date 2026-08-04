@@ -10,6 +10,7 @@ import { createMemoryHandlers } from "./memory-handlers";
 import { createModelMetaHandlers } from "./model-meta-handlers";
 import { createReadingHandlers } from "./reading-handlers";
 import { createRoutineHandlers } from "./routine-handlers";
+import { createSuggestionHandlers } from "./suggestion-handlers";
 import { createSystemHandlers } from "./system-handlers";
 import { createDesktopContextHandlers } from "./desktop-context-handlers";
 import { createWikiHandlers } from "./wiki-handlers";
@@ -71,6 +72,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     }),
     createAutomationHandlers(),
     createRoutineHandlers(),
+    createSuggestionHandlers({ writeNotification: context.writeNotification }),
     createDesktopContextHandlers(desktopContextRpcService),
     createWikiHandlers(),
     createAgentHandlers({

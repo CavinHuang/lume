@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { acknowledgeRendererDelivery, listSubagentWork, onSidecarEvent, sidecarCall } from '@/lib/desktop-api'
+import { acknowledgeRendererDelivery, listSubagentWork, onSidecarEvent, onSuggestionsChanged, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
   agentRuntimeStatusAtom,
@@ -19,6 +19,7 @@ import {
   currentWorkspaceIdAtom,
   tabsAtom,
   welcomePromptSeedAtom,
+  suggestionsVersionAtom,
 } from '@/atoms'
 import { buildDesktopProposalOpenRequestState } from '@/components/settings/desktop-assistant-proposals-state'
 import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
@@ -91,6 +92,7 @@ export function useGlobalAgentListeners() {
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
   const setWelcomePromptSeed = useSetAtom(welcomePromptSeedAtom)
+  const setSuggestionsVersion = useSetAtom(suggestionsVersionAtom)
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const runtimeEventsRafRef = useRef<number | null>(null)
@@ -378,8 +380,14 @@ export function useGlobalAgentListeners() {
         }
       }
     })
+    // sidecar 推送的建议变更信号 → bump 版本号 → 消费方（建议列表 / Banner，
+    // Task 14+）订阅 suggestionsVersionAtom 触发 suggestion:list 重拉。
+    const unlistenSuggestions = onSuggestionsChanged(() => {
+      setSuggestionsVersion((v) => v + 1)
+    })
     return () => {
       unlisten.then((fn) => fn())
+      unlistenSuggestions.then((fn) => fn())
       if (runtimeEventsRafRef.current !== null) {
         cancelAnimationFrame(runtimeEventsRafRef.current)
         runtimeEventsRafRef.current = null
@@ -395,5 +403,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setSubagentWork, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setSidePanelViews, setTabs, tabs, currentWorkspaceId, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, enqueueRuntimeEvent])
 }

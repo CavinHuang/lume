@@ -36,6 +36,7 @@ import {
   createMemoryWorkflowHookService,
   createRuntimeEventWorkflowHookService,
   createSecurityWorkflowHookService,
+  createSuggestionWorkflowHookService,
   createTraceWorkflowHookService
 } from "../../workflow-hooks/hook-services";
 import {
@@ -781,6 +782,7 @@ function resolveWorkflowHooks(input: {
     services: {
       memory: createMemoryWorkflowHookService(),
       security: createSecurityWorkflowHookService(),
+      suggestion: createSuggestionWorkflowHookService(),
       runtimeEvents: createRuntimeEventWorkflowHookService(),
       trace: createTraceWorkflowHookService(),
       clock: { now: () => new Date() }
