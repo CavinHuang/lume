@@ -15,6 +15,7 @@ import { createLazyConnectionLlmProvider } from "../model-runtime/connection-pro
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { MEMORY_CLAIM_PREFERRED_NAME, claimFromEntry } from "./claim";
 import { resolveMemoryExtractionModelRefs } from "./extraction";
+import { listEntries } from "./markdown-store";
 import { getPersonaPath } from "./paths";
 import type { MemoryV2Entry, MemoryV2Scope } from "./types";
 
@@ -199,6 +200,50 @@ export async function generatePersona(input: {
   const userPrompt = buildPersonaUserPrompt(input.entries, input.existing);
   const raw = await factory(userPrompt);
   return parsePersonaMarkdown(raw);
+}
+
+/**
+ * 三态编排：确保 scope 下存在 persona Markdown。
+ *
+ * 1. 无 persona + LLM 可用 → generatePersona({entries}) → write
+ * 2. 有 persona + LLM 可用 → generatePersona({entries, existing}) → write（增量合并）
+ * 3. generatePersona 抛错（无模型 / provider 错误）→ buildPersonaFromRules(entries) 兜底 → write
+ *
+ * - entries 来自 listEntries（markdown-store，按 scope 取）
+ * - scope 默认 global；传 workspaceSlug 时默认 workspace
+ * - providerFactory 可注入（测试）；默认走 generatePersona 生产工厂
+ * - **fail-open**：全程 try/catch，永不抛错（persona 失败不得阻塞 run/feedback）
+ */
+export async function ensurePersona(input: {
+  scope?: MemoryV2Scope;
+  workspaceSlug?: string;
+  providerFactory?: PersonaProviderFactory;
+}): Promise<void> {
+  try {
+    const scope: MemoryV2Scope =
+      input.scope ?? (input.workspaceSlug ? "workspace" : "global");
+    const workspaceSlug = scope === "workspace" ? input.workspaceSlug : undefined;
+
+    const entries = listEntries({ workspaceSlug, scopes: [scope] });
+    const existing = readPersonaRaw(scope, workspaceSlug);
+
+    let markdown: string;
+    try {
+      markdown = await generatePersona({
+        entries,
+        existing: existing ?? undefined,
+        workspaceSlug,
+        providerFactory: input.providerFactory
+      });
+    } catch {
+      // LLM 不可用或失败 → 规则兜底
+      markdown = buildPersonaFromRules(entries);
+    }
+    writePersona(scope, workspaceSlug, markdown);
+  } catch (error) {
+    // fail-open：persona 编排失败不得阻塞调用方
+    console.warn("[ensurePersona] persona 编排失败，已忽略:", error);
+  }
 }
 
 /** 构建 persona 生成 user prompt：记忆条目段 + 已有画像段 */

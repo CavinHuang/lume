@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   buildPersonaFromRules,
   deletePersona,
+  ensurePersona,
   generatePersona,
   getPersonaPath,
   parsePersonaProfile,
@@ -296,5 +297,40 @@ describe("generatePersona", () => {
     await expect(
       generatePersona({ entries: [], providerFactory: fake })
     ).rejects.toThrow("network down");
+  });
+});
+
+describe("ensurePersona", () => {
+  test("无 persona + LLM 可用 → 生成（state 1）", async () => {
+    const provider = async () => "# 用户画像\n## 一句话定位\n开发者";
+    await ensurePersona({ scope: "global", providerFactory: provider });
+    expect(readPersonaRaw("global")).toContain("一句话定位");
+  });
+
+  test("有 persona + LLM 可用 → 增量合并（existing 注入 prompt）（state 2）", async () => {
+    writePersona("global", undefined, "旧画像内容");
+    let capturedPrompt = "";
+    const provider = async (p: string) => {
+      capturedPrompt = p;
+      return "# 用户画像\n## 一句话定位\n新";
+    };
+    await ensurePersona({ scope: "global", providerFactory: provider });
+    expect(capturedPrompt).toContain("旧画像内容");
+    expect(readPersonaRaw("global")).toContain("新");
+  });
+
+  test("LLM 失败 → 规则兜底（fail-open，不抛）（state 3）", async () => {
+    const provider = async () => {
+      throw new Error("no llm configured");
+    };
+    await ensurePersona({ scope: "global", providerFactory: provider });
+    const md = readPersonaRaw("global");
+    expect(md).toContain("用户画像"); // buildPersonaFromRules 兜底产出
+  });
+
+  test("scope 默认 global（未传 scope/workspaceSlug）", async () => {
+    const provider = async () => "# 用户画像\n## 一句话定位\n默认";
+    await ensurePersona({ providerFactory: provider });
+    expect(readPersonaRaw("global")).toContain("默认");
   });
 });
