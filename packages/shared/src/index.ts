@@ -10,6 +10,7 @@ export * from "./afterglow";
 export * from "./data/model-meta";
 export * from "./data/catalog-mapping";
 export * from "./browser-api-registry";
+export * from "./agent-island-projections";
 
 // Bootstrap-level compatibility types used by MIG-001 scaffold.
 export type AppMode = "chat" | "agent";
