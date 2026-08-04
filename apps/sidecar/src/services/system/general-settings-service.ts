@@ -256,6 +256,12 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
         typeof updateSettings?.lastUpdateCheckAt === "string"
           ? updateSettings.lastUpdateCheckAt
           : null
+    },
+    agentIsland: {
+      enabled:
+        typeof value.agentIsland?.enabled === "boolean"
+          ? value.agentIsland.enabled
+          : GENERAL_SETTINGS_DEFAULTS.agentIsland.enabled
     }
   };
 }
@@ -390,6 +396,9 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
         input.updateSettings && "lastUpdateCheckAt" in input.updateSettings
           ? input.updateSettings.lastUpdateCheckAt ?? null
           : current.updateSettings.lastUpdateCheckAt
+    },
+    agentIsland: {
+      enabled: input.agentIsland?.enabled ?? current.agentIsland.enabled
     }
   };
   settings.generalSettings = next;

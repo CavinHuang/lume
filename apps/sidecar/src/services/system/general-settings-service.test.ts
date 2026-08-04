@@ -68,6 +68,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
@@ -101,6 +102,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
@@ -128,6 +130,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: true,
@@ -182,6 +185,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
@@ -302,6 +306,7 @@ describe("general-settings-service", () => {
       agentMessageDisplayMode: "minimal",
       agentMessageListDisplayMode: "conversation",
       agentMessageAvatarMode: "visible",
+      agentIsland: { enabled: true },
       logging: LUME_LOGGING_DEFAULTS,
       windowBehavior: {
         minimizeToTray: false,
