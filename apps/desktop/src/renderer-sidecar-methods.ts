@@ -179,6 +179,7 @@ export const PUBLIC_RENDERER_SIDECAR_METHODS = new Set([
   'agent:revert-coding-run',
   'agent:rewind-coding-turn',
   'agent:retire-subagent',
+  'agent:retry-queued-message',
   'agent:runtime-event',
   'agent:runtime-status-changed',
   'agent:save-files-to-thread',
