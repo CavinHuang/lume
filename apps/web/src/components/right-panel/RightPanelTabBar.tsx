@@ -1,4 +1,4 @@
-import { Braces, Camera, CircleAlert, FileDiff, FolderOpen, Globe, List, LoaderCircle, Mic, Package, Plus, Volume2, X, type LucideIcon } from 'lucide-react'
+import { Braces, Camera, CircleAlert, FileDiff, FolderOpen, Globe, List, LoaderCircle, MessageSquare, Mic, Package, Plus, Volume2, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import {
@@ -43,6 +43,8 @@ export type RightPanelTabItem =
 const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: LucideIcon; shortcut?: string }> = {
   browser: { label: '浏览器', Icon: Globe, shortcut: '⌘T' },
   files: { label: '文件', Icon: FolderOpen, shortcut: '⌘P' },
+  // chat 仅作类型完备；side-chat 不在 tab 栏主动添加，由划线引用「打开右侧问答」触发（见 #18）
+  chat: { label: '问答', Icon: MessageSquare },
 }
 
 export function buildRightPanelTabItems(
@@ -211,8 +213,10 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                 size="icon-xs"
                 type="button"
                 onClick={() => close(item)}
+                // Button 默认带 active:not-aria-[haspopup]:translate-y-px，按下时覆盖此处的 -translate-y-1/2 居中，
+                // 导致关闭按钮下跳约 13px、鼠标脱离而 click 不触发（关不掉最后一个 tab）。用 !important 强制按压时保持居中。
                 className={cn(
-                  'pointer-events-none absolute right-0.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100',
+                  'pointer-events-none absolute right-0.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 transition-opacity active:-translate-y-1/2! group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100',
                   active && 'pointer-events-auto opacity-100',
                 )}
                 title={`关闭${item.label}`}
