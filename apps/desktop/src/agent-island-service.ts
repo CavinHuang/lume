@@ -246,6 +246,15 @@ export class AgentIslandService {
     if (!force && now - this.lastPushAt < throttle) return
     this.lastPushAt = now
     this.lastStateJson = json
+    // Phase 2：native 推送与 Electron 窗口创建完全解耦——ensure 抛错也不影响 native。
+    if (this.deps.isNativeReady?.()) {
+      this.deps.publishNativeSnapshot?.({
+        type: 'snapshot',
+        protocol: 1,
+        revision: this.revision++,
+        state,
+      })
+    }
     let win = this.deps.getIslandWindow()
     if (!win || win.isDestroyed()) {
       try {
@@ -256,16 +265,6 @@ export class AgentIslandService {
     }
     if (win && !win.isDestroyed()) {
       win.webContents.send(`lume:event:${AGENT_ISLAND_IPC_CHANNELS.STATE}`, { state })
-    }
-    // Phase 2：复用同一份 state 推给 native host（macOS26 原生刘海）。
-    // native 分支与 Electron 窗口推送独立——win 不存在/被销毁时 native 仍可推。
-    if (this.deps.isNativeReady?.()) {
-      this.deps.publishNativeSnapshot?.({
-        type: 'snapshot',
-        protocol: 1,
-        revision: this.revision++,
-        state,
-      })
     }
   }
 
