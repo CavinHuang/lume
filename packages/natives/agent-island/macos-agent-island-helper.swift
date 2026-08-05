@@ -564,7 +564,13 @@ struct IslandRootView: View {
           : Color.black)
         if let snapshot = model.snapshot, visible {
           if expanded {
+            // 刘海避让：= safeAreaInsets.top（= model.compactHeight），待 macOS 实测确认无遮挡。
+            // ExpandedIslandView 整体下移 compactHeight，让内容落在硬件刘海下方；
+            // 顶部空出的区域由底层 shape.fill 渲染深灰背景，视觉上与刘海形成连续曲面。
+            // 注意：expandedHeight(for:width:notchHeight:) 测量时必须同步加同等内容 padding，
+            // 否则 surfaceSize 高度不足，底部会被 clipShape(shape) 裁剪。
             ExpandedIslandView(snapshot: snapshot, action: action)
+              .padding(.top, model.compactHeight)
               .transition(.opacity.combined(with: .move(edge: .top)))
           } else {
             CompactIslandView(snapshot: snapshot, height: model.compactHeight, action: action)
@@ -691,7 +697,11 @@ final class IslandController {
     let visible = message.state.presentation != "hidden"
     let expanded = message.state.presentation == "expanded"
     let width = expanded ? min(Self.maximumWidth, screen.frame.width - 32) : metrics.compactWidth
-    let height = expanded ? Self.expandedHeight(for: message, width: width) : metrics.height
+    // 把 notchHeight（= safeAreaInsets.top）传给 expandedHeight，与 IslandRootView 中
+    // ExpandedIslandView `.padding(.top, notchHeight)` 对齐，确保 panel 高度包含刘海避让区。
+    let height = expanded
+      ? Self.expandedHeight(for: message, width: width, notchHeight: metrics.height)
+      : metrics.height
     let surfaceSize = CGSize(width: width, height: height)
 
     // 把 NSPanel 紧贴真实可交互 surface，避免巨型透明 WindowServer 命中区。
@@ -717,9 +727,16 @@ final class IslandController {
   }
 
   /// 用最终宽度的 SwiftUI 树做 hosting 测量，避免二次 resize。
-  private static func expandedHeight(for message: SnapshotMessage, width: CGFloat) -> CGFloat {
+  /// notchHeight 必须与 IslandRootView 中 ExpandedIslandView 的 `.padding(.top, notchHeight)`
+  /// 保持一致，否则 panel 高度不足会让底部内容被 clipShape 裁剪。
+  private static func expandedHeight(
+    for message: SnapshotMessage,
+    width: CGFloat,
+    notchHeight: CGFloat
+  ) -> CGFloat {
     let measuringView = NSHostingView(rootView:
       ExpandedIslandView(snapshot: message, action: { _, _ in })
+        .padding(.top, notchHeight)
         .frame(width: width, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)
     )
