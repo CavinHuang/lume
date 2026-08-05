@@ -147,7 +147,7 @@ export function TodoView({
     if (!title.trim()) return
     setBusy(true)
     try {
-      await createPlanningTodo({
+      const result = await createPlanningTodo({
         title: title.trim(),
         priority: createPriority,
         ...(createWorkspaceId === 'unassigned'
@@ -160,6 +160,12 @@ export function TodoView({
             }
           : {}),
       })
+      // 后端对同 workspace 下标题 normalize 后相同的 open 待办会静默去重（deduplicated:true）。
+      // 此时未真正创建，保留 Dialog 让用户修改标题，而非无声关闭（见 #19）。
+      if (result.deduplicated) {
+        toast.info('已存在相同标题的待办，未重复创建。请修改标题后重试。')
+        return
+      }
       setTitle('')
       setCreatePriority('medium')
       setCreateDueAt('')
