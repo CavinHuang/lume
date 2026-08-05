@@ -166,7 +166,8 @@ function updateMemoryEntryFromSettings(input: MemoryUpdateEntryInput): MemoryMut
     statement: input.statement,
     kind: toMemoryV2Kind(input.kind),
     confidence: input.confidence,
-    tags: input.tags
+    tags: input.tags,
+    ...(input.activation ? { activation: input.activation } : {})
   });
   return {
     ok: true,

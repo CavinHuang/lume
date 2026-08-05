@@ -59,6 +59,7 @@ export interface MemoryV2Store {
     kind?: MemoryV2EntryFrontmatter["kind"];
     confidence?: MemoryV2EntryFrontmatter["confidence"];
     tags?: string[];
+    activation?: MemoryV2Activation;
   }): MemoryV2Entry;
   deleteEntry(input: {
     scope: MemoryV2Scope;
@@ -234,6 +235,7 @@ export function updateEntry(input: {
   kind?: MemoryV2EntryFrontmatter["kind"];
   confidence?: MemoryV2EntryFrontmatter["confidence"];
   tags?: string[];
+  activation?: MemoryV2Activation;
 }): MemoryV2Entry {
   const entry = findEntryById(input);
   if (!entry) {
@@ -248,6 +250,8 @@ export function updateEntry(input: {
     statement: nextStatement,
     tags: nextTags
   }) ?? entry.frontmatter.claim;
+  const previousActivation = readActivation(entry.frontmatter);
+  const nextActivation = input.activation ? { ...input.activation } : previousActivation;
   const next: MemoryV2Entry = {
     ...entry,
     statement: nextStatement,
@@ -256,6 +260,7 @@ export function updateEntry(input: {
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.confidence ? { confidence: input.confidence } : {}),
       tags: nextTags,
+      activation: nextActivation,
       ...(nextClaim ? { claim: nextClaim } : {}),
       updated: new Date().toISOString()
     }

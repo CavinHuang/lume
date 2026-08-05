@@ -35,6 +35,25 @@ export interface MemoryClaim {
   qualifiers?: Record<string, string>;
 }
 
+/**
+ * 记忆激活开关：按用途授权（recall/persona/suggestion/analyst）。
+ * 与 sidecar memory-v2/types.ts 的 MemoryV2Activation 对齐；
+ * 缺省（旧记忆）由 readActivation fallback 全 true。
+ */
+export interface MemoryActivation {
+  recall: boolean;
+  persona: boolean;
+  suggestion: boolean;
+  analyst: boolean;
+}
+
+export const DEFAULT_MEMORY_ACTIVATION: MemoryActivation = {
+  recall: true,
+  persona: true,
+  suggestion: true,
+  analyst: true,
+};
+
 export interface MemoryItem {
   id: string;
   workspaceSlug: string;
@@ -383,6 +402,7 @@ export interface MemorySettingsEntrySummary {
   pinned: boolean;
   tags: string[];
   claim?: MemoryClaim;
+  activation?: MemoryActivation;
 }
 
 export interface MemorySettingsPendingCandidateSummary {
@@ -415,6 +435,7 @@ export interface MemoryUpdateEntryInput {
   kind?: MemoryKind;
   confidence?: "low" | "medium" | "high";
   tags?: string[];
+  activation?: MemoryActivation;
 }
 
 export interface MemoryDeleteEntryInput {
