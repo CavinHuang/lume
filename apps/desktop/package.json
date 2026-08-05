@@ -108,7 +108,8 @@
       {
         "from": "resources/agent-island",
         "to": "agent-island",
-        "filter": ["**/*"]
+        "filter": ["**/*"],
+        "os": ["mac"]
       }
     ],
     "mac": {
