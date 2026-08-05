@@ -49,6 +49,21 @@ describe('selectPrimarySession', () => {
     ])
     expect(list.primarySessionId).toBe('b')
   })
+  test('error 优先于 completed（对齐 Proma attentionScore）', () => {
+    // 同级 lastActivityAt 时，error 应胜出成为 primary
+    const list = selectPrimarySession([
+      session({ threadId: 'ok', phase: 'completed', lastActivityAt: 5 }),
+      session({ threadId: 'boom', phase: 'error', lastActivityAt: 5 }),
+    ])
+    expect(list.primarySessionId).toBe('boom')
+  })
+  test('completed 优先于 running（running 后置）', () => {
+    const list = selectPrimarySession([
+      session({ threadId: 'run', phase: 'running', lastActivityAt: 9 }),
+      session({ threadId: 'ok', phase: 'completed', lastActivityAt: 1 }),
+    ])
+    expect(list.primarySessionId).toBe('ok')
+  })
   test('空列表返回 null primary', () => {
     expect(selectPrimarySession([]).primarySessionId).toBeNull()
   })

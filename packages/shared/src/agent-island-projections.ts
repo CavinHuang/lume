@@ -37,9 +37,9 @@ export interface IslandSessionInput {
 
 const PHASE_PRIORITY: Record<AgentIslandPhase, number> = {
   'needs-interaction': 0,
-  running: 1,
+  error: 1,
   completed: 2,
-  error: 3,
+  running: 3,
   idle: 4,
 }
 
