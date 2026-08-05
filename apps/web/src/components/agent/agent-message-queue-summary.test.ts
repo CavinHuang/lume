@@ -27,4 +27,12 @@ describe('summarizeQueuedMessage', () => {
   test('无文本无附件 → 占位', () => {
     expect(summarizeQueuedMessage(base())).toBe('（空消息）')
   })
+  test('文本含引用 XML 块时剥离 <quoted_context>，只返回纯净文本', () => {
+    const quotedBlock = '<quoted_context source="agent-history" label="Agent 历史" message_id="m1" role="assistant">\n引用内容\n</quoted_context>\n\n'
+    expect(summarizeQueuedMessage(base({ text: quotedBlock + '改这里' }))).toBe('改这里')
+  })
+  test('文本只有引用块时，剥离后按空文本降级到占位', () => {
+    const quotedBlock = '<quoted_file path="src/a.ts">\n代码\n</quoted_file>\n\n'
+    expect(summarizeQueuedMessage(base({ text: quotedBlock }))).toBe('（空消息）')
+  })
 })

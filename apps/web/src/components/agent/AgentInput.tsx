@@ -1600,7 +1600,7 @@ export function AgentInput({
       previousDraft: editor.getJSON(),
     })
     setPlusPanelOpen(false)
-    setEditorMessageParts(editor, editing.queuedMessage.messageParts, editing.draftText)
+    setEditorMessageParts(editor, stripLeadingQuotePart(editing.queuedMessage.messageParts), editing.draftText)
     setEditorText(editor.getText())
     editor.commands.focus('end')
   }, [editor, messageQueueSnapshot, setMessageQueues, threadId])
@@ -2196,6 +2196,17 @@ export function AgentInput({
       />
     </div>
   )
+}
+
+/** 剥离 messageParts 开头的引用块 text part（编辑队列消息时不让 <quoted_*> 标签进编辑器） */
+function stripLeadingQuotePart(parts: AgentQueuedMessage['messageParts']): AgentQueuedMessage['messageParts'] {
+  if (!parts || parts.length === 0) return parts
+  const first = parts[0]
+  if (first && first.type === 'text' && first.text.startsWith('<quoted_')) {
+    const rest = parts.slice(1)
+    return rest.length > 0 ? rest : undefined
+  }
+  return parts
 }
 
 function setEditorMessageParts(
