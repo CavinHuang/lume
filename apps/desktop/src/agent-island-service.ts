@@ -12,6 +12,7 @@ import type {
   AgentIslandPhase,
   AgentIslandPlanningItem,
   AgentIslandState,
+  NativeAgentIslandSnapshot,
 } from '../../../packages/shared/src/types/agent-island'
 import type {
   ActivePlanningReminder,
@@ -51,6 +52,10 @@ export interface AgentIslandServiceDeps {
   openSession: (threadId: string) => void
   /** 测得的展开内容高度回写：main 调 clampIslandHeight 调整 BrowserWindow 高度。 */
   setExpandedHeight: (height: number) => void
+  /** Phase 2：若 native host ready，同步推送快照；否则忽略。 */
+  publishNativeSnapshot?: (snapshot: NativeAgentIslandSnapshot) => void
+  /** Phase 2：native host 是否 ready（main.ts 路由：macOS26+ 且 helper 已握手）。 */
+  isNativeReady?: () => boolean
 }
 
 /** sidecar runtime-status 通知中 status 字段的宽松形状。 */
@@ -78,6 +83,8 @@ export class AgentIslandService {
   private dismissedKey: string | null = null
   private lastPushAt = 0
   private lastStateJson = ''
+  /** Phase 2：native snapshot 单调版本号，Swift 据此丢弃乱序/重复快照。 */
+  private revision = 0
   private planningTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(private deps: AgentIslandServiceDeps) {}
@@ -249,6 +256,16 @@ export class AgentIslandService {
     }
     if (win && !win.isDestroyed()) {
       win.webContents.send(`lume:event:${AGENT_ISLAND_IPC_CHANNELS.STATE}`, { state })
+    }
+    // Phase 2：复用同一份 state 推给 native host（macOS26 原生刘海）。
+    // native 分支与 Electron 窗口推送独立——win 不存在/被销毁时 native 仍可推。
+    if (this.deps.isNativeReady?.()) {
+      this.deps.publishNativeSnapshot?.({
+        type: 'snapshot',
+        protocol: 1,
+        revision: this.revision++,
+        state,
+      })
     }
   }
 
