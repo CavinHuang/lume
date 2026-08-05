@@ -100,3 +100,10 @@ export const agentInputHistoryAtom = atomWithStorage<Record<string, AgentInputDr
   {},
 )
 export const agentInputHistoryFamily = createThreadSliceFamily(agentInputHistoryAtom)
+
+/**
+ * 队列项图片附件的预览 URL(renderer 本地 objectURL 映射)。
+ * key = messageAttachment.id,value = objectURL。
+ * 不进 sidecar/不持久化;提交时填、队列项删除时 revoke+清。刷新丢失 → 队列行降级为无缩略。
+ */
+export const queuedAttachmentPreviewUrlAtom = atom<Record<string, string>>({})

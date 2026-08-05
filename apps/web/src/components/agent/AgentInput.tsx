@@ -24,7 +24,7 @@ import {
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, queuedAttachmentPreviewUrlAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { debounce } from 'throttle-debounce'
 import {
@@ -83,8 +83,8 @@ import {
 import { AgentMessageQueueList } from './AgentMessageQueueList'
 import { SuggestionBanner } from './SuggestionBanner'
 import {
+  applyOrderByIds,
   createEmptyAgentMessageQueueSnapshot,
-  reorderQueuedMessages,
   startEditingQueuedMessage,
   upsertAgentMessageQueueSnapshot,
 } from './agent-message-queue-state'
@@ -617,6 +617,7 @@ export function AgentInput({
   const messageQueueSnapshot = messageQueues[threadId] ?? createEmptyAgentMessageQueueSnapshot(threadId)
   const queueInterrupted = useAtomValue(agentQueueInterruptedFamily(threadId)) ?? false
   const setQueueInterruptedStates = useSetAtom(agentQueueInterruptedAtom)
+  const setQueuedAttachmentPreviewUrls = useSetAtom(queuedAttachmentPreviewUrlAtom)
   const desktopContextView = resolveAgentInputDesktopContextView({
     propTarget: desktopContextTarget,
     capturedTarget: capturedDesktopContextTarget,
@@ -1306,6 +1307,17 @@ export function AgentInput({
           }
         })
       }
+      // renderer 瞬态:把 pending 图片附件的 objectURL 存入 atom,供队列行首图缩略。
+      // 不进 sidecar(messageAttachment.id === pendingAttachment.id,见构造处 id: attachment.id)。
+      const pendingImagePreviews: Record<string, string> = {}
+      for (const pending of effectivePendingAttachments) {
+        if (pending.previewUrl && isImageAttachment({ filename: pending.filename, mediaType: pending.mediaType })) {
+          pendingImagePreviews[pending.id] = pending.previewUrl
+        }
+      }
+      if (Object.keys(pendingImagePreviews).length > 0) {
+        setQueuedAttachmentPreviewUrls((prev) => ({ ...prev, ...pendingImagePreviews }))
+      }
       for (const attachment of effectiveBrowserAttachments) {
         const screenshotRef = attachment.origin === 'browser-annotation' ? attachment.screenshotRef : undefined
         if (!screenshotRef) continue
@@ -1510,14 +1522,17 @@ export function AgentInput({
     }
   }
 
-  const handleQueueReorder = useCallback((draggedId: string, targetId: string, placement: 'before' | 'after') => {
+  const handleQueueReorder = useCallback((orderedIds: string[]) => {
     const previousSnapshot = messageQueueSnapshot
-    const optimisticSnapshot = reorderQueuedMessages(previousSnapshot, draggedId, targetId, placement)
+    const optimisticSnapshot = applyOrderByIds(previousSnapshot, orderedIds)
     if (optimisticSnapshot === previousSnapshot) return
     setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, optimisticSnapshot))
     reorderAgentMessageQueue({
       threadId,
-      orderedMessageIds: optimisticSnapshot.queuedMessages.map((item) => item.id),
+      // 传完整顺序(含 internal),否则 kernel reorderQueued 会把未列出的 id 追加到末尾,
+      // 覆盖乐观更新中 internal 原位保留的语义。optimisticSnapshot 已是 applyOrderByIds
+      // 处理后的完整顺序(visible 重排 + internal 原位)。
+      orderedMessageIds: optimisticSnapshot.queuedMessages.map((m) => m.id),
       expectedRevision: previousSnapshot.revision,
       queueOperationId: crypto.randomUUID(),
     })
@@ -1533,6 +1548,10 @@ export function AgentInput({
   }, [messageQueueSnapshot, setMessageQueues, threadId])
 
   const handleRemoveQueuedMessage = useCallback((queuedMessageId: string) => {
+    // 仅在删除成功后才 revoke previewUrl:失败路径消息仍在队列,提前 revoke 会让缩略
+    // 在该消息剩余生命周期永久消失(objectURL 不可重建)。
+    const removedMessage = messageQueueSnapshot.queuedMessages.find((m) => m.id === queuedMessageId)
+    const removedAttachmentIds = removedMessage?.messageAttachments?.map((a) => a.id) ?? []
     removeQueuedAgentMessage({
       threadId,
       queuedMessageId,
@@ -1541,13 +1560,33 @@ export function AgentInput({
     })
       .then((result) => {
         setMessageQueues((prev) => upsertAgentMessageQueueSnapshot(prev, result.snapshot))
-        if (!result.ok) toast.error('队列已发生变化，删除未执行')
+        if (!result.ok) {
+          toast.error('队列已发生变化，删除未执行')
+          return
+        }
+        // 删除成功:revoke + 清 atom(updater 保持纯净:revoke 副作用收集到外层,
+        // 无任何目标 id 时短路返回 prev,避免不必要的引用变更触发重渲染)
+        if (removedAttachmentIds.length === 0) return
+        const urlsToRevoke: string[] = []
+        setQueuedAttachmentPreviewUrls((prev) => {
+          if (!removedAttachmentIds.some((id) => id in prev)) return prev
+          const next = { ...prev }
+          for (const id of removedAttachmentIds) {
+            const url = next[id]
+            if (url) {
+              urlsToRevoke.push(url)
+              delete next[id]
+            }
+          }
+          return next
+        })
+        for (const url of urlsToRevoke) URL.revokeObjectURL(url)
       })
       .catch((error) => {
         console.error('[AgentInput] 删除排队消息失败:', error)
         toast.error('删除排队消息失败')
       })
-  }, [messageQueueSnapshot.revision, setMessageQueues, threadId])
+  }, [messageQueueSnapshot, setMessageQueues, setQueuedAttachmentPreviewUrls, threadId])
 
   const handleEditQueuedMessage = useCallback((queuedMessageId: string) => {
     if (!editor) return
