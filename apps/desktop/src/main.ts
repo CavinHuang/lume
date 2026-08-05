@@ -118,6 +118,13 @@ import {
 } from './plugin-native-host-installer'
 import { loadOrCreateDesktopContextKey } from './desktop-context-key'
 import { AgentIslandService } from './agent-island-service'
+import { isMacOS26NativeIslandCapable } from './macos-version'
+import {
+  startMacAgentIslandNativeHost,
+  disposeMacAgentIslandNativeHost,
+  isMacAgentIslandNativeHostReady,
+  publishMacAgentIslandSnapshot,
+} from './mac-agent-island-native-host'
 import {
   autoUnlockConnectionVault,
   getConnectionVaultStatus,
@@ -132,7 +139,8 @@ import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile } from './browser-import'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '../../../packages/shared/src/types/logging'
-import type { AgentIslandIntent } from '../../../packages/shared/src/types/agent-island'
+import { nativeEventToIntent } from '../../../packages/shared/src/types/agent-island'
+import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '../../../packages/shared/src/types/agent-island'
 import {
   createAsyncSingleFlight,
   createEventRateLimiter,
@@ -1315,6 +1323,44 @@ export function destroyIslandWindow() {
   islandWindow = null
 }
 
+// Phase 2：macOS 26+ 启用原生灵动岛面（NSPanel/SwiftUI）时为真。native 激活期间禁止
+// 创建 Electron 岛屿 BrowserWindow（参见 getAgentIslandService 的 deps.ensureIslandWindow 包装）。
+let nativeSurfaceActive = false
+
+/**
+ * Phase 2：macOS 26+ 优先起 native 面；4s 未 ready / fatal / exit 则回退 Electron 窗。
+ * 非 macOS 26（含 Windows/Linux 与 darwin<26）直接走 Phase 1 的 Electron 透明窗路径。
+ */
+function startAgentIslandSurface(): void {
+  if (!isMacOS26NativeIslandCapable()) {
+    ensureIslandWindow()
+    return
+  }
+  const started = startMacAgentIslandNativeHost({
+    onReady: () => {
+      nativeSurfaceActive = true
+      destroyIslandWindow()
+    },
+    onEvent: (event) => {
+      if (event.type === 'intent') {
+        agentIslandService?.handleIntent(nativeEventToIntent(event))
+      }
+    },
+    onUnavailable: () => {
+      nativeSurfaceActive = false
+      ensureIslandWindow()
+    },
+  })
+  if (!started) ensureIslandWindow()
+}
+
+/** Phase 2：停用灵动岛渲染面（native host + Electron 窗均释放）。 */
+function stopAgentIslandSurface(): void {
+  disposeMacAgentIslandNativeHost()
+  nativeSurfaceActive = false
+  destroyIslandWindow()
+}
+
 /**
  * Lazy 构造 Agent 灵动岛 service（Task 6）。onNotification 路由、whenReady 启动、will-quit 销毁
  * 在 Task 7 接线；此处仅保证 `agentIslandService` 符号存在，让 dispatchCommand 的
@@ -1330,7 +1376,10 @@ function getAgentIslandService(): AgentIslandService {
         return enabled !== false
       },
       getIslandWindow: () => islandWindow,
-      ensureIslandWindow: () => ensureIslandWindow(),
+      // Phase 2：native 激活时返回 null（不创建 BrowserWindow），避免 native 模式冒 Electron 窗。
+      // service push() 的 win 检查已对 null 友好（`if (win && !win.isDestroyed())`）；service
+      // 类型签名仍是 `() => BrowserWindow`，这里用 as 收窄 `BrowserWindow | null` 为合同类型。
+      ensureIslandWindow: (() => (nativeSurfaceActive ? null : ensureIslandWindow())) as () => BrowserWindow,
       callSidecar: <T,>(method: string, params?: unknown) => sidecarHost.call(method, params ?? null) as Promise<T>,
       openMain: () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1354,6 +1403,11 @@ function getAgentIslandService(): AgentIslandService {
       setExpandedHeight: (height) => {
         const w = islandWindow
         if (w && !w.isDestroyed()) clampIslandHeight(w, height)
+      },
+      // Phase 2：native host ready 时同步推送快照；intent 走 onEvent → handleIntent。
+      isNativeReady: () => nativeSurfaceActive && isMacAgentIslandNativeHostReady(),
+      publishNativeSnapshot: (snap: NativeAgentIslandSnapshot) => {
+        publishMacAgentIslandSnapshot(snap)
       },
     })
   }
@@ -2516,11 +2570,14 @@ function createSidecarHost({ onNotification }) {
             if (logging && typeof logging === 'object') getLoggingService().updateSettings(logging)
             // Agent 灵动岛 §5.3：设置开关"关闭后立即生效"。settings-replace 是所有设置写入
             // （含 renderer toggle → sidecar general-settings:update）的唯一汇聚点，故在此处
-            // 检测 agentIsland.enabled 翻为 false 即立即销毁窗口；重新开启由下次 push 懒重建。
+            // 检测 agentIsland.enabled 翻为 false 即停整个渲染面（native host + Electron 窗）；
+            // 反向翻转（重新开启）若发现渲染面已停，重启以恢复 macOS26 原生优先语义。
             const agentIslandEnabled = (settings.generalSettings as { agentIsland?: { enabled?: boolean } } | undefined)
               ?.agentIsland?.enabled
             if (agentIslandEnabled === false) {
-              destroyIslandWindow()
+              stopAgentIslandSurface()
+            } else if (!nativeSurfaceActive && (!islandWindow || islandWindow.isDestroyed())) {
+              startAgentIslandSurface()
             }
             if (mutationId) {
               runningChild.postMessage(JSON.stringify({
@@ -3010,6 +3067,8 @@ app.whenReady().then(async () => {
   await createMainWindow()
   // Agent 灵动岛 service（Task 7）：主窗口就绪后启动，开始响应 sidecar intent。
   await getAgentIslandService().start()
+  // Phase 2：启动渲染面（macOS 26+ 优先 native，否则 Electron 窗）。native 4s 未 ready 由 host 回退。
+  startAgentIslandSurface()
   logDesktopStartup('main window ready')
   // 检查 Alt+L 注册结果：被系统或其他程序占用时 register 返回 false，记录但不中断启动
   const quickInputShortcutRegistered = globalShortcut.register('Alt+L', () => {
@@ -3057,10 +3116,10 @@ app.on('will-quit', async () => {
   globalShortcut.unregisterAll()
   connectionVaultKey?.fill(0)
   connectionVaultKey = null
-  // Agent 灵动岛 service（Task 7）：销毁 service 与悬浮窗，释放资源。
+  // Agent 灵动岛 service（Task 7）：销毁 service 与渲染面（Phase 2 含 native host），释放资源。
   agentIslandService?.destroy()
   agentIslandService = null
-  destroyIslandWindow()
+  stopAgentIslandSurface()
 })
 
 async function startDesktopHost(): Promise<DesktopHostState> {
