@@ -399,7 +399,15 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
     },
     agentIsland: {
       enabled: input.agentIsland?.enabled ?? current.agentIsland.enabled
-    }
+    },
+    // Task 6 fix round 1：main 的 broker.mutate 写 islandWindowPosition 时不通知
+    // sidecar，sidecar cache 可能过期。这里 best-effort 透传缓存的 islandWindowPosition
+    // 到 next，避免本次 update 把字段整体覆盖丢失。仅在缓存有值时带上，保持缺省时的既有
+    // persisted 形状（不强制写 null，避免破坏现有 toEqual 契约）。
+    // live scenario 的 cache stale gap 见 task-6-report fix round 1。
+    ...(settings.generalSettings?.islandWindowPosition
+      ? { islandWindowPosition: settings.generalSettings.islandWindowPosition }
+      : {})
   };
   settings.generalSettings = next;
   await writePersistedSettings(settings);
