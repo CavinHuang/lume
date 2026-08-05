@@ -1306,6 +1306,8 @@ export function ensureIslandWindow() {
     appProtocolOrigin: APP_PROTOCOL_ORIGIN,
     devServerUrl: getDevServerUrl(),
     desktopRoot: DESKTOP_ROOT,
+    savedPosition: readIslandWindowPosition(),
+    onWindowMove: (position) => persistIslandWindowPosition(position),
   })
   islandWindow = win
   win.on('closed', () => {
@@ -1315,6 +1317,49 @@ export function ensureIslandWindow() {
     if (islandWindow === win && !win.isDestroyed()) win.showInactive()
   })
   return win
+}
+
+/**
+ * 读 settings.islandWindowPosition（Windows/Linux 持久化位置）。
+ * 缺省/非有限值返回 null → window 模块走默认吸附逻辑。
+ */
+function readIslandWindowPosition(): { x: number; y: number } | null {
+  const raw = getSettingsBroker().read().generalSettings as
+    | { islandWindowPosition?: { x?: unknown; y?: unknown } | null }
+    | undefined
+  const pos = raw?.islandWindowPosition
+  if (
+    pos &&
+    typeof pos.x === 'number' && Number.isFinite(pos.x) &&
+    typeof pos.y === 'number' && Number.isFinite(pos.y)
+  ) {
+    return { x: pos.x, y: pos.y }
+  }
+  return null
+}
+
+/**
+ * 经 settings broker 把拖动后的 {x,y} 写回 generalSettings.islandWindowPosition。
+ * 与 sidecar settings-replace 是同一条 settings.json 写路径（broker.mutate → replace），
+ * 不绕过既有持久化链。值未变时跳过，避免 clampIslandHeight 等程序化 setBounds
+ * 触发的 noop move 事件频繁写盘。
+ */
+function persistIslandWindowPosition(position: { x: number; y: number }): void {
+  try {
+    const current = readIslandWindowPosition()
+    if (current && current.x === position.x && current.y === position.y) return
+    getSettingsBroker().mutate((prev) => ({
+      ...prev,
+      generalSettings: {
+        ...((prev.generalSettings as Record<string, unknown> | undefined) ?? {}),
+        islandWindowPosition: { x: position.x, y: position.y },
+      },
+    }))
+  } catch (error) {
+    writeMainLog('warn', 'desktop.agent-island', 'position.persist_failed', 'failed to persist island window position', {
+      data: { error },
+    })
+  }
 }
 
 /** 销毁岛屿窗口并清空模块级引用。 */
