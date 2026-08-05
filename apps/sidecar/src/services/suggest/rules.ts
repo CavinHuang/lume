@@ -26,7 +26,7 @@ import type { SuggestionCandidate } from "@lume/shared";
 import type { Signal } from "./signals";
 import { isMeaningfulRule, normalizeRule } from "./signals";
 import { listAutomationJobs } from "../automation/automation-manager";
-import { listEntries, listPending } from "../memory-v2/markdown-store";
+import { listEntries, listPending, readActivation } from "../memory-v2/markdown-store";
 
 /** SOP 候选数量阈值：达到后建议沉淀为 Skill */
 export const SOP_CANDIDATE_THRESHOLD = 3;
@@ -242,10 +242,12 @@ export function loadDedupContext(input: DedupContextInput = {}): DedupContext {
   }
 
   // memory-v2 entries（active）+ pending（open）：correction 规则 + sop/state 计数
+  // activation.suggestion=false 的条目不计入建议去重源（Task 3）
   let correctionRules: string[] = [];
   let sopCandidateCount = 0;
   try {
-    const entries = listEntries({ workspaceSlug, includeStatuses: ["active"] });
+    const entries = listEntries({ workspaceSlug, includeStatuses: ["active"] })
+      .filter((e) => readActivation(e.frontmatter).suggestion);
     const pending = listPending({ workspaceSlug, includeStatuses: ["open"] });
 
     const fromEntries = entries
