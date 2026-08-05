@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ClipboardEvent, type HTMLAttributes, type ReactNode } from 'react'
-import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, MessageSquareText, Minimize2, Package, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
+import { BookOpen, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, Copy, Database, Download, Edit3, ExternalLink, FileText, Gauge, GitFork, Globe, History, ListChecks, ListCollapse, Loader2, Maximize2, MessageSquareText, Minimize2, Package, Quote, Sparkles, Terminal, TriangleAlert, Workflow, Wrench, X } from 'lucide-react'
+import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
 import { XMarkdown } from '@ant-design/x-markdown'
 import { MermaidBlock, useSmoothStream } from '@lume/ui'
 import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre'
@@ -704,17 +705,40 @@ export function UserAgentRoleInvocationContent({
   messageParts?: AgentUserMessagePart[]
   capabilityReferences?: AgentCapabilityReferenceView[]
 }) {
+  const { quotes, text: cleanText } = parseQuotedSelectionRefs(text)
+  const quoteMarks = quotes.length > 0 ? (
+    <div className="mb-1.5 flex flex-wrap gap-1.5">
+      {quotes.map((quote, index) => (
+        <span key={`${quote.label ?? quote.filename}-${index}`} className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border border-[color:color-mix(in_oklab,var(--brand)_20%,transparent)] bg-[color:color-mix(in_oklab,var(--brand)_8%,transparent)] px-2.5 py-1 text-[12px] text-[var(--text-2)]">
+          <Quote className="size-3.5 shrink-0 text-[var(--text-3)]" />
+          <span className="min-w-0 truncate">{quote.label ?? quote.filename}</span>
+        </span>
+      ))}
+    </div>
+  ) : null
+
   if (messageParts?.some((part) => part.type === 'capability_ref')) {
-    return <CapabilityMessageText text={text} messageParts={messageParts} capabilityReferences={capabilityReferences} />
+    return (
+      <div className="min-w-0">
+        {quoteMarks}
+        <CapabilityMessageText text={cleanText} messageParts={messageParts} capabilityReferences={capabilityReferences} />
+      </div>
+    )
   }
-  const invocation = parseAgentRoleInstructionMessage(text)
+  const invocation = parseAgentRoleInstructionMessage(cleanText)
 
   if (!invocation) {
-    return <CapabilityMessageText text={text} />
+    return (
+      <div className="min-w-0">
+        {quoteMarks}
+        <CapabilityMessageText text={cleanText} />
+      </div>
+    )
   }
 
   return (
     <div data-agent-role-message={invocation.role.id} className="min-w-0 space-y-2">
+      {quoteMarks}
       <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--lume-accent)_24%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_76%,var(--lume-accent-soft))] px-2 py-1 shadow-[0_1px_0_hsl(var(--lume-shadow-panel)/0.08)]">
         <img
           src={AGENT_ROLE_ASSETS.roles[invocation.role.id]}

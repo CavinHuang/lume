@@ -21,6 +21,23 @@ describe("agentSendInputSchema messageParts", () => {
     expect(parsed.messageParts).toHaveLength(2);
   });
 
+  test("accepts quoted_context block prepended as a text part (quote + capability)", () => {
+    // P2-1 回归：引用块 prepend 到 userMessage 时，必须同步 prepend 为 text part，
+    // 否则 messageParts 拼接 != userMessage 被 sidecar 拒绝（引用 + @capability 共存场景）
+    const quotedBlock = '<quoted_context source="agent-history" label="Agent 历史" message_id="m1" role="assistant">\n引用内容\n</quoted_context>\n\n';
+    const parsed = agentSendInputSchema.parse({
+      threadId: "thread-1",
+      userMessage: quotedBlock + "Use lume-plugin://browser",
+      clientSubmissionId: "8312d8d1-bc7b-4e93-a2ca-b6a4ca8ad503",
+      messageParts: [
+        { type: "text", text: quotedBlock },
+        { type: "text", text: "Use " },
+        { type: "capability_ref", occurrenceId: "plugin-1", uri: "lume-plugin://browser" }
+      ]
+    });
+    expect(parsed.messageParts).toHaveLength(3);
+  });
+
   test("rejects mismatches, duplicate occurrences, and malformed refs", () => {
     expect(() => agentSendInputSchema.parse({
       threadId: "thread-1",

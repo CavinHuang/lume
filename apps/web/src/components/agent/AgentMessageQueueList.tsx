@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
 import { summarizeQueuedMessage } from './agent-message-queue-summary'
+import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
 type QueueDropPlacement = 'before' | 'after'
 
 interface AgentMessageQueueListProps {
@@ -78,7 +79,7 @@ export function AgentMessageQueueList({
             >
               <CornerDownRight size={15} strokeWidth={2} className="shrink-0 text-[var(--text-3)]" />
               <span className="shrink-0 font-medium text-[var(--text-2)]">引导</span>
-              <span className="min-w-0 truncate">{item.text}</span>
+              <span className="min-w-0 truncate">{parseQuotedSelectionRefs(item.text ?? '').text}</span>
             </div>
           ))}
         </div>
