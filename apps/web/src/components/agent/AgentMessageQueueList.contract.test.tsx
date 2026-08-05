@@ -83,4 +83,22 @@ describe('AgentMessageQueueList 契约(平铺浮层)', () => {
     )
     expect(html).toBe('')
   })
+
+  test('无文本多类型附件行渲染联合计数', () => {
+    const html = renderToStaticMarkup(
+      <AgentMessageQueueList
+        snapshot={snapshotWith([{
+          id: 'q-multi', text: '',
+          messageAttachments: [
+            { id: 'f1', filename: 'a.txt', mediaType: 'text/plain' } as never,
+            { id: 'f2', filename: 'b.txt', mediaType: 'text/plain' } as never,
+          ],
+          commentAttachments: [{ id: 'c1' } as never],
+          browserAttachments: [{ id: 'b1' } as never],
+        }])}
+        onReorder={noopReorder} onRemove={() => undefined} onEdit={() => undefined} onPromoteToGuidance={() => undefined}
+      />,
+    )
+    expect(html).toContain('2 文件 · 1 评论 · 1 浏览器注释')
+  })
 })

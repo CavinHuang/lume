@@ -18,10 +18,13 @@ import { CSS } from '@dnd-kit/utilities'
 import { AlertTriangle, CornerDownRight, Edit3, GripVertical, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useState } from 'react'
+import { useAtomValue } from 'jotai'
 import type { AgentFollowUpMode, AgentMessageQueueSnapshot, AgentQueuedMessage } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { queuedAttachmentPreviewUrlAtom } from '@/atoms'
 import { summarizeQueuedMessage } from './agent-message-queue-summary'
+import { isImageAttachment } from './AgentAttachmentGrid'
 
 interface AgentMessageQueueListProps {
   snapshot: AgentMessageQueueSnapshot
@@ -139,6 +142,11 @@ function QueuedMessageRow({
   const [menuOpen, setMenuOpen] = useState(false)
   const canPromote = item.status === 'queued' && item.text.trim().length > 0
   const blocked = item.status === 'blocked'
+  const previewUrls = useAtomValue(queuedAttachmentPreviewUrlAtom)
+  const firstImage = item.messageAttachments?.find((a) =>
+    isImageAttachment({ filename: a.filename, mediaType: a.mediaType }),
+  )
+  const firstImagePreviewUrl = firstImage ? previewUrls[firstImage.id] : undefined
 
   return (
     <motion.div
@@ -171,6 +179,14 @@ function QueuedMessageRow({
         >
           <AlertTriangle size={14} strokeWidth={2} />
         </span>
+      )}
+      {firstImagePreviewUrl && (
+        <img
+          src={firstImagePreviewUrl}
+          alt=""
+          draggable={false}
+          className="size-6 shrink-0 rounded border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] object-cover"
+        />
       )}
       <span className="min-w-0 flex-1 truncate font-medium text-[var(--text-2)]">{summarizeQueuedMessage(item)}</span>
       {blocked && (
