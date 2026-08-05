@@ -1,6 +1,6 @@
 import type { LumeRuntimeEvent, RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 
-export type RightPanelFunction = 'browser' | 'files'
+export type RightPanelFunction = 'browser' | 'files' | 'chat'
 
 export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['browser', 'files']
 
@@ -11,6 +11,7 @@ export interface ThreadRightPanelWorkspace {
 export type RightPanelTabState =
   | BrowserTabState
   | FilesTabState
+  | ChatTabState
 
 export interface BrowserTabState {
   type: 'browser'
@@ -22,6 +23,11 @@ export interface BrowserTabState {
 
 export interface FilesTabState {
   type: 'files'
+}
+
+/** 右侧面板 side-chat：为当前会话临时配一个问答副窗口（见 #18） */
+export interface ChatTabState {
+  type: 'chat'
 }
 
 export interface RightPanelReviewLaunchTarget {
