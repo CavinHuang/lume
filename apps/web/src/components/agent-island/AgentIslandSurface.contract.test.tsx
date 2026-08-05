@@ -42,6 +42,26 @@ describe('AgentIslandSurface 契约', () => {
     expect(html).toContain('需要你接手')
     expect(html).toMatch(/data-phase="needs-interaction"/)
   })
+  test('expanded 有 open-main 与 dismiss 按钮(attention=true)', () => {
+    const html = renderToStaticMarkup(
+      <AgentIslandSurface state={state({
+        presentation: 'expanded',
+        sessions: [{
+          threadId: 't1', title: '任务A', phase: 'needs-interaction', detail: '',
+          activityLines: [], attention: true, unread: false, terminalAt: null, lastActivityAt: 1,
+        }],
+      })} onIntent={noop} />,
+    )
+    expect(html).toContain('打开 Lume')
+    expect(html).toContain('关闭')
+  })
+  test('expanded 在 attention=false 时不显示 dismiss', () => {
+    const html = renderToStaticMarkup(
+      <AgentIslandSurface state={state({ presentation: 'expanded' })} onIntent={noop} />,
+    )
+    expect(html).toContain('打开 Lume')
+    expect(html).not.toContain('关闭')
+  })
   test('expanded 渲染 planning 两列', () => {
     const planningState: AgentIslandState = {
       presentation: 'expanded',

@@ -76,6 +76,10 @@ export function AgentIslandSurface({
             <div className="island-expanded-head island-drag-handle">
               <span className="island-title">{state.compactLabel.replace('Lume · ', '')}</span>
               <div className="island-actions island-no-drag">
+                <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'open-main' })}>打开 Lume</Button>
+                {primary.attention && (
+                  <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'dismiss' })}>关闭</Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'open-session', threadId: primary.threadId })}>打开会话</Button>
                 <Button size="sm" variant="ghost" onClick={() => onIntent({ name: 'set-expanded', value: false })}>收起</Button>
               </div>
