@@ -59,14 +59,17 @@ export function AgentIslandSurface({
         onMouseEnter={() => onIntent({ name: 'set-hovered', value: true })}
         onMouseLeave={() => onIntent({ name: 'set-hovered', value: false })}
       >
+        {/* 窗口拖动 grip（仅非 macOS）：独立绝对定位区，不贴到 compact button 上，
+            避免 -webkit-app-region:drag 吞掉 compact 整面 click。macOS 走 Phase 2 native 刘海 */}
+        <div className="island-drag-handle" aria-hidden="true" />
         <button
-          className="island-compact-layer island-drag-handle"
+          className="island-compact-layer"
           data-collapsed={expanded ? 'false' : 'true'}
           onClick={() => onIntent({ name: 'set-expanded', value: !expanded })}
         >
           <span className={cn('island-dot', PHASE_DOT[primary?.phase ?? 'idle'])} />
           <span className="island-label">{state.compactLabel}</span>
-          <ChevronDown className={cn('island-chevron', 'island-no-drag', expanded && 'rotate-180')} />
+          <ChevronDown className={cn('island-chevron', expanded && 'rotate-180')} />
         </button>
         {expanded && primary && (
           <div className="island-expanded">
