@@ -29,6 +29,7 @@ import {
   mapRuntimePhaseToIslandPhase,
   projectPlanning,
   pushActivityLine,
+  selectHoverDelay,
 } from '../../../packages/shared/src/agent-island-projections'
 import type { IslandSessionInput } from '../../../packages/shared/src/agent-island-projections'
 
@@ -90,6 +91,14 @@ export class AgentIslandService {
   private planning: PlanningCache = { todos: [], reminders: [] }
   private manuallyExpanded = false
   private hoverExpanded = false
+  /**
+   * 即时的指针 hover 状态（不进 state，仅 service 内部用）。
+   * 对齐 Proma pointerHovered：驱动高亮反馈（renderer 侧用 CSS :hover），
+   * 与延迟的 hoverExpanded 分离，避免鼠标掠过立即展开又收起。
+   */
+  private pointerHovered = false
+  /** hover 防疫定时器：进入/离开时延迟翻转 hoverExpanded（防抖）。 */
+  private hoverTimer: ReturnType<typeof setTimeout> | null = null
   private dismissedKey: string | null = null
   private lastPushAt = 0
   private lastStateJson = ''
@@ -127,10 +136,29 @@ export class AgentIslandService {
     switch (intent.name) {
       case 'set-expanded':
         this.manuallyExpanded = intent.value === true
+        // 显式收起应立即终结任何 pending 的 hover 展开——否则点击收起后
+        // 延迟到期会把岛屿又拉开（"click 收起被忽略"的错觉）。对齐 Proma
+        // agent-island-service.ts:858-865 setAgentIslandExpanded 收起分支。
+        if (!this.manuallyExpanded) {
+          this.hoverExpanded = false
+          this.clearHoverTimer()
+        }
         break
-      case 'set-hovered':
-        this.hoverExpanded = intent.value === true
+      case 'set-hovered': {
+        // 即时记下指针状态（仅内部），延迟翻转 hoverExpanded——鼠标掠过不会
+        // 立即展开又收起。重复 set-hovered 事件清旧 timer（防抖）。
+        // 对齐 Proma agent-island-service.ts:869-883 setAgentIslandHovered。
+        const hovered = intent.value === true
+        this.pointerHovered = hovered
+        this.clearHoverTimer()
+        this.hoverTimer = setTimeout(() => {
+          this.hoverTimer = null
+          if (this.hoverExpanded === hovered) return
+          this.hoverExpanded = hovered
+          this.push(true)
+        }, selectHoverDelay(hovered))
         break
+      }
       case 'dismiss':
         this.dismissedKey = buildVisibilityKey(
           [...this.sessions.values()],
@@ -308,9 +336,20 @@ export class AgentIslandService {
     )
   }
 
+  /** 清 pending hover 定时器（防抖与销毁时调用）。 */
+  private clearHoverTimer(): void {
+    if (this.hoverTimer) {
+      clearTimeout(this.hoverTimer)
+      this.hoverTimer = null
+    }
+  }
+
   destroy(): void {
     if (this.planningTimer) clearInterval(this.planningTimer)
     this.planningTimer = null
+    this.clearHoverTimer()
+    this.pointerHovered = false
+    this.hoverExpanded = false
   }
 }
 

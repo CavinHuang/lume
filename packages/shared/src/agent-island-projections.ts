@@ -51,6 +51,19 @@ export function isStaleSession(session: IslandSessionInput, now: number): boolea
   return now - session.lastActivityAt >= STALE_SESSION_MS
 }
 
+/**
+ * hover 进入/离开时，service 在延迟到期后才真正翻转 hoverExpanded（防抖）。
+ * 进入展开用 HOVER_EXPAND_DELAY_MS，离开收起用 HOVER_COLLAPSE_DELAY_MS
+ * （对齐 Proma agent-island-service.ts:59-60；收起更慢以容纳鼠标短时跨岛往返）。
+ */
+export const HOVER_EXPAND_DELAY_MS = 300
+export const HOVER_COLLAPSE_DELAY_MS = 420
+
+/** 选择 hover 延迟：进入(true)→展开延迟；离开(false)→收起延迟。供 service 的 setTimeout 取值。 */
+export function selectHoverDelay(hovered: boolean): number {
+  return hovered ? HOVER_EXPAND_DELAY_MS : HOVER_COLLAPSE_DELAY_MS
+}
+
 const PHASE_PRIORITY: Record<AgentIslandPhase, number> = {
   'needs-interaction': 0,
   error: 1,

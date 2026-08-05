@@ -8,6 +8,9 @@ import {
   selectPlanningIndicator,
   isStaleSession,
   STALE_SESSION_MS,
+  selectHoverDelay,
+  HOVER_EXPAND_DELAY_MS,
+  HOVER_COLLAPSE_DELAY_MS,
 } from './agent-island-projections'
 import type { IslandSessionInput } from './agent-island-projections'
 import type { AgentIslandPlanningSnapshot } from './types/agent-island'
@@ -281,5 +284,16 @@ describe('selectPlanningIndicator', () => {
     const before = JSON.stringify(snap)
     selectPlanningIndicator(snap, now)
     expect(JSON.stringify(snap)).toBe(before)
+  })
+})
+
+describe('selectHoverDelay', () => {
+  test('进入(true) → HOVER_EXPAND_DELAY_MS', () => {
+    expect(selectHoverDelay(true)).toBe(HOVER_EXPAND_DELAY_MS)
+    expect(HOVER_EXPAND_DELAY_MS).toBe(300)
+  })
+  test('离开(false) → HOVER_COLLAPSE_DELAY_MS', () => {
+    expect(selectHoverDelay(false)).toBe(HOVER_COLLAPSE_DELAY_MS)
+    expect(HOVER_COLLAPSE_DELAY_MS).toBe(420)
   })
 })
