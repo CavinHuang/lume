@@ -5,6 +5,7 @@ import YAML from "yaml";
 import { getMemoryV2ScopePaths, type MemoryV2ScopePaths } from "./paths";
 import { inferMemoryV2Claim, normalizeMemoryV2Claim } from "./claim";
 import type {
+  MemoryV2Activation,
   MemoryV2Candidate,
   MemoryV2Entry,
   MemoryV2EntryFrontmatter,
@@ -15,6 +16,7 @@ import type {
   MemoryV2Source,
   MemoryV2Status
 } from "./types";
+import { DEFAULT_ACTIVATION } from "./types";
 
 const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
 const ALL_ENTRY_STATUSES: MemoryV2Status[] = [
@@ -34,6 +36,7 @@ export interface MemoryV2Store {
     related?: string[];
     supersedes?: string[];
     source?: MemoryV2Source;
+    activation?: MemoryV2Activation;
   }): MemoryV2Entry;
   updateEntryStatus(input: {
     scope: MemoryV2Scope;
@@ -56,6 +59,7 @@ export interface MemoryV2Store {
     kind?: MemoryV2EntryFrontmatter["kind"];
     confidence?: MemoryV2EntryFrontmatter["confidence"];
     tags?: string[];
+    activation?: MemoryV2Activation;
   }): MemoryV2Entry;
   deleteEntry(input: {
     scope: MemoryV2Scope;
@@ -137,6 +141,7 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
   related?: string[];
   supersedes?: string[];
   source?: MemoryV2Source;
+  activation?: MemoryV2Activation;
 } = {}): MemoryV2Entry {
   const paths = getMemoryV2ScopePaths({
     scope: candidate.targetScope,
@@ -163,6 +168,7 @@ export function writeEntry(candidate: MemoryV2Candidate, input: {
     applies_when: candidate.appliesWhen ?? {},
     valid_from: null,
     valid_to: null,
+    activation: input.activation ? { ...input.activation } : { ...DEFAULT_ACTIVATION },
     ...(candidate.claim ? { claim: candidate.claim } : {})
   };
   const filename = `${now.slice(0, 10)}-${id}.md`;
@@ -229,6 +235,7 @@ export function updateEntry(input: {
   kind?: MemoryV2EntryFrontmatter["kind"];
   confidence?: MemoryV2EntryFrontmatter["confidence"];
   tags?: string[];
+  activation?: MemoryV2Activation;
 }): MemoryV2Entry {
   const entry = findEntryById(input);
   if (!entry) {
@@ -243,6 +250,8 @@ export function updateEntry(input: {
     statement: nextStatement,
     tags: nextTags
   }) ?? entry.frontmatter.claim;
+  const previousActivation = readActivation(entry.frontmatter);
+  const nextActivation = input.activation ? { ...input.activation } : previousActivation;
   const next: MemoryV2Entry = {
     ...entry,
     statement: nextStatement,
@@ -251,6 +260,7 @@ export function updateEntry(input: {
       ...(input.kind ? { kind: input.kind } : {}),
       ...(input.confidence ? { confidence: input.confidence } : {}),
       tags: nextTags,
+      activation: nextActivation,
       ...(nextClaim ? { claim: nextClaim } : {}),
       updated: new Date().toISOString()
     }
@@ -401,15 +411,22 @@ export function resolvePending(input: {
   }
 
   const candidate = candidateFromPending(pending, input.workspaceSlug, input.candidateOverride);
+  const existingIds = pending.frontmatter.existing?.ids ?? [];
+  // 版本迁移：新版继承被 supersede 旧版的 activation（保留用户对原记忆按用途的精调）。
+  // 无旧版（纯新记忆接受低置信度等）→ writeEntry 默认 DEFAULT_ACTIVATION。
+  const supersededEntry = existingIds.length > 0
+    ? findEntryByIdAcrossScopes(existingIds[0]!, input.workspaceSlug)
+    : undefined;
   const entry = writeEntry(candidate, {
-    supersedes: pending.frontmatter.existing?.ids,
+    supersedes: existingIds,
     source: {
       type: "manual",
       run_id: pending.frontmatter.evidence?.run_id,
       record_ids: pending.frontmatter.evidence?.record_ids
-    }
+    },
+    ...(supersededEntry ? { activation: readActivation(supersededEntry.frontmatter) } : {})
   });
-  for (const existingId of pending.frontmatter.existing?.ids ?? []) {
+  for (const existingId of existingIds) {
     const existing = findEntryByIdAcrossScopes(existingId, input.workspaceSlug);
     if (!existing) continue;
     updateEntryStatus({
@@ -517,6 +534,17 @@ export function parseMarkdownDocument<T extends object>(source: string): {
 export function writeMarkdownDocument(path: string, frontmatter: unknown, body: string): void {
   const yaml = YAML.stringify(frontmatter).trimEnd();
   writeFileAtomic(path, `---\n${yaml}\n---\n${body.trim()}\n`);
+}
+
+/**
+ * 读取激活开关。fail-open：frontmatter 无 activation 字段时返回 DEFAULT_ACTIVATION（全 true），
+ * 以兼容 Task 1 之前写入的旧记忆。
+ *
+ * 按键 fallback：手编辑 YAML 产生 partial activation（如仅 {recall: true}）时，
+ * 缺失键以 DEFAULT_ACTIVATION 对应值补齐（默认 true），与 UI 的逐键合并行为保持一致。
+ */
+export function readActivation(frontmatter: Pick<MemoryV2EntryFrontmatter, "activation">): MemoryV2Activation {
+  return { ...DEFAULT_ACTIVATION, ...(frontmatter.activation ?? {}) };
 }
 
 export function redactArchiveRecord(record: Record<string, unknown>): Record<string, unknown> & { redacted: boolean } {

@@ -313,3 +313,17 @@ return (
 2. **Shiki shadow DOM**：Agent 历史里的代码块若经 Shiki 渲染在 shadow DOM，`window.getSelection` 可能取不到——hook 的 `getSelection` 参数需支持注入 `getDeepSelection`（复用 Proma `discoverShadowRoots`）。实现时先验证 agent 消息代码块的 DOM 结构再定。
 3. **与 comment attachment 的 popover 共存**：代码文件上已有 `addSelectionToComposer` 的「让模型修改」/选区动作。本期 `quoted_selection` 只挂 Agent 历史，不碰代码文件，**无共存冲突**；未来若扩到代码文件需明确二者边界（建议代码文件继续只走 comment attachment）。
 4. **`createThreadSliceFamily` 写入规约**：hook 和 chip 的所有写入必须走 root atom 不可变展开，否则 per-thread 订阅的重渲染优化失效——code review 重点。
+
+---
+
+## 8. 实现注记（2026-08-05）
+
+一期已完整实现（worktree `worktree-quoted-selection`）。实现时相对本设计的调整：
+
+- **第二动作「打开右侧问答」已实现（非 follow-up，§3.4/§7 风险①已解决）**：`AgentHistorySelectionLayer` **自给自足**（不委托上层 prop）。Lume 无 Proma side chat，映射为「新建 agent 会话 tab + 切过去 + 引用 chip」——`handleOpenChat` 内部 `sidecarCall<AgentThreadMeta>(CREATE_THREAD, {workspaceId})` + `setThreads` 乐观更新 + `setActiveTabId` + `setTabs` 去重 upsert（对齐 `WelcomeView.tsx:418-496` / `CommandPalette.tsx:85`）。引用只写到新会话 atom、不预填草稿（chip 表达意图）。注意：Lume UI 默认 lazy 创建（先 `__welcome__` tab），此 eager 创建是脱离默认路径的自定义实现。
+- **引用卡片只展示来源 label**（对齐 Proma `QuoteChip`，§3.7「text 摘要」未采用）：`parseQuotedSelectionRefs` 只返回元数据（label/path/sourceType），引用的**文本内容只进 LLM prompt、UI 不重复展示**——避免冗长。`UserAgentRoleInvocationContent` 内 parse 后渲染 `Quote` 图标 + label 行。
+- **atom 放独立文件** `atoms/quoted-selection.ts`（非并入 `agent-atoms.ts`）。
+- **`QuotedSelectionChip` 放 `components/agent/`**（Lume 无 `components/diff/`）。
+- 验证：`tsc --noEmit` 通过 + 序列化测试 8/8 + 全量 unit 308 pass（2 个 browser-annotation 预存失败与本期无关）。
+
+仍 defer：Wiki/Reading/各 markdown 预览分支（需统一 markdown 段落锚点基建）、scratch-pad（Lume 无对应物）。

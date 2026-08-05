@@ -15,7 +15,7 @@ import { createLazyConnectionLlmProvider } from "../model-runtime/connection-pro
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { MEMORY_CLAIM_PREFERRED_NAME, claimFromEntry } from "./claim";
 import { resolveMemoryExtractionModelRefs } from "./extraction";
-import { listEntries } from "./markdown-store";
+import { listEntries, readActivation } from "./markdown-store";
 import { getPersonaPath } from "./paths";
 import type { MemoryV2Entry, MemoryV2Scope } from "./types";
 
@@ -224,7 +224,8 @@ export async function ensurePersona(input: {
       input.scope ?? (input.workspaceSlug ? "workspace" : "global");
     const workspaceSlug = scope === "workspace" ? input.workspaceSlug : undefined;
 
-    const entries = listEntries({ workspaceSlug, scopes: [scope] });
+    const entries = listEntries({ workspaceSlug, scopes: [scope] })
+      .filter((entry) => readActivation(entry.frontmatter).persona);
     const existing = readPersonaRaw(scope, workspaceSlug);
 
     let markdown: string;

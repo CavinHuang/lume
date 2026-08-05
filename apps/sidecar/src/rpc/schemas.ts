@@ -894,6 +894,13 @@ export const memoryListSourceFilesInputSchema = z.object({
 const memoryEntryScopeSchema = z.enum(["global", "workspace"]);
 const memoryEntryConfidenceSchema = z.enum(["low", "medium", "high"]);
 
+export const memoryActivationSchema = z.object({
+  recall: z.boolean(),
+  persona: z.boolean(),
+  suggestion: z.boolean(),
+  analyst: z.boolean()
+}).strict();
+
 export const memoryUpdateEntryInputSchema = z.object({
   workspaceSlug: idSchema,
   scope: memoryEntryScopeSchema,
@@ -901,7 +908,8 @@ export const memoryUpdateEntryInputSchema = z.object({
   statement: z.string().trim().min(1).optional(),
   kind: memoryKindSchema.optional(),
   confidence: memoryEntryConfidenceSchema.optional(),
-  tags: z.array(z.string()).optional()
+  tags: z.array(z.string()).optional(),
+  activation: memoryActivationSchema.optional()
 }).strict();
 
 export const memoryDeleteEntryInputSchema = z.object({

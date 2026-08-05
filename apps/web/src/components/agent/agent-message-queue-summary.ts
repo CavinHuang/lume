@@ -1,11 +1,12 @@
 import type { AgentQueuedMessage } from '@lume/shared'
+import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
 
 /**
  * 队列消息的可读摘要(对齐 Codex J 函数:有文本用文本;否则多类型附件联合计数)。
- * 仅用于 UI 单行展示,不参与发给模型的上下文。
+ * 仅用于 UI 单行展示,不参与发给模型的上下文。剥离引用 XML 块(避免裸露 <quoted_context>)。
  */
 export function summarizeQueuedMessage(item: AgentQueuedMessage): string {
-  const text = item.text?.trim() ?? ''
+  const { text } = parseQuotedSelectionRefs(item.text?.trim() ?? '')
   if (text.length > 0) return text
 
   const parts: string[] = []

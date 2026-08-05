@@ -2,7 +2,7 @@ import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react'
 import { cn } from '@/lib/utils'
 import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   agentSend,
@@ -25,8 +25,11 @@ import {
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
 import { listChannels } from '@/lib/desktop-api/channel'
-import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, queuedAttachmentPreviewUrlAtom, settingsInitialTabAtom, tabsAtom } from '@/atoms'
+import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, queuedAttachmentPreviewUrlAtom, settingsInitialTabAtom, tabsAtom, quotedSelectionMapAtom, quotedSelectionFamily } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
+import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
+import type { QuotedSelection } from '@/atoms/quoted-selection'
+import { QuotedSelectionChip } from './QuotedSelectionChip'
 import { debounce } from 'throttle-debounce'
 import {
   AGENT_IPC_CHANNELS,
@@ -437,6 +440,31 @@ export function AgentInput({
   const draft = useAtomValue(agentInputDraftFamily(threadId))
   const commentAttachments: AgentDiffCommentAttachment[] = useAtomValue(agentDiffCommentDraftsFamily(threadId)) ?? []
   const setCommentDrafts = useSetAtom(agentDiffCommentDraftsAtom)
+  const quotedSelection = useAtomValue(quotedSelectionFamily(threadId)) ?? null
+  const setQuotedSelectionMap = useSetAtom(quotedSelectionMapAtom)
+  const jotaiStore = useStore()
+  /** 读取当前会话的划线引用快照（不删除）—— 发送构建 text 时用 */
+  const peekQuotedSelection = useCallback((): QuotedSelection | null => {
+    return jotaiStore.get(quotedSelectionMapAtom)[threadId] ?? null
+  }, [jotaiStore, threadId])
+  /** 发送成功后提交（删除）引用；capturedAt 乐观锁防发送途中用户重选导致误删新选区 */
+  const commitQuotedSelection = useCallback((capturedAt: number): void => {
+    jotaiStore.set(quotedSelectionMapAtom, (prev) => {
+      const existing = prev[threadId]
+      if (!existing || existing.capturedAt !== capturedAt) return prev
+      const next = { ...prev }
+      delete next[threadId]
+      return next
+    })
+  }, [jotaiStore, threadId])
+  const handleRemoveQuotedSelection = useCallback(() => {
+    setQuotedSelectionMap((prev) => {
+      if (!prev[threadId]) return prev
+      const next = { ...prev }
+      delete next[threadId]
+      return next
+    })
+  }, [setQuotedSelectionMap, threadId])
   const browserAttachments: AgentBrowserAttachment[] = useAtomValue(agentBrowserAttachmentsFamily(threadId)) ?? []
   const setBrowserAttachments = useSetAtom(agentBrowserAttachmentsAtom)
   const setDraftState = useSetAtom(agentInputDraftAtom)
@@ -1237,7 +1265,16 @@ export function AgentInput({
     const effectiveBrowserAttachments = directAttachment ? [directAttachment] : annotationSubmission.attachments
     const effectiveCommentAttachments = directAttachment ? [] : commentAttachments
     const effectivePendingAttachments = directAttachment ? [] : pendingAttachments
-    const text = directAttachment ? annotationSubmission.text : resolveBrowserAnnotationBatchText({ rawText, hasSnapshot: Boolean(batchSnapshot), hasCodeComments: commentAttachments.length > 0, hasBrowserAttachments: effectiveBrowserAttachments.length > 0 })
+    const baseText = directAttachment ? annotationSubmission.text : resolveBrowserAnnotationBatchText({ rawText, hasSnapshot: Boolean(batchSnapshot), hasCodeComments: commentAttachments.length > 0, hasBrowserAttachments: effectiveBrowserAttachments.length > 0 })
+    // 划线引用：peek（不删）构建 text；删除延迟到发送成功后（commitQuotedSelection），失败时引用保留可重试
+    const quotedSelectionSnapshot = directAttachment ? null : peekQuotedSelection()
+    const quotedBlock = quotedSelectionSnapshot ? buildQuotedSelectionBlock(quotedSelectionSnapshot) : ''
+    const text = quotedBlock + baseText
+    // messageParts 须与 userMessage 一致（sidecar 校验 parts 拼接 == userMessage）；引用 prepend 为 text part
+    const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
+    const messageParts = quotedBlock && hasStructuredParts
+      ? [{ type: 'text' as const, text: quotedBlock }, ...serialized.messageParts]
+      : serialized.messageParts
     let sendMessageMetadata = directAttachment ? undefined : effectiveMessageMetadata
     if (!directAttachment && selectedDesktopContextTarget) {
       const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
@@ -1261,7 +1298,7 @@ export function AgentInput({
     }
     const submissionIdentity = JSON.stringify({
       userMessage: text,
-      messageParts: serialized.messageParts,
+      messageParts,
       attachments: effectivePendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
       commentAttachments: effectiveCommentAttachments,
       browserAttachments: effectiveBrowserAttachments,
@@ -1351,7 +1388,7 @@ export function AgentInput({
             threadId,
             userMessage: text,
             clientSubmissionId,
-            ...(serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref') ? { messageParts: serialized.messageParts } : {}),
+            ...(hasStructuredParts ? { messageParts } : {}),
             thinkingLevel,
             followUpQueueMode,
             permissionMode,
@@ -1362,6 +1399,8 @@ export function AgentInput({
             ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
           })
       pendingSubmissionRef.current = null
+      // P2-2: 发送成功后才删除引用（失败/early return 时保留 chip 供重试）
+      if (quotedSelectionSnapshot) commitQuotedSelection(quotedSelectionSnapshot.capturedAt)
       if (!directAttachment) editor.commands.clearContent()
       if (!directAttachment) setEditorText('')
       if (!directAttachment) pushHistoryEntry(sentJson)
@@ -1407,8 +1446,8 @@ export function AgentInput({
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
           ...(effectiveCommentAttachments.length > 0 ? { commentAttachments: effectiveCommentAttachments } : {}),
           ...(effectiveBrowserAttachments.length > 0 ? { browserAttachments: effectiveBrowserAttachments } : {}),
-          ...(!directAttachment && serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
-            ? { messageParts: serialized.messageParts }
+          ...(!directAttachment && hasStructuredParts
+            ? { messageParts }
             : {}),
         }))
         setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
@@ -1451,6 +1490,8 @@ export function AgentInput({
     setStreamingStates,
     setMessageQueues,
     setCommentDrafts,
+    peekQuotedSelection,
+    commitQuotedSelection,
     setBrowserAttachments,
     streaming,
     thinkingLevel,
@@ -1600,7 +1641,7 @@ export function AgentInput({
       previousDraft: editor.getJSON(),
     })
     setPlusPanelOpen(false)
-    setEditorMessageParts(editor, editing.queuedMessage.messageParts, editing.draftText)
+    setEditorMessageParts(editor, stripLeadingQuotePart(editing.queuedMessage.messageParts), editing.draftText)
     setEditorText(editor.getText())
     editor.commands.focus('end')
   }, [editor, messageQueueSnapshot, setMessageQueues, threadId])
@@ -1915,6 +1956,7 @@ export function AgentInput({
               || editingQueuedMessage?.item.commentAttachments?.length
               || editingQueuedMessage?.item.browserAttachments?.length
               || (!editingQueuedMessage && (pendingAttachments.length > 0 || commentAttachments.length > 0 || browserAttachments.length > 0))
+              || (!editingQueuedMessage && quotedSelection)
                 ? (
                     <div className="space-y-2 px-3 pb-2 pt-3">
                       {editingQueuedMessage?.item.messageAttachments?.length ? (
@@ -1927,6 +1969,14 @@ export function AgentInput({
                         <PendingAttachmentList
                           attachments={pendingAttachments}
                           onRemove={onRemovePendingAttachment}
+                        />
+                      ) : null}
+                      {!editingQueuedMessage && quotedSelection ? (
+                        <QuotedSelectionChip
+                          text={quotedSelection.text}
+                          filePath={quotedSelection.filePath}
+                          sourceLabel={quotedSelection.sourceLabel}
+                          onRemove={handleRemoveQuotedSelection}
                         />
                       ) : null}
                       {(editingQueuedMessage?.item.commentAttachments ?? commentAttachments).map((comment) => (
@@ -2193,6 +2243,17 @@ export function AgentInput({
       />
     </div>
   )
+}
+
+/** 剥离 messageParts 开头的引用块 text part（编辑队列消息时不让 <quoted_*> 标签进编辑器） */
+function stripLeadingQuotePart(parts: AgentQueuedMessage['messageParts']): AgentQueuedMessage['messageParts'] {
+  if (!parts || parts.length === 0) return parts
+  const first = parts[0]
+  if (first && first.type === 'text' && first.text.startsWith('<quoted_')) {
+    const rest = parts.slice(1)
+    return rest.length > 0 ? rest : undefined
+  }
+  return parts
 }
 
 function setEditorMessageParts(

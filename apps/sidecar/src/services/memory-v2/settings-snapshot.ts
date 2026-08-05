@@ -13,7 +13,7 @@ import {
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF
 } from "@lume/shared";
 import { getMemoryV2ScopePaths } from "./paths";
-import { createMemoryV2Store } from "./markdown-store";
+import { createMemoryV2Store, readActivation } from "./markdown-store";
 import { resolveMemoryEmbeddingModelRef, resolveMemoryEmbeddingStatusModelRef } from "./embedding";
 import { resolveMemoryExtractionModelRef } from "./extraction";
 import { getLocalOnnxMemoryEmbeddingStatus } from "./local-embedding";
@@ -171,6 +171,7 @@ function entrySummary(entry: MemoryV2Entry): MemorySettingsEntrySummary {
     updated: entry.frontmatter.updated,
     pinned: entry.frontmatter.pinned,
     tags: entry.frontmatter.tags,
+    activation: readActivation(entry.frontmatter),
     ...(entry.frontmatter.claim ? { claim: entry.frontmatter.claim } : {})
   };
 }

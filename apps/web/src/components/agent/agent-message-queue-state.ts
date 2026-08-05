@@ -1,4 +1,5 @@
 import type { AgentMessageQueueSnapshot } from '@lume/shared'
+import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
 
 export function createEmptyAgentMessageQueueSnapshot(threadId: string): AgentMessageQueueSnapshot {
   return {
@@ -75,7 +76,8 @@ export function startEditingQueuedMessage(
   const queuedMessage = snapshot.queuedMessages.find((item) => item.id === queuedMessageId)
   if (!queuedMessage) return null
   return {
-    draftText: queuedMessage.text,
+    // 剥离引用 XML 块：编辑器载入纯净用户文本（引用块在编辑场景视为已消费）
+    draftText: parseQuotedSelectionRefs(queuedMessage.text).text,
     queuedMessage,
     snapshot,
   }

@@ -21,6 +21,7 @@ import {
 import { useAtomValue } from 'jotai'
 import { toast } from 'sonner'
 import type {
+  MemoryActivation,
   MemoryCitationsMode,
   MemoryIngestSourceInput,
   MemoryIngestSourcesJob,
@@ -38,6 +39,7 @@ import type {
   MemorySettingsSnapshot,
   PersonaGetResult,
 } from '@lume/shared'
+import { DEFAULT_MEMORY_ACTIVATION } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -527,6 +529,21 @@ export function MemorySettings() {
     toast.success('记忆已更新')
   })
 
+  const handleToggleActivation = (
+    entry: MemorySettingsEntrySummary,
+    activation: MemoryActivation,
+  ) => runAction(`activation-${entry.id}`, async () => {
+    if (!workspaceSlug) return
+    await updateMemoryEntry({
+      workspaceSlug,
+      scope: entry.scope,
+      id: entry.id,
+      activation,
+    })
+    await refresh()
+    toast.success('激活用途已更新')
+  })
+
   const handleDeleteMemoryEntry = (entry: MemorySettingsEntrySummary) => runAction(`delete-${entry.id}`, async () => {
     if (!workspaceSlug) return
     const toastId = toast.loading('正在删除记忆...')
@@ -788,6 +805,7 @@ export function MemorySettings() {
           onOpenFile={(path) => void handleOpenMemoryFile(path)}
           onInspectEntry={(entry) => void handleInspectMemoryEntry(entry)}
           onUpdateEntry={(entry, input) => void handleUpdateMemoryEntry(entry, input)}
+          onToggleActivation={(entry, activation) => void handleToggleActivation(entry, activation)}
           onDeleteEntry={(entry) => void handleDeleteMemoryEntry(entry)}
           onDirtyChange={setDetailDirty}
           selectedEntry={selectedMemoryEntry}
@@ -1273,6 +1291,7 @@ function UserMemoryPanel({
   onOpenFile,
   onInspectEntry,
   onUpdateEntry,
+  onToggleActivation,
   selectedEntry,
   selectedEntryId,
 }: {
@@ -1296,6 +1315,7 @@ function UserMemoryPanel({
       tags: string[]
     },
   ) => void
+  onToggleActivation: (entry: MemorySettingsEntrySummary, activation: MemoryActivation) => void
   selectedEntry: MemorySettingsEntrySummary | null
   selectedEntryId: string | null
 }) {
@@ -1362,6 +1382,7 @@ function UserMemoryPanel({
           onDirtyChange={onDirtyChange}
           onOpenFile={onOpenFile}
           onUpdateEntry={onUpdateEntry}
+          onToggleActivation={onToggleActivation}
         />
       </div>
     </section>
@@ -1674,6 +1695,7 @@ function MemoryDetailPanel({
   onDirtyChange,
   onOpenFile,
   onUpdateEntry,
+  onToggleActivation,
 }: {
   busyAction: string | null
   detail: MemoryReadToolResult | null
@@ -1690,6 +1712,7 @@ function MemoryDetailPanel({
       tags: string[]
     },
   ) => void
+  onToggleActivation: (entry: MemorySettingsEntrySummary, activation: MemoryActivation) => void
 }) {
   const rows = buildMemoryDetailRows(detail)
   const [statement, setStatement] = React.useState('')
@@ -1862,6 +1885,13 @@ function MemoryDetailPanel({
           ))}
         </dl>
       )}
+      {entry && (
+        <ActivationToggleGroup
+          entry={entry}
+          disabled={busyAction !== null}
+          onToggle={(activation) => onToggleActivation(entry, activation)}
+        />
+      )}
       {!entry && (
         <pre className="mt-3 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-border bg-[var(--surface-1)] p-3 text-[12px] leading-5 text-[var(--text-1)]">
           {detail.text}
@@ -1892,6 +1922,71 @@ function StatusBadge({
     )}>
       {children}
     </span>
+  )
+}
+
+const MEMORY_ACTIVATION_ITEMS: ReadonlyArray<{
+  key: keyof MemoryActivation
+  label: string
+  desc: string
+}> = [
+  { key: 'recall', label: '召回', desc: '对话中通过 memory.read / 搜索调用此记忆' },
+  { key: 'persona', label: 'Persona', desc: '生成/注入 L3 用户画像时使用此记忆' },
+  { key: 'suggestion', label: '主动建议', desc: '匹配触发条件时由主动建议引用此记忆' },
+  { key: 'analyst', label: '工作模式分析', desc: '周期性工作模式分析读取此记忆' },
+]
+
+/**
+ * 4 toggle：recall/persona/suggestion/analyst。
+ * 读 entry.activation（缺省 DEFAULT_MEMORY_ACTIVATION 兼容旧记忆）；toggle → onToggle(全新 activation 对象)。
+ */
+export function ActivationToggleGroup({
+  entry,
+  disabled,
+  onToggle,
+}: {
+  entry: MemorySettingsEntrySummary
+  disabled: boolean
+  onToggle: (activation: MemoryActivation) => void
+}) {
+  const activation: MemoryActivation = {
+    ...DEFAULT_MEMORY_ACTIVATION,
+    ...(entry.activation ?? {}),
+  }
+  return (
+    <div className="mt-3 rounded-[8px] border border-border bg-[var(--surface-1)] p-3">
+      <div className="text-[12px] font-semibold text-[var(--text-3)]">激活用途</div>
+      <p className="mt-1 text-[11px] leading-4 text-[var(--text-3)]">
+        精调这条记忆在哪些场景被读取；关闭后即使命中也不会被该用途读取。
+      </p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        {MEMORY_ACTIVATION_ITEMS.map((item) => {
+          const checked = activation[item.key]
+          return (
+            <label
+              key={item.key}
+              className={cn(
+                'flex min-h-[56px] items-center justify-between gap-3 rounded-[6px] border p-2',
+                checked
+                  ? 'border-[color-mix(in_oklab,var(--brand)_30%,var(--border))] bg-[color-mix(in_oklab,var(--brand)_6%,var(--surface-1))]'
+                  : 'border-border bg-[var(--surface-2)]',
+              )}
+            >
+              <span className="min-w-0">
+                <span className="block text-[12px] font-semibold text-[var(--text-1)]">{item.label}</span>
+                <span className="mt-0.5 block text-[11px] leading-4 text-[var(--text-3)]">{item.desc}</span>
+              </span>
+              <Switch
+                checked={checked}
+                disabled={disabled}
+                aria-label={`激活用途：${item.label}`}
+                onCheckedChange={(value) => onToggle({ ...activation, [item.key]: value })}
+              />
+            </label>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 

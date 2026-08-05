@@ -32,7 +32,7 @@ import type { SuggestionCandidate, SuggestionKind } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
-import { listEntries, listPending } from "../memory-v2/markdown-store";
+import { listEntries, listPending, readActivation } from "../memory-v2/markdown-store";
 import { parsePersonaProfile, readPersonaRaw } from "../memory-v2/persona";
 import { resolveMemoryExtractionModelRefs } from "../memory-v2/extraction";
 import { listAutomationJobs } from "../automation/automation-manager";
@@ -151,13 +151,13 @@ export interface BuildAnalysisInputOptions {
 export function buildAnalysisInput(opts: BuildAnalysisInputOptions = {}): string {
   const sections: string[] = [];
 
-  // 近期记忆条目
+  // 近期记忆条目（activation.analyst=false 排除，Task 3）
   let entries: ReturnType<typeof listEntries> = [];
   try {
     entries = listEntries({
       workspaceSlug: opts.workspaceSlug,
       includeStatuses: ["active"],
-    });
+    }).filter((entry) => readActivation(entry.frontmatter).analyst);
   } catch {
     entries = [];
   }
