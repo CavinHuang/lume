@@ -47,6 +47,7 @@ export interface AgentRuntimeKernelOptions<TInput extends { threadId: string; us
 
 export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: string }, TEmit> {
   private readonly activeThreads = new Set<string>();
+  private readonly paused = new Set<string>();
   private readonly activeAbortControllers = new Map<string, AbortController>();
   private readonly queuedDispatches = new Map<string, Array<AgentRuntimeKernelQueuedDispatch<TInput, TEmit>>>();
   private readonly queueRevisions = new Map<string, number>();
@@ -191,6 +192,21 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     return item;
   }
 
+  /** 暂停某线程的队列派发:startNextQueued 将跳过该线程,直到 resumeQueue。 */
+  pauseQueue(threadId: string): void {
+    this.paused.add(threadId);
+  }
+
+  /** 解除暂停并尝试派发队列首项。 */
+  resumeQueue(threadId: string): void {
+    if (!this.paused.delete(threadId)) return;
+    if (!this.activeThreads.has(threadId)) this.scheduleStartNext(threadId);
+  }
+
+  isPaused(threadId: string): boolean {
+    return this.paused.has(threadId);
+  }
+
   async waitForIdleForTest(): Promise<void> {
     while (this.running.size > 0) {
       await Promise.allSettled(Array.from(this.running));
@@ -202,6 +218,7 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
       controller.abort(new Error("Agent runtime reset"));
     }
     this.activeThreads.clear();
+    this.paused.clear();
     this.activeAbortControllers.clear();
     this.queuedDispatches.clear();
     this.queueRevisions.clear();
@@ -278,6 +295,7 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
 
   private async startNextQueued(threadId: string): Promise<void> {
     if (this.activeThreads.has(threadId)) return;
+    if (this.paused.has(threadId)) return;
     const queue = this.queuedDispatches.get(threadId) ?? [];
     const first = queue[0];
     const next = first?.priority === "background"
