@@ -11,6 +11,14 @@ Spend time on thinking; you do not need to use the commentary channel to report 
 - 仅在改动涉及可测试逻辑时运行相关测试；样式、文案、纯 UI 调整无需运行测试。不要为了"证明完成"而执行全量 lint/typecheck/test，只在改动有风险或涉及公共接口时验证。
 - Final reports must include changed files, simplifications made, and remaining risks.
 
+## 改动工作流
+
+所有改动必须遵循以下顺序（Claude Code / Codex / 人工一律适用）：
+
+1. **先 pull main** —— 开发前确保本地 `main` 与 `origin/main` 同步。
+2. **在 worktree 新分支上开发** —— 基于最新 `main` 为每个能力创建独立 worktree 与新分支，所有改动只在分支上完成；禁止在 `main` 工作区直接修改。
+3. **通过 PR 合并 main** —— 改动只能经 PR review 通过后合并回 `main`，禁止本地直接 merge 到 main。
+
 Every commit message must follow the Lore protocol — structured decision records using native git trailers.
 Commits are not just labels on diffs; they are the atomic unit of institutional knowledge.
 
