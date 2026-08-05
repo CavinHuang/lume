@@ -454,6 +454,12 @@ const sidecarHost = createSidecarHost({
     // Agent 灵动岛 service（Task 7）：先于 renderer 转发处理 sidecar 通知，
     // 确保即便主窗口隐藏也能触发 intent 刷新。
     getAgentIslandService().handleSidecarNotification(method, params)
+    // Task 6（M-3）：planning 变更即时推送——sidecar 在 todo/calendar 任意变更时
+    // 发 `planning-todo:changed`（planning-todo-handlers.ts:48-55），触发重拉 +
+    // force push 绕过 5min 轮询让岛屿内容在 ~80ms 内更新。
+    if (method === 'planning-todo:changed') {
+      void getAgentIslandService().onPlanningChanged()
+    }
     emitRendererEvent(SIDE_CAR_EVENT_CHANNEL, { method, params })
   },
 })

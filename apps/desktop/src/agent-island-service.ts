@@ -247,6 +247,19 @@ export class AgentIslandService {
     if (s && s.unread) this.sessions.set(threadId, { ...s, unread: false })
   }
 
+  /**
+   * Planning 变更即时推送（M-3）：sidecar 在 todo/calendar 任意变更时发
+   * `planning-todo:changed`（见 planning-todo-handlers.ts:48-55），由 main.ts
+   * 的 onNotification 路由到此处。先重拉 planning 快照，再 force push 绕过
+   * 2000ms 节流——使完成/改期/新增 todo 后岛屿内容在 ~80ms 内更新，而不是
+   * 等下个 5min 轮询周期。refreshPlanning 末尾的 push(false) 仅是节流推送，
+   * 随后的 push(true) 用 force=true 绕过节流真正落地。
+   */
+  async onPlanningChanged(): Promise<void> {
+    await this.refreshPlanning()
+    this.push(true)
+  }
+
   private async refreshPlanning(): Promise<void> {
     try {
       const [todosRes, remindersRaw] = await Promise.all([
