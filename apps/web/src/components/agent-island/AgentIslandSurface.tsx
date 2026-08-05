@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
-import { ChevronDown } from 'lucide-react'
+import { CalendarDays, ChevronDown, ListTodo } from 'lucide-react'
 import type { AgentIslandIntent, AgentIslandState } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -11,6 +11,12 @@ const PHASE_DOT: Record<string, string> = {
   'needs-interaction': 'bg-[var(--lume-warning)]',
   completed: 'bg-[var(--lume-success)]',
   error: 'bg-[var(--lume-danger)]',
+}
+
+/** 灵动岛 planning 行的时间标签：逾期加前缀，否则仅 HH:MM。 */
+function formatIslandTime(ts: number, overdue: boolean): string {
+  const hhmm = new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  return overdue ? `逾期 · ${hhmm}` : hhmm
 }
 
 /**
@@ -92,6 +98,55 @@ export function AgentIslandSurface({
                 </li>
               ))}
             </ul>
+            {(state.planning.todos.length > 0 || state.planning.reminders.length > 0) && (
+              <div className="island-planning">
+                {state.planning.todos.length > 0 && (
+                  <div className="island-planning-col">
+                    <div className="island-planning-head">
+                      <ListTodo className="island-planning-icon" />
+                      <span>待办</span>
+                      <span className="island-planning-count">{state.planning.todos.length}</span>
+                    </div>
+                    {state.planning.todos.slice(0, 3).map((t) => (
+                      <div
+                        key={t.id}
+                        className="island-planning-row"
+                        data-overdue={t.overdue ? 'true' : 'false'}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onIntent({ name: 'open-main' })}
+                      >
+                        <span className={cn('island-planning-check', t.overdue && 'island-planning-check-overdue')} />
+                        <span className="island-planning-text">{t.title}</span>
+                        <span className="island-planning-time">{formatIslandTime(t.dueAt, t.overdue)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {state.planning.reminders.length > 0 && (
+                  <div className="island-planning-col">
+                    <div className="island-planning-head">
+                      <CalendarDays className="island-planning-icon" />
+                      <span>提醒</span>
+                      <span className="island-planning-count">{state.planning.reminders.length}</span>
+                    </div>
+                    {state.planning.reminders.slice(0, 3).map((r) => (
+                      <div
+                        key={r.id}
+                        className="island-planning-row"
+                        data-overdue={r.overdue ? 'true' : 'false'}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onIntent({ name: 'open-main' })}
+                      >
+                        <span className="island-planning-time">{formatIslandTime(r.dueAt, r.overdue)}</span>
+                        <span className="island-planning-text">{r.title}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

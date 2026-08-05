@@ -44,6 +44,75 @@ html.darwin .island-surface {
 .island-session-row:hover { background: rgb(255 255 255 / 0.06); }
 .island-session-title { font-size: 12px; }
 .island-session-detail { font-size: 11px; opacity: 0.6; margin-left: auto; }
+/* planning 两列（对齐 Proma）：todos + reminders */
+.island-planning {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.island-planning-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 0.06);
+  cursor: pointer;
+}
+.island-planning-col:hover { background: rgb(255 255 255 / 0.1); }
+.island-planning-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.86);
+}
+.island-planning-icon { width: 13px; height: 13px; color: #9eb5ff; flex-shrink: 0; }
+.island-planning-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgb(255 255 255 / 0.6);
+}
+.island-planning-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.island-planning-row:hover { background: rgb(255 255 255 / 0.06); }
+.island-planning-check {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border: 1px solid rgb(255 255 255 / 0.45);
+  border-radius: 3px;
+}
+.island-planning-check-overdue { border-color: #ff7777; }
+.island-planning-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.island-planning-time {
+  flex-shrink: 0;
+  font-size: 9.5px;
+  font-weight: 600;
+  color: rgb(255 255 255 / 0.5);
+}
+.island-planning-row[data-overdue='true'] .island-planning-text,
+.island-planning-row[data-overdue='true'] .island-planning-time {
+  color: #ff9696;
+}
+.island-planning-row[data-overdue='true'] {
+  box-shadow: inset 0 0 0 1px rgb(255 119 119 / 0.45);
+}
 @media (prefers-reduced-motion: reduce) {
   .island-transition-surface, .island-expanded, .island-chevron { transition: none; }
 }

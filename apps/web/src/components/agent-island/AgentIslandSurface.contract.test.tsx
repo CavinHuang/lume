@@ -42,4 +42,26 @@ describe('AgentIslandSurface 契约', () => {
     expect(html).toContain('需要你接手')
     expect(html).toMatch(/data-phase="needs-interaction"/)
   })
+  test('expanded 渲染 planning 两列', () => {
+    const planningState: AgentIslandState = {
+      presentation: 'expanded',
+      primarySessionId: 't1',
+      compactLabel: 'Lume · 正在执行',
+      sessions: [{
+        threadId: 't1', title: 'A', phase: 'running', detail: '', activityLines: [],
+        attention: false, unread: false, terminalAt: null, lastActivityAt: 1,
+      }],
+      planning: {
+        todos: [{ id: 'p1', title: '写文档', kind: 'todo', dueAt: 1, overdue: true }],
+        reminders: [{ id: 'r1', title: '站会', kind: 'calendar_event', dueAt: 2, overdue: false }],
+      },
+      updatedAt: 1,
+    }
+    const html = renderToStaticMarkup(
+      <AgentIslandSurface state={planningState} onIntent={noop} />,
+    )
+    expect(html).toContain('待办')
+    expect(html).toContain('提醒')
+    expect(html).toContain('data-overdue="true"')
+  })
 })
